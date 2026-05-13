@@ -232,6 +232,217 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── HTTPS binding scenarios (Phase 2) ───────────────────────────────────
+    //
+    // The deploy script's HTTPS branch (PS1 lines 499-608) reads the per-binding
+    // `thumbprint`, finds the cert in `Cert:\LocalMachine\My`, then runs
+    // `netsh http add sslcert ipport=...` (non-SNI) or `hostnameport=...` (SNI).
+    // These tests stage a real self-signed cert in the local machine store, deploy,
+    // then assert the metabase binding lands AND the netsh sslcert table shows
+    // the cert thumbprint in the expected form.
+
+    [Fact]
+    public void RealIIS_HttpsBindingNonSni_RegistersCertViaNetshIpport()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var thumbprint = ctx.StageSelfSignedCertInLocalMachineMy(dnsName: $"squid-iis-nonsni-{Guid.NewGuid():N}");
+        ctx.RegisterNetshIpPortForCleanup(ctx.HttpsPort);
+
+        var bindingsJson =
+            "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"\"," +
+            "\"ipAddress\":\"*\",\"thumbprint\":\"" + thumbprint + "\"," +
+            "\"requireSni\":false,\"enabled\":true}]";
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, bindingsJson),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                "Squid IIS HTTPS-non-SNI deploy failed. To diagnose manually: " +
+                $"`Get-ChildItem Cert:\\LocalMachine\\My\\{thumbprint}` and " +
+                $"`netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort}`.\n\n" +
+                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // netsh sslcert table MUST show the cert thumbprint under ipport=0.0.0.0:<port>.
+        var netshDump = RunPowerShell($"& netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort}").StdOut;
+        netshDump.ToUpperInvariant().ShouldContain(thumbprint.ToUpperInvariant(),
+            customMessage:
+                $"netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort} did NOT show our cert thumbprint. " +
+                $"This means either the binding wasn't created OR was created against a different port/IP. " +
+                $"Manually: `netsh http show sslcert` to dump every binding.\n\nnetsh output:\n{netshDump}");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_HttpsBindingSni_RegistersCertViaNetshHostnameport()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var hostName = $"squid-iis-sni-{Guid.NewGuid():N}.local";
+        var thumbprint = ctx.StageSelfSignedCertInLocalMachineMy(dnsName: hostName);
+        ctx.RegisterNetshHostnamePortForCleanup(hostName, ctx.HttpsPort);
+
+        var bindingsJson =
+            "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"" + hostName + "\"," +
+            "\"ipAddress\":\"*\",\"thumbprint\":\"" + thumbprint + "\"," +
+            "\"requireSni\":true,\"enabled\":true}]";
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, bindingsJson),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                "Squid IIS HTTPS-SNI deploy failed. To diagnose manually: " +
+                $"`Get-ChildItem Cert:\\LocalMachine\\My\\{thumbprint}` and " +
+                $"`netsh http show sslcert hostnameport={hostName}:{ctx.HttpsPort}`.\n\n" +
+                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // netsh sslcert table MUST show our cert thumbprint under hostnameport=<host>:<port>.
+        var netshDump = RunPowerShell($"& netsh http show sslcert hostnameport={hostName}:{ctx.HttpsPort}").StdOut;
+        netshDump.ToUpperInvariant().ShouldContain(thumbprint.ToUpperInvariant(),
+            customMessage:
+                $"netsh http show sslcert hostnameport={hostName}:{ctx.HttpsPort} did NOT show our cert thumbprint. " +
+                $"SNI handling broken — check `$_.sslFlags -eq 1` branch in PS1 (line 548). " +
+                $"netsh output:\n{netshDump}");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_HttpsBindingWithMissingCert_FailsWithLocalMachineMyError()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        const string missingThumbprint = "FAKE0000000000000000000000000000DEADBEEF";
+
+        var bindingsJson =
+            "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"\"," +
+            "\"ipAddress\":\"*\",\"thumbprint\":\"" + missingThumbprint + "\"," +
+            "\"requireSni\":false,\"enabled\":true}]";
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, bindingsJson)));
+
+        var result = RunPowerShell(script);
+
+        // The script throws when the cert lookup misses; PowerShell surfaces the throw via
+        // non-zero exit + the error text we Squid-fied at line 531 of the embedded PS1.
+        result.ExitCode.ShouldNotBe(0,
+            customMessage: "Missing-cert deploy unexpectedly succeeded — the PS1's " +
+                          $"`Could not find certificate under Cert:\\LocalMachine with thumbprint` " +
+                          $"guard at line 531 is broken or wasn't reached.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var combinedOutput = result.StdOut + result.StdErr;
+        combinedOutput.ShouldContain("Could not find certificate",
+            customMessage:
+                "Cert-missing error did not contain the actionable 'Could not find certificate' phrase. " +
+                "Operators rely on grepping this exact phrase to triage. If this assertion fails, the PS1 " +
+                "error message at line 531 was renamed without updating this test.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_HttpsBindingRebindToDifferentCert_ReplacesPreviousNetshEntry()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.RegisterNetshIpPortForCleanup(ctx.HttpsPort);
+
+        var thumbprintA = ctx.StageSelfSignedCertInLocalMachineMy(dnsName: $"squid-iis-rotateA-{Guid.NewGuid():N}");
+        var thumbprintB = ctx.StageSelfSignedCertInLocalMachineMy(dnsName: $"squid-iis-rotateB-{Guid.NewGuid():N}");
+
+        thumbprintA.ShouldNotBe(thumbprintB,
+            customMessage: "Test setup expected two distinct cert thumbprints — both came back identical, " +
+                          "which would make the rebind assertion meaningless.");
+
+        // Deploy 1 — cert A
+        var script1 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"thumbprint\":\"" + thumbprintA + "\"," +
+                "\"requireSni\":false,\"enabled\":true}]")));
+
+        RunPowerShell(script1).ExitCode.ShouldBe(0, "First (cert A) deploy must succeed before re-bind can be tested.");
+
+        RunPowerShell($"& netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort}").StdOut
+            .ToUpperInvariant().ShouldContain(thumbprintA.ToUpperInvariant(),
+                customMessage: "Cert A binding not present after first deploy — staging issue, not a re-bind issue.");
+
+        // Deploy 2 — cert B against the same site + port, exercising the
+        // `# A different binding exists for the IP/port combination, replacing...` branch.
+        var script2 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"thumbprint\":\"" + thumbprintB + "\"," +
+                "\"requireSni\":false,\"enabled\":true}]")));
+
+        var result2 = RunPowerShell(script2);
+        result2.ExitCode.ShouldBe(0,
+            customMessage: $"Re-deploy with cert B failed. STDOUT:\n{result2.StdOut}\n\nSTDERR:\n{result2.StdErr}");
+
+        var finalDump = RunPowerShell($"& netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort}").StdOut;
+
+        finalDump.ToUpperInvariant().ShouldContain(thumbprintB.ToUpperInvariant(),
+            customMessage: "After re-deploy with cert B, netsh binding still doesn't show cert B. " +
+                          "The PS1's `netsh http delete sslcert ipport=...` + add-new path may have failed silently.");
+
+        finalDump.ToUpperInvariant().ShouldNotContain(thumbprintA.ToUpperInvariant(),
+            customMessage: "After re-deploy, the OLD cert A is still bound — re-bind replaced nothing. " +
+                          "This means cert rotation in production would leave the previous cert in place " +
+                          "even after the operator changed the thumbprint property.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -245,6 +456,9 @@ public sealed class IISDeployRealHostE2ETests
     {
         private readonly string _suffix = Guid.NewGuid().ToString("N")[..8];
         private readonly List<string> _tempDirsToClean = new();
+        private readonly List<string> _certThumbprintsToClean = new();
+        private readonly List<string> _netshIpPortsToClean = new();
+        private readonly List<(string Host, string Port)> _netshHostnamePortsToClean = new();
         private bool _markedClean;
 
         public IISTestContext()
@@ -253,6 +467,7 @@ public sealed class IISDeployRealHostE2ETests
             PoolName = $"SquidIISE2EPool-{_suffix}";
             PhysicalPath = Path.Combine(Path.GetTempPath(), $"squid-iis-e2e-{_suffix}");
             HttpPort = PickFreePort();
+            HttpsPort = PickFreePort();
 
             Directory.CreateDirectory(PhysicalPath);
             _tempDirsToClean.Add(PhysicalPath);
@@ -262,8 +477,48 @@ public sealed class IISDeployRealHostE2ETests
         public string PoolName { get; }
         public string PhysicalPath { get; }
         public string HttpPort { get; }
+        public string HttpsPort { get; }
 
         public void RegisterTempDirForCleanup(string path) => _tempDirsToClean.Add(path);
+
+        /// <summary>
+        /// Imports a self-signed cert into <c>Cert:\LocalMachine\My</c> and registers the
+        /// thumbprint for removal during <see cref="Dispose"/>. Used by HTTPS binding tests
+        /// — the embedded PS1's HTTPS branch reads the cert by thumbprint from this store.
+        /// </summary>
+        /// <param name="dnsName">CN + DNS SAN on the issued cert. Use a unique value per call
+        /// so concurrent tests don't share subjects (the store is process-wide).</param>
+        /// <returns>40-char SHA-1 thumbprint of the issued cert (uppercase hex, no spaces).</returns>
+        public string StageSelfSignedCertInLocalMachineMy(string dnsName)
+        {
+            var result = RunPowerShell(
+                $"$cert = New-SelfSignedCertificate -DnsName '{dnsName}' " +
+                $"-CertStoreLocation Cert:\\LocalMachine\\My -KeyExportPolicy Exportable; " +
+                $"Write-Host -NoNewline $cert.Thumbprint");
+
+            if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StdOut))
+                throw new InvalidOperationException(
+                    $"Failed to stage self-signed cert. ExitCode={result.ExitCode}, " +
+                    $"StdOut='{result.StdOut}', StdErr='{result.StdErr}'.");
+
+            var thumbprint = result.StdOut.Trim();
+            _certThumbprintsToClean.Add(thumbprint);
+            return thumbprint;
+        }
+
+        /// <summary>
+        /// Tells <see cref="Dispose"/> to run <c>netsh http delete sslcert ipport=0.0.0.0:{port}</c>
+        /// on teardown. Production deploys (non-SNI) leave entries in the netsh sslcert table;
+        /// CI parallelism would accumulate them otherwise.
+        /// </summary>
+        public void RegisterNetshIpPortForCleanup(string port) => _netshIpPortsToClean.Add(port);
+
+        /// <summary>
+        /// Tells <see cref="Dispose"/> to run <c>netsh http delete sslcert hostnameport={host}:{port}</c>
+        /// on teardown. Used by SNI HTTPS binding tests.
+        /// </summary>
+        public void RegisterNetshHostnamePortForCleanup(string host, string port) =>
+            _netshHostnamePortsToClean.Add((host, port));
 
         public void MarkClean() => _markedClean = true;
 
@@ -276,6 +531,19 @@ public sealed class IISDeployRealHostE2ETests
                 TryPowerShell($"Remove-Website -Name '{SiteName}' -ErrorAction SilentlyContinue");
                 TryPowerShell($"Remove-WebAppPool -Name '{PoolName}' -ErrorAction SilentlyContinue");
             }
+
+            // netsh sslcert entries — survive process exit so MUST be torn down explicitly.
+            // Best-effort: ignore errors (entry may not exist if the deploy failed pre-bind).
+            foreach (var port in _netshIpPortsToClean)
+                TryPowerShell($"& netsh http delete sslcert ipport=0.0.0.0:{port} | Out-Null");
+
+            foreach (var (host, port) in _netshHostnamePortsToClean)
+                TryPowerShell($"& netsh http delete sslcert hostnameport={host}:{port} | Out-Null");
+
+            // Cert store entries — removing the cert from the store also revokes any netsh
+            // binding (since the SHA-1 lookup misses), so order matters: netsh first, certs second.
+            foreach (var thumb in _certThumbprintsToClean)
+                TryPowerShell($"Remove-Item Cert:\\LocalMachine\\My\\{thumb} -Force -ErrorAction SilentlyContinue");
 
             foreach (var dir in _tempDirsToClean)
             {

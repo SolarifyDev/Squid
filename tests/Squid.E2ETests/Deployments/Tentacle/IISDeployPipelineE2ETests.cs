@@ -141,6 +141,72 @@ public class IISDeployPipelineE2ETests
         bindingsLine.ShouldContain("\"thumbprint\":\"ABCD1234\"");
     }
 
+    // ── Variable substitution on HTTPS cert thumbprint (Phase 2) ──────────
+
+    [Theory]
+    [InlineData("TentaclePolling", false)]    // plaintext Squid variable
+    [InlineData("TentaclePolling", true)]     // sensitive Squid variable (encrypted at rest)
+    [InlineData("TentacleListening", false)]
+    [InlineData("TentacleListening", true)]
+    public async Task FullPipeline_HttpsBindingThumbprintReferencesSquidVariable_IsResolvedBeforeDispatch(
+        string communicationStyle, bool isSensitive)
+    {
+        // Realistic operator workflow: cert thumbprint stored as a Squid variable
+        // (so it can rotate without re-editing every deploy spec). Bindings JSON
+        // references it via `#{CertThumbprint}`. The pipeline's
+        // `ExpandActionProperties` stage MUST resolve the reference BEFORE the
+        // builder serialises the JSON into the preamble — otherwise the agent
+        // sees a literal `#{CertThumbprint}` and `Get-ChildItem Cert:\LocalMachine\My`
+        // throws an unfindable-thumbprint error.
+        //
+        // Sensitive flag exercised: sensitive variables go through the encrypted
+        // `sensitiveVariables.json` channel on the agent but must still resolve
+        // their value at expansion time on the server. Theory pins both shapes.
+        ExecutionCapture.Clear();
+
+        const string resolvedThumbprint = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+
+        var serverTaskId = await SeedIISWebSiteWithVariableAsync(
+            communicationStyle,
+            variableName: "CertThumbprint",
+            variableValue: resolvedThumbprint,
+            isSensitive: isSensitive,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi-Https",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "OrderApi-Https-Pool",
+                ["Squid.Action.IISWebSite.Bindings"] =
+                    "[{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"\"," +
+                    "\"ipAddress\":\"*\",\"thumbprint\":\"#{CertThumbprint}\"," +
+                    "\"requireSni\":false,\"enabled\":true}]"
+            });
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        var bindingsLine = captured.ScriptBody
+            .Split('\n')
+            .Single(l => l.Contains("$SquidParameters['Squid.Action.IISWebSite.Bindings'] ="));
+
+        bindingsLine.ShouldContain($"\"thumbprint\":\"{resolvedThumbprint}\"",
+            customMessage:
+                "Variable substitution didn't resolve #{CertThumbprint} before the builder serialised. " +
+                "If this assertion fails the agent will see a literal '#{CertThumbprint}' string and " +
+                "fail with `Could not find certificate under Cert:\\LocalMachine with thumbprint #{CertThumbprint}`. " +
+                "Check the order of `ExpandActionProperties` vs the handler's `DescribeIntentAsync` call " +
+                $"in DeploymentTaskExecutor.Execute.cs. Captured assignment:\n  {bindingsLine}");
+
+        // Defence-in-depth: the unresolved template must NOT remain anywhere in the script body.
+        captured.ScriptBody.ShouldNotContain("#{CertThumbprint}");
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]
@@ -177,7 +243,27 @@ public class IISDeployPipelineE2ETests
 
     // ── Seeder ─────────────────────────────────────────────────────────────
 
-    private async Task<int> SeedIISWebSiteAsync(string communicationStyle, Dictionary<string, string> properties)
+    private Task<int> SeedIISWebSiteWithVariableAsync(
+        string communicationStyle, string variableName, string variableValue,
+        bool isSensitive, Dictionary<string, string> properties)
+    {
+        // Thin overload: forwards to the main seeder with a single-entry variable list.
+        // Kept separate so the existing tests (no variables) don't have to thread a
+        // null/empty list through their call sites.
+        return SeedIISWebSiteInternalAsync(
+            communicationStyle, properties,
+            variables: new[] { (variableName, variableValue, isSensitive) });
+    }
+
+    private Task<int> SeedIISWebSiteAsync(string communicationStyle, Dictionary<string, string> properties)
+    {
+        return SeedIISWebSiteInternalAsync(communicationStyle, properties, variables: null);
+    }
+
+    private async Task<int> SeedIISWebSiteInternalAsync(
+        string communicationStyle,
+        Dictionary<string, string> properties,
+        (string Name, string Value, bool IsSensitive)[]? variables)
     {
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var serverTaskId = 0;
@@ -189,6 +275,10 @@ public class IISDeployPipelineE2ETests
             var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
             var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
             await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            if (variables != null)
+                foreach (var v in variables)
+                    await builder.CreateVariableAsync(variableSet.Id, v.Name, v.Value, isSensitive: v.IsSensitive).ConfigureAwait(false);
 
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
