@@ -342,10 +342,10 @@ $DeployIISScriptBlock = {
 				throw "`"$virtualPath`" already exists in IIS and points to a Web Application. We cannot automatically change this to a Virtual Directory on your behalf. Please delete it and then re-deploy the project."
 			} else {
 				if (!(Is-Directory -Path $physicalPath)) {
-					throw "`"$virtualPath`" already exists in IIS and points to an unknown item which isn't a directory. Please delete it and then re-deploy the project. If you used the Custom Installation Directory feature to target this path we recommend removing the Custom Installation Directory feature, instead allowing Octopus to unpack the files into the default location and update the Physical Path of the Virtual Directory on your behalf."
+					throw "`"$virtualPath`" already exists in IIS and points to an unknown item which isn't a directory. Please delete it and then re-deploy the project. If you specified a custom Physical Path that targets this location, switch back to the default location and let Squid update the Physical Path of the Virtual Directory on your behalf."
 				}
-				
-				Write-Host "`"$virtualPath`" already exists in IIS and points to an unknown item which seems to be a directory. We will try to convert it to a Virtual Directory. If you used the Custom Installation Directory feature to target this path we recommend removing the Custom Installation Directory feature, instead allowing Octopus to unpack the files into the default location and update the Physical Path of the Virtual Directory on your behalf."
+
+				Write-Host "`"$virtualPath`" already exists in IIS and points to an unknown item which seems to be a directory. We will try to convert it to a Virtual Directory. If you specified a custom Physical Path that targets this location, switch back to the default location and let Squid update the Physical Path of the Virtual Directory on your behalf."
 				Execute-WithRetry { 
 					New-Item $fullPathToLastVirtualPathSegment -type VirtualDirectory -physicalPath $physicalPath
 				}
@@ -400,10 +400,10 @@ $DeployIISScriptBlock = {
 				throw "`"$virtualPath`" already exists in IIS and points to a Virtual Directory. We cannot automatically change this to a Web Application on your behalf. Please delete it and then re-deploy the project."
 			} else {
 				if (!(Is-Directory -Path $physicalPath)) {
-					throw "`"$virtualPath`" already exists in IIS and points to an unknown item which isn't a directory. Please delete it and then re-deploy the project. If you used the Custom Installation Directory feature to target this path we recommend removing the Custom Installation Directory feature, instead allowing Octopus to unpack the files into the default location and update the Physical Path of the Web Application on your behalf."
+					throw "`"$virtualPath`" already exists in IIS and points to an unknown item which isn't a directory. Please delete it and then re-deploy the project. If you specified a custom Physical Path that targets this location, switch back to the default location and let Squid update the Physical Path of the Web Application on your behalf."
 				}
-				
-				Write-Host "`"$virtualPath`" already exists in IIS and points to an unknown item which seems to be a directory. We will try to convert it to a Web Application. If you used the Custom Installation Directory feature to target this path we recommend removing the Custom Installation Directory feature, instead allowing Octopus to unpack the files into the default location and update the Physical Path of the Web Application on your behalf."
+
+				Write-Host "`"$virtualPath`" already exists in IIS and points to an unknown item which seems to be a directory. We will try to convert it to a Web Application. If you specified a custom Physical Path that targets this location, switch back to the default location and let Squid update the Physical Path of the Web Application on your behalf."
 				Execute-WithRetry { 
 					New-Item $fullPathToLastVirtualPathSegment -type Application -physicalPath $physicalPath
 				}
@@ -499,15 +499,18 @@ $DeployIISScriptBlock = {
 		# For any HTTPS bindings, ensure the certificate is configured for the IP/port combination
 		$wsbindings | where-object { $_.protocol -eq "https" } | foreach-object {
 
-			# If an Octopus-managed certificate variable is supplied, it will have been installed in the store earlier
-			# in the deployment process
+			# Squid certificate-variable system (forward-compatible with future phases): when the binding
+			# references a named variable, the script reads its sibling ".Thumbprint" property from
+			# $SquidParameters. Until the cert-variable feature ships, operators use the direct
+			# `thumbprint` field on the binding, which points at a cert already installed in
+			# LocalMachine\My on the target Tentacle.
 			if ($_.certificateVariable) {
 				$sslCertificateThumbprint = $SquidParameters[$_.certificateVariable + ".Thumbprint"]
 			} elseif ($_.thumbprint){
 				# Otherwise, the certificate thumbprint was supplied directly in the binding
 				$sslCertificateThumbprint = $_.thumbprint.Trim()
 			} else {
-				[Console]::Error.WriteLine("To configure an HTTPS binding please choose a certificate which is managed by Octopus, or provide the thumbprint for a certificate which is already available in the Machine certificate store.")
+				[Console]::Error.WriteLine("To configure an HTTPS binding, provide the `thumbprint` field on the binding pointing at a certificate already installed in LocalMachine\My on the target Tentacle.")
 				exit 1
 			}
 

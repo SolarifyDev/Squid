@@ -181,6 +181,44 @@ public class IISDeployScriptDriftDetectorTests
                 "Rename to $SquidParameters and re-commit.");
     }
 
+    /// <summary>
+    /// Belt-and-braces follow-up to <see cref="EmbeddedScript_DoesNotLeakAnyOctopusNamespace_InExecutableLines"/>.
+    /// That test only catches the two namespace identifiers (<c>Octopus.Action.IISWebSite</c>,
+    /// <c>$OctopusParameters</c>). This test catches the broader category of operator-facing
+    /// "Octopus" brand mentions in error messages, comments, and prose that the namespace
+    /// rename misses — exactly the leaks Phase 2 cleaned up at lines 345/348/403/406/502/510
+    /// of the embedded script.
+    ///
+    /// <para>One operational literal is whitelisted: <c>Global\Octopus-IIS-Metabase-Mutex</c>.
+    /// This mutex name is shared across vendors so that an Octopus Tentacle and a Squid
+    /// Tentacle running side-by-side on the same Windows host serialize their IIS metabase
+    /// edits through one mutex instead of racing. Renaming it would break that interop.</para>
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_NoOctopusBrandInExecutableText_ExceptInteropMutexLiteral()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        // The mutex literal MUST stay byte-identical to Octopus's for cross-vendor coordination.
+        const string allowedMutexLiteral = "Octopus-IIS-Metabase-Mutex";
+
+        var leakingLine = ourScript
+            .Split('\n')
+            .Where(line => !line.TrimStart().StartsWith('#'))                   // skip PS comment lines
+            .Where(line => line.Contains("Octopus", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !line.Contains(allowedMutexLiteral, StringComparison.Ordinal))
+            .FirstOrDefault();
+
+        leakingLine.ShouldBeNull(
+            customMessage:
+                "Squid's embedded PS1 has an operator-facing 'Octopus' brand reference in executable text:\n" +
+                $"  {leakingLine}\n\n" +
+                "Rename to 'Squid' (or drop the Octopus-specific feature reference entirely) and re-commit. " +
+                $"The ONLY whitelisted 'Octopus' literal is the cross-vendor mutex name " +
+                $"'{allowedMutexLiteral}' — renaming that would break interop with Octopus Tentacles " +
+                "on the same host. Any other 'Octopus' word in executable code is a porting oversight.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

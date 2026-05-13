@@ -149,6 +149,108 @@ public class IISDeployScriptBuilderTests
         bindingsAssignmentLine.ShouldNotContain("\n");
     }
 
+    // ── HTTPS bindings (Phase 2) ───────────────────────────────────────────
+    //
+    // The builder treats the Bindings string as opaque JSON — these tests pin the contract
+    // that operator-supplied HTTPS payloads survive the escape pipeline byte-for-byte so
+    // the agent-side ConvertFrom-Json + netsh-cert-binding paths receive exactly what the
+    // operator configured.
+
+    [Fact]
+    public void Build_HttpsBindingWithDirectThumbprint_FlowsThroughAssignmentLine()
+    {
+        // Direct-thumbprint path: the operator points at a cert already installed in
+        // LocalMachine\My on the target Tentacle. This is the only HTTPS path Squid
+        // supports in Phase 2 (Squid cert-variable system is future work).
+        const string thumbprint = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+        var bindings =
+            "[{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"\",\"ipAddress\":\"*\"," +
+            $"\"thumbprint\":\"{thumbprint}\",\"requireSni\":false,\"enabled\":true}}]";
+
+        var action = BuildAction((IISDeployProperties.Bindings, bindings));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        var assignmentLine = script
+            .Split('\n')
+            .Single(l => l.Contains("$SquidParameters['Squid.Action.IISWebSite.Bindings'] ="));
+
+        assignmentLine.ShouldContain("\"protocol\":\"https\"");
+        assignmentLine.ShouldContain($"\"thumbprint\":\"{thumbprint}\"");
+        assignmentLine.ShouldContain("\"requireSni\":false");
+    }
+
+    [Theory]
+    [InlineData("true")]
+    [InlineData("false")]
+    public void Build_HttpsBinding_RequireSniFlag_PreservedVerbatim(string sniFlag)
+    {
+        // The PS1 reads `$binding.requireSni` and the SNI/non-SNI branch picks
+        // `netsh http add sslcert hostnameport=…` vs `ipport=…`. The builder must
+        // not silently coerce the flag — Theory pins both values.
+        var bindings =
+            "[{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"orders.example.com\"," +
+            "\"thumbprint\":\"ABCDEF0123456789ABCDEF0123456789ABCDEF01\"," +
+            $"\"requireSni\":{sniFlag},\"enabled\":true}}]";
+
+        var action = BuildAction((IISDeployProperties.Bindings, bindings));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var assignmentLine = script
+            .Split('\n')
+            .Single(l => l.Contains("$SquidParameters['Squid.Action.IISWebSite.Bindings'] ="));
+
+        assignmentLine.ShouldContain($"\"requireSni\":{sniFlag}");
+    }
+
+    [Fact]
+    public void Build_HttpsBindingWithCertificateVariableReference_PassesThroughForFutureCertVariableSystem()
+    {
+        // Forward-compat: the PS1's HTTPS path supports `$binding.certificateVariable`
+        // which the script resolves by reading `$SquidParameters[<varname>.Thumbprint]`.
+        // Squid's cert-variable system isn't shipped yet, but the binding shape must
+        // round-trip cleanly so when it does ship there's no plumbing rewrite needed.
+        var bindings =
+            "[{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"\",\"ipAddress\":\"*\"," +
+            "\"certificateVariable\":\"OrderApiCert\",\"requireSni\":false,\"enabled\":true}]";
+
+        var action = BuildAction((IISDeployProperties.Bindings, bindings));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var assignmentLine = script
+            .Split('\n')
+            .Single(l => l.Contains("$SquidParameters['Squid.Action.IISWebSite.Bindings'] ="));
+
+        assignmentLine.ShouldContain("\"certificateVariable\":\"OrderApiCert\"");
+    }
+
+    [Fact]
+    public void Build_MixedHttpAndHttpsBindings_BothLandInSingleAssignmentLine()
+    {
+        // A common production layout: port 80 redirects to port 443. The Bindings JSON
+        // is one array with both entries; the builder must keep them on a single line.
+        var bindings =
+            "[" +
+            "{\"protocol\":\"http\",\"port\":\"80\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}," +
+            "{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"\",\"ipAddress\":\"*\"," +
+            "\"thumbprint\":\"ABCDEF0123456789ABCDEF0123456789ABCDEF01\"," +
+            "\"requireSni\":false,\"enabled\":true}" +
+            "]";
+
+        var action = BuildAction((IISDeployProperties.Bindings, bindings));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var assignmentLine = script
+            .Split('\n')
+            .Single(l => l.Contains("$SquidParameters['Squid.Action.IISWebSite.Bindings'] ="));
+
+        assignmentLine.ShouldContain("\"protocol\":\"http\"");
+        assignmentLine.ShouldContain("\"protocol\":\"https\"");
+        assignmentLine.ShouldContain("\"port\":\"80\"");
+        assignmentLine.ShouldContain("\"port\":\"443\"");
+        assignmentLine.ShouldNotContain("\n");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
