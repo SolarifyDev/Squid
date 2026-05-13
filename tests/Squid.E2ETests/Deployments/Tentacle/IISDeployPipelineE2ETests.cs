@@ -288,6 +288,132 @@ public class IISDeployPipelineE2ETests
         return string.Join("\n", lines[from..(to + 1)]);
     }
 
+    // ── WebApplication + VirtualDirectory sub-features (Phase 4) ──────────
+
+    [Theory]
+    [InlineData("TentaclePolling")]
+    [InlineData("TentacleListening")]
+    public async Task FullPipeline_WebApplicationToggle_DispatchesWithSubFeatureProperties(string communicationStyle)
+    {
+        // Pipeline-tier verification that the WebApplication sub-feature flows through
+        // the full Squid pipeline (DeploymentTaskExecutor → IISDeployActionHandler →
+        // IntentRenderer → CapturingExecutionStrategy). Asserts that the WebApp.*
+        // property names land in the rendered preamble — proves the action-property
+        // expansion + variable substitution + serialisation path doesn't drop WebApp
+        // properties (which were dormant in Phase 1-3).
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteAsync(
+            communicationStyle,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.WebApplication.CreateOrUpdate"] = "True",
+                ["Squid.Action.IISWebSite.WebApplication.WebSiteName"] = "OrdersParentSite",
+                ["Squid.Action.IISWebSite.WebApplication.VirtualPath"] = "/api/v2",
+                ["Squid.Action.IISWebSite.WebApplication.PhysicalPath"] = @"C:\inetpub\order-api",
+                ["Squid.Action.IISWebSite.WebApplication.ApplicationPoolName"] = "OrdersV2Pool",
+                ["Squid.Action.IISWebSite.WebApplication.ApplicationPoolFrameworkVersion"] = "v4.0"
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.WebApplication.CreateOrUpdate'] = 'True'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.WebApplication.WebSiteName'] = 'OrdersParentSite'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.WebApplication.VirtualPath'] = '/api/v2'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.WebApplication.ApplicationPoolName'] = 'OrdersV2Pool'");
+    }
+
+    [Theory]
+    [InlineData("TentaclePolling")]
+    [InlineData("TentacleListening")]
+    public async Task FullPipeline_VirtualDirectoryToggle_DispatchesWithSubFeatureProperties(string communicationStyle)
+    {
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteAsync(
+            communicationStyle,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate"] = "True",
+                ["Squid.Action.IISWebSite.VirtualDirectory.WebSiteName"] = "OrdersParentSite",
+                ["Squid.Action.IISWebSite.VirtualDirectory.VirtualPath"] = "/static",
+                ["Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath"] = @"C:\inetpub\order-static"
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate'] = 'True'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.WebSiteName'] = 'OrdersParentSite'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.VirtualPath'] = '/static'");
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath'] = 'C:\\inetpub\\order-static'");
+    }
+
+    [Fact]
+    public async Task FullPipeline_WebAppVirtualPathReferencesSquidVariable_ResolvedBeforeDispatch()
+    {
+        // Realistic operator workflow: same Squid step deployed to dev/staging/prod with
+        // different virtual paths (`#{WebAppVirtualPath}` = `/api-dev` / `/api-stage` /
+        // `/api`). Variable substitution MUST resolve before the builder serialises into
+        // the preamble — otherwise the agent sees a literal `#{WebAppVirtualPath}` and
+        // PS1's `Convert-ToPathSegments` returns a one-element array with the unresolved
+        // template, producing an unusable IIS path.
+        ExecutionCapture.Clear();
+
+        const string resolvedPath = "/api-resolved";
+
+        var serverTaskId = await SeedIISWebSiteWithVariableAsync(
+            communicationStyle: "TentaclePolling",
+            variableName: "WebAppVirtualPath",
+            variableValue: resolvedPath,
+            isSensitive: false,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.WebApplication.CreateOrUpdate"] = "True",
+                ["Squid.Action.IISWebSite.WebApplication.WebSiteName"] = "OrdersParentSite",
+                ["Squid.Action.IISWebSite.WebApplication.VirtualPath"] = "#{WebAppVirtualPath}",
+                ["Squid.Action.IISWebSite.WebApplication.PhysicalPath"] = @"C:\inetpub\order-api",
+                ["Squid.Action.IISWebSite.WebApplication.ApplicationPoolName"] = "OrdersV2Pool"
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.WebApplication.VirtualPath'] = '{resolvedPath}'",
+            customMessage:
+                "WebApp VirtualPath template wasn't resolved before serialization. If this fails the agent " +
+                "would see a literal '#{WebAppVirtualPath}' and IIS path resolution breaks.");
+        captured.ScriptBody.ShouldNotContain("#{WebAppVirtualPath}");
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]
