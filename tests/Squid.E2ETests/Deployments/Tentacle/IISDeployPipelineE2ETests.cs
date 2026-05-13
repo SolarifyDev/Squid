@@ -207,6 +207,87 @@ public class IISDeployPipelineE2ETests
         captured.ScriptBody.ShouldNotContain("#{CertThumbprint}");
     }
 
+    // ── Authentication toggle variable substitution (Phase 3) ─────────────
+
+    [Theory]
+    [InlineData("TentaclePolling", "True", "False", "True")]      // anonymous + windows, no basic
+    [InlineData("TentacleListening", "False", "True", "False")]   // basic only
+    public async Task FullPipeline_AuthFlagsReferenceSquidVariables_AllThreeAreResolvedBeforeDispatch(
+        string communicationStyle, string anonValue, string basicValue, string windowsValue)
+    {
+        // Realistic operator workflow: auth posture differs between environments
+        // (dev: anonymous-only; staging/prod: windows-auth required). Operators store
+        // the per-environment flag values as Squid variables and reference them in
+        // the action properties via `#{AnonEnabled}` etc. The pipeline's
+        // `ExpandActionProperties` stage MUST resolve all three before the builder
+        // serialises — otherwise the agent's appcmd call gets `/enabled:#{AnonEnabled}`
+        // and IIS rejects with "the value '#{AnonEnabled}' is not valid for property 'enabled'".
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteInternalAsync(
+            communicationStyle,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "AuthSite",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "AuthSite-Pool",
+                ["Squid.Action.IISWebSite.EnableAnonymousAuthentication"] = "#{AnonEnabled}",
+                ["Squid.Action.IISWebSite.EnableBasicAuthentication"] = "#{BasicEnabled}",
+                ["Squid.Action.IISWebSite.EnableWindowsAuthentication"] = "#{WindowsEnabled}"
+            },
+            variables: new[]
+            {
+                ("AnonEnabled", anonValue, false),
+                ("BasicEnabled", basicValue, false),
+                ("WindowsEnabled", windowsValue, false)
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableAnonymousAuthentication'] = '{anonValue}'",
+            customMessage:
+                "Anonymous auth flag didn't resolve through variable substitution. " +
+                "If this fails the agent's appcmd call sees a literal '#{AnonEnabled}' and IIS rejects. " +
+                "Captured body around that line:\n" +
+                ExtractAroundProperty(captured.ScriptBody, "EnableAnonymousAuthentication"));
+
+        captured.ScriptBody.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableBasicAuthentication'] = '{basicValue}'");
+        captured.ScriptBody.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableWindowsAuthentication'] = '{windowsValue}'");
+
+        // Defence-in-depth: none of the three #{...} placeholders survive into the script body.
+        captured.ScriptBody.ShouldNotContain("#{AnonEnabled}");
+        captured.ScriptBody.ShouldNotContain("#{BasicEnabled}");
+        captured.ScriptBody.ShouldNotContain("#{WindowsEnabled}");
+    }
+
+    /// <summary>
+    /// Grabs the line containing the named property (if any) + one above for context.
+    /// Helps narrow a failed Should-contain assertion to the specific area without
+    /// dumping the entire 850+-line rendered script into the test output.
+    /// </summary>
+    private static string ExtractAroundProperty(string scriptBody, string propertyToken)
+    {
+        var lines = scriptBody.Split('\n');
+        var idx = Array.FindIndex(lines, l => l.Contains(propertyToken, StringComparison.Ordinal));
+
+        if (idx < 0) return "(property token not found anywhere in script body)";
+
+        var from = Math.Max(0, idx - 1);
+        var to = Math.Min(lines.Length - 1, idx + 1);
+
+        return string.Join("\n", lines[from..(to + 1)]);
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]
