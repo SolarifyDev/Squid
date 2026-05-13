@@ -203,9 +203,15 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
-    [Fact]
-    public void RealIIS_AppPoolFrameworkVersionV2_AppliedToMetabase()
+    [Theory]
+    [InlineData("v4.0", "v4.0")]              // modern .NET Framework (default for new pools)
+    [InlineData("v2.0", "v2.0")]              // legacy .NET Framework 2.0/3.5 apps
+    [InlineData("No Managed Code", "")]       // static-content / classic-ASP / non-.NET payloads
+    public void RealIIS_AppPoolFrameworkVersion_AppliedToMetabase(string configured, string expectedInMetabase)
     {
+        // PS1 lines 227-234 branch on the literal string "No Managed Code" — that branch
+        // sets managedRuntimeVersion to empty string. Every other value is passed through verbatim.
+        // Theory covers both arms.
         if (!OperatingSystem.IsWindows()) return;
         if (!IsIISInstalled()) return;
 
@@ -215,19 +221,22 @@ public sealed class IISDeployRealHostE2ETests
             (Property.CreateOrUpdateWebSite, "True"),
             (Property.WebSiteName, ctx.SiteName),
             (Property.ApplicationPoolName, ctx.PoolName),
-            (Property.ApplicationPoolFrameworkVersion, "v2.0"),
+            (Property.ApplicationPoolFrameworkVersion, configured),
             (Property.WebRoot, ctx.PhysicalPath),
             (Property.Bindings, "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}]")));
 
         var result = RunPowerShell(script);
-        result.ExitCode.ShouldBe(0, $"deploy failed: {result.StdErr}");
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy failed for framework='{configured}'. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
 
         var poolRuntime = PowerShellSingleLine(
             $"(Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name managedRuntimeVersion).Value");
 
-        poolRuntime.ShouldBe("v2.0",
-            customMessage: "Framework version not applied to the app pool. The script's " +
-                          "`Set-ItemProperty managedRuntimeVersion` didn't run or ran with the wrong value.");
+        poolRuntime.ShouldBe(expectedInMetabase,
+            customMessage:
+                $"Framework version not applied. Configured='{configured}', expectedInMetabase='{expectedInMetabase}', actual='{poolRuntime}'. " +
+                $"PS1 lines 227-234 should set `managedRuntimeVersion` to '{expectedInMetabase}' for input '{configured}'. " +
+                $"Manually: `Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name managedRuntimeVersion`.");
 
         ctx.MarkClean();
     }
@@ -583,6 +592,235 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Rigor-hardening: app pool identities (Phase 3.5) ────────────────────
+    //
+    // The PS1's `SetUp-ApplicationPool` function (lines 214-222) branches on
+    // `$applicationPoolIdentityType -eq "SpecificUser"`. For SpecificUser it sets
+    // identityType + username + password; for every other value it sets just
+    // identityType. Phase 1 only exercised `ApplicationPoolIdentity` (the modern
+    // per-pool virtual account). These tests cover the 4 built-in service accounts
+    // + SpecificUser-with-credentials so every IIS-supported identity is exercised
+    // at least once.
+
+    [Theory]
+    [InlineData("ApplicationPoolIdentity")]   // Phase 1 covered this — kept for full matrix
+    [InlineData("LocalSystem")]               // legacy, full machine privilege
+    [InlineData("NetworkService")]            // legacy domain-network identity
+    [InlineData("LocalService")]              // legacy local-only low privilege
+    public void RealIIS_AppPoolIdentityType_BuiltIn_AppliedToMetabase(string identityType)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, identityType),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Deploy failed for identityType='{identityType}'. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var actualIdentity = PowerShellSingleLine(
+            $"(Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name processModel.identityType).Value");
+
+        actualIdentity.ShouldBe(identityType,
+            customMessage:
+                $"App pool identity not applied. Configured='{identityType}', actual='{actualIdentity}'. " +
+                $"Manually: `Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name processModel`.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_AppPoolIdentitySpecificUser_AppliesCredentialsToMetabase()
+    {
+        // SpecificUser path is the most security-sensitive identity option — operators
+        // use it for domain-joined enterprise pools. PS1 line 217-218 sets the full
+        // processModel triple (identityType + username + password). This test stages
+        // a local Windows user via `net user /add`, deploys with that user as the pool
+        // identity, then verifies BOTH the identityType and userName landed in the
+        // metabase. We don't try to START the pool because that requires granting
+        // SeBatchLogonRight to the local user (LSA-policy edit, out of scope for
+        // a deploy-step E2E).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var (userName, password) = ctx.StageLocalWindowsUser();
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "SpecificUser"),
+            (Property.ApplicationPoolUsername, userName),
+            (Property.ApplicationPoolPassword, password),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            // Pool may not start because SeBatchLogonRight isn't granted — that's fine,
+            // we're testing the metabase write, not the runtime.
+            (Property.StartApplicationPool, "False"),
+            (Property.StartWebSite, "False")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"SpecificUser pool deploy failed. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}\n\n" +
+                $"If failure mentions 'The user name or password is incorrect', the cleanup may have removed " +
+                $"the account too eagerly. If it mentions 'Cannot validate the access' the local-user creation " +
+                $"itself failed.");
+
+        var actualIdentity = PowerShellSingleLine(
+            $"(Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name processModel.identityType).Value");
+
+        actualIdentity.ShouldBe("SpecificUser",
+            customMessage: $"Expected identityType=SpecificUser, actual='{actualIdentity}'.");
+
+        // The userName property contains a non-empty value. We don't assert exact match
+        // because IIS may store it with domain-prefix (`.\squid-test-...`) — what we
+        // need to verify is that PS1 wrote it through, not lost it to escaping.
+        var actualUserName = PowerShellSingleLine(
+            $"(Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name processModel.userName).Value");
+
+        actualUserName.ShouldContain(userName,
+            customMessage:
+                $"Pool userName doesn't contain configured user '{userName}', actual='{actualUserName}'. " +
+                $"This means the PS1 lost the username during the `Set-ItemProperty processModel` call — " +
+                $"check apostrophe escaping or hashtable serialization.");
+
+        ctx.MarkClean();
+    }
+
+    // ── Rigor-hardening: bindings edge cases (Phase 3.5) ────────────────────
+
+    [Fact]
+    public void RealIIS_ExistingBindingsMerge_PreservesPreExistingBindings()
+    {
+        // The PS1 `ExistingBindings` property has two modes:
+        //   - default (Replace): the deploy resets the site's bindings to exactly what's
+        //     in the configured array; pre-existing bindings the operator added in IIS
+        //     Manager would be wiped.
+        //   - "Merge": pre-existing bindings whose key (protocol+bindingInformation) doesn't
+        //     conflict with the configured set are preserved.
+        // PS1 line 663-668 implements the merge by reading the site's current bindings
+        // and adding the non-conflicting ones into $wsbindings before applying.
+        //
+        // This test pre-creates a site with TWO bindings, then re-deploys with Merge
+        // mode and only ONE binding configured. The pre-existing binding on the other
+        // port must survive.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var preExistingPort = ctx.PickAdditionalFreePort();
+
+        // Step 1: Pre-create the site + app pool with TWO bindings (operator-staged state).
+        // We use New-Website directly so this is "manual" config that didn't come from Squid.
+        var setupResult = RunPowerShell(
+            $"Import-Module WebAdministration; " +
+            $"New-WebAppPool -Name '{ctx.PoolName}' | Out-Null; " +
+            $"New-Website -Name '{ctx.SiteName}' -Port {preExistingPort} -PhysicalPath '{ctx.PhysicalPath}' " +
+            $"  -ApplicationPool '{ctx.PoolName}' -Force | Out-Null; " +
+            $"New-WebBinding -Name '{ctx.SiteName}' -Protocol 'http' -Port {ctx.HttpPort} -IPAddress '*' -HostHeader ''");
+
+        setupResult.ExitCode.ShouldBe(0,
+            customMessage: $"Pre-deploy site setup failed. STDOUT:\n{setupResult.StdOut}\n\nSTDERR:\n{setupResult.StdErr}");
+
+        // Step 2: Deploy with Merge mode + only the HttpPort binding in the configured set.
+        // The preExistingPort binding is NOT in the configured set, so under Replace it
+        // would be removed. Under Merge it MUST survive.
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            (Property.ExistingBindings, "Merge"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Merge-mode deploy failed. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // Step 3: Both bindings must be present.
+        var bindingInfo = RunPowerShell(
+            $"Import-Module WebAdministration; " +
+            $"(Get-WebBinding -Name '{ctx.SiteName}' | ForEach-Object {{ $_.bindingInformation }}) -join ';'").StdOut.Trim();
+
+        bindingInfo.ShouldContain($":{preExistingPort}:",
+            customMessage:
+                $"Pre-existing binding on port {preExistingPort} was wiped by the deploy. " +
+                $"ExistingBindings=Merge should have preserved it. Actual binding info: '{bindingInfo}'. " +
+                $"PS1 line 663-668 (`if ($existingBindings -eq \"Merge\")`) likely didn't fire.");
+
+        bindingInfo.ShouldContain($":{ctx.HttpPort}:",
+            customMessage:
+                $"Configured binding on port {ctx.HttpPort} is missing after deploy. " +
+                $"Actual binding info: '{bindingInfo}'.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_EmptyBindingsArray_DeploysSiteWithoutOperatorBindings()
+    {
+        // Edge case: operator explicitly sets Bindings to `[]` (empty array). The PS1's
+        // ConvertFrom-Json yields an empty array, the foreach over $bindingArray runs
+        // zero times, and the site is left with whatever default-binding behaviour IIS
+        // applies on site creation. This test pins that the deploy COMPLETES (doesn't
+        // throw) when no bindings are configured — operators do hit this when they
+        // pre-stage bindings externally and use Merge to layer Squid's deploys on top.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, "[]"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "False")));      // not started — there may be no bindings to listen on
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Empty bindings array deploy failed. The script should treat `[]` as 'no bindings to configure' " +
+                $"and let the site be created. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // Site must exist in the metabase regardless.
+        var siteExists = PowerShellSingleLine(
+            $"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}");
+
+        siteExists.ShouldBe("true",
+            customMessage: $"Site '{ctx.SiteName}' not created despite the deploy reporting success. " +
+                          $"`Get-Website -Name '{ctx.SiteName}'` to verify manually.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -599,6 +837,7 @@ public sealed class IISDeployRealHostE2ETests
         private readonly List<string> _certThumbprintsToClean = new();
         private readonly List<string> _netshIpPortsToClean = new();
         private readonly List<(string Host, string Port)> _netshHostnamePortsToClean = new();
+        private readonly List<string> _localUsersToClean = new();
         private bool _markedClean;
 
         public IISTestContext()
@@ -620,6 +859,38 @@ public sealed class IISDeployRealHostE2ETests
         public string HttpsPort { get; }
 
         public void RegisterTempDirForCleanup(string path) => _tempDirsToClean.Add(path);
+
+        /// <summary>
+        /// Allocates an additional free localhost port (separate from <see cref="HttpPort"/> /
+        /// <see cref="HttpsPort"/>). Used by the ExistingBindings=Merge test which needs a
+        /// pre-existing binding port AND the deploy-time binding port to coexist.
+        /// </summary>
+        public string PickAdditionalFreePort() => PickFreePort();
+
+        /// <summary>
+        /// Creates a local Windows user account via <c>net user /add</c> and registers it
+        /// for removal in <see cref="Dispose"/>. The password satisfies the default Windows
+        /// local-policy complexity (≥ 8 chars, mixed case, digit, symbol).
+        ///
+        /// <para>Used by the <c>SpecificUser</c> app-pool identity test. The account is
+        /// created but NOT granted SeBatchLogonRight, so the resulting pool cannot actually
+        /// START — that's outside scope; the test asserts the metabase write only.</para>
+        /// </summary>
+        public (string UserName, string Password) StageLocalWindowsUser()
+        {
+            var userName = $"squid-iis-{_suffix}";
+            // Strong password: lower, upper, digit, symbol, ≥ 8 chars. Uses GUID for entropy.
+            var password = $"Sq!{Guid.NewGuid():N}";
+
+            var result = RunPowerShell($"& net user '{userName}' '{password}' /add");
+            if (result.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"Failed to stage local user '{userName}'. ExitCode={result.ExitCode}, " +
+                    $"StdOut='{result.StdOut}', StdErr='{result.StdErr}'.");
+
+            _localUsersToClean.Add(userName);
+            return (userName, password);
+        }
 
         /// <summary>
         /// Imports a self-signed cert into <c>Cert:\LocalMachine\My</c> and registers the
@@ -685,6 +956,12 @@ public sealed class IISDeployRealHostE2ETests
             foreach (var thumb in _certThumbprintsToClean)
                 TryPowerShell($"Remove-Item Cert:\\LocalMachine\\My\\{thumb} -Force -ErrorAction SilentlyContinue");
 
+            // Local Windows users created by StageLocalWindowsUser. Must run AFTER the app pool
+            // is gone (some teardown paths reference the user via processModel), so leave this
+            // last among the OS-state cleanups.
+            foreach (var user in _localUsersToClean)
+                TryPowerShell($"& net user '{user}' /delete | Out-Null");
+
             foreach (var dir in _tempDirsToClean)
             {
                 try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
@@ -732,6 +1009,9 @@ public sealed class IISDeployRealHostE2ETests
         public const string EnableAnonymousAuthentication = "Squid.Action.IISWebSite.EnableAnonymousAuthentication";
         public const string EnableBasicAuthentication = "Squid.Action.IISWebSite.EnableBasicAuthentication";
         public const string EnableWindowsAuthentication = "Squid.Action.IISWebSite.EnableWindowsAuthentication";
+        public const string ApplicationPoolUsername = "Squid.Action.IISWebSite.ApplicationPoolUsername";
+        public const string ApplicationPoolPassword = "Squid.Action.IISWebSite.ApplicationPoolPassword";
+        public const string ExistingBindings = "Squid.Action.IISWebSite.ExistingBindings";
     }
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
