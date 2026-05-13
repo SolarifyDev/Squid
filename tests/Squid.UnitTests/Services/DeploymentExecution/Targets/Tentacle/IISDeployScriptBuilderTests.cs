@@ -330,6 +330,86 @@ public class IISDeployScriptBuilderTests
         script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.EnableWindowsAuthentication'] = 'True'");
     }
 
+    // ── Sub-feature toggles (Phase 4: WebApplication + VirtualDirectory) ───
+    //
+    // A single Squid.DeployToIISWebSite action carries THREE independent toggles
+    // (CreateOrUpdateWebSite / WebApplication.CreateOrUpdate / VirtualDirectory.CreateOrUpdate).
+    // Operators set them in any combination — these tests pin that the builder emits
+    // each toggle's value to the preamble verbatim AND that the toggles are independent
+    // (no defaulting of one based on another). The PS1 then reads each $SquidParameters
+    // value and runs the corresponding branch — exercised at the real-host tier.
+
+    [Fact]
+    public void Build_WebApplicationToggleOn_WebSiteToggleOff_BothLandInPreambleIndependently()
+    {
+        // Realistic operator workflow: a Phase-4 step that ONLY creates a child WebApp
+        // under a previously-deployed parent. CreateOrUpdateWebSite=False, WebApplication
+        // toggle=True. The builder must emit both verbatim — silently flipping the WebSite
+        // toggle would re-create the parent and wipe operator state.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "False"),
+            (IISDeployProperties.WebApplicationCreateOrUpdate, "True"),
+            (IISDeployProperties.WebApplicationWebSiteName, "OrderApi-Parent"),
+            (IISDeployProperties.WebApplicationVirtualPath, "/api/v2"),
+            (IISDeployProperties.WebApplicationPhysicalPath, @"C:\inetpub\order-api"),
+            (IISDeployProperties.WebApplicationApplicationPoolName, "OrderApi-V2-Pool"),
+            (IISDeployProperties.WebApplicationApplicationPoolFrameworkVersion, "v4.0"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.CreateOrUpdateWebSite'] = 'False'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.CreateOrUpdate'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.WebSiteName'] = 'OrderApi-Parent'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.VirtualPath'] = '/api/v2'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.PhysicalPath'] = 'C:\\inetpub\\order-api'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.ApplicationPoolName'] = 'OrderApi-V2-Pool'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.ApplicationPoolFrameworkVersion'] = 'v4.0'");
+    }
+
+    [Fact]
+    public void Build_VirtualDirectoryToggleOn_WebSiteToggleOff_LandsInPreambleIndependently()
+    {
+        // The VirtDir sub-feature is simpler than WebApplication (no app pool of its own —
+        // VirtDirs inherit from their parent site's pool). PS1 line 313-315 reads 3 properties.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "False"),
+            (IISDeployProperties.VirtualDirectoryCreateOrUpdate, "True"),
+            (IISDeployProperties.VirtualDirectoryWebSiteName, "OrderApi-Parent"),
+            (IISDeployProperties.VirtualDirectoryVirtualPath, "/static"),
+            (IISDeployProperties.VirtualDirectoryPhysicalPath, @"C:\inetpub\order-static"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.WebSiteName'] = 'OrderApi-Parent'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.VirtualPath'] = '/static'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath'] = 'C:\\inetpub\\order-static'");
+    }
+
+    [Fact]
+    public void Build_AllThreeSubFeatureTogglesOn_AllLandInPreamble_Independently()
+    {
+        // Composite deploy: an operator sets all three toggles to True in a single action.
+        // PS1 contract is that the parent WebSite must already exist (Assert-WebsiteExists
+        // fires before VirtDir/WebApp branches), but the BUILDER is agnostic to that —
+        // it just emits whatever the operator configured. Test pins the emit shape.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "Parent"),
+            (IISDeployProperties.WebApplicationCreateOrUpdate, "True"),
+            (IISDeployProperties.WebApplicationWebSiteName, "Parent"),
+            (IISDeployProperties.WebApplicationVirtualPath, "/api"),
+            (IISDeployProperties.VirtualDirectoryCreateOrUpdate, "True"),
+            (IISDeployProperties.VirtualDirectoryWebSiteName, "Parent"),
+            (IISDeployProperties.VirtualDirectoryVirtualPath, "/static"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.CreateOrUpdateWebSite'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebApplication.CreateOrUpdate'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate'] = 'True'");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)

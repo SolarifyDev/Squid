@@ -821,6 +821,285 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── WebApplication + VirtualDirectory sub-features (Phase 4) ────────────
+    //
+    // Octopus's PS1 supports three deployment-type toggles in one action:
+    //  - `Squid.Action.IISWebSite.CreateOrUpdateWebSite` — parent website
+    //  - `Squid.Action.IISWebSite.WebApplication.CreateOrUpdate` — child WebApp under existing parent
+    //  - `Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate` — child VirtDir under existing parent
+    //
+    // The PS1 evaluates child branches (VirtDir at line 311, WebApp at line 360) BEFORE
+    // the WebSite branch (line 426). `Assert-WebsiteExists` throws fatally if the parent
+    // is missing, so the Octopus contract is: parent must already exist (typically from a
+    // prior deploy step). These tests follow that contract — each test pre-deploys the
+    // parent via a first `Build(...)` call with only `CreateOrUpdateWebSite=True`, then a
+    // second deploy activates the child sub-feature.
+
+    [Fact]
+    public void RealIIS_WebApplication_CreatedUnderExistingParentSite()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureWebAppPhysicalPathExists();
+
+        DeployParentSite(ctx);
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, ctx.WebAppPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.StartApplicationPool, "True")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"WebApplication deploy failed. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}\n\n" +
+                $"Manually: `Get-WebApplication -Site '{ctx.SiteName}' -Name '{ctx.WebAppVirtualPath.TrimStart('/')}'`.");
+
+        // The metabase must show a node of ElementTagName='application' at the configured path.
+        var sitePath = $"IIS:\\Sites\\{ctx.SiteName}{ctx.WebAppVirtualPath}";
+        var elementType = ReadIISElementType(sitePath);
+        elementType.ShouldBe("application",
+            customMessage:
+                $"Expected an IIS application at '{sitePath}', got ElementTagName='{elementType}'. " +
+                $"The PS1's `New-Item -type Application` line 392 may have run with the wrong path or " +
+                $"silently failed. Manually: `Get-Item '{sitePath}'`.");
+
+        var physicalPath = ReadIISPhysicalPath(sitePath);
+        physicalPath.ShouldBe(ctx.WebAppPhysicalPath,
+            customMessage:
+                $"WebApplication physicalPath mismatch. Configured='{ctx.WebAppPhysicalPath}', " +
+                $"actual='{physicalPath}'.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_VirtualDirectory_CreatedUnderExistingParentSite()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureVirtDirPhysicalPathExists();
+
+        DeployParentSite(ctx);
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.VirtualDirectoryCreateOrUpdate, "True"),
+            (Property.VirtualDirectoryWebSiteName, ctx.SiteName),
+            (Property.VirtualDirectoryVirtualPath, ctx.VirtDirVirtualPath),
+            (Property.VirtualDirectoryPhysicalPath, ctx.VirtDirPhysicalPath)));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"VirtualDirectory deploy failed. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}\n\n" +
+                $"Manually: `Get-WebVirtualDirectory -Site '{ctx.SiteName}' -Name '{ctx.VirtDirVirtualPath.TrimStart('/')}'`.");
+
+        var sitePath = $"IIS:\\Sites\\{ctx.SiteName}{ctx.VirtDirVirtualPath}";
+        var elementType = ReadIISElementType(sitePath);
+        elementType.ShouldBe("virtualDirectory",
+            customMessage:
+                $"Expected an IIS virtualDirectory at '{sitePath}', got ElementTagName='{elementType}'. " +
+                $"The PS1's `New-Item -type VirtualDirectory` line 334 may have run with the wrong path. " +
+                $"Manually: `Get-Item '{sitePath}'`.");
+
+        var physicalPath = ReadIISPhysicalPath(sitePath);
+        physicalPath.ShouldBe(ctx.VirtDirPhysicalPath,
+            customMessage:
+                $"VirtualDirectory physicalPath mismatch. Configured='{ctx.VirtDirPhysicalPath}', " +
+                $"actual='{physicalPath}'.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_WebApplication_FrameworkVersionDifferentFromParent_AppliedIndependently()
+    {
+        // A common production pattern: parent site runs v4.0 for the main app, child WebApp
+        // runs v2.0 (or No Managed Code) for a legacy sub-app. The two app pools must
+        // hold their own framework values independently. PS1 line 375 reads the WebApp's
+        // OWN ApplicationPoolFrameworkVersion property — different from the parent's.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureWebAppPhysicalPathExists();
+
+        DeployParentSite(ctx);   // parent uses v4.0 (set in DeployParentSite)
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, ctx.WebAppPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v2.0"),
+            (Property.StartApplicationPool, "True")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, $"WebApp framework-override deploy failed: {result.StdErr}");
+
+        // Verify the WebApp's pool has v2.0, parent pool still has v4.0 — independence.
+        var parentPoolFramework = PowerShellSingleLine(
+            $"(Get-ItemProperty IIS:\\AppPools\\{ctx.PoolName} -Name managedRuntimeVersion).Value");
+        var webAppPoolFramework = PowerShellSingleLine(
+            $"(Get-ItemProperty IIS:\\AppPools\\{ctx.WebAppPoolName} -Name managedRuntimeVersion).Value");
+
+        parentPoolFramework.ShouldBe("v4.0",
+            customMessage: $"Parent pool framework changed unexpectedly. Should still be v4.0, was '{parentPoolFramework}'.");
+
+        webAppPoolFramework.ShouldBe("v2.0",
+            customMessage:
+                $"WebApp pool framework not set to v2.0, was '{webAppPoolFramework}'. " +
+                $"PS1 may be reading the parent's framework instead of the WebApp's own property.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_WebApplication_Redeploy_UpdatesPhysicalPath()
+    {
+        // Idempotence + change-detection: redeploy the same WebApp with a different physical
+        // path. PS1's "already exists, no need to create it" branch (line 396) should be hit
+        // on the second pass, but `Set-Path` (line 413) MUST still update the physicalPath.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureWebAppPhysicalPathExists();
+
+        DeployParentSite(ctx);
+
+        var script1 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, ctx.WebAppPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v4.0")));
+
+        RunPowerShell(script1).ExitCode.ShouldBe(0, "First WebApp deploy must succeed.");
+
+        // Second deploy: new physical path. The directory must exist for IIS to accept it.
+        var newPhysicalPath = Path.Combine(Path.GetTempPath(), $"squid-iis-webapp-rotated-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(newPhysicalPath);
+        ctx.RegisterTempDirForCleanup(newPhysicalPath);
+
+        var script2 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, newPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v4.0")));
+
+        var result2 = RunPowerShell(script2);
+        result2.ExitCode.ShouldBe(0, $"WebApp redeploy failed: {result2.StdErr}");
+
+        var sitePath = $"IIS:\\Sites\\{ctx.SiteName}{ctx.WebAppVirtualPath}";
+        var physicalPath = ReadIISPhysicalPath(sitePath);
+        physicalPath.ShouldBe(newPhysicalPath,
+            customMessage:
+                $"WebApp physicalPath not updated after redeploy. Expected='{newPhysicalPath}', " +
+                $"actual='{physicalPath}'. PS1's `Set-Path` (line 413) didn't run or ran with the wrong target.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_WebApplicationAndVirtualDirectory_BothInSingleAction_BothCreated()
+    {
+        // Composite deploy: the same Squid action sets BOTH WebApplication.CreateOrUpdate
+        // AND VirtualDirectory.CreateOrUpdate to True under the same parent site. Operators
+        // use this for /api (WebApp) + /static (VirtDir) layouts in one Squid step.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureWebAppPhysicalPathExists();
+        ctx.EnsureVirtDirPhysicalPathExists();
+
+        DeployParentSite(ctx);
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            // WebApp leg
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, ctx.WebAppPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v4.0"),
+            // VirtDir leg
+            (Property.VirtualDirectoryCreateOrUpdate, "True"),
+            (Property.VirtualDirectoryWebSiteName, ctx.SiteName),
+            (Property.VirtualDirectoryVirtualPath, ctx.VirtDirVirtualPath),
+            (Property.VirtualDirectoryPhysicalPath, ctx.VirtDirPhysicalPath)));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Composite WebApp+VirtDir deploy failed. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        ReadIISElementType($"IIS:\\Sites\\{ctx.SiteName}{ctx.WebAppVirtualPath}").ShouldBe("application",
+            customMessage: $"WebApp leg of composite deploy didn't create the application node.");
+        ReadIISElementType($"IIS:\\Sites\\{ctx.SiteName}{ctx.VirtDirVirtualPath}").ShouldBe("virtualDirectory",
+            customMessage: $"VirtDir leg of composite deploy didn't create the virtualDirectory node.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_WebApplication_NoParentSite_FailsWithActionableError()
+    {
+        // PS1's `Assert-WebsiteExists` (line 282) throws when the configured parent
+        // WebSite doesn't exist. The error message guides the operator to add a
+        // pre-step that creates the parent. This test pins that the error path
+        // produces the expected actionable text — operators rely on grepping for
+        // the phrase to triage misconfigured deploy orders.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.EnsureWebAppPhysicalPathExists();
+        // NOTE: NOT calling DeployParentSite — the parent doesn't exist.
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.WebApplicationCreateOrUpdate, "True"),
+            (Property.WebApplicationWebSiteName, ctx.SiteName),
+            (Property.WebApplicationVirtualPath, ctx.WebAppVirtualPath),
+            (Property.WebApplicationPhysicalPath, ctx.WebAppPhysicalPath),
+            (Property.WebApplicationApplicationPoolName, ctx.WebAppPoolName),
+            (Property.WebApplicationApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.WebApplicationApplicationPoolFrameworkVersion, "v4.0")));
+
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage:
+                $"WebApp deploy without a parent site unexpectedly SUCCEEDED. PS1's `Assert-WebsiteExists` " +
+                $"line 282 should have thrown. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var combinedOutput = result.StdOut + result.StdErr;
+        combinedOutput.ShouldContain("does not exist in IIS",
+            customMessage:
+                "Missing-parent error didn't contain the actionable 'does not exist in IIS' phrase. " +
+                "Operators grep for this exact text. If renamed in PS1 update this test in lockstep.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -852,11 +1131,46 @@ public sealed class IISDeployRealHostE2ETests
             _tempDirsToClean.Add(PhysicalPath);
         }
 
+        /// <summary>
+        /// Stages the WebApplication physical-path directory and registers it for cleanup.
+        /// Used by Phase 4 tests that activate the `Squid.Action.IISWebSite.WebApplication.*`
+        /// sub-feature. Calling this is optional — Phase 1-3.5 tests don't touch the WebApp
+        /// state and skip this entirely.
+        /// </summary>
+        public void EnsureWebAppPhysicalPathExists()
+        {
+            if (!Directory.Exists(WebAppPhysicalPath))
+                Directory.CreateDirectory(WebAppPhysicalPath);
+            if (!_tempDirsToClean.Contains(WebAppPhysicalPath))
+                _tempDirsToClean.Add(WebAppPhysicalPath);
+        }
+
+        /// <summary>
+        /// Stages the VirtualDirectory physical-path directory and registers it for cleanup.
+        /// </summary>
+        public void EnsureVirtDirPhysicalPathExists()
+        {
+            if (!Directory.Exists(VirtDirPhysicalPath))
+                Directory.CreateDirectory(VirtDirPhysicalPath);
+            if (!_tempDirsToClean.Contains(VirtDirPhysicalPath))
+                _tempDirsToClean.Add(VirtDirPhysicalPath);
+        }
+
         public string SiteName { get; }
         public string PoolName { get; }
         public string PhysicalPath { get; }
         public string HttpPort { get; }
         public string HttpsPort { get; }
+
+        // Phase 4 — child WebApplication + VirtualDirectory derive their state from
+        // the same per-test GUID suffix so concurrent CI runs stay isolated. Cleanup
+        // is handled by Remove-Website cascading to children; the separate WebApp
+        // pool needs its own Remove-WebAppPool call (registered below).
+        public string WebAppVirtualPath => $"/webapp-{_suffix}";
+        public string WebAppPhysicalPath => Path.Combine(Path.GetTempPath(), $"squid-iis-webapp-{_suffix}");
+        public string WebAppPoolName => $"{PoolName}-webapp";
+        public string VirtDirVirtualPath => $"/virtdir-{_suffix}";
+        public string VirtDirPhysicalPath => Path.Combine(Path.GetTempPath(), $"squid-iis-virtdir-{_suffix}");
 
         public void RegisterTempDirForCleanup(string path) => _tempDirsToClean.Add(path);
 
@@ -939,8 +1253,12 @@ public sealed class IISDeployRealHostE2ETests
             // so the next class instance starts clean.
             if (OperatingSystem.IsWindows() && IsIISInstalled())
             {
+                // Remove-Website cascades to remove child applications + virtual directories,
+                // so the WebApp/VirtDir state is implicitly cleaned up. The WebApp's own pool
+                // is a separate metabase entry though — must be removed independently.
                 TryPowerShell($"Remove-Website -Name '{SiteName}' -ErrorAction SilentlyContinue");
                 TryPowerShell($"Remove-WebAppPool -Name '{PoolName}' -ErrorAction SilentlyContinue");
+                TryPowerShell($"Remove-WebAppPool -Name '{WebAppPoolName}' -ErrorAction SilentlyContinue");
             }
 
             // netsh sslcert entries — survive process exit so MUST be torn down explicitly.
@@ -1012,6 +1330,21 @@ public sealed class IISDeployRealHostE2ETests
         public const string ApplicationPoolUsername = "Squid.Action.IISWebSite.ApplicationPoolUsername";
         public const string ApplicationPoolPassword = "Squid.Action.IISWebSite.ApplicationPoolPassword";
         public const string ExistingBindings = "Squid.Action.IISWebSite.ExistingBindings";
+
+        // Phase 4 — WebApplication sub-feature
+        public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";
+        public const string WebApplicationWebSiteName = "Squid.Action.IISWebSite.WebApplication.WebSiteName";
+        public const string WebApplicationVirtualPath = "Squid.Action.IISWebSite.WebApplication.VirtualPath";
+        public const string WebApplicationPhysicalPath = "Squid.Action.IISWebSite.WebApplication.PhysicalPath";
+        public const string WebApplicationApplicationPoolName = "Squid.Action.IISWebSite.WebApplication.ApplicationPoolName";
+        public const string WebApplicationApplicationPoolIdentityType = "Squid.Action.IISWebSite.WebApplication.ApplicationPoolIdentityType";
+        public const string WebApplicationApplicationPoolFrameworkVersion = "Squid.Action.IISWebSite.WebApplication.ApplicationPoolFrameworkVersion";
+
+        // Phase 4 — VirtualDirectory sub-feature
+        public const string VirtualDirectoryCreateOrUpdate = "Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate";
+        public const string VirtualDirectoryWebSiteName = "Squid.Action.IISWebSite.VirtualDirectory.WebSiteName";
+        public const string VirtualDirectoryVirtualPath = "Squid.Action.IISWebSite.VirtualDirectory.VirtualPath";
+        public const string VirtualDirectoryPhysicalPath = "Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath";
     }
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
@@ -1063,6 +1396,50 @@ public sealed class IISDeployRealHostE2ETests
             return false;
         }
     }
+
+    /// <summary>
+    /// Deploys a parent WebSite via a standalone <c>Build(...)</c> call with only
+    /// <c>CreateOrUpdateWebSite=True</c>. Phase 4 tests need a parent site to exist BEFORE
+    /// activating the WebApplication or VirtualDirectory sub-features (PS1 <c>Assert-WebsiteExists</c>
+    /// throws otherwise). Helper consolidates the parent-bootstrap so each Phase 4 test reads
+    /// as "deploy parent; then deploy child; assert child" without duplicating the parent setup.
+    /// </summary>
+    private static void DeployParentSite(IISTestContext ctx)
+    {
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+        if (result.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"Parent-site bootstrap for Phase 4 test failed (site '{ctx.SiteName}'). " +
+                $"ExitCode={result.ExitCode}, StdOut='{result.StdOut}', StdErr='{result.StdErr}'.");
+    }
+
+    /// <summary>
+    /// Reads <c>(Get-Item).ElementTagName</c> for an IIS metabase path. Returns
+    /// <c>application</c>, <c>virtualDirectory</c>, <c>site</c>, etc. — used by Phase 4
+    /// tests to verify the script created a node of the expected type.
+    /// </summary>
+    private static string ReadIISElementType(string sitePath) =>
+        PowerShellSingleLine($"(Get-Item '{sitePath}' -ErrorAction SilentlyContinue).ElementTagName");
+
+    /// <summary>
+    /// Reads <c>(Get-Item).physicalPath</c> for an IIS metabase path. Phase 4 tests use this
+    /// to verify the WebApp / VirtDir node's disk-path matches what was configured.
+    /// </summary>
+    private static string ReadIISPhysicalPath(string sitePath) =>
+        PowerShellSingleLine($"(Get-Item '{sitePath}' -ErrorAction SilentlyContinue).physicalPath");
 
     /// <summary>
     /// Reads the <c>enabled</c> attribute of the named auth section from the site's effective
