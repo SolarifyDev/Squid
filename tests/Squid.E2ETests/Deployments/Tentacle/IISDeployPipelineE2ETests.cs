@@ -31,6 +31,7 @@ namespace Squid.E2ETests.Deployments.Tentacle;
 /// </summary>
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]
+[Trait("Tier", "Contract")]
 public class IISDeployPipelineE2ETests
     : IClassFixture<DeploymentPipelineFixture<IISDeployPipelineE2ETests>>
 {

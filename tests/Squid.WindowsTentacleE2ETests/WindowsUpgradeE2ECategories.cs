@@ -222,4 +222,37 @@ public static class WindowsUpgradeE2ECategories
     /// <c>win-x64</c> bundle that won't run on macOS / Linux.</para>
     /// </summary>
     public const string TentacleBinary = "WindowsTentacleBinaryE2E";
+
+    /// <summary>
+    /// E2E coverage for the production
+    /// <c>Squid.DeployToIISWebSite</c> action's PowerShell payload against
+    /// a real Windows host with real IIS installed. Drives
+    /// <c>IISDeployScriptBuilder.Build(action)</c> to produce the same
+    /// script the dispatch path would ship, then executes it via real
+    /// <c>powershell.exe</c> and verifies cluster-equivalent state via
+    /// <c>Get-Website</c> / <c>Get-WebAppPool</c> / <c>Get-WebBinding</c>.
+    ///
+    /// <para><b>Tier</b>: 🟢 High-fidelity (Rule 12). Real IIS, real
+    /// PowerShell, real <c>WebAdministration</c> module, real metabase
+    /// state. The only seam vs an end-to-end deploy from a Squid server
+    /// is the Halibut RPC layer between server and agent — that layer is
+    /// covered by <see cref="TentacleDeploy"/> and is intentionally
+    /// out-of-scope here so this suite can run on
+    /// <c>windows-latest</c> without spinning up a server-side stack.</para>
+    ///
+    /// <para><b>Coverage delta vs the pipeline-tier
+    /// <c>IISDeployPipelineE2ETests</c> in <c>Squid.E2ETests</c></b>: that
+    /// category asserts the rendered <c>ScriptExecutionRequest</c> shape
+    /// (medium-mock — <c>CapturingExecutionStrategy</c>); this category
+    /// proves the script actually does the right thing to real IIS
+    /// metabase state. Both ship in the same PR so a regression in
+    /// either rendering OR runtime is caught.</para>
+    ///
+    /// <para>Windows-only — requires <c>Web-WebServer</c> Windows feature
+    /// installed. CI workflow installs it before invoking the test step;
+    /// local devs without IIS see a clean skip via
+    /// <c>if (!OperatingSystem.IsWindows()) return;</c> + per-test
+    /// <c>Get-WindowsFeature</c> probe.</para>
+    /// </summary>
+    public const string IISDeploy = "IISDeployE2E";
 }
