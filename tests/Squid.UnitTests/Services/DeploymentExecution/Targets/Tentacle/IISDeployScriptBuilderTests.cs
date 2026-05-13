@@ -251,6 +251,85 @@ public class IISDeployScriptBuilderTests
         assignmentLine.ShouldNotContain("\n");
     }
 
+    // ── Authentication toggles (Phase 3) ───────────────────────────────────
+    //
+    // The PS1 reads each `EnableXAuthentication` flag (lines 433-435), then
+    // runs `appcmd.exe set config <site> -section:.../XAuthentication /enabled:<value>`
+    // (lines 781/789/797). These tests pin the contract: the operator's flag
+    // value reaches the preamble byte-for-byte. The PS1's own appcmd plumbing
+    // is exercised at the real-host tier.
+
+    [Theory]
+    [InlineData("True")]
+    [InlineData("False")]
+    [InlineData("true")]                // case variants flow through verbatim — PS1 normalizes
+    [InlineData("false")]
+    public void Build_AnonymousAuthenticationFlag_PassesThroughToPreambleVerbatim(string value)
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "AuthSite"),
+            (IISDeployProperties.EnableAnonymousAuthentication, value));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableAnonymousAuthentication'] = '{value}'");
+    }
+
+    [Theory]
+    [InlineData("True")]
+    [InlineData("False")]
+    public void Build_BasicAuthenticationFlag_PassesThroughToPreambleVerbatim(string value)
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "AuthSite"),
+            (IISDeployProperties.EnableBasicAuthentication, value));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableBasicAuthentication'] = '{value}'");
+    }
+
+    [Theory]
+    [InlineData("True")]
+    [InlineData("False")]
+    public void Build_WindowsAuthenticationFlag_PassesThroughToPreambleVerbatim(string value)
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "AuthSite"),
+            (IISDeployProperties.EnableWindowsAuthentication, value));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain(
+            $"$SquidParameters['Squid.Action.IISWebSite.EnableWindowsAuthentication'] = '{value}'");
+    }
+
+    [Fact]
+    public void Build_AllThreeAuthFlagsSet_LandInPreambleIndependently()
+    {
+        // The three flags are emitted to the preamble independently — none of them are
+        // computed from the others. This test catches a regression where someone "helpfully"
+        // makes Anonymous default-true when Basic+Windows are false (or vice versa), which
+        // would silently change behaviour for operators relying on a specific combination.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "MixedAuthSite"),
+            (IISDeployProperties.EnableAnonymousAuthentication, "False"),
+            (IISDeployProperties.EnableBasicAuthentication, "True"),
+            (IISDeployProperties.EnableWindowsAuthentication, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.EnableAnonymousAuthentication'] = 'False'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.EnableBasicAuthentication'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.EnableWindowsAuthentication'] = 'True'");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)

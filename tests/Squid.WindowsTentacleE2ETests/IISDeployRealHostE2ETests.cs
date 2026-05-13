@@ -443,6 +443,146 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Authentication toggles (Phase 3) ───────────────────────────────────
+    //
+    // The deploy script (PS1 lines 778-806) runs appcmd.exe three times per deploy:
+    // `appcmd set config <site> /section:.../anonymousAuthentication /enabled:<X>`
+    // and the equivalent for basic + windows. These tests verify the operator's
+    // configured flag values land in the IIS metabase, by reading back via the
+    // same appcmd tool. The Theory matrix covers the realistic combinations an
+    // operator picks (anon-only dev / windows-only enterprise / locked-down none /
+    // wide-open all-three).
+    //
+    // Skips: needs Web-Basic-Auth + Web-Windows-Auth Windows features installed.
+    // The workflow installs these; local dev hosts without them see a clean skip.
+
+    [Theory]
+    [InlineData("True", "False", "False")]    // anonymous-only (typical dev)
+    [InlineData("False", "True", "False")]    // basic-only (rare but supported)
+    [InlineData("False", "False", "True")]    // windows-only (typical enterprise intranet)
+    [InlineData("True", "True", "False")]     // anon + basic
+    [InlineData("False", "False", "False")]   // locked-down (all three explicitly off)
+    [InlineData("True", "True", "True")]      // wide-open (every method enabled)
+    public void RealIIS_AuthFlags_MetabaseReflectsConfiguredEnabledStates(
+        string anonEnabled, string basicEnabled, string windowsEnabled)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsIISFeatureInstalled("Web-Basic-Auth")) return;
+        if (!IsIISFeatureInstalled("Web-Windows-Auth")) return;
+
+        using var ctx = new IISTestContext();
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            (Property.EnableAnonymousAuthentication, anonEnabled),
+            (Property.EnableBasicAuthentication, basicEnabled),
+            (Property.EnableWindowsAuthentication, windowsEnabled),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Auth-flag deploy failed for combo (anon={anonEnabled}, basic={basicEnabled}, windows={windowsEnabled}). " +
+                $"Manually inspect via `appcmd.exe list config {ctx.SiteName} -section:system.webServer/security/authentication/anonymousAuthentication`.\n\n" +
+                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var actualAnon = ReadAuthEnabledFlag(ctx.SiteName, "anonymousAuthentication");
+        var actualBasic = ReadAuthEnabledFlag(ctx.SiteName, "basicAuthentication");
+        var actualWindows = ReadAuthEnabledFlag(ctx.SiteName, "windowsAuthentication");
+
+        // appcmd outputs `enabled="true"` / `enabled="false"` (lowercase XML attr).
+        // The operator's configured value can be "True"/"False" (PascalCase, common in Squid)
+        // or "true"/"false". Compare case-insensitively.
+        actualAnon.ToLowerInvariant().ShouldBe(anonEnabled.ToLowerInvariant(),
+            customMessage:
+                $"anonymousAuthentication.enabled in metabase doesn't match configured value. " +
+                $"Configured='{anonEnabled}', actual='{actualAnon}'. " +
+                $"This means the PS1's appcmd call for the anonymous section didn't take effect.");
+
+        actualBasic.ToLowerInvariant().ShouldBe(basicEnabled.ToLowerInvariant(),
+            customMessage:
+                $"basicAuthentication.enabled in metabase doesn't match. Configured='{basicEnabled}', actual='{actualBasic}'.");
+
+        actualWindows.ToLowerInvariant().ShouldBe(windowsEnabled.ToLowerInvariant(),
+            customMessage:
+                $"windowsAuthentication.enabled in metabase doesn't match. Configured='{windowsEnabled}', actual='{actualWindows}'.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_AuthFlag_FlipsOnRedeploy_MetabaseReflectsNewValue()
+    {
+        // Idempotence + change-detection: a redeploy with different auth flags
+        // must produce the new state, not be a no-op. This catches a regression
+        // where a future PR adds "skip if value matches" logic that doesn't account
+        // for an externally-modified config (operator manually toggled in IIS Manager).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsIISFeatureInstalled("Web-Windows-Auth")) return;
+
+        using var ctx = new IISTestContext();
+
+        // Deploy 1: Anonymous on, Windows off
+        var script1 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            (Property.EnableAnonymousAuthentication, "True"),
+            (Property.EnableWindowsAuthentication, "False")));
+
+        RunPowerShell(script1).ExitCode.ShouldBe(0, "First deploy (anon=true, windows=false) must succeed.");
+
+        ReadAuthEnabledFlag(ctx.SiteName, "anonymousAuthentication").ToLowerInvariant().ShouldBe("true");
+        ReadAuthEnabledFlag(ctx.SiteName, "windowsAuthentication").ToLowerInvariant().ShouldBe("false");
+
+        // Deploy 2: Anonymous off, Windows on — opposite of Deploy 1
+        var script2 = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings,
+                "[{\"protocol\":\"http\",\"port\":\"" + ctx.HttpPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"enabled\":true}]"),
+            (Property.EnableAnonymousAuthentication, "False"),
+            (Property.EnableWindowsAuthentication, "True")));
+
+        var result2 = RunPowerShell(script2);
+        result2.ExitCode.ShouldBe(0,
+            customMessage: $"Redeploy (anon=false, windows=true) failed.\nSTDOUT:\n{result2.StdOut}\n\nSTDERR:\n{result2.StdErr}");
+
+        // Both flags must have FLIPPED — not just stayed at Deploy 1's values.
+        ReadAuthEnabledFlag(ctx.SiteName, "anonymousAuthentication").ToLowerInvariant().ShouldBe("false",
+            customMessage: "Redeploy with anonymous=False didn't flip the metabase from True to False. " +
+                          "The PS1 may have a `skip if already configured` regression.");
+
+        ReadAuthEnabledFlag(ctx.SiteName, "windowsAuthentication").ToLowerInvariant().ShouldBe("true",
+            customMessage: "Redeploy with windows=True didn't flip the metabase from False to True. " +
+                          "Confirm by `appcmd list config " + ctx.SiteName + " -section:system.webServer/security/authentication/windowsAuthentication` after the redeploy.");
+
+        ctx.MarkClean();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -589,6 +729,9 @@ public sealed class IISDeployRealHostE2ETests
         public const string Bindings = "Squid.Action.IISWebSite.Bindings";
         public const string StartApplicationPool = "Squid.Action.IISWebSite.StartApplicationPool";
         public const string StartWebSite = "Squid.Action.IISWebSite.StartWebSite";
+        public const string EnableAnonymousAuthentication = "Squid.Action.IISWebSite.EnableAnonymousAuthentication";
+        public const string EnableBasicAuthentication = "Squid.Action.IISWebSite.EnableBasicAuthentication";
+        public const string EnableWindowsAuthentication = "Squid.Action.IISWebSite.EnableWindowsAuthentication";
     }
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
@@ -617,6 +760,56 @@ public sealed class IISDeployRealHostE2ETests
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Probes whether a specific Windows-feature sub-module is installed (e.g. <c>Web-Basic-Auth</c>,
+    /// <c>Web-Windows-Auth</c>). Returns false on non-Windows or if the cmdlet fails. Phase 3
+    /// auth tests use this to skip cleanly on hosts where the required IIS auth module isn't
+    /// present — `appcmd set config /section:basicAuthentication` errors out with a "section
+    /// declaration is missing" message otherwise.
+    /// </summary>
+    private static bool IsIISFeatureInstalled(string featureName)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+
+        try
+        {
+            var result = RunPowerShell($"(Get-WindowsFeature {featureName} -ErrorAction SilentlyContinue).Installed");
+            return result.ExitCode == 0 && result.StdOut.Trim().Equals("True", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads the <c>enabled</c> attribute of the named auth section from the site's effective
+    /// IIS config via the same <c>appcmd.exe</c> tool the PS1 used to set it. Round-tripping
+    /// through appcmd (rather than `Get-WebConfigurationProperty`) ensures we see the exact
+    /// value the deploy committed at apphost level, not an inherited/overridden one.
+    /// </summary>
+    /// <param name="siteName">IIS site name.</param>
+    /// <param name="sectionName">One of <c>anonymousAuthentication</c>, <c>basicAuthentication</c>,
+    /// <c>windowsAuthentication</c>.</param>
+    /// <returns><c>"true"</c> or <c>"false"</c> as appcmd emits them (lowercase XML attr style),
+    /// or a diagnostic string if no match.</returns>
+    private static string ReadAuthEnabledFlag(string siteName, string sectionName)
+    {
+        var ps =
+            $"$output = & \"$env:SystemRoot\\system32\\inetsrv\\appcmd.exe\" list config '{siteName}' " +
+            $"-section:system.webServer/security/authentication/{sectionName}; " +
+            $"$output | Out-String";
+        var output = RunPowerShell(ps).StdOut;
+
+        // Parse `<sectionName ... enabled="X" ... />` from the XML output.
+        var pattern = $"<{System.Text.RegularExpressions.Regex.Escape(sectionName)}\\b[^>]*\\benabled=\"(?<v>[^\"]+)\"";
+        var match = System.Text.RegularExpressions.Regex.Match(output, pattern);
+
+        return match.Success
+            ? match.Groups["v"].Value
+            : $"(no '<{sectionName} ... enabled=...' found in appcmd output: {output.Trim()})";
     }
 
     /// <summary>

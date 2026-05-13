@@ -69,16 +69,22 @@ jobs:
             --filter $filter `
             --logger "console;verbosity=normal"
 
-      - name: Install IIS feature (Web-WebServer + Management tools)
+      - name: Install IIS feature (Web-WebServer + auth modules + Management tools)
         # Required by Category=IISDeployE2E. Other categories don't need IIS but installing it
         # is cheap on `windows-latest` (~1m) and idempotent, so we always install rather than
         # gating on category. The IIS tests themselves probe `Get-WindowsFeature Web-WebServer`
         # before exercising the metabase so a future split into category-conditional install
         # is mechanical.
+        #
+        # Auth modules (Phase 3): `Web-Basic-Auth` and `Web-Windows-Auth` are NOT part of the
+        # base `Web-WebServer` install. Without them, `appcmd.exe set config /section:basicAuthentication`
+        # fails with "the configuration section 'basicAuthentication' cannot be read because it
+        # is missing a section declaration" — same for windowsAuthentication. Anonymous auth
+        # comes with the base install.
         shell: pwsh
         run: |
-          Install-WindowsFeature -Name Web-WebServer,Web-Mgmt-Console -IncludeManagementTools
-          Get-WindowsFeature Web-WebServer | Format-Table -Property Name, InstallState, DisplayName
+          Install-WindowsFeature -Name Web-WebServer,Web-Mgmt-Console,Web-Basic-Auth,Web-Windows-Auth -IncludeManagementTools
+          Get-WindowsFeature Web-WebServer, Web-Basic-Auth, Web-Windows-Auth | Format-Table -Property Name, InstallState, DisplayName
 
       - name: Restore Squid.WindowsTentacleE2ETests
         shell: pwsh
