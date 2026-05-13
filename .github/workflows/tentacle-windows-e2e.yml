@@ -25,7 +25,7 @@ on:
       upgrade_test_filter:
         description: "xUnit --filter for the Squid.WindowsTentacleE2ETests step (defaults to wrapper + service categories)"
         required: false
-        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E"
+        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E"
 
 permissions:
   contents: read
@@ -69,6 +69,17 @@ jobs:
             --filter $filter `
             --logger "console;verbosity=normal"
 
+      - name: Install IIS feature (Web-WebServer + Management tools)
+        # Required by Category=IISDeployE2E. Other categories don't need IIS but installing it
+        # is cheap on `windows-latest` (~1m) and idempotent, so we always install rather than
+        # gating on category. The IIS tests themselves probe `Get-WindowsFeature Web-WebServer`
+        # before exercising the metabase so a future split into category-conditional install
+        # is mechanical.
+        shell: pwsh
+        run: |
+          Install-WindowsFeature -Name Web-WebServer,Web-Mgmt-Console -IncludeManagementTools
+          Get-WindowsFeature Web-WebServer | Format-Table -Property Name, InstallState, DisplayName
+
       - name: Restore Squid.WindowsTentacleE2ETests
         shell: pwsh
         run: dotnet restore tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj --configfile "$env:NUGET_CONFIG"
@@ -76,8 +87,20 @@ jobs:
       - name: Run Squid.WindowsTentacleE2ETests
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E" }
+          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E" }
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
             --logger "console;verbosity=normal"
+
+      - name: Capture IIS metabase state on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Import-Module WebAdministration -ErrorAction SilentlyContinue
+          Write-Host "=== Sites ==="
+          Get-Website | Format-Table -Property Name, ID, State, PhysicalPath | Out-String
+          Write-Host "=== AppPools ==="
+          Get-WebAppPool | Format-Table -Property Name, State | Out-String
+          Write-Host "=== Bindings ==="
+          Get-WebBinding | Format-Table -Property protocol, bindingInformation, sslFlags | Out-String
