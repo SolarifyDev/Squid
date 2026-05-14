@@ -589,6 +589,55 @@ public class IISDeployPipelineE2ETests
         captured.ScriptBody.ShouldContain("$SquidVariables['SomeVar'] = 'some-value'");
     }
 
+    // ── XML Configuration Transforms (Phase 7 — XDT) ──────────────────────
+
+    [Theory]
+    [InlineData("TentaclePolling")]
+    [InlineData("TentacleListening")]
+    public async Task FullPipeline_ConfigurationTransforms_EnabledAndEnvironmentResolved(string communicationStyle)
+    {
+        // Pipeline-tier verification that XDT properties flow through the pipeline + variable
+        // substitution resolves `#{Squid.Environment.Name}` (or any operator-defined var) for
+        // the EnvironmentName property — operators set this so per-env `web.{env}.config`
+        // transforms apply automatically.
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteWithVariableAsync(
+            communicationStyle: communicationStyle,
+            variableName: "EnvName",
+            variableValue: "Production",
+            isSensitive: false,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "OrderApi-Pool",
+                ["Squid.Action.IISWebSite.WebRoot"] = @"C:\inetpub\OrderApi",
+                ["Squid.Action.IISWebSite.ConfigurationTransforms.Enabled"] = "True",
+                ["Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName"] = "#{EnvName}"
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'] = 'True'");
+
+        // Variable reference resolves BEFORE the builder serialises — agent sees the literal env name.
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName'] = 'Production'",
+            customMessage:
+                "EnvironmentName template wasn't resolved by pipeline variable substitution. " +
+                "Agent would receive literal '#{EnvName}' and look for `web.#{EnvName}.config` which doesn't exist.");
+        captured.ScriptBody.ShouldNotContain("#{EnvName}");
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]

@@ -1149,6 +1149,236 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── XML Configuration Transforms / XDT (Phase 7) ────────────────────────
+    //
+    // The deploy script's `Update-IISConfigurationTransforms` function loads
+    // Microsoft.Web.XmlTransform.dll and applies XDT transforms:
+    //   - Auto: `<base>.Release.config` over `<base>.config`
+    //   - Auto: `<base>.{EnvironmentName}.config` over `<base>.config`
+    //   - Explicit: CSV `transform.config => target.config` entries
+    //
+    // These tests stage real config + transform files in the WebRoot, deploy with the
+    // feature enabled, and assert XDT semantics were applied (e.g. `xdt:Transform="SetAttributes"`
+    // replaced the target attribute value).
+
+    [Fact]
+    public void RealIIS_ConfigurationTransforms_AutoReleaseTransform_AppliedOverBase()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsMicrosoftWebXmlTransformAvailable()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        var releaseTransformPath = Path.Combine(ctx.PhysicalPath, "web.Release.config");
+
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"ApiUrl\" value=\"https://localhost-dev.example.com\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        File.WriteAllText(releaseTransformPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"ApiUrl\" value=\"https://api.prod.example.com\"\n" +
+            "         xdt:Transform=\"SetAttributes(value)\" xdt:Locator=\"Match(key)\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationTransformsEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"XDT Release transform deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+        rewritten.ShouldContain("value=\"https://api.prod.example.com\"",
+            customMessage:
+                $"XDT Release transform NOT applied — `xdt:Transform=\"SetAttributes(value)\"` should have replaced the ApiUrl value. " +
+                $"File after deploy:\n{rewritten}");
+        rewritten.ShouldNotContain("localhost-dev.example.com",
+            customMessage: "Original (pre-transform) ApiUrl value still present — XDT didn't take effect.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationTransforms_EnvironmentSpecificTransform_AppliedOverBase()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsMicrosoftWebXmlTransformAvailable()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        var stagingTransformPath = Path.Combine(ctx.PhysicalPath, "web.Staging.config");
+
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"LogLevel\" value=\"Info\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        File.WriteAllText(stagingTransformPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"LogLevel\" value=\"Debug\"\n" +
+            "         xdt:Transform=\"SetAttributes(value)\" xdt:Locator=\"Match(key)\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationTransformsEnabled, "True"),
+            (Property.ConfigurationTransformsEnvironmentName, "Staging"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"XDT Staging transform deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+        rewritten.ShouldContain("value=\"Debug\"",
+            customMessage:
+                $"web.Staging.config transform NOT applied — EnvironmentName='Staging' should have triggered the env-specific overlay. " +
+                $"File after deploy:\n{rewritten}");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationTransforms_ExplicitAdditionalTransform_AppliedOverNonStandardTarget()
+    {
+        // Explicit transforms via the AdditionalTransforms CSV — operators use this for
+        // transforms whose source filename doesn't follow the `<base>.{name}.config` convention.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsMicrosoftWebXmlTransformAvailable()) return;
+
+        using var ctx = new IISTestContext();
+        var configPath = Path.Combine(ctx.PhysicalPath, "ConnectionStrings.config");
+        var transformPath = Path.Combine(ctx.PhysicalPath, "ConnectionStrings.transform.config");
+
+        File.WriteAllText(configPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<connectionStrings>\n" +
+            "  <add name=\"Default\" connectionString=\"Server=localhost\" />\n" +
+            "</connectionStrings>\n");
+
+        File.WriteAllText(transformPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<connectionStrings xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">\n" +
+            "  <add name=\"Default\" connectionString=\"Server=prod-cluster\"\n" +
+            "       xdt:Transform=\"SetAttributes(connectionString)\" xdt:Locator=\"Match(name)\" />\n" +
+            "</connectionStrings>\n");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            // Toggle off, but additional transforms present — agent still runs the rewriter
+            // because of the gate condition (`enabled == "True" -or additionalTransforms is non-empty`)
+            (Property.ConfigurationTransformsAdditional, "ConnectionStrings.transform.config => ConnectionStrings.config"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"XDT explicit-transform deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(configPath);
+        rewritten.ShouldContain("connectionString=\"Server=prod-cluster\"",
+            customMessage:
+                $"Explicit `transform => target` did not apply. CSV parsing or non-base-file XDT path is broken. " +
+                $"File after deploy:\n{rewritten}");
+        rewritten.ShouldNotContain("Server=localhost",
+            customMessage: "Original connectionString still present after explicit transform.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationTransforms_FeatureDisabled_FileUntouched()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        var releaseTransformPath = Path.Combine(ctx.PhysicalPath, "web.Release.config");
+
+        const string originalContent =
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"ApiUrl\" value=\"localhost-dev\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n";
+        File.WriteAllText(webConfigPath, originalContent);
+
+        File.WriteAllText(releaseTransformPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"ApiUrl\" value=\"SHOULD_NOT_BE_APPLIED\"\n" +
+            "         xdt:Transform=\"SetAttributes(value)\" xdt:Locator=\"Match(key)\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]")
+            // ConfigurationTransformsEnabled NOT set + no AdditionalTransforms = gate stays off
+        );
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy with XDT off failed:\n{result.StdErr}");
+
+        var content = File.ReadAllText(webConfigPath);
+        content.ShouldContain("value=\"localhost-dev\"",
+            customMessage: "Base web.config value lost despite XDT feature OFF — gate is broken.");
+        content.ShouldNotContain("SHOULD_NOT_BE_APPLIED",
+            customMessage: "Transform applied despite feature being off — gate is broken.");
+
+        ctx.MarkClean();
+    }
+
     // ── Custom-script hooks (Phase 5: PreDeploy + PostDeploy) ───────────────
     //
     // Octopus's `ConfiguredScriptBehaviour` runs operator-inline scripts at 5 stages of
@@ -1914,6 +2144,11 @@ public sealed class IISDeployRealHostE2ETests
         // Phase 6 — .NET Configuration Variables (Octopus ConfigurationVariables parity)
         public const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+        // Phase 7 — XML Configuration Transforms (Octopus ConfigurationTransforms parity / XDT)
+        public const string ConfigurationTransformsEnabled = "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled";
+        public const string ConfigurationTransformsEnvironmentName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName";
+        public const string ConfigurationTransformsAdditional = "Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms";
+
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";
         public const string WebApplicationWebSiteName = "Squid.Action.IISWebSite.WebApplication.WebSiteName";
@@ -1950,6 +2185,34 @@ public sealed class IISDeployRealHostE2ETests
         try
         {
             var result = RunPowerShell("(Get-WindowsFeature Web-WebServer -ErrorAction SilentlyContinue).Installed");
+            return result.ExitCode == 0 && result.StdOut.Trim().Equals("True", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Probes whether <c>Microsoft.Web.XmlTransform.dll</c> is loadable on the host. Phase 7 XDT
+    /// tests use this to skip cleanly when the DLL isn't installed (typical dev hosts without
+    /// VS Build Tools). CI installs via the workflow's <c>dotnet add package Microsoft.Web.Xdt</c>
+    /// step so this returns true there.
+    /// </summary>
+    private static bool IsMicrosoftWebXmlTransformAvailable()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+
+        try
+        {
+            var result = RunPowerShell(
+                "$ok = $false; " +
+                "try { Add-Type -AssemblyName 'Microsoft.Web.XmlTransform' -ErrorAction Stop; $ok = $true } catch {}; " +
+                "if (-not $ok) { " +
+                "  $probe = Get-ChildItem -Path \"$env:USERPROFILE\\.nuget\\packages\\microsoft.web.xdt\" -Recurse -Filter Microsoft.Web.XmlTransform.dll -ErrorAction SilentlyContinue | Select-Object -First 1; " +
+                "  if ($probe) { try { Add-Type -Path $probe.FullName; $ok = $true } catch {} } " +
+                "}; " +
+                "Write-Host -NoNewline ($ok.ToString())");
             return result.ExitCode == 0 && result.StdOut.Trim().Equals("True", StringComparison.OrdinalIgnoreCase);
         }
         catch

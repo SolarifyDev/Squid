@@ -313,6 +313,64 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "ConfigurationVariables gate must appear BEFORE the IIS configure dispatch — IIS reads web.config when starting the site, so rewrites must complete first.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: the PS1 contains the <c>Update-IISConfigurationTransforms</c>
+    /// function with XDT (XML Document Transform) semantics. Mirrors Octopus's
+    /// <c>ConfigurationTransformsBehaviour</c> as an embedded helper. Pins:
+    ///   - Function presence
+    ///   - Microsoft.Web.XmlTransform loading attempt (GAC + NuGet probe path)
+    ///   - Auto-transform for "Release" (always)
+    ///   - Auto-transform for `$EnvironmentName` (conditional)
+    ///   - Order: XDT runs AFTER PreDeploy, BEFORE ConfigurationVariables, BEFORE IIS configure dispatch
+    ///     (matches Octopus pipeline: ConfigurationTransforms → ConfigurationVariables)
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasConfigurationTransformsRewriter_ForOctopusXdtParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Update-IISConfigurationTransforms",
+            customMessage:
+                "Squid IIS PS1 is missing Update-IISConfigurationTransforms. This breaks the operator-facing " +
+                "'Auto-run config transformations' workflow that Octopus's `Octopus.Features.ConfigurationTransforms` " +
+                "provides — `web.Release.config` and `web.{Env}.config` overlays won't apply.");
+
+        ourScript.ShouldContain("Microsoft.Web.XmlTransform.XmlTransformableDocument",
+            customMessage: "XDT engine type reference missing — function must instantiate XmlTransformableDocument.");
+
+        ourScript.ShouldContain("Microsoft.Web.XmlTransform.XmlTransformation",
+            customMessage: "XDT engine type reference missing — function must instantiate XmlTransformation.");
+
+        // Auto-transform names — Release is unconditional, EnvironmentName is conditional.
+        ourScript.ShouldContain("$autoTransformNames.Add(\"Release\")",
+            customMessage: "Auto-transform must always include Release (Octopus parity — ConfigurationTransformsBehaviour.cs:86).");
+        ourScript.ShouldContain("$autoTransformNames.Add($EnvironmentName)",
+            customMessage: "Auto-transform must conditionally include EnvironmentName (Octopus parity — ConfigurationTransformsBehaviour.cs:92).");
+
+        // Enablement gate uses ConfigurationTransforms.Enabled OR has AdditionalTransforms set.
+        ourScript.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled']",
+            customMessage: "Enablement gate missing — operator's UI checkbox controls auto-discovery.");
+        ourScript.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms']",
+            customMessage: "AdditionalTransforms property read missing.");
+
+        // Order: ConfigurationTransforms gate must appear AFTER PreDeploy hook AND BEFORE ConfigurationVariables gate
+        // AND BEFORE the IIS configure dispatch.
+        var preDeployIdx = ourScript.IndexOf("'Squid.Action.CustomScripts.PreDeploy.ps1'", StringComparison.Ordinal);
+        var transformsGateIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'", StringComparison.Ordinal);
+        var configVarsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationVariables.Enabled'", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+
+        preDeployIdx.ShouldBeLessThan(transformsGateIdx,
+            customMessage: "ConfigurationTransforms gate must run AFTER PreDeploy hook (operator may stage *.Release.config files in PreDeploy).");
+        transformsGateIdx.ShouldBeLessThan(configVarsIdx,
+            customMessage:
+                "ConfigurationTransforms must run BEFORE ConfigurationVariables — Octopus pipeline order " +
+                "(DeployPackageCommand.cs:116-117). Transforms may ADD <appSettings> entries that " +
+                "ConfigurationVariables then rewrites by value; reversed order skips the new entries.");
+        configVarsIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "Both config-rewriting features must run BEFORE the IIS configure dispatch — IIS reads web.config when starting the site.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses
