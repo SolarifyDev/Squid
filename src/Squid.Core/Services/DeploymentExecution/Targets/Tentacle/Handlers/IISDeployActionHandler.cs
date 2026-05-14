@@ -31,7 +31,11 @@ public class IISDeployActionHandler : IActionHandler
 
         EnsureWindowsTentacleTarget(ctx);
 
-        var scriptBody = IISDeployScriptBuilder.Build(ctx.Action);
+        // Pass ctx.Variables so the builder emits the $SquidVariables hashtable —
+        // required by the .NET Configuration Variables feature (Phase 6) which looks up
+        // each <appSettings/add@key> + <connectionStrings/add@name> + <applicationSettings/setting@name>
+        // in $SquidVariables and replaces the in-file value when a Squid variable matches.
+        var scriptBody = IISDeployScriptBuilder.Build(ctx.Action, ctx.Variables);
 
         var intent = new RunScriptIntent
         {
