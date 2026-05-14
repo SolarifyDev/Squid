@@ -7,31 +7,35 @@ namespace Squid.WindowsTentacleE2ETests;
 
 /// <summary>
 /// Composite end-to-end test: stages a realistic <c>.NET</c> application artifact and
-/// exercises EVERY operator-facing feature of <c>Squid.DeployToIISWebSite</c> in a single
-/// deploy action. Mirrors the canonical Octopus operator workflow:
+/// exercises EVERY operator-facing feature of <c>Squid.DeployToIISWebSite</c> across a
+/// matrix of canonical operator workflows. Mirrors the way an Octopus operator would set
+/// up a single deploy step in real production:
 ///
 /// <list type="number">
-///   <item><b>Package extraction</b> — operator-staged <c>app.zip</c> extracted to <c>WebRoot</c>
-///         (with purge of prior files)</item>
-///   <item><b>PreDeploy custom script</b> — writes a sentinel file proving the hook fired</item>
-///   <item><b>SubstituteInFiles</b> — replaces <c>#{X}</c> tokens in <c>appsettings.json</c>
-///         (text-level substitution)</item>
-///   <item><b>ConfigurationTransforms (XDT)</b> — applies <c>web.Release.config</c> overlay
-///         to <c>web.config</c> via <c>Microsoft.Web.XmlTransform</c></item>
-///   <item><b>ConfigurationVariables</b> — replaces <c>&lt;appSettings/add@key&gt;</c> and
-///         <c>&lt;connectionStrings/add@name&gt;</c> in <c>web.config</c></item>
-///   <item><b>StructuredConfigurationVariables (JSON)</b> — replaces nested leaf values
-///         in <c>appsettings.json</c> using both <c>:</c> and <c>.</c> path separators</item>
-///   <item><b>IIS configure</b> — creates the site / app pool / bindings + applies all three
-///         auth toggles</item>
-///   <item><b>PostDeploy custom script</b> — writes a sentinel containing the live site
-///         state via <c>Get-Website</c></item>
+///   <item><b>Package extraction</b> with <c>PurgeBeforeExtract</c></item>
+///   <item><b>Inline + packaged PreDeploy / PostDeploy</b> custom-script hooks (1.6.9 P1-3)</item>
+///   <item><b>SubstituteInFiles</b> — <c>#{X}</c> tokens AND filter form <c>#{X | ToUpper}</c> (1.6.9 P0-3)</item>
+///   <item><b>ConfigurationTransforms (XDT)</b> — <c>web.Release.config</c> overlay</item>
+///   <item><b>ConfigurationVariables</b> — <c>appSettings/add@key</c> + <c>connectionStrings/add@name</c></item>
+///   <item><b>StructuredConfigurationVariables</b> — JSON nested-leaf replacement using BOTH
+///         <c>:</c> and <c>.</c> separators, AND 1.6.9 type-preserving substitution
+///         (int / bool / array) (P0-4)</item>
+///   <item><b>AdditionalPaths</b> — config file OUTSIDE <c>WebRoot</c> still rewritten (1.6.9 P1-4)</item>
+///   <item><b>Deployment journal idempotence</b> — second deploy with <c>SkipIfAlreadyInstalled=True</c>
+///         short-circuits without re-extracting (1.6.9 P0-2)</item>
+///   <item><b>IIS configure</b> — site, app pool, bindings, auth toggles</item>
 /// </list>
 ///
 /// <para>The test asserts the END STATE — every file's content, IIS metabase entries, sentinel
-/// contents — proving the eight phases compose correctly into a single coherent
-/// operator-facing deploy. This is the canonical "does the action work end-to-end on a real
-/// .NET artifact" question.</para>
+/// contents, journal file — proving the eleven phases compose correctly into a single coherent
+/// operator-facing deploy. This is the canonical "does the full action work end-to-end on a
+/// real .NET artifact with all 1.6.x features ON" question.</para>
+///
+/// <para><b>Why a composite test on top of per-feature tests?</b> The per-feature tests in
+/// <see cref="IISDeployRealHostE2ETests"/> exercise each feature in isolation. Real operators
+/// turn every checkbox ON at once. The composite test catches ordering bugs, variable-shadowing
+/// between rewriters, type-coercion side effects on adjacent JSON keys, etc. — bugs that pass
+/// the per-feature tier but break in production.</para>
 ///
 /// <para><b>Tier</b>: 🟢 High-fidelity. Real IIS, real PowerShell, real
 /// <c>Microsoft.Web.XmlTransform.dll</c>, real <c>appsettings.json</c> + <c>web.config</c>
@@ -42,7 +46,7 @@ namespace Squid.WindowsTentacleE2ETests;
 public sealed class IISDeployRealWorldDotNetAppE2ETests
 {
     [Fact]
-    public void RealWorld_FullDotNetAppDeploy_AllEightFeaturesComposeCorrectly()
+    public void RealWorld_FullDotNetAppDeploy_AllFeaturesAndIdempotence_ComposeCorrectly()
     {
         if (!OperatingSystem.IsWindows()) return;
         if (!IsIISInstalled()) return;
@@ -52,11 +56,14 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
 
         // ──── STAGE 1: Build the operator-facing .NET app artifact ─────────────────
         //
-        // Constructs an in-memory representation of a realistic ASP.NET / .NET Core
+        // Constructs an in-memory representation of a realistic ASP.NET Core 8.0
         // deployment package containing:
-        //   - appsettings.json (with tokens for SubstituteInFiles + nested keys for StructuredConfigurationVariables)
+        //   - appsettings.json (with tokens for SubstituteInFiles + nested keys for
+        //     StructuredConfigurationVariables, including TYPED values: int / bool / array
+        //     to exercise 1.6.9 P0-4 type-preservation)
         //   - web.config (with appSettings + connectionStrings for ConfigurationVariables)
         //   - web.Release.config (XDT transforms)
+        //   - PreDeploy.ps1 / PostDeploy.ps1 INSIDE the package (1.6.9 P1-3 packaged scripts)
         //   - index.html (proves recursive extraction works)
         //   - bin/ subdir with a fake DLL (proves nested-directory extraction)
         var artifactPath = StageNetAppArtifact(ctx);
@@ -66,36 +73,78 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         var stalePath = Path.Combine(ctx.PhysicalPath, "stale-from-previous-deploy.txt");
         File.WriteAllText(stalePath, "should be purged");
 
-        // Pre/PostDeploy hook witnesses.
-        var preDeploySentinel = ctx.RegisterSentinelPath("realworld-predeploy");
-        var postDeploySentinel = ctx.RegisterSentinelPath("realworld-postdeploy");
+        // Stage a config file OUTSIDE the WebRoot — AdditionalPaths must scan it (1.6.9 P1-4).
+        // Real-world use case: app stores secrets in `<install>/config/secrets.json` next to
+        // `<install>/wwwroot/`, NOT under WebRoot. Without AdditionalPaths the rewriters would
+        // miss it entirely.
+        var externalConfigDir = Path.Combine(Path.GetTempPath(), $"squid-iis-external-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(externalConfigDir);
+        ctx.RegisterTempDirForCleanup(externalConfigDir);
+        var externalConfigPath = Path.Combine(externalConfigDir, "secrets.json");
+        File.WriteAllText(externalConfigPath,
+            "{\n" +
+            "  \"ApiKey\": \"#{ExternalApiKey}\",\n" +
+            "  \"Region\": \"#{Region | ToUpper}\"\n" +
+            "}\n");
+
+        // Sentinel paths for the 4 custom-script hooks (inline + packaged × pre + post).
+        var inlinePreSentinel = ctx.RegisterSentinelPath("realworld-inline-predeploy");
+        var inlinePostSentinel = ctx.RegisterSentinelPath("realworld-inline-postdeploy");
+        var packagedPreSentinel = ctx.RegisterSentinelPath("realworld-packaged-predeploy");
+        var packagedPostSentinel = ctx.RegisterSentinelPath("realworld-packaged-postdeploy");
+
+        // Override the staging-time sentinel placeholders in the packaged scripts so they
+        // write to test-controlled paths.
+        OverridePackagedScriptSentinels(artifactPath, packagedPreSentinel, packagedPostSentinel);
 
         // ──── STAGE 2: Define the operator's Squid variable set ───────────────────
         //
-        // Variables fall into three groups, each consumed by a different rewriter:
+        // Six variable groups, each consumed by a different feature path:
         //
-        //   Group A — SubstituteInFiles (#{X} text tokens in appsettings.json):
-        //     - AppVersion        → "1.4.2"      (replaces `#{AppVersion}`)
-        //     - EnvironmentTag    → "Production" (replaces `#{EnvironmentTag}`)
+        //   Group A — SubstituteInFiles plain tokens (#{X}):
+        //     - AppVersion        → "1.4.2"
+        //     - EnvironmentTag    → "Production"
+        //     - ExternalApiKey    → "sk_live_xxx" (replaces token in external secrets.json via AdditionalPaths)
         //
-        //   Group B — ConfigurationVariables (XML <add key=...>/<add name=...> in web.config):
-        //     - ApiUrl            → URL          (replaces appSetting `value` for key="ApiUrl")
-        //     - OrdersDb          → connstr      (replaces connectionString for name="OrdersDb")
+        //   Group B — SubstituteInFiles FILTER form (#{X | Filter}) — 1.6.9 P0-3:
+        //     - Region            → "us-east-1"  (rendered as "US-EAST-1" via | ToUpper)
         //
-        //   Group C — StructuredConfigurationVariables (JSON nested leaves in appsettings.json):
+        //   Group C — ConfigurationVariables (XML <add key=...>/<add name=...> in web.config):
+        //     - ApiUrl            → URL
+        //     - OrdersDb          → connstr
+        //
+        //   Group D — StructuredConfigurationVariables nested leaves in appsettings.json,
+        //             string values:
         //     - Logging:LogLevel:Default → "Debug"      (colon path — .NET Core style)
         //     - ConnectionStrings.CacheDb → "...cache"  (dot path — .NET Framework style)
+        //
+        //   Group E — StructuredConfigurationVariables 1.6.9 P0-4 type preservation:
+        //     - MaxThreads        → "8"          (parsed as int, NOT "8" string)
+        //     - EnableSwagger     → "false"      (parsed as bool, NOT "false" string)
+        //     - Hosts             → '["a","b"]'  (parsed as JSON array, NOT "...string")
+        //
+        //   Group F — Variables intentionally unused (proves the variable set tolerates noise):
+        //     - UnusedVariable    → "ignored"
         var variables = new List<VariableDto>
         {
             // Group A
             new() { Name = "AppVersion", Value = "1.4.2" },
             new() { Name = "EnvironmentTag", Value = "Production" },
-            // Group B
+            new() { Name = "ExternalApiKey", Value = "sk_live_xxx" },
+            // Group B (filter form)
+            new() { Name = "Region", Value = "us-east-1" },
+            // Group C
             new() { Name = "ApiUrl", Value = "https://api.prod.example.com/v2" },
             new() { Name = "OrdersDb", Value = "Server=prod-db-cluster;Database=Orders;Integrated Security=True" },
-            // Group C — note the variable NAMES use both separators to prove both are accepted
+            // Group D
             new() { Name = "Logging:LogLevel:Default", Value = "Debug" },
-            new() { Name = "ConnectionStrings.CacheDb", Value = "Redis=cache-prod-1.local:6379" }
+            new() { Name = "ConnectionStrings.CacheDb", Value = "Redis=cache-prod-1.local:6379" },
+            // Group E — 1.6.9 P0-4 type preservation
+            new() { Name = "MaxThreads", Value = "8" },
+            new() { Name = "EnableSwagger", Value = "false" },
+            new() { Name = "Hosts", Value = "[\"a.example.com\",\"b.example.com\"]" },
+            // Group F (noise)
+            new() { Name = "UnusedVariable", Value = "ignored" }
         };
 
         // ──── STAGE 3: Build the action with EVERY feature toggle ON ──────────────
@@ -121,13 +170,13 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             (Property.EnableWindowsAuthentication, "True"),
             (Property.StartApplicationPool, "True"),
             (Property.StartWebSite, "True"),
-            // — Custom scripts (Phase 5) —
+            // — Custom scripts (Phase 5 + 1.6.9 P1-3 packaged scripts) —
             (Property.CustomScriptsPreDeploy,
-                $"Set-Content -Path '{preDeploySentinel}' -Value 'predeploy-fired-at-' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"),
+                $"Set-Content -Path '{inlinePreSentinel}' -Value 'inline-predeploy-fired'"),
             (Property.CustomScriptsPostDeploy,
                 $"$site = Get-Website -Name '{ctx.SiteName}'; " +
-                $"Set-Content -Path '{postDeploySentinel}' -Value \"postdeploy-saw-site-state=$($site.State)\""),
-            // — SubstituteInFiles (Phase 8) —
+                $"Set-Content -Path '{inlinePostSentinel}' -Value \"inline-postdeploy-saw-site-state=$($site.State)\""),
+            // — SubstituteInFiles (Phase 8 + 1.6.9 P0-3 filter form) —
             (Property.SubstituteInFilesEnabled, "True"),
             (Property.SubstituteInFilesTargetFiles, "appsettings.json"),
             // — ConfigurationTransforms / XDT (Phase 7) —
@@ -135,23 +184,29 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             (Property.ConfigurationTransformsEnvironmentName, "Production"),
             // — ConfigurationVariables (Phase 6) —
             (Property.ConfigurationVariablesEnabled, "True"),
-            // — StructuredConfigurationVariables / JSON (Phase 9) —
+            // — StructuredConfigurationVariables / JSON (Phase 9 + 1.6.9 P0-4 type preservation) —
             (Property.StructuredConfigurationVariablesEnabled, "True"),
-            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"),
+            // — 1.6.9 P1-4: AdditionalPaths (rewriters scan external dir too) —
+            (Property.AdditionalPaths, externalConfigDir),
+            // — 1.6.9 P0-2: Deployment-journal short-circuit. We turn this ON to capture
+            //   that the first run writes a Success entry — the SECOND run later in this
+            //   test (stage 14) verifies the short-circuit.
+            (Property.PackageSkipIfAlreadyInstalled, "True"));
 
-        // ──── STAGE 4: Build + run the deploy script ──────────────────────────────
+        // ──── STAGE 4: Build + run the FIRST deploy script ────────────────────────
         var script = IISDeployScriptBuilder.Build(action, variables);
-        var result = RunPowerShell(script);
+        var firstRun = RunPowerShell(script);
 
-        result.ExitCode.ShouldBe(0,
+        firstRun.ExitCode.ShouldBe(0,
             customMessage:
-                "Full real-world deploy failed — at least one of the 8 features broke. " +
+                "Full real-world deploy failed — at least one of the 11 features broke. " +
                 "Triage steps:\n" +
                 $"  1. Inspect STDOUT for which phase wrote the last Write-Host line\n" +
-                $"  2. Check sentinel files: predeploy '{preDeploySentinel}', postdeploy '{postDeploySentinel}'\n" +
+                $"  2. Check sentinel files: inline pre/post {inlinePreSentinel} / {inlinePostSentinel}\n" +
                 $"  3. `Get-Website -Name '{ctx.SiteName}'` to check IIS metabase\n" +
                 $"  4. `Get-ChildItem '{ctx.PhysicalPath}' -Recurse` to inspect WebRoot contents\n\n" +
-                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+                $"STDOUT:\n{firstRun.StdOut}\n\nSTDERR:\n{firstRun.StdErr}");
 
         // ──── STAGE 5: Verify Package Extraction ──────────────────────────────────
         File.Exists(stalePath).ShouldBeFalse(
@@ -163,14 +218,20 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         File.Exists(Path.Combine(ctx.PhysicalPath, "bin", "OrderApi.dll")).ShouldBeTrue(
             customMessage: "Nested bin/OrderApi.dll missing — recursive extraction broken.");
 
-        // ──── STAGE 6: Verify Custom PreDeploy Script Fired ───────────────────────
-        File.Exists(preDeploySentinel).ShouldBeTrue(
-            customMessage: $"PreDeploy sentinel '{preDeploySentinel}' missing — custom PreDeploy script didn't run.");
+        // ──── STAGE 6: Verify all 4 Custom-Script hooks fired in the right order ──
+        File.Exists(inlinePreSentinel).ShouldBeTrue(
+            customMessage: $"Inline PreDeploy sentinel '{inlinePreSentinel}' missing — configured PreDeploy didn't run.");
+        File.ReadAllText(inlinePreSentinel).Trim().ShouldBe("inline-predeploy-fired");
 
-        File.ReadAllText(preDeploySentinel).ShouldStartWith("predeploy-fired-at-",
-            customMessage: "PreDeploy sentinel content doesn't match expected format — script body may have been mangled.");
+        File.Exists(packagedPreSentinel).ShouldBeTrue(
+            customMessage: $"Packaged PreDeploy sentinel '{packagedPreSentinel}' missing — PreDeploy.ps1 inside the package didn't fire (1.6.9 P1-3).");
 
-        // ──── STAGE 7: Verify SubstituteInFiles (#{X} tokens) ─────────────────────
+        File.Exists(inlinePostSentinel).ShouldBeTrue(
+            customMessage: "Inline PostDeploy sentinel missing.");
+        File.Exists(packagedPostSentinel).ShouldBeTrue(
+            customMessage: "Packaged PostDeploy sentinel missing (1.6.9 P1-3).");
+
+        // ──── STAGE 7: Verify SubstituteInFiles plain tokens (#{X}) ───────────────
         var renderedAppSettings = File.ReadAllText(Path.Combine(ctx.PhysicalPath, "appsettings.json"));
 
         renderedAppSettings.ShouldContain("\"OrderApi v1.4.2\"",
@@ -179,6 +240,17 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             customMessage: "#{EnvironmentTag} token NOT replaced.");
         renderedAppSettings.ShouldNotContain("#{AppVersion}");
         renderedAppSettings.ShouldNotContain("#{EnvironmentTag}");
+
+        // ──── STAGE 7b: Verify SubstituteInFiles FILTER form (1.6.9 P0-3) ─────────
+        // `#{Region | ToUpper}` should render the lower-case "us-east-1" as "US-EAST-1".
+        renderedAppSettings.ShouldContain("\"US-EAST-1\"",
+            customMessage:
+                $"#{{Region | ToUpper}} filter did NOT apply — expected 'US-EAST-1' (upper-cased). " +
+                $"appsettings.json content:\n{renderedAppSettings}");
+        renderedAppSettings.ShouldNotContain("us-east-1",
+            customMessage: "Lower-case 'us-east-1' still present — filter chain didn't apply.");
+        renderedAppSettings.ShouldNotContain("#{Region",
+            customMessage: "#{Region | ToUpper} token left intact — filter parsing broke.");
 
         // ──── STAGE 8: Verify StructuredConfigurationVariables (JSON nested) ──────
         // Logging:LogLevel:Default — colon path, .NET Core style
@@ -192,6 +264,33 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             customMessage: "ConnectionStrings.CacheDb nested leaf NOT replaced via dot path. " +
                           "Confirms dot-separator path matching is working.");
         renderedAppSettings.ShouldNotContain("Server=cache-localhost");
+
+        // ──── STAGE 8b: Verify 1.6.9 P0-4 JSON type preservation ──────────────────
+        // MaxThreads variable is "8" (string). After type-preserving substitution the JSON
+        // value MUST be the unquoted integer `8`, not the string `"8"`. Real .NET apps
+        // bind to `int MaxThreads { get; set; }` — a string-typed value here triggers
+        // JsonException at startup.
+        renderedAppSettings.ShouldMatch("\"MaxThreads\":\\s*8\\b",
+            customMessage:
+                $"MaxThreads must be unquoted int '8' (NOT '\"8\"'). 1.6.9 P0-4 type preservation broken. " +
+                $"appsettings.json content:\n{renderedAppSettings}");
+        renderedAppSettings.ShouldNotContain("\"MaxThreads\": \"8\"",
+            customMessage: "MaxThreads is a quoted string — type-preservation failed for int.");
+
+        // EnableSwagger — "false" string → unquoted bool false
+        renderedAppSettings.ShouldMatch("\"EnableSwagger\":\\s*false\\b",
+            customMessage:
+                $"EnableSwagger must be unquoted bool 'false'. .NET would throw JsonException if it sees '\"false\"' string. " +
+                $"appsettings.json content:\n{renderedAppSettings}");
+        renderedAppSettings.ShouldNotContain("\"EnableSwagger\": \"false\"");
+
+        // Hosts — JSON array '["a.example.com","b.example.com"]' must be a real array
+        renderedAppSettings.ShouldMatch("\"Hosts\":\\s*\\[",
+            customMessage:
+                $"Hosts must be a real JSON array. .NET binds 'string[] Hosts' — string-encoded array throws. " +
+                $"appsettings.json content:\n{renderedAppSettings}");
+        renderedAppSettings.ShouldContain("\"a.example.com\"");
+        renderedAppSettings.ShouldContain("\"b.example.com\"");
 
         // ──── STAGE 9: Verify ConfigurationTransforms (XDT) ───────────────────────
         var renderedWebConfig = File.ReadAllText(Path.Combine(ctx.PhysicalPath, "web.config"));
@@ -215,7 +314,18 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             customMessage: "OrdersDb connectionString didn't get replaced by ConfigurationVariables.");
         renderedWebConfig.ShouldNotContain("Server=local-db");
 
-        // ──── STAGE 11: Verify IIS Configure (the leaf) ───────────────────────────
+        // ──── STAGE 11: Verify AdditionalPaths external rewrite (1.6.9 P1-4) ──────
+        // The secrets.json file at externalConfigDir is OUTSIDE WebRoot. Without AdditionalPaths
+        // the rewriters would have skipped it entirely.
+        var renderedExternalSecrets = File.ReadAllText(externalConfigPath);
+        renderedExternalSecrets.ShouldContain("\"ApiKey\": \"sk_live_xxx\"",
+            customMessage:
+                $"ExternalApiKey token NOT replaced in external file '{externalConfigPath}'. " +
+                $"1.6.9 P1-4 AdditionalPaths broke — rewriters not scanning external dir. Content:\n{renderedExternalSecrets}");
+        renderedExternalSecrets.ShouldContain("\"Region\": \"US-EAST-1\"",
+            customMessage: "Filter form `#{Region | ToUpper}` didn't render in external file — confirms AdditionalPaths threads both plain + filter substitution.");
+
+        // ──── STAGE 12: Verify IIS Configure ──────────────────────────────────────
         var siteExists = PowerShellSingleLine(
             $"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}");
         siteExists.ShouldBe("true",
@@ -238,18 +348,66 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         bindingInfo.ShouldContain($":{ctx.HttpPort}:",
             customMessage: $"HTTP binding on port {ctx.HttpPort} missing — Bindings JSON didn't apply.");
 
-        // ──── STAGE 12: Verify Custom PostDeploy Script Fired AFTER IIS Configure ──
-        // PostDeploy is the canary that proves ordering: it ran AFTER the IIS configure
-        // because it queried Get-Website and saw the site in "Started" state.
-        File.Exists(postDeploySentinel).ShouldBeTrue(
-            customMessage: $"PostDeploy sentinel '{postDeploySentinel}' missing — PostDeploy didn't fire.");
-
-        var postDeployContent = File.ReadAllText(postDeploySentinel).Trim();
-        postDeployContent.ShouldBe("postdeploy-saw-site-state=Started",
+        // ──── STAGE 13: Verify inline PostDeploy fired AFTER IIS Configure ────────
+        var inlinePostContent = File.ReadAllText(inlinePostSentinel).Trim();
+        inlinePostContent.ShouldBe("inline-postdeploy-saw-site-state=Started",
             customMessage:
-                $"PostDeploy observed site state '{postDeployContent}' — expected 'postdeploy-saw-site-state=Started'. " +
-                "If the value is 'Stopped' or empty, PostDeploy ran BEFORE the IIS configure (ordering broken). " +
-                "If sentinel content is malformed, the script body got mangled (escape issue).");
+                $"Inline PostDeploy observed site state '{inlinePostContent}' — expected '...=Started'. " +
+                "If 'Stopped'/empty, PostDeploy ran BEFORE IIS configure (ordering broken).");
+
+        // ──── STAGE 14: Journal idempotence — SECOND deploy must short-circuit ────
+        // 1.6.9 P0-2: with SkipIfAlreadyInstalled=True, the next deploy with the same
+        // package fingerprint + WebRoot should write "Skipping this deploy" and exit 0
+        // WITHOUT re-extracting, re-rewriting, or re-running any custom scripts.
+        //
+        // The witness: re-stage a stale marker that would normally be purged by stage 1's
+        // PurgeBeforeExtract, then run again. The marker MUST survive the second run if
+        // the journal short-circuit fired correctly.
+        var idempotenceWitness = Path.Combine(ctx.PhysicalPath, "should-survive-second-run.txt");
+        File.WriteAllText(idempotenceWitness, "second-run-marker");
+
+        File.Delete(inlinePreSentinel);   // clear so we can detect re-fire
+        File.Delete(inlinePostSentinel);
+
+        var secondRun = RunPowerShell(script);
+
+        secondRun.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Second (idempotent) deploy failed. SkipIfAlreadyInstalled should short-circuit when journal " +
+                $"matches. STDOUT:\n{secondRun.StdOut}\n\nSTDERR:\n{secondRun.StdErr}");
+
+        secondRun.StdOut.ShouldContain("SkipIfAlreadyInstalled: prior deploy",
+            customMessage:
+                "Second deploy did NOT short-circuit — journal idempotence broken. The deploy re-extracted " +
+                "and re-ran the rewriters, defeating the purpose of SkipIfAlreadyInstalled.");
+
+        File.Exists(idempotenceWitness).ShouldBeTrue(
+            customMessage:
+                "Second deploy purged the WebRoot — proves the short-circuit didn't fire. " +
+                "The witness file should have survived because no extraction should have happened.");
+
+        File.Exists(inlinePreSentinel).ShouldBeFalse(
+            customMessage: "Inline PreDeploy fired on second deploy — short-circuit should bypass ALL custom scripts.");
+
+        File.Exists(inlinePostSentinel).ShouldBeFalse(
+            customMessage: "Inline PostDeploy fired on second deploy — short-circuit should bypass ALL custom scripts.");
+
+        // Verify a journal file was written under %PROGRAMDATA%\Squid\IISDeploy\journal\
+        var journalDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "Squid", "IISDeploy", "journal");
+        var journalFile = Path.Combine(journalDir, $"{ctx.SiteName}.json");
+        ctx.RegisterTempDirForCleanup(journalFile);
+        File.Exists(journalFile).ShouldBeTrue(
+            customMessage:
+                $"Journal entry '{journalFile}' not written by first deploy. " +
+                $"Without a journal entry, SkipIfAlreadyInstalled has nothing to compare against.");
+
+        var journalText = File.ReadAllText(journalFile);
+        journalText.ShouldContain("\"Status\": \"Success\"",
+            customMessage: $"Journal entry has wrong Status — expected 'Success'. Content:\n{journalText}");
+        journalText.ShouldContain("\"Fingerprint\"",
+            customMessage: "Journal entry missing Fingerprint field.");
 
         ctx.MarkClean();
     }
@@ -257,16 +415,21 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
     /// <summary>
     /// Stages a realistic <c>.NET</c> application package on disk and returns the path to the
     /// resulting <c>.zip</c> archive. The package contents are designed to exercise every
-    /// rewriter in the IIS deploy pipeline:
+    /// rewriter in the IIS deploy pipeline including the 1.6.9 additions:
     ///
     /// <list type="bullet">
-    ///   <item><c>appsettings.json</c> — contains <c>#{AppVersion}</c> tokens (consumed by
-    ///         SubstituteInFiles) AND nested values like <c>Logging.LogLevel.Default</c>
-    ///         (consumed by StructuredConfigurationVariables)</item>
-    ///   <item><c>web.config</c> — contains <c>&lt;appSettings/add@key&gt;</c> entries for
-    ///         ApiUrl (matched by ConfigurationVariables) and MaxRetries (transformed by XDT);
-    ///         plus a <c>&lt;connectionStrings/add@name&gt;</c> for OrdersDb</item>
+    ///   <item><c>appsettings.json</c> — contains <c>#{X}</c> tokens (SubstituteInFiles plain),
+    ///         a <c>#{X | Filter}</c> token (1.6.9 P0-3), nested string values
+    ///         (StructuredConfigurationVariables string), AND typed leaves
+    ///         (<c>MaxThreads</c>, <c>EnableSwagger</c>, <c>Hosts</c>) that 1.6.9 P0-4
+    ///         type-preservation must keep unquoted</item>
+    ///   <item><c>web.config</c> — <c>&lt;appSettings/add@key&gt;</c> entries for
+    ///         ApiUrl (ConfigurationVariables) and MaxRetries (XDT); plus a
+    ///         <c>&lt;connectionStrings/add@name&gt;</c> for OrdersDb</item>
     ///   <item><c>web.Release.config</c> — XDT overlay that changes MaxRetries to 10</item>
+    ///   <item><c>PreDeploy.ps1</c> / <c>PostDeploy.ps1</c> at package root — Octopus
+    ///         <c>PackagedScriptBehaviour</c> parity (1.6.9 P1-3). Sentinel paths are
+    ///         placeholders that the caller rewrites after staging.</item>
     ///   <item><c>index.html</c> — proves recursive extraction</item>
     ///   <item><c>bin/OrderApi.dll</c> — proves nested-directory extraction (empty file)</item>
     /// </list>
@@ -278,12 +441,13 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         Directory.CreateDirectory(Path.Combine(stagingDir, "bin"));
         ctx.RegisterTempDirForCleanup(stagingDir);
 
-        // appsettings.json — designed for BOTH SubstituteInFiles (text tokens at top)
-        // AND StructuredConfigurationVariables (nested JSON values at bottom).
+        // appsettings.json — designed for SubstituteInFiles (plain + filter), nested-string
+        // StructuredConfigurationVariables, AND typed StructuredConfigurationVariables (1.6.9 P0-4).
         File.WriteAllText(Path.Combine(stagingDir, "appsettings.json"),
             "{\n" +
             "  \"ApplicationName\": \"OrderApi v#{AppVersion}\",\n" +
             "  \"Environment\": \"#{EnvironmentTag}\",\n" +
+            "  \"DeployRegion\": \"#{Region | ToUpper}\",\n" +
             "  \"Logging\": {\n" +
             "    \"LogLevel\": {\n" +
             "      \"Default\": \"Information\"\n" +
@@ -291,13 +455,13 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             "  },\n" +
             "  \"ConnectionStrings\": {\n" +
             "    \"CacheDb\": \"Server=cache-localhost\"\n" +
-            "  }\n" +
+            "  },\n" +
+            "  \"MaxThreads\": 4,\n" +
+            "  \"EnableSwagger\": true,\n" +
+            "  \"Hosts\": [\"localhost\"]\n" +
             "}\n");
 
         // web.config — for ConfigurationVariables (appSettings + connectionStrings).
-        // MaxRetries=3 here will get OVERRIDDEN by web.Release.config's XDT to 10.
-        // ApiUrl=https://localhost/api will get overridden by ConfigurationVariables to the
-        // Squid variable's value. OrdersDb connectionString gets replaced similarly.
         File.WriteAllText(Path.Combine(stagingDir, "web.config"),
             "<?xml version=\"1.0\"?>\n" +
             "<configuration>\n" +
@@ -310,8 +474,7 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             "  </connectionStrings>\n" +
             "</configuration>\n");
 
-        // web.Release.config — XDT transform. Only touches MaxRetries to avoid
-        // overlapping with the ConfigurationVariables rewriter (which handles ApiUrl).
+        // web.Release.config — XDT transform. Only touches MaxRetries.
         File.WriteAllText(Path.Combine(stagingDir, "web.Release.config"),
             "<?xml version=\"1.0\"?>\n" +
             "<configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">\n" +
@@ -320,6 +483,16 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
             "         xdt:Transform=\"SetAttributes(value)\" xdt:Locator=\"Match(key)\" />\n" +
             "  </appSettings>\n" +
             "</configuration>\n");
+
+        // Packaged PreDeploy.ps1 — 1.6.9 P1-3. Operator ships hooks inside the package.
+        // We write a placeholder sentinel path that the caller (StageNetAppArtifact's
+        // invoker) rewrites after zipping. The placeholder convention is unique enough
+        // that no real script body would contain it.
+        File.WriteAllText(Path.Combine(stagingDir, "PreDeploy.ps1"),
+            "Set-Content -Path '__PACKAGED_PREDEPLOY_SENTINEL__' -Value 'packaged-predeploy-fired'\n");
+
+        File.WriteAllText(Path.Combine(stagingDir, "PostDeploy.ps1"),
+            "Set-Content -Path '__PACKAGED_POSTDEPLOY_SENTINEL__' -Value 'packaged-postdeploy-fired'\n");
 
         // Plain HTML — no rewriters touch it; proves extraction without modification.
         File.WriteAllText(Path.Combine(stagingDir, "index.html"),
@@ -331,9 +504,41 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
 
         // Zip it up.
         var zipPath = Path.Combine(Path.GetTempPath(), $"squid-iis-app-{Guid.NewGuid():N}.zip");
-        ctx.RegisterTempDirForCleanup(zipPath);   // single-file path; Dispose handles non-dir cleanup gracefully
+        ctx.RegisterTempDirForCleanup(zipPath);
         ZipFile.CreateFromDirectory(stagingDir, zipPath);
         return zipPath;
+    }
+
+    /// <summary>
+    /// Rewrites the placeholder sentinel paths embedded inside the packaged PreDeploy.ps1 /
+    /// PostDeploy.ps1 (staged with literal <c>__PACKAGED_PREDEPLOY_SENTINEL__</c> placeholders)
+    /// to the test-controlled paths. Done in-place on the zip — unzips, edits, re-zips —
+    /// because we can't know the sentinel paths at staging time (they depend on the test's
+    /// <c>IISTestContext</c> instance which exists at runtime).
+    /// </summary>
+    private static void OverridePackagedScriptSentinels(string zipPath, string preSentinel, string postSentinel)
+    {
+        var workDir = Path.Combine(Path.GetTempPath(), $"squid-iis-zip-rewrite-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDir);
+        try
+        {
+            ZipFile.ExtractToDirectory(zipPath, workDir);
+
+            var preScript = Path.Combine(workDir, "PreDeploy.ps1");
+            File.WriteAllText(preScript,
+                File.ReadAllText(preScript).Replace("__PACKAGED_PREDEPLOY_SENTINEL__", preSentinel));
+
+            var postScript = Path.Combine(workDir, "PostDeploy.ps1");
+            File.WriteAllText(postScript,
+                File.ReadAllText(postScript).Replace("__PACKAGED_POSTDEPLOY_SENTINEL__", postSentinel));
+
+            File.Delete(zipPath);
+            ZipFile.CreateFromDirectory(workDir, zipPath);
+        }
+        finally
+        {
+            try { Directory.Delete(workDir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
     // ── Helpers (mirror the ones in IISDeployRealHostE2ETests; duplicated here for
@@ -435,6 +640,9 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         public const string StructuredConfigurationVariablesTargets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
         public const string PackageSourcePath = "Squid.Action.IISWebSite.Package.SourcePath";
         public const string PackagePurgeBeforeExtract = "Squid.Action.IISWebSite.Package.PurgeBeforeExtract";
+        // 1.6.9 additions
+        public const string AdditionalPaths = "Squid.Action.IISWebSite.AdditionalPaths";
+        public const string PackageSkipIfAlreadyInstalled = "Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled";
     }
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
@@ -526,7 +734,7 @@ public sealed class IISDeployRealWorldDotNetAppE2ETests
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         // Composite deploy may take a few seconds longer than per-feature tests because every
-        // hook fires. 3 minutes is generous.
+        // hook fires + we run it TWICE for idempotence. 3 minutes is generous.
         process.WaitForExit(TimeSpan.FromMinutes(3));
 
         return new PsResult(process.ExitCode, stdout, stderr);
