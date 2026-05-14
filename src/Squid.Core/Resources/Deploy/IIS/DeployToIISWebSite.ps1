@@ -1323,17 +1323,34 @@ function Update-IISFilesWithVariableSubstitution {
 				continue
 			}
 
-			# Replace #{VariableName} tokens. Allows dots/hyphens/underscores in names (matches
-			# Octopus's Octostache simple-variable form). Tokens with no matching Squid variable
-			# are left intact (Octopus parity — unresolved tokens flow through, operators see
-			# the unresolved token in the deployed file and can fix the variable spec).
-			$newContent = [regex]::Replace($content, '#\{([A-Za-z0-9_.\-]+)\}', {
+			# Replace `#{VariableName}` and `#{VariableName | Filter}` tokens. Mirrors a subset
+			# of Octostache (1.6.9 P0-3): supports the simple-variable form + the most common
+			# filters (ToUpper, ToLower, Trim, ToBase64, FromBase64, HtmlEscape, UrlEncode).
+			# `#{if}` and `#{each}` conditionals/iteration deferred to a follow-up. Tokens with
+			# no matching Squid variable are left intact.
+			$newContent = [regex]::Replace($content, '#\{([A-Za-z0-9_.\-]+)(\s*\|\s*([A-Za-z0-9]+))?\}', {
 				param($match)
 				$varName = $match.Groups[1].Value
-				if ($Variables.ContainsKey($varName)) {
-					return [string]$Variables[$varName]
+				$filterName = if ($match.Groups[3].Success) { $match.Groups[3].Value } else { $null }
+
+				if (-not $Variables.ContainsKey($varName)) { return $match.Value }
+				$raw = [string]$Variables[$varName]
+
+				if ([string]::IsNullOrEmpty($filterName)) { return $raw }
+
+				switch ($filterName.ToLowerInvariant()) {
+					'toupper'    { return $raw.ToUpperInvariant() }
+					'tolower'    { return $raw.ToLowerInvariant() }
+					'trim'       { return $raw.Trim() }
+					'tobase64'   { return [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($raw)) }
+					'frombase64' { try { return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($raw)) } catch { return $raw } }
+					'htmlescape' { return [System.Net.WebUtility]::HtmlEncode($raw) }
+					'urlencode'  { return [System.Net.WebUtility]::UrlEncode($raw) }
+					default {
+						Write-Warning "SubstituteInFiles: unknown filter '$filterName' for #{$varName | $filterName}. Leaving token unresolved."
+						return $match.Value
+					}
 				}
-				return $match.Value
 			})
 
 			if ($newContent -ne $content) {

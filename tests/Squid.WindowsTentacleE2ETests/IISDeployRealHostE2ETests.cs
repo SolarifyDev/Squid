@@ -1943,6 +1943,88 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Octostache filters in SubstituteInFiles (1.6.9 P0-3) ─────────────────
+
+    [Theory]
+    [InlineData("#{Name | ToUpper}", "world", "WORLD")]
+    [InlineData("#{Name | ToLower}", "WORLD", "world")]
+    [InlineData("#{Name | Trim}", "  hello  ", "hello")]
+    [InlineData("#{Name | ToBase64}", "hi", "aGk=")]
+    [InlineData("#{Name | FromBase64}", "aGk=", "hi")]
+    [InlineData("#{Name | HtmlEscape}", "<a>", "&lt;a&gt;")]
+    [InlineData("#{Name | UrlEncode}", "a b", "a+b")]
+    public void RealIIS_SubstituteInFiles_OctostacheFilter_AppliedCorrectly(string token, string variableValue, string expected)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var filePath = Path.Combine(ctx.PhysicalPath, "config.txt");
+        File.WriteAllText(filePath, $"value={token}");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "Name", Value = variableValue }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "config.txt"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Filter deploy failed: {result.StdErr}");
+
+        var rendered = File.ReadAllText(filePath);
+        rendered.ShouldBe($"value={expected}",
+            customMessage: $"Filter '{token}' didn't produce expected '{expected}'. Got: '{rendered}'");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_SubstituteInFiles_UnknownFilter_TokenLeftAsLiteralWithWarning()
+    {
+        // Operators using a filter we don't yet support get the token left intact (warned to
+        // stdout for triage). Matches Octopus's "unknown filter = preserve" semantic.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var filePath = Path.Combine(ctx.PhysicalPath, "config.txt");
+        File.WriteAllText(filePath, "value=#{Name | UnknownFilter}");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "Name", Value = "irrelevant" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "config.txt"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Unknown-filter deploy failed: {result.StdErr}");
+
+        File.ReadAllText(filePath).ShouldContain("#{Name | UnknownFilter}",
+            customMessage: "Unknown filter should leave token intact (not crash, not silently replace).");
+    }
+
     // ── JSON arrays + type preservation (1.6.9 P0-4) ─────────────────────────
 
     [Fact]
