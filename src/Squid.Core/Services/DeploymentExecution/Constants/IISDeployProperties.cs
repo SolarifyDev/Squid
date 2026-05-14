@@ -120,6 +120,26 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Deployment journal + SkipIfAlreadyInstalled (P0-2, 1.6.9) ─────────────
+    //
+    // Mirrors Octopus's `Octopus.Action.Package.SkipIfAlreadyInstalled` flag
+    // (`KnownVariables.cs:86`) + `AlreadyInstalledConvention` + `IDeploymentJournalWriter`.
+    // When enabled, the deploy script:
+    //   1. Computes a fingerprint of the package (SHA256 of source path + WebRoot)
+    //   2. Reads the deployment journal at `%PROGRAMDATA%\Squid\IISDeploy\journal\<siteName>.json`
+    //   3. If the journal's last successful entry matches the current fingerprint → exit 0 with
+    //      "already-installed; skipping" message. No extraction, no rewriting, no IIS reconfig
+    //   4. Otherwise: deploy normally. Write a journal entry at end (success status)
+    //
+    // Reduces re-deploy cycle time from ~minutes to ~seconds for idempotent re-runs.
+
+    /// <summary>
+    /// When <c>"True"</c>, the deploy script short-circuits if the deployment journal records
+    /// a prior successful deploy with the same package fingerprint + WebRoot. Default (unset /
+    /// non-True) always re-runs the deploy fresh.
+    /// </summary>
+    internal const string PackageSkipIfAlreadyInstalled = "Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled";
+
     // ── Certificate auto-import + private-key ACL (P0-1, 1.6.9) ───────────────
     //
     // Operator-friendly HTTPS deploys without manual cert staging. Operator stores the PFX

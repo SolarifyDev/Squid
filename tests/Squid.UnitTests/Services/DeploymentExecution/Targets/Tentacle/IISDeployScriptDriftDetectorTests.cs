@@ -580,6 +580,45 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "Private-key ACL grant must run AFTER IIS configure dispatch — AppPool's synthetic identity exists only after pool is created.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 has deployment journal helpers + SkipIfAlreadyInstalled
+    /// gate (P0-2, 1.6.9). Mirrors Octopus's AlreadyInstalledConvention.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasDeploymentJournalAndSkipIfAlreadyInstalledGate_ForOctopusAlreadyInstalledParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Get-IISDeployJournalPath");
+        ourScript.ShouldContain("function Get-IISDeployFingerprint");
+        ourScript.ShouldContain("function Read-IISDeployJournalEntry");
+        ourScript.ShouldContain("function Write-IISDeployJournalEntry");
+
+        // Journal location: %PROGRAMDATA%\Squid\IISDeploy\journal — machine-wide, persists.
+        ourScript.ShouldContain("$env:ProgramData",
+            customMessage: "Journal must persist under %PROGRAMDATA% so it survives reboots + spans deployments.");
+        ourScript.ShouldContain("Squid\\IISDeploy\\journal",
+            customMessage: "Journal namespace mismatch.");
+
+        // Skip-gate triggers on SkipIfAlreadyInstalled=True + matching fingerprint.
+        ourScript.ShouldContain("'Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled'");
+        ourScript.ShouldContain("Skipping this deploy",
+            customMessage: "Skip-gate exit message missing — operators rely on this log line.");
+
+        // Order: skip gate must come BEFORE any work (cert import, package extract, etc.)
+        var skipGateIdx = ourScript.IndexOf("SkipIfAlreadyInstalled: prior deploy at", StringComparison.Ordinal);
+        var certImportIdx = ourScript.IndexOf("Import-IISCertificateFromPfxBase64 -Base64", StringComparison.Ordinal);
+        var packageExtractIdx = ourScript.IndexOf("Expand-IISPackage", StringComparison.Ordinal);
+
+        skipGateIdx.ShouldBeLessThan(certImportIdx,
+            customMessage: "SkipIfAlreadyInstalled gate must run BEFORE cert auto-import (don't import a cert just to skip).");
+        skipGateIdx.ShouldBeLessThan(packageExtractIdx,
+            customMessage: "SkipIfAlreadyInstalled gate must run BEFORE package extraction (the whole point is to avoid the work).");
+
+        // Journal write at end (after PostDeploy) — only on success path.
+        ourScript.ShouldContain("Write-IISDeployJournalEntry -SiteName $journalSiteName -Fingerprint $journalFingerprint -Status 'Success'");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

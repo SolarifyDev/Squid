@@ -110,6 +110,9 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.CertificatePfxBase64,
         IISDeployProperties.CertificatePfxPassword,
         IISDeployProperties.CertificateThumbprintVariableName,
+
+        // Deployment journal + SkipIfAlreadyInstalled (P0-2, 1.6.9)
+        IISDeployProperties.PackageSkipIfAlreadyInstalled,
     };
 
     internal static string Build(DeploymentActionDto action)
