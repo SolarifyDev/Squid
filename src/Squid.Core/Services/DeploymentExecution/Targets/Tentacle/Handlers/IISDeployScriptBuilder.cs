@@ -113,6 +113,9 @@ internal static class IISDeployScriptBuilder
 
         // Deployment journal + SkipIfAlreadyInstalled (P0-2, 1.6.9)
         IISDeployProperties.PackageSkipIfAlreadyInstalled,
+
+        // AdditionalPaths across all 4 rewriters (P1-4, 1.6.9)
+        IISDeployProperties.AdditionalPaths,
     };
 
     internal static string Build(DeploymentActionDto action)
@@ -166,6 +169,8 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.SubstituteInFilesTargetFiles,
         // StructuredConfigurationVariables.Targets is also a newline-separated glob list.
         IISDeployProperties.StructuredConfigurationVariablesTargets,
+        // AdditionalPaths is a newline-separated list of dirs.
+        IISDeployProperties.AdditionalPaths,
     };
 
     private static string BuildPreamble(DeploymentActionDto action, IReadOnlyList<VariableDto> variables)

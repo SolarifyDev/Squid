@@ -1943,6 +1943,107 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── AdditionalPaths (1.6.9 P1-4) ─────────────────────────────────────────
+    //
+    // All 4 config rewriters extend their scan from WebRoot-only to WebRoot + AdditionalPaths.
+    // Verifies the loop wires through to all rewriters by staging files in a sibling dir
+    // and confirming each rewriter touches them.
+
+    [Fact]
+    public void RealIIS_AdditionalPaths_ConfigurationVariables_AppliesToSiblingDir()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        // Sibling dir alongside WebRoot — operator's "config files outside wwwroot" layout.
+        var siblingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-sibling-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(siblingDir);
+        ctx.RegisterTempDirForCleanup(siblingDir);
+
+        var siblingWebConfig = Path.Combine(siblingDir, "external.config");
+        File.WriteAllText(siblingWebConfig,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"ExternalKey\" value=\"OLD_VALUE\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "ExternalKey", Value = "NEW_FROM_SIBLING_DIR" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"),
+            (Property.AdditionalPaths, siblingDir));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"AdditionalPaths deploy failed: {result.StdErr}");
+
+        // The SIBLING dir's external.config must have been rewritten.
+        var rewritten = File.ReadAllText(siblingWebConfig);
+        rewritten.ShouldContain("value=\"NEW_FROM_SIBLING_DIR\"",
+            customMessage:
+                $"ConfigurationVariables didn't scan the AdditionalPaths sibling dir. " +
+                $"File after deploy:\n{rewritten}");
+        rewritten.ShouldNotContain("OLD_VALUE");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_AdditionalPaths_SubstituteInFiles_AppliesToSiblingDir()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        var siblingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-sibling-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(siblingDir);
+        ctx.RegisterTempDirForCleanup(siblingDir);
+
+        var siblingFile = Path.Combine(siblingDir, "external-config.txt");
+        File.WriteAllText(siblingFile, "Setting: #{ExternalSetting}");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "ExternalSetting", Value = "resolved-from-sibling" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "external-config.txt"),
+            (Property.AdditionalPaths, siblingDir));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"AdditionalPaths SubstituteInFiles failed: {result.StdErr}");
+
+        File.ReadAllText(siblingFile).ShouldContain("Setting: resolved-from-sibling",
+            customMessage: "SubstituteInFiles didn't scan the AdditionalPaths sibling dir.");
+
+        ctx.MarkClean();
+    }
+
     // ── Deployment journal + SkipIfAlreadyInstalled (1.6.9 P0-2) ─────────────
     //
     // First deploy writes a journal entry. Re-deploy with SkipIfAlreadyInstalled=True +
@@ -3146,6 +3247,9 @@ public sealed class IISDeployRealHostE2ETests
 
         // P0-2 (1.6.9) — Deployment journal + SkipIfAlreadyInstalled
         public const string PackageSkipIfAlreadyInstalled = "Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled";
+
+        // P1-4 (1.6.9) — AdditionalPaths across all 4 rewriters
+        public const string AdditionalPaths = "Squid.Action.IISWebSite.AdditionalPaths";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";
