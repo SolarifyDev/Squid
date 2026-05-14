@@ -116,6 +116,11 @@ internal static class IISDeployScriptBuilder
 
         // AdditionalPaths across all 4 rewriters (P1-4, 1.6.9)
         IISDeployProperties.AdditionalPaths,
+
+        // Error-tolerance toggles (P2-1, 1.6.9)
+        IISDeployProperties.IgnoreVariableReplacementErrors,
+        IISDeployProperties.ShouldFailDeploymentOnSubstitutionFails,
+        IISDeployProperties.EnableDiagnosticsConfigTransformationLogging,
     };
 
     internal static string Build(DeploymentActionDto action)

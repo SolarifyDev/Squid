@@ -1943,6 +1943,138 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Error-tolerance toggles (1.6.9 P2-1) ─────────────────────────────────
+
+    [Fact]
+    public void RealIIS_IgnoreVariableReplacementErrors_DefaultFalse_MalformedConfigThrows()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        // Malformed XML — unclosed tag
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "broken.config"),
+            "<?xml version=\"1.0\"?><configuration><appSettings><add key=\"X\" value=\"Y\"></appSettings>");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage: $"Default (Ignore=False/unset) should THROW on malformed XML. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+        (result.StdOut + result.StdErr).ShouldContain("failed to parse",
+            customMessage: "Actionable error message must say 'failed to parse'.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_IgnoreVariableReplacementErrors_True_MalformedConfigSkippedDeployCompletes()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "broken.config"),
+            "<?xml version=\"1.0\"?><configuration><appSettings><add key=\"X\" value=\"Y\"></appSettings>");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"),
+            (Property.IgnoreVariableReplacementErrors, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Ignore=True should swallow XML parse errors. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+        result.StdOut.ShouldContain("IgnoreVariableReplacementErrors=True",
+            customMessage: "Skip-due-to-flag log line missing.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ShouldFailDeploymentOnSubstitutionFails_True_UnresolvedTokenAborts()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "config.txt"),
+            "value=#{NotDefinedInAnyVariable}");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "config.txt"),
+            (Property.ShouldFailDeploymentOnSubstitutionFails, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage: $"Strict mode should THROW on unresolved tokens. STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+        (result.StdOut + result.StdErr).ShouldContain("#{NotDefinedInAnyVariable}",
+            customMessage: "Error must list the specific unresolved tokens for operator triage.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_EnableDiagnosticsConfigTransformationLogging_True_VerboseTraceEmitted()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+        if (!IsMicrosoftWebXmlTransformAvailable()) return;
+
+        using var ctx = new IISTestContext();
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "web.config"),
+            "<?xml version=\"1.0\"?><configuration><appSettings><add key=\"X\" value=\"old\" /></appSettings></configuration>");
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "web.Release.config"),
+            "<?xml version=\"1.0\"?><configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">" +
+            "<appSettings><add key=\"X\" value=\"new\" xdt:Transform=\"SetAttributes(value)\" xdt:Locator=\"Match(key)\" /></appSettings></configuration>");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationTransformsEnabled, "True"),
+            (Property.EnableDiagnosticsConfigTransformationLogging, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Diagnostic-logging deploy failed: {result.StdErr}");
+        result.StdOut.ShouldContain("[diagnostic]",
+            customMessage: "Diagnostic trace lines missing in STDOUT despite EnableDiagnosticsConfigTransformationLogging=True.");
+
+        ctx.MarkClean();
+    }
+
     // ── Octostache filters in SubstituteInFiles (1.6.9 P0-3) ─────────────────
 
     [Theory]
@@ -3435,6 +3567,11 @@ public sealed class IISDeployRealHostE2ETests
 
         // P1-4 (1.6.9) — AdditionalPaths across all 4 rewriters
         public const string AdditionalPaths = "Squid.Action.IISWebSite.AdditionalPaths";
+
+        // P2-1 (1.6.9) — Error-tolerance toggles
+        public const string IgnoreVariableReplacementErrors = "Squid.Action.Package.IgnoreVariableReplacementErrors";
+        public const string ShouldFailDeploymentOnSubstitutionFails = "Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails";
+        public const string EnableDiagnosticsConfigTransformationLogging = "Squid.Action.Package.EnableDiagnosticsConfigTransformationLogging";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";
