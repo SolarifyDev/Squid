@@ -821,6 +821,230 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Custom-script hooks (Phase 5: PreDeploy + PostDeploy) ───────────────
+    //
+    // Octopus's `ConfiguredScriptBehaviour` runs operator-inline scripts at 5 stages of
+    // the deploy pipeline. Squid embeds the two most-used stages (PreDeploy + PostDeploy)
+    // directly inside the IIS deploy script — PreDeploy runs BEFORE the IIS configure
+    // dispatch, PostDeploy runs AFTER it completes (success path only — `throw` in the
+    // IIS configure block aborts before PostDeploy).
+    //
+    // These tests verify real PowerShell execution + ordering + failure propagation against
+    // real IIS. Sentinel files at known temp paths witness which scripts ran.
+
+    [Fact]
+    public void RealIIS_PreDeployScript_RunsBeforeIISConfigure()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var sentinelPath = ctx.RegisterSentinelPath("predeploy");
+
+        // PreDeploy writes a sentinel file. After deploy, both the sentinel AND the IIS site
+        // must exist — proving PreDeploy ran AND the deploy still proceeded normally.
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.CustomScriptsPreDeploy, $"Set-Content -Path '{sentinelPath}' -Value 'predeploy-ran'")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy with PreDeploy script failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        File.Exists(sentinelPath).ShouldBeTrue(
+            customMessage: $"PreDeploy sentinel '{sentinelPath}' was not created — PreDeploy didn't run. " +
+                          "Check the IIS PS1's PreDeploy hook block at the bottom of the file.");
+
+        File.ReadAllText(sentinelPath).Trim().ShouldBe("predeploy-ran");
+
+        // IIS site must also exist — PreDeploy succeeded, deploy proceeded.
+        PowerShellSingleLine($"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}")
+            .ShouldBe("true", customMessage: "Site missing after PreDeploy succeeded — deploy aborted unexpectedly.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PostDeployScript_RunsAfterIISConfigure_SeesSiteInMetabase()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var sentinelPath = ctx.RegisterSentinelPath("postdeploy");
+
+        // PostDeploy queries Get-Website and writes the site state to the sentinel.
+        // If PostDeploy ran AFTER IIS configure, the site MUST be in the metabase
+        // and `(Get-Website).State` returns "Started".
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True"),
+            (Property.CustomScriptsPostDeploy,
+                $"$site = Get-Website -Name '{ctx.SiteName}'; " +
+                $"Set-Content -Path '{sentinelPath}' -Value $site.State")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy with PostDeploy script failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        File.Exists(sentinelPath).ShouldBeTrue(
+            customMessage: $"PostDeploy sentinel '{sentinelPath}' was not created — PostDeploy didn't run. " +
+                          "Check the IIS PS1's PostDeploy hook block at the bottom of the file.");
+
+        var observedState = File.ReadAllText(sentinelPath).Trim();
+        observedState.ShouldBe("Started",
+            customMessage: $"PostDeploy observed site state='{observedState}', expected 'Started'. " +
+                          "Either PostDeploy ran BEFORE the IIS configure (impossible per script order), " +
+                          "OR Start-WebSite didn't fire. Check IIS PS1 deploy logic.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PreDeployScriptFailure_AbortsBeforeIISConfigure()
+    {
+        // Failure propagation: PreDeploy throws → deploy must abort with non-zero exit
+        // AND the IIS site must NOT be created (the configure block never runs).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var postDeploySentinel = ctx.RegisterSentinelPath("postdeploy-should-not-fire");
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.CustomScriptsPreDeploy, "throw 'intentional pre-deploy failure'"),
+            (Property.CustomScriptsPostDeploy,
+                $"Set-Content -Path '{postDeploySentinel}' -Value 'this-should-never-fire'")));
+
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage: $"Deploy with PreDeploy throw unexpectedly succeeded. " +
+                          $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // IIS site MUST NOT exist — the configure block never ran.
+        PowerShellSingleLine($"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}")
+            .ShouldBe("false",
+                customMessage: $"Site '{ctx.SiteName}' was created despite PreDeploy throwing — the abort path is broken.");
+
+        // PostDeploy MUST NOT have fired — the throw should have stopped script execution.
+        File.Exists(postDeploySentinel).ShouldBeFalse(
+            customMessage: $"PostDeploy sentinel '{postDeploySentinel}' exists — PostDeploy ran after a PreDeploy throw. " +
+                          "Script execution should stop at the throw.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PreDeployMultiLineScript_AllStatementsExecute()
+    {
+        // Multi-line operator scripts MUST preserve newlines through the base64 round-trip.
+        // Single-quote single-line escape would have collapsed `\n` to space and broken this.
+        // This test writes TWO distinct sentinel files from a multi-line PreDeploy script.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var sentinel1 = ctx.RegisterSentinelPath("multiline-line1");
+        var sentinel2 = ctx.RegisterSentinelPath("multiline-line2");
+
+        var multiLineScript =
+            $"Set-Content -Path '{sentinel1}' -Value 'first-line-ran'\n" +
+            $"Start-Sleep -Milliseconds 50\n" +
+            $"Set-Content -Path '{sentinel2}' -Value 'second-line-ran'";
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.CustomScriptsPreDeploy, multiLineScript)));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Multi-line PreDeploy deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        File.Exists(sentinel1).ShouldBeTrue(
+            customMessage: $"First sentinel '{sentinel1}' missing — first line of multi-line script didn't run. " +
+                          "Likely base64 round-trip lost newlines (would have made statement 1 and 2 collide).");
+
+        File.Exists(sentinel2).ShouldBeTrue(
+            customMessage: $"Second sentinel '{sentinel2}' missing — second line of multi-line script didn't run.");
+
+        File.ReadAllText(sentinel1).Trim().ShouldBe("first-line-ran");
+        File.ReadAllText(sentinel2).Trim().ShouldBe("second-line-ran");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PreAndPostDeployStopThenStartAppPool_RealisticOperatorWorkflow()
+    {
+        // Realistic operator workflow: PreDeploy stops the app pool (releases file locks for
+        // a subsequent file copy), PostDeploy starts it again. This is the canonical Octopus
+        // IIS deploy pattern. After the full deploy, the pool MUST be in "Started" state.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        // First deploy: create the site and pool, with both Pre + Post scripts wired.
+        // PreDeploy: Stop-WebAppPool '#{PoolName}' — Stop is no-op for a non-existent pool on
+        //   first deploy (handled gracefully via -ErrorAction SilentlyContinue).
+        // PostDeploy: explicit `Start-WebAppPool '#{PoolName}'` to ensure pool is running.
+        // Note: the IIS configure script itself starts the pool via StartApplicationPool=True,
+        // so PostDeploy here is documenting + asserting the operator's explicit pattern.
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True"),
+            (Property.CustomScriptsPreDeploy, $"Stop-WebAppPool -Name '{ctx.PoolName}' -ErrorAction SilentlyContinue"),
+            (Property.CustomScriptsPostDeploy, $"Start-WebAppPool -Name '{ctx.PoolName}' -ErrorAction Stop")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Realistic Pre+Post workflow failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}\n\n" +
+                $"Manually inspect via `Get-WebAppPool -Name {ctx.PoolName}`.");
+
+        // Pool MUST be in Started state after the workflow.
+        var poolState = PowerShellSingleLine($"(Get-WebAppPool -Name '{ctx.PoolName}').State");
+        poolState.ShouldBe("Started",
+            customMessage: $"After Pre/Post Stop-Start workflow, pool state='{poolState}', expected 'Started'. " +
+                          "PostDeploy `Start-WebAppPool` either didn't run or failed silently.");
+
+        ctx.MarkClean();
+    }
+
     // ── WebApplication + VirtualDirectory sub-features (Phase 4) ────────────
     //
     // Octopus's PS1 supports three deployment-type toggles in one action:
@@ -1117,6 +1341,7 @@ public sealed class IISDeployRealHostE2ETests
         private readonly List<string> _netshIpPortsToClean = new();
         private readonly List<(string Host, string Port)> _netshHostnamePortsToClean = new();
         private readonly List<string> _localUsersToClean = new();
+        private readonly List<string> _sentinelFilesToClean = new();
         private bool _markedClean;
 
         public IISTestContext()
@@ -1129,6 +1354,20 @@ public sealed class IISDeployRealHostE2ETests
 
             Directory.CreateDirectory(PhysicalPath);
             _tempDirsToClean.Add(PhysicalPath);
+        }
+
+        /// <summary>
+        /// Generates a unique sentinel-file path under the OS temp dir and registers it for
+        /// removal during <see cref="Dispose"/>. Used by Phase 5 custom-script tests to witness
+        /// that the operator's PreDeploy / PostDeploy hook actually ran (sentinel exists =
+        /// script body executed; file content = what the script wrote).
+        /// </summary>
+        /// <param name="suffix">Short label to disambiguate concurrent sentinels in the same test.</param>
+        public string RegisterSentinelPath(string suffix)
+        {
+            var path = Path.Combine(Path.GetTempPath(), $"squid-iis-sentinel-{_suffix}-{suffix}.txt");
+            _sentinelFilesToClean.Add(path);
+            return path;
         }
 
         /// <summary>
@@ -1286,6 +1525,15 @@ public sealed class IISDeployRealHostE2ETests
                 catch { /* best-effort */ }
             }
 
+            // Sentinel files written by Phase 5 custom-script tests — small text files in the
+            // OS temp dir. Even if every test cleans up cleanly, the OS retention policy
+            // varies, so explicit removal here makes the test suite hermetic.
+            foreach (var sentinelPath in _sentinelFilesToClean)
+            {
+                try { if (File.Exists(sentinelPath)) File.Delete(sentinelPath); }
+                catch { /* best-effort */ }
+            }
+
             // If MarkClean wasn't called and we're on a CI runner, leave a hint in the log so
             // post-mortem diagnostics know to dump IIS state on failure.
             if (!_markedClean && OperatingSystem.IsWindows())
@@ -1330,6 +1578,10 @@ public sealed class IISDeployRealHostE2ETests
         public const string ApplicationPoolUsername = "Squid.Action.IISWebSite.ApplicationPoolUsername";
         public const string ApplicationPoolPassword = "Squid.Action.IISWebSite.ApplicationPoolPassword";
         public const string ExistingBindings = "Squid.Action.IISWebSite.ExistingBindings";
+
+        // Phase 5 — custom script slots (Octopus CustomScripts parity)
+        public const string CustomScriptsPreDeploy = "Squid.Action.CustomScripts.PreDeploy.ps1";
+        public const string CustomScriptsPostDeploy = "Squid.Action.CustomScripts.PostDeploy.ps1";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

@@ -79,6 +79,10 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.VirtualDirectoryWebSiteName,
         IISDeployProperties.VirtualDirectoryVirtualPath,
         IISDeployProperties.VirtualDirectoryPhysicalPath,
+
+        // Custom script slots (Phase 5)
+        IISDeployProperties.CustomScriptsPreDeploy,
+        IISDeployProperties.CustomScriptsPostDeploy,
     };
 
     internal static string Build(DeploymentActionDto action)
@@ -91,31 +95,78 @@ internal static class IISDeployScriptBuilder
         return preamble + body;
     }
 
+    /// <summary>
+    /// Properties whose value is an operator-authored SCRIPT BODY (not data). Multi-line scripts
+    /// must preserve newlines (PowerShell statement separator) and arbitrary apostrophes / dollar
+    /// signs without breakage — single-quote single-line escape cannot guarantee that. We instead
+    /// emit these via base64 round-trip, which is byte-safe at the cost of slight verbosity in
+    /// the rendered preamble.
+    /// </summary>
+    private static readonly HashSet<string> ScriptContentProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        IISDeployProperties.CustomScriptsPreDeploy,
+        IISDeployProperties.CustomScriptsPostDeploy,
+    };
+
     private static string BuildPreamble(DeploymentActionDto action)
     {
         var sb = new StringBuilder();
 
         sb.AppendLine("# ── BEGIN GENERATED PREAMBLE (Squid IISDeployScriptBuilder) ──");
         sb.AppendLine("# This hashtable is populated server-side from the action's property values;");
-        sb.AppendLine("# every value is pre-escaped for PowerShell single-quote literals. Do not edit.");
+        sb.AppendLine("# data values are pre-escaped for PowerShell single-quote literals.");
+        sb.AppendLine("# Script-body values are base64-encoded so newlines + apostrophes pass through");
+        sb.AppendLine("# verbatim at runtime. Do not edit.");
         sb.AppendLine("$SquidParameters = @{}");
 
         foreach (var propertyName in RecognisedProperties)
         {
             var rawValue = ReadProperty(action, propertyName);
-            var escaped = EscapeForPowerShellSingleQuote(rawValue);
 
-            sb.Append("$SquidParameters['");
-            sb.Append(propertyName);
-            sb.Append("'] = '");
-            sb.Append(escaped);
-            sb.AppendLine("'");
+            if (ScriptContentProperties.Contains(propertyName))
+            {
+                EmitScriptContentAssignment(sb, propertyName, rawValue);
+            }
+            else
+            {
+                EmitDataAssignment(sb, propertyName, rawValue);
+            }
         }
 
         sb.AppendLine("# ── END GENERATED PREAMBLE ──");
         sb.AppendLine();
 
         return sb.ToString();
+    }
+
+    private static void EmitDataAssignment(StringBuilder sb, string propertyName, string rawValue)
+    {
+        var escaped = EscapeForPowerShellSingleQuote(rawValue);
+        sb.Append("$SquidParameters['");
+        sb.Append(propertyName);
+        sb.Append("'] = '");
+        sb.Append(escaped);
+        sb.AppendLine("'");
+    }
+
+    private static void EmitScriptContentAssignment(StringBuilder sb, string propertyName, string rawValue)
+    {
+        // Empty script-content stays empty (no decode needed at runtime — saves a few CPU cycles
+        // and keeps the rendered preamble readable when the operator didn't set the slot).
+        if (string.IsNullOrEmpty(rawValue))
+        {
+            sb.Append("$SquidParameters['");
+            sb.Append(propertyName);
+            sb.AppendLine("'] = ''");
+            return;
+        }
+
+        var base64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(rawValue));
+        sb.Append("$SquidParameters['");
+        sb.Append(propertyName);
+        sb.Append("'] = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('");
+        sb.Append(base64);
+        sb.AppendLine("'))");
     }
 
     private static string ReadProperty(DeploymentActionDto action, string propertyName)

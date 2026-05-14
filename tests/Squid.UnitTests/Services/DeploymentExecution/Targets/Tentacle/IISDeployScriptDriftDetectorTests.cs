@@ -219,6 +219,48 @@ public class IISDeployScriptDriftDetectorTests
                 "on the same host. Any other 'Octopus' word in executable code is a porting oversight.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: the PS1 contains PreDeploy + PostDeploy custom-script
+    /// hooks that have NO Octopus equivalent in this PS1 (Octopus runs custom scripts at
+    /// a higher orchestration layer via <c>ConfiguredScriptBehaviour</c> in their
+    /// <c>DeployPackageCommand</c> pipeline — Squid mirrors the same operator-facing
+    /// contract by embedding the hooks directly in the IIS deploy script).
+    ///
+    /// <para>This test is NOT part of <see cref="KeyOperations"/> because adding it there
+    /// would cause the upstream comparison test to incorrectly flag the hooks as "missing
+    /// from Octopus" — they're not supposed to be in Octopus's PS1 at all.</para>
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasPreDeployAndPostDeployHooks_ForOctopusCustomScriptsParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("$SquidParameters['Squid.Action.CustomScripts.PreDeploy.ps1']",
+            customMessage:
+                "Squid IIS PS1 is missing the PreDeploy custom-script hook. This breaks operator " +
+                "workflows that need `Stop-WebAppPool` before file replacement. Hook should appear " +
+                "BEFORE the `Invoke-Command -ScriptBlock $DeployIISScriptBlock` dispatch.");
+
+        ourScript.ShouldContain("$SquidParameters['Squid.Action.CustomScripts.PostDeploy.ps1']",
+            customMessage:
+                "Squid IIS PS1 is missing the PostDeploy custom-script hook. This breaks operator " +
+                "workflows that smoke-test after deploy. Hook should appear AFTER the IIS configure " +
+                "dispatch — runs only on successful IIS configuration (throw aborts before reaching it).");
+
+        // Order: PreDeploy MUST appear before the script block invocation; PostDeploy MUST appear after.
+        var preDeployIdx = ourScript.IndexOf("'Squid.Action.CustomScripts.PreDeploy.ps1'", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+        var postDeployIdx = ourScript.IndexOf("'Squid.Action.CustomScripts.PostDeploy.ps1'", StringComparison.Ordinal);
+
+        preDeployIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "PreDeploy hook appears AFTER the IIS configure dispatch — that's backwards. " +
+                          "Operators expect PreDeploy to fire BEFORE IIS metabase mutations.");
+
+        invokeIdx.ShouldBeLessThan(postDeployIdx,
+            customMessage: "PostDeploy hook appears BEFORE the IIS configure dispatch — that's backwards. " +
+                          "PostDeploy must fire AFTER IIS configuration completes successfully.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

@@ -410,6 +410,111 @@ public class IISDeployScriptBuilderTests
         script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate'] = 'True'");
     }
 
+    // ── Custom-script slots (Phase 5: PreDeploy + PostDeploy hooks) ────────
+    //
+    // Custom-script properties are operator-authored PowerShell bodies that may contain
+    // newlines, apostrophes, dollar signs. These are NOT data values — single-quote
+    // single-line escape would silently break multi-line scripts (newlines collapsed to
+    // spaces would turn `Stop-WebAppPool MyPool\nStart-Sleep 2` into one undefined command).
+    // The builder routes script-content properties through base64 round-trip instead, so
+    // every byte survives. These tests pin that routing + verify the runtime decode shape.
+
+    [Fact]
+    public void Build_PreDeployScriptPropertySet_EmittedAsBase64DecodeInPreamble()
+    {
+        const string body = "Stop-WebAppPool 'MyPool'\nStart-Sleep 2\nWrite-Host \"stopped\"";
+
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"),
+            (IISDeployProperties.CustomScriptsPreDeploy, body));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        // Data properties stay in their single-quote single-line form.
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.WebSiteName'] = 'OrderApi'");
+
+        // The script-body lands as a base64 round-trip — the decoded value must equal `body`.
+        var expectedBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(body));
+        script.ShouldContain(
+            $"$SquidParameters['Squid.Action.CustomScripts.PreDeploy.ps1'] = " +
+            $"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{expectedBase64}'))");
+    }
+
+    [Fact]
+    public void Build_PostDeployScriptPropertySet_EmittedAsBase64DecodeInPreamble()
+    {
+        const string body = "Start-WebAppPool 'MyPool'; Invoke-WebRequest http://localhost:8080/health";
+
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"),
+            (IISDeployProperties.CustomScriptsPostDeploy, body));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        var expectedBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(body));
+        script.ShouldContain(
+            $"$SquidParameters['Squid.Action.CustomScripts.PostDeploy.ps1'] = " +
+            $"[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('{expectedBase64}'))");
+    }
+
+    [Fact]
+    public void Build_CustomScriptUnset_EmittedAsEmptyStringNotBase64()
+    {
+        // Unset script slots SHOULD emit an empty string literal — base64-decode of an empty
+        // string costs CPU + makes the preamble noisy. Defensive guard for the common case
+        // where the operator only sets one of the two hooks.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.CustomScripts.PreDeploy.ps1'] = ''");
+        script.ShouldContain("$SquidParameters['Squid.Action.CustomScripts.PostDeploy.ps1'] = ''");
+        script.ShouldNotContain("FromBase64String('')",
+            customMessage: "Empty script slot should NOT emit a base64-decode-empty-string expression; " +
+                          "use the simple empty string literal for clarity + avoiding wasted CPU.");
+    }
+
+    [Fact]
+    public void Build_PreDeployScriptWithApostrophesAndNewlines_RoundTripsExactlyViaBase64()
+    {
+        // Adversarial operator script: apostrophes, dollar signs, backticks, multiple newlines.
+        // Round-trip via base64 must preserve ALL bytes — the runtime decode produces the EXACT
+        // original string. Pin by decoding the base64 we emitted and comparing.
+        const string body =
+            "$pool = 'O''Brien''s Pool'\n" +
+            "Stop-WebAppPool $pool\n" +
+            "Start-Sleep 2\n" +
+            "Write-Host \"pool: $pool\"";
+
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"),
+            (IISDeployProperties.CustomScriptsPreDeploy, body));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        // Extract the base64 segment from the preamble.
+        var marker = "Squid.Action.CustomScripts.PreDeploy.ps1'] = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('";
+        var start = script.IndexOf(marker, StringComparison.Ordinal);
+        start.ShouldBePositive("PreDeploy base64 marker missing from preamble.");
+
+        var base64Start = start + marker.Length;
+        var base64End = script.IndexOf("'))", base64Start, StringComparison.Ordinal);
+        base64End.ShouldBeGreaterThan(base64Start, "PreDeploy base64 closing delimiter missing.");
+
+        var emittedBase64 = script.Substring(base64Start, base64End - base64Start);
+        var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(emittedBase64));
+
+        decoded.ShouldBe(body,
+            customMessage:
+                "Round-trip through base64 must preserve script body byte-for-byte. " +
+                $"Emitted base64='{emittedBase64}'. Decoded='{decoded}'. Expected='{body}'.");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
