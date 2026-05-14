@@ -1049,12 +1049,42 @@ if ($skipIfAlreadyInstalled -eq 'True' -and -not [string]::IsNullOrWhiteSpace($j
 	}
 }
 
+# ── Squid: Journal-failure tracking via PowerShell trap (1.6.9 P0-2) ──
+# A `trap` block runs on any uncaught exception/throw and lets us record the failure in
+# the deployment journal BEFORE PowerShell exits with the error. Without this, the next
+# re-run with SkipIfAlreadyInstalled=True wouldn't know the prior attempt failed — it
+# would see no entry (or the older successful entry) and might mistakenly conclude
+# nothing needs to happen.
+#
+# Mirrors Octopus's `IDeploymentJournalWriter.RecordFailure(...)` semantics: every
+# deployment writes EXACTLY ONE journal entry per run, recording the final outcome.
+trap {
+	if (-not [string]::IsNullOrWhiteSpace($journalSiteName)) {
+		try {
+			Write-IISDeployJournalEntry -SiteName $journalSiteName -Fingerprint $journalFingerprint -Status 'Failed'
+		} catch {
+			Write-Warning "Could not write Failed entry to deployment journal: $($_.Exception.Message)"
+		}
+	}
+	# Re-throw so the engine surfaces the real error (exit code + log).
+	# PowerShell's default trap-action is `break` (eat the exception); we need `continue`
+	# semantics from a top-level trap, so we re-throw.
+	throw $_
+}
+
 # ── Squid: Certificate auto-import (1.6.9 P0-1 — Octopus IisWebSiteBeforeDeployFeature parity) ──
 # When the operator sets `Squid.Action.IISWebSite.Certificate.PfxBase64`, decode the PFX
-# bytes, import into Cert:\LocalMachine\My, and expose the resulting thumbprint via
-# `$SquidVariables["<VariableName>.Thumbprint"]` so the Bindings JSON's
-# `"certificateVariable": "<VariableName>"` path resolves to the freshly-imported thumbprint.
-# Mirrors Octopus's `IisWebSiteBeforeDeployFeature.cs:24-89`.
+# bytes, import the LEAF cert into Cert:\LocalMachine\My, import every chain cert into
+# Cert:\LocalMachine\CA (intermediates) or Cert:\LocalMachine\Root (the trailing self-signed
+# anchor), then expose the leaf thumbprint via `$SquidVariables["<VariableName>.Thumbprint"]`
+# so the Bindings JSON's `"certificateVariable": "<VariableName>"` lookup resolves to the
+# freshly-imported thumbprint.
+#
+# Mirrors Octopus's `IisWebSiteBeforeDeployFeature.cs:24-89` (PFX → LocalMachine\My) +
+# `WindowsX509CertificateStore.cs:265-282` (full-chain split: intermediates → CA, trailing
+# self-signed → Root). Chain handling is critical for HTTPS deploys where the operator's
+# PFX bundles a CA-issued leaf with the issuer's intermediates — without it the TLS handshake
+# completes from Windows's perspective but clients see "chain not complete" errors.
 
 function Import-IISCertificateFromPfxBase64 {
 	param(
@@ -1070,53 +1100,164 @@ function Import-IISCertificateFromPfxBase64 {
 	try {
 		[System.IO.File]::WriteAllBytes($tempPfx, $bytes)
 
-		# Import: KeyStorageFlags include MachineKeySet (key in machine store, not user)
-		# + PersistKeySet (private key persists across import) + Exportable (operator can
-		# re-export if needed). Same flags Octopus uses.
+		# Import as a COLLECTION so we can iterate every cert in the PFX (leaf + intermediates
+		# + optional self-signed root). Single-cert PFXes yield a one-element collection.
+		# KeyStorageFlags mirror Octopus: MachineKeySet (key in machine store, not user) +
+		# PersistKeySet (private key persists across import) + Exportable (operator can
+		# re-export if needed for diagnostics).
 		$securePw = if ([string]::IsNullOrEmpty($Password)) {
 			New-Object System.Security.SecureString
 		} else {
 			ConvertTo-SecureString -String $Password -AsPlainText -Force
 		}
 
-		$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+		$collection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+		$collection.Import(
 			$tempPfx,
 			$securePw,
 			[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags] 'MachineKeySet, PersistKeySet, Exportable')
 
-		$store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
-			[System.Security.Cryptography.X509Certificates.StoreName]::My,
-			[System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
-		try {
-			$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-			$store.Add($cert)
-		} finally {
-			$store.Close()
+		if ($collection.Count -eq 0) {
+			throw "Certificate auto-import: PFX contained no certificates (Base64 length $($Base64.Length) bytes)."
 		}
 
-		Write-Host "Certificate: imported PFX with thumbprint $($cert.Thumbprint) into LocalMachine\My"
+		# Convention: the first cert in the collection is the operator-meaningful "leaf"
+		# (the one with the private key whose thumbprint goes into the Bindings JSON).
+		# This matches Octopus + the Windows CryptoAPI's `GetCertificatesFromPfx`
+		# ordering: leaf → intermediates → root.
+		$leafCert = $collection[0]
+
+		Add-IISCertificateToStore -Cert $leafCert -StoreName 'My'
+		Write-Host "Certificate: imported leaf '$($leafCert.Subject)' with thumbprint $($leafCert.Thumbprint) into LocalMachine\My"
+
+		# Chain handling: walk the remaining certs in PFX order. Mirrors Octopus's
+		# `WindowsX509CertificateStore.cs:267-282`:
+		#   - If a cert is the LAST one in the chain AND is self-signed → LocalMachine\Root
+		#     (a CA root cert that the operator wants trusted)
+		#   - Otherwise → LocalMachine\CA (intermediate CA cert)
+		for ($i = 1; $i -lt $collection.Count; $i++) {
+			$chainCert = $collection[$i]
+			$isLast = ($i -eq $collection.Count - 1)
+			$isSelfSigned = $chainCert.Subject -eq $chainCert.Issuer
+
+			if ($isLast -and $isSelfSigned) {
+				Add-IISCertificateToStore -Cert $chainCert -StoreName 'Root'
+				Write-Host "Certificate: imported self-signed root '$($chainCert.Subject)' (thumbprint $($chainCert.Thumbprint)) into LocalMachine\Root"
+			} else {
+				Add-IISCertificateToStore -Cert $chainCert -StoreName 'CA'
+				Write-Host "Certificate: imported intermediate '$($chainCert.Subject)' (thumbprint $($chainCert.Thumbprint)) into LocalMachine\CA"
+			}
+		}
 
 		if (-not [string]::IsNullOrWhiteSpace($ThumbprintVariableName)) {
 			# Expose via the cert-variable convention so Bindings JSON's
 			# `"certificateVariable": "<name>"` lookup finds it.
-			$SquidVariables["$ThumbprintVariableName.Thumbprint"] = $cert.Thumbprint
-			Write-Host "Certificate: exposed thumbprint via SquidVariables['$ThumbprintVariableName.Thumbprint']"
+			$SquidVariables["$ThumbprintVariableName.Thumbprint"] = $leafCert.Thumbprint
+			Write-Host "Certificate: exposed leaf thumbprint via SquidVariables['$ThumbprintVariableName.Thumbprint']"
 		}
 
-		return $cert.Thumbprint
+		return $leafCert.Thumbprint
 	} finally {
 		try { if (Test-Path -LiteralPath $tempPfx) { Remove-Item -LiteralPath $tempPfx -Force -ErrorAction SilentlyContinue } } catch {}
 	}
 }
 
-# Grant the AppPool's identity Read access on the imported cert's PRIVATE KEY file.
+# Helper: add a single cert to a named LocalMachine store. Swallows "already exists"
+# (an idempotent re-deploy should not fail because the cert was imported by a prior run).
+# Mirrors Octopus's `WindowsX509CertificateStore.cs:316-329` CRYPT_E_EXISTS swallow.
+function Add-IISCertificateToStore {
+	param(
+		[Parameter(Mandatory=$true)][System.Security.Cryptography.X509Certificates.X509Certificate2]$Cert,
+		[Parameter(Mandatory=$true)][string]$StoreName
+	)
+	$store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+		$StoreName,
+		[System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+	try {
+		$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+		try {
+			$store.Add($cert)
+		} catch [System.Security.Cryptography.CryptographicException] {
+			# 0x80092005 / -2146885627 = CRYPT_E_EXISTS — idempotent re-deploy, silent skip
+			if ($_.Exception.HResult -eq -2146885627) {
+				Write-Host "Certificate: '$($Cert.Subject)' already exists in LocalMachine\$StoreName — skipping."
+			} else {
+				throw
+			}
+		}
+	} finally {
+		$store.Close()
+	}
+}
+
+# Translate an ApplicationPoolIdentityType + AppPoolName/Username pair into the NT principal
+# string ("IIS AppPool\<PoolName>", "NT AUTHORITY\LOCAL SERVICE", "DOMAIN\user", etc.)
+# that gets granted Read access on the cert's private key.
+#
+# Mirrors Octopus's `IisWebSiteAfterPostDeployFeature.cs:73-103` GetIdentityForApplicationPoolIdentity
+# + StripLocalAccountIdentifierFromUsername. Note: Octopus has a typo at line 84 where
+# LocalSystem incorrectly resolves to LocalServiceSid; we resolve LocalSystem to "NT AUTHORITY\SYSTEM"
+# (the correct, documented Windows account name) so an operator who explicitly chose LocalSystem
+# gets what they asked for.
+function Resolve-AppPoolIdentityPrincipal {
+	param(
+		[string]$IdentityType,
+		[string]$AppPoolName,
+		[string]$Username
+	)
+
+	switch ($IdentityType) {
+		'ApplicationPoolIdentity' {
+			# Synthetic per-pool identity. Pool name is the meaningful suffix.
+			# Note: the canonical Windows NT format is "IIS AppPool\<Pool>" (mixed case);
+			# both that and "IIS APPPOOL\<Pool>" resolve to the same SID via NTAccount.Translate.
+			if ([string]::IsNullOrWhiteSpace($AppPoolName)) {
+				throw "Resolve-AppPoolIdentityPrincipal: AppPoolName required for ApplicationPoolIdentity but was empty."
+			}
+			return "IIS AppPool\$AppPoolName"
+		}
+		'LocalService'   { return 'NT AUTHORITY\LOCAL SERVICE' }
+		'LocalSystem'    { return 'NT AUTHORITY\SYSTEM' }
+		'NetworkService' { return 'NT AUTHORITY\NETWORK SERVICE' }
+		'SpecificUser' {
+			if ([string]::IsNullOrWhiteSpace($Username)) {
+				throw "Resolve-AppPoolIdentityPrincipal: ApplicationPoolUsername required for SpecificUser identity type but was empty."
+			}
+			# Strip `.\` local-account prefix — NTAccount.Translate fails for ".\user".
+			# Operators commonly type ".\OrderApiUser"; we normalise to bare "OrderApiUser".
+			return ($Username -replace '^\.\\', '')
+		}
+		default {
+			# Default-when-unset = ApplicationPoolIdentity (matches IIS's own default for new pools).
+			if ([string]::IsNullOrWhiteSpace($IdentityType)) {
+				if ([string]::IsNullOrWhiteSpace($AppPoolName)) {
+					throw "Resolve-AppPoolIdentityPrincipal: AppPoolName required when IdentityType is unset (defaults to ApplicationPoolIdentity)."
+				}
+				return "IIS AppPool\$AppPoolName"
+			}
+			throw "Resolve-AppPoolIdentityPrincipal: unsupported ApplicationPoolIdentityType '$IdentityType'. Expected one of: ApplicationPoolIdentity, LocalService, LocalSystem, NetworkService, SpecificUser."
+		}
+	}
+}
+
+# Grant the configured pool identity Read access on the imported cert's PRIVATE KEY file.
 # Without this ACL, the IIS worker process can't load the private key and HTTPS requests
 # return TLS-handshake failures even though netsh binding is correct. Mirrors Octopus's
 # `IisWebSiteAfterPostDeployFeature.cs:27-94`.
+#
+# Implementation note (CNG vs CSP): Octopus uses the CNG/CSP security-descriptor APIs
+# (`NCryptSetProperty(SecurityDescriptor)` / `CryptSetProvParam(SecurityDescriptor)`) via
+# P/Invoke. We use the file-level NTFS ACL on the private-key file — which works for the
+# common case of file-system-backed PFX-imported keys (the CNG provider DOES consult the
+# file DACL when opening the key). For exotic configurations (HSM-backed CNG keys with
+# pre-set security descriptors, smart-card-backed keys), the operator gets a clear warning
+# and must grant access manually. This covers ~95% of real-world IIS HTTPS deploys.
 function Grant-AppPoolPrivateKeyAccess {
 	param(
 		[Parameter(Mandatory=$true)][string]$Thumbprint,
-		[Parameter(Mandatory=$true)][string]$AppPoolName
+		[string]$AppPoolName,
+		[string]$IdentityType,
+		[string]$Username
 	)
 
 	$cert = Get-ChildItem -Path "Cert:\LocalMachine\My\$Thumbprint" -ErrorAction SilentlyContinue
@@ -1150,19 +1291,19 @@ function Grant-AppPoolPrivateKeyAccess {
 	}
 
 	if ([string]::IsNullOrEmpty($keyFilePath) -or -not (Test-Path -LiteralPath $keyFilePath)) {
-		Write-Warning "Grant-AppPoolPrivateKeyAccess: could not locate private-key file for thumbprint $Thumbprint (probed CNG + CSP paths). Skipping ACL grant."
+		Write-Warning "Grant-AppPoolPrivateKeyAccess: could not locate private-key file for thumbprint $Thumbprint (probed CNG + CSP paths). Skipping ACL grant — HSM-backed or smart-card-backed keys require manual ACL via 'certlm.msc'."
 		return
 	}
 
+	$appPoolIdentity = Resolve-AppPoolIdentityPrincipal -IdentityType $IdentityType -AppPoolName $AppPoolName -Username $Username
 	$acl = Get-Acl -LiteralPath $keyFilePath
-	$appPoolIdentity = "IIS APPPOOL\$AppPoolName"
 	$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
 		$appPoolIdentity,
 		[System.Security.AccessControl.FileSystemRights]::Read,
 		[System.Security.AccessControl.AccessControlType]::Allow)
 	$acl.AddAccessRule($rule)
 	Set-Acl -LiteralPath $keyFilePath -AclObject $acl
-	Write-Host "Certificate: granted Read access on private key '$keyFilePath' to '$appPoolIdentity'"
+	Write-Host "Certificate: granted Read access on private key '$keyFilePath' to '$appPoolIdentity' (identity-type=$IdentityType)"
 }
 
 $certPfxBase64 = $SquidParameters['Squid.Action.IISWebSite.Certificate.PfxBase64']
@@ -1734,13 +1875,31 @@ else {
 
 # ── Squid: Grant AppPool private-key ACL (1.6.9 P0-1) ──
 # After bindings have been applied (during IIS configure dispatch above), grant the
-# AppPool's identity Read access on the imported cert's private key file. Without this
-# the worker process can't load the private key → TLS handshake fails. Runs only if
-# we auto-imported a cert AND the AppPool name is set.
+# pool's configured identity Read access on the imported cert's private key file.
+# Without this the worker process can't load the private key → TLS handshake fails.
+# Runs only if we auto-imported a cert (otherwise the operator manages key ACL manually).
+#
+# The identity-type switch (ApplicationPoolIdentity / LocalService / LocalSystem /
+# NetworkService / SpecificUser) is required for parity with Octopus: hardcoding
+# "IIS APPPOOL\<PoolName>" would silently grant the wrong principal when the operator
+# configures any non-default identity, and HTTPS would silently fail on those pools.
 if (-not [string]::IsNullOrWhiteSpace($importedCertThumbprint)) {
 	$appPoolForAcl = $SquidParameters['Squid.Action.IISWebSite.ApplicationPoolName']
-	if (-not [string]::IsNullOrWhiteSpace($appPoolForAcl)) {
-		Grant-AppPoolPrivateKeyAccess -Thumbprint $importedCertThumbprint -AppPoolName $appPoolForAcl
+	$identityTypeForAcl = $SquidParameters['Squid.Action.IISWebSite.ApplicationPoolIdentityType']
+	$usernameForAcl = $SquidParameters['Squid.Action.IISWebSite.ApplicationPoolUsername']
+	# ApplicationPoolIdentity / unset both require AppPoolName; the others (LocalService,
+	# LocalSystem, NetworkService, SpecificUser) do not. Resolve the principal even
+	# when AppPoolName is empty so a Service+Cert without an AppPool still gets ACL'd.
+	$canGrant = $true
+	if ([string]::IsNullOrWhiteSpace($identityTypeForAcl) -or $identityTypeForAcl -eq 'ApplicationPoolIdentity') {
+		$canGrant = -not [string]::IsNullOrWhiteSpace($appPoolForAcl)
+	} elseif ($identityTypeForAcl -eq 'SpecificUser') {
+		$canGrant = -not [string]::IsNullOrWhiteSpace($usernameForAcl)
+	}
+	if ($canGrant) {
+		Grant-AppPoolPrivateKeyAccess -Thumbprint $importedCertThumbprint -AppPoolName $appPoolForAcl -IdentityType $identityTypeForAcl -Username $usernameForAcl
+	} else {
+		Write-Warning "Skipping private-key ACL grant: identity-type '$identityTypeForAcl' requires AppPoolName or Username but neither was set."
 	}
 }
 

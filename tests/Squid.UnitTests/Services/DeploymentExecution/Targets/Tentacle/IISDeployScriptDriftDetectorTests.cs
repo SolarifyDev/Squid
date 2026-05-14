@@ -552,24 +552,24 @@ public class IISDeployScriptDriftDetectorTests
         ourScript.ShouldContain("function Grant-AppPoolPrivateKeyAccess",
             customMessage: "Private-key ACL function missing — HTTPS deploys would TLS-handshake-fail despite correct netsh binding.");
 
-        // Imports into LocalMachine\My (not CurrentUser — IIS reads from machine store).
-        ourScript.ShouldContain("StoreName]::My",
-            customMessage: "Cert must be imported to LocalMachine\\My (operator-friendly default).");
-        ourScript.ShouldContain("StoreLocation]::LocalMachine");
+        // Imports the LEAF cert into LocalMachine\My (not CurrentUser — IIS reads from machine store).
+        ourScript.ShouldContain("Add-IISCertificateToStore -Cert $leafCert -StoreName 'My'",
+            customMessage: "Leaf cert must be imported to LocalMachine\\My (operator-friendly default).");
 
         // Exposes thumbprint via the cert-variable convention so Phase 2's binding lookup works.
         ourScript.ShouldContain("$ThumbprintVariableName.Thumbprint",
             customMessage: "Imported thumbprint must be exposed via SquidVariables[VarName.Thumbprint] for Bindings JSON cert-variable lookup.");
 
-        // ACL grant uses `IIS APPPOOL\<PoolName>` — IIS-specific synthetic identity.
-        ourScript.ShouldContain("IIS APPPOOL",
-            customMessage: "ACL grant must target the AppPool's synthetic identity 'IIS APPPOOL\\<PoolName>'.");
+        // ACL grant uses the canonical "IIS AppPool\<PoolName>" form (mixed case) for the
+        // ApplicationPoolIdentity case — matches Octopus's `NTAccount("IIS AppPool\\" + ...)`
+        // construction at `IisWebSiteAfterPostDeployFeature.cs:78`.
+        ourScript.ShouldContain("IIS AppPool\\$AppPoolName",
+            customMessage: "ApplicationPoolIdentity principal must use 'IIS AppPool\\<PoolName>' form (Octopus parity).");
 
         // Order: cert IMPORT happens BEFORE the IIS configure dispatch (bindings need the
         // thumbprint exposed before they resolve). ACL grant happens AFTER (AppPool must exist).
         var importIdx = ourScript.IndexOf("Import-IISCertificateFromPfxBase64", StringComparison.Ordinal);
         var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
-        var aclIdx = ourScript.IndexOf("Grant-AppPoolPrivateKeyAccess", StringComparison.Ordinal);
 
         // The function DEFINITION should appear before the invocation. We're checking the
         // INVOCATION position of `Grant-AppPoolPrivateKeyAccess` which calls the function —
@@ -580,6 +580,118 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "Cert import must run BEFORE IIS configure dispatch — bindings need the thumbprint exposed first.");
         invokeIdx.ShouldBeLessThan(aclInvokeIdx,
             customMessage: "Private-key ACL grant must run AFTER IIS configure dispatch — AppPool's synthetic identity exists only after pool is created.");
+    }
+
+    /// <summary>
+    /// P0-1 hardening (1.6.9): PFX import must split the chain — leaf cert to LocalMachine\My,
+    /// intermediate CA certs to LocalMachine\CA, trailing self-signed root to LocalMachine\Root.
+    /// Mirrors Octopus's <c>WindowsX509CertificateStore.cs:265-282</c> chain-split semantics.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_CertImportSplitsChain_LeafToMyIntermediatesToCaSelfSignedRootToRoot()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        // Import collection (not single cert) so we can iterate chain certs.
+        ourScript.ShouldContain("X509Certificate2Collection",
+            customMessage: "Cert import must use X509Certificate2Collection to access full chain (Octopus parity — single-cert import drops intermediates).");
+        ourScript.ShouldContain("$collection.Import(",
+            customMessage: "Collection import call missing — chain handling impossible without it.");
+
+        // The 3 store targets — chain split.
+        ourScript.ShouldContain("Add-IISCertificateToStore -Cert $leafCert -StoreName 'My'",
+            customMessage: "Leaf cert must go to LocalMachine\\My.");
+        ourScript.ShouldContain("Add-IISCertificateToStore -Cert $chainCert -StoreName 'Root'",
+            customMessage: "Trailing self-signed cert must go to LocalMachine\\Root (Octopus parity — WindowsX509CertificateStore.cs:276).");
+        ourScript.ShouldContain("Add-IISCertificateToStore -Cert $chainCert -StoreName 'CA'",
+            customMessage: "Intermediate CA certs must go to LocalMachine\\CA (Octopus parity — WindowsX509CertificateStore.cs:281).");
+
+        // Self-signed detection: Subject == Issuer is the canonical test (mirrors what
+        // Octopus's CertificatePal does internally via signature-cert-name comparison).
+        ourScript.ShouldContain("$chainCert.Subject -eq $chainCert.Issuer",
+            customMessage: "Self-signed detection must compare Subject to Issuer (canonical test).");
+
+        // CRYPT_E_EXISTS handling — idempotent re-deploys must not fail on already-imported certs.
+        ourScript.ShouldContain("-2146885627",
+            customMessage: "CRYPT_E_EXISTS HRESULT must be swallowed for idempotent re-deploys (Octopus parity — WindowsX509CertificateStore.cs:321-324).");
+    }
+
+    /// <summary>
+    /// P0-1 hardening (1.6.9): ACL grant must switch on ApplicationPoolIdentityType — hardcoding
+    /// "IIS APPPOOL\<PoolName>" silently grants the wrong principal for LocalService /
+    /// LocalSystem / NetworkService / SpecificUser pools and HTTPS fails on those.
+    /// Mirrors Octopus's <c>IisWebSiteAfterPostDeployFeature.cs:73-103</c>.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_PrivateKeyAclSwitchesOnIdentityType_AllFiveOctopusTypesWired()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Resolve-AppPoolIdentityPrincipal",
+            customMessage: "Identity-type resolution helper missing — without it ACL grant hardcodes 'IIS APPPOOL\\<PoolName>' for every identity type.");
+
+        // All 5 Octopus identity-type values must produce a different NT principal.
+        ourScript.ShouldContain("'ApplicationPoolIdentity'");
+        ourScript.ShouldContain("'LocalService'");
+        ourScript.ShouldContain("'LocalSystem'");
+        ourScript.ShouldContain("'NetworkService'");
+        ourScript.ShouldContain("'SpecificUser'");
+
+        // Canonical NT principal strings for the synthetic identities.
+        ourScript.ShouldContain("'NT AUTHORITY\\LOCAL SERVICE'",
+            customMessage: "LocalService identity must resolve to 'NT AUTHORITY\\LOCAL SERVICE'.");
+        ourScript.ShouldContain("'NT AUTHORITY\\SYSTEM'",
+            customMessage: "LocalSystem identity must resolve to 'NT AUTHORITY\\SYSTEM' (Squid corrects Octopus's typo at IisWebSiteAfterPostDeployFeature.cs:84 which incorrectly returns LocalServiceSid).");
+        ourScript.ShouldContain("'NT AUTHORITY\\NETWORK SERVICE'",
+            customMessage: "NetworkService identity must resolve to 'NT AUTHORITY\\NETWORK SERVICE'.");
+
+        // SpecificUser must strip leading `.\` from local-account usernames (Octopus parity).
+        ourScript.ShouldContain("-replace '^\\.\\\\', ''",
+            customMessage: "SpecificUser identity must strip leading '.\\' from local-account usernames — NTAccount.Translate fails for '.\\user' form (Octopus parity — StripLocalAccountIdentifierFromUsername).");
+
+        // The Grant-AppPoolPrivateKeyAccess function must invoke the resolver instead of
+        // hardcoding the principal — pin the function signature now requires IdentityType.
+        ourScript.ShouldContain("[string]$IdentityType",
+            customMessage: "Grant-AppPoolPrivateKeyAccess must accept an IdentityType parameter.");
+        ourScript.ShouldContain("Resolve-AppPoolIdentityPrincipal -IdentityType",
+            customMessage: "Grant-AppPoolPrivateKeyAccess must delegate principal resolution to Resolve-AppPoolIdentityPrincipal.");
+    }
+
+    /// <summary>
+    /// P0-2 hardening (1.6.9): the deployment journal must record FAILED outcomes too, not just
+    /// success. Without this, the next re-run with SkipIfAlreadyInstalled=True sees a stale
+    /// success entry (or no entry) and might mistakenly conclude nothing needs to happen.
+    /// Mirrors Octopus's <c>IDeploymentJournalWriter</c> "exactly one entry per run" semantic.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasJournalFailureTrackingTrap_ForOctopusJournalRecordFailureParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        // A `trap` block at top level captures uncaught throws and writes the failure entry
+        // BEFORE PowerShell exits with the error.
+        ourScript.ShouldContain("trap {",
+            customMessage: "Journal failure-tracking trap missing — failed deploys leave no journal trace, breaking SkipIfAlreadyInstalled idempotence.");
+
+        ourScript.ShouldContain("-Status 'Failed'",
+            customMessage: "Trap must write Status='Failed' on uncaught throw (Octopus parity — IDeploymentJournalWriter.RecordFailure).");
+
+        // Trap must re-throw so the engine surfaces the real error (exit code + log).
+        // Without this, the script silently exits 0 after writing the failure entry.
+        ourScript.ShouldContain("throw $_",
+            customMessage: "Trap must re-throw the original error after recording the failure entry, otherwise the script silently exits 0 and the engine never sees the failure.");
+
+        // Order: trap registration must happen AFTER `$journalSiteName` / `$journalFingerprint`
+        // are computed (the trap body references them) but BEFORE the main deploy work begins
+        // (cert import, package extract, IIS configure).
+        var fingerprintIdx = ourScript.IndexOf("$journalFingerprint = Get-IISDeployFingerprint", StringComparison.Ordinal);
+        var trapIdx = ourScript.IndexOf("trap {", StringComparison.Ordinal);
+        var certImportIdx = ourScript.IndexOf("Import-IISCertificateFromPfxBase64 -Base64", StringComparison.Ordinal);
+
+        fingerprintIdx.ShouldBeLessThan(trapIdx,
+            customMessage: "Trap must be registered AFTER fingerprint computation (trap body references $journalFingerprint).");
+        trapIdx.ShouldBeLessThan(certImportIdx,
+            customMessage: "Trap must be registered BEFORE the main deploy work (cert import, package extract, etc.) so failures during those phases are caught.");
     }
 
     /// <summary>
