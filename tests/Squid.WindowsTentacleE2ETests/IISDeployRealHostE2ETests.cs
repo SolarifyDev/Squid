@@ -1038,6 +1038,117 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    [Fact]
+    public void RealIIS_ConfigurationVariables_NamespacedWebConfig_StillReplacesEntries()
+    {
+        // Octopus parity edge case: real-world web.config files often declare an XML namespace
+        // (`<configuration xmlns="..."`). A naive `//appSettings/add` XPath returns ZERO matches
+        // in that case — operator would see no replacements and no error. Octopus uses
+        // `//*[local-name()='appSettings']/*[local-name()='add']` to match regardless of namespace
+        // (`ConfigurationVariablesReplacer.cs:77`). This test pins our parity by feeding a
+        // namespaced config and verifying the replacement still happens.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+            "<configuration xmlns=\"http://example.com/schemas/config\">\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"NamespacedKey\" value=\"OLD_NS_VALUE\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "NamespacedKey", Value = "NEW_NS_VALUE" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Namespaced web.config deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+
+        rewritten.ShouldContain("value=\"NEW_NS_VALUE\"",
+            customMessage:
+                $"Namespaced web.config NOT updated — XPath probably regressed to namespace-aware form. " +
+                $"Octopus parity (ConfigurationVariablesReplacer.cs:77) requires `local-name()` XPath. " +
+                $"File after deploy:\n{rewritten}");
+
+        rewritten.ShouldNotContain("OLD_NS_VALUE",
+            customMessage: "Original value still present despite namespace fix — replacement didn't fire.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationVariables_ApplicationSettingsWithoutValueElement_CreatesValueElement()
+    {
+        // Octopus parity edge case: <setting name="X"/> with no child <value> element.
+        // Octopus's ReplaceStronglyTypeApplicationSetting (ConfigurationVariablesReplacer.cs:148-151)
+        // CREATES the <value> child and sets its inner text. Earlier Squid implementation silently
+        // skipped (`if ($null -ne $valueNode)` gate). The fix preserves operator-facing parity.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <applicationSettings>\n" +
+            "    <MyApp.Properties.Settings>\n" +
+            "      <setting name=\"BareSetting\" serializeAs=\"String\" />\n" +
+            "    </MyApp.Properties.Settings>\n" +
+            "  </applicationSettings>\n" +
+            "</configuration>\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "BareSetting", Value = "CREATED_VALUE" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"applicationSettings-without-value deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+
+        // The <value>CREATED_VALUE</value> element must exist after the deploy.
+        rewritten.ShouldContain("<value>CREATED_VALUE</value>",
+            customMessage:
+                $"applicationSettings <value> element NOT created. Octopus parity requires the rewriter " +
+                $"to APPEND a <value> child when none exists. File after deploy:\n{rewritten}");
+
+        ctx.MarkClean();
+    }
+
     // ── Custom-script hooks (Phase 5: PreDeploy + PostDeploy) ───────────────
     //
     // Octopus's `ConfiguredScriptBehaviour` runs operator-inline scripts at 5 stages of

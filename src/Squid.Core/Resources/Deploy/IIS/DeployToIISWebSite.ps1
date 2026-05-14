@@ -886,8 +886,13 @@ function Update-IISConfigurationVariables {
 
 		$modified = $false
 
+		# Octopus parity: XPath uses local-name() so the matcher works regardless of whether
+		# the .config file has an XML namespace declared (Octopus's
+		# ConfigurationVariablesReplacer.cs:77-79). A plain `//appSettings/add` matcher would
+		# return ZERO nodes when web.config has `<configuration xmlns="...">`.
+
 		# appSettings: <appSettings><add key="X" value="..."/></appSettings>
-		foreach ($node in $xml.SelectNodes("//appSettings/add[@key]")) {
+		foreach ($node in $xml.SelectNodes("//*[local-name()='appSettings']/*[local-name()='add'][@key]")) {
 			$key = $node.GetAttribute("key")
 			if ($Variables.ContainsKey($key)) {
 				$node.SetAttribute("value", [string]$Variables[$key])
@@ -897,7 +902,7 @@ function Update-IISConfigurationVariables {
 		}
 
 		# connectionStrings: <connectionStrings><add name="X" connectionString="..." providerName="..."/></connectionStrings>
-		foreach ($node in $xml.SelectNodes("//connectionStrings/add[@name]")) {
+		foreach ($node in $xml.SelectNodes("//*[local-name()='connectionStrings']/*[local-name()='add'][@name]")) {
 			$name = $node.GetAttribute("name")
 			if ($Variables.ContainsKey($name)) {
 				$node.SetAttribute("connectionString", [string]$Variables[$name])
@@ -907,15 +912,22 @@ function Update-IISConfigurationVariables {
 		}
 
 		# applicationSettings: <applicationSettings><Class><setting name="X"><value>...</value></setting></Class></applicationSettings>
-		foreach ($node in $xml.SelectNodes("//applicationSettings//setting[@name]")) {
+		# Octopus parity: when <setting> has NO <value> child element, Octopus's
+		# ReplaceStronglyTypeApplicationSetting (ConfigurationVariablesReplacer.cs:147-151)
+		# CREATES the element. Earlier Squid implementation silently skipped — this is the fix.
+		foreach ($node in $xml.SelectNodes("//*[local-name()='applicationSettings']//*[local-name()='setting'][@name]")) {
 			$name = $node.GetAttribute("name")
 			if ($Variables.ContainsKey($name)) {
-				$valueNode = $node.SelectSingleNode("value")
-				if ($null -ne $valueNode) {
-					$valueNode.InnerText = [string]$Variables[$name]
-					Write-Host "  - applicationSettings/$name replaced"
-					$modified = $true
+				$valueNode = $node.SelectSingleNode("*[local-name()='value']")
+				if ($null -eq $valueNode) {
+					# Create the <value> element in the same namespace as the parent <setting> so
+					# the resulting XML stays well-formed when the document had `xmlns="..."`.
+					$valueNode = $xml.CreateElement('value', $node.NamespaceURI)
+					$node.AppendChild($valueNode) | Out-Null
 				}
+				$valueNode.InnerText = [string]$Variables[$name]
+				Write-Host "  - applicationSettings/$name replaced"
+				$modified = $true
 			}
 		}
 

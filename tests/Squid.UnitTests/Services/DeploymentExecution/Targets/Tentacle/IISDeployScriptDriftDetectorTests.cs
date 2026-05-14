@@ -278,13 +278,23 @@ public class IISDeployScriptDriftDetectorTests
                 "the operator-facing 'Replace entries in .config files' UI checkbox semantics. The " +
                 "function should declare param(`$TargetDir, `$Variables) and walk *.config files.");
 
-        // Critical XPath probes — these are what Octopus's ConfigurationVariablesBehaviour replaces.
-        ourScript.ShouldContain("//appSettings/add[@key]",
-            customMessage: "appSettings XPath probe missing — Octopus parity requires `<appSettings><add key='X'/>` replacement.");
-        ourScript.ShouldContain("//connectionStrings/add[@name]",
-            customMessage: "connectionStrings XPath probe missing — Octopus parity requires `<connectionStrings><add name='X'/>` replacement.");
-        ourScript.ShouldContain("//applicationSettings//setting[@name]",
-            customMessage: "applicationSettings XPath probe missing — Octopus parity covers user.config-style `<applicationSettings>` blocks.");
+        // Critical XPath probes — Octopus parity requires the `local-name()` form
+        // (`ConfigurationVariablesReplacer.cs:77-79`) so namespaced web.config files match too.
+        // A plain `//appSettings/add` matcher would silently return ZERO nodes when the document
+        // declares `xmlns="..."` — operators wouldn't even see an error, just no replacements.
+        ourScript.ShouldContain("//*[local-name()='appSettings']/*[local-name()='add'][@key]",
+            customMessage: "appSettings XPath probe missing or wrong form — must use `local-name()` for namespace-agnostic matching (Octopus parity).");
+        ourScript.ShouldContain("//*[local-name()='connectionStrings']/*[local-name()='add'][@name]",
+            customMessage: "connectionStrings XPath probe missing or wrong form — must use `local-name()` for namespace-agnostic matching.");
+        ourScript.ShouldContain("//*[local-name()='applicationSettings']//*[local-name()='setting'][@name]",
+            customMessage: "applicationSettings XPath probe missing or wrong form — must use `local-name()` for namespace-agnostic matching.");
+
+        // Octopus creates the <value> element when missing (ConfigurationVariablesReplacer.cs:148-151).
+        // Squid must do the same — pin the element-creation branch via grep.
+        ourScript.ShouldContain("CreateElement('value', $node.NamespaceURI)",
+            customMessage:
+                "applicationSettings rewriter doesn't create `<value>` element when missing. " +
+                "Octopus creates it; Squid must too (ConfigurationVariablesReplacer.cs:148-151).");
 
         // Feature-flag enablement gate — `Squid.Action.IISWebSite.ConfigurationVariables.Enabled == 'True'`.
         ourScript.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled']",
