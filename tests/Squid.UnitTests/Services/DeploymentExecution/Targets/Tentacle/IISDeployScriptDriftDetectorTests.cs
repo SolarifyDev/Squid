@@ -667,6 +667,33 @@ public class IISDeployScriptDriftDetectorTests
         ourScript.ShouldContain("'urlencode'");
     }
 
+    /// <summary>
+    /// P2-1 (1.6.9): all 3 error-tolerance toggles are wired into the corresponding rewriter.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasErrorToleranceTogglesWiredToRewriters_ForOctopusParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        // 1. IgnoreVariableReplacementErrors → ConfigurationVariables XML-parse-fail path
+        ourScript.ShouldContain("'Squid.Action.Package.IgnoreVariableReplacementErrors'",
+            customMessage: "ConfigurationVariables must read the IgnoreVariableReplacementErrors flag.");
+        ourScript.ShouldContain("$ignoreVarErrors",
+            customMessage: "IgnoreVariableReplacementErrors flag must be evaluated before the XML-parse continue/throw branch.");
+
+        // 2. ShouldFailDeploymentOnSubstitutionFails → SubstituteInFiles unresolved-token path
+        ourScript.ShouldContain("'Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails'",
+            customMessage: "SubstituteInFiles must read the ShouldFailDeployment flag.");
+        ourScript.ShouldContain("$unresolvedTokens",
+            customMessage: "SubstituteInFiles must track unresolved tokens for the strict-mode short-circuit.");
+
+        // 3. EnableDiagnosticsConfigTransformationLogging → XDT verbose tracing
+        ourScript.ShouldContain("'Squid.Action.Package.EnableDiagnosticsConfigTransformationLogging'",
+            customMessage: "ConfigurationTransforms must read the EnableDiagnostics flag.");
+        ourScript.ShouldContain("[diagnostic]",
+            customMessage: "XDT diagnostic tracing format missing — operators rely on this prefix for log filtering.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

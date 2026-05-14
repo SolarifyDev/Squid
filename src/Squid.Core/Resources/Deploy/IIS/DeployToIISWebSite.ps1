@@ -896,14 +896,23 @@ function Update-IISConfigurationVariables {
 		return
 	}
 
+	# P2-1 (1.6.9): when IgnoreVariableReplacementErrors=True, XML parse failures get
+	# logged and skipped. When False/unset (default), failures throw — operator's deploy
+	# fails loudly if a config file is malformed.
+	$ignoreVarErrors = $SquidParameters['Squid.Action.Package.IgnoreVariableReplacementErrors'] -eq 'True'
+
 	foreach ($file in $configFiles) {
 		Write-Host "ConfigurationVariables: scanning $($file.FullName)"
 		$xml = $null
 		try {
 			$xml = [xml](Get-Content -LiteralPath $file.FullName -Raw)
 		} catch {
-			Write-Host "  - skip (not parseable as XML): $($_.Exception.Message)"
-			continue
+			$parseErrorMsg = "ConfigurationVariables: failed to parse '$($file.FullName)' as XML: $($_.Exception.Message)"
+			if ($ignoreVarErrors) {
+				Write-Host "  - skip (IgnoreVariableReplacementErrors=True): $($_.Exception.Message)"
+				continue
+			}
+			throw "$parseErrorMsg. Set Squid.Action.Package.IgnoreVariableReplacementErrors=True to log+skip instead of failing the deploy."
 		}
 
 		$modified = $false
@@ -1328,12 +1337,20 @@ function Update-IISFilesWithVariableSubstitution {
 			# filters (ToUpper, ToLower, Trim, ToBase64, FromBase64, HtmlEscape, UrlEncode).
 			# `#{if}` and `#{each}` conditionals/iteration deferred to a follow-up. Tokens with
 			# no matching Squid variable are left intact.
+			#
+			# P2-1 (1.6.9): track unresolved tokens. When operator sets
+			# ShouldFailDeploymentOnSubstitutionFails=True AND any tokens remain unresolved,
+			# the function throws after processing — matches Octopus's strict mode.
+			$unresolvedTokens = New-Object System.Collections.Generic.HashSet[string]
 			$newContent = [regex]::Replace($content, '#\{([A-Za-z0-9_.\-]+)(\s*\|\s*([A-Za-z0-9]+))?\}', {
 				param($match)
 				$varName = $match.Groups[1].Value
 				$filterName = if ($match.Groups[3].Success) { $match.Groups[3].Value } else { $null }
 
-				if (-not $Variables.ContainsKey($varName)) { return $match.Value }
+				if (-not $Variables.ContainsKey($varName)) {
+					$unresolvedTokens.Add($match.Value) | Out-Null
+					return $match.Value
+				}
 				$raw = [string]$Variables[$varName]
 
 				if ([string]::IsNullOrEmpty($filterName)) { return $raw }
@@ -1348,10 +1365,20 @@ function Update-IISFilesWithVariableSubstitution {
 					'urlencode'  { return [System.Net.WebUtility]::UrlEncode($raw) }
 					default {
 						Write-Warning "SubstituteInFiles: unknown filter '$filterName' for #{$varName | $filterName}. Leaving token unresolved."
+						$unresolvedTokens.Add($match.Value) | Out-Null
 						return $match.Value
 					}
 				}
 			})
+
+			# P2-1: strict-mode short-circuit. When operator opted into "fail on unresolved"
+			# AND we left any tokens intact, raise a typed error with all unresolved tokens
+			# listed for triage.
+			$failOnUnresolved = $SquidParameters['Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails'] -eq 'True'
+			if ($failOnUnresolved -and $unresolvedTokens.Count -gt 0) {
+				$tokenList = ($unresolvedTokens | ForEach-Object { "  - $_" }) -join "`n"
+				throw "SubstituteInFiles: $($unresolvedTokens.Count) token(s) in '$($file.FullName)' did not match any Squid variable:`n$tokenList`n`nSet Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails=False (or unset) to leave unresolved tokens intact instead."
+			}
 
 			if ($newContent -ne $content) {
 				# Use Set-Content with -NoNewline to avoid appending a trailing newline on files
@@ -1425,8 +1452,17 @@ function Update-IISConfigurationTransforms {
 		return
 	}
 
+	# P2-1 (1.6.9): when EnableDiagnosticsConfigTransformationLogging=True, emit
+	# extra per-transform tracing so operators triaging "why didn't my XDT match?" can
+	# see at-a-glance which sources + transforms ran.
+	$xdtDiagnostics = $SquidParameters['Squid.Action.Package.EnableDiagnosticsConfigTransformationLogging'] -eq 'True'
+
 	function Apply-SingleXdtTransform($sourcePath, $transformPath) {
 		Write-Host "  XDT: '$transformPath' => '$sourcePath'"
+		if ($script:xdtDiagnostics) {
+			Write-Host "    [diagnostic] source size: $((Get-Item -LiteralPath $sourcePath).Length) bytes"
+			Write-Host "    [diagnostic] transform size: $((Get-Item -LiteralPath $transformPath).Length) bytes"
+		}
 		$source = New-Object Microsoft.Web.XmlTransform.XmlTransformableDocument
 		$source.PreserveWhitespace = $true
 		$source.Load($sourcePath)
@@ -1435,6 +1471,8 @@ function Update-IISConfigurationTransforms {
 			$applied = $transform.Apply($source)
 			if (-not $applied) {
 				Write-Warning "  XDT transform application returned false — engine reported failure for '$transformPath'"
+			} elseif ($script:xdtDiagnostics) {
+				Write-Host "    [diagnostic] transform applied; new source size: $((Get-Item -LiteralPath $sourcePath).Length) bytes (pre-save)"
 			}
 			$source.Save($sourcePath)
 		} finally {

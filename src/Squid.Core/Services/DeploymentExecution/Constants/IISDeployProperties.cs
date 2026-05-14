@@ -120,6 +120,37 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Error-tolerance toggles (P2-1, 1.6.9) ────────────────────────────────
+    //
+    // Three operator-tunable error-mode flags, all matching Octopus's flags:
+    // - `IgnoreVariableReplacementErrors` — ConfigurationVariables XML parse failures get
+    //   logged and skipped instead of throwing
+    // - `ShouldFailDeploymentOnSubstitutionFails` — SubstituteInFiles unresolved `#{X}`
+    //   tokens become a hard failure (opposite of current "leave intact" default)
+    // - `EnableDiagnosticsConfigTransformationLogging` — XDT engine emits per-rule trace
+
+    /// <summary>
+    /// Octopus parity: `Octopus.Action.Package.IgnoreVariableReplacementErrors`. When True,
+    /// the ConfigurationVariables rewriter logs and skips XML parse failures instead of
+    /// throwing — useful for deploys where the operator doesn't want a single malformed
+    /// config to abort the entire deploy.
+    /// </summary>
+    internal const string IgnoreVariableReplacementErrors = "Squid.Action.Package.IgnoreVariableReplacementErrors";
+
+    /// <summary>
+    /// Octopus parity: `Octopus.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails`.
+    /// When True, the SubstituteInFiles rewriter fails the deployment if any `#{X}` token
+    /// remains unresolved after processing. Default (False) leaves unresolved tokens intact
+    /// so the operator sees them in the deployed file and can fix.
+    /// </summary>
+    internal const string ShouldFailDeploymentOnSubstitutionFails = "Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails";
+
+    /// <summary>
+    /// Octopus parity: `Octopus.Action.Package.EnableDiagnosticsConfigTransformationLogging`.
+    /// When True, the XDT engine emits per-rule trace output via the verbose logger.
+    /// </summary>
+    internal const string EnableDiagnosticsConfigTransformationLogging = "Squid.Action.Package.EnableDiagnosticsConfigTransformationLogging";
+
     // ── Additional paths across all rewriters (P1-4, 1.6.9) ───────────────────
     //
     // Mirrors Octopus's `Octopus.Action.Package.AdditionalPaths`
