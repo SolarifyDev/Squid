@@ -1943,6 +1943,148 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Certificate auto-import + private-key ACL (1.6.9 P0-1) ───────────────
+    //
+    // Operator stores PFX bytes as a base64 Squid variable. Deploy script decodes,
+    // imports to `Cert:\LocalMachine\My`, exposes the thumbprint via $SquidVariables,
+    // and the binding cert-variable lookup uses it. After IIS configure, grants the
+    // AppPool's identity Read access on the cert's private key file.
+
+    [Fact]
+    public void RealIIS_CertificateAutoImport_PfxLandsInLocalMachineMy_AndExposedViaSquidVariables()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        // Stage a self-signed PFX in memory; capture base64 for the action property.
+        var pfxBytes = GenerateSelfSignedPfxBytes($"squid-iis-autoimport-{Guid.NewGuid():N}", "P@ssw0rd!Test");
+        var pfxBase64 = Convert.ToBase64String(pfxBytes);
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.CertificatePfxBase64, pfxBase64),
+            (Property.CertificatePfxPassword, "P@ssw0rd!Test"),
+            (Property.CertificateThumbprintVariableName, "MyImportedCert")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Cert auto-import deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // Confirm the cert is now in LocalMachine\My. Grep STDOUT for the thumbprint line
+        // emitted by the import function.
+        result.StdOut.ShouldContain("imported PFX with thumbprint",
+            customMessage: $"Import didn't log success. STDOUT:\n{result.StdOut}");
+
+        // Look up the imported thumbprint from STDOUT for cleanup verification.
+        var match = System.Text.RegularExpressions.Regex.Match(
+            result.StdOut, @"thumbprint ([A-F0-9]{40})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        match.Success.ShouldBeTrue("Couldn't extract imported thumbprint from STDOUT — log format may have changed.");
+
+        var importedThumbprint = match.Groups[1].Value;
+        ctx.RegisterCertThumbprintForCleanup(importedThumbprint);
+
+        // The cert MUST be in the store now.
+        var inStore = PowerShellSingleLine(
+            $"if (Get-ChildItem -Path 'Cert:\\LocalMachine\\My\\{importedThumbprint}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}");
+        inStore.ShouldBe("true",
+            customMessage: $"Imported cert with thumbprint {importedThumbprint} not found in Cert:\\LocalMachine\\My after deploy.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_CertificateAutoImport_HttpsBindingViaCertificateVariable_ResolvesToAutoImportedThumbprint()
+    {
+        // End-to-end: auto-import PFX + Bindings JSON references the cert via
+        // `certificateVariable` (the variable name set by the operator). After deploy,
+        // `netsh http show sslcert` must show the auto-imported thumbprint bound.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.RegisterNetshIpPortForCleanup(ctx.HttpsPort);
+
+        var pfxBytes = GenerateSelfSignedPfxBytes($"squid-iis-https-auto-{Guid.NewGuid():N}", "");
+        var pfxBase64 = Convert.ToBase64String(pfxBytes);
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.CertificatePfxBase64, pfxBase64),
+            (Property.CertificatePfxPassword, ""),
+            (Property.CertificateThumbprintVariableName, "AutoImportedSiteCert"),
+            // Bindings JSON uses `certificateVariable` to reference the auto-imported cert
+            // by its operator-chosen logical name. The PS1's cert-variable lookup resolves
+            // to `$SquidVariables["AutoImportedSiteCert.Thumbprint"]` which the import
+            // function populated.
+            (Property.Bindings,
+                "[{\"protocol\":\"https\",\"port\":\"" + ctx.HttpsPort + "\",\"host\":\"\"," +
+                "\"ipAddress\":\"*\",\"certificateVariable\":\"AutoImportedSiteCert\"," +
+                "\"requireSni\":false,\"enabled\":true}]")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Auto-import + HTTPS-binding deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // Extract thumbprint + register for cleanup
+        var match = System.Text.RegularExpressions.Regex.Match(
+            result.StdOut, @"imported PFX with thumbprint ([A-F0-9]{40})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        match.Success.ShouldBeTrue();
+        var importedThumbprint = match.Groups[1].Value;
+        ctx.RegisterCertThumbprintForCleanup(importedThumbprint);
+
+        // netsh MUST show the auto-imported thumbprint bound on the HTTPS port.
+        var netshOutput = RunPowerShell($"& netsh http show sslcert ipport=0.0.0.0:{ctx.HttpsPort}").StdOut;
+        netshOutput.ToUpperInvariant().ShouldContain(importedThumbprint.ToUpperInvariant(),
+            customMessage:
+                $"netsh sslcert binding doesn't show auto-imported thumbprint {importedThumbprint}. " +
+                "Confirms cert-variable resolution failed to find the import. netsh output:\n" + netshOutput);
+
+        ctx.MarkClean();
+    }
+
+    /// <summary>
+    /// Generates a self-signed PFX in memory for testing. Returns the raw PFX bytes
+    /// (operator-equivalent of <c>Get-Content -AsByteStream</c> on a real cert file).
+    /// </summary>
+    private static byte[] GenerateSelfSignedPfxBytes(string dnsName, string password)
+    {
+        var pwArg = string.IsNullOrEmpty(password) ? "$null" : $"(ConvertTo-SecureString -String '{password}' -AsPlainText -Force)";
+        var tempPfx = Path.Combine(Path.GetTempPath(), $"squid-gen-cert-{Guid.NewGuid():N}.pfx");
+        try
+        {
+            // PowerShell is the easiest way to generate a self-signed cert + export to PFX
+            // on Windows. The result bytes are what an operator would have on disk.
+            var script =
+                $"$cert = New-SelfSignedCertificate -DnsName '{dnsName}' " +
+                $"-CertStoreLocation Cert:\\CurrentUser\\My -KeyExportPolicy Exportable; " +
+                $"Export-PfxCertificate -Cert $cert -FilePath '{tempPfx}' -Password {pwArg} | Out-Null; " +
+                // Clean up the CurrentUser copy — we only need the PFX bytes for the test.
+                $"Remove-Item Cert:\\CurrentUser\\My\\$($cert.Thumbprint) -Force -ErrorAction SilentlyContinue";
+
+            var r = RunPowerShell(script);
+            if (r.ExitCode != 0)
+                throw new InvalidOperationException($"Self-signed PFX generation failed: {r.StdErr}");
+            return File.ReadAllBytes(tempPfx);
+        }
+        finally
+        {
+            try { if (File.Exists(tempPfx)) File.Delete(tempPfx); } catch { }
+        }
+    }
+
     // ── Packaged scripts inside the artifact (Phase 1.6.9 P1-3) ─────────────
     //
     // After Phase 10 package extraction, the deploy script auto-discovers `PreDeploy.ps1`
@@ -2699,6 +2841,13 @@ public sealed class IISDeployRealHostE2ETests
         }
 
         /// <summary>
+        /// Registers an externally-imported cert thumbprint for removal during <see cref="Dispose"/>.
+        /// Used by Phase 1.6.9 P0-1 tests that drive the deploy script's <c>Import-IISCertificateFromPfxBase64</c>
+        /// and need to clean up the cert the script imported (not staged by this test directly).
+        /// </summary>
+        public void RegisterCertThumbprintForCleanup(string thumbprint) => _certThumbprintsToClean.Add(thumbprint);
+
+        /// <summary>
         /// Tells <see cref="Dispose"/> to run <c>netsh http delete sslcert ipport=0.0.0.0:{port}</c>
         /// on teardown. Production deploys (non-SNI) leave entries in the netsh sslcert table;
         /// CI parallelism would accumulate them otherwise.
@@ -2831,6 +2980,11 @@ public sealed class IISDeployRealHostE2ETests
         public const string PackageSourcePath = "Squid.Action.IISWebSite.Package.SourcePath";
         public const string PackageExtractTo = "Squid.Action.IISWebSite.Package.ExtractTo";
         public const string PackagePurgeBeforeExtract = "Squid.Action.IISWebSite.Package.PurgeBeforeExtract";
+
+        // P0-1 (1.6.9) — Certificate auto-import + private-key ACL
+        public const string CertificatePfxBase64 = "Squid.Action.IISWebSite.Certificate.PfxBase64";
+        public const string CertificatePfxPassword = "Squid.Action.IISWebSite.Certificate.PfxPassword";
+        public const string CertificateThumbprintVariableName = "Squid.Action.IISWebSite.Certificate.ThumbprintVariableName";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

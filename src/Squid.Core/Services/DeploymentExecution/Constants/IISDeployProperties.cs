@@ -120,6 +120,43 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Certificate auto-import + private-key ACL (P0-1, 1.6.9) ───────────────
+    //
+    // Operator-friendly HTTPS deploys without manual cert staging. Operator stores the PFX
+    // contents as a base64 string in a Squid variable, references that variable here.
+    // The deploy script imports the cert into `Cert:\LocalMachine\My`, writes the resulting
+    // thumbprint into `$SquidVariables["<SiteThumbprintVariableName>.Thumbprint"]`, then the
+    // Bindings JSON references it via `"certificateVariable": "<SiteThumbprintVariableName>"`
+    // (Phase 2's existing cert-variable lookup path).
+    //
+    // After the bindings apply via `netsh http add sslcert`, the script grants the AppPool's
+    // identity Read access on the cert's private key file. Mirrors Octopus's
+    // `IisWebSiteBeforeDeployFeature.cs:24-89` (import) + `IisWebSiteAfterPostDeployFeature.cs:27-94`
+    // (ACL).
+
+    /// <summary>
+    /// Base64-encoded PFX (PKCS#12) bytes. Operator-friendly path: store the PFX as a
+    /// sensitive Squid variable, then reference via <c>#{MyPfxVariable}</c> here. When set,
+    /// the deploy script imports the cert into <c>Cert:\LocalMachine\My</c> on the agent
+    /// before binding resolution.
+    /// </summary>
+    internal const string CertificatePfxBase64 = "Squid.Action.IISWebSite.Certificate.PfxBase64";
+
+    /// <summary>
+    /// Import password for the PFX. Sensitive — operators set this as a Squid sensitive
+    /// variable and reference here. Empty / unset when the PFX has no password.
+    /// </summary>
+    internal const string CertificatePfxPassword = "Squid.Action.IISWebSite.Certificate.PfxPassword";
+
+    /// <summary>
+    /// Logical variable name under which the imported cert's thumbprint is exposed at runtime.
+    /// For example, if set to <c>"OrderApiCert"</c>, the imported thumbprint lands in
+    /// <c>$SquidVariables["OrderApiCert.Thumbprint"]</c>. The operator's Bindings JSON can
+    /// then reference it via <c>"certificateVariable": "OrderApiCert"</c> — Phase 2's existing
+    /// cert-variable lookup path finds it automatically.
+    /// </summary>
+    internal const string CertificateThumbprintVariableName = "Squid.Action.IISWebSite.Certificate.ThumbprintVariableName";
+
     // ── Package extraction — pre-staged .zip / .nupkg deployment (Phase 10) ──
     //
     // Mirrors Octopus's package extraction step (`ExtractPackageToApplicationDirectoryConvention`
