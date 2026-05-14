@@ -1943,6 +1943,112 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Packaged scripts inside the artifact (Phase 1.6.9 P1-3) ─────────────
+    //
+    // After Phase 10 package extraction, the deploy script auto-discovers `PreDeploy.ps1`
+    // and `PostDeploy.ps1` in the extracted package and runs them. Mirrors Octopus's
+    // `PackagedScriptBehaviour` so devs can ship deploy-stage scripts WITH their app code.
+
+    [Fact]
+    public void RealIIS_PackagedPreDeployScript_DiscoveredAndExecuted()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var sentinelPath = ctx.RegisterSentinelPath("packaged-predeploy");
+
+        // Pre-stage the WebRoot with a `PreDeploy.ps1` file — simulates a deploy package
+        // that has the script in its root after extraction.
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "PreDeploy.ps1"),
+            $"Set-Content -Path '{sentinelPath}' -Value 'packaged-predeploy-fired'");
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Packaged PreDeploy deploy failed: {result.StdErr}");
+
+        File.Exists(sentinelPath).ShouldBeTrue(
+            customMessage: $"Packaged PreDeploy.ps1 didn't run — sentinel '{sentinelPath}' missing. " +
+                          "Check the `Test-Path PreDeploy.ps1` discovery block in PS1.");
+        File.ReadAllText(sentinelPath).Trim().ShouldBe("packaged-predeploy-fired");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PackagedPostDeployScript_DiscoveredAndExecutedAfterIISConfigure()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var sentinelPath = ctx.RegisterSentinelPath("packaged-postdeploy");
+
+        // PostDeploy queries the IIS site state — proves it ran AFTER IIS configure.
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "PostDeploy.ps1"),
+            $"$site = Get-Website -Name '{ctx.SiteName}'; " +
+            $"Set-Content -Path '{sentinelPath}' -Value $site.State");
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StartApplicationPool, "True"),
+            (Property.StartWebSite, "True")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Packaged PostDeploy deploy failed: {result.StdErr}");
+
+        File.Exists(sentinelPath).ShouldBeTrue(
+            customMessage: $"Packaged PostDeploy.ps1 didn't run.");
+        File.ReadAllText(sentinelPath).Trim().ShouldBe("Started",
+            customMessage: "Packaged PostDeploy observed wrong site state — confirms ordering: must run AFTER IIS configure.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PackagedScriptsAbsent_DeployProceedsNormally()
+    {
+        // Operator's package has neither PreDeploy.ps1 nor PostDeploy.ps1 — deploy should
+        // complete normally without errors (Test-Path negative + skip).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        var script = IISDeployScriptBuilder.Build(BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]")));
+
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy without packaged scripts failed: {result.StdErr}");
+
+        PowerShellSingleLine($"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}")
+            .ShouldBe("true", customMessage: "Site missing — deploy didn't complete despite scripts being absent.");
+
+        ctx.MarkClean();
+    }
+
     // ── Custom-script hooks (Phase 5: PreDeploy + PostDeploy) ───────────────
     //
     // Octopus's `ConfiguredScriptBehaviour` runs operator-inline scripts at 5 stages of

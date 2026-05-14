@@ -505,6 +505,37 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "All pre-IIS hooks must run before the IIS configure dispatch.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 picks up <c>PreDeploy.ps1</c> / <c>PostDeploy.ps1</c>
+    /// files inside the extracted package (Phase 1.6.9 P1-3 — Octopus PackagedScriptBehaviour parity).
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasPackagedPreAndPostDeployDiscovery_ForOctopusPackagedScriptParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("Packaged PreDeploy",
+            customMessage: "Packaged PreDeploy block missing — operators can't ship PreDeploy.ps1 inside their package.");
+        ourScript.ShouldContain("Packaged PostDeploy",
+            customMessage: "Packaged PostDeploy block missing.");
+
+        ourScript.ShouldContain("Join-Path $preDeployWebRoot 'PreDeploy.ps1'",
+            customMessage: "Packaged PreDeploy must resolve PreDeploy.ps1 relative to WebRoot.");
+        ourScript.ShouldContain("Join-Path $postDeployWebRoot 'PostDeploy.ps1'",
+            customMessage: "Packaged PostDeploy must resolve PostDeploy.ps1 relative to WebRoot.");
+
+        // Ordering: configured (inline) PreDeploy must run BEFORE packaged PreDeploy.
+        var inlinePre = ourScript.IndexOf("'Squid.Action.CustomScripts.PreDeploy.ps1'", StringComparison.Ordinal);
+        var packagedPre = ourScript.IndexOf("Packaged PreDeploy", StringComparison.Ordinal);
+        var packagedPost = ourScript.IndexOf("Packaged PostDeploy", StringComparison.Ordinal);
+        var inlinePost = ourScript.IndexOf("'Squid.Action.CustomScripts.PostDeploy.ps1'", StringComparison.Ordinal);
+
+        inlinePre.ShouldBeLessThan(packagedPre,
+            customMessage: "Configured (inline) PreDeploy must run BEFORE packaged PreDeploy.ps1 (Octopus order).");
+        inlinePost.ShouldBeLessThan(packagedPost,
+            customMessage: "Configured PostDeploy must run BEFORE packaged PostDeploy.ps1 (Octopus order).");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses
