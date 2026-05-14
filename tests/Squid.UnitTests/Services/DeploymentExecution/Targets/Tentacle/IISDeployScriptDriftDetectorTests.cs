@@ -389,8 +389,10 @@ public class IISDeployScriptDriftDetectorTests
                 "Squid IIS PS1 is missing Update-IISFilesWithVariableSubstitution. This breaks the operator-facing " +
                 "'Substitute variables in files' workflow that Octopus's `Octopus.Features.SubstituteInFiles` provides.");
 
-        // The regex pattern must match Octopus's Octostache simple-variable form.
-        ourScript.ShouldContain("#\\{([A-Za-z0-9_.\\-]+)\\}",
+        // Variable-name capture group must match Octostache's name shape (alphanumeric +
+        // dot/hyphen/underscore). The regex MAY have additional groups after for filter
+        // support (P0-3, 1.6.9) — assert only the name-capture prefix here.
+        ourScript.ShouldContain("#\\{([A-Za-z0-9_.\\-]+)",
             customMessage:
                 "SubstituteInFiles regex pattern missing or wrong form — must match `#{X}` style tokens with " +
                 "alphanumeric + dot/hyphen/underscore names (Octostache simple-variable form).");
@@ -640,6 +642,29 @@ public class IISDeployScriptDriftDetectorTests
                 $"Found {helperInvocations.Count} invocations — missing one or more call sites.");
 
         ourScript.ShouldContain("'Squid.Action.IISWebSite.AdditionalPaths'");
+    }
+
+    /// <summary>
+    /// Squid-specific invariant: SubstituteInFiles regex supports the optional filter form
+    /// `#{X | Filter}` (P0-3, 1.6.9). Octostache filters: ToUpper, ToLower, Trim, ToBase64,
+    /// FromBase64, HtmlEscape, UrlEncode.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_SubstituteInFilesSupportsOctostacheFilters_ForOctopusParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("(\\s*\\|\\s*([A-Za-z0-9]+))?",
+            customMessage: "SubstituteInFiles regex must support optional `| FilterName` form.");
+
+        // All 7 filters must be wired in the switch.
+        ourScript.ShouldContain("'toupper'");
+        ourScript.ShouldContain("'tolower'");
+        ourScript.ShouldContain("'trim'");
+        ourScript.ShouldContain("'tobase64'");
+        ourScript.ShouldContain("'frombase64'");
+        ourScript.ShouldContain("'htmlescape'");
+        ourScript.ShouldContain("'urlencode'");
     }
 
     private static string LoadEmbeddedScript()
