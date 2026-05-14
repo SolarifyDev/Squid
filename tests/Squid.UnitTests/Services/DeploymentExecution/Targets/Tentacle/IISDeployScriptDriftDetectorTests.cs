@@ -454,6 +454,57 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "All config rewriters must run BEFORE the IIS configure dispatch.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 contains the <c>Expand-IISPackage</c> function
+    /// (Phase 10). Pins:
+    ///   - Function presence + supported extensions (.zip and .nupkg)
+    ///   - Default ExtractTo falls back to WebRoot
+    ///   - PurgeBeforeExtract semantic
+    ///   - Order: package extraction runs BEFORE SubstituteInFiles (Octopus pipeline:
+    ///     extract → substitute → transforms → vars → IIS configure)
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasPackageExtractor_ForOctopusPackageDeployParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Expand-IISPackage",
+            customMessage:
+                "Squid IIS PS1 is missing Expand-IISPackage. Without it operators must hand-script " +
+                "extraction in a prior Squid.Script step — defeats the 'one-action deploy' parity " +
+                "with Octopus's package-deploy step.");
+
+        // Supported extensions: .zip and .nupkg.
+        ourScript.ShouldContain("'.zip'");
+        ourScript.ShouldContain("'.nupkg'");
+
+        // Default ExtractTo falls back to WebRoot when empty.
+        ourScript.ShouldContain("'Squid.Action.IISWebSite.WebRoot'",
+            customMessage: "ExtractTo must fall back to WebRoot when operator leaves ExtractTo empty.");
+
+        // PurgeBeforeExtract gate present.
+        ourScript.ShouldContain("'Squid.Action.IISWebSite.Package.PurgeBeforeExtract'",
+            customMessage: "PurgeBeforeExtract toggle missing — operators can't request a clean dir before extract.");
+
+        // Order: package extraction MUST appear BEFORE SubstituteInFiles. Octopus's
+        // DeployPackageCommand.cs:110-115 puts ExtractPackage FIRST, then the rewriters.
+        // If reversed, substitutions wouldn't have the extracted files to operate on.
+        var packageGateIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.Package.SourcePath'", StringComparison.Ordinal);
+        var substituteIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.SubstituteInFiles.Enabled'", StringComparison.Ordinal);
+        var transformsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+
+        packageGateIdx.ShouldBeLessThan(substituteIdx,
+            customMessage:
+                "Package extraction must run BEFORE SubstituteInFiles. Octopus pipeline " +
+                "(DeployPackageCommand.cs:110-115) is: extract → substitute → transforms → vars → IIS configure. " +
+                "Reversed order means the rewriters operate on stale or missing files.");
+        packageGateIdx.ShouldBeLessThan(transformsIdx,
+            customMessage: "Package extraction must run before ConfigurationTransforms too.");
+        substituteIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "All pre-IIS hooks must run before the IIS configure dispatch.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

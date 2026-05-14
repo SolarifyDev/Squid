@@ -100,6 +100,11 @@ internal static class IISDeployScriptBuilder
         // Structured Configuration Variables — JSON leaf replacement (Phase 9)
         IISDeployProperties.StructuredConfigurationVariablesEnabled,
         IISDeployProperties.StructuredConfigurationVariablesTargets,
+
+        // Package extraction (Phase 10)
+        IISDeployProperties.PackageSourcePath,
+        IISDeployProperties.PackageExtractTo,
+        IISDeployProperties.PackagePurgeBeforeExtract,
     };
 
     internal static string Build(DeploymentActionDto action)

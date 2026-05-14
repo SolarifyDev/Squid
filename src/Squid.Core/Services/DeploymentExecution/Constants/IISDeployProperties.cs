@@ -120,6 +120,46 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Package extraction — pre-staged .zip / .nupkg deployment (Phase 10) ──
+    //
+    // Mirrors Octopus's package extraction step (`ExtractPackageToApplicationDirectoryConvention`
+    // + related package-deploy plumbing). Operator pre-stages a deployable artifact on the
+    // Tentacle agent (via prior `Squid.Script` step, fileserver mount, or operator manual stage)
+    // and references it via <see cref="PackageSourcePath"/>. The deploy script extracts the
+    // archive into <see cref="PackageExtractTo"/> (defaults to <see cref="WebRoot"/>), then
+    // hands off to the rest of the pipeline.
+    //
+    // Phase 10 MVP supports operator-pre-staged paths only — operators stage the file via
+    // their preferred mechanism. Future phases can add server-side feed-resolved package
+    // shipping via <c>ScriptExecutionRequest.Files</c> for true "Squid downloads + ships"
+    // end-to-end flow.
+    //
+    // Supported archive formats: <c>.zip</c> (via <c>Expand-Archive</c>) and <c>.nupkg</c>
+    // (NuGet treated as zip; same Expand-Archive). Other formats (.tar.gz, .7z) deferred.
+
+    /// <summary>
+    /// Absolute path on the Tentacle agent to the archive to extract. Supported extensions:
+    /// <c>.zip</c>, <c>.nupkg</c>. Operator stages the file via a prior <c>Squid.Script</c> step,
+    /// fileserver mount, or pre-baked artifact location.
+    /// </summary>
+    internal const string PackageSourcePath = "Squid.Action.IISWebSite.Package.SourcePath";
+
+    /// <summary>
+    /// Target directory for extraction. When empty, defaults to <see cref="WebRoot"/> — the
+    /// canonical "deploy package = web root" operator workflow. Operator can override to a
+    /// staging directory if they need separate "extract here, then copy elsewhere" pipelines.
+    /// </summary>
+    internal const string PackageExtractTo = "Squid.Action.IISWebSite.Package.ExtractTo";
+
+    /// <summary>
+    /// When <c>"True"</c>, the extraction target directory is purged (deleted + recreated)
+    /// BEFORE the archive is extracted. Matches Octopus's
+    /// <c>Octopus.Action.Package.PurgeInstallationDirectory</c>. Use to guarantee old files
+    /// from prior deploys don't survive — common with versioned web apps where an obsolete
+    /// DLL could shadow a new one of the same name.
+    /// </summary>
+    internal const string PackagePurgeBeforeExtract = "Squid.Action.IISWebSite.Package.PurgeBeforeExtract";
+
     // ── Structured Configuration Variables — JSON/YAML leaf replacement (Phase 9) ──
     //
     // Mirrors Octopus's `Octopus.Features.JsonConfigurationVariables` feature

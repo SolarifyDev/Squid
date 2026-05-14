@@ -1149,6 +1149,181 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Package extraction (Phase 10) ────────────────────────────────────────
+    //
+    // The deploy script's `Expand-IISPackage` function extracts an operator-staged `.zip` or
+    // `.nupkg` into `Package.ExtractTo` (or WebRoot by default). Hook runs FIRST among the
+    // pre-IIS pipeline so all subsequent rewriters operate on the extracted files.
+    //
+    // These tests stage a real archive at a temp path, deploy with the feature on, and assert
+    // the extracted files land where expected — proving the operator's "package staged in prior
+    // step + IIS step extracts to WebRoot" workflow.
+
+    [Fact]
+    public void RealIIS_PackageExtraction_ZipExtractedIntoWebRoot()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        // Stage a sample .zip with a known file inside.
+        var zipPath = Path.Combine(Path.GetTempPath(), $"squid-iis-package-{Guid.NewGuid():N}.zip");
+        ctx.RegisterSentinelPath("package-zip");  // borrows the cleanup mechanism
+        var stagingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-pkg-src-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
+        ctx.RegisterTempDirForCleanup(stagingDir);
+        File.WriteAllText(Path.Combine(stagingDir, "index.html"), "<html>hello from package</html>");
+        File.WriteAllText(Path.Combine(stagingDir, "config.txt"), "deployed=true");
+        System.IO.Compression.ZipFile.CreateFromDirectory(stagingDir, zipPath);
+        ctx.RegisterTempDirForCleanup(zipPath);  // single-file cleanup; Dispose handles non-dirs gracefully
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Package extraction deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        // Both files must exist in WebRoot.
+        File.Exists(Path.Combine(ctx.PhysicalPath, "index.html")).ShouldBeTrue(
+            customMessage: $"index.html not extracted into WebRoot '{ctx.PhysicalPath}'. Directory contents: {string.Join(", ", Directory.GetFiles(ctx.PhysicalPath))}");
+        File.Exists(Path.Combine(ctx.PhysicalPath, "config.txt")).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(ctx.PhysicalPath, "config.txt")).ShouldContain("deployed=true");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PackageExtraction_PurgeBeforeExtractDeletesPriorFiles()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+
+        // Pre-stage a stale file in WebRoot — purge must remove it.
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "stale-old-deploy.txt"), "from a previous deploy");
+
+        var zipPath = Path.Combine(Path.GetTempPath(), $"squid-iis-package-{Guid.NewGuid():N}.zip");
+        var stagingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-pkg-src-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
+        ctx.RegisterTempDirForCleanup(stagingDir);
+        File.WriteAllText(Path.Combine(stagingDir, "new-only.txt"), "from the new deploy");
+        System.IO.Compression.ZipFile.CreateFromDirectory(stagingDir, zipPath);
+        ctx.RegisterTempDirForCleanup(zipPath);
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath),
+            (Property.PackagePurgeBeforeExtract, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0, customMessage: $"Purge+extract deploy failed: {result.StdErr}");
+
+        // Stale file MUST be gone (purge worked).
+        File.Exists(Path.Combine(ctx.PhysicalPath, "stale-old-deploy.txt")).ShouldBeFalse(
+            customMessage: "Stale file survived purge — PurgeBeforeExtract is broken or didn't run.");
+
+        // New file MUST exist (extraction worked).
+        File.Exists(Path.Combine(ctx.PhysicalPath, "new-only.txt")).ShouldBeTrue();
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PackageExtraction_NoPurge_PriorFilesPreserved()
+    {
+        // Default (PurgeBeforeExtract not set or "False"): prior files survive the extract.
+        // Extracted files merge with pre-existing ones; useful for layered deploys.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        File.WriteAllText(Path.Combine(ctx.PhysicalPath, "prior-file.txt"), "kept from before");
+
+        var zipPath = Path.Combine(Path.GetTempPath(), $"squid-iis-package-{Guid.NewGuid():N}.zip");
+        var stagingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-pkg-src-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
+        ctx.RegisterTempDirForCleanup(stagingDir);
+        File.WriteAllText(Path.Combine(stagingDir, "from-package.txt"), "added by package");
+        System.IO.Compression.ZipFile.CreateFromDirectory(stagingDir, zipPath);
+        ctx.RegisterTempDirForCleanup(zipPath);
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"No-purge extract deploy failed: {result.StdErr}");
+
+        File.Exists(Path.Combine(ctx.PhysicalPath, "prior-file.txt")).ShouldBeTrue(
+            customMessage: "Prior file deleted despite PurgeBeforeExtract NOT being set — purge is too eager.");
+        File.Exists(Path.Combine(ctx.PhysicalPath, "from-package.txt")).ShouldBeTrue();
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_PackageExtraction_MissingSourcePath_FailsWithActionableError()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var missingZipPath = Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():N}.zip");
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, missingZipPath));
+
+        var script = IISDeployScriptBuilder.Build(action);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage: $"Missing-package deploy unexpectedly succeeded.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var combinedOutput = result.StdOut + result.StdErr;
+        combinedOutput.ShouldContain("does not exist",
+            customMessage: $"Error message didn't contain actionable 'does not exist' phrase. Output:\n{combinedOutput}");
+
+        // IIS site MUST NOT have been created — the package-extract throw should have aborted before IIS configure.
+        PowerShellSingleLine($"if (Get-Website -Name '{ctx.SiteName}' -ErrorAction SilentlyContinue) {{ 'true' }} else {{ 'false' }}")
+            .ShouldBe("false", customMessage: "Site created despite package-extract failure — abort path is broken.");
+
+        ctx.MarkClean();
+    }
+
     // ── Structured Configuration Variables (Phase 9) ─────────────────────────
     //
     // The deploy script's `Update-IISStructuredJsonConfiguration` walks operator-specified
@@ -2545,6 +2720,11 @@ public sealed class IISDeployRealHostE2ETests
         // Phase 9 — Structured Configuration Variables (Octopus JsonConfigurationVariables parity)
         public const string StructuredConfigurationVariablesEnabled = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled";
         public const string StructuredConfigurationVariablesTargets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
+
+        // Phase 10 — Package extraction (operator-staged .zip / .nupkg)
+        public const string PackageSourcePath = "Squid.Action.IISWebSite.Package.SourcePath";
+        public const string PackageExtractTo = "Squid.Action.IISWebSite.Package.ExtractTo";
+        public const string PackagePurgeBeforeExtract = "Squid.Action.IISWebSite.Package.PurgeBeforeExtract";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

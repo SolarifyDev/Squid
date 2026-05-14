@@ -937,6 +937,81 @@ function Update-IISConfigurationVariables {
 	}
 }
 
+# ── Squid: Package extraction (Phase 10 — operator-staged .zip / .nupkg into WebRoot) ──
+# Mirrors Octopus's package-extraction step. Operator stages a `.zip` or `.nupkg` somewhere on
+# the Tentacle agent (prior step, fileserver, pre-baked path) and points `Squid.Action.IISWebSite.Package.SourcePath`
+# at it. The deploy script extracts into `Squid.Action.IISWebSite.Package.ExtractTo` (or WebRoot
+# by default), optionally purging the target first. Runs FIRST among the pre-IIS hooks so
+# all the rewriters (SubstituteInFiles, ConfigurationTransforms, ConfigurationVariables,
+# StructuredConfigurationVariables) operate on the freshly extracted files.
+
+function Expand-IISPackage {
+	param(
+		[Parameter(Mandatory=$true)][string]$SourcePath,
+		[Parameter(Mandatory=$true)][string]$ExtractTo,
+		[bool]$PurgeBeforeExtract
+	)
+
+	if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+		throw "Package source path '$SourcePath' does not exist or is not a file. Operators must stage the archive via a prior step (e.g. Squid.Script downloading from a feed) before this IIS step runs."
+	}
+
+	$extension = [System.IO.Path]::GetExtension($SourcePath).ToLowerInvariant()
+	if ($extension -ne '.zip' -and $extension -ne '.nupkg') {
+		throw "Package source '$SourcePath' has unsupported extension '$extension'. Supported: .zip, .nupkg. (.tar.gz / .7z support is deferred to a future phase.)"
+	}
+
+	# Purge: delete the entire target dir + recreate. This mirrors Octopus's
+	# Octopus.Action.Package.PurgeInstallationDirectory semantic — operators tick this to
+	# guarantee stale files from prior deploys don't survive.
+	if ($PurgeBeforeExtract -and (Test-Path -LiteralPath $ExtractTo)) {
+		Write-Host "Package: purging target dir '$ExtractTo' before extract (PurgeBeforeExtract=True)"
+		try {
+			Get-ChildItem -LiteralPath $ExtractTo -Force | Remove-Item -Recurse -Force
+		} catch {
+			Write-Warning "Package: purge encountered errors but will continue: $($_.Exception.Message)"
+		}
+	}
+
+	if (-not (Test-Path -LiteralPath $ExtractTo)) {
+		Write-Host "Package: creating target dir '$ExtractTo'"
+		New-Item -Path $ExtractTo -ItemType Directory -Force | Out-Null
+	}
+
+	Write-Host "Package: extracting '$SourcePath' → '$ExtractTo'"
+	# Both .zip and .nupkg are zip-format archives — Expand-Archive handles both, but it
+	# strictly requires .zip extension. For .nupkg, we copy to a temp .zip first.
+	if ($extension -eq '.nupkg') {
+		$tempZip = Join-Path ([System.IO.Path]::GetTempPath()) ("squid-nupkg-" + [System.Guid]::NewGuid().ToString("N") + ".zip")
+		try {
+			Copy-Item -LiteralPath $SourcePath -Destination $tempZip
+			Expand-Archive -LiteralPath $tempZip -DestinationPath $ExtractTo -Force
+		} finally {
+			Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+		}
+	} else {
+		Expand-Archive -LiteralPath $SourcePath -DestinationPath $ExtractTo -Force
+	}
+
+	$extractedCount = @(Get-ChildItem -LiteralPath $ExtractTo -Recurse -File -ErrorAction SilentlyContinue).Count
+	Write-Host "Package: extracted $extractedCount file(s) into '$ExtractTo'"
+}
+
+$packageSourcePath = $SquidParameters['Squid.Action.IISWebSite.Package.SourcePath']
+if (-not [string]::IsNullOrWhiteSpace($packageSourcePath)) {
+	$packageExtractTo = $SquidParameters['Squid.Action.IISWebSite.Package.ExtractTo']
+	if ([string]::IsNullOrWhiteSpace($packageExtractTo)) {
+		# Default to WebRoot when ExtractTo is empty.
+		$packageExtractTo = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	}
+	if ([string]::IsNullOrWhiteSpace($packageExtractTo)) {
+		throw "Package SourcePath is set ('$packageSourcePath') but neither Package.ExtractTo nor WebRoot is defined. The script doesn't know where to extract the archive."
+	}
+
+	$purgeFlag = ($SquidParameters['Squid.Action.IISWebSite.Package.PurgeBeforeExtract'] -eq 'True')
+	Expand-IISPackage -SourcePath $packageSourcePath -ExtractTo $packageExtractTo -PurgeBeforeExtract $purgeFlag
+}
+
 # ── Squid: SubstituteInFiles — `#{X}` token replacement INSIDE files (Phase 8 — Octopus SubstituteInFiles parity) ──
 # Mirrors Octopus's `Octopus.Features.SubstituteInFiles` feature
 # (`SubstituteInFilesBehaviour.cs:12-35`). For each operator-specified file glob, reads file
