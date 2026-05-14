@@ -685,6 +685,52 @@ public class IISDeployScriptBuilderTests
         script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms'] = ''");
     }
 
+    // ── SubstituteInFiles (Phase 8) ────────────────────────────────────────
+
+    [Fact]
+    public void Build_SubstituteInFilesEnabled_LandsInPreamble()
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.SubstituteInFilesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.Enabled'] = 'True'");
+    }
+
+    [Fact]
+    public void Build_SubstituteInFilesTargetFilesWithNewlines_PreservedViaBase64()
+    {
+        // Operators enter newline-separated globs (one file/glob per line). Newlines must
+        // survive the serialisation so the agent-side parser yields multiple entries instead
+        // of one fused string. Builder routes TargetFiles through base64 — verify round-trip.
+        const string multilineGlobs =
+            "appsettings.json\n" +
+            "appsettings.{env}.json\n" +
+            "config/*.yml";
+
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.SubstituteInFilesTargetFiles, multilineGlobs));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        // Find the base64 emission and decode — content must equal `multilineGlobs`.
+        var marker = "$SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles'] = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('";
+        var startIdx = script.IndexOf(marker, StringComparison.Ordinal);
+        startIdx.ShouldBePositive(
+            customMessage: "SubstituteInFiles.TargetFiles must emit via base64 (registered in ScriptContentProperties for newline preservation).");
+
+        var b64Start = startIdx + marker.Length;
+        var b64End = script.IndexOf("'))", b64Start, StringComparison.Ordinal);
+        var emittedB64 = script.Substring(b64Start, b64End - b64Start);
+        var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(emittedB64));
+
+        decoded.ShouldBe(multilineGlobs,
+            customMessage: $"TargetFiles round-trip via base64 lost content. Decoded:\n{decoded}");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)

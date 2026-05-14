@@ -120,6 +120,35 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── SubstituteInFiles — variable replacement INSIDE files (Phase 8) ────
+    //
+    // Mirrors Octopus's `Octopus.Features.SubstituteInFiles` feature
+    // (`Calamari.Common/Features/Behaviours/SubstituteInFilesBehaviour.cs:12-35`). When enabled,
+    // the deploy script walks operator-specified files (newline-separated globs relative to
+    // <see cref="WebRoot"/>) and replaces every <c>#{VariableName}</c> token with the matching
+    // Squid variable's value. Unlike <see cref="ConfigurationVariablesEnabled"/> (which only
+    // touches XML attributes inside <c>*.config</c>), SubstituteInFiles works on ANY text file
+    // (JSON, YAML, properties, .txt, .config, anything).
+    //
+    // Pairs with the existing variable-shipping infrastructure: the builder already emits
+    // <c>$SquidVariables</c> in the preamble (added in Phase 6 for ConfigurationVariables); this
+    // feature reuses the same hashtable for token lookup.
+
+    /// <summary>
+    /// When <c>"True"</c>, the deploy script walks the file globs in <see cref="SubstituteInFilesTargetFiles"/>
+    /// and replaces every <c>#{VariableName}</c> token (case-sensitive name match against the
+    /// Squid variable set). Tokens with no matching variable are left as-is.
+    /// </summary>
+    internal const string SubstituteInFilesEnabled = "Squid.Action.IISWebSite.SubstituteInFiles.Enabled";
+
+    /// <summary>
+    /// Newline-separated (or comma-separated) list of file paths / globs relative to
+    /// <see cref="WebRoot"/>. Operator example:
+    /// <c>"appsettings.json\nappsettings.{env}.json\n*.yml"</c>. Absolute paths also supported.
+    /// Matches Octopus's <c>Octopus.Action.SubstituteInFiles.TargetFiles</c>.
+    /// </summary>
+    internal const string SubstituteInFilesTargetFiles = "Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles";
+
     // ── XML config transforms (Phase 7 — Octopus ConfigurationTransforms parity) ──
     //
     // Mirrors Octopus's `Octopus.Features.ConfigurationTransforms` feature
