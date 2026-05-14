@@ -105,6 +105,11 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.PackageSourcePath,
         IISDeployProperties.PackageExtractTo,
         IISDeployProperties.PackagePurgeBeforeExtract,
+
+        // Certificate auto-import (P0-1, 1.6.9)
+        IISDeployProperties.CertificatePfxBase64,
+        IISDeployProperties.CertificatePfxPassword,
+        IISDeployProperties.CertificateThumbprintVariableName,
     };
 
     internal static string Build(DeploymentActionDto action)

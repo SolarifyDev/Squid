@@ -536,6 +536,50 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "Configured PostDeploy must run BEFORE packaged PostDeploy.ps1 (Octopus order).");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 contains <c>Import-IISCertificateFromPfxBase64</c> +
+    /// <c>Grant-AppPoolPrivateKeyAccess</c> (Phase 1.6.9 P0-1).
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasCertificateAutoImportAndAclGrant_ForOctopusIisWebSiteCertParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Import-IISCertificateFromPfxBase64",
+            customMessage: "Cert import function missing — operators can't auto-import PFX certs.");
+        ourScript.ShouldContain("function Grant-AppPoolPrivateKeyAccess",
+            customMessage: "Private-key ACL function missing — HTTPS deploys would TLS-handshake-fail despite correct netsh binding.");
+
+        // Imports into LocalMachine\My (not CurrentUser — IIS reads from machine store).
+        ourScript.ShouldContain("StoreName]::My",
+            customMessage: "Cert must be imported to LocalMachine\\My (operator-friendly default).");
+        ourScript.ShouldContain("StoreLocation]::LocalMachine");
+
+        // Exposes thumbprint via the cert-variable convention so Phase 2's binding lookup works.
+        ourScript.ShouldContain("$ThumbprintVariableName.Thumbprint",
+            customMessage: "Imported thumbprint must be exposed via SquidVariables[VarName.Thumbprint] for Bindings JSON cert-variable lookup.");
+
+        // ACL grant uses `IIS APPPOOL\<PoolName>` — IIS-specific synthetic identity.
+        ourScript.ShouldContain("IIS APPPOOL",
+            customMessage: "ACL grant must target the AppPool's synthetic identity 'IIS APPPOOL\\<PoolName>'.");
+
+        // Order: cert IMPORT happens BEFORE the IIS configure dispatch (bindings need the
+        // thumbprint exposed before they resolve). ACL grant happens AFTER (AppPool must exist).
+        var importIdx = ourScript.IndexOf("Import-IISCertificateFromPfxBase64", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+        var aclIdx = ourScript.IndexOf("Grant-AppPoolPrivateKeyAccess", StringComparison.Ordinal);
+
+        // The function DEFINITION should appear before the invocation. We're checking the
+        // INVOCATION position of `Grant-AppPoolPrivateKeyAccess` which calls the function —
+        // the LAST occurrence is the invocation site, not the definition. Use LastIndexOf.
+        var aclInvokeIdx = ourScript.LastIndexOf("Grant-AppPoolPrivateKeyAccess", StringComparison.Ordinal);
+
+        importIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "Cert import must run BEFORE IIS configure dispatch — bindings need the thumbprint exposed first.");
+        invokeIdx.ShouldBeLessThan(aclInvokeIdx,
+            customMessage: "Private-key ACL grant must run AFTER IIS configure dispatch — AppPool's synthetic identity exists only after pool is created.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

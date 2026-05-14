@@ -959,6 +959,130 @@ function Update-IISConfigurationVariables {
 	}
 }
 
+# ── Squid: Certificate auto-import (1.6.9 P0-1 — Octopus IisWebSiteBeforeDeployFeature parity) ──
+# When the operator sets `Squid.Action.IISWebSite.Certificate.PfxBase64`, decode the PFX
+# bytes, import into Cert:\LocalMachine\My, and expose the resulting thumbprint via
+# `$SquidVariables["<VariableName>.Thumbprint"]` so the Bindings JSON's
+# `"certificateVariable": "<VariableName>"` path resolves to the freshly-imported thumbprint.
+# Mirrors Octopus's `IisWebSiteBeforeDeployFeature.cs:24-89`.
+
+function Import-IISCertificateFromPfxBase64 {
+	param(
+		[Parameter(Mandatory=$true)][string]$Base64,
+		[string]$Password,
+		[string]$ThumbprintVariableName
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Base64)) { return $null }
+
+	$bytes = [System.Convert]::FromBase64String($Base64)
+	$tempPfx = Join-Path ([System.IO.Path]::GetTempPath()) ("squid-iis-cert-" + [System.Guid]::NewGuid().ToString("N") + ".pfx")
+	try {
+		[System.IO.File]::WriteAllBytes($tempPfx, $bytes)
+
+		# Import: KeyStorageFlags include MachineKeySet (key in machine store, not user)
+		# + PersistKeySet (private key persists across import) + Exportable (operator can
+		# re-export if needed). Same flags Octopus uses.
+		$securePw = if ([string]::IsNullOrEmpty($Password)) {
+			New-Object System.Security.SecureString
+		} else {
+			ConvertTo-SecureString -String $Password -AsPlainText -Force
+		}
+
+		$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+			$tempPfx,
+			$securePw,
+			[System.Security.Cryptography.X509Certificates.X509KeyStorageFlags] 'MachineKeySet, PersistKeySet, Exportable')
+
+		$store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+			[System.Security.Cryptography.X509Certificates.StoreName]::My,
+			[System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+		try {
+			$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+			$store.Add($cert)
+		} finally {
+			$store.Close()
+		}
+
+		Write-Host "Certificate: imported PFX with thumbprint $($cert.Thumbprint) into LocalMachine\My"
+
+		if (-not [string]::IsNullOrWhiteSpace($ThumbprintVariableName)) {
+			# Expose via the cert-variable convention so Bindings JSON's
+			# `"certificateVariable": "<name>"` lookup finds it.
+			$SquidVariables["$ThumbprintVariableName.Thumbprint"] = $cert.Thumbprint
+			Write-Host "Certificate: exposed thumbprint via SquidVariables['$ThumbprintVariableName.Thumbprint']"
+		}
+
+		return $cert.Thumbprint
+	} finally {
+		try { if (Test-Path -LiteralPath $tempPfx) { Remove-Item -LiteralPath $tempPfx -Force -ErrorAction SilentlyContinue } } catch {}
+	}
+}
+
+# Grant the AppPool's identity Read access on the imported cert's PRIVATE KEY file.
+# Without this ACL, the IIS worker process can't load the private key and HTTPS requests
+# return TLS-handshake failures even though netsh binding is correct. Mirrors Octopus's
+# `IisWebSiteAfterPostDeployFeature.cs:27-94`.
+function Grant-AppPoolPrivateKeyAccess {
+	param(
+		[Parameter(Mandatory=$true)][string]$Thumbprint,
+		[Parameter(Mandatory=$true)][string]$AppPoolName
+	)
+
+	$cert = Get-ChildItem -Path "Cert:\LocalMachine\My\$Thumbprint" -ErrorAction SilentlyContinue
+	if ($null -eq $cert) {
+		Write-Warning "Grant-AppPoolPrivateKeyAccess: cert with thumbprint $Thumbprint not in Cert:\LocalMachine\My; skipping ACL grant."
+		return
+	}
+
+	# Locate the private-key file on disk. The path differs by key-storage provider
+	# (CSP/CNG); we use CertificateExtensionsRSA helper introduced in .NET 4.6+ which
+	# handles both.
+	$rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+	if ($null -eq $rsa) {
+		Write-Warning "Grant-AppPoolPrivateKeyAccess: cert $Thumbprint has no RSA private key; skipping."
+		return
+	}
+
+	$keyFilePath = $null
+	# CNG path (modern certs)
+	if ($rsa -is [System.Security.Cryptography.RSACng]) {
+		$keyName = $rsa.Key.UniqueName
+		$keyFilePath = Join-Path "$env:ProgramData\Microsoft\Crypto\Keys" $keyName
+		if (-not (Test-Path -LiteralPath $keyFilePath)) {
+			$keyFilePath = Join-Path "$env:ALLUSERSPROFILE\Microsoft\Crypto\Keys" $keyName
+		}
+	}
+	# Legacy CSP path
+	if ($null -eq $keyFilePath -and $rsa -is [System.Security.Cryptography.RSACryptoServiceProvider]) {
+		$keyName = $rsa.CspKeyContainerInfo.UniqueKeyContainerName
+		$keyFilePath = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" $keyName
+	}
+
+	if ([string]::IsNullOrEmpty($keyFilePath) -or -not (Test-Path -LiteralPath $keyFilePath)) {
+		Write-Warning "Grant-AppPoolPrivateKeyAccess: could not locate private-key file for thumbprint $Thumbprint (probed CNG + CSP paths). Skipping ACL grant."
+		return
+	}
+
+	$acl = Get-Acl -LiteralPath $keyFilePath
+	$appPoolIdentity = "IIS APPPOOL\$AppPoolName"
+	$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+		$appPoolIdentity,
+		[System.Security.AccessControl.FileSystemRights]::Read,
+		[System.Security.AccessControl.AccessControlType]::Allow)
+	$acl.AddAccessRule($rule)
+	Set-Acl -LiteralPath $keyFilePath -AclObject $acl
+	Write-Host "Certificate: granted Read access on private key '$keyFilePath' to '$appPoolIdentity'"
+}
+
+$certPfxBase64 = $SquidParameters['Squid.Action.IISWebSite.Certificate.PfxBase64']
+$importedCertThumbprint = $null
+if (-not [string]::IsNullOrWhiteSpace($certPfxBase64)) {
+	$certPfxPassword = $SquidParameters['Squid.Action.IISWebSite.Certificate.PfxPassword']
+	$certVarName = $SquidParameters['Squid.Action.IISWebSite.Certificate.ThumbprintVariableName']
+	$importedCertThumbprint = Import-IISCertificateFromPfxBase64 -Base64 $certPfxBase64 -Password $certPfxPassword -ThumbprintVariableName $certVarName
+}
+
 # ── Squid: Package extraction (Phase 10 — operator-staged .zip / .nupkg into WebRoot) ──
 # Mirrors Octopus's package-extraction step. Operator stages a `.zip` or `.nupkg` somewhere on
 # the Tentacle agent (prior step, fileserver, pre-baked path) and points `Squid.Action.IISWebSite.Package.SourcePath`
@@ -1408,6 +1532,18 @@ if ($psVersion.Major -ge 7 -and $psVersion.Minor -ge 3) {
 }
 else {
 	&$DeployIISScriptBlock -SquidParameters $SquidParameters
+}
+
+# ── Squid: Grant AppPool private-key ACL (1.6.9 P0-1) ──
+# After bindings have been applied (during IIS configure dispatch above), grant the
+# AppPool's identity Read access on the imported cert's private key file. Without this
+# the worker process can't load the private key → TLS handshake fails. Runs only if
+# we auto-imported a cert AND the AppPool name is set.
+if (-not [string]::IsNullOrWhiteSpace($importedCertThumbprint)) {
+	$appPoolForAcl = $SquidParameters['Squid.Action.IISWebSite.ApplicationPoolName']
+	if (-not [string]::IsNullOrWhiteSpace($appPoolForAcl)) {
+		Grant-AppPoolPrivateKeyAccess -Thumbprint $importedCertThumbprint -AppPoolName $appPoolForAcl
+	}
 }
 
 # ── Squid: Custom-script PostDeploy hook (Phase 5) ──
