@@ -1149,6 +1149,208 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Structured Configuration Variables (Phase 9) ─────────────────────────
+    //
+    // The deploy script's `Update-IISStructuredJsonConfiguration` walks operator-specified
+    // JSON files, recurses into the object structure, and replaces leaf values whose path
+    // matches a Squid variable (with `:` or `.` separator). Phase 9 MVP supports JSON;
+    // YAML/properties are future work (Octopus's `StructuredConfigurationVariablesBehaviour`
+    // covers more formats via separate parsers).
+    //
+    // These tests stage real `appsettings.json` files, deploy, then assert the rewritten
+    // JSON's leaf values match the operator's variable values.
+
+    [Fact]
+    public void RealIIS_StructuredConfigurationVariables_TopLevelLeaf_ReplacedByMatchingVariable()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"AppName\": \"OLD_NAME\",\n" +
+            "  \"Unchanged\": \"keep-me\"\n" +
+            "}\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "AppName", Value = "OrderApi" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesEnabled, "True"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Top-level leaf replacement deploy failed: {result.StdErr}");
+
+        var rewrittenJson = File.ReadAllText(jsonPath);
+        rewrittenJson.ShouldContain("\"OrderApi\"",
+            customMessage: $"Top-level leaf value 'AppName' wasn't replaced. File:\n{rewrittenJson}");
+        rewrittenJson.ShouldNotContain("OLD_NAME");
+        rewrittenJson.ShouldContain("\"keep-me\"",
+            customMessage: "Non-matching leaf was modified — walker is over-eager.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_StructuredConfigurationVariables_NestedLeaf_ColonSeparator_ReplacedByMatchingVariable()
+    {
+        // .NET Core `appsettings.json` operators typically use colon-separated paths
+        // (matches IConfiguration's section separator).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"Logging\": {\n" +
+            "    \"LogLevel\": {\n" +
+            "      \"Default\": \"Information\"\n" +
+            "    }\n" +
+            "  },\n" +
+            "  \"ConnectionStrings\": {\n" +
+            "    \"Default\": \"Server=localhost\"\n" +
+            "  }\n" +
+            "}\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "Logging:LogLevel:Default", Value = "Debug" },
+            new() { Name = "ConnectionStrings:Default", Value = "Server=prod-cluster" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesEnabled, "True"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Nested-leaf colon-separator deploy failed: {result.StdErr}");
+
+        var rewritten = File.ReadAllText(jsonPath);
+        // PowerShell ConvertTo-Json may vary indentation between versions — assert on the
+        // VALUE only to keep the test independent of formatting.
+        rewritten.ShouldContain("\"Debug\"",
+            customMessage: $"Logging:LogLevel:Default not replaced to 'Debug'. File:\n{rewritten}");
+        rewritten.ShouldNotContain("Information",
+            customMessage: "Original LogLevel value still present — replacement didn't persist.");
+        rewritten.ShouldContain("Server=prod-cluster",
+            customMessage: $"ConnectionStrings:Default not replaced. File:\n{rewritten}");
+        rewritten.ShouldNotContain("Server=localhost");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_StructuredConfigurationVariables_NestedLeaf_DotSeparator_AlsoMatches()
+    {
+        // .NET Framework operators may use dot-separated variable names (more familiar from
+        // `app.config` style). The rewriter must accept BOTH separator forms (Octopus parity).
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"Logging\": {\n" +
+            "    \"LogLevel\": {\n" +
+            "      \"Default\": \"Information\"\n" +
+            "    }\n" +
+            "  }\n" +
+            "}\n");
+
+        // Dot separator instead of colon
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "Logging.LogLevel.Default", Value = "Trace" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesEnabled, "True"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Dot-separator path deploy failed: {result.StdErr}");
+
+        var rewritten = File.ReadAllText(jsonPath);
+        rewritten.ShouldContain("Trace",
+            customMessage:
+                $"Logging.LogLevel.Default (dot separator) not replaced — dot path matching is broken. " +
+                $"File:\n{rewritten}");
+        rewritten.ShouldNotContain("Information");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_StructuredConfigurationVariables_FeatureDisabled_JsonFileUntouched()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        const string originalContent = "{\n  \"X\": \"keep-me\"\n}\n";
+        File.WriteAllText(jsonPath, originalContent);
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "X", Value = "SHOULD_NOT_BE_APPLIED" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json")
+            // StructuredConfigurationVariablesEnabled NOT set — gate stays off
+        );
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Deploy failed: {result.StdErr}");
+
+        File.ReadAllText(jsonPath).ShouldContain("keep-me",
+            customMessage: "JSON file was modified despite feature OFF — gate is broken.");
+        File.ReadAllText(jsonPath).ShouldNotContain("SHOULD_NOT_BE_APPLIED",
+            customMessage: "Rewriter ran despite feature OFF — gate is broken.");
+
+        ctx.MarkClean();
+    }
+
     // ── SubstituteInFiles (Phase 8) ──────────────────────────────────────────
     //
     // The deploy script's `Update-IISFilesWithVariableSubstitution` reads each glob in
@@ -2339,6 +2541,10 @@ public sealed class IISDeployRealHostE2ETests
         // Phase 8 — SubstituteInFiles (Octopus SubstituteInFiles parity)
         public const string SubstituteInFilesEnabled = "Squid.Action.IISWebSite.SubstituteInFiles.Enabled";
         public const string SubstituteInFilesTargetFiles = "Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles";
+
+        // Phase 9 — Structured Configuration Variables (Octopus JsonConfigurationVariables parity)
+        public const string StructuredConfigurationVariablesEnabled = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled";
+        public const string StructuredConfigurationVariablesTargets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

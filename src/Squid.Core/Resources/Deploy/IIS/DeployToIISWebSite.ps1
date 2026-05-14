@@ -1187,6 +1187,115 @@ if ($configurationVariablesEnabled -eq 'True') {
 	}
 }
 
+# ── Squid: Structured Configuration Variables — JSON leaf replacement (Phase 9 — Octopus JsonConfigurationVariables parity) ──
+# Mirrors Octopus's `Octopus.Features.JsonConfigurationVariables` feature
+# (`StructuredConfigurationVariablesBehaviour.cs:13-35`). Walks each operator-specified JSON
+# file, recurses into the object structure, replaces leaf values where the path (with `:` or `.`
+# separator) matches a Squid variable name. Phase 9 MVP supports JSON; YAML/properties are
+# future work.
+#
+# Order: runs AFTER ConfigurationVariables — Octopus pipeline puts structured-config LAST among
+# the rewriters because it operates on a different file family (JSON) than the prior XML ones,
+# and operators may want appSettings replaced first, then JSON leaves.
+
+function Update-IISStructuredJsonConfiguration {
+	param(
+		[Parameter(Mandatory=$true)][string]$TargetDir,
+		[Parameter(Mandatory=$true)][hashtable]$Variables,
+		[Parameter(Mandatory=$true)][string]$TargetFilesGlobs
+	)
+
+	if (-not (Test-Path $TargetDir)) {
+		Write-Host "StructuredConfigurationVariables: target dir '$TargetDir' does not exist; skipping."
+		return
+	}
+
+	if ([string]::IsNullOrWhiteSpace($TargetFilesGlobs)) {
+		Write-Host "StructuredConfigurationVariables: no target file globs configured; skipping."
+		return
+	}
+
+	# Walk JSON object recursively, replacing leaf values whose path matches a Squid variable.
+	# Supports BOTH `:` and `.` path separators (operator may have stored the variable as
+	# `Logging:LogLevel:Default` or `Logging.LogLevel.Default` — try both).
+	function Walk-JsonReplace($node, $pathParts, $variables, [ref]$modifiedFlag) {
+		if ($node -is [System.Management.Automation.PSCustomObject]) {
+			foreach ($prop in $node.PSObject.Properties) {
+				$newParts = $pathParts + @($prop.Name)
+				$value = $prop.Value
+
+				if ($value -is [System.Management.Automation.PSCustomObject]) {
+					Walk-JsonReplace -node $value -pathParts $newParts -variables $variables -modifiedFlag $modifiedFlag
+				} elseif ($value -is [System.Array] -or $value -is [System.Object[]]) {
+					# Phase 9 MVP: scalar leaves only — array element replacement is Phase 9.5
+					# Arrays of strings and primitives are skipped intentionally
+				} else {
+					$pathColon = $newParts -join ':'
+					$pathDot = $newParts -join '.'
+					$matchedVar = $null
+					if ($variables.ContainsKey($pathColon)) {
+						$matchedVar = $variables[$pathColon]
+					} elseif ($variables.ContainsKey($pathDot)) {
+						$matchedVar = $variables[$pathDot]
+					}
+					if ($null -ne $matchedVar) {
+						$prop.Value = [string]$matchedVar
+						$modifiedFlag.Value = $true
+						Write-Host "  - JSON leaf '$pathColon' replaced"
+					}
+				}
+			}
+		}
+	}
+
+	$globs = $TargetFilesGlobs -split "[`r`n,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+	foreach ($glob in $globs) {
+		$resolvedGlob = if ([System.IO.Path]::IsPathRooted($glob)) { $glob } else { Join-Path $TargetDir $glob }
+		$files = @(Get-ChildItem -Path $resolvedGlob -File -ErrorAction SilentlyContinue)
+
+		if ($files.Count -eq 0) {
+			Write-Warning "StructuredConfigurationVariables: glob '$glob' matched no files."
+			continue
+		}
+
+		foreach ($file in $files) {
+			Write-Host "StructuredConfigurationVariables: scanning '$($file.FullName)'"
+			$json = $null
+			try {
+				$rawContent = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+				$json = $rawContent | ConvertFrom-Json
+			} catch {
+				Write-Warning "  - skip (not parseable as JSON): $($_.Exception.Message)"
+				continue
+			}
+
+			if ($null -eq $json) { continue }
+
+			$modified = [ref]$false
+			Walk-JsonReplace -node $json -pathParts @() -variables $Variables -modifiedFlag $modified
+
+			if ($modified.Value) {
+				# Preserve UTF-8 (Set-Content -Encoding UTF8 doesn't add BOM by default in PS 5.1+).
+				# Depth 32 covers virtually all real-world config files; default of 2 truncates badly.
+				$serialized = $json | ConvertTo-Json -Depth 32
+				Set-Content -LiteralPath $file.FullName -Value $serialized -NoNewline -Encoding UTF8
+			}
+		}
+	}
+}
+
+$structuredEnabled = $SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled']
+if ($structuredEnabled -eq 'True') {
+	$structuredTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$structuredGlobs = $SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets']
+	if (-not [string]::IsNullOrWhiteSpace($structuredTarget)) {
+		Write-Host "StructuredConfigurationVariables: feature enabled; rewriting JSON leaves under '$structuredTarget'"
+		Update-IISStructuredJsonConfiguration -TargetDir $structuredTarget -Variables $SquidVariables -TargetFilesGlobs $structuredGlobs
+	} else {
+		Write-Host "StructuredConfigurationVariables: feature enabled but WebRoot is empty; skipping."
+	}
+}
+
 $psVersion = $PSVersionTable.PSVersion
 
 if ($psVersion.Major -ge 7 -and $psVersion.Minor -ge 3) {

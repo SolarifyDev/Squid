@@ -120,6 +120,37 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Structured Configuration Variables — JSON/YAML leaf replacement (Phase 9) ──
+    //
+    // Mirrors Octopus's `Octopus.Features.JsonConfigurationVariables` feature
+    // (`Calamari.Common/Features/Behaviours/StructuredConfigurationVariablesBehaviour.cs:13-35`).
+    // Format-aware leaf replacement — walks JSON object structure, for each leaf checks if a
+    // Squid variable matches the path (with both `:` and `.` separators supported, matching
+    // .NET Core configuration conventions).
+    //
+    // Distinct from Phase 8 SubstituteInFiles:
+    //   - SubstituteInFiles: TEXT-level `#{X}` token replacement in any file format
+    //   - StructuredConfigurationVariables: STRUCTURE-AWARE leaf replacement (operator
+    //     stores `ConnectionStrings:Default` as the variable name; the rewriter walks
+    //     `appsettings.json` and replaces the `connectionStrings.default` leaf value)
+    //
+    // Phase 9 MVP supports JSON. YAML/properties files can be added in future phases
+    // (Octopus's `StructuredConfigVariables.csproj` adds those format-specific parsers).
+
+    /// <summary>
+    /// When <c>"True"</c>, the deploy script walks each JSON file in <see cref="StructuredConfigurationVariablesTargets"/>
+    /// and replaces leaf values where the JSON path matches a Squid variable name. Path forms:
+    /// dot-separated (`Logging.LogLevel.Default`) and colon-separated (`Logging:LogLevel:Default`) both supported.
+    /// </summary>
+    internal const string StructuredConfigurationVariablesEnabled = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled";
+
+    /// <summary>
+    /// Newline-separated list of file paths / globs relative to <see cref="WebRoot"/>. Operator example:
+    /// <c>"appsettings.json\nappsettings.Production.json"</c>. Matches Octopus's
+    /// <c>Octopus.Action.Package.JsonConfigurationVariablesTargets</c>.
+    /// </summary>
+    internal const string StructuredConfigurationVariablesTargets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
+
     // ── SubstituteInFiles — variable replacement INSIDE files (Phase 8) ────
     //
     // Mirrors Octopus's `Octopus.Features.SubstituteInFiles` feature

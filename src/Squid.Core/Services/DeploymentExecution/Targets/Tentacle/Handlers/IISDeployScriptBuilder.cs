@@ -96,6 +96,10 @@ internal static class IISDeployScriptBuilder
         // SubstituteInFiles — variable replacement INSIDE files (Phase 8)
         IISDeployProperties.SubstituteInFilesEnabled,
         IISDeployProperties.SubstituteInFilesTargetFiles,
+
+        // Structured Configuration Variables — JSON leaf replacement (Phase 9)
+        IISDeployProperties.StructuredConfigurationVariablesEnabled,
+        IISDeployProperties.StructuredConfigurationVariablesTargets,
     };
 
     internal static string Build(DeploymentActionDto action)
@@ -147,6 +151,8 @@ internal static class IISDeployScriptBuilder
         // SubstituteInFiles.TargetFiles is a newline-separated list of file globs. Same newline-
         // preservation requirement as AdditionalTransforms above.
         IISDeployProperties.SubstituteInFilesTargetFiles,
+        // StructuredConfigurationVariables.Targets is also a newline-separated glob list.
+        IISDeployProperties.StructuredConfigurationVariablesTargets,
     };
 
     private static string BuildPreamble(DeploymentActionDto action, IReadOnlyList<VariableDto> variables)
