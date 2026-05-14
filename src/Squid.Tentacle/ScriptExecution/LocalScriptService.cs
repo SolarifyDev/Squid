@@ -367,6 +367,26 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
     private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
     {
+        // Drain AsyncStreamReader callbacks on the FIRST poll that observes
+        // HasExited=true. Without this, GetStatus can return state=Complete
+        // with stdout lines still in flight on the threadpool — the line is
+        // already in the kernel pipe and the AsyncStreamReader has read it,
+        // but the OutputDataReceived event hasn't been dispatched yet, so it
+        // isn't in the on-disk log file when ReadLogsAndCursor reads below.
+        // The test then sees "ExitCode=0 + last 1-2 log lines missing".
+        //
+        // CompleteScript already does this drain on its own teardown path
+        // (line ~594), but GetStatus is the OTHER way state=Complete becomes
+        // observable — when the test polls before calling CompleteScript.
+        // PR #317's RunToCompletion accumulator papered over this by polling
+        // additional times after seeing Complete; this fix removes the race
+        // at its source so single-poll callers also get the full output.
+        //
+        // Idempotent: WaitForExit() on an already-drained process is a no-op,
+        // but we gate via Interlocked.Exchange to avoid taking the lock-equivalent
+        // path on every subsequent poll.
+        DrainAsyncReadersOnce(running);
+
         // Cursor MUST be derived from the same disk read as `logs` — see
         // ReadLogsAndCursor's XML for the race that the previous two-source
         // code (ReadLogs + LogWriter.NextSequence) opened.
@@ -375,6 +395,38 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
 
         return new ScriptStatusResponse(ticket, state, exitCode, logs, nextSequence);
+    }
+
+    /// <summary>
+    /// Drains <see cref="Process.OutputDataReceived"/> / <see cref="Process.ErrorDataReceived"/>
+    /// callbacks via the parameterless <see cref="Process.WaitForExit()"/> overload,
+    /// AT MOST ONCE per <paramref name="running"/> instance. No-op when the process
+    /// hasn't exited yet (the readers are still actively delivering lines).
+    ///
+    /// <para>The .NET docs say: "Following a call to <see cref="Process.BeginOutputReadLine"/>,
+    /// only calling <see cref="Process.WaitForExit()"/> (no args) ensures async output is
+    /// flushed before returning." The timeout overload, and the implicit `HasExited` poll,
+    /// do NOT wait for the AsyncStreamReader to drain.</para>
+    ///
+    /// <para>Race we're closing: process writes "last line" → process exits → threadpool
+    /// hasn't yet scheduled the <c>OutputDataReceived</c> callback for "last line" → test
+    /// polls <see cref="GetStatus"/> → sees <c>HasExited=true</c> → reads log file from disk
+    /// → "last line" not there yet → returns Complete with truncated logs.</para>
+    /// </summary>
+    private static void DrainAsyncReadersOnce(RunningScript running)
+    {
+        if (!running.Process.HasExited) return;
+        if (Interlocked.Exchange(ref running.DrainedAsyncReaders, 1) != 0) return;
+
+        try
+        {
+            running.Process.WaitForExit();
+        }
+        catch
+        {
+            // Drain is best-effort — if Process was disposed mid-drain (e.g.
+            // CompleteScript ran concurrently), the readers are gone anyway.
+        }
     }
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
@@ -1357,6 +1409,13 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         public StartScriptCommand? Command { get; }
         public DateTimeOffset StartedAt { get; }
         public string? TraceId { get; }
+
+        /// <summary>
+        /// 0 = `WaitForExit()` (no-arg drain) not yet called; 1 = called. Toggled
+        /// via <see cref="Interlocked.Exchange"/> so concurrent GetStatus polls don't
+        /// double-call. See <c>DrainAsyncReadersOnce</c> for the race this closes.
+        /// </summary>
+        public int DrainedAsyncReaders;
 
         public long LogSequence => LogWriter?.NextSequence ?? 0;
 

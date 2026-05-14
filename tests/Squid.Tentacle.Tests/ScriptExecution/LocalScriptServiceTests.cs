@@ -1047,6 +1047,84 @@ public class LocalScriptServiceTests : IDisposable
     // ========================================================================
 
     [Fact]
+    public void GetStatus_FlushesAsyncStreamReaders_FastExitScript_FirstCompletePollSeesAllLines()
+    {
+        // Pins the `DrainAsyncReadersOnce` call in `BuildStatus`. Pre-fix race:
+        //   1. Script writes a single line + exits within 50ms
+        //   2. Test polls GetStatus → BuildStatus reads HasExited=true → returns Complete
+        //   3. But .NET's AsyncStreamReader hasn't yet dispatched the OutputDataReceived
+        //      callback for the last line → log file on disk is still empty
+        //   4. ReadLogsAndCursor returns empty list → test sees state=Complete + 0 lines
+        //
+        // CompleteScript already had the WaitForExit() (no-arg) drain (pinned by the
+        // sibling test below). GetStatus is the OTHER way state=Complete becomes
+        // observable — when the test polls before invoking CompleteScript.
+        // PR #317's RunToCompletion accumulator papered over this by polling many
+        // times after seeing Complete; this fix closes the race at the source.
+        //
+        // 5 iterations to amplify the intermittent race. Pre-fix typically 1-2
+        // iterations show empty logs; post-fix all 5 capture the marker.
+        const int iterations = 5;
+        var failures = new List<string>();
+
+        for (var i = 0; i < iterations; i++)
+        {
+            var marker = $"fast-exit-getstatus-{i}-{Guid.NewGuid():N}";
+            var script = OperatingSystem.IsWindows()
+                ? $"Write-Output '{marker}'"
+                : $"echo '{marker}'";
+
+            var command = new StartScriptCommand(
+                new ScriptTicket(Guid.NewGuid().ToString("N")),
+                script,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(1),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero)
+            {
+                ScriptSyntax = OperatingSystem.IsWindows() ? ScriptType.PowerShell : ScriptType.Bash
+            };
+
+            _service.StartScript(command);
+            var ticket = command.ScriptTicket;
+            _createdTickets.Add(ticket.TaskId);
+
+            // Poll GetStatus until state=Complete. Critical: we use ONLY the first
+            // poll's logs that returns Complete — not an accumulator. Pre-fix this
+            // is where the line was lost.
+            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(30);
+            ScriptStatusResponse? completeStatus = null;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                var status = _service.GetStatus(new ScriptStatusRequest(ticket, 0));
+                if (status.State == ProcessState.Complete)
+                {
+                    completeStatus = status;
+                    break;
+                }
+                Thread.Sleep(10);
+            }
+
+            completeStatus.ShouldNotBeNull(
+                customMessage: $"iter {i}: GetStatus never reported Complete within 30s.");
+
+            var allText = string.Join("\n", completeStatus.Logs.Select(l => l.Text));
+            if (!allText.Contains(marker))
+                failures.Add($"iter {i}: expected '{marker}' missing from FIRST Complete poll. Got: '{allText}'");
+        }
+
+        failures.ShouldBeEmpty(
+            customMessage:
+                $"GetStatus MUST drain async stream readers on the first poll that observes HasExited=true. " +
+                $"Got {failures.Count}/{iterations} flake(s) — pre-fix this race dropped output silently when " +
+                $"a fast-exit script's last line was still in flight on the threadpool. Without the drain, the " +
+                $"in-memory RunningScript reports state=Complete but the on-disk log file is missing the " +
+                $"unflushed final line(s).\n\nFailures:\n{string.Join("\n", failures)}");
+    }
+
+    [Fact]
     public void CompleteScript_FlushesAsyncStreamReaders_FastExitScript_OutputCaptured()
     {
         // 5 iterations to surface intermittent race. Each iteration uses a
