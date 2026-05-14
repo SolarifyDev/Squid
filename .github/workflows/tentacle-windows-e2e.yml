@@ -86,6 +86,29 @@ jobs:
           Install-WindowsFeature -Name Web-WebServer,Web-Mgmt-Console,Web-Basic-Auth,Web-Windows-Auth -IncludeManagementTools
           Get-WindowsFeature Web-WebServer, Web-Basic-Auth, Web-Windows-Auth | Format-Table -Property Name, InstallState, DisplayName
 
+      - name: Install Microsoft.Web.Xdt (XDT engine for Phase 7 ConfigurationTransforms)
+        # The Phase 7 IIS deploy script invokes Microsoft.Web.XmlTransform for XDT transforms.
+        # `windows-latest` has VS Build Tools pre-installed but the DLL is not GAC-resident
+        # by default. We populate the NuGet global cache so the PS1's probe lookup
+        # (`~/.nuget/packages/microsoft.web.xdt/*/lib/...`) resolves the DLL.
+        shell: pwsh
+        run: |
+          $tempProj = "$env:RUNNER_TEMP\xdt-installer"
+          New-Item -ItemType Directory -Force -Path $tempProj | Out-Null
+          Push-Location $tempProj
+          dotnet new classlib -n XdtInstaller --force | Out-Null
+          Set-Location XdtInstaller
+          dotnet add package Microsoft.Web.Xdt --version 3.0.0
+          dotnet restore
+          Pop-Location
+
+          $dll = Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages\microsoft.web.xdt" -Recurse -Filter "Microsoft.Web.XmlTransform.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dll) {
+            Write-Host "Microsoft.Web.XmlTransform.dll available at: $($dll.FullName)"
+          } else {
+            Write-Warning "Microsoft.Web.XmlTransform.dll NOT found in NuGet global cache — Phase 7 XDT real-host tests will skip."
+          }
+
       - name: Restore Squid.WindowsTentacleE2ETests
         shell: pwsh
         run: dotnet restore tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj --configfile "$env:NUGET_CONFIG"

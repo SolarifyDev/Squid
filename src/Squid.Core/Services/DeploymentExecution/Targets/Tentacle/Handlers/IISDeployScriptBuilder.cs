@@ -87,6 +87,11 @@ internal static class IISDeployScriptBuilder
 
         // .NET Configuration Variables feature toggle (Phase 6)
         IISDeployProperties.ConfigurationVariablesEnabled,
+
+        // XML Configuration Transforms (Phase 7 — XDT)
+        IISDeployProperties.ConfigurationTransformsEnabled,
+        IISDeployProperties.ConfigurationTransformsEnvironmentName,
+        IISDeployProperties.ConfigurationTransformsAdditional,
     };
 
     internal static string Build(DeploymentActionDto action)
@@ -120,16 +125,21 @@ internal static class IISDeployScriptBuilder
     }
 
     /// <summary>
-    /// Properties whose value is an operator-authored SCRIPT BODY (not data). Multi-line scripts
-    /// must preserve newlines (PowerShell statement separator) and arbitrary apostrophes / dollar
-    /// signs without breakage — single-quote single-line escape cannot guarantee that. We instead
-    /// emit these via base64 round-trip, which is byte-safe at the cost of slight verbosity in
-    /// the rendered preamble.
+    /// Properties whose value must preserve newlines byte-for-byte. Single-quote single-line
+    /// escape collapses newlines to spaces — fine for JSON (whitespace-insensitive) but breaks:
+    ///   - PowerShell scripts (newlines are statement separators)
+    ///   - CSV / newline-separated config (newlines are entry separators)
+    /// These properties round-trip via base64 in the preamble, which is byte-safe at the cost
+    /// of slight verbosity in the rendered script.
     /// </summary>
     private static readonly HashSet<string> ScriptContentProperties = new(StringComparer.OrdinalIgnoreCase)
     {
         IISDeployProperties.CustomScriptsPreDeploy,
         IISDeployProperties.CustomScriptsPostDeploy,
+        // ConfigurationTransforms.AdditionalTransforms is multi-line CSV where operators commonly
+        // separate `source => target` entries with newlines. Newline collapse would turn N entries
+        // into one undelimited string.
+        IISDeployProperties.ConfigurationTransformsAdditional,
     };
 
     private static string BuildPreamble(DeploymentActionDto action, IReadOnlyList<VariableDto> variables)

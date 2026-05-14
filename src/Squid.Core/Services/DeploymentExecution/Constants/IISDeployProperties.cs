@@ -120,6 +120,48 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── XML config transforms (Phase 7 — Octopus ConfigurationTransforms parity) ──
+    //
+    // Mirrors Octopus's `Octopus.Features.ConfigurationTransforms` feature
+    // (`Calamari.Common/Features/Behaviours/ConfigurationTransformsBehaviour.cs:84-101`).
+    // When enabled, the deploy script applies XDT (XML Document Transform) overlays to
+    // every `*.config` file under <see cref="WebRoot"/>:
+    //
+    //   - <c>web.config</c> + <c>web.Release.config</c> → applies the Release transform
+    //   - <c>web.config</c> + <c>web.{EnvironmentName}.config</c> → applies the env transform
+    //
+    // Operators can also specify explicit transforms via <see cref="ConfigurationTransformsAdditional"/>
+    // (CSV of <c>transform.config =&gt; target.config</c> entries; matches Octopus's
+    // <c>Octopus.Action.Package.AdditionalXmlConfigurationTransforms</c> format).
+    //
+    // The transform engine on the agent is <c>Microsoft.Web.XmlTransform.dll</c> (from the
+    // <c>Microsoft.Web.Xdt</c> NuGet package). The script probes the GAC + common VS install
+    // paths; if not found, the feature emits a clear remediation message and the script
+    // continues (transform skipped — operator's `web.config` is left as-is).
+
+    /// <summary>
+    /// When <c>"True"</c>, the deploy script applies <c>*.Release.config</c> and
+    /// <c>*.{EnvironmentName}.config</c> XDT transforms over their base files under
+    /// <see cref="WebRoot"/>. Matches Octopus's
+    /// <c>Octopus.Action.Package.AutomaticallyRunConfigurationTransformationFiles</c>.
+    /// </summary>
+    internal const string ConfigurationTransformsEnabled = "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled";
+
+    /// <summary>
+    /// Environment name used for auto-transforms (<c>*.{EnvironmentName}.config</c>). Operators
+    /// typically set this to <c>#{Squid.Environment.Name}</c> so the deploy picks the right env
+    /// overlay automatically. Optional — when empty, only the Release transform is applied.
+    /// </summary>
+    internal const string ConfigurationTransformsEnvironmentName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName";
+
+    /// <summary>
+    /// Operator-specified explicit transforms as CSV of <c>source =&gt; target</c> entries
+    /// (newline OR comma separated). Each transform applies independently of the auto-discovery
+    /// flow. Example: <c>"connectionStrings.config =&gt; web.config, settings.{env}.config =&gt; settings.config"</c>.
+    /// Matches Octopus's <c>Octopus.Action.Package.AdditionalXmlConfigurationTransforms</c>.
+    /// </summary>
+    internal const string ConfigurationTransformsAdditional = "Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms";
+
     // ── Custom script slots (Phase 5 — Octopus CustomScripts parity) ──────
     //
     // Mirrors Octopus's <c>Octopus.Action.CustomScripts.{Stage}.{ext}</c> taxonomy from

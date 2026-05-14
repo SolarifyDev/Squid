@@ -937,6 +937,144 @@ function Update-IISConfigurationVariables {
 	}
 }
 
+# ── Squid: XML Configuration Transforms / XDT (Phase 7 — Octopus ConfigurationTransforms parity) ──
+# Mirrors Octopus's `Octopus.Features.ConfigurationTransforms` feature
+# (`ConfigurationTransformsBehaviour.cs:84-101`). When enabled, walks every *.config file
+# under WebRoot and applies XDT transforms:
+#   - Auto: <baseName>.Release.config (always)
+#   - Auto: <baseName>.{EnvironmentName}.config (when EnvironmentName is set)
+#   - Explicit: any CSV of `transform.config => target.config` entries in AdditionalTransforms
+#
+# RUNS BEFORE ConfigurationVariables — XDT can ADD <appSettings> entries that ConfigurationVariables
+# then rewrites by value (Octopus pipeline order: ConfigurationTransforms → ConfigurationVariables).
+
+function Update-IISConfigurationTransforms {
+	param(
+		[Parameter(Mandatory=$true)][string]$TargetDir,
+		[string]$EnvironmentName,
+		[string]$AdditionalTransforms
+	)
+
+	if (-not (Test-Path $TargetDir)) {
+		Write-Host "ConfigurationTransforms: target dir '$TargetDir' does not exist; skipping."
+		return
+	}
+
+	# Locate Microsoft.Web.XmlTransform — try GAC first, then probe common install paths.
+	$xdtLoaded = $false
+	try {
+		Add-Type -AssemblyName "Microsoft.Web.XmlTransform" -ErrorAction Stop
+		$xdtLoaded = $true
+	} catch {
+		$probePaths = @(
+			"${env:ProgramFiles}\Microsoft Visual Studio\*\*\MSBuild\Microsoft\VisualStudio\v*\Web\Microsoft.Web.XmlTransform.dll",
+			"${env:ProgramFiles(x86)}\Microsoft Visual Studio\*\*\MSBuild\Microsoft\VisualStudio\v*\Web\Microsoft.Web.XmlTransform.dll",
+			"${env:USERPROFILE}\.nuget\packages\microsoft.web.xdt\*\lib\net40\Microsoft.Web.XmlTransform.dll",
+			"${env:USERPROFILE}\.nuget\packages\microsoft.web.xdt\*\lib\netstandard2.0\Microsoft.Web.XmlTransform.dll"
+		)
+		foreach ($pattern in $probePaths) {
+			$found = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+			if ($found) {
+				try { Add-Type -Path $found.FullName; $xdtLoaded = $true; break } catch {}
+			}
+		}
+	}
+
+	if (-not $xdtLoaded) {
+		Write-Warning ("ConfigurationTransforms: Microsoft.Web.XmlTransform not available on this agent. " +
+			"Install via 'dotnet add package Microsoft.Web.Xdt' or via VS Build Tools 'Web development workload'. " +
+			"Transforms will NOT be applied to *.config files.")
+		return
+	}
+
+	function Apply-SingleXdtTransform($sourcePath, $transformPath) {
+		Write-Host "  XDT: '$transformPath' => '$sourcePath'"
+		$source = New-Object Microsoft.Web.XmlTransform.XmlTransformableDocument
+		$source.PreserveWhitespace = $true
+		$source.Load($sourcePath)
+		$transform = New-Object Microsoft.Web.XmlTransform.XmlTransformation($transformPath)
+		try {
+			$applied = $transform.Apply($source)
+			if (-not $applied) {
+				Write-Warning "  XDT transform application returned false — engine reported failure for '$transformPath'"
+			}
+			$source.Save($sourcePath)
+		} finally {
+			$source.Dispose()
+			$transform.Dispose()
+		}
+	}
+
+	# Build the auto-transform name list.
+	$autoTransformNames = New-Object System.Collections.Generic.List[string]
+	$autoTransformNames.Add("Release") | Out-Null
+	if (-not [string]::IsNullOrWhiteSpace($EnvironmentName) -and $EnvironmentName -ne "Release") {
+		$autoTransformNames.Add($EnvironmentName) | Out-Null
+	}
+
+	# Discover all *.config files; auto-apply siblings.
+	$allConfigs = @(Get-ChildItem -Path $TargetDir -Recurse -Filter "*.config" -File -ErrorAction SilentlyContinue)
+	foreach ($baseFile in $allConfigs) {
+		$baseName = [System.IO.Path]::GetFileNameWithoutExtension($baseFile.Name)
+
+		# Skip files that ARE transforms themselves (e.g. "web.Release" → would chain-apply onto itself).
+		$isItselfATransform = $false
+		foreach ($transformName in $autoTransformNames) {
+			if ($baseName.EndsWith(".$transformName", [System.StringComparison]::OrdinalIgnoreCase)) {
+				$isItselfATransform = $true; break
+			}
+		}
+		if ($isItselfATransform) { continue }
+
+		foreach ($transformName in $autoTransformNames) {
+			$transformPath = Join-Path $baseFile.DirectoryName "$baseName.$transformName.config"
+			if (Test-Path $transformPath) {
+				Write-Host "ConfigurationTransforms: applying '$transformName' transform to '$($baseFile.FullName)'"
+				Apply-SingleXdtTransform -sourcePath $baseFile.FullName -transformPath $transformPath
+			}
+		}
+	}
+
+	# Explicit additional transforms (CSV `source => target`, comma or newline separated).
+	if (-not [string]::IsNullOrWhiteSpace($AdditionalTransforms)) {
+		$entries = $AdditionalTransforms -split "[`r`n,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+		foreach ($entry in $entries) {
+			$parts = $entry -split '\s*=>\s*'
+			if ($parts.Count -ne 2) {
+				Write-Warning "ConfigurationTransforms: skipping malformed entry '$entry' (expected 'transform.config => target.config')"
+				continue
+			}
+			$transformFile = $parts[0].Trim()
+			$targetFile = $parts[1].Trim()
+			$resolvedTransform = if ([System.IO.Path]::IsPathRooted($transformFile)) { $transformFile } else { Join-Path $TargetDir $transformFile }
+			$resolvedTarget = if ([System.IO.Path]::IsPathRooted($targetFile)) { $targetFile } else { Join-Path $TargetDir $targetFile }
+			if (-not (Test-Path $resolvedTransform)) {
+				Write-Warning "ConfigurationTransforms: transform file '$resolvedTransform' not found; skipping"
+				continue
+			}
+			if (-not (Test-Path $resolvedTarget)) {
+				Write-Warning "ConfigurationTransforms: target file '$resolvedTarget' not found; skipping"
+				continue
+			}
+			Write-Host "ConfigurationTransforms: applying explicit '$transformFile' => '$targetFile'"
+			Apply-SingleXdtTransform -sourcePath $resolvedTarget -transformPath $resolvedTransform
+		}
+	}
+}
+
+$configurationTransformsEnabled = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled']
+$configurationTransformsAdditional = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms']
+if ($configurationTransformsEnabled -eq 'True' -or -not [string]::IsNullOrWhiteSpace($configurationTransformsAdditional)) {
+	$transformsTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	if (-not [string]::IsNullOrWhiteSpace($transformsTarget)) {
+		$transformsEnv = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName']
+		Write-Host "ConfigurationTransforms: feature enabled; processing *.config under '$transformsTarget'"
+		Update-IISConfigurationTransforms -TargetDir $transformsTarget -EnvironmentName $transformsEnv -AdditionalTransforms $configurationTransformsAdditional
+	} else {
+		Write-Host "ConfigurationTransforms: feature enabled but WebRoot is empty; skipping (nothing to scan)."
+	}
+}
+
 $configurationVariablesEnabled = $SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled']
 if ($configurationVariablesEnabled -eq 'True') {
 	$configRewriteTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']

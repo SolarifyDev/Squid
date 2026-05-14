@@ -620,6 +620,71 @@ public class IISDeployScriptBuilderTests
         script.ShouldNotContain("'alsoSkipped'");
     }
 
+    // ── XML Configuration Transforms (Phase 7 — XDT) ──────────────────────
+
+    [Fact]
+    public void Build_ConfigurationTransformsProperties_AllLandInPreamble()
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"),
+            (IISDeployProperties.ConfigurationTransformsEnabled, "True"),
+            (IISDeployProperties.ConfigurationTransformsEnvironmentName, "Production"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'] = 'True'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName'] = 'Production'");
+    }
+
+    [Fact]
+    public void Build_ConfigurationTransformsAdditionalTransformsWithNewlines_PreservedViaBase64()
+    {
+        // Operators typically separate explicit transforms with newlines (one entry per line).
+        // Single-quote single-line escape collapses newlines to spaces — that breaks the CSV
+        // parser on the agent (`-split "[\r\n,]"` would yield one fused entry with embedded `=>`).
+        // The builder routes AdditionalTransforms through base64 (registered in
+        // ScriptContentProperties) so newlines survive.
+        const string multilineCsv =
+            "connectionStrings.config => web.config\n" +
+            "settings.Production.config => settings.config\n" +
+            "appsettings.transform.config => appsettings.config";
+
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.ConfigurationTransformsAdditional, multilineCsv));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        // Find the base64 emission for AdditionalTransforms and verify round-trip preserves content.
+        var marker = "$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms'] = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('";
+        var startIdx = script.IndexOf(marker, StringComparison.Ordinal);
+        startIdx.ShouldBePositive(
+            customMessage: "AdditionalTransforms must emit via base64 (registered in ScriptContentProperties).");
+
+        var b64Start = startIdx + marker.Length;
+        var b64End = script.IndexOf("'))", b64Start, StringComparison.Ordinal);
+        var emittedB64 = script.Substring(b64Start, b64End - b64Start);
+        var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(emittedB64));
+
+        decoded.ShouldBe(multilineCsv,
+            customMessage: $"AdditionalTransforms round-trip via base64 lost content. Decoded:\n{decoded}");
+    }
+
+    [Fact]
+    public void Build_ConfigurationTransformsUnset_BothToggleAndAdditionalEmitAsEmpty()
+    {
+        // Phase 7 defaults: operator hasn't enabled XDT. Both properties emit as empty strings
+        // (parameter not base64 + toggle not "True") — agent script's gate short-circuits, no work.
+        var action = BuildAction((IISDeployProperties.CreateOrUpdateWebSite, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'] = ''");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName'] = ''");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms'] = ''");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
