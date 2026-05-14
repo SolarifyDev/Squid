@@ -751,6 +751,24 @@ public class IISDeployScriptBuilderTests
             customMessage: "Targets must emit via base64 — newline separators required for multi-glob lists.");
     }
 
+    // ── Package extraction (Phase 10) ──────────────────────────────────────
+
+    [Fact]
+    public void Build_PackageProperties_AllLandInPreamble()
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.PackageSourcePath, @"C:\staging\order-api-v1.zip"),
+            (IISDeployProperties.PackageExtractTo, @"C:\inetpub\OrderApi"),
+            (IISDeployProperties.PackagePurgeBeforeExtract, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.Package.SourcePath'] = 'C:\\staging\\order-api-v1.zip'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.Package.ExtractTo'] = 'C:\\inetpub\\OrderApi'");
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.Package.PurgeBeforeExtract'] = 'True'");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
