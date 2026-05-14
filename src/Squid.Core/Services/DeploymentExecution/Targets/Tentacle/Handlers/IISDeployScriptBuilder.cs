@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Text;
 using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Tentacle.Handlers;
 
@@ -83,13 +84,36 @@ internal static class IISDeployScriptBuilder
         // Custom script slots (Phase 5)
         IISDeployProperties.CustomScriptsPreDeploy,
         IISDeployProperties.CustomScriptsPostDeploy,
+
+        // .NET Configuration Variables feature toggle (Phase 6)
+        IISDeployProperties.ConfigurationVariablesEnabled,
     };
 
     internal static string Build(DeploymentActionDto action)
     {
+        return Build(action, variables: null);
+    }
+
+    /// <summary>
+    /// Builds the full IIS deploy script, optionally shipping the deployment's variable set
+    /// to the agent as a <c>$SquidVariables</c> hashtable in the preamble. The variable set
+    /// is required by features that introspect Squid variables by name at agent-time —
+    /// currently <see cref="IISDeployProperties.ConfigurationVariablesEnabled"/> (Phase 6:
+    /// the .NET Configuration Variables rewriter looks up each <c>&lt;appSettings/add@key&gt;</c>
+    /// in <c>$SquidVariables</c> and replaces the value when found).
+    ///
+    /// <para>Sensitive variables flow through as plain text — the script body is created
+    /// server-side, encrypted in transit by Halibut TLS, executed on the agent, and the
+    /// rendered config files contain the plain-text values on disk. This matches Octopus's
+    /// behaviour exactly. Operators wanting the values masked in logs rely on Squid's log
+    /// masker registering them via the <c>IsSensitive</c> flag (handled separately in the
+    /// pipeline, not in this builder).</para>
+    /// </summary>
+    internal static string Build(DeploymentActionDto action, IReadOnlyList<VariableDto>? variables)
+    {
         ArgumentNullException.ThrowIfNull(action);
 
-        var preamble = BuildPreamble(action);
+        var preamble = BuildPreamble(action, variables ?? Array.Empty<VariableDto>());
         var body = LoadEmbeddedScriptBody();
 
         return preamble + body;
@@ -108,7 +132,7 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.CustomScriptsPostDeploy,
     };
 
-    private static string BuildPreamble(DeploymentActionDto action)
+    private static string BuildPreamble(DeploymentActionDto action, IReadOnlyList<VariableDto> variables)
     {
         var sb = new StringBuilder();
 
@@ -133,10 +157,39 @@ internal static class IISDeployScriptBuilder
             }
         }
 
+        EmitSquidVariablesHashtable(sb, variables);
+
         sb.AppendLine("# ── END GENERATED PREAMBLE ──");
         sb.AppendLine();
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Emits the deployment's full variable set as a <c>$SquidVariables</c> hashtable for
+    /// agent-side features that introspect Squid variables by name (currently the
+    /// .NET Configuration Variables rewriter — Phase 6). Always emitted (even if empty) so
+    /// agent-side helpers can use <c>$SquidVariables.ContainsKey(...)</c> without a null
+    /// check. Variable values are escaped via single-quote literal rules — apostrophes in
+    /// names OR values are safely doubled.
+    /// </summary>
+    private static void EmitSquidVariablesHashtable(StringBuilder sb, IReadOnlyList<VariableDto> variables)
+    {
+        sb.AppendLine("$SquidVariables = @{}");
+
+        foreach (var v in variables)
+        {
+            if (string.IsNullOrEmpty(v?.Name)) continue;
+
+            var escapedName = EscapeForPowerShellSingleQuote(v.Name);
+            var escapedValue = EscapeForPowerShellSingleQuote(v.Value ?? string.Empty);
+
+            sb.Append("$SquidVariables['");
+            sb.Append(escapedName);
+            sb.Append("'] = '");
+            sb.Append(escapedValue);
+            sb.AppendLine("'");
+        }
     }
 
     private static void EmitDataAssignment(StringBuilder sb, string propertyName, string rawValue)

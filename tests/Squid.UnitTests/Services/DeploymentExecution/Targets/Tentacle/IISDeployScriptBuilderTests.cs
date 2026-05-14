@@ -515,6 +515,111 @@ public class IISDeployScriptBuilderTests
                 $"Emitted base64='{emittedBase64}'. Decoded='{decoded}'. Expected='{body}'.");
     }
 
+    // ── $SquidVariables hashtable (Phase 6 — Octopus ConfigurationVariables parity) ─
+    //
+    // The builder ships the deployment's full variable set to the agent as a
+    // `$SquidVariables` hashtable, separate from `$SquidParameters` (which only carries
+    // action properties). Required by features that look up arbitrary Squid variables
+    // by name at agent-time — currently the .NET Configuration Variables rewriter, but
+    // future features (SubstituteInFiles, StructuredConfigurationVariables) reuse the
+    // same shipping channel.
+
+    [Fact]
+    public void Build_NoVariables_EmitsEmptySquidVariablesHashtable()
+    {
+        // Always emit the hashtable (even if empty) so agent-side helpers can call
+        // `$SquidVariables.ContainsKey(...)` without a null check.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidVariables = @{}");
+    }
+
+    [Fact]
+    public void Build_WithVariables_EmitsHashtableEntriesAfterParameters()
+    {
+        // Variables ship in the preamble AFTER the $SquidParameters loop completes — must be
+        // accessible by the agent-side rewriter function `Update-IISConfigurationVariables`.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "OrderApi"),
+            (IISDeployProperties.ConfigurationVariablesEnabled, "True"));
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "DatabaseConnectionString", Value = "Server=db1;Database=Orders" },
+            new() { Name = "ApiKey", Value = "secret-key-value" }
+        };
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+
+        script.ShouldContain("$SquidVariables = @{}");
+        script.ShouldContain("$SquidVariables['DatabaseConnectionString'] = 'Server=db1;Database=Orders'");
+        script.ShouldContain("$SquidVariables['ApiKey'] = 'secret-key-value'");
+
+        // $SquidVariables emission MUST come AFTER the $SquidParameters initialization
+        // AND inside the preamble (before the END marker which separates preamble from body).
+        var paramsInitIdx = script.IndexOf("$SquidParameters = @{}", StringComparison.Ordinal);
+        var varsInitIdx = script.IndexOf("$SquidVariables = @{}", StringComparison.Ordinal);
+        var preambleEndIdx = script.IndexOf("# ── END GENERATED PREAMBLE ──", StringComparison.Ordinal);
+
+        paramsInitIdx.ShouldBePositive();
+        varsInitIdx.ShouldBeGreaterThan(paramsInitIdx,
+            customMessage: "$SquidVariables hashtable must initialise AFTER $SquidParameters.");
+        preambleEndIdx.ShouldBeGreaterThan(varsInitIdx,
+            customMessage: "$SquidVariables must be emitted INSIDE the preamble (before END marker).");
+    }
+
+    [Theory]
+    [InlineData("O'Brien", "O''Brien")]                              // apostrophe doubled
+    [InlineData("plain", "plain")]
+    [InlineData("multi\nline\nvalue", "multi line value")]           // each \n collapsed to single space
+    public void Build_VariableValueWithSpecialChars_EscapedSafely(string rawValue, string expectedEscaped)
+    {
+        // Variable values flow through the same single-quote escape as action property data —
+        // apostrophes doubled, newlines collapsed. Operators storing JSON or multi-line text
+        // inside a variable will see the same collapse — that's an accepted trade-off for the
+        // ConfigurationVariables use case where values are typically connection strings or keys.
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.WebSiteName, "X"));
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "TestVar", Value = rawValue }
+        };
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+
+        script.ShouldContain($"$SquidVariables['TestVar'] = '{expectedEscaped}'");
+    }
+
+    [Fact]
+    public void Build_VariableWithEmptyName_SilentlySkipped()
+    {
+        // Defensive: a variable with no name (shouldn't happen, but DTO permits) gets dropped
+        // rather than emitting `$SquidVariables[''] = '...'` which would shadow the next
+        // hashtable entry semantically. Empty-name variables can't be referenced by config
+        // rewriter anyway (XPath `[@key='']` matches nothing).
+        var action = BuildAction((IISDeployProperties.CreateOrUpdateWebSite, "True"));
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "GoodName", Value = "ok" },
+            new() { Name = "", Value = "skipped" },
+            new() { Name = null, Value = "alsoSkipped" }
+        };
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+
+        script.ShouldContain("$SquidVariables['GoodName'] = 'ok'");
+        script.ShouldNotContain("$SquidVariables[''] = 'skipped'");
+        script.ShouldNotContain("'alsoSkipped'");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)

@@ -95,6 +95,31 @@ internal static class IISDeployProperties
     internal const string VirtualDirectoryVirtualPath = "Squid.Action.IISWebSite.VirtualDirectory.VirtualPath";
     internal const string VirtualDirectoryPhysicalPath = "Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath";
 
+    // ── .NET Configuration Variables (Phase 6 — Octopus ConfigurationVariables parity) ──
+    //
+    // Mirrors Octopus's `Octopus.Features.ConfigurationVariables` feature-flag from
+    // `Calamari.Common/Plumbing/Variables/KnownVariables.cs:65`. When enabled (`"True"`),
+    // the IIS deploy script walks every `*.config` file under <see cref="WebRoot"/>,
+    // finds:
+    //   - `&lt;appSettings&gt;&lt;add key="X" value="..."/&gt;`
+    //   - `&lt;connectionStrings&gt;&lt;add name="X" connectionString="..."/&gt;`
+    //   - `&lt;applicationSettings&gt;&lt;Class&gt;&lt;setting name="X"&gt;&lt;value&gt;...&lt;/value&gt;`
+    // and replaces the value when a Squid variable named "X" exists in the deployment's
+    // variable set. This is the operator-facing "Replace entries in .config files" checkbox
+    // on the Octopus IIS deploy step UI's ".NET Configuration Variables" card.
+    //
+    // Setting this to "True" requires the action's full variable set to be shipped to the
+    // agent (the rewriter needs to look up each Squid variable by name). The builder emits
+    // a separate `$SquidVariables` hashtable in the preamble for this purpose.
+
+    /// <summary>
+    /// When <c>"True"</c>, the deploy script walks every <c>*.config</c> file under
+    /// <see cref="WebRoot"/> and replaces matching <c>appSettings</c>, <c>connectionStrings</c>,
+    /// and <c>applicationSettings</c> entries against the deployment's variable set. Empty
+    /// or non-"True" value disables the feature (no .config files touched).
+    /// </summary>
+    internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
+
     // ── Custom script slots (Phase 5 — Octopus CustomScripts parity) ──────
     //
     // Mirrors Octopus's <c>Octopus.Action.CustomScripts.{Stage}.{ext}</c> taxonomy from

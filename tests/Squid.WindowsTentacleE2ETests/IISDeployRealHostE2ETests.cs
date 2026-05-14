@@ -821,6 +821,223 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── .NET Configuration Variables (Phase 6) ──────────────────────────────
+    //
+    // The deploy script's `Update-IISConfigurationVariables` function walks *.config files
+    // under WebRoot and replaces matching `appSettings/add@key`, `connectionStrings/add@name`,
+    // `applicationSettings/.../setting@name` entries with values from the deployment's
+    // variable set (shipped as `$SquidVariables`). These tests stage a real `web.config`
+    // in the WebRoot, deploy with the feature enabled + a variable that matches a config
+    // entry by name, then read the rewritten `web.config` and assert the replacement.
+
+    [Fact]
+    public void RealIIS_ConfigurationVariables_AppSettingReplacedByMatchingVariable()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"OrderApi.LogLevel\" value=\"OLD_LEVEL\" />\n" +
+            "    <add key=\"UnrelatedSetting\" value=\"DO_NOT_TOUCH\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "OrderApi.LogLevel", Value = "Debug" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Config-vars deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+
+        rewritten.ShouldContain("key=\"OrderApi.LogLevel\"",
+            customMessage: "Original appSetting key disappeared — rewriter deleted the node instead of updating it.");
+        rewritten.ShouldContain("value=\"Debug\"",
+            customMessage: $"appSettings[OrderApi.LogLevel] value not replaced. Expected 'Debug', actual file:\n{rewritten}");
+        rewritten.ShouldNotContain("OLD_LEVEL",
+            customMessage: "Original value still present — replacement didn't fire or didn't persist.");
+        rewritten.ShouldContain("value=\"DO_NOT_TOUCH\"",
+            customMessage: "Unrelated appSetting was touched — rewriter is replacing more than the matching key.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationVariables_ConnectionStringReplacedByMatchingVariable()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <connectionStrings>\n" +
+            "    <add name=\"OrdersDb\" connectionString=\"Server=OLD_HOST;Database=Orders\" providerName=\"System.Data.SqlClient\" />\n" +
+            "    <add name=\"UnusedDb\" connectionString=\"Server=other-host;Database=Other\" />\n" +
+            "  </connectionStrings>\n" +
+            "</configuration>\n");
+
+        const string newConnection = "Server=new-host;Database=Orders;Trusted_Connection=True";
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "OrdersDb", Value = newConnection }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Config-vars (connectionStrings) deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rewritten = File.ReadAllText(webConfigPath);
+
+        rewritten.ShouldContain($"connectionString=\"{newConnection}\"",
+            customMessage: $"connectionString for 'OrdersDb' not replaced. Expected '{newConnection}', actual file:\n{rewritten}");
+        rewritten.ShouldNotContain("Server=OLD_HOST",
+            customMessage: "Old connectionString value still present — replacement didn't persist.");
+        rewritten.ShouldContain("name=\"UnusedDb\"",
+            customMessage: "UnusedDb entry disappeared — rewriter deleted unrelated node.");
+        rewritten.ShouldContain("connectionString=\"Server=other-host;Database=Other\"",
+            customMessage: "UnusedDb connectionString was changed — rewriter touched unrelated node.");
+
+        // Sanity: providerName attribute on OrdersDb must remain (rewriter only touches connectionString).
+        rewritten.ShouldContain("providerName=\"System.Data.SqlClient\"",
+            customMessage: "providerName attribute lost on OrdersDb — rewriter overwrites siblings.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationVariables_FeatureDisabled_NoFileChanges()
+    {
+        // The enablement gate (`Squid.Action.IISWebSite.ConfigurationVariables.Enabled`) MUST
+        // guard the rewriter. When unset or != "True", the rewriter does not run even if
+        // matching variables are present.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        const string originalContent =
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"OrderApi.LogLevel\" value=\"INITIAL\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n";
+        File.WriteAllText(webConfigPath, originalContent);
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "OrderApi.LogLevel", Value = "SHOULD_NOT_BE_APPLIED" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]")
+            // ConfigurationVariablesEnabled NOT set
+        );
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"Deploy with feature off failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var content = File.ReadAllText(webConfigPath);
+        content.ShouldContain("value=\"INITIAL\"",
+            customMessage: "Original web.config value lost despite feature being OFF — gate is broken.");
+        content.ShouldNotContain("SHOULD_NOT_BE_APPLIED",
+            customMessage: "Rewriter ran despite feature being off — gate is broken.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_ConfigurationVariables_NoMatchingVariable_EntryUntouched()
+    {
+        // The rewriter only replaces values when a Squid variable with the SAME NAME as the
+        // config entry's key/name exists. Operators may have config entries that don't have
+        // corresponding variables — those must pass through untouched.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var webConfigPath = Path.Combine(ctx.PhysicalPath, "web.config");
+        File.WriteAllText(webConfigPath,
+            "<?xml version=\"1.0\"?>\n" +
+            "<configuration>\n" +
+            "  <appSettings>\n" +
+            "    <add key=\"OrphanSetting\" value=\"NO_VARIABLE_FOR_ME\" />\n" +
+            "  </appSettings>\n" +
+            "</configuration>\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            // Different name from the appSetting key — must NOT match.
+            new() { Name = "SomeOtherKey", Value = "wont-apply" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.ConfigurationVariablesEnabled, "True"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0, customMessage: $"Deploy failed:\n{result.StdErr}");
+
+        var content = File.ReadAllText(webConfigPath);
+        content.ShouldContain("value=\"NO_VARIABLE_FOR_ME\"",
+            customMessage: "OrphanSetting was modified despite no matching variable — rewriter is over-eager.");
+
+        ctx.MarkClean();
+    }
+
     // ── Custom-script hooks (Phase 5: PreDeploy + PostDeploy) ───────────────
     //
     // Octopus's `ConfiguredScriptBehaviour` runs operator-inline scripts at 5 stages of
@@ -1582,6 +1799,9 @@ public sealed class IISDeployRealHostE2ETests
         // Phase 5 — custom script slots (Octopus CustomScripts parity)
         public const string CustomScriptsPreDeploy = "Squid.Action.CustomScripts.PreDeploy.ps1";
         public const string CustomScriptsPostDeploy = "Squid.Action.CustomScripts.PostDeploy.ps1";
+
+        // Phase 6 — .NET Configuration Variables (Octopus ConfigurationVariables parity)
+        public const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

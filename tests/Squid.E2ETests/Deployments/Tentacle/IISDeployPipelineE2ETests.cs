@@ -490,6 +490,105 @@ public class IISDeployPipelineE2ETests
         return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64));
     }
 
+    // ── .NET Configuration Variables (Phase 6) ─────────────────────────────
+
+    [Theory]
+    [InlineData("TentaclePolling")]
+    [InlineData("TentacleListening")]
+    public async Task FullPipeline_ConfigurationVariablesEnabled_ShipsDeploymentVariablesAsSquidVariables(string communicationStyle)
+    {
+        // .NET Configuration Variables rewriter looks up arbitrary Squid variable names
+        // inside operator config files. The pipeline must serialize the deployment's
+        // full variable set into a $SquidVariables hashtable on the agent — this test
+        // pins that two operator-defined variables land verbatim in the captured script
+        // body's preamble (`MyDbConn` for connectionStrings; `MyApiKey` for appSettings).
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteInternalAsync(
+            communicationStyle: communicationStyle,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "OrderApi-Pool",
+                ["Squid.Action.IISWebSite.WebRoot"] = @"C:\inetpub\OrderApi",
+                ["Squid.Action.IISWebSite.ConfigurationVariables.Enabled"] = "True"
+            },
+            variables: new[]
+            {
+                ("MyDbConn", "Server=prod-db;Database=Orders;Trusted_Connection=True", false),
+                ("MyApiKey", "secret-prod-key", true)   // sensitive — still ships (rewriter needs the value)
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        // ConfigurationVariables enablement gate in the preamble.
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled'] = 'True'",
+            customMessage: "Config-vars enablement flag missing from preamble.");
+
+        // $SquidVariables hashtable holds the operator's deployment variables.
+        captured.ScriptBody.ShouldContain("$SquidVariables = @{}",
+            customMessage: "$SquidVariables hashtable initialization missing — agent rewriter would NullReference.");
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidVariables['MyDbConn'] = 'Server=prod-db;Database=Orders;Trusted_Connection=True'",
+            customMessage: "Connection-string variable didn't ship to agent — config rewriter would skip the match.");
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidVariables['MyApiKey'] = 'secret-prod-key'",
+            customMessage:
+                "Sensitive variable didn't ship to agent — config rewriter would skip the match. " +
+                "Note: Squid's log-masker handles sensitive masking at log-render time; the variable " +
+                "VALUE legitimately appears in $SquidVariables because the deployed config file needs it.");
+    }
+
+    [Fact]
+    public async Task FullPipeline_ConfigurationVariablesDisabled_DefaultBehaviorVariablesStillShipButGateOff()
+    {
+        // The $SquidVariables hashtable always ships (even when ConfigurationVariables is off)
+        // so future features (SubstituteInFiles, StructuredConfigurationVariables) get the same
+        // variable channel. The enablement gate just controls whether the REWRITER runs.
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteInternalAsync(
+            communicationStyle: "TentaclePolling",
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "OrderApi-Pool"
+                // ConfigurationVariables.Enabled NOT set (operator left checkbox off)
+            },
+            variables: new[]
+            {
+                ("SomeVar", "some-value", false)
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        // Enablement gate emitted as empty (gate is False → rewriter doesn't run on the agent).
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled'] = ''");
+
+        // Variables still ship — future features (SubstituteInFiles, StructuredConfig) reuse the channel.
+        captured.ScriptBody.ShouldContain("$SquidVariables['SomeVar'] = 'some-value'");
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]

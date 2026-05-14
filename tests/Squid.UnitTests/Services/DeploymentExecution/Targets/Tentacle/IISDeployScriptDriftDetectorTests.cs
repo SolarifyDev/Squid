@@ -261,6 +261,48 @@ public class IISDeployScriptDriftDetectorTests
                           "PostDeploy must fire AFTER IIS configuration completes successfully.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: the PS1 contains the <c>Update-IISConfigurationVariables</c>
+    /// function and an enablement gate that reads <c>Squid.Action.IISWebSite.ConfigurationVariables.Enabled</c>.
+    /// Mirrors Octopus's <c>ConfigurationVariablesBehaviour</c> as embedded helper, not as a
+    /// surrounding-pipeline convention (Squid does not have a DeployPackageCommand orchestrator yet).
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasConfigurationVariablesRewriter_ForOctopusConfigVariablesParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Update-IISConfigurationVariables",
+            customMessage:
+                "Squid IIS PS1 is missing the Update-IISConfigurationVariables function. This breaks " +
+                "the operator-facing 'Replace entries in .config files' UI checkbox semantics. The " +
+                "function should declare param(`$TargetDir, `$Variables) and walk *.config files.");
+
+        // Critical XPath probes — these are what Octopus's ConfigurationVariablesBehaviour replaces.
+        ourScript.ShouldContain("//appSettings/add[@key]",
+            customMessage: "appSettings XPath probe missing — Octopus parity requires `<appSettings><add key='X'/>` replacement.");
+        ourScript.ShouldContain("//connectionStrings/add[@name]",
+            customMessage: "connectionStrings XPath probe missing — Octopus parity requires `<connectionStrings><add name='X'/>` replacement.");
+        ourScript.ShouldContain("//applicationSettings//setting[@name]",
+            customMessage: "applicationSettings XPath probe missing — Octopus parity covers user.config-style `<applicationSettings>` blocks.");
+
+        // Feature-flag enablement gate — `Squid.Action.IISWebSite.ConfigurationVariables.Enabled == 'True'`.
+        ourScript.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled']",
+            customMessage: "Enablement gate missing — operator's UI checkbox must control whether the rewriter runs.");
+
+        // Order: ConfigurationVariables rewrites must happen BEFORE the IIS configure dispatch
+        // (so the .config files are correct when IIS reads them to start the site) and AFTER
+        // the PreDeploy hook (operator may stage files in PreDeploy).
+        var preDeployIdx = ourScript.IndexOf("'Squid.Action.CustomScripts.PreDeploy.ps1'", StringComparison.Ordinal);
+        var configVarsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationVariables.Enabled'", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+
+        preDeployIdx.ShouldBeLessThan(configVarsIdx,
+            customMessage: "ConfigurationVariables gate must appear AFTER the PreDeploy hook so operator-staged files are present when the rewriter runs.");
+        configVarsIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "ConfigurationVariables gate must appear BEFORE the IIS configure dispatch — IIS reads web.config when starting the site, so rewrites must complete first.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

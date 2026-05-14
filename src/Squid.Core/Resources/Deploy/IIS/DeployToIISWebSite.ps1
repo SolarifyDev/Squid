@@ -849,6 +849,93 @@ if (-not [string]::IsNullOrWhiteSpace($preDeployScript)) {
 	}
 }
 
+# ── Squid: .NET Configuration Variables rewriter (Phase 6 — Octopus ConfigurationVariables parity) ──
+# Mirrors Octopus's `Octopus.Features.ConfigurationVariables` feature. When the toggle is True
+# and a `Squid.Action.IISWebSite.WebRoot` is set, walks every *.config file under that dir and
+# replaces matching <appSettings/add@key>, <connectionStrings/add@name>, <applicationSettings/.../setting@name>
+# entries with values from $SquidVariables (the deployment's full variable set, shipped via the
+# preamble). Runs BEFORE the IIS configure dispatch so any web.config rewrites are in place
+# before IIS reads the config to start the site.
+
+function Update-IISConfigurationVariables {
+	param(
+		[Parameter(Mandatory=$true)][string]$TargetDir,
+		[Parameter(Mandatory=$true)][hashtable]$Variables
+	)
+
+	if (-not (Test-Path $TargetDir)) {
+		Write-Host "ConfigurationVariables: target dir '$TargetDir' does not exist; skipping."
+		return
+	}
+
+	$configFiles = @(Get-ChildItem -Path $TargetDir -Recurse -Filter "*.config" -ErrorAction SilentlyContinue)
+	if ($configFiles.Count -eq 0) {
+		Write-Host "ConfigurationVariables: no *.config files found under '$TargetDir'; skipping."
+		return
+	}
+
+	foreach ($file in $configFiles) {
+		Write-Host "ConfigurationVariables: scanning $($file.FullName)"
+		$xml = $null
+		try {
+			$xml = [xml](Get-Content -LiteralPath $file.FullName -Raw)
+		} catch {
+			Write-Host "  - skip (not parseable as XML): $($_.Exception.Message)"
+			continue
+		}
+
+		$modified = $false
+
+		# appSettings: <appSettings><add key="X" value="..."/></appSettings>
+		foreach ($node in $xml.SelectNodes("//appSettings/add[@key]")) {
+			$key = $node.GetAttribute("key")
+			if ($Variables.ContainsKey($key)) {
+				$node.SetAttribute("value", [string]$Variables[$key])
+				Write-Host "  - appSettings/$key replaced"
+				$modified = $true
+			}
+		}
+
+		# connectionStrings: <connectionStrings><add name="X" connectionString="..." providerName="..."/></connectionStrings>
+		foreach ($node in $xml.SelectNodes("//connectionStrings/add[@name]")) {
+			$name = $node.GetAttribute("name")
+			if ($Variables.ContainsKey($name)) {
+				$node.SetAttribute("connectionString", [string]$Variables[$name])
+				Write-Host "  - connectionStrings/$name replaced"
+				$modified = $true
+			}
+		}
+
+		# applicationSettings: <applicationSettings><Class><setting name="X"><value>...</value></setting></Class></applicationSettings>
+		foreach ($node in $xml.SelectNodes("//applicationSettings//setting[@name]")) {
+			$name = $node.GetAttribute("name")
+			if ($Variables.ContainsKey($name)) {
+				$valueNode = $node.SelectSingleNode("value")
+				if ($null -ne $valueNode) {
+					$valueNode.InnerText = [string]$Variables[$name]
+					Write-Host "  - applicationSettings/$name replaced"
+					$modified = $true
+				}
+			}
+		}
+
+		if ($modified) {
+			$xml.Save($file.FullName)
+		}
+	}
+}
+
+$configurationVariablesEnabled = $SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled']
+if ($configurationVariablesEnabled -eq 'True') {
+	$configRewriteTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	if (-not [string]::IsNullOrWhiteSpace($configRewriteTarget)) {
+		Write-Host "ConfigurationVariables: feature enabled; rewriting *.config under '$configRewriteTarget'"
+		Update-IISConfigurationVariables -TargetDir $configRewriteTarget -Variables $SquidVariables
+	} else {
+		Write-Host "ConfigurationVariables: feature enabled but WebRoot is empty; skipping (nothing to scan)."
+	}
+}
+
 $psVersion = $PSVersionTable.PSVersion
 
 if ($psVersion.Major -ge 7 -and $psVersion.Minor -ge 3) {
