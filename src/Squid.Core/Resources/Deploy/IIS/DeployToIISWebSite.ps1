@@ -1538,6 +1538,29 @@ function Update-IISStructuredJsonConfiguration {
 	# Walk JSON object recursively, replacing leaf values whose path matches a Squid variable.
 	# Supports BOTH `:` and `.` path separators (operator may have stored the variable as
 	# `Logging:LogLevel:Default` or `Logging.LogLevel.Default` — try both).
+	# P0-4 (1.6.9): type-preserving leaf coercion. If the variable's string value parses as
+	# bool/int/double AND the original JSON leaf was the same kind, coerce the replacement to
+	# that type so `ConvertTo-Json` re-serialises with the right JSON tokens (no quotes around
+	# numbers/bools). Mirrors Octopus's `JsonUpdateMap.MapNumber`/`MapBool`.
+	function Coerce-JsonReplacementValue($variableStringValue, $originalLeaf) {
+		if ($null -eq $variableStringValue) { return $null }
+		# Type-preserving paths
+		if ($originalLeaf -is [bool]) {
+			if ($variableStringValue -ieq 'true') { return $true }
+			if ($variableStringValue -ieq 'false') { return $false }
+		}
+		if ($originalLeaf -is [int] -or $originalLeaf -is [long]) {
+			$parsedInt = 0L
+			if ([long]::TryParse($variableStringValue, [ref]$parsedInt)) { return $parsedInt }
+		}
+		if ($originalLeaf -is [double] -or $originalLeaf -is [decimal] -or $originalLeaf -is [single]) {
+			$parsedFloat = 0.0
+			if ([double]::TryParse($variableStringValue, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsedFloat)) { return $parsedFloat }
+		}
+		# Default: string (preserves whatever the operator typed)
+		return [string]$variableStringValue
+	}
+
 	function Walk-JsonReplace($node, $pathParts, $variables, [ref]$modifiedFlag) {
 		if ($node -is [System.Management.Automation.PSCustomObject]) {
 			foreach ($prop in $node.PSObject.Properties) {
@@ -1547,8 +1570,26 @@ function Update-IISStructuredJsonConfiguration {
 				if ($value -is [System.Management.Automation.PSCustomObject]) {
 					Walk-JsonReplace -node $value -pathParts $newParts -variables $variables -modifiedFlag $modifiedFlag
 				} elseif ($value -is [System.Array] -or $value -is [System.Object[]]) {
-					# Phase 9 MVP: scalar leaves only — array element replacement is Phase 9.5
-					# Arrays of strings and primitives are skipped intentionally
+					# P0-4 (1.6.9): walk arrays with numeric index paths so operators can replace
+					# `Logging:LogLevel:Microsoft:0` style entries. Mirrors Octopus's JsonUpdateMap
+					# array handling.
+					for ($i = 0; $i -lt $value.Count; $i++) {
+						$elementParts = $newParts + @([string]$i)
+						if ($value[$i] -is [System.Management.Automation.PSCustomObject]) {
+							Walk-JsonReplace -node $value[$i] -pathParts $elementParts -variables $variables -modifiedFlag $modifiedFlag
+						} else {
+							$pathColon = $elementParts -join ':'
+							$pathDot = $elementParts -join '.'
+							$matchedVar = $null
+							if ($variables.ContainsKey($pathColon)) { $matchedVar = $variables[$pathColon] }
+							elseif ($variables.ContainsKey($pathDot)) { $matchedVar = $variables[$pathDot] }
+							if ($null -ne $matchedVar) {
+								$value[$i] = Coerce-JsonReplacementValue -variableStringValue $matchedVar -originalLeaf $value[$i]
+								$modifiedFlag.Value = $true
+								Write-Host "  - JSON array element '$pathColon' replaced"
+							}
+						}
+					}
 				} else {
 					$pathColon = $newParts -join ':'
 					$pathDot = $newParts -join '.'
@@ -1559,7 +1600,10 @@ function Update-IISStructuredJsonConfiguration {
 						$matchedVar = $variables[$pathDot]
 					}
 					if ($null -ne $matchedVar) {
-						$prop.Value = [string]$matchedVar
+						# P0-4: coerce the variable's string value back to the original JSON
+						# type (bool / int / double) so ConvertTo-Json doesn't string-ify numbers
+						# and booleans (which downstream JSON consumers may reject).
+						$prop.Value = Coerce-JsonReplacementValue -variableStringValue $matchedVar -originalLeaf $value
 						$modifiedFlag.Value = $true
 						Write-Host "  - JSON leaf '$pathColon' replaced"
 					}

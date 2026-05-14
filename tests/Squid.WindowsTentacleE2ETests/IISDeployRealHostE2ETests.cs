@@ -1943,6 +1943,109 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── JSON arrays + type preservation (1.6.9 P0-4) ─────────────────────────
+
+    [Fact]
+    public void RealIIS_StructuredJson_ArrayElement_ReplacedByIndexPath()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"AllowedHosts\": [\n" +
+            "    \"localhost\",\n" +
+            "    \"OLD_HOST_2\"\n" +
+            "  ]\n" +
+            "}\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "AllowedHosts:1", Value = "api.prod.example.com" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesEnabled, "True"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Array-index replacement deploy failed: {result.StdErr}");
+
+        var rewritten = File.ReadAllText(jsonPath);
+        rewritten.ShouldContain("api.prod.example.com",
+            customMessage: $"Array element at index 1 not replaced via 'AllowedHosts:1' path. File:\n{rewritten}");
+        rewritten.ShouldNotContain("OLD_HOST_2");
+        rewritten.ShouldContain("localhost",
+            customMessage: "Sibling array element at index 0 was modified — array walker is over-eager.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_StructuredJson_TypePreservation_NumberAndBoolNotStringified()
+    {
+        // Variable string values get coerced back to bool/int/double when the source leaf
+        // was that type. Without this, ConvertTo-Json renders booleans as `"True"` (string)
+        // and numbers as quoted strings — which downstream JSON consumers may reject.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"MaxConnections\": 10,\n" +
+            "  \"EnableTelemetry\": false,\n" +
+            "  \"Timeout\": 30.5\n" +
+            "}\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "MaxConnections", Value = "100" },     // int → int
+            new() { Name = "EnableTelemetry", Value = "true" },   // bool → bool
+            new() { Name = "Timeout", Value = "60.25" }           // double → double
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.StructuredConfigurationVariablesEnabled, "True"),
+            (Property.StructuredConfigurationVariablesTargets, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+        result.ExitCode.ShouldBe(0, customMessage: $"Type-preservation deploy failed: {result.StdErr}");
+
+        var rewritten = File.ReadAllText(jsonPath);
+
+        // Number stays as JSON number (no quotes around the value)
+        rewritten.ShouldMatch(@"""MaxConnections""\s*:\s*100\b",
+            customMessage: $"MaxConnections coerced to string instead of int. File:\n{rewritten}");
+        // Bool stays as JSON bool literal
+        rewritten.ShouldMatch(@"""EnableTelemetry""\s*:\s*true\b",
+            customMessage: $"EnableTelemetry coerced to string \"true\" instead of bool true. File:\n{rewritten}");
+        // Double stays as JSON number
+        rewritten.ShouldMatch(@"""Timeout""\s*:\s*60\.25\b",
+            customMessage: $"Timeout coerced to string instead of double. File:\n{rewritten}");
+
+        ctx.MarkClean();
+    }
+
     // ── AdditionalPaths (1.6.9 P1-4) ─────────────────────────────────────────
     //
     // All 4 config rewriters extend their scan from WebRoot-only to WebRoot + AdditionalPaths.
