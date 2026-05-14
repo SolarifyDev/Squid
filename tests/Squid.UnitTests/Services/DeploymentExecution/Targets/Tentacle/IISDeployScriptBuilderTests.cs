@@ -731,6 +731,26 @@ public class IISDeployScriptBuilderTests
             customMessage: $"TargetFiles round-trip via base64 lost content. Decoded:\n{decoded}");
     }
 
+    // ── Structured Configuration Variables (Phase 9) ──────────────────────
+
+    [Fact]
+    public void Build_StructuredConfigurationVariablesEnabled_LandsInPreamble()
+    {
+        var action = BuildAction(
+            (IISDeployProperties.CreateOrUpdateWebSite, "True"),
+            (IISDeployProperties.StructuredConfigurationVariablesEnabled, "True"),
+            (IISDeployProperties.StructuredConfigurationVariablesTargets, "appsettings.json\nappsettings.Production.json"));
+
+        var script = IISDeployScriptBuilder.Build(action);
+
+        script.ShouldContain("$SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled'] = 'True'");
+
+        // Targets via base64 so newline-separated globs survive
+        script.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets'] = [System.Text.Encoding]::UTF8.GetString",
+            customMessage: "Targets must emit via base64 — newline separators required for multi-glob lists.");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)

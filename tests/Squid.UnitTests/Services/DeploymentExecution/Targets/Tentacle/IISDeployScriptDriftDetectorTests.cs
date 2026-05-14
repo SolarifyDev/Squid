@@ -410,6 +410,50 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "ConfigurationTransforms must run BEFORE ConfigurationVariables — pinned earlier.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 contains <c>Update-IISStructuredJsonConfiguration</c>
+    /// (Phase 9 — Octopus JsonConfigurationVariables parity). Pins:
+    ///   - Function presence
+    ///   - Walk-JsonReplace nested helper
+    ///   - Both `:` and `.` path separator support
+    ///   - Order: runs AFTER ConfigurationVariables (Octopus pipeline order)
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasStructuredJsonRewriter_ForOctopusJsonConfigurationVariablesParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Update-IISStructuredJsonConfiguration",
+            customMessage:
+                "Squid IIS PS1 is missing Update-IISStructuredJsonConfiguration. This breaks the operator-facing " +
+                "JSON `appsettings.json` leaf replacement that Octopus's `Octopus.Features.JsonConfigurationVariables` provides.");
+
+        ourScript.ShouldContain("function Walk-JsonReplace",
+            customMessage: "JSON recursion helper Walk-JsonReplace missing.");
+
+        // Both path separators MUST be supported — operators may have stored vars as
+        // `Logging:LogLevel:Default` (.NET Core style) OR `Logging.LogLevel.Default` (dot style).
+        ourScript.ShouldContain("$newParts -join ':'",
+            customMessage: "Colon-separated path lookup missing — .NET Core operators won't match.");
+        ourScript.ShouldContain("$newParts -join '.'",
+            customMessage: "Dot-separated path lookup missing — .NET Framework operators won't match.");
+
+        // Order: StructuredConfigurationVariables runs AFTER ConfigurationVariables — Octopus
+        // pipeline places it last among rewriters.
+        var configVarsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationVariables.Enabled'", StringComparison.Ordinal);
+        var structuredIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled'", StringComparison.Ordinal);
+        var invokeIdx = ourScript.IndexOf("Invoke-Command -Session $compatSession", StringComparison.Ordinal);
+
+        configVarsIdx.ShouldBeLessThan(structuredIdx,
+            customMessage:
+                "StructuredConfigurationVariables must run AFTER ConfigurationVariables (Octopus pipeline order). " +
+                "ConfigurationVariables works on *.config XML; StructuredConfigurationVariables works on JSON — running " +
+                "the JSON rewriter first means later XML rewrites have nothing to overlap, but Octopus's canonical " +
+                "order is appSettings/connectionStrings first, then JSON leaves.");
+        structuredIdx.ShouldBeLessThan(invokeIdx,
+            customMessage: "All config rewriters must run BEFORE the IIS configure dispatch.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses
