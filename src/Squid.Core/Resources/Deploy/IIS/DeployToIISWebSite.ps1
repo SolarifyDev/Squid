@@ -849,6 +849,28 @@ if (-not [string]::IsNullOrWhiteSpace($preDeployScript)) {
 	}
 }
 
+# ── Squid: Packaged PreDeploy script (Phase 1.6.9 P1-3 — Octopus PackagedScriptBehaviour parity) ──
+# After Octopus's `ConfiguredScriptBehaviour` runs the operator-inline PreDeploy script,
+# `PackagedScriptBehaviour` (`PackagedScriptBehaviour.cs:14-35`) ALSO looks inside the
+# EXTRACTED PACKAGE for a `PreDeploy.ps1` file and runs it. This lets developers ship
+# deploy-stage scripts WITH their application code instead of authoring them inline in
+# the deploy step UI. Squid mirrors the same operator-facing contract: when the package
+# extraction step (Phase 10) wrote a `PreDeploy.ps1` into WebRoot, we invoke it here.
+#
+# Order vs. inline PreDeploy: matches Octopus — configured (inline) first, packaged second.
+$preDeployWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+if (-not [string]::IsNullOrWhiteSpace($preDeployWebRoot)) {
+	$packagedPreDeploy = Join-Path $preDeployWebRoot 'PreDeploy.ps1'
+	if (Test-Path -LiteralPath $packagedPreDeploy -PathType Leaf) {
+		Write-Host "Packaged PreDeploy: running '$packagedPreDeploy'"
+		Import-Module WebAdministration -ErrorAction SilentlyContinue
+		& $packagedPreDeploy
+		if ($LastExitCode -ne 0 -and $null -ne $LastExitCode) {
+			throw "Packaged PreDeploy script '$packagedPreDeploy' exited with code $LastExitCode. Aborting IIS deploy."
+		}
+	}
+}
+
 # ── Squid: .NET Configuration Variables rewriter (Phase 6 — Octopus ConfigurationVariables parity) ──
 # Mirrors Octopus's `Octopus.Features.ConfigurationVariables` feature. When the toggle is True
 # and a `Squid.Action.IISWebSite.WebRoot` is set, walks every *.config file under that dir and
@@ -1400,6 +1422,23 @@ if (-not [string]::IsNullOrWhiteSpace($postDeployScript)) {
 	& $postDeployBlock
 	if ($LastExitCode -ne 0 -and $null -ne $LastExitCode) {
 		throw "PostDeploy custom script exited with code $LastExitCode."
+	}
+}
+
+# ── Squid: Packaged PostDeploy script (Phase 1.6.9 P1-3) ──
+# Same as packaged PreDeploy above but for the PostDeploy stage. Operator can ship a
+# `PostDeploy.ps1` inside the package — usually for smoke-tests, cache warming, or
+# instrumentation. Runs AFTER both IIS configure AND the inline PostDeploy hook.
+$postDeployWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+if (-not [string]::IsNullOrWhiteSpace($postDeployWebRoot)) {
+	$packagedPostDeploy = Join-Path $postDeployWebRoot 'PostDeploy.ps1'
+	if (Test-Path -LiteralPath $packagedPostDeploy -PathType Leaf) {
+		Write-Host "Packaged PostDeploy: running '$packagedPostDeploy'"
+		Import-Module WebAdministration -ErrorAction SilentlyContinue
+		& $packagedPostDeploy
+		if ($LastExitCode -ne 0 -and $null -ne $LastExitCode) {
+			throw "Packaged PostDeploy script '$packagedPostDeploy' exited with code $LastExitCode."
+		}
 	}
 }
 
