@@ -414,6 +414,82 @@ public class IISDeployPipelineE2ETests
         captured.ScriptBody.ShouldNotContain("#{WebAppVirtualPath}");
     }
 
+    // ── Custom-script slots (Phase 5: PreDeploy + PostDeploy hooks) ────────
+
+    [Theory]
+    [InlineData("TentaclePolling")]
+    [InlineData("TentacleListening")]
+    public async Task FullPipeline_PreDeployAndPostDeployScripts_FlowThroughAsBase64InPreamble(string communicationStyle)
+    {
+        // Operator workflow: stop the AppPool before file replacement, smoke-test after.
+        // Variables inside the scripts (`#{X}`) must be resolved BEFORE the builder base64-
+        // encodes — otherwise the agent sees the literal '#{X}' inside the decoded script and
+        // either runs against a bogus token or fails noisily.
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteWithVariableAsync(
+            communicationStyle: communicationStyle,
+            variableName: "PoolName",
+            variableValue: "OrderApi-Pool",
+            isSensitive: false,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "#{PoolName}",
+                ["Squid.Action.CustomScripts.PreDeploy.ps1"] =
+                    "Stop-WebAppPool '#{PoolName}'\nStart-Sleep 1",
+                ["Squid.Action.CustomScripts.PostDeploy.ps1"] =
+                    "Start-WebAppPool '#{PoolName}'"
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        // Decode each script's base64 from the preamble — confirm the variable substitution
+        // happened pre-encode (otherwise the decoded body would contain the literal #{PoolName}).
+        var preDeployDecoded = DecodeBase64Body(captured.ScriptBody, "Squid.Action.CustomScripts.PreDeploy.ps1");
+        var postDeployDecoded = DecodeBase64Body(captured.ScriptBody, "Squid.Action.CustomScripts.PostDeploy.ps1");
+
+        preDeployDecoded.ShouldContain("Stop-WebAppPool 'OrderApi-Pool'",
+            customMessage: "PreDeploy script lost variable resolution OR base64 round-trip mangled the body. " +
+                          $"Decoded:\n{preDeployDecoded}");
+        preDeployDecoded.ShouldContain("Start-Sleep 1");
+        preDeployDecoded.ShouldNotContain("#{PoolName}");
+
+        postDeployDecoded.ShouldContain("Start-WebAppPool 'OrderApi-Pool'");
+        postDeployDecoded.ShouldNotContain("#{PoolName}");
+    }
+
+    /// <summary>
+    /// Helper: locates the base64 string for a given script-content property in the rendered
+    /// preamble, decodes it, and returns the original operator-authored body. Mirrors the
+    /// agent-side `[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(...))`
+    /// expression — see <c>IISDeployScriptBuilder.EmitScriptContentAssignment</c>.
+    /// </summary>
+    private static string DecodeBase64Body(string preambleScript, string propertyName)
+    {
+        var marker = $"$SquidParameters['{propertyName}'] = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('";
+        var start = preambleScript.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+            throw new InvalidOperationException(
+                $"Property '{propertyName}' not emitted as base64 in preamble. " +
+                $"This means the builder treated it as a data value, not a script-content value — " +
+                $"check `IISDeployScriptBuilder.ScriptContentProperties` registration.");
+
+        var b64Start = start + marker.Length;
+        var b64End = preambleScript.IndexOf("'))", b64Start, StringComparison.Ordinal);
+        var b64 = preambleScript.Substring(b64Start, b64End - b64Start);
+
+        return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]

@@ -95,6 +95,36 @@ internal static class IISDeployProperties
     internal const string VirtualDirectoryVirtualPath = "Squid.Action.IISWebSite.VirtualDirectory.VirtualPath";
     internal const string VirtualDirectoryPhysicalPath = "Squid.Action.IISWebSite.VirtualDirectory.PhysicalPath";
 
+    // ── Custom script slots (Phase 5 — Octopus CustomScripts parity) ──────
+    //
+    // Mirrors Octopus's <c>Octopus.Action.CustomScripts.{Stage}.{ext}</c> taxonomy from
+    // <c>Calamari.Common/Plumbing/Variables/KnownVariables.cs:27-35</c>. Each property
+    // value is the LITERAL SCRIPT BODY the operator wants executed at that stage
+    // — not a file path. Operators commonly use these for:
+    //   - PreDeploy: <c>Stop-WebAppPool $PoolName</c> so file replacement doesn't EBUSY
+    //   - PostDeploy: <c>Start-WebAppPool $PoolName; Invoke-WebRequest http://localhost:$Port/health</c>
+    //
+    // The <c>.ps1</c> suffix is part of the key (not a file extension) and signals the
+    // PowerShell syntax. Future syntaxes (<c>.sh</c> / <c>.py</c> / <c>.csx</c>) would
+    // slot in as additional sibling constants when Squid supports non-Windows IIS.
+
+    /// <summary>
+    /// Operator PowerShell script that runs BEFORE the IIS configuration logic.
+    /// Typical use: <c>Stop-WebAppPool $PoolName</c> to release file locks before deployment.
+    /// Runs in an isolated scope but has access to <c>$SquidParameters</c>;
+    /// <c>WebAdministration</c> is auto-imported.
+    /// </summary>
+    internal const string CustomScriptsPreDeploy = "Squid.Action.CustomScripts.PreDeploy.ps1";
+
+    /// <summary>
+    /// Operator PowerShell script that runs AFTER the IIS configuration logic completes
+    /// successfully. Typical use: <c>Start-WebAppPool $PoolName; Invoke-WebRequest ...</c>
+    /// for smoke-testing. Skipped if the IIS configure script threw (the throw aborts
+    /// before reaching the PostDeploy hook). Runs in an isolated scope; <c>$SquidParameters</c>
+    /// is available and <c>WebAdministration</c> is auto-imported.
+    /// </summary>
+    internal const string CustomScriptsPostDeploy = "Squid.Action.CustomScripts.PostDeploy.ps1";
+
     // ── Tentacle-runtime variables read by the script (NOT action properties) ─
 
     /// <summary>Injected by <c>TentacleEndpointVariableContributor</c>. The handler reads this to gate Windows-only execution.</summary>

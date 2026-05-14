@@ -832,6 +832,23 @@ $DeployIISScriptBlock = {
 	Write-Host "IIS configuration complete"
 }
 
+# ── Squid: Custom-script PreDeploy hook (Phase 5 — Octopus CustomScripts parity) ──
+# Mirrors Octopus's `Octopus.Action.CustomScripts.PreDeploy.ps1` slot. The operator's
+# script body has already been server-rendered into the preamble as a single-quoted
+# string literal (so apostrophes are doubled and the value is safe to Invoke-Expression).
+# Auto-imports WebAdministration so operators can use `Stop-WebAppPool` / `Restart-WebAppPool`
+# directly without boilerplate.
+$preDeployScript = $SquidParameters['Squid.Action.CustomScripts.PreDeploy.ps1']
+if (-not [string]::IsNullOrWhiteSpace($preDeployScript)) {
+	Write-Host "Running PreDeploy custom script..."
+	Import-Module WebAdministration -ErrorAction SilentlyContinue
+	$preDeployBlock = [scriptblock]::Create($preDeployScript)
+	& $preDeployBlock
+	if ($LastExitCode -ne 0 -and $null -ne $LastExitCode) {
+		throw "PreDeploy custom script exited with code $LastExitCode. Aborting IIS deploy before metabase mutations."
+	}
+}
+
 $psVersion = $PSVersionTable.PSVersion
 
 if ($psVersion.Major -ge 7 -and $psVersion.Minor -ge 3) {
@@ -847,5 +864,20 @@ if ($psVersion.Major -ge 7 -and $psVersion.Minor -ge 3) {
 }
 else {
 	&$DeployIISScriptBlock -SquidParameters $SquidParameters
+}
+
+# ── Squid: Custom-script PostDeploy hook (Phase 5) ──
+# Runs ONLY when the IIS configure block above completed without throwing (PowerShell's
+# default error-mode aborts the script on uncaught throw, so this line is unreachable on
+# IIS-configure failure — matches Octopus's semantic of "post-deploy runs on success").
+$postDeployScript = $SquidParameters['Squid.Action.CustomScripts.PostDeploy.ps1']
+if (-not [string]::IsNullOrWhiteSpace($postDeployScript)) {
+	Write-Host "Running PostDeploy custom script..."
+	Import-Module WebAdministration -ErrorAction SilentlyContinue
+	$postDeployBlock = [scriptblock]::Create($postDeployScript)
+	& $postDeployBlock
+	if ($LastExitCode -ne 0 -and $null -ne $LastExitCode) {
+		throw "PostDeploy custom script exited with code $LastExitCode."
+	}
 }
 
