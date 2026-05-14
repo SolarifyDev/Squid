@@ -1239,6 +1239,24 @@ if (-not [string]::IsNullOrWhiteSpace($packageSourcePath)) {
 	Expand-IISPackage -SourcePath $packageSourcePath -ExtractTo $packageExtractTo -PurgeBeforeExtract $purgeFlag
 }
 
+# ── Squid: AdditionalPaths resolver (1.6.9 P1-4 — Octopus Package.AdditionalPaths parity) ──
+# Returns the unified list of directories the 4 config rewriters should scan: WebRoot
+# (always) + each entry in `Squid.Action.IISWebSite.AdditionalPaths` (newline OR comma
+# separated). Used by SubstituteInFiles / ConfigurationTransforms / ConfigurationVariables /
+# StructuredConfigurationVariables.
+function Get-IISDeployScanPaths {
+	param([string]$WebRoot, [string]$AdditionalPathsRaw)
+	$paths = New-Object System.Collections.Generic.List[string]
+	if (-not [string]::IsNullOrWhiteSpace($WebRoot)) { $paths.Add($WebRoot) }
+	if (-not [string]::IsNullOrWhiteSpace($AdditionalPathsRaw)) {
+		$entries = $AdditionalPathsRaw -split "[`r`n,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+		foreach ($e in $entries) {
+			if (-not $paths.Contains($e)) { $paths.Add($e) }
+		}
+	}
+	return $paths
+}
+
 # ── Squid: SubstituteInFiles — `#{X}` token replacement INSIDE files (Phase 8 — Octopus SubstituteInFiles parity) ──
 # Mirrors Octopus's `Octopus.Features.SubstituteInFiles` feature
 # (`SubstituteInFilesBehaviour.cs:12-35`). For each operator-specified file glob, reads file
@@ -1330,13 +1348,13 @@ function Update-IISFilesWithVariableSubstitution {
 
 $substituteInFilesEnabled = $SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.Enabled']
 if ($substituteInFilesEnabled -eq 'True') {
-	$substituteTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$substituteWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$substituteAdditional = $SquidParameters['Squid.Action.IISWebSite.AdditionalPaths']
 	$substituteGlobs = $SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles']
-	if (-not [string]::IsNullOrWhiteSpace($substituteTarget)) {
-		Write-Host "SubstituteInFiles: feature enabled; substituting tokens under '$substituteTarget'"
-		Update-IISFilesWithVariableSubstitution -TargetDir $substituteTarget -Variables $SquidVariables -TargetFilesGlobs $substituteGlobs
-	} else {
-		Write-Host "SubstituteInFiles: feature enabled but WebRoot is empty; skipping."
+	$substitutePaths = Get-IISDeployScanPaths -WebRoot $substituteWebRoot -AdditionalPathsRaw $substituteAdditional
+	foreach ($p in $substitutePaths) {
+		Write-Host "SubstituteInFiles: scanning '$p'"
+		Update-IISFilesWithVariableSubstitution -TargetDir $p -Variables $SquidVariables -TargetFilesGlobs $substituteGlobs
 	}
 }
 
@@ -1468,24 +1486,24 @@ function Update-IISConfigurationTransforms {
 $configurationTransformsEnabled = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.Enabled']
 $configurationTransformsAdditional = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms']
 if ($configurationTransformsEnabled -eq 'True' -or -not [string]::IsNullOrWhiteSpace($configurationTransformsAdditional)) {
-	$transformsTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
-	if (-not [string]::IsNullOrWhiteSpace($transformsTarget)) {
-		$transformsEnv = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName']
-		Write-Host "ConfigurationTransforms: feature enabled; processing *.config under '$transformsTarget'"
-		Update-IISConfigurationTransforms -TargetDir $transformsTarget -EnvironmentName $transformsEnv -AdditionalTransforms $configurationTransformsAdditional
-	} else {
-		Write-Host "ConfigurationTransforms: feature enabled but WebRoot is empty; skipping (nothing to scan)."
+	$transformsWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$transformsAdditionalPaths = $SquidParameters['Squid.Action.IISWebSite.AdditionalPaths']
+	$transformsEnv = $SquidParameters['Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName']
+	$transformsPaths = Get-IISDeployScanPaths -WebRoot $transformsWebRoot -AdditionalPathsRaw $transformsAdditionalPaths
+	foreach ($p in $transformsPaths) {
+		Write-Host "ConfigurationTransforms: processing *.config under '$p'"
+		Update-IISConfigurationTransforms -TargetDir $p -EnvironmentName $transformsEnv -AdditionalTransforms $configurationTransformsAdditional
 	}
 }
 
 $configurationVariablesEnabled = $SquidParameters['Squid.Action.IISWebSite.ConfigurationVariables.Enabled']
 if ($configurationVariablesEnabled -eq 'True') {
-	$configRewriteTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
-	if (-not [string]::IsNullOrWhiteSpace($configRewriteTarget)) {
-		Write-Host "ConfigurationVariables: feature enabled; rewriting *.config under '$configRewriteTarget'"
-		Update-IISConfigurationVariables -TargetDir $configRewriteTarget -Variables $SquidVariables
-	} else {
-		Write-Host "ConfigurationVariables: feature enabled but WebRoot is empty; skipping (nothing to scan)."
+	$configVarsWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$configVarsAdditional = $SquidParameters['Squid.Action.IISWebSite.AdditionalPaths']
+	$configVarsPaths = Get-IISDeployScanPaths -WebRoot $configVarsWebRoot -AdditionalPathsRaw $configVarsAdditional
+	foreach ($p in $configVarsPaths) {
+		Write-Host "ConfigurationVariables: rewriting *.config under '$p'"
+		Update-IISConfigurationVariables -TargetDir $p -Variables $SquidVariables
 	}
 }
 
@@ -1588,13 +1606,13 @@ function Update-IISStructuredJsonConfiguration {
 
 $structuredEnabled = $SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled']
 if ($structuredEnabled -eq 'True') {
-	$structuredTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$structuredWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$structuredAdditional = $SquidParameters['Squid.Action.IISWebSite.AdditionalPaths']
 	$structuredGlobs = $SquidParameters['Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets']
-	if (-not [string]::IsNullOrWhiteSpace($structuredTarget)) {
-		Write-Host "StructuredConfigurationVariables: feature enabled; rewriting JSON leaves under '$structuredTarget'"
-		Update-IISStructuredJsonConfiguration -TargetDir $structuredTarget -Variables $SquidVariables -TargetFilesGlobs $structuredGlobs
-	} else {
-		Write-Host "StructuredConfigurationVariables: feature enabled but WebRoot is empty; skipping."
+	$structuredPaths = Get-IISDeployScanPaths -WebRoot $structuredWebRoot -AdditionalPathsRaw $structuredAdditional
+	foreach ($p in $structuredPaths) {
+		Write-Host "StructuredConfigurationVariables: rewriting JSON leaves under '$p'"
+		Update-IISStructuredJsonConfiguration -TargetDir $p -Variables $SquidVariables -TargetFilesGlobs $structuredGlobs
 	}
 }
 

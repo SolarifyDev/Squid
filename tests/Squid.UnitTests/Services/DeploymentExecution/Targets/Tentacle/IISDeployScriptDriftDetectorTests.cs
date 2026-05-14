@@ -619,6 +619,29 @@ public class IISDeployScriptDriftDetectorTests
         ourScript.ShouldContain("Write-IISDeployJournalEntry -SiteName $journalSiteName -Fingerprint $journalFingerprint -Status 'Success'");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 has AdditionalPaths scan-list helper + all 4 rewriters
+    /// invoke it (P1-4, 1.6.9). Mirrors Octopus's `Octopus.Action.Package.AdditionalPaths`.
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasAdditionalPathsHelperAndAllRewritersUseIt_ForOctopusAdditionalPathsParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Get-IISDeployScanPaths");
+
+        // All 4 rewriter call sites must invoke the helper (proves they extend to AdditionalPaths).
+        var helperInvocations = System.Text.RegularExpressions.Regex.Matches(
+            ourScript, @"Get-IISDeployScanPaths -WebRoot");
+        helperInvocations.Count.ShouldBeGreaterThanOrEqualTo(4,
+            customMessage:
+                $"AdditionalPaths helper must be invoked by all 4 rewriters (SubstituteInFiles, " +
+                $"ConfigurationTransforms, ConfigurationVariables, StructuredConfigurationVariables). " +
+                $"Found {helperInvocations.Count} invocations — missing one or more call sites.");
+
+        ourScript.ShouldContain("'Squid.Action.IISWebSite.AdditionalPaths'");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

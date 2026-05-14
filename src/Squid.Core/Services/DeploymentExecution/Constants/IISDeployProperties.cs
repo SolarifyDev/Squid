@@ -120,6 +120,24 @@ internal static class IISDeployProperties
     /// </summary>
     internal const string ConfigurationVariablesEnabled = "Squid.Action.IISWebSite.ConfigurationVariables.Enabled";
 
+    // ── Additional paths across all rewriters (P1-4, 1.6.9) ───────────────────
+    //
+    // Mirrors Octopus's `Octopus.Action.Package.AdditionalPaths`
+    // (`ConfigurationVariablesBehaviour.cs:74-76`). Some apps store config files OUTSIDE
+    // WebRoot — e.g. `<install>/config/*.config` sibling of `<install>/wwwroot/`. By
+    // default the 4 rewriters (SubstituteInFiles, ConfigurationTransforms,
+    // ConfigurationVariables, StructuredConfigurationVariables) scan WebRoot only;
+    // setting AdditionalPaths extends the scan to those dirs too.
+    //
+    // Format: newline-separated absolute paths. Each path is scanned IN ADDITION to WebRoot.
+
+    /// <summary>
+    /// Newline-separated absolute directory paths. When set, all 4 config rewriters
+    /// (SubstituteInFiles / ConfigurationTransforms / ConfigurationVariables /
+    /// StructuredConfigurationVariables) scan WebRoot + each AdditionalPath.
+    /// </summary>
+    internal const string AdditionalPaths = "Squid.Action.IISWebSite.AdditionalPaths";
+
     // ── Deployment journal + SkipIfAlreadyInstalled (P0-2, 1.6.9) ─────────────
     //
     // Mirrors Octopus's `Octopus.Action.Package.SkipIfAlreadyInstalled` flag
