@@ -1943,6 +1943,149 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── Deployment journal + SkipIfAlreadyInstalled (1.6.9 P0-2) ─────────────
+    //
+    // First deploy writes a journal entry. Re-deploy with SkipIfAlreadyInstalled=True +
+    // unchanged package short-circuits with no IIS work. Re-deploy with different package
+    // (different content / mtime / size) bypasses the skip — fingerprint mismatch.
+
+    [Fact]
+    public void RealIIS_DeploymentJournal_SkipIfAlreadyInstalled_SecondIdenticalRunShortCircuits()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var zipPath = StageTinyPackageZip(ctx);
+        ctx.RegisterDeploymentJournalForCleanup(ctx.SiteName);
+
+        // Action shared by both runs — identical fingerprint expected.
+        DeploymentActionDto BuildDeploy() => BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath),
+            (Property.PackageSkipIfAlreadyInstalled, "True"));
+
+        // First deploy: writes journal, normal flow.
+        var script1 = IISDeployScriptBuilder.Build(BuildDeploy());
+        var result1 = RunPowerShell(script1);
+        result1.ExitCode.ShouldBe(0, customMessage: $"First deploy failed: {result1.StdErr}");
+        result1.StdOut.ShouldContain("Deployment journal: wrote entry");
+
+        // Second deploy with same package: should short-circuit.
+        var script2 = IISDeployScriptBuilder.Build(BuildDeploy());
+        var result2 = RunPowerShell(script2);
+        result2.ExitCode.ShouldBe(0, customMessage: $"Second deploy failed: {result2.StdErr}");
+        result2.StdOut.ShouldContain("Skipping this deploy",
+            customMessage: $"Second identical deploy should have short-circuited via journal lookup. STDOUT:\n{result2.StdOut}");
+
+        // Confirm no IIS site re-creation logs appear in the second run.
+        result2.StdOut.ShouldNotContain("Making sure a Website",
+            customMessage: "IIS configure script ran despite SkipIfAlreadyInstalled gate — gate didn't fire.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_DeploymentJournal_DifferentPackage_BypassesSkipGate()
+    {
+        // Same site + same flag = True, but the package CHANGED between deploys (different
+        // file content → different mtime/size/fingerprint). Second deploy must run fresh,
+        // NOT short-circuit.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.RegisterDeploymentJournalForCleanup(ctx.SiteName);
+
+        var zipPath1 = StageTinyPackageZip(ctx, "first-version-content");
+        var action1 = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath1),
+            (Property.PackageSkipIfAlreadyInstalled, "True"));
+
+        RunPowerShell(IISDeployScriptBuilder.Build(action1)).ExitCode.ShouldBe(0);
+
+        // New artifact = new fingerprint.
+        var zipPath2 = StageTinyPackageZip(ctx, "second-version-content");
+        var action2 = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath2),
+            (Property.PackageSkipIfAlreadyInstalled, "True"));
+
+        var result2 = RunPowerShell(IISDeployScriptBuilder.Build(action2));
+        result2.ExitCode.ShouldBe(0, customMessage: $"Second deploy with different package failed: {result2.StdErr}");
+        result2.StdOut.ShouldNotContain("Skipping this deploy",
+            customMessage: "Different package fingerprint should have BYPASSED the skip gate. Gate is too eager.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_DeploymentJournal_FlagDisabled_AlwaysRunsFresh()
+    {
+        // SkipIfAlreadyInstalled is False (or unset) — even with a matching prior entry,
+        // every deploy runs fresh.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        ctx.RegisterDeploymentJournalForCleanup(ctx.SiteName);
+
+        var zipPath = StageTinyPackageZip(ctx);
+
+        DeploymentActionDto BuildDeploy(string skipFlag) => BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.PackageSourcePath, zipPath),
+            (Property.PackageSkipIfAlreadyInstalled, skipFlag));
+
+        // First deploy with flag True → writes journal entry.
+        RunPowerShell(IISDeployScriptBuilder.Build(BuildDeploy("True"))).ExitCode.ShouldBe(0);
+
+        // Second deploy with flag False → runs fresh despite matching prior entry.
+        var result2 = RunPowerShell(IISDeployScriptBuilder.Build(BuildDeploy("False")));
+        result2.ExitCode.ShouldBe(0);
+        result2.StdOut.ShouldNotContain("Skipping this deploy",
+            customMessage: "Flag=False should disable the skip gate even when journal matches.");
+
+        ctx.MarkClean();
+    }
+
+    private static string StageTinyPackageZip(IISTestContext ctx, string contentVariant = "content-v1")
+    {
+        var stagingDir = Path.Combine(Path.GetTempPath(), $"squid-iis-tinypkg-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stagingDir);
+        ctx.RegisterTempDirForCleanup(stagingDir);
+        File.WriteAllText(Path.Combine(stagingDir, "marker.txt"), contentVariant);
+        var zipPath = Path.Combine(Path.GetTempPath(), $"squid-iis-tinypkg-{Guid.NewGuid():N}.zip");
+        ctx.RegisterTempDirForCleanup(zipPath);
+        System.IO.Compression.ZipFile.CreateFromDirectory(stagingDir, zipPath);
+        return zipPath;
+    }
+
     // ── Certificate auto-import + private-key ACL (1.6.9 P0-1) ───────────────
     //
     // Operator stores PFX bytes as a base64 Squid variable. Deploy script decodes,
@@ -2848,6 +2991,21 @@ public sealed class IISDeployRealHostE2ETests
         public void RegisterCertThumbprintForCleanup(string thumbprint) => _certThumbprintsToClean.Add(thumbprint);
 
         /// <summary>
+        /// Registers the deployment-journal file for this test's site for removal during
+        /// <see cref="Dispose"/>. P0-2 tests write to %PROGRAMDATA%\Squid\IISDeploy\journal\&lt;site&gt;.json;
+        /// without cleanup, repeated test runs would carry state forward.
+        /// </summary>
+        public void RegisterDeploymentJournalForCleanup(string siteName)
+        {
+            var programData = Environment.GetEnvironmentVariable("ProgramData");
+            if (string.IsNullOrEmpty(programData)) return;
+            // Same sanitisation logic as the PS1 Get-IISDeployJournalPath.
+            var safeName = System.Text.RegularExpressions.Regex.Replace(siteName, @"[^A-Za-z0-9._-]", "_");
+            var journalPath = Path.Combine(programData, "Squid", "IISDeploy", "journal", $"{safeName}.json");
+            _sentinelFilesToClean.Add(journalPath);
+        }
+
+        /// <summary>
         /// Tells <see cref="Dispose"/> to run <c>netsh http delete sslcert ipport=0.0.0.0:{port}</c>
         /// on teardown. Production deploys (non-SNI) leave entries in the netsh sslcert table;
         /// CI parallelism would accumulate them otherwise.
@@ -2985,6 +3143,9 @@ public sealed class IISDeployRealHostE2ETests
         public const string CertificatePfxBase64 = "Squid.Action.IISWebSite.Certificate.PfxBase64";
         public const string CertificatePfxPassword = "Squid.Action.IISWebSite.Certificate.PfxPassword";
         public const string CertificateThumbprintVariableName = "Squid.Action.IISWebSite.Certificate.ThumbprintVariableName";
+
+        // P0-2 (1.6.9) — Deployment journal + SkipIfAlreadyInstalled
+        public const string PackageSkipIfAlreadyInstalled = "Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";

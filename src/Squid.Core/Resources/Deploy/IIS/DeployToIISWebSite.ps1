@@ -959,6 +959,87 @@ function Update-IISConfigurationVariables {
 	}
 }
 
+# ── Squid: Deployment journal + SkipIfAlreadyInstalled (1.6.9 P0-2 — Octopus AlreadyInstalledConvention parity) ──
+# Mirrors Octopus's `Octopus.Action.Package.SkipIfAlreadyInstalled` short-circuit.
+# When the flag is True and the local journal records a prior successful deploy with the
+# same package fingerprint + WebRoot, exits with status 0 (skip) — no extraction, no
+# rewriting, no IIS reconfig. Saves ~minutes per idempotent re-run.
+
+function Get-IISDeployJournalPath {
+	param([Parameter(Mandatory=$true)][string]$SiteName)
+	$root = Join-Path $env:ProgramData 'Squid\IISDeploy\journal'
+	if (-not (Test-Path -LiteralPath $root)) { New-Item -Path $root -ItemType Directory -Force | Out-Null }
+	# Sanitise siteName to a filename-safe form (IIS site names can contain spaces / special chars).
+	$safeName = [System.Text.RegularExpressions.Regex]::Replace($SiteName, '[^A-Za-z0-9._-]', '_')
+	return Join-Path $root "$safeName.json"
+}
+
+function Get-IISDeployFingerprint {
+	param([string]$SourcePath, [string]$WebRoot)
+	# Hash combines the package's last-modified time + size + the operator-configured WebRoot.
+	# When the operator re-runs with the same package + same target, fingerprint matches → skip.
+	$parts = New-Object System.Collections.Generic.List[string]
+	if (-not [string]::IsNullOrWhiteSpace($SourcePath) -and (Test-Path -LiteralPath $SourcePath)) {
+		$info = Get-Item -LiteralPath $SourcePath
+		$parts.Add($info.FullName)
+		$parts.Add($info.Length.ToString())
+		$parts.Add($info.LastWriteTimeUtc.ToString('o'))
+	}
+	$parts.Add($WebRoot)
+	$concat = ($parts -join '|')
+	$sha = [System.Security.Cryptography.SHA256]::Create()
+	try {
+		$bytes = [System.Text.Encoding]::UTF8.GetBytes($concat)
+		$hash = $sha.ComputeHash($bytes)
+		return [System.BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+	} finally {
+		$sha.Dispose()
+	}
+}
+
+function Read-IISDeployJournalEntry {
+	param([Parameter(Mandatory=$true)][string]$SiteName)
+	$path = Get-IISDeployJournalPath -SiteName $SiteName
+	if (-not (Test-Path -LiteralPath $path)) { return $null }
+	try {
+		return Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+	} catch {
+		Write-Warning "Could not parse deployment journal at '$path': $($_.Exception.Message). Treating as no prior entry."
+		return $null
+	}
+}
+
+function Write-IISDeployJournalEntry {
+	param(
+		[Parameter(Mandatory=$true)][string]$SiteName,
+		[Parameter(Mandatory=$true)][string]$Fingerprint,
+		[Parameter(Mandatory=$true)][string]$Status
+	)
+	$path = Get-IISDeployJournalPath -SiteName $SiteName
+	$entry = [pscustomobject]@{
+		SiteName = $SiteName
+		Fingerprint = $Fingerprint
+		Status = $Status
+		DeployedAt = (Get-Date -Format 'o')
+	}
+	$entry | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $path -Encoding UTF8 -NoNewline
+	Write-Host "Deployment journal: wrote entry to '$path' (status=$Status, fingerprint=$($Fingerprint.Substring(0,8))...)"
+}
+
+$skipIfAlreadyInstalled = $SquidParameters['Squid.Action.IISWebSite.Package.SkipIfAlreadyInstalled']
+$journalSiteName = $SquidParameters['Squid.Action.IISWebSite.WebSiteName']
+$journalSourcePath = $SquidParameters['Squid.Action.IISWebSite.Package.SourcePath']
+$journalWebRoot = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+$journalFingerprint = Get-IISDeployFingerprint -SourcePath $journalSourcePath -WebRoot $journalWebRoot
+
+if ($skipIfAlreadyInstalled -eq 'True' -and -not [string]::IsNullOrWhiteSpace($journalSiteName)) {
+	$priorEntry = Read-IISDeployJournalEntry -SiteName $journalSiteName
+	if ($null -ne $priorEntry -and $priorEntry.Status -eq 'Success' -and $priorEntry.Fingerprint -eq $journalFingerprint) {
+		Write-Host "SkipIfAlreadyInstalled: prior deploy at $($priorEntry.DeployedAt) had the same package fingerprint + WebRoot. Skipping this deploy."
+		exit 0
+	}
+}
+
 # ── Squid: Certificate auto-import (1.6.9 P0-1 — Octopus IisWebSiteBeforeDeployFeature parity) ──
 # When the operator sets `Squid.Action.IISWebSite.Certificate.PfxBase64`, decode the PFX
 # bytes, import into Cert:\LocalMachine\My, and expose the resulting thumbprint via
@@ -1576,5 +1657,13 @@ if (-not [string]::IsNullOrWhiteSpace($postDeployWebRoot)) {
 			throw "Packaged PostDeploy script '$packagedPostDeploy' exited with code $LastExitCode."
 		}
 	}
+}
+
+# ── Squid: Write success entry to deployment journal (1.6.9 P0-2) ──
+# Reached only when every prior phase (extract, rewriters, IIS configure, post-deploy)
+# completed without throwing. Failed deploys never write — the next re-run sees no journal
+# entry (or the last successful one before this failed attempt) and proceeds.
+if (-not [string]::IsNullOrWhiteSpace($journalSiteName)) {
+	Write-IISDeployJournalEntry -SiteName $journalSiteName -Fingerprint $journalFingerprint -Status 'Success'
 }
 
