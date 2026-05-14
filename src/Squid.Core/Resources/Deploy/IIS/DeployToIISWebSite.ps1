@@ -937,6 +937,107 @@ function Update-IISConfigurationVariables {
 	}
 }
 
+# ── Squid: SubstituteInFiles — `#{X}` token replacement INSIDE files (Phase 8 — Octopus SubstituteInFiles parity) ──
+# Mirrors Octopus's `Octopus.Features.SubstituteInFiles` feature
+# (`SubstituteInFilesBehaviour.cs:12-35`). For each operator-specified file glob, reads file
+# content, replaces every `#{VariableName}` token with the matching Squid variable's value,
+# writes back. Works on ANY text format (JSON, YAML, properties, .txt) — unlike the XML-only
+# ConfigurationVariables rewriter (Phase 6).
+#
+# Order: runs FIRST among the config-rewriters — Octopus pipeline is
+#   SubstituteInFiles → ConfigurationTransforms → ConfigurationVariables → StructuredConfigurationVariables
+# (DeployPackageCommand.cs:115-118). The reason: SubstituteInFiles can populate values that
+# XDT transforms or ConfigurationVariables then operate on; the reverse order would have
+# `#{X}` tokens still unresolved when the later features run.
+
+function Update-IISFilesWithVariableSubstitution {
+	param(
+		[Parameter(Mandatory=$true)][string]$TargetDir,
+		[Parameter(Mandatory=$true)][hashtable]$Variables,
+		[Parameter(Mandatory=$true)][string]$TargetFilesGlobs
+	)
+
+	if (-not (Test-Path $TargetDir)) {
+		Write-Host "SubstituteInFiles: target dir '$TargetDir' does not exist; skipping."
+		return
+	}
+
+	if ([string]::IsNullOrWhiteSpace($TargetFilesGlobs)) {
+		Write-Host "SubstituteInFiles: no target file globs configured; skipping."
+		return
+	}
+
+	# Parse newline-separated (or comma-separated) globs. Allows operators to enter
+	# `appsettings.json\nappsettings.{env}.json\n*.yml` per line in the editor UI.
+	$globs = $TargetFilesGlobs -split "[`r`n,]" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+	if ($globs.Count -eq 0) {
+		Write-Host "SubstituteInFiles: target file globs string parsed to zero entries; skipping."
+		return
+	}
+
+	foreach ($glob in $globs) {
+		# Absolute path → use directly. Relative → resolve against $TargetDir.
+		$resolvedGlob = if ([System.IO.Path]::IsPathRooted($glob)) {
+			$glob
+		} else {
+			Join-Path $TargetDir $glob
+		}
+
+		$files = @(Get-ChildItem -Path $resolvedGlob -File -ErrorAction SilentlyContinue)
+		if ($files.Count -eq 0) {
+			Write-Warning "SubstituteInFiles: glob '$glob' (resolved: '$resolvedGlob') matched no files."
+			continue
+		}
+
+		foreach ($file in $files) {
+			Write-Host "SubstituteInFiles: scanning '$($file.FullName)'"
+			$content = $null
+			try {
+				$content = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+			} catch {
+				Write-Warning "  - skip (failed to read): $($_.Exception.Message)"
+				continue
+			}
+
+			if ($null -eq $content -or $content.Length -eq 0) {
+				continue
+			}
+
+			# Replace #{VariableName} tokens. Allows dots/hyphens/underscores in names (matches
+			# Octopus's Octostache simple-variable form). Tokens with no matching Squid variable
+			# are left intact (Octopus parity — unresolved tokens flow through, operators see
+			# the unresolved token in the deployed file and can fix the variable spec).
+			$newContent = [regex]::Replace($content, '#\{([A-Za-z0-9_.\-]+)\}', {
+				param($match)
+				$varName = $match.Groups[1].Value
+				if ($Variables.ContainsKey($varName)) {
+					return [string]$Variables[$varName]
+				}
+				return $match.Value
+			})
+
+			if ($newContent -ne $content) {
+				# Use Set-Content with -NoNewline to avoid appending a trailing newline on files
+				# that didn't have one (preserves operator's exact file shape).
+				Set-Content -LiteralPath $file.FullName -Value $newContent -NoNewline -Encoding UTF8
+				Write-Host "  - tokens replaced"
+			}
+		}
+	}
+}
+
+$substituteInFilesEnabled = $SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.Enabled']
+if ($substituteInFilesEnabled -eq 'True') {
+	$substituteTarget = $SquidParameters['Squid.Action.IISWebSite.WebRoot']
+	$substituteGlobs = $SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles']
+	if (-not [string]::IsNullOrWhiteSpace($substituteTarget)) {
+		Write-Host "SubstituteInFiles: feature enabled; substituting tokens under '$substituteTarget'"
+		Update-IISFilesWithVariableSubstitution -TargetDir $substituteTarget -Variables $SquidVariables -TargetFilesGlobs $substituteGlobs
+	} else {
+		Write-Host "SubstituteInFiles: feature enabled but WebRoot is empty; skipping."
+	}
+}
+
 # ── Squid: XML Configuration Transforms / XDT (Phase 7 — Octopus ConfigurationTransforms parity) ──
 # Mirrors Octopus's `Octopus.Features.ConfigurationTransforms` feature
 # (`ConfigurationTransformsBehaviour.cs:84-101`). When enabled, walks every *.config file

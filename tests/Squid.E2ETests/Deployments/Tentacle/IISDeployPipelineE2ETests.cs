@@ -638,6 +638,55 @@ public class IISDeployPipelineE2ETests
         captured.ScriptBody.ShouldNotContain("#{EnvName}");
     }
 
+    // ── SubstituteInFiles (Phase 8) ────────────────────────────────────────
+
+    [Fact]
+    public async Task FullPipeline_SubstituteInFilesEnabled_TargetFilesAndVariablesShipTogether()
+    {
+        // Pipeline-tier verification: both the feature toggle, the TargetFiles glob list (via
+        // base64), and the operator-defined variables flow through the captured request.
+        // The agent-side function then has everything it needs in one preamble.
+        ExecutionCapture.Clear();
+
+        var serverTaskId = await SeedIISWebSiteInternalAsync(
+            communicationStyle: "TentaclePolling",
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.IISWebSite.CreateOrUpdateWebSite"] = "True",
+                ["Squid.Action.IISWebSite.WebSiteName"] = "OrderApi",
+                ["Squid.Action.IISWebSite.ApplicationPoolName"] = "OrderApi-Pool",
+                ["Squid.Action.IISWebSite.WebRoot"] = @"C:\inetpub\OrderApi",
+                ["Squid.Action.IISWebSite.SubstituteInFiles.Enabled"] = "True",
+                ["Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles"] = "appsettings.json\nappsettings.Production.json"
+            },
+            variables: new[]
+            {
+                ("ApiUrl", "https://api.prod.example.com", false),
+                ("LogLevel", "Information", false)
+            }).ConfigureAwait(false);
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await AssertTaskStateAsync(TaskState.Success);
+
+        var captured = ExecutionCapture.CapturedRequests.Single();
+
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.Enabled'] = 'True'");
+
+        // TargetFiles via base64 — preamble has the decode expression
+        captured.ScriptBody.ShouldContain(
+            "$SquidParameters['Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles'] = [System.Text.Encoding]::UTF8.GetString",
+            customMessage: "TargetFiles must emit via base64 to preserve newline separators.");
+
+        // Variables ship via $SquidVariables (same channel as Phase 6 ConfigurationVariables)
+        captured.ScriptBody.ShouldContain("$SquidVariables['ApiUrl'] = 'https://api.prod.example.com'");
+        captured.ScriptBody.ShouldContain("$SquidVariables['LogLevel'] = 'Information'");
+    }
+
     // ── Theory matrix coverage of Tentacle communication-style dispatch ───
 
     [Theory]

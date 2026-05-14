@@ -92,6 +92,10 @@ internal static class IISDeployScriptBuilder
         IISDeployProperties.ConfigurationTransformsEnabled,
         IISDeployProperties.ConfigurationTransformsEnvironmentName,
         IISDeployProperties.ConfigurationTransformsAdditional,
+
+        // SubstituteInFiles — variable replacement INSIDE files (Phase 8)
+        IISDeployProperties.SubstituteInFilesEnabled,
+        IISDeployProperties.SubstituteInFilesTargetFiles,
     };
 
     internal static string Build(DeploymentActionDto action)
@@ -140,6 +144,9 @@ internal static class IISDeployScriptBuilder
         // separate `source => target` entries with newlines. Newline collapse would turn N entries
         // into one undelimited string.
         IISDeployProperties.ConfigurationTransformsAdditional,
+        // SubstituteInFiles.TargetFiles is a newline-separated list of file globs. Same newline-
+        // preservation requirement as AdditionalTransforms above.
+        IISDeployProperties.SubstituteInFilesTargetFiles,
     };
 
     private static string BuildPreamble(DeploymentActionDto action, IReadOnlyList<VariableDto> variables)

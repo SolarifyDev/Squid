@@ -371,6 +371,45 @@ public class IISDeployScriptDriftDetectorTests
             customMessage: "Both config-rewriting features must run BEFORE the IIS configure dispatch — IIS reads web.config when starting the site.");
     }
 
+    /// <summary>
+    /// Squid-specific invariant: PS1 contains the <c>Update-IISFilesWithVariableSubstitution</c>
+    /// function (Phase 8 — Octopus SubstituteInFiles parity). Pins:
+    ///   - Function presence
+    ///   - <c>#{X}</c> regex pattern (the actual token form)
+    ///   - <c>$SquidVariables.ContainsKey</c> lookup
+    ///   - Order: runs BEFORE ConfigurationTransforms (Octopus pipeline order)
+    /// </summary>
+    [Fact]
+    public void EmbeddedScript_HasSubstituteInFilesRewriter_ForOctopusSubstituteInFilesParity()
+    {
+        var ourScript = LoadEmbeddedScript();
+
+        ourScript.ShouldContain("function Update-IISFilesWithVariableSubstitution",
+            customMessage:
+                "Squid IIS PS1 is missing Update-IISFilesWithVariableSubstitution. This breaks the operator-facing " +
+                "'Substitute variables in files' workflow that Octopus's `Octopus.Features.SubstituteInFiles` provides.");
+
+        // The regex pattern must match Octopus's Octostache simple-variable form.
+        ourScript.ShouldContain("#\\{([A-Za-z0-9_.\\-]+)\\}",
+            customMessage:
+                "SubstituteInFiles regex pattern missing or wrong form — must match `#{X}` style tokens with " +
+                "alphanumeric + dot/hyphen/underscore names (Octostache simple-variable form).");
+
+        // Order: SubstituteInFiles must appear BEFORE ConfigurationTransforms (Octopus pipeline:
+        // DeployPackageCommand.cs:115-117 — SubstituteInFiles first, then transforms, then variables).
+        var substituteIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.SubstituteInFiles.Enabled'", StringComparison.Ordinal);
+        var transformsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationTransforms.Enabled'", StringComparison.Ordinal);
+        var configVarsIdx = ourScript.IndexOf("'Squid.Action.IISWebSite.ConfigurationVariables.Enabled'", StringComparison.Ordinal);
+
+        substituteIdx.ShouldBeLessThan(transformsIdx,
+            customMessage:
+                "SubstituteInFiles must run BEFORE ConfigurationTransforms — Octopus pipeline order " +
+                "(DeployPackageCommand.cs:115-117). SubstituteInFiles populates `#{X}` tokens; transforms " +
+                "then operate on the resolved content. Reversed order leaves tokens unresolved when XDT runs.");
+        transformsIdx.ShouldBeLessThan(configVarsIdx,
+            customMessage: "ConfigurationTransforms must run BEFORE ConfigurationVariables — pinned earlier.");
+    }
+
     private static string LoadEmbeddedScript()
     {
         // We deliberately load through the same path the production code uses

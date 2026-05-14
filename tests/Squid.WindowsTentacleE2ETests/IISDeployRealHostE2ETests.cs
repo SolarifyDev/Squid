@@ -1149,6 +1149,193 @@ public sealed class IISDeployRealHostE2ETests
         ctx.MarkClean();
     }
 
+    // ── SubstituteInFiles (Phase 8) ──────────────────────────────────────────
+    //
+    // The deploy script's `Update-IISFilesWithVariableSubstitution` reads each glob in
+    // `TargetFiles`, replaces every `#{X}` token using the Squid variable set, writes back.
+    // Works on ANY text format — JSON, YAML, properties, .txt. These tests stage real
+    // operator-style files, deploy, then assert the rendered content matches what was expected.
+
+    [Fact]
+    public void RealIIS_SubstituteInFiles_JsonAppSettings_TokensReplacedWithVariableValues()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+
+        File.WriteAllText(jsonPath,
+            "{\n" +
+            "  \"ApiUrl\": \"#{ApiUrl}\",\n" +
+            "  \"LogLevel\": \"#{LogLevel}\",\n" +
+            "  \"Constant\": \"unchanged\"\n" +
+            "}\n");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "ApiUrl", Value = "https://api.prod.example.com" },
+            new() { Name = "LogLevel", Value = "Information" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "appsettings.json"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0,
+            customMessage: $"SubstituteInFiles deploy failed.\nSTDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+
+        var rendered = File.ReadAllText(jsonPath);
+        rendered.ShouldContain("\"ApiUrl\": \"https://api.prod.example.com\"",
+            customMessage: $"#{{ApiUrl}} token not replaced. File after deploy:\n{rendered}");
+        rendered.ShouldContain("\"LogLevel\": \"Information\"");
+        rendered.ShouldContain("\"Constant\": \"unchanged\"",
+            customMessage: "Non-token content was modified — substitution should only touch `#{X}` patterns.");
+
+        // No surviving tokens (all matched).
+        rendered.ShouldNotContain("#{ApiUrl}");
+        rendered.ShouldNotContain("#{LogLevel}");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_SubstituteInFiles_MultipleGlobs_AllMatchingFilesProcessed()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var jsonPath = Path.Combine(ctx.PhysicalPath, "appsettings.json");
+        var ymlPath = Path.Combine(ctx.PhysicalPath, "config.yml");
+
+        File.WriteAllText(jsonPath, "{ \"value\": \"#{TheValue}\" }");
+        File.WriteAllText(ymlPath, "value: #{TheValue}");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "TheValue", Value = "shared-value" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            // Multiple globs (newline separated) — both should be processed
+            (Property.SubstituteInFilesTargetFiles, "appsettings.json\nconfig.yml"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0, customMessage: $"Multi-glob substitution failed: {result.StdErr}");
+
+        File.ReadAllText(jsonPath).ShouldContain("\"value\": \"shared-value\"",
+            customMessage: "appsettings.json wasn't substituted.");
+        File.ReadAllText(ymlPath).ShouldContain("value: shared-value",
+            customMessage: "config.yml wasn't substituted — newline-separated glob list may not have parsed correctly.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_SubstituteInFiles_UnmatchedToken_LeftAsIs()
+    {
+        // Octopus parity: unresolved tokens (no matching Squid variable) are left INTACT in the
+        // output file. Operators see the unresolved token in the deployed file and can fix the
+        // variable spec on the next deploy.
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var configPath = Path.Combine(ctx.PhysicalPath, "config.txt");
+        File.WriteAllText(configPath, "Known: #{KnownVar}\nUnknown: #{NotDefined}");
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "KnownVar", Value = "resolved" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesEnabled, "True"),
+            (Property.SubstituteInFilesTargetFiles, "config.txt"));
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0, customMessage: $"Deploy failed: {result.StdErr}");
+
+        var rendered = File.ReadAllText(configPath);
+        rendered.ShouldContain("Known: resolved",
+            customMessage: "Known token wasn't replaced.");
+        rendered.ShouldContain("Unknown: #{NotDefined}",
+            customMessage:
+                "Unknown token was replaced or removed — Octopus parity requires unresolved tokens to be LEFT AS-IS. " +
+                $"File after deploy:\n{rendered}");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void RealIIS_SubstituteInFiles_FeatureDisabled_FileUntouched()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        if (!IsIISInstalled()) return;
+
+        using var ctx = new IISTestContext();
+        var configPath = Path.Combine(ctx.PhysicalPath, "config.txt");
+        const string originalContent = "Value: #{ShouldStayAsToken}";
+        File.WriteAllText(configPath, originalContent);
+
+        var variables = new List<Squid.Message.Models.Deployments.Variable.VariableDto>
+        {
+            new() { Name = "ShouldStayAsToken", Value = "DO_NOT_APPLY" }
+        };
+
+        var action = BuildAction(
+            (Property.CreateOrUpdateWebSite, "True"),
+            (Property.WebSiteName, ctx.SiteName),
+            (Property.ApplicationPoolName, ctx.PoolName),
+            (Property.ApplicationPoolIdentityType, "ApplicationPoolIdentity"),
+            (Property.ApplicationPoolFrameworkVersion, "v4.0"),
+            (Property.WebRoot, ctx.PhysicalPath),
+            (Property.Bindings, $"[{{\"protocol\":\"http\",\"port\":\"{ctx.HttpPort}\",\"host\":\"\",\"ipAddress\":\"*\",\"enabled\":true}}]"),
+            (Property.SubstituteInFilesTargetFiles, "config.txt")
+            // SubstituteInFilesEnabled NOT set — gate is off
+        );
+
+        var script = IISDeployScriptBuilder.Build(action, variables);
+        var result = RunPowerShell(script);
+
+        result.ExitCode.ShouldBe(0, customMessage: $"Deploy failed: {result.StdErr}");
+
+        File.ReadAllText(configPath).ShouldBe(originalContent,
+            customMessage: "File was modified despite feature being OFF — gate is broken.");
+
+        ctx.MarkClean();
+    }
+
     // ── XML Configuration Transforms / XDT (Phase 7) ────────────────────────
     //
     // The deploy script's `Update-IISConfigurationTransforms` function loads
@@ -2148,6 +2335,10 @@ public sealed class IISDeployRealHostE2ETests
         public const string ConfigurationTransformsEnabled = "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled";
         public const string ConfigurationTransformsEnvironmentName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName";
         public const string ConfigurationTransformsAdditional = "Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms";
+
+        // Phase 8 — SubstituteInFiles (Octopus SubstituteInFiles parity)
+        public const string SubstituteInFilesEnabled = "Squid.Action.IISWebSite.SubstituteInFiles.Enabled";
+        public const string SubstituteInFilesTargetFiles = "Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles";
 
         // Phase 4 — WebApplication sub-feature
         public const string WebApplicationCreateOrUpdate = "Squid.Action.IISWebSite.WebApplication.CreateOrUpdate";
