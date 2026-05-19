@@ -234,14 +234,15 @@ public class TentacleInstallScriptBuildersTests
             "Step 1 must defer service install so register can write config first " +
             "(matches LinuxBinaryScriptBuilder's install-then-register-then-service order).");
 
-        // register
-        script.Content.ShouldContain("squid-tentacle.exe' register");
+        // register — uses the $tentacle variable discovered from install-info.json
+        // (no hardcoded path; survives operator's -InstallDir override)
+        script.Content.ShouldContain("$tentacle register");
         script.Content.ShouldContain("--listening-host \"host.local\"");
         script.Content.ShouldContain("--listening-port \"10933\"");
         script.Content.ShouldContain("--server-cert \"FAF04764\"");
 
         // service install must come AFTER register
-        var registerIdx = script.Content.IndexOf("register", StringComparison.Ordinal);
+        var registerIdx = script.Content.IndexOf("$tentacle register", StringComparison.Ordinal);
         var serviceInstallIdx = script.Content.IndexOf("service install", StringComparison.Ordinal);
         registerIdx.ShouldBeGreaterThan(0);
         serviceInstallIdx.ShouldBeGreaterThan(registerIdx,
@@ -320,37 +321,156 @@ public class TentacleInstallScriptBuildersTests
     }
 
     [Fact]
-    public void WindowsPowerShell_BinaryPath_PinsCanonicalProgramFilesLocation()
+    public void WindowsPowerShell_DoesNotHardcodeBinaryPath_ReadsInstallInfoJson()
     {
-        // install-tentacle.ps1 default install dir is C:\Program Files\Squid Tentacle.
-        // Pinning the literal here ensures the script and the installer agree —
-        // a future installer that defaults elsewhere would silently break this
-        // generated script (binary not found at the path the script invokes).
+        // Path-agnostic invariant: the generated script MUST NOT hardcode
+        // C:\Program Files\Squid Tentacle\... because operators routinely
+        // override -InstallDir for D: drive installs, dev-machine layouts,
+        // or air-gapped per-tenant paths.
+        //
+        // Instead, the script reads %ProgramData%\Squid\Tentacle\install-info.json
+        // (written by install-tentacle.ps1 post-extraction) and uses the
+        // BinaryPath field. This survives any -InstallDir override.
         var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
 
-        script.Content.ShouldContain(@"C:\Program Files\Squid Tentacle\squid-tentacle.exe", customMessage:
-            "Generated script must reference the canonical install path written by install-tentacle.ps1. " +
-            "If install-tentacle.ps1's default ever changes, update both sides — caught by this pin.");
+        script.Content.ShouldNotContain(@"C:\Program Files\Squid Tentacle\Squid.Tentacle.exe", customMessage:
+            "Generated script hardcodes the default install path. Operators with custom -InstallDir " +
+            "would silently break — read from install-info.json instead.");
+        script.Content.ShouldNotContain(@"C:\Program Files\Squid Tentacle\squid-tentacle.exe", customMessage:
+            "Generated script contains the deprecated lowercase 'squid-tentacle.exe' name. The actual " +
+            "published binary is 'Squid.Tentacle.exe' (per Squid.Tentacle.csproj RootNamespace).");
+
+        // Discovery-file path is pinned exactly — install-tentacle.ps1 writes here.
+        script.Content.ShouldContain(@"Squid\Tentacle\install-info.json", customMessage:
+            "Step 2 must read the discovery file at %ProgramData%\\Squid\\Tentacle\\install-info.json. " +
+            "Renaming requires lockstep update in install-tentacle.ps1's Write-InstallInfo function.");
+
+        // The `$tentacle` PowerShell variable is the resolved binary path used
+        // throughout Steps 3-4. Pin both the assignment and the consumption.
+        script.Content.ShouldContain("$tentacle = $installInfo.BinaryPath");
+        script.Content.ShouldContain("$tentacle register");
+        script.Content.ShouldContain("$tentacle service install");
     }
 
     [Fact]
-    public void WindowsPowerShell_ContainsAllThreeOrderedSteps()
+    public void WindowsPowerShell_GeneratedScript_ChecksRegisterExitCodeForHttp403WithPermissionHint()
+    {
+        // 403 from /api/machines/register/* almost always means the API key user
+        // lacks the MachineCreate permission. Without a structured error message,
+        // the operator just sees an exit code and has no idea what to do.
+        //
+        // The generated script wraps $LASTEXITCODE = 403 and emits the three
+        // built-in roles that grant MachineCreate (Environment Manager / Space
+        // Owner / System Administrator) so the operator can self-service the
+        // fix.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("$LASTEXITCODE -eq 403", customMessage:
+            "Register exit-code handler must explicitly detect 403 — that's the canonical " +
+            "permission-denied signal from /api/machines/register/*.");
+
+        script.Content.ShouldContain("MachineCreate", customMessage:
+            "403 error message must name the missing permission so operators know what to grant.");
+
+        // The roles that actually grant MachineCreate must be named explicitly.
+        // System Administrator is INTENTIONALLY omitted — it's a system-level
+        // role and does not grant space-scoped MachineCreate (verified by
+        // PermissionRoleResolverTests). Listing it would mislead operators.
+        script.Content.ShouldContain("Environment Manager");
+        script.Content.ShouldContain("Space Owner");
+        script.Content.ShouldNotContain("System Administrator", customMessage:
+            "System Administrator does NOT grant MachineCreate — suggesting it would mislead operators. " +
+            "If BuiltInRoles.SystemAdministrator changes to include MachineCreate, update " +
+            "WindowsPowerShellScriptBuilder.BuildRegisterExitCodeHandler AND this test.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_ContainsAllFourOrderedSteps()
     {
         // Defensive ordering pin: the script must contain Step 1 (install),
-        // Step 2 (register), Step 3 (service install) in that order. A refactor
-        // that accidentally reorders them would break the registration flow
-        // because service install before register starts the SCM-managed
-        // process with no config → it crashes within seconds → operator sees
-        // a confusing "service stopped immediately" rather than a clean error.
+        // Step 2 (discover), Step 3 (register), Step 4 (service install) in
+        // that order. A refactor that accidentally reorders them breaks the
+        // registration flow.
+        //
+        // Step 2 (discover) is new in the install-info.json design — it reads
+        // the discovery file written by install-tentacle.ps1 and resolves the
+        // $tentacle variable that Steps 3-4 use.
         var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
 
         var step1Idx = script.Content.IndexOf("Step 1", StringComparison.Ordinal);
         var step2Idx = script.Content.IndexOf("Step 2", StringComparison.Ordinal);
         var step3Idx = script.Content.IndexOf("Step 3", StringComparison.Ordinal);
+        var step4Idx = script.Content.IndexOf("Step 4", StringComparison.Ordinal);
 
         step1Idx.ShouldBeGreaterThan(-1);
         step2Idx.ShouldBeGreaterThan(step1Idx);
         step3Idx.ShouldBeGreaterThan(step2Idx);
+        step4Idx.ShouldBeGreaterThan(step3Idx);
+    }
+
+    [Fact]
+    public void WindowsPowerShell_DiscoveryFileMissing_ScriptThrowsActionableError()
+    {
+        // If Step 1 (install-tentacle.ps1) failed silently or got skipped, Step 2
+        // must throw with an actionable error pointing at the missing discovery
+        // file — not a cryptic "$tentacle is null" or NullReferenceException at
+        // Step 3.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("Test-Path $infoPath", customMessage:
+            "Step 2 must validate the discovery file exists before reading.");
+        script.Content.ShouldContain("install-info.json not found", customMessage:
+            "Discovery-file-missing error must name the file explicitly so operators know what failed.");
+        script.Content.ShouldContain("Step 1 did not complete --", customMessage:
+            "Error must direct operator back to Step 1 instead of leaving them guessing. " +
+            "Must use ASCII -- (not em-dash —) for PowerShell 5.1 OEM-codepage compatibility.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_GeneratedContent_HasNoEmDashesInExecutableStrings()
+    {
+        // PowerShell 5.1 reads files using the host's OEM codepage when no BOM is
+        // present. An em-dash (—, U+2014) in a string literal is decoded as
+        // `â?"` under cp437/cp1252, which the PS parser then chokes on with
+        // "Unexpected token" — entire script bails before reaching the first
+        // executable line. CI failure 2026-05-19 (run 26077385538) hit exactly
+        // this; the fix is to use ASCII `--` in strings.
+        //
+        // Comments are safe (parser skips them) so this check looks only at
+        // string-literal context — any em-dash inside the generated script body
+        // breaks operators on cp437/cp1252/cp936/cp932 hosts.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldNotContain("—", customMessage:
+            "Generated PowerShell content contains an em-dash (—). PowerShell 5.1 on cp437/cp1252/cp936 " +
+            "hosts mis-decodes this as 'â?\"' and fails to parse the surrounding statement. Use ASCII `--` instead. " +
+            "Test pinned after CI failure on workflow run 26077385538.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_PinsBinaryFileNameConstant_SquidTentacleExe()
+    {
+        // Drift detector for the canonical binary filename. The .NET publish
+        // output is "Squid.Tentacle.exe" (Squid.Tentacle.csproj has
+        // <RootNamespace>Squid.Tentacle</RootNamespace>, AssemblyName defaults
+        // to project name). A rename in the csproj OR a future "lowercase
+        // everything" refactor would silently break the generated script.
+        WindowsPowerShellScriptBuilder.BinaryFileName.ShouldBe("Squid.Tentacle.exe", customMessage:
+            "Renaming the published binary breaks every install-tentacle.ps1 invocation. " +
+            "If you genuinely want to rename, update install-tentacle.ps1's $BinaryName " +
+            "(line ~80) AND this pin in lockstep.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_PinsDiscoveryFileRelativePath()
+    {
+        // Drift detector for the discovery-file location. install-tentacle.ps1
+        // writes to %ProgramData%\Squid\Tentacle\install-info.json; the
+        // generated script reads from the same path. Renaming one without the
+        // other breaks every fresh install.
+        WindowsPowerShellScriptBuilder.DiscoveryFileRelativePath.ShouldBe(@"Squid\Tentacle\install-info.json", customMessage:
+            "Discovery-file path changed. install-tentacle.ps1's Write-InstallInfo writes here; " +
+            "the generated script reads from the same constant. Update both sides in lockstep.");
     }
 
     // ========================================================================

@@ -176,8 +176,9 @@ public class GenerateTentacleInstallScriptServiceTests
         response.Data.Scripts[0].ScriptType.ShouldBe("powershell");
         response.Data.Scripts[0].Content.ShouldContain("Invoke-WebRequest", customMessage:
             "Real Windows builder must emit PowerShell-flavoured download command.");
-        response.Data.Scripts[0].Content.ShouldContain("squid-tentacle.exe' register", customMessage:
-            "Real Windows builder must invoke the Windows binary path for register.");
+        response.Data.Scripts[0].Content.ShouldContain("$tentacle register", customMessage:
+            "Real Windows builder must invoke the discovery-resolved $tentacle variable for register " +
+            "(path comes from install-info.json — no hardcoded C:\\Program Files\\...).");
     }
 
     [Fact]
