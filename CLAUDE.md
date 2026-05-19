@@ -1006,6 +1006,214 @@ openssl s_client -connect #{PollingBaseDomainName}:10943 \
 
 ---
 
+## Documentation Policy
+
+**No standalone PRs for documentation / architecture-comparison / review markdown files.** Knowledge of this kind goes directly into `CLAUDE.md` so it lives in every future session's project memory. The motivation: `.md` files in `docs/` are easy to lose (operators rarely browse), drift quickly from code, and create review overhead. CLAUDE.md is loaded automatically and stays adjacent to the code it documents.
+
+What counts as "doc / review markdown":
+- Architecture audits (e.g. "Squid vs Octopus parity review")
+- Frontend integration guides ("how to wire FE to API X")
+- Operator runbooks for established features
+- Comparative analysis ("Octopus does X, we do Y")
+
+What is NOT covered by this rule (these may still PR normally):
+- `README.md` updates
+- Schema / API reference docs that are the SINGLE SOURCE OF TRUTH (no equivalent in code)
+- Migration guides bundled with a breaking-change PR
+
+When user asks for an architecture review or compatibility analysis, deliver in chat AND distill the operational essentials into this `CLAUDE.md` (or `~/.claude/CLAUDE.md` for cross-project rules) — never a freestanding `docs/foo-review.md` PR.
+
+---
+
+## Windows Tentacle Install Surface — operational quick reference
+
+Reflects the 1.7.0 install-resilience series (PRs #329-#332). See
+`docs/windows-tentacle-install.md` + `docs/api-key-permissions.md` for the
+operator-facing long-form (these were the LAST doc-only PRs; future updates
+land here per the policy above).
+
+### Generated install snippet — 4-step PowerShell
+
+The `WindowsPowerShellScriptBuilder` emits a 4-step script. Step 2 is smart-discovery so the SAME script works in both Paste mode + Download mode:
+
+| Step | Purpose | Notes |
+|---|---|---|
+| 1 | Download `install-tentacle.ps1` from `raw.githubusercontent.com/.../main/...` → run with `-NoServiceInstall` → writes `install-info.json` | Auto-elevates via UAC if not admin; skippable for Download mode operators |
+| 2 | Smart-discover the Tentacle binary | Try 1: `install-info.json.BinaryPath` (Paste mode). Try 2: `%ProgramFiles%\Squid Tentacle\Squid.Tentacle.exe` (Download mode default). Try 3: PATH lookup via `Get-Command Squid.Tentacle.exe`. |
+| 3 | `& $tentacle register …` with `--server` / `--api-key` / `--flavor LinuxTentacle` / `--role` / `--environment` / `--name` / cert thumbprint | Exit code 403 → script prints structured hint naming MachineCreate + the two granting roles |
+| 4 | `& $tentacle service install --instance Default --service-name squid-tentacle` | Exit non-zero → script throws with explicit "review SCM errors" message |
+
+### install-info.json discovery file
+
+Written by `deploy/scripts/install-tentacle.ps1` after successful extraction. Schema = 1.
+
+```json
+{
+  "Schema": 1,
+  "BinaryPath": "C:\\Program Files\\Squid Tentacle\\Squid.Tentacle.exe",
+  "InstallDir": "C:\\Program Files\\Squid Tentacle",
+  "Version": "1.7.0",
+  "Architecture": "win-x64",
+  "InstalledAt": "2026-05-19T10:23:00Z",
+  "InstalledBy": "DOMAIN\\admin",
+  "ServiceName": "squid-tentacle"
+}
+```
+
+| Item | Value |
+|---|---|
+| File path | `%ProgramData%\Squid\Tentacle\install-info.json` |
+| Path const (server-side) | `WindowsPowerShellScriptBuilder.DiscoveryFileRelativePath` |
+| Path const (script-side) | `$InstallInfoDir` + `$InstallInfoPath` in `install-tentacle.ps1` |
+| Binary filename const | `WindowsPowerShellScriptBuilder.BinaryFileName = "Squid.Tentacle.exe"` |
+
+**Critical**: the .NET publish output is `Squid.Tentacle.exe`. NOT `squid-tentacle.exe` (which is the Linux shell wrapper). The 1.6.x bug was emitting the wrong name. Pinned by `WindowsPowerShell_PinsBinaryFileNameConstant_SquidTentacleExe`.
+
+### UAC auto-elevation logic
+
+`install-tentacle.ps1` auto-elevates when (a) install dir requires admin AND (b) not already admin AND (c) `-NoAutoElevate` not passed.
+
+Two invocation modes:
+- **File invocation** (`$PSCommandPath` set): re-launch via `Start-Process powershell.exe -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,…)`
+- **Pipe invocation** (`irm | iex`, `$PSCommandPath` empty): write `$MyInvocation.MyCommand.ScriptContents` to `$env:TEMP\squid-install-{guid}.ps1`, then RunAs that file
+
+Always uses `powershell.exe` (5.1, always present on Windows) — not `pwsh.exe` (7.x, optional).
+
+### Em-dash hardening (Rule 12.5)
+
+PowerShell 5.1 mis-decodes em-dash (`—`, U+2014) as `â?"` under the OEM codepage. `install-tentacle.ps1` and `WindowsPowerShellScriptBuilder` generated strings use ASCII `--` only. Drift detector `WindowsPowerShell_GeneratedContent_HasNoEmDashesInExecutableStrings` fails CI if any em-dash reappears in generated PowerShell.
+
+---
+
+## API Key Permission Model — quick reference
+
+API keys carry the owner-user's permissions. A 403 means the OWNER user lacks the permission, not the key itself.
+
+### Built-in role → MachineCreate matrix (1.7.0)
+
+| Built-in role | Has MachineCreate? | Scope |
+|---|---|---|
+| System Administrator | ❌ | System-level role (spaces / users / teams). **Deliberately does NOT grant space-scoped MachineCreate.** |
+| Space Owner | ✅ | Full space access |
+| Environment Manager | ✅ | Machines / accounts / environments |
+| Project Deployer | ❌ | View-only on machines |
+| Project Contributor | ❌ | View-only on machines |
+| Project Viewer | ❌ | Read-only |
+
+Source of truth: `BuiltInRoles.All` in `src/Squid.Core/Services/DataSeeding/BuiltInRoleSeeder.cs`. Pinned by `PermissionRoleResolverTests.GetBuiltInRolesGranting_MachineCreate_ReturnsSpaceOwnerAndEnvironmentManager`.
+
+### Structured 403 response shape (1.7.0+)
+
+`SquidResponse` carries optional `MissingPermission` + `SuggestedRoles` fields populated by `GlobalExceptionFilter` when the exception is `PermissionDeniedException`:
+
+```json
+{
+  "code": 403,
+  "msg": "Permission denied: MachineCreate. Missing permission 'MachineCreate'. Built-in roles that grant it: Environment Manager, Space Owner. Assign one of these roles to the API key user, or add 'MachineCreate' to their existing role.",
+  "missingPermission": "MachineCreate",
+  "suggestedRoles": ["Environment Manager", "Space Owner"]
+}
+```
+
+Tentacle CLI catches the typed `PermissionDeniedRegistrationException`, emits a multi-line stderr hint, exits with code 403. Install script's exit-code wrapper propagates the same hint.
+
+### Helpers
+
+| Surface | File |
+|---|---|
+| Permission → role mapping | `PermissionRoleResolver.GetBuiltInRolesGranting(Permission)` |
+| Operator hint composer | `PermissionRoleResolver.BuildOperatorHint(Permission)` |
+| Tentacle CLI exit-code emit | `TentacleEntry.EmitPermissionDeniedHint(PermissionDeniedRegistrationException)` |
+| Typed registration exception | `Squid.Tentacle.Registration.PermissionDeniedRegistrationException` |
+
+---
+
+## IIS Deploy Frontend Integration — quick reference
+
+Action type identifier the FE submits: `Squid.DeployToIISWebSite`.
+
+### Authority files (FE engineers cite these)
+
+| Concern | File |
+|---|---|
+| Property name constants (all 1.6.9 surface) | `src/Squid.Core/Services/DeploymentExecution/Constants/IISDeployProperties.cs` |
+| Behavioral contract (what each property does on agent) | `src/Squid.Core/Resources/Deploy/IIS/DeployToIISWebSite.ps1` |
+| Octopus parity reference | `Calamari/source/Calamari/Scripts/Octopus.Features.IISWebSite_BeforePostDeploy.ps1` + `IisWebSite{Before,AfterPostDeploy}Feature.cs` |
+| Drift detector | `tests/Squid.UnitTests/Services/DeploymentExecution/Targets/Tentacle/IISDeployScriptDriftDetectorTests.cs` |
+
+### Property submission shape
+
+All property values are **strings**. Booleans submit as `"True"` / `"False"` (case-sensitive — agent does `eq 'True'` check). Bindings submit as JSON-encoded string. Empty / unset properties may be omitted entirely.
+
+```jsonc
+{
+  "actionType": "Squid.DeployToIISWebSite",
+  "properties": [
+    { "propertyName": "Squid.Action.IISWebSite.CreateOrUpdateWebSite", "propertyValue": "True" },
+    { "propertyName": "Squid.Action.IISWebSite.WebSiteName", "propertyValue": "OrderApi" },
+    { "propertyName": "Squid.Action.IISWebSite.Bindings",
+      "propertyValue": "[{\"protocol\":\"https\",\"port\":\"443\",\"host\":\"orders.example.com\",\"requireSni\":true,\"certificateVariable\":\"OrderApiCert\"}]" }
+    // ... more properties ...
+  ]
+}
+```
+
+### Bindings JSON shape
+
+```jsonc
+[{
+  "protocol":    "http" | "https" | "net.tcp" | "net.pipe" | "net.msmq" | "msmq.formatname",
+  "port":        "80",                  // required for http/https
+  "host":        "orders.example.com",  // optional; "" = all hostnames
+  "ipAddress":   "*",                   // optional; "*" or specific IP
+  "enabled":     true,
+  "thumbprint":  "ABCDEF…",             // https — direct (mutex with certificateVariable)
+  "certificateVariable": "OrderApiCert", // https — Squid var ref (server resolves <name>.Thumbprint)
+  "requireSni":  true,                  // https — SNI binding
+  "sslFlags":    "0"                    // https — netsh sslFlags bitmask
+}]
+```
+
+### Sub-feature toggles (at least one must be True)
+
+| Property | UI label |
+|---|---|
+| `Squid.Action.IISWebSite.CreateOrUpdateWebSite` | "Create or Update Website" |
+| `Squid.Action.IISWebSite.WebApplication.CreateOrUpdate` | "Create or Update Web Application" |
+| `Squid.Action.IISWebSite.VirtualDirectory.CreateOrUpdate` | "Create or Update Virtual Directory" |
+
+Card visibility cascades from each toggle. See `IISDeployProperties.cs` for the full property surface (~60 properties grouped by concern: WebSite / AppPool / WebApp / VirtualDir / Bindings / Auth / Package / Certificate / Rewriters / AdditionalPaths / Journal / Error-tolerance toggles / Custom scripts).
+
+### Variable references
+
+Every text-input property value supports `#{X}` plain substitution OR `#{X | Filter}` filter form (7 Octostache filters: `ToUpper`, `ToLower`, `Trim`, `ToBase64`, `FromBase64`, `HtmlEscape`, `UrlEncode`). FE should render an "insert variable" helper next to every text input.
+
+---
+
+## 1.7.x Roadmap — protocol-layer hardening gaps
+
+Identified by the post-1.6.9 architecture review (Squid vs OctopusTentacle OSS). Ordered by production risk; not 1.6.9 blockers but high-leverage 1.7.x investments.
+
+### 🔴 Critical (wire-protocol layer)
+
+1. **`IScriptServiceV2` with idempotent re-attempt** — current `StartScript` is not retry-safe across server reconnects. Server can't re-issue the same `ScriptTicket` without double-execution risk.
+2. **`ICapabilitiesServiceV2` with `[CacheResponse(600)]`** — server has no way to detect older agents missing a feature. Today every Squid agent must be lock-step with server.
+3. **Agent-side persistent `ScriptStateStore`** — in-process `ConcurrentDictionary<ScriptTicket, RunningScript>` is lost on agent restart. Crash mid-script = deploy fails, no resume.
+4. **Retry-policy differentiation** — single retry posture for all RPCs. Long file uploads + short status polls need different envelopes (`RpcCallExecutor` vs `FileTransferRpcCallExecutor`).
+5. **Backwards-compat decorators** — no compat layer between server and agent versions. Every wire-protocol change is a forced fleet-wide upgrade.
+
+### 🟡 Important (operator experience)
+
+6. **Workspace janitor background task** — `LocalScriptService.OrphanMaxAgeEnvVar` exists but no reaper. Workspaces accumulate over weeks/months.
+7. **Windows watchdog scheduled task** — current install relies solely on SCM auto-restart. No belt-and-braces.
+8. **Separate `Squid.Tentacle.Upgrader.exe` side-car** — Windows can't overwrite a running PE; Octopus splits the upgrader into its own binary.
+9. **`DurationToWaitForScriptToFinish` long-poll** — current polling loop generates N RPCs per script. V2 long-poll cuts to 1 RPC for sub-30s scripts.
+10. **Test-matrix parameterization** — each E2E runs once per platform. Octopus parameterizes by `TentacleType × Version × IsolationLevel × RetryPolicy`.
+
+Recommended PR series A: 6.1 + 6.2 + 6.5 (V2 contracts + capabilities + backwards-compat decorators) as one coherent series. PR series B: 6.3 (state store). Then PR series C: 6.4 (retry differentiation).
+
+---
+
 ## Development Rules
 
 See `~/.claude/CLAUDE.md` for global rules (no breaking changes, design principles, refactoring patterns).
