@@ -372,11 +372,16 @@ public class TentacleInstallScriptBuildersTests
         script.Content.ShouldContain("MachineCreate", customMessage:
             "403 error message must name the missing permission so operators know what to grant.");
 
-        // The three roles must be named explicitly — pinned by drift detector so
-        // a future role-rename triggers CI failure and the script gets updated.
+        // The roles that actually grant MachineCreate must be named explicitly.
+        // System Administrator is INTENTIONALLY omitted — it's a system-level
+        // role and does not grant space-scoped MachineCreate (verified by
+        // PermissionRoleResolverTests). Listing it would mislead operators.
         script.Content.ShouldContain("Environment Manager");
         script.Content.ShouldContain("Space Owner");
-        script.Content.ShouldContain("System Administrator");
+        script.Content.ShouldNotContain("System Administrator", customMessage:
+            "System Administrator does NOT grant MachineCreate — suggesting it would mislead operators. " +
+            "If BuiltInRoles.SystemAdministrator changes to include MachineCreate, update " +
+            "WindowsPowerShellScriptBuilder.BuildRegisterExitCodeHandler AND this test.");
     }
 
     [Fact]
@@ -416,8 +421,30 @@ public class TentacleInstallScriptBuildersTests
             "Step 2 must validate the discovery file exists before reading.");
         script.Content.ShouldContain("install-info.json not found", customMessage:
             "Discovery-file-missing error must name the file explicitly so operators know what failed.");
-        script.Content.ShouldContain("Step 1 did not complete", customMessage:
-            "Error must direct operator back to Step 1 instead of leaving them guessing.");
+        script.Content.ShouldContain("Step 1 did not complete --", customMessage:
+            "Error must direct operator back to Step 1 instead of leaving them guessing. " +
+            "Must use ASCII -- (not em-dash —) for PowerShell 5.1 OEM-codepage compatibility.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_GeneratedContent_HasNoEmDashesInExecutableStrings()
+    {
+        // PowerShell 5.1 reads files using the host's OEM codepage when no BOM is
+        // present. An em-dash (—, U+2014) in a string literal is decoded as
+        // `â?"` under cp437/cp1252, which the PS parser then chokes on with
+        // "Unexpected token" — entire script bails before reaching the first
+        // executable line. CI failure 2026-05-19 (run 26077385538) hit exactly
+        // this; the fix is to use ASCII `--` in strings.
+        //
+        // Comments are safe (parser skips them) so this check looks only at
+        // string-literal context — any em-dash inside the generated script body
+        // breaks operators on cp437/cp1252/cp936/cp932 hosts.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldNotContain("—", customMessage:
+            "Generated PowerShell content contains an em-dash (—). PowerShell 5.1 on cp437/cp1252/cp936 " +
+            "hosts mis-decodes this as 'â?\"' and fails to parse the surrounding statement. Use ASCII `--` instead. " +
+            "Test pinned after CI failure on workflow run 26077385538.");
     }
 
     [Fact]

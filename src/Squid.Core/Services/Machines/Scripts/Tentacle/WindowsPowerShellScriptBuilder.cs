@@ -80,7 +80,7 @@ public sealed class WindowsPowerShellScriptBuilder : TentacleInstallScriptBuilde
             "# the subsequent register/service-install commands.",
             $"$infoPath = Join-Path $env:ProgramData '{DiscoveryFileRelativePath}'",
             "if (-not (Test-Path $infoPath)) {",
-            "    throw \"install-info.json not found at $infoPath. Step 1 did not complete — review its output above.\"",
+            "    throw \"install-info.json not found at $infoPath. Step 1 did not complete -- review its output above.\"",
             "}",
             "$installInfo = Get-Content -Raw $infoPath | ConvertFrom-Json",
             "$tentacle = $installInfo.BinaryPath",
@@ -147,26 +147,28 @@ public sealed class WindowsPowerShellScriptBuilder : TentacleInstallScriptBuilde
     /// structured error message. Operators hitting <c>MachineCreate</c> permission
     /// denials get a clear remediation path instead of opaque "HTTP 403".
     ///
-    /// <para>Built-in roles with <c>MachineCreate</c> (per
-    /// <c>BuiltInRoleSeeder.cs</c>): Environment Manager, Space Owner,
-    /// System Administrator.</para>
+    /// <para>Built-in roles with <c>MachineCreate</c> (per <c>BuiltInRoles</c>
+    /// in <c>BuiltInRoleSeeder.cs</c>): Environment Manager, Space Owner.
+    /// System Administrator does NOT grant MachineCreate — it's a system-level
+    /// role for managing spaces/users/teams, not a space-resource role.
+    /// Pinned by <c>PermissionRoleResolverTests.GetBuiltInRolesGranting_MachineCreate_...</c>.</para>
     /// </summary>
     private static string BuildRegisterExitCodeHandler()
     {
         return @"if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -eq 403) {
         throw @""
-Register failed with HTTP 403 — the API key user lacks the 'MachineCreate' permission.
+Register failed with HTTP 403 -- the API key user lacks the 'MachineCreate' permission.
 
 Resolve via the Squid Web UI:
-  1. Assign the 'Environment Manager' role (or higher) to the API key's owner user, OR
-  2. Add 'MachineCreate' permission to the owner's current role, OR
-  3. Issue a new API key from a user with 'Space Owner' or 'System Administrator' role.
+  1. Assign 'Environment Manager' role to the API key's owner user, OR
+  2. Assign 'Space Owner' role for full space access, OR
+  3. Add 'MachineCreate' permission to the owner's current role, OR
+  4. Issue a new API key from a user with one of those roles.
 
 Built-in roles that grant MachineCreate:
   - Environment Manager
   - Space Owner
-  - System Administrator
 ""@
     }
     throw ""Register failed (exit $LASTEXITCODE). Review the output above.""

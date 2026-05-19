@@ -35,7 +35,7 @@
 
 .PARAMETER NoServiceInstall
     Skip the `service install` step. Use when bootstrapping a base VM image
-    that will be cloned — the SCM-registered service identity must be unique
+    that will be cloned -- the SCM-registered service identity must be unique
     per machine.
 
 .PARAMETER NoAutoElevate
@@ -45,7 +45,7 @@
     is undesired or impossible.
 
 .EXAMPLE
-    # One-liner (latest) — auto-elevates if needed
+    # One-liner (latest) -- auto-elevates if needed
     irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.ps1 | iex
 
 .EXAMPLE
@@ -75,7 +75,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── Defaults (Rule 8 — pinned literals) ─────────────────────────────────────
+# ── Defaults (Rule 8 -- pinned literals) ─────────────────────────────────────
 # Renaming any of these breaks operator runbooks, MDM playbooks, and the
 # in-UI script-generator's expectations.
 $DefaultVersion       = 'latest'
@@ -84,7 +84,7 @@ $DefaultDownloadBase  = 'https://github.com/SolarifyDev/Squid/releases'
 $BinaryName           = 'Squid.Tentacle.exe'
 $ListeningPort        = 10933
 
-# Discovery file path — Server-generated `register` / `service install`
+# Discovery file path -- Server-generated `register` / `service install`
 # snippet reads this to locate the binary regardless of install dir.
 $InstallInfoDir       = Join-Path $env:ProgramData 'Squid\Tentacle'
 $InstallInfoPath      = Join-Path $InstallInfoDir 'install-info.json'
@@ -102,7 +102,7 @@ function Resolve-Rid {
         'AMD64' { return 'win-x64' }
         'ARM64' { return 'win-arm64' }
         default {
-            throw "Unsupported architecture: $Arch. Squid Tentacle ships for win-x64 and win-arm64 only — 32-bit Windows is not supported."
+            throw "Unsupported architecture: $Arch. Squid Tentacle ships for win-x64 and win-arm64 only -- 32-bit Windows is not supported."
         }
     }
 }
@@ -120,19 +120,19 @@ $rid = Resolve-Rid -Arch $arch
 # we re-launch this script under UAC.
 #
 # Two invocation modes need handling:
-#   1. File-invocation  (`.\install-tentacle.ps1 …`) — $PSCommandPath is set;
+#   1. File-invocation  (`.\install-tentacle.ps1 …`) -- $PSCommandPath is set;
 #                       we relaunch the same file.
-#   2. Pipe-invocation  (`irm <url> | iex`) — $PSCommandPath is empty; the
+#   2. Pipe-invocation  (`irm <url> | iex`) -- $PSCommandPath is empty; the
 #                       script body lives in $MyInvocation.MyCommand.ScriptContents.
 #                       We materialise it to %TEMP%\squid-install-{guid}.ps1
 #                       and relaunch that.
 #
 # In both cases the original (non-admin) process exits with code 0 after
-# the elevated child finishes — operator sees the UAC prompt, then progress.
+# the elevated child finishes -- operator sees the UAC prompt, then progress.
 #
 # Skip elevation when:
 #   - Already admin (Test-IsAdministrator)
-#   - Installing to a user-owned path (InstallDir != default) — admin not required
+#   - Installing to a user-owned path (InstallDir != default) -- admin not required
 #   - -NoAutoElevate switch was passed (CI, SYSTEM-context invocations)
 function Test-IsAdministrator {
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
@@ -169,7 +169,7 @@ function Invoke-SelfElevation {
         if ([string]::IsNullOrWhiteSpace($body)) {
             throw "Auto-elevation impossible: invoked via pipe but `$MyInvocation.MyCommand.ScriptContents` is empty. Run from an elevated PowerShell directly, or download the script to disk first."
         }
-        # Write WITHOUT BOM — PowerShell.exe (5.1) accepts UTF-8 with or without
+        # Write WITHOUT BOM -- PowerShell.exe (5.1) accepts UTF-8 with or without
         # BOM but staying BOM-less keeps `Get-Content` of the file identical to
         # the original irm response.
         [System.IO.File]::WriteAllText($scriptPath, $body, [System.Text.UTF8Encoding]::new($false))
@@ -304,7 +304,7 @@ Possible causes:
 # ── Discovery file ──────────────────────────────────────────────────────────
 # Downstream scripts read %ProgramData%\Squid\Tentacle\install-info.json to
 # locate the binary. Without this, the server-generated register/service-install
-# snippet would have to hardcode the install path — breaking custom InstallDir.
+# snippet would have to hardcode the install path -- breaking custom InstallDir.
 function Write-InstallInfo {
     param(
         [string] $BinaryPath,
@@ -356,7 +356,7 @@ function Add-ListeningFirewallRule {
     $existing = Get-NetFirewallRule -DisplayName $RuleName -ErrorAction SilentlyContinue
 
     if ($existing) {
-        Write-Host "Firewall rule '$RuleName' already exists — skipping."
+        Write-Host "Firewall rule '$RuleName' already exists -- skipping."
         return
     }
 
@@ -380,7 +380,7 @@ try {
 # ── Service install ─────────────────────────────────────────────────────────
 if ($NoServiceInstall) {
     Write-Host ''
-    Write-Host '-NoServiceInstall set — skipping service install.'
+    Write-Host '-NoServiceInstall set -- skipping service install.'
     Write-Host "To install the service later, run:"
     Write-Host "  & '$binaryPath' service install --instance Default --service-name $ServiceName"
     Write-Host ''
@@ -404,7 +404,7 @@ Write-Host '=== Next steps ==='
 Write-Host ''
 Write-Host 'Register the agent with your Squid server (the install-info.json above'
 Write-Host 'lets the Squid Web UI generate a copy-pasteable register snippet that'
-Write-Host 'discovers the binary automatically — no hardcoded paths):'
+Write-Host 'discovers the binary automatically -- no hardcoded paths):'
 Write-Host ''
 Write-Host '  Listening agent (Squid server connects IN to this Windows host):'
 Write-Host "      & '$binaryPath' register \"
