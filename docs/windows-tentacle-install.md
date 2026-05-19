@@ -156,6 +156,33 @@ You're running an older script with non-ASCII characters that PowerShell 5.1 can
 
 ---
 
+## 4b — Download mode (manual archive download)
+
+Some operators prefer to download the Tentacle zip themselves and skip the auto-download in Step 1. The Squid Web UI's "Or download the installer manually" tab gives direct URLs from GitHub Releases.
+
+Workflow:
+
+1. **Download** `squid-tentacle-{version}-win-x64.zip` (or `win-arm64.zip`) from the wizard's URL.
+2. **Extract** to `C:\Program Files\Squid Tentacle\` (the canonical default — Step 2's smart discovery finds it here automatically).
+3. **Run Steps 3 + 4** from the wizard's script. Step 2's discovery handles three scenarios:
+
+   | Scenario | Step 2 result |
+   |---|---|
+   | Paste mode (you DID run Step 1) → `install-info.json` exists | Uses `BinaryPath` field from the JSON |
+   | Download mode (you skipped Step 1) → binary at default location | Falls back to `%ProgramFiles%\Squid Tentacle\Squid.Tentacle.exe` |
+   | Custom dir on PATH | Uses `Get-Command Squid.Tentacle.exe` lookup |
+
+If you extracted to a non-standard path (e.g. `D:\squid\`) AND skipped Step 1, manually set `$tentacle` before pasting:
+
+```powershell
+$tentacle = 'D:\squid\Squid.Tentacle.exe'
+# ... then paste Steps 3 + 4 from the wizard ...
+```
+
+The smart-discovery error message names all three lookup paths it tried — never guessing.
+
+---
+
 ## 5 — Air-gapped installs
 
 For hosts with no internet access:

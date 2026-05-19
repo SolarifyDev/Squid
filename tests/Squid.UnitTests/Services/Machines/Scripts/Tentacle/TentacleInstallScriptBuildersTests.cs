@@ -346,8 +346,12 @@ public class TentacleInstallScriptBuildersTests
             "Renaming requires lockstep update in install-tentacle.ps1's Write-InstallInfo function.");
 
         // The `$tentacle` PowerShell variable is the resolved binary path used
-        // throughout Steps 3-4. Pin both the assignment and the consumption.
-        script.Content.ShouldContain("$tentacle = $installInfo.BinaryPath");
+        // throughout Steps 3-4. Pin both the assignment + the consumption.
+        // (Smart discovery may set $tentacle from install-info.json's BinaryPath
+        // field OR from one of the fallback paths -- the consumers stay
+        // identical so the rest of the script is path-agnostic.)
+        script.Content.ShouldContain(".BinaryPath",
+            customMessage: "install-info.json's BinaryPath field must be consumed.");
         script.Content.ShouldContain("$tentacle register");
         script.Content.ShouldContain("$tentacle service install");
     }
@@ -409,21 +413,66 @@ public class TentacleInstallScriptBuildersTests
     }
 
     [Fact]
-    public void WindowsPowerShell_DiscoveryFileMissing_ScriptThrowsActionableError()
+    public void WindowsPowerShell_Step2_SmartDiscovery_TriesInstallInfoJsonFirst()
     {
-        // If Step 1 (install-tentacle.ps1) failed silently or got skipped, Step 2
-        // must throw with an actionable error pointing at the missing discovery
-        // file — not a cryptic "$tentacle is null" or NullReferenceException at
-        // Step 3.
+        // Paste-mode workflow: Step 1 (install-tentacle.ps1) writes install-info.json.
+        // Step 2's first attempt is to read that file -- the canonical path.
         var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
 
         script.Content.ShouldContain("Test-Path $infoPath", customMessage:
-            "Step 2 must validate the discovery file exists before reading.");
-        script.Content.ShouldContain("install-info.json not found", customMessage:
-            "Discovery-file-missing error must name the file explicitly so operators know what failed.");
-        script.Content.ShouldContain("Step 1 did not complete --", customMessage:
-            "Error must direct operator back to Step 1 instead of leaving them guessing. " +
-            "Must use ASCII -- (not em-dash —) for PowerShell 5.1 OEM-codepage compatibility.");
+            "Step 2 must check install-info.json first (Paste-mode canonical path).");
+        script.Content.ShouldContain(".BinaryPath", customMessage:
+            "Discovery file's BinaryPath field is consumed when present.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_Step2_SmartDiscovery_FallsBackToDefaultInstallDir()
+    {
+        // Download-mode workflow: operator manually downloads the zip + extracts to
+        // the default location, NEVER ran install-tentacle.ps1, so install-info.json
+        // doesn't exist. Step 2's fallback chain must still find the binary at
+        // %ProgramFiles%\Squid Tentacle\Squid.Tentacle.exe.
+        //
+        // Without this fallback, Download-mode operators would hit a hard
+        // "install-info.json not found" error and the snippet would be useless.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("$env:ProgramFiles", customMessage:
+            "Step 2 fallback must probe %ProgramFiles%\\Squid Tentacle for Download-mode operators.");
+        script.Content.ShouldContain(@"Squid Tentacle\Squid.Tentacle.exe", customMessage:
+            "Default install path probe must use the canonical 'Squid Tentacle\\Squid.Tentacle.exe' form.");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_Step2_SmartDiscovery_FallsBackToPathLookup()
+    {
+        // Last-resort fallback: operator added the install dir to PATH and didn't
+        // use either standard location. Get-Command finds it via PATH.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("Get-Command 'Squid.Tentacle.exe'", customMessage:
+            "Step 2 must fall back to PATH lookup so operators with custom install + PATH entries " +
+            "still work. Catches workflow where operator did everything by hand (Download + custom dir + PATH edit).");
+    }
+
+    [Fact]
+    public void WindowsPowerShell_Step2_AllFallbacksExhausted_ActionableError()
+    {
+        // If install-info.json + default install dir + PATH lookup all miss,
+        // the script must throw with an error that names every path tried AND
+        // gives operator three explicit remediation paths.
+        var script = new WindowsPowerShellScriptBuilder().Build(ListeningContext());
+
+        script.Content.ShouldContain("Could not locate Squid.Tentacle.exe", customMessage:
+            "All-fallbacks-exhausted error must name the binary so operators can grep for it.");
+        script.Content.ShouldContain("install-info.json at $infoPath", customMessage:
+            "Error must list the discovery file path it tried.");
+        script.Content.ShouldContain("default install path", customMessage:
+            "Error must list the default install path it tried.");
+        script.Content.ShouldContain("PATH lookup", customMessage:
+            "Error must list the PATH lookup it tried.");
+        script.Content.ShouldContain("Either run Step 1 above", customMessage:
+            "Error must give operator the three remediation paths (Paste mode / Download mode / manual $tentacle).");
     }
 
     [Fact]
