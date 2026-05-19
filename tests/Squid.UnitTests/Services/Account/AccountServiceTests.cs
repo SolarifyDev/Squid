@@ -241,6 +241,38 @@ public class AccountServiceTests
     }
 
     [Fact]
+    public async Task FindApiKeyByDescription_ExistingActiveKey_ReturnsApiKeyWithSecret()
+    {
+        var existing = new UserAccountApiKey
+        {
+            Id = 42, UserAccountId = 1, ApiKey = "raw-secret-value", Description = "test-key", IsDisabled = false, CreatedDate = DateTimeOffset.UtcNow
+        };
+        _repository.Setup(r => r.FirstOrDefaultAsync<UserAccountApiKey>(It.IsAny<Expression<Func<UserAccountApiKey, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(existing);
+
+        var result = await _sut.FindApiKeyByDescriptionAsync(userId: 1, description: "test-key");
+
+        result.ShouldNotBeNull();
+        result.Id.ShouldBe(42);
+        result.ApiKey.ShouldBe("raw-secret-value",
+            customMessage: "FindApiKeyByDescriptionAsync MUST return the raw key value -- callers like the " +
+                          "install-script generator embed it in the generated PowerShell snippet. " +
+                          "Returning a masked value here would silently produce useless install scripts.");
+        result.Description.ShouldBe("test-key");
+    }
+
+    [Fact]
+    public async Task FindApiKeyByDescription_NotFound_ReturnsNull()
+    {
+        _repository.Setup(r => r.FirstOrDefaultAsync<UserAccountApiKey>(It.IsAny<Expression<Func<UserAccountApiKey, bool>>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((UserAccountApiKey?)null);
+
+        var result = await _sut.FindApiKeyByDescriptionAsync(userId: 1, description: "missing");
+
+        result.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task DeleteApiKey_DisablesAndClearsCache()
     {
         var apiKey = new UserAccountApiKey { Id = 5, UserAccountId = 1, ApiKey = "raw-key-value", IsDisabled = false };

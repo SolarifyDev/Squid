@@ -185,6 +185,9 @@ public class GenerateTentacleInstallScriptServiceTests
     public async Task GenerateTentacleInstallScript_ApiKeyCreationFails_ReturnsInternalError()
     {
         _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiKeyWithSecret?)null);
+        _accountService
             .Setup(x => x.CreateApiKeyAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = null });
 
@@ -195,6 +198,49 @@ public class GenerateTentacleInstallScriptServiceTests
             CancellationToken.None);
 
         response.Code.ShouldBe(HttpStatusCode.InternalServerError);
+        response.Msg.ShouldContain("Failed to create Tentacle bootstrap API key",
+            customMessage: "Error message must name the specific surface (bootstrap key).");
+    }
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_SharedKeyExists_ReusesItWithoutMinting()
+    {
+        // Single-instance pin for the Tentacle bootstrap key. Mirror of the K8s pin
+        // in MachineInstallScriptServiceTests -- both install surfaces share the
+        // get-or-create pattern.
+        _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, MachineScriptService.TentacleBootstrapKeyDescription, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApiKeyWithSecret(99, "SHARED-TENTACLE-KEY", MachineScriptService.TentacleBootstrapKeyDescription, DateTimeOffset.UtcNow));
+
+        var service = BuildService(new FakeBuilder("linux-binary", "Linux"));
+
+        var response = await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Polling" },
+            CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        _accountService.Verify(x => x.CreateApiKeyAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, failMessage:
+                "MUST reuse the existing Tentacle bootstrap key when present. Mint-per-call was the 1.6.x bug.");
+    }
+
+    [Fact]
+    public async Task GenerateTentacleInstallScript_NoSharedKey_MintsExactlyOneWithCanonicalDescription()
+    {
+        _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, MachineScriptService.TentacleBootstrapKeyDescription, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiKeyWithSecret?)null);
+
+        var service = BuildService(new FakeBuilder("linux-binary", "Linux"));
+
+        await service.GenerateTentacleInstallScriptAsync(
+            new GenerateTentacleInstallScriptCommand { CommunicationMode = "Polling" },
+            CancellationToken.None);
+
+        _accountService.Verify(x => x.CreateApiKeyAsync(
+            CurrentUsers.InternalUser.Id,
+            MachineScriptService.TentacleBootstrapKeyDescription,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private MachineScriptService BuildService(params ITentacleInstallScriptBuilder[] builders)

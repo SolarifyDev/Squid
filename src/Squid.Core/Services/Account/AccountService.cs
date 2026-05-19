@@ -23,7 +23,24 @@ public interface IAccountService : IScopedDependency
     Task<CreateApiKeyResponseData> CreateApiKeyAsync(int userId, string description, CancellationToken ct = default);
     Task DeleteApiKeyAsync(int apiKeyId, int currentUserId, CancellationToken ct = default);
     Task<List<ApiKeyDto>> GetApiKeysAsync(int userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Finds a single active API key owned by <paramref name="userId"/> whose
+    /// <c>Description</c> matches verbatim, returning the raw key value so the caller
+    /// can reuse it (used by the install-script generator to reuse the shared
+    /// bootstrap key instead of minting a new one on every call). Returns null when
+    /// no matching active key exists.
+    /// </summary>
+    Task<ApiKeyWithSecret?> FindApiKeyByDescriptionAsync(int userId, string description, CancellationToken ct = default);
 }
+
+/// <summary>
+/// Internal-only DTO carrying the raw API key value for trusted Core callers
+/// (install-script generator, bootstrap-key rotation). Never expose to controllers /
+/// API responses -- the production <see cref="ApiKeyDto"/> with <c>MaskedKey</c>
+/// is the operator-facing shape.
+/// </summary>
+public sealed record ApiKeyWithSecret(int Id, string ApiKey, string Description, DateTimeOffset CreatedDate);
 
 public class AccountService : IAccountService
 {
@@ -259,6 +276,16 @@ public class AccountService : IAccountService
             Description = k.Description,
             CreatedDate = k.CreatedDate
         }).ToList();
+    }
+
+    public async Task<ApiKeyWithSecret?> FindApiKeyByDescriptionAsync(int userId, string description, CancellationToken ct = default)
+    {
+        var match = await _repository.FirstOrDefaultAsync<UserAccountApiKey>(
+            x => x.UserAccountId == userId && x.Description == description && !x.IsDisabled, ct).ConfigureAwait(false);
+
+        if (match == null) return null;
+
+        return new ApiKeyWithSecret(match.Id, match.ApiKey, match.Description ?? string.Empty, match.CreatedDate);
     }
 
     private async Task InvalidateApiKeyCacheForUserAsync(int userId, CancellationToken ct)
