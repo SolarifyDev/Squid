@@ -190,6 +190,73 @@ public class TentacleRegistrationClientTests
         callCount.ShouldBe(1); // Retry loop gave up on the 4xx
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // PR 2 (1.7.0): structured 403 permission-denial response parsing.
+    // When the server emits `missingPermission` + `suggestedRoles` in the
+    // 403 body, the client must throw PermissionDeniedRegistrationException
+    // (not generic HttpRequestException) so the entry-point catch can map to
+    // exit code 403 + emit the operator hint.
+    // ────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RegisterAsync_403WithStructuredPermissionBody_ThrowsTypedException()
+    {
+        var body = """
+            {
+                "code": 403,
+                "msg": "Permission denied: MachineCreate.",
+                "missingPermission": "MachineCreate",
+                "suggestedRoles": ["Environment Manager", "Space Owner", "System Administrator"]
+            }
+            """;
+
+        var client = BuildClientWithStubbedResponse(HttpStatusCode.Forbidden, body);
+
+        var ex = await Should.ThrowAsync<Squid.Tentacle.Registration.PermissionDeniedRegistrationException>(
+            () => client.RegisterAsync("sub-1", "AABB", CancellationToken.None));
+
+        ex.MissingPermission.ShouldBe("MachineCreate");
+        ex.SuggestedRoles.ShouldContain("Environment Manager");
+        ex.SuggestedRoles.ShouldContain("Space Owner");
+        ex.SuggestedRoles.ShouldContain("System Administrator");
+        ex.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_403WithoutStructuredFields_ThrowsGenericHttpException()
+    {
+        // Backwards compatibility: a server running an older version that
+        // doesn't emit the structured fields still produces a meaningful
+        // failure — we fall back to the generic HttpRequestException so old
+        // server + new tentacle still work.
+        var body = """{"code":403,"msg":"Permission denied"}""";
+
+        var client = BuildClientWithStubbedResponse(HttpStatusCode.Forbidden, body);
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(
+            () => client.RegisterAsync("sub-1", "AABB", CancellationToken.None));
+
+        // Specifically NOT the typed exception — old server can't trigger it.
+        ex.ShouldNotBeOfType<Squid.Tentacle.Registration.PermissionDeniedRegistrationException>(
+            customMessage: "Without `missingPermission` in the body, the client must fall back to the generic " +
+                          "HttpRequestException — promoting to the typed exception would mask other 403 causes " +
+                          "(e.g. firewall-injected 403 page with no JSON).");
+    }
+
+    [Fact]
+    public async Task RegisterAsync_403WithMalformedJson_ThrowsGenericHttpException()
+    {
+        // Some corporate proxies / WAFs inject a non-JSON HTML 403 page.
+        // The client must not crash on parse failure — fall back to the
+        // generic exception so the operator at least sees the HTTP status.
+        var client = BuildClientWithStubbedResponse(HttpStatusCode.Forbidden, "<html>blocked by Acme WAF</html>");
+
+        var ex = await Should.ThrowAsync<HttpRequestException>(
+            () => client.RegisterAsync("sub-1", "AABB", CancellationToken.None));
+
+        ex.ShouldNotBeOfType<Squid.Tentacle.Registration.PermissionDeniedRegistrationException>();
+    }
+
     private static TentacleRegistrationClient BuildClientWithStubbedResponse(HttpStatusCode status, string body)
     {
         var handler = new StubMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(status)
