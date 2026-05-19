@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
 using Serilog;
@@ -188,7 +189,51 @@ public class TentacleRegistrationClient
             : $"Registration failed with code {code}: {bodyOrMessage}";
 
         Log.Error(message);
+
+        // Permission-denied path (PR 2, 1.7.0): if the server emitted the
+        // structured 403 envelope with missingPermission + suggestedRoles,
+        // throw the typed exception so the entry-point catch can render the
+        // operator hint AND exit with code 403 — the install script's
+        // exit-code handler then propagates the same hint to the operator
+        // who copy-pasted the snippet.
+        if (code == (int)HttpStatusCode.Forbidden)
+        {
+            var permissionInfo = TryParsePermissionInfo(bodyOrMessage);
+            if (permissionInfo.HasValue)
+            {
+                throw new PermissionDeniedRegistrationException(
+                    permissionInfo.Value.MissingPermission,
+                    permissionInfo.Value.SuggestedRoles,
+                    message);
+            }
+        }
+
         throw new HttpRequestException(message, null, httpStatus);
+    }
+
+    /// <summary>
+    /// Best-effort extraction of <c>missingPermission</c> + <c>suggestedRoles</c>
+    /// from a server-emitted 403 body. Returns null when the body isn't JSON or
+    /// doesn't carry the structured fields — caller falls back to the generic
+    /// <see cref="HttpRequestException"/> path.
+    /// </summary>
+    private static (string MissingPermission, IReadOnlyList<string> SuggestedRoles)? TryParsePermissionInfo(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<BusinessEnvelope>(body, JsonOptions);
+            if (envelope == null || string.IsNullOrWhiteSpace(envelope.MissingPermission)) return null;
+
+            IReadOnlyList<string> roles = envelope.SuggestedRoles ?? new List<string>();
+            return (envelope.MissingPermission, roles);
+        }
+        catch
+        {
+            // Server may have returned a non-JSON 403 (e.g. nginx default page); fall back.
+            return null;
+        }
     }
 
     private static HttpStatusCode MapCodeToHttpStatus(int code)
@@ -219,6 +264,21 @@ public class TentacleRegistrationClient
         public int Code { get; set; }
 
         public string Msg { get; set; }
+
+        /// <summary>
+        /// Populated by the server on permission-denial responses (PR 2, 1.7.0).
+        /// Null when the response isn't a permission denial.
+        /// </summary>
+        [JsonPropertyName("missingPermission")]
+        public string MissingPermission { get; set; }
+
+        /// <summary>
+        /// Built-in roles that grant <see cref="MissingPermission"/>. Empty
+        /// list when no built-in role grants it (operator must use a custom
+        /// role or add the permission to an existing role).
+        /// </summary>
+        [JsonPropertyName("suggestedRoles")]
+        public List<string> SuggestedRoles { get; set; }
     }
 
     private class RegistrationResponse

@@ -108,6 +108,16 @@ public static class TentacleEntry
             Log.Information("Squid Tentacle shutdown requested");
             return 0;
         }
+        catch (Squid.Tentacle.Registration.PermissionDeniedRegistrationException ex)
+        {
+            // PR 2 (1.7.0): permission denials get a distinct exit code (403) and
+            // a multi-line operator hint instead of a generic exit 1. The hint
+            // lists the built-in roles that grant the missing permission, so the
+            // operator can resolve without reading server source.
+            EmitPermissionDeniedHint(ex);
+            TryWriteScmDiagnostic($"TentacleEntry.RunAsync caught PermissionDeniedRegistrationException: {ex.MissingPermission}");
+            return 403;
+        }
         catch (Exception ex)
         {
             Log.Fatal(ex, "Squid Tentacle terminated unexpectedly");
@@ -121,6 +131,34 @@ public static class TentacleEntry
             TryWriteScmDiagnostic($"TentacleEntry.RunAsync caught {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Emits a multi-line permission-denied hint to stderr. The structured fields
+    /// come from the server's enriched 403 response body (<c>missingPermission</c>
+    /// + <c>suggestedRoles</c>); we display them as plain text the operator can
+    /// read directly from the install script's console output.
+    ///
+    /// <para>Format is deliberately stable — install-script E2E tests grep for
+    /// the literal "Permission denied:" prefix + "Built-in roles that grant"
+    /// substring to assert the hint reached the operator.</para>
+    /// </summary>
+    private static void EmitPermissionDeniedHint(Squid.Tentacle.Registration.PermissionDeniedRegistrationException ex)
+    {
+        var roles = ex.SuggestedRoles.Count > 0
+            ? string.Join(", ", ex.SuggestedRoles)
+            : "(no built-in role grants this permission — add it to a custom role)";
+
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Permission denied: '{ex.MissingPermission}' permission required to register the machine.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine("Resolve via the Squid Web UI:");
+        Console.Error.WriteLine($"  1. Assign one of these roles to the API key user: {roles}, OR");
+        Console.Error.WriteLine($"  2. Add '{ex.MissingPermission}' permission to the user's current role, OR");
+        Console.Error.WriteLine($"  3. Issue a new API key from a user with one of the roles above.");
+        Console.Error.WriteLine();
+        Console.Error.WriteLine($"Built-in roles that grant {ex.MissingPermission}: {roles}");
+        Console.Error.WriteLine();
     }
 
     /// <summary>
