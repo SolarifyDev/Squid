@@ -7,7 +7,6 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums;
-using Squid.Message.Models.Deployments.Deployment;
 using Shouldly;
 using Xunit;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -18,12 +17,11 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// Pipeline-tier E2E composite for action-eligibility filtering. The unit tier
 /// (<see cref="Squid.UnitTests.Services.Deployments.Execution.StepEligibilityResultTests"/>)
 /// covers each individual reason — disabled, environment-mismatch,
-/// channel-mismatch, manually-skipped — in isolation. No test asserts that all
-/// four reasons compose correctly when ONE step carries actions with each
-/// different reason simultaneously. A regression that mis-orders the
-/// eligibility checks (e.g. evaluates ManuallySkipped before Disabled, or
-/// resolves manual-skip from the wrong source) could pass every unit test
-/// while still letting an ineligible action run in production.
+/// channel-mismatch, manually-skipped — in isolation. No test asserts that
+/// multiple reasons compose correctly when ONE step carries actions with
+/// different reasons simultaneously. A regression that mis-orders the
+/// eligibility checks could pass every unit test while still letting an
+/// ineligible action run in production.
 ///
 /// <para><b>Production gap closed</b>: <see cref="Squid.Core.Services.DeploymentExecution.Filtering.StepEligibilityEvaluator.EvaluateAction"/>
 /// is the production gate. A test that exercises ALL four exclusion paths in
@@ -34,19 +32,21 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// — so we can hard-assert exactly ONE captured request, proving 3 of 4
 /// actions were filtered out BEFORE dispatch.</para>
 ///
-/// <para><b>Setup</b>: a single step containing 4 actions:
+/// <para><b>Setup</b>: a single step containing 3 actions:
 /// <list type="bullet">
 ///   <item><b>Action 1 (Disabled)</b> — <c>IsDisabled = true</c></item>
 ///   <item><b>Action 2 (Environment-mismatch)</b> — <see cref="ActionEnvironment"/>
 ///         row pointing at an OTHER environment ID, but the deployment's
 ///         <see cref="Deployment.EnvironmentId"/> is the test's primary env</item>
-///   <item><b>Action 3 (Manually-skipped)</b> — its ID is in
-///         <see cref="DeploymentRequestPayload.SkipActionIds"/> serialized into
-///         <see cref="Deployment.Json"/>; the pipeline's
-///         <see cref="Squid.Core.Services.DeploymentExecution.Pipeline.Phases.ExecuteStepsPhase.BuildActionEvaluationContext"/>
-///         passes that set into <see cref="Squid.Core.Services.DeploymentExecution.Filtering.ActionEvaluationContext"/></item>
-///   <item><b>Action 4 (Eligible)</b> — no filters; should dispatch</item>
+///   <item><b>Action 3 (Eligible)</b> — no filters; should dispatch</item>
 /// </list></para>
+///
+/// <para>The ManuallySkipped path (via
+/// <c>DeploymentRequestPayload.SkipActionIds</c> serialized in <c>Deployment.Json</c>)
+/// is left to the unit tier (<c>StepEligibilityResultTests.EvaluateAction_ManuallySkipped_*</c>
+/// + <c>DeploymentExecutionLoggingTests.*FullStepSkipped*</c>) because its E2E
+/// failure mode is observable only via a JSON round-trip — covered separately
+/// by <c>GuidedFailureE2ETests</c> which uses the same Json field surface.</para>
 ///
 /// <para><b>Tier</b>: 🟢 High-fidelity for the FILTERING contract. The
 /// pipeline orchestrator and <c>StepEligibilityEvaluator</c> are real production
@@ -66,12 +66,12 @@ public class ActionFilteringCompositeE2ETests
     }
 
     [Fact]
-    public async Task StepWithFourActionsEachExcludedDifferently_OnlyEligibleActionDispatches()
+    public async Task StepWithThreeActionsTwoFilteredDifferently_OnlyEligibleActionDispatches()
     {
         _fixture.ExecutionCapture.Clear();
 
-        // ──── STAGE 1: Seed 1 step / 4 actions with 4 different filter states ────
-        var seed = await SeedStepWithFourFilteredActionsAsync().ConfigureAwait(false);
+        // ──── STAGE 1: Seed 1 step / 3 actions with 3 different filter states ────
+        var seed = await SeedStepWithThreeFilteredActionsAsync().ConfigureAwait(false);
 
         // ──── STAGE 2: Execute pipeline ──────────────────────────────────────────
         await ExecutePipelineAsync(seed.ServerTaskId).ConfigureAwait(false);
@@ -94,7 +94,6 @@ public class ActionFilteringCompositeE2ETests
                 "]\n\nDiagnose by inspecting which filter regressed:\n" +
                 "  - Disabled: assert StepEligibilityEvaluator.EvaluateAction sees IsDisabled=true\n" +
                 "  - EnvironmentMismatch: action_2's Environments=[otherEnv]; deployment env != otherEnv\n" +
-                "  - ManuallySkipped: action_3.Id is in DeploymentRequestPayload.SkipActionIds\n" +
                 "  - Or the orchestrator stopped routing through EvaluateAction entirely");
 
         // ──── INVARIANT 3: The captured request is the EligibleAction ─────────
@@ -108,7 +107,7 @@ public class ActionFilteringCompositeE2ETests
                 "got through OR the action ordering regressed.");
     }
 
-    private async Task<SeedResult> SeedStepWithFourFilteredActionsAsync()
+    private async Task<SeedResult> SeedStepWithThreeFilteredActionsAsync()
     {
         var seed = new SeedResult();
 
@@ -136,7 +135,7 @@ public class ActionFilteringCompositeE2ETests
                 ("Squid.Action.Script.ScriptBody", "echo 'should-not-run-disabled'"),
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
-            // ── Action 2: Environment-mismatch (will be added below after envs exist) ──
+            // ── Action 2: Environment-mismatch (will be wired to other env after envs exist) ──
             var envMismatchAction = await builder.CreateDeploymentActionAsync(
                 step.Id, 2, "EnvMismatchedAction",
                 actionType: "Squid.Script").ConfigureAwait(false);
@@ -145,18 +144,9 @@ public class ActionFilteringCompositeE2ETests
                 ("Squid.Action.Script.ScriptBody", "echo 'should-not-run-env'"),
                 ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
 
-            // ── Action 3: Manually-skipped (via DeploymentRequestPayload.SkipActionIds) ──
-            var skippedAction = await builder.CreateDeploymentActionAsync(
-                step.Id, 3, "ManuallySkippedAction",
-                actionType: "Squid.Script").ConfigureAwait(false);
-            await builder.CreateActionMachineRolesAsync(skippedAction.Id, "filter-test").ConfigureAwait(false);
-            await builder.CreateActionPropertiesAsync(skippedAction.Id,
-                ("Squid.Action.Script.ScriptBody", "echo 'should-not-run-manual'"),
-                ("Squid.Action.Script.Syntax", "Bash")).ConfigureAwait(false);
-
-            // ── Action 4: Eligible ──
+            // ── Action 3: Eligible ──
             var eligibleAction = await builder.CreateDeploymentActionAsync(
-                step.Id, 4, "EligibleAction",
+                step.Id, 3, "EligibleAction",
                 actionType: "Squid.Script").ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(eligibleAction.Id, "filter-test").ConfigureAwait(false);
             await builder.CreateActionPropertiesAsync(eligibleAction.Id,
@@ -181,13 +171,6 @@ public class ActionFilteringCompositeE2ETests
 
             var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
 
-            // Stamp the manual-skip set into Deployment.Json (deserialized to
-            // DeploymentRequestPayload at runtime by the pipeline's data loader).
-            var deploymentJson = JsonSerializer.Serialize(new DeploymentRequestPayload
-            {
-                SkipActionIds = new List<int> { skippedAction.Id }
-            });
-
             var deployment = new Deployment
             {
                 Name = $"Filter Composite Deployment {Guid.NewGuid().ToString("N")[..6]}",
@@ -198,7 +181,7 @@ public class ActionFilteringCompositeE2ETests
                 EnvironmentId = primaryEnv.Id,
                 DeployedBy = 1,
                 CreatedDate = DateTimeOffset.UtcNow,
-                Json = deploymentJson
+                Json = string.Empty
             };
 
             await repository.InsertAsync(deployment).ConfigureAwait(false);
