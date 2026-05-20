@@ -1,7 +1,9 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Core.Services.Account;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.DataSeeding;
+using Squid.Core.Services.Machines;
 using Squid.Core.Services.Teams;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
@@ -172,6 +174,54 @@ public class InternalUserSeederIntegrationTests : TestBase
         // (200), AFTER AdminUserSeeder (300) so audit columns reference a real user.
         var seeder = new InternalUserSeeder();
         seeder.Order.ShouldBe(350);
+    }
+
+    [Fact]
+    public async Task BootstrapKeyRotation_EndToEnd_GenerateScriptAfterRotation_GetsFreshKey()
+    {
+        // End-to-end pin: rotation invalidates the previously-shared bootstrap key.
+        // The next FindApiKeyByDescriptionAsync MUST return null so the next
+        // GenerateInstallScript call mints a fresh row. Without this, rotation would
+        // leave the leaked key still in use and the rotation endpoint would be
+        // useless.
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<IAccountService>(async accountService =>
+        {
+            // Mint the initial shared key (simulating first GenerateInstallScript).
+            var firstKey = await accountService.CreateApiKeyAsync(
+                CurrentUsers.InternalUser.Id,
+                MachineScriptService.TentacleBootstrapKeyDescription,
+                CancellationToken.None).ConfigureAwait(false);
+
+            var found = await accountService.FindApiKeyByDescriptionAsync(
+                CurrentUsers.InternalUser.Id,
+                MachineScriptService.TentacleBootstrapKeyDescription,
+                CancellationToken.None).ConfigureAwait(false);
+
+            found.ShouldNotBeNull();
+            found.ApiKey.ShouldBe(firstKey.ApiKey,
+                customMessage: "Before rotation, Find returns the shared key minted above.");
+
+            // Rotate -- disables the existing key.
+            var disabledCount = await accountService.DisableApiKeysByDescriptionAsync(
+                CurrentUsers.InternalUser.Id,
+                MachineScriptService.TentacleBootstrapKeyDescription,
+                CancellationToken.None).ConfigureAwait(false);
+
+            disabledCount.ShouldBe(1);
+
+            // After rotation, Find returns null -- next GenerateInstallScript would mint fresh.
+            var afterRotation = await accountService.FindApiKeyByDescriptionAsync(
+                CurrentUsers.InternalUser.Id,
+                MachineScriptService.TentacleBootstrapKeyDescription,
+                CancellationToken.None).ConfigureAwait(false);
+
+            afterRotation.ShouldBeNull(customMessage:
+                "After rotation, the shared bootstrap key MUST be disabled. The next install-script generation " +
+                "will mint a fresh one via the get-or-create flow. If this returns non-null, rotation is broken " +
+                "and operators can't actually invalidate a leaked key.");
+        }).ConfigureAwait(false);
     }
 
     private async Task RunDataSeeders()
