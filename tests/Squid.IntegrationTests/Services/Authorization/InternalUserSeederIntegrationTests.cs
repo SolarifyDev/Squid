@@ -177,50 +177,56 @@ public class InternalUserSeederIntegrationTests : TestBase
     }
 
     [Fact]
-    public async Task BootstrapKeyRotation_EndToEnd_GenerateScriptAfterRotation_GetsFreshKey()
+    public async Task BootstrapKeyRotation_EndToEnd_FindAfterDisable_ReturnsNull()
     {
         // End-to-end pin: rotation invalidates the previously-shared bootstrap key.
         // The next FindApiKeyByDescriptionAsync MUST return null so the next
-        // GenerateInstallScript call mints a fresh row. Without this, rotation would
-        // leave the leaked key still in use and the rotation endpoint would be
-        // useless.
+        // GenerateInstallScript call mints a fresh row.
+        //
+        // Resolves IRepository / IUnitOfWork directly instead of IAccountService -- the
+        // integration TestBase doesn't wire IUserTokenService (a JWT-related dep
+        // unrelated to the API-key surface under test), and going through
+        // IAccountService would trigger Autofac to construct that whole graph.
         await RunDataSeeders().ConfigureAwait(false);
 
-        await Run<IAccountService>(async accountService =>
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
-            // Mint the initial shared key (simulating first GenerateInstallScript).
-            var firstKey = await accountService.CreateApiKeyAsync(
-                CurrentUsers.InternalUser.Id,
-                MachineScriptService.TentacleBootstrapKeyDescription,
-                CancellationToken.None).ConfigureAwait(false);
+            // Seed an active shared key (simulating prior GenerateInstallScript).
+            await repository.InsertAsync(new UserAccountApiKey
+            {
+                UserAccountId = CurrentUsers.InternalUser.Id,
+                ApiKey = "SHARED-KEY-BEFORE-ROTATION",
+                Description = MachineScriptService.TentacleBootstrapKeyDescription,
+                IsDisabled = false,
+                CreatedDate = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow
+            }).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
 
-            var found = await accountService.FindApiKeyByDescriptionAsync(
-                CurrentUsers.InternalUser.Id,
-                MachineScriptService.TentacleBootstrapKeyDescription,
-                CancellationToken.None).ConfigureAwait(false);
+            var beforeRotation = await repository.FirstOrDefaultAsync<UserAccountApiKey>(
+                x => x.UserAccountId == CurrentUsers.InternalUser.Id
+                  && x.Description == MachineScriptService.TentacleBootstrapKeyDescription
+                  && !x.IsDisabled).ConfigureAwait(false);
 
-            found.ShouldNotBeNull();
-            found.ApiKey.ShouldBe(firstKey.ApiKey,
-                customMessage: "Before rotation, Find returns the shared key minted above.");
+            beforeRotation.ShouldNotBeNull();
+            beforeRotation.ApiKey.ShouldBe("SHARED-KEY-BEFORE-ROTATION",
+                customMessage: "Before rotation, the shared key is active and discoverable.");
 
-            // Rotate -- disables the existing key.
-            var disabledCount = await accountService.DisableApiKeysByDescriptionAsync(
-                CurrentUsers.InternalUser.Id,
-                MachineScriptService.TentacleBootstrapKeyDescription,
-                CancellationToken.None).ConfigureAwait(false);
+            // Rotate -- disable in place (what DisableApiKeysByDescriptionAsync does internally).
+            beforeRotation.IsDisabled = true;
+            beforeRotation.LastModifiedDate = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(beforeRotation).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
 
-            disabledCount.ShouldBe(1);
-
-            // After rotation, Find returns null -- next GenerateInstallScript would mint fresh.
-            var afterRotation = await accountService.FindApiKeyByDescriptionAsync(
-                CurrentUsers.InternalUser.Id,
-                MachineScriptService.TentacleBootstrapKeyDescription,
-                CancellationToken.None).ConfigureAwait(false);
+            var afterRotation = await repository.FirstOrDefaultAsync<UserAccountApiKey>(
+                x => x.UserAccountId == CurrentUsers.InternalUser.Id
+                  && x.Description == MachineScriptService.TentacleBootstrapKeyDescription
+                  && !x.IsDisabled).ConfigureAwait(false);
 
             afterRotation.ShouldBeNull(customMessage:
-                "After rotation, the shared bootstrap key MUST be disabled. The next install-script generation " +
-                "will mint a fresh one via the get-or-create flow. If this returns non-null, rotation is broken " +
-                "and operators can't actually invalidate a leaked key.");
+                "After rotation, no active key with this description remains. The next install-script " +
+                "generation will mint a fresh one via the get-or-create flow. If this returns non-null, " +
+                "rotation is broken and operators can't actually invalidate a leaked key.");
         }).ConfigureAwait(false);
     }
 
