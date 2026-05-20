@@ -323,17 +323,20 @@ public sealed class TentacleRegisterE2ETests
     }
 
     [Fact]
-    public async Task RepeatedRoleFlags_OnlyLastValueWins_KnownBug()
+    public async Task RepeatedRoleFlags_AllRolesAccumulatedAsCommaSeparated_RegressionGuard()
     {
-        // Documents the install-tentacle.ps1 ↔ implementation divergence:
-        // the script's --role doc-string says "pass --role multiple times",
-        // but Microsoft.Extensions.Configuration.CommandLine's flat
-        // key-value store keeps only the LAST value for repeated keys.
-        // Pinning this behaviour as a test means:
-        //   1. Operators / future maintainers see the actual contract.
-        //   2. If someone fixes the multi-flag accumulation, this test
-        //      flips from green to red — they update both the test AND
-        //      the install-tentacle.ps1 docs in the same PR.
+        // PIN: when the operator passes --role more than once, all values are
+        // accumulated into a single comma-separated Tentacle:Roles config entry
+        // BEFORE being handed to Microsoft.Extensions.Configuration.CommandLine
+        // (which would otherwise keep only the LAST value).
+        //
+        // History: this test originally pinned the BUG ("only the last value
+        // wins") in 1.6.x. The accumulation fix in RegisterCommand.ExpandShorthandArgs
+        // (Phase 3 / Squid 1.7.x) promoted it to a regression guard. If this
+        // test flips from green to red, repeated-flag accumulation has regressed
+        // — re-read RegisterCommand.AccumulatingConfigKeys and confirm
+        // "Tentacle:Roles" is still in the set, and confirm the bucket-merge
+        // loop in ExpandShorthandArgs still emits the comma-joined arg.
         await using var stub = await StubSquidServer.StartAsync();
         using var ctx = new RegisterTestContext();
 
@@ -350,9 +353,52 @@ public sealed class TentacleRegisterE2ETests
         exitCode.ShouldBe(0);
 
         var received = stub.ReceivedRegistrations.First();
-        received.Roles.ShouldBe("third-role",
-            customMessage: "current behaviour: only the LAST --role value is kept (last-wins from CommandLine config provider). " +
-                           "If this assertion now fails because all three roles got through, repeated-flag accumulation has been fixed — update install-tentacle.ps1's doc-string to match AND update CommaSeparatedRoles test to verify the new accumulating behaviour AND remove this regression test.");
+
+        received.Roles.ShouldContain("first-role",
+            customMessage: "first --role value MUST survive accumulation. " +
+                           "If missing, the bucket-merge loop in ExpandShorthandArgs has regressed (or Tentacle:Roles was dropped from AccumulatingConfigKeys).");
+        received.Roles.ShouldContain("second-role",
+            customMessage: "second --role value MUST survive accumulation");
+        received.Roles.ShouldContain("third-role",
+            customMessage: "third --role value MUST survive accumulation");
+
+        // Persisted config carries the same comma-joined value as what the server received.
+        var config = await File.ReadAllTextAsync(ctx.ExpectedConfigPath);
+        config.ShouldContain("first-role");
+        config.ShouldContain("second-role");
+        config.ShouldContain("third-role");
+    }
+
+    [Fact]
+    public async Task RepeatedEnvironmentFlags_AllEnvironmentsAccumulatedAsCommaSeparated()
+    {
+        // Sibling assertion for --environment, which is the OTHER list-valued
+        // shorthand (Tentacle:Environments). Adding a new accumulating config
+        // key requires adding a parallel test here. See AccumulatingConfigKeys
+        // doc-comment in RegisterCommand.
+        await using var stub = await StubSquidServer.StartAsync();
+        using var ctx = new RegisterTestContext();
+
+        var exitCode = await RunRegisterAsync(ctx,
+            "--server", stub.ServerUri.ToString(),
+            "--api-key", "API-test-key",
+            "--role", "web-server",
+            "--environment", "production",
+            "--environment", "us-east",
+            "--environment", "canary",
+            "--flavor", "LinuxTentacle"
+        );
+
+        exitCode.ShouldBe(0);
+
+        var received = stub.ReceivedRegistrations.First();
+
+        received.Environments.ShouldContain("production",
+            customMessage: "first --environment value MUST survive accumulation");
+        received.Environments.ShouldContain("us-east",
+            customMessage: "second --environment value MUST survive accumulation");
+        received.Environments.ShouldContain("canary",
+            customMessage: "third --environment value MUST survive accumulation");
     }
 
     // ========================================================================

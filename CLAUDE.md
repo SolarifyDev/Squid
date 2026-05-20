@@ -248,7 +248,10 @@ Stage 6: Serialize for Execution
 
 Stage 7: Capture Output Variables (post-execution)
   └─ Parse logs for ##squid[setVariable name='X' value='Y' sensitive='True/False']
-      → Add to _ctx.Variables as "Squid.Action.{StepName}.{VarName}" + unqualified
+      → Add to _ctx.Variables as "Squid.Action[{StepName}].Output.{VarName}" + unqualified
+      → (Per-machine variant: "Squid.Action[{StepName}].Output[{MachineName}].{VarName}")
+      → Canonical shape defined by SpecialVariables.Output.Variable(stepName, variableName)
+        at src/Squid.Message/Constants/SpecialVariables.cs:289
 ```
 
 ---
@@ -416,10 +419,12 @@ Rules:
 | Feature | Status | Notes |
 |---------|--------|-------|
 | ExcludedEnvironments DB persistence | Pending | DTO + filtering logic complete, but no entity/provider yet |
-| Variable Condition evaluation | Stub | `"Variable"` condition treated as Always |
-| Parallel steps (`StartWithPrevious`) | Not supported | Octopus allows steps to start concurrently |
 | Tenant tag filtering | Not supported | Octopus filters actions by tenant tags |
-| Manual skip (`SkipActions`) | Not supported | Octopus allows skipping specific actions at deploy time |
+
+Removed entries (now implemented — historical reference only):
+- **Variable Condition evaluation** — fully evaluated by `StepEligibilityEvaluator.EvaluateVariableCondition` at `src/Squid.Core/Services/DeploymentExecution/Filtering/StepEligibilityEvaluator.cs:108`, delegating to `VariableDictionary.EvaluateTruthy`. E2E coverage in `KubernetesStepConditionE2ETests`.
+- **Parallel steps (`StartWithPrevious`)** — implemented in `StepBatcher.BatchSteps` (`src/Squid.Core/Services/DeploymentExecution/Filtering/StepBatcher.cs:18`); consecutive `StartWithPrevious` steps are grouped into one batch and dispatched in parallel via `Task.WhenAll`. E2E coverage in `StepBatcherParallelE2ETests` (wall-clock proves parallelism).
+- **Manual skip (`SkipActions`)** — `DeploymentRequestPayload.SkipActionIds` is honoured by `StepEligibilityEvaluator.EvaluateAction` (`ctx.SkipActionIds?.Contains(action.Id)`). Unit coverage in `StepEligibilityResultTests.EvaluateAction_ManuallySkipped_*` and `DeploymentExecutionLoggingTests.*FullStepSkipped*`.
 
 ---
 
