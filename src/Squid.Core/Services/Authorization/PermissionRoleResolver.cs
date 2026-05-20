@@ -25,18 +25,33 @@ namespace Squid.Core.Services.Authorization;
 public static class PermissionRoleResolver
 {
     /// <summary>
-    /// Returns the names of the built-in roles that grant <paramref name="permission"/>.
-    /// Empty when no built-in role grants it (operator must use a custom role
-    /// or add the permission to an existing role).
+    /// Returns the names of the built-in roles that grant <paramref name="permission"/>
+    /// AND are safe to suggest to a human operator (i.e. <c>IsReservedForSystem == false</c>).
+    /// Empty when no operator-assignable role grants it.
+    ///
+    /// <para>System-reserved roles (e.g. <c>SystemServiceAccount</c>, used by the Tentacle
+    /// bootstrap key's owner account) are deliberately filtered out -- suggesting them
+    /// would lead an operator to assign a system-reserved role to a human user, defeating
+    /// the least-privilege isolation those roles are designed for.</para>
     /// </summary>
     public static IReadOnlyList<string> GetBuiltInRolesGranting(Permission permission)
+        => GetBuiltInRolesGranting(permission, includeSystemReserved: false);
+
+    /// <summary>
+    /// Lower-level variant that lets the caller choose whether to include system-reserved
+    /// roles. Internal callers (seeders, diagnostics) may need the full list; operator-facing
+    /// surfaces (403 hint, install-script error message) MUST stick with the filtered default.
+    /// </summary>
+    public static IReadOnlyList<string> GetBuiltInRolesGranting(Permission permission, bool includeSystemReserved)
     {
         var matches = new List<string>();
 
         foreach (var role in BuiltInRoles.All)
         {
-            if (role.Permissions.Contains(permission))
-                matches.Add(role.Name);
+            if (!role.Permissions.Contains(permission)) continue;
+            if (role.IsReservedForSystem && !includeSystemReserved) continue;
+
+            matches.Add(role.Name);
         }
 
         return matches;

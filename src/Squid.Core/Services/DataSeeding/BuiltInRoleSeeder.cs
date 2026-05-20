@@ -58,6 +58,14 @@ public class BuiltInRoleDefinition
     public string Name { get; init; }
     public string Description { get; init; }
     public List<Permission> Permissions { get; init; }
+
+    /// <summary>
+    /// When <c>true</c>, this role is reserved for system / internal accounts (e.g. the
+    /// Tentacle bootstrap key's owner) and must NOT be suggested as a remediation to
+    /// human operators hitting a permission denial. Operator-facing 403 hints filter
+    /// these out via <c>PermissionRoleResolver.GetBuiltInRolesGranting</c>.
+    /// </summary>
+    public bool IsReservedForSystem { get; init; }
 }
 
 public static class BuiltInRoles
@@ -144,6 +152,30 @@ public static class BuiltInRoles
         }
     };
 
+    /// <summary>
+    /// Reserved for system-generated bootstrap operations (Tentacle install-script API keys,
+    /// automation pipelines). Deliberately narrower than <see cref="EnvironmentManager"/>:
+    /// has <c>MachineView</c> + <c>MachineCreate</c> + <c>MachineEdit</c> only -- enough for a
+    /// Tentacle to onboard itself, but explicitly NOT <c>MachineDelete</c> (bootstrap must not
+    /// be able to remove machines) and no account / environment / task permissions.
+    ///
+    /// <para><b>Operator-facing warning</b>: do NOT assign this role to a human user.
+    /// Reserved for the internal account (<c>CurrentUsers.InternalUser.Id</c>) that owns the
+    /// shared Tentacle bootstrap API key. Assigning to humans silently grants MachineCreate
+    /// without going through the documented Environment Manager / Space Owner paths.</para>
+    /// </summary>
+    public static readonly BuiltInRoleDefinition SystemServiceAccount = new()
+    {
+        Name = "System Service Account",
+        Description = "Reserved for system-generated bootstrap (Tentacle install scripts). " +
+                      "Do NOT assign to human users -- use Environment Manager or Space Owner instead.",
+        Permissions = new List<Permission>
+        {
+            Permission.MachineView, Permission.MachineCreate, Permission.MachineEdit,
+        },
+        IsReservedForSystem = true
+    };
+
     public static readonly List<BuiltInRoleDefinition> All = new()
     {
         SystemAdministrator,
@@ -152,5 +184,6 @@ public static class BuiltInRoles
         ProjectContributor,
         ProjectViewer,
         EnvironmentManager,
+        SystemServiceAccount,
     };
 }

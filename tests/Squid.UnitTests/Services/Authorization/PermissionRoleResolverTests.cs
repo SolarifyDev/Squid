@@ -16,22 +16,39 @@ public class PermissionRoleResolverTests
     [Fact]
     public void GetBuiltInRolesGranting_MachineCreate_ReturnsSpaceOwnerAndEnvironmentManager()
     {
-        // Operator-facing contract pinned: the built-in roles that ship with
-        // MachineCreate permission. Tentacle's PR 2 install-script hint
-        // explicitly names these — drift breaks the operator UX.
+        // Operator-facing contract pinned: the built-in roles operators can SAFELY
+        // assign to humans to grant MachineCreate. Tentacle's install-script hint
+        // and the structured 403 response both surface this exact list.
         //
-        // System Administrator deliberately does NOT have MachineCreate — it's
-        // a system-level role (manage spaces, users, teams), not a space-
-        // resource role. Machines live inside a space, so MachineCreate ships
-        // on space-scoped roles only.
+        // Two deliberate exclusions:
+        // - System Administrator: system-level role (spaces/users/teams), not space-resource
+        // - System Service Account: IsReservedForSystem=true (bootstrap-key only, must not be
+        //   suggested to humans -- defeats least-privilege isolation)
         var roles = PermissionRoleResolver.GetBuiltInRolesGranting(Permission.MachineCreate);
 
         roles.ShouldContain("Environment Manager");
         roles.ShouldContain("Space Owner");
         roles.ShouldNotContain("System Administrator", customMessage:
-            "System Administrator is a system-level role and does not grant space-scoped MachineCreate. " +
-            "If this changed in BuiltInRoles.SystemAdministrator, update the install-script hint AND this test.");
+            "System Administrator is a system-level role and does not grant space-scoped MachineCreate.");
+        roles.ShouldNotContain("System Service Account", customMessage:
+            "System Service Account is IsReservedForSystem=true -- operator-facing hints MUST filter it out. " +
+            "Suggesting it would lead operators to assign a system role to humans, breaking least-privilege.");
         roles.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public void GetBuiltInRolesGranting_IncludeSystemReserved_RevealsSystemServiceAccount()
+    {
+        // Inverse pin: when callers explicitly opt in (internal callers like seeders /
+        // diagnostics), the system-reserved role IS visible. Without this branch the
+        // installation seeder couldn't programmatically find which role to assign to
+        // InternalUser for MachineCreate.
+        var roles = PermissionRoleResolver.GetBuiltInRolesGranting(Permission.MachineCreate, includeSystemReserved: true);
+
+        roles.ShouldContain("Environment Manager");
+        roles.ShouldContain("Space Owner");
+        roles.ShouldContain("System Service Account");
+        roles.Count.ShouldBe(3);
     }
 
     [Fact]
@@ -57,6 +74,8 @@ public class PermissionRoleResolverTests
         hint.ShouldContain("Space Owner");
         hint.ShouldNotContain("System Administrator", customMessage:
             "System Administrator does not grant space-scoped MachineCreate. Suggesting it would mislead operators.");
+        hint.ShouldNotContain("System Service Account", customMessage:
+            "System Service Account is IsReservedForSystem=true -- operator hint must filter it out.");
         // The hint must direct operators to one of two remediation paths.
         hint.ShouldContain("Assign one of these roles");
         hint.ShouldContain("add 'MachineCreate'");
