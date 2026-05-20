@@ -41,13 +41,31 @@ public partial class MachineScriptService
         }
     }
 
+    /// <summary>
+    /// Canonical description for the SHARED Kubernetes-agent bootstrap API key.
+    /// Same get-or-create pattern as the Tentacle bootstrap key (see
+    /// <see cref="MachineScriptService.TentacleBootstrapKeyDescription"/>): one
+    /// active key per server, reused across all KubernetesAgent install-script
+    /// generations.
+    ///
+    /// <para>The previous design embedded the subscriptionId in the description
+    /// (<c>KubernetesAgent:&lt;guid&gt;</c>) which minted a NEW key per agent. That
+    /// shipped per-agent secret material into a public install script -- replaying
+    /// the old script after agent deletion left an orphan key the operator couldn't
+    /// easily find. Single-instance is simpler AND tighter security.</para>
+    /// </summary>
+    internal const string KubernetesAgentBootstrapKeyDescription = "Kubernetes Agent install bootstrap (system-shared, rotate via admin endpoint)";
+
     private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateApiKeyAsync(string subscriptionId, CancellationToken ct)
     {
-        var description = $"KubernetesAgent:{subscriptionId}";
-        var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, description, ct).ConfigureAwait(false);
+        var existing = await _accountService.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, KubernetesAgentBootstrapKeyDescription, ct).ConfigureAwait(false);
+
+        if (existing != null) return (true, existing.ApiKey, HttpStatusCode.OK, null);
+
+        var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, KubernetesAgentBootstrapKeyDescription, ct).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(result?.ApiKey))
-            return (false, null, HttpStatusCode.InternalServerError, "Failed to create API key");
+            return (false, null, HttpStatusCode.InternalServerError, "Failed to create Kubernetes Agent bootstrap API key");
 
         return (true, result.ApiKey, HttpStatusCode.OK, null);
     }

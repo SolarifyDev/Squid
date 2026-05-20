@@ -325,6 +325,12 @@ public class MachineInstallScriptServiceTests
     [Fact]
     public async Task GenerateScript_ApiKeyCreationFails_ReturnsInternalServerError()
     {
+        // Force FindApiKeyByDescriptionAsync to return null (no shared key yet) so we
+        // exercise the mint path; then have CreateApiKeyAsync return an empty key to
+        // simulate failure.
+        _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiKeyWithSecret?)null);
         _accountService
             .Setup(x => x.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CreateApiKeyResponseData { ApiKey = "" });
@@ -332,8 +338,45 @@ public class MachineInstallScriptServiceTests
         var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
 
         response.Code.ShouldBe(HttpStatusCode.InternalServerError);
-        response.Msg.ShouldContain("Failed to create API key");
+        response.Msg.ShouldContain("Failed to create Kubernetes Agent bootstrap API key",
+            customMessage: "Error message must name the specific surface (bootstrap key) so operators know where to look.");
         response.Data.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task GenerateScript_SharedKeyAlreadyExists_ReusesItWithoutMinting()
+    {
+        // Single-instance pin: when FindApiKeyByDescriptionAsync returns an existing
+        // key, the service MUST NOT call CreateApiKeyAsync. DB must not accumulate
+        // one row per install-script call.
+        const string sharedKey = "SHARED-K8S-KEY-VALUE";
+        _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, MachineScriptService.KubernetesAgentBootstrapKeyDescription, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApiKeyWithSecret(99, sharedKey, MachineScriptService.KubernetesAgentBootstrapKeyDescription, DateTimeOffset.UtcNow));
+
+        var response = await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        _accountService.Verify(x => x.CreateApiKeyAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never, failMessage: "MUST NOT mint a new key when a shared bootstrap key already exists. " +
+                                     "Mint per call was the 1.6.x bug -- DB accumulated one row per install-script call.");
+    }
+
+    [Fact]
+    public async Task GenerateScript_NoSharedKey_MintsExactlyOneNewKey()
+    {
+        // Mint-once pin: when no shared key exists, CreateApiKeyAsync is called
+        // exactly once with the canonical description.
+        _accountService
+            .Setup(x => x.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, MachineScriptService.KubernetesAgentBootstrapKeyDescription, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ApiKeyWithSecret?)null);
+
+        await _service.GenerateKubernetesAgentInstallScriptAsync(CreateCommand(), CancellationToken.None);
+
+        _accountService.Verify(x => x.CreateApiKeyAsync(
+            CurrentUsers.InternalUser.Id,
+            MachineScriptService.KubernetesAgentBootstrapKeyDescription,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========================================================================

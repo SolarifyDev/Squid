@@ -105,13 +105,28 @@ public partial class MachineScriptService
             new MachineRuntimeCapabilities { Os = os },
             ct);
 
+    /// <summary>
+    /// Canonical description for the SHARED Tentacle bootstrap API key. Pinned in
+    /// <see cref="TentacleBootstrapKeyDescription"/> so the rotation endpoint
+    /// (system admin) and the script generator agree on which row to look up.
+    ///
+    /// <para>Single instance per server: <see cref="TryCreateTentacleApiKeyAsync"/>
+    /// always queries by this description first and reuses the existing key when
+    /// present. New keys are minted only on first install + after rotation. The
+    /// DB accumulates AT MOST ONE active Tentacle bootstrap key per server.</para>
+    /// </summary>
+    internal const string TentacleBootstrapKeyDescription = "Tentacle install bootstrap (system-shared, rotate via admin endpoint)";
+
     private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateTentacleApiKeyAsync(CancellationToken ct)
     {
-        var description = $"Tentacle:{Guid.NewGuid():N}";
-        var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, description, ct).ConfigureAwait(false);
+        var existing = await _accountService.FindApiKeyByDescriptionAsync(CurrentUsers.InternalUser.Id, TentacleBootstrapKeyDescription, ct).ConfigureAwait(false);
+
+        if (existing != null) return (true, existing.ApiKey, HttpStatusCode.OK, null);
+
+        var result = await _accountService.CreateApiKeyAsync(CurrentUsers.InternalUser.Id, TentacleBootstrapKeyDescription, ct).ConfigureAwait(false);
 
         if (string.IsNullOrWhiteSpace(result?.ApiKey))
-            return (false, null, HttpStatusCode.InternalServerError, "Failed to create API key");
+            return (false, null, HttpStatusCode.InternalServerError, "Failed to create Tentacle bootstrap API key");
 
         return (true, result.ApiKey, HttpStatusCode.OK, null);
     }
