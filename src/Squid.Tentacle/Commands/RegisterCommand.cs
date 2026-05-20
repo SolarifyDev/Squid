@@ -50,6 +50,26 @@ public sealed class RegisterCommand : ITentacleCommand
         ["--proxy-password"] = "Tentacle:Proxy:Password",
     };
 
+    /// <summary>
+    /// Config keys whose values represent a comma-separated LIST (not a single
+    /// scalar). When the operator passes the corresponding shorthand more than
+    /// once (e.g. <c>--role web-server --role db-replica --role monitoring</c>),
+    /// the values are accumulated into ONE comma-joined config entry before
+    /// being handed to <c>AddCommandLine</c> — which would otherwise keep only
+    /// the LAST value for any repeated key, silently dropping the earlier ones.
+    /// <para>
+    /// Pinned by the <c>RepeatedRoleFlags_*</c> + <c>RepeatedEnvironmentFlags_*</c>
+    /// E2E tests in <c>TentacleRegisterE2ETests</c>. Adding a new list-valued
+    /// shorthand requires adding the mapped config key here AND a matching
+    /// regression test for the repeated-flag path.
+    /// </para>
+    /// </summary>
+    internal static readonly HashSet<string> AccumulatingConfigKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Tentacle:Roles",
+        "Tentacle:Environments",
+    };
+
     /// <summary>Settings we deem safe + necessary to persist after a successful register.</summary>
     private static readonly string[] PersistableKeys =
     [
@@ -245,11 +265,25 @@ public sealed class RegisterCommand : ITentacleCommand
     internal static string[] ExpandShorthandArgs(string[] args)
     {
         var result = new List<string>();
+        var accumulators = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < args.Length; i++)
         {
             if (ArgMapping.TryGetValue(args[i], out var configKey) && i + 1 < args.Length)
             {
+                if (AccumulatingConfigKeys.Contains(configKey))
+                {
+                    if (!accumulators.TryGetValue(configKey, out var bucket))
+                    {
+                        bucket = new List<string>();
+                        accumulators[configKey] = bucket;
+                    }
+
+                    bucket.Add(args[i + 1]);
+                    i++;
+                    continue;
+                }
+
                 result.Add($"--{configKey}={args[i + 1]}");
                 i++;
             }
@@ -257,6 +291,14 @@ public sealed class RegisterCommand : ITentacleCommand
             {
                 result.Add(args[i]);
             }
+        }
+
+        // Emit accumulated list-valued keys as ONE comma-joined arg so AddCommandLine
+        // doesn't drop earlier values via last-wins semantics. Order within the joined
+        // string preserves the operator's CLI order (web-server,db-replica,monitoring).
+        foreach (var (configKey, values) in accumulators)
+        {
+            result.Add($"--{configKey}={string.Join(",", values)}");
         }
 
         return result.ToArray();
