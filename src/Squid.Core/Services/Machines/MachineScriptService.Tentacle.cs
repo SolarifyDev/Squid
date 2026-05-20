@@ -115,7 +115,7 @@ public partial class MachineScriptService
     /// present. New keys are minted only on first install + after rotation. The
     /// DB accumulates AT MOST ONE active Tentacle bootstrap key per server.</para>
     /// </summary>
-    internal const string TentacleBootstrapKeyDescription = "Tentacle install bootstrap (system-shared, rotate via admin endpoint)";
+    public const string TentacleBootstrapKeyDescription = "Tentacle install bootstrap (system-shared, rotate via admin endpoint)";
 
     private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateTentacleApiKeyAsync(CancellationToken ct)
     {

@@ -54,7 +54,7 @@ public partial class MachineScriptService
     /// the old script after agent deletion left an orphan key the operator couldn't
     /// easily find. Single-instance is simpler AND tighter security.</para>
     /// </summary>
-    internal const string KubernetesAgentBootstrapKeyDescription = "Kubernetes Agent install bootstrap (system-shared, rotate via admin endpoint)";
+    public const string KubernetesAgentBootstrapKeyDescription = "Kubernetes Agent install bootstrap (system-shared, rotate via admin endpoint)";
 
     private async Task<(bool Success, string ApiKey, HttpStatusCode Code, string Message)> TryCreateApiKeyAsync(string subscriptionId, CancellationToken ct)
     {

@@ -1,7 +1,9 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Core.Services.Account;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.DataSeeding;
+using Squid.Core.Services.Machines;
 using Squid.Core.Services.Teams;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
@@ -172,6 +174,60 @@ public class InternalUserSeederIntegrationTests : TestBase
         // (200), AFTER AdminUserSeeder (300) so audit columns reference a real user.
         var seeder = new InternalUserSeeder();
         seeder.Order.ShouldBe(350);
+    }
+
+    [Fact]
+    public async Task BootstrapKeyRotation_EndToEnd_FindAfterDisable_ReturnsNull()
+    {
+        // End-to-end pin: rotation invalidates the previously-shared bootstrap key.
+        // The next FindApiKeyByDescriptionAsync MUST return null so the next
+        // GenerateInstallScript call mints a fresh row.
+        //
+        // Resolves IRepository / IUnitOfWork directly instead of IAccountService -- the
+        // integration TestBase doesn't wire IUserTokenService (a JWT-related dep
+        // unrelated to the API-key surface under test), and going through
+        // IAccountService would trigger Autofac to construct that whole graph.
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            // Seed an active shared key (simulating prior GenerateInstallScript).
+            await repository.InsertAsync(new UserAccountApiKey
+            {
+                UserAccountId = CurrentUsers.InternalUser.Id,
+                ApiKey = "SHARED-KEY-BEFORE-ROTATION",
+                Description = MachineScriptService.TentacleBootstrapKeyDescription,
+                IsDisabled = false,
+                CreatedDate = DateTimeOffset.UtcNow,
+                LastModifiedDate = DateTimeOffset.UtcNow
+            }).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var beforeRotation = await repository.FirstOrDefaultAsync<UserAccountApiKey>(
+                x => x.UserAccountId == CurrentUsers.InternalUser.Id
+                  && x.Description == MachineScriptService.TentacleBootstrapKeyDescription
+                  && !x.IsDisabled).ConfigureAwait(false);
+
+            beforeRotation.ShouldNotBeNull();
+            beforeRotation.ApiKey.ShouldBe("SHARED-KEY-BEFORE-ROTATION",
+                customMessage: "Before rotation, the shared key is active and discoverable.");
+
+            // Rotate -- disable in place (what DisableApiKeysByDescriptionAsync does internally).
+            beforeRotation.IsDisabled = true;
+            beforeRotation.LastModifiedDate = DateTimeOffset.UtcNow;
+            await repository.UpdateAsync(beforeRotation).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            var afterRotation = await repository.FirstOrDefaultAsync<UserAccountApiKey>(
+                x => x.UserAccountId == CurrentUsers.InternalUser.Id
+                  && x.Description == MachineScriptService.TentacleBootstrapKeyDescription
+                  && !x.IsDisabled).ConfigureAwait(false);
+
+            afterRotation.ShouldBeNull(customMessage:
+                "After rotation, no active key with this description remains. The next install-script " +
+                "generation will mint a fresh one via the get-or-create flow. If this returns non-null, " +
+                "rotation is broken and operators can't actually invalidate a leaked key.");
+        }).ConfigureAwait(false);
     }
 
     private async Task RunDataSeeders()

@@ -32,6 +32,15 @@ public interface IAccountService : IScopedDependency
     /// no matching active key exists.
     /// </summary>
     Task<ApiKeyWithSecret?> FindApiKeyByDescriptionAsync(int userId, string description, CancellationToken ct = default);
+
+    /// <summary>
+    /// Disables every active API key owned by <paramref name="userId"/> whose
+    /// <c>Description</c> matches verbatim. Returns the count disabled. Used by
+    /// the bootstrap-key rotation endpoint -- after this returns, the next
+    /// <see cref="FindApiKeyByDescriptionAsync"/> with the same description
+    /// returns null, forcing a fresh mint on the next install-script generation.
+    /// </summary>
+    Task<int> DisableApiKeysByDescriptionAsync(int userId, string description, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -286,6 +295,26 @@ public class AccountService : IAccountService
         if (match == null) return null;
 
         return new ApiKeyWithSecret(match.Id, match.ApiKey, match.Description ?? string.Empty, match.CreatedDate);
+    }
+
+    public async Task<int> DisableApiKeysByDescriptionAsync(int userId, string description, CancellationToken ct = default)
+    {
+        var matches = await _repository.ToListAsync<UserAccountApiKey>(
+            x => x.UserAccountId == userId && x.Description == description && !x.IsDisabled, ct).ConfigureAwait(false);
+
+        if (matches.Count == 0) return 0;
+
+        foreach (var key in matches)
+        {
+            key.IsDisabled = true;
+            key.LastModifiedDate = DateTimeOffset.UtcNow;
+        }
+
+        await _repository.UpdateAllAsync(matches, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        await InvalidateApiKeyCacheForUserAsync(userId, ct).ConfigureAwait(false);
+
+        return matches.Count;
     }
 
     private async Task InvalidateApiKeyCacheForUserAsync(int userId, CancellationToken ct)
