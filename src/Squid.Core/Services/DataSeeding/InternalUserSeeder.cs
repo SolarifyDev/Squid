@@ -50,7 +50,7 @@ public class InternalUserSeeder : IDataSeeder
         var roleProvider = scope.Resolve<IUserRoleDataProvider>();
         var scopedRoleProvider = scope.Resolve<IScopedUserRoleDataProvider>();
 
-        await EnsureInternalUserAccountAsync(repository, dbContext).ConfigureAwait(false);
+        await EnsureInternalUserAccountAsync(repository, unitOfWork, dbContext).ConfigureAwait(false);
         var team = await EnsureInternalServiceAccountsTeamAsync(teamProvider).ConfigureAwait(false);
         await EnsureTeamHasSystemServiceAccountRoleAsync(roleProvider, scopedRoleProvider, team).ConfigureAwait(false);
         await EnsureInternalUserInTeamAsync(teamProvider, team).ConfigureAwait(false);
@@ -66,13 +66,13 @@ public class InternalUserSeeder : IDataSeeder
     /// throw. The raw INSERT lets PostgreSQL accept the explicit Id (the sequence
     /// default is overridden by the explicit value column).
     /// </summary>
-    private static async Task EnsureInternalUserAccountAsync(IRepository repository, SquidDbContext dbContext)
+    private static async Task EnsureInternalUserAccountAsync(IRepository repository, IUnitOfWork unitOfWork, SquidDbContext dbContext)
     {
         var existing = await repository.FirstOrDefaultAsync<UserAccount>(x => x.Id == CurrentUsers.InternalUser.Id).ConfigureAwait(false);
 
         if (existing != null)
         {
-            if (!existing.IsSystem) Log.Warning("Internal user (id={Id}) exists but IsSystem=false -- it should be true; UI will show it as a regular user", CurrentUsers.InternalUser.Id);
+            await NormaliseLegacyInternalUserAsync(repository, unitOfWork, existing).ConfigureAwait(false);
             return;
         }
 
@@ -92,6 +92,38 @@ public class InternalUserSeeder : IDataSeeder
             CurrentUsers.InternalUser.Id, CurrentUsers.InternalUser.Name, CurrentUsers.InternalUser.Name.ToUpperInvariant(), CurrentUsers.InternalUser.DisplayName, now).ConfigureAwait(false);
 
         Log.Information("Seeded internal user (id={Id}, rowsAffected={Rows})", CurrentUsers.InternalUser.Id, rows);
+    }
+
+    /// <summary>
+    /// Upgrades an existing InternalUser row to the canonical values when fields drift
+    /// from the constants in <see cref="CurrentUsers.InternalUser"/>. Specifically, the
+    /// <c>001_initial_schema.sql</c> migration seeds <c>display_name='internal_user'</c>
+    /// (legacy -- same as user_name), but the canonical value is <c>'System'</c>. Same
+    /// for <c>IsSystem</c>: must be true so the UI can hide it from human user lists.
+    /// </summary>
+    private static async Task NormaliseLegacyInternalUserAsync(IRepository repository, IUnitOfWork unitOfWork, UserAccount existing)
+    {
+        var dirty = false;
+
+        if (existing.DisplayName != CurrentUsers.InternalUser.DisplayName)
+        {
+            Log.Information("Upgrading internal user display_name from '{Old}' to '{New}'", existing.DisplayName, CurrentUsers.InternalUser.DisplayName);
+            existing.DisplayName = CurrentUsers.InternalUser.DisplayName;
+            dirty = true;
+        }
+
+        if (!existing.IsSystem)
+        {
+            Log.Information("Upgrading internal user IsSystem from false to true");
+            existing.IsSystem = true;
+            dirty = true;
+        }
+
+        if (!dirty) return;
+
+        existing.LastModifiedDate = DateTimeOffset.UtcNow;
+        await repository.UpdateAsync(existing).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
     }
 
     /// <summary>
