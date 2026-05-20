@@ -37,10 +37,11 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 ///         service message via <c>echo</c> on the agent</item>
 ///   <item>Halibut polling RPC streams the log line back to the server</item>
 ///   <item>The output-variable parser (in <c>DeploymentTaskExecutor.Script.cs</c>)
-///         decodes the service message and stores <c>"Squid.Action.&lt;StepName&gt;.X"</c>
-///         + unqualified <c>"X"</c> in <c>_ctx.Variables</c></item>
+///         decodes the service message and stores <c>"Squid.Action[&lt;StepName&gt;].Output.X"</c>
+///         + unqualified <c>"X"</c> in <c>_ctx.Variables</c> via
+///         <c>SpecialVariables.Output.Variable(stepName, varName)</c></item>
 ///   <item>For step 2, <c>BuildEffectiveVariables</c> includes these output variables</item>
-///   <item>The script-body expansion replaces <c>#{Squid.Action.&lt;StepName&gt;.X}</c>
+///   <item>The script-body expansion replaces <c>#{Squid.Action[&lt;StepName&gt;].Output.X}</c>
 ///         with the resolved value, then the agent runs the resolved script and we
 ///         can grep the cluster-side output for the value</item>
 /// </list></para>
@@ -95,11 +96,16 @@ public class OutputVariableCrossStepE2ETests
         var emitScript = $"echo \"##squid[setVariable name='{OutputVarName}' value='{uniqueValue}']\"";
 
         // Step 2 script — references the output variable via the qualified key:
-        //   Squid.Action.<StepName>.<VarName>
+        //   Squid.Action[<StepName>].Output.<VarName>
+        // (Format pinned by SpecialVariables.Output.Variable in
+        // src/Squid.Message/Constants/SpecialVariables.cs:289 — the canonical
+        // Octopus-parity shape with brackets around the step name + .Output. segment.
+        // The unqualified form `#{<VarName>}` would also resolve, but using the
+        // operator-facing qualified form pins the documented contract.)
         // Variable expansion happens server-side before the script is shipped to
         // the agent. `--dry-run=client -o name` makes the kubectl invocation
         // side-effect-free and emits "namespace/<value>" to stdout.
-        var consumeScript = $"kubectl create namespace #{{Squid.Action.{EmitStepName}.{OutputVarName}}} --dry-run=client -o name";
+        var consumeScript = $"kubectl create namespace #{{Squid.Action[{EmitStepName}].Output.{OutputVarName}}} --dry-run=client -o name";
 
         var serverTaskId = await SeedTwoStepDeploymentAsync(emitScript, consumeScript).ConfigureAwait(false);
 
@@ -120,9 +126,9 @@ public class OutputVariableCrossStepE2ETests
                 "The cross-step output-variable chain broke at one of these seams:\n" +
                 "  - Step 1 didn't emit (no echo log line back from agent)\n" +
                 "  - Parser didn't decode the service message\n" +
-                $"  - Merger stored under the wrong key (expected 'Squid.Action.{EmitStepName}.{OutputVarName}')\n" +
+                $"  - Merger stored under the wrong key (expected 'Squid.Action[{EmitStepName}].Output.{OutputVarName}')\n" +
                 "  - Step 2's script wasn't variable-expanded before dispatch\n" +
-                "  - Agent ran the literal #{…} token and kubectl rejected the name\n");
+                "  - Agent ran the empty expansion: `kubectl create namespace --dry-run=client` (no NAME) → exit 1\n");
 
         // ──── INVARIANT 3: The literal #{…} token did NOT make it to the agent ───
         // If the substitution layer regressed and the script body shipped with the
@@ -130,11 +136,11 @@ public class OutputVariableCrossStepE2ETests
         // string. The absence of "#{Squid.Action" in logs (and absence of any
         // "Invalid value" containing the qualified key) is proof the substitution
         // ran server-side.
-        _fixture.LogSink.ContainsMessage($"#{{Squid.Action.{EmitStepName}.{OutputVarName}}}").ShouldBeFalse(
+        _fixture.LogSink.ContainsMessage($"#{{Squid.Action[{EmitStepName}].Output.{OutputVarName}}}").ShouldBeFalse(
             customMessage:
-                "Unresolved #{Squid.Action…} token appeared in logs — the substitution layer " +
-                "didn't expand the token before the script reached the agent. Confirms a regression " +
-                "in BuildEffectiveVariables or the script-body expansion stage.");
+                "Unresolved #{Squid.Action[…].Output.…} token appeared in logs — the substitution " +
+                "layer didn't expand the token before the script reached the agent. Confirms a " +
+                "regression in BuildEffectiveVariables or the script-body expansion stage.");
     }
 
     /// <summary>
