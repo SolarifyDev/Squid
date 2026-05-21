@@ -1,13 +1,15 @@
 using System.Net.Http;
+using Shouldly;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Http;
+using Xunit;
 
-namespace Squid.IntegrationTests.Services.Deployments.ExternalFeeds;
+namespace Squid.E2ETests.Deployments.ExternalFeeds;
 
 /// <summary>
-/// Live integration tests driving <see cref="NuGetPackageSearchStrategy"/> and
+/// Live E2E tests driving <see cref="NuGetPackageSearchStrategy"/> and
 /// <see cref="NuGetPackageVersionStrategy"/> against a real operator NuGet feed
 /// (<c>https://nuget.sjfood.us/nuget</c>) — the same feed bound in the SquidWeb
 /// frontend during the IIS-deploy smoke validation that surfaced the original
@@ -48,7 +50,7 @@ namespace Squid.IntegrationTests.Services.Deployments.ExternalFeeds;
 /// (any → any), proving the protocol contract end-to-end.</para>
 /// </summary>
 [Trait("Category", "LiveNuGetFeed")]
-public class NuGetFeedLiveIntegrationTests
+public class NuGetFeedLiveE2ETests
 {
     private const string LiveFeedUri = "https://nuget.sjfood.us/nuget";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
