@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 
@@ -24,6 +25,23 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle.Handlers;
 public class IISDeployActionHandler : IActionHandler
 {
     public string ActionType => SpecialVariables.ActionTypes.DeployToIISWebSite;
+
+    /// <summary>
+    /// Plan-time static requirements: the action only runs on Windows targets
+    /// that have a PowerShell-family shell available. Declared here so
+    /// <c>DeploymentPlanner</c> can reject incompatible targets at preview /
+    /// release-creation time — the operator sees the blocked target with a
+    /// clear reason instead of the deploy failing at dispatch.
+    ///
+    /// <para>The dispatch-time guard <see cref="EnsureWindowsTentacleTarget"/>
+    /// remains as belt-and-braces: if the cache is stale or the machine
+    /// changed OS between preview and execute, the guard catches it before
+    /// the agent script tries <c>Get-WindowsFeature</c> on a non-Windows host.</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> StaticRequirements { get; } =
+        CapabilityRequirements.Empty
+            .Require(CapabilityKeys.OsSlot, CapabilityKeys.Os.Windows)
+            .Require(CapabilityKeys.Shell.PowerShell, CapabilityKeys.Present);
 
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

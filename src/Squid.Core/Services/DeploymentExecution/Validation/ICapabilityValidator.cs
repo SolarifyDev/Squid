@@ -38,4 +38,36 @@ public interface ICapabilityValidator : IScopedDependency
         ITransportCapabilities capabilities,
         CommunicationStyle communicationStyle,
         string? actionType = null);
+
+    /// <summary>
+    /// Validates handler-declared static capability requirements (e.g. <c>os: {windows}</c>,
+    /// <c>shell: {powershell, pwsh}</c>) against the target machine's projected
+    /// capability set (produced by <see cref="MachineCapabilitySet.From"/>).
+    ///
+    /// <para><b>Semantics</b>:
+    /// <list type="bullet">
+    ///   <item>AND across slots — every slot the handler declares must be satisfied
+    ///         by the target.</item>
+    ///   <item>OR within a slot — a slot is satisfied when the target advertises
+    ///         AT LEAST ONE value in the handler's acceptable-values set for that slot.</item>
+    ///   <item>If the handler declares a slot the target hasn't advertised
+    ///         (e.g. <c>os</c> is unset because the agent hasn't health-checked),
+    ///         it's a violation — the message tells the operator to run a health
+    ///         check. Plan-time strictness is intentional UX: surface the gap at
+    ///         preview, not at dispatch. The per-handler dispatch-time guard
+    ///         remains the runtime safety net for cache-went-stale-between-
+    ///         preview-and-execute scenarios.</item>
+    ///   <item>Empty <paramref name="handlerRequirements"/> short-circuits to no
+    ///         violations — backward-compat for handlers that don't opt in.</item>
+    /// </list></para>
+    /// </summary>
+    /// <param name="handlerRequirements">The slot-keyed requirement map from <c>IActionHandler.StaticRequirements</c>.</param>
+    /// <param name="targetCapabilities">The slot-keyed projection of the target machine's capabilities.</param>
+    /// <param name="intent">The intent producing the violation context (for naming).</param>
+    /// <param name="communicationStyle">Transport tag carried on each violation.</param>
+    IReadOnlyList<CapabilityViolation> ValidateStaticRequirements(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> handlerRequirements,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> targetCapabilities,
+        ExecutionIntent intent,
+        CommunicationStyle communicationStyle);
 }

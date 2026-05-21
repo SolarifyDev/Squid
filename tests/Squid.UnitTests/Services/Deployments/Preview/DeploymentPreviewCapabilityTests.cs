@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Ssh;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
@@ -23,14 +24,21 @@ public class DeploymentPreviewCapabilityTests
 {
     private readonly CapabilityValidator _validator = new();
     private readonly Mock<IActionHandlerRegistry> _registry = new();
+    private readonly Mock<IMachineRuntimeCapabilitiesCache> _capabilitiesCache = new();
 
     public DeploymentPreviewCapabilityTests()
     {
         _registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>()))
             .Returns(ExecutionScope.TargetLevel);
+
+        _registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>()))
+            .Returns((IActionHandler)null);
+
+        _capabilitiesCache.Setup(c => c.TryGet(It.IsAny<int>()))
+            .Returns(MachineRuntimeCapabilities.Empty);
     }
 
-    private DeploymentPlanner BuildPlanner() => new(_registry.Object, _validator);
+    private DeploymentPlanner BuildPlanner() => new(_registry.Object, _validator, _capabilitiesCache.Object);
 
     [Fact]
     public async Task Preview_SshTargetWithUnsupportedAction_BlockingReasonsContainViolation()

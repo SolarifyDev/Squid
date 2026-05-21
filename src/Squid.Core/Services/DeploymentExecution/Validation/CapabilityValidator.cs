@@ -206,4 +206,76 @@ public sealed class CapabilityValidator : ICapabilityValidator
         ActionName = intent.ActionName,
         Detail = detail
     };
+
+    public IReadOnlyList<CapabilityViolation> ValidateStaticRequirements(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> handlerRequirements,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> targetCapabilities,
+        ExecutionIntent intent,
+        CommunicationStyle communicationStyle)
+    {
+        ArgumentNullException.ThrowIfNull(handlerRequirements);
+        ArgumentNullException.ThrowIfNull(targetCapabilities);
+        ArgumentNullException.ThrowIfNull(intent);
+
+        if (handlerRequirements.Count == 0)
+            return Array.Empty<CapabilityViolation>();
+
+        var violations = new List<CapabilityViolation>();
+
+        foreach (var (slot, acceptableValues) in handlerRequirements)
+        {
+            // Slot absent from target → violation. The validator runs at preview
+            // time; surfacing a "target hasn't advertised this slot" violation
+            // tells the operator to health-check the target before triggering
+            // deploy. The runtime safety net (per-handler dispatch-time guard
+            // like IISDeployActionHandler.EnsureWindowsTentacleTarget) handles
+            // the "cache went stale between preview and execute" case with
+            // optimistic-allow on its own terms.
+            if (!targetCapabilities.TryGetValue(slot, out var advertisedValues))
+            {
+                violations.Add(BuildViolation(
+                    ViolationCodes.MissingCapability,
+                    BuildMissingCapabilityMessage(slot, acceptableValues, advertised: null),
+                    intent,
+                    communicationStyle,
+                    detail: slot));
+                continue;
+            }
+
+            // Set intersection — match succeeds when handler accepts at least one of
+            // the values the target advertises in this slot.
+            if (acceptableValues.Overlaps(advertisedValues))
+                continue;
+
+            violations.Add(BuildViolation(
+                ViolationCodes.MissingCapability,
+                BuildMissingCapabilityMessage(slot, acceptableValues, advertisedValues),
+                intent,
+                communicationStyle,
+                detail: slot));
+        }
+
+        return violations;
+    }
+
+    private static string BuildMissingCapabilityMessage(
+        string slot,
+        IReadOnlySet<string> acceptable,
+        IReadOnlySet<string>? advertised)
+    {
+        var acceptableJoined = string.Join(", ", acceptable.OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
+
+        if (advertised is null)
+        {
+            return $"Target does not advertise capability slot '{slot}' (handler accepts: {{{acceptableJoined}}}). " +
+                   $"Run a health check on this target so its runtime-capabilities cache populates the slot.";
+        }
+
+        var advertisedJoined = advertised.Count == 0
+            ? "(none)"
+            : string.Join(", ", advertised.OrderBy(v => v, StringComparer.OrdinalIgnoreCase));
+
+        return $"Target does not satisfy capability slot '{slot}'. " +
+               $"Handler accepts: {{{acceptableJoined}}}. Target advertises: {{{advertisedJoined}}}.";
+    }
 }
