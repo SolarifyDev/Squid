@@ -106,9 +106,20 @@ public class IISDeployActionHandlerTests
     }
 
     [Theory]
+    // Canonical short form — current AgentOperatingSystems.Windows
     [InlineData("Windows")]
     [InlineData("windows")]   // case-insensitive — Windows reports vary
     [InlineData("WINDOWS")]
+    // Legacy long form — older Tentacle binaries / cache entries seeded before the
+    // canonical-constant refactor wrote Environment.OSVersion.VersionString into
+    // the "os" metadata field. Real-world examples reported by operators below.
+    // Without these the production-blocking failure mode lands: a fully-functional
+    // Windows Tentacle gets rejected at dispatch with a misleading "not Windows" error.
+    [InlineData("Microsoft Windows NT 10.0.19045.0")]    // Windows 10 22H2 (user's failure mode)
+    [InlineData("Microsoft Windows NT 10.0.22631.0")]    // Windows 11 23H2
+    [InlineData("Microsoft Windows NT 10.0.17763.0")]    // Windows Server 2019
+    [InlineData("Microsoft Windows NT 10.0.20348.0")]    // Windows Server 2022
+    [InlineData("microsoft windows nt 10.0.19045.0")]    // lowercased — defensive
     public async Task DescribeIntentAsync_WindowsTentacle_ProceedsSuccessfully(string os)
     {
         var handler = (IActionHandler)new IISDeployActionHandler();
@@ -119,6 +130,46 @@ public class IISDeployActionHandlerTests
         // Should not throw.
         var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
         intent.ShouldBeOfType<RunScriptIntent>();
+    }
+
+    [Theory]
+    // Canonical short form
+    [InlineData("Windows", true)]
+    [InlineData("windows", true)]
+    [InlineData("WINDOWS", true)]
+    // Legacy long forms — Environment.OSVersion.VersionString on Windows
+    [InlineData("Microsoft Windows NT 10.0.19045.0", true)]
+    [InlineData("Microsoft Windows NT 6.3.9600.0", true)]    // legacy Windows 8.1 / Server 2012 R2
+    [InlineData("microsoft windows nt 6.1.7601.0", true)]    // case-insensitive prefix
+    // Non-Windows — must reject
+    [InlineData("Linux", false)]
+    [InlineData("linux", false)]
+    [InlineData("macOS", false)]
+    [InlineData("Darwin", false)]
+    [InlineData("FreeBSD", false)]
+    [InlineData("Unknown", false)]
+    // Edge cases
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData(null, false)]
+    // Anchoring guard: must NOT false-positive on a string that merely CONTAINS
+    // "Windows" but isn't a Windows OS marker (the helper anchors on prefix,
+    // not Contains, exactly to prevent this).
+    [InlineData("LinuxOnWindowsSubsystem", false)]
+    [InlineData("not-a-windows-host", false)]
+    public void LooksLikeWindowsOsString_PinnedBehaviour(string osValue, bool expected)
+    {
+        // Pin both halves of the tolerance contract:
+        //   1. canonical "Windows" → true
+        //   2. legacy "Microsoft Windows ..." → true (the operator-blocking bug fix)
+        //   3. explicit Linux/macOS/Unknown → false (we still reject these)
+        //   4. unrelated strings that contain the word "Windows" → false
+        //      (prevents accidental positives — the helper uses StartsWith, not Contains)
+        IISDeployActionHandler.LooksLikeWindowsOsString(osValue).ShouldBe(expected,
+            customMessage:
+                $"LooksLikeWindowsOsString('{osValue}') expected {expected} but got {!expected}. " +
+                $"If a legitimate Windows OS string is being rejected, extend the helper's prefix list. " +
+                $"If a non-Windows string is being accepted, the prefix anchor has been weakened.");
     }
 
     [Fact]

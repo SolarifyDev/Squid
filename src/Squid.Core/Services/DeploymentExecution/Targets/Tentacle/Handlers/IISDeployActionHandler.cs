@@ -56,8 +56,21 @@ public class IISDeployActionHandler : IActionHandler
     /// <summary>
     /// Rejects dispatch when the target machine is known to NOT be a Windows Tentacle.
     /// "Known non-Windows" = the runtime-capabilities cache has a value for
-    /// <c>Squid.Tentacle.OS</c> and that value isn't <c>Windows</c>. "Unknown" (no value
-    /// in the cache yet) is permitted — the script will fail loudly on the agent if so.
+    /// <c>Squid.Tentacle.OS</c> and the value doesn't look like a Windows identifier.
+    /// "Unknown" (no value in the cache yet) is permitted — the script will fail
+    /// loudly on the agent if so.
+    ///
+    /// <para><b>Tolerant match rationale</b>: this handler accepts BOTH the
+    /// canonical short form <c>"Windows"</c> (current <see cref="AgentOperatingSystems.Windows"/>
+    /// constant emitted by modern <c>RuntimeCapabilitiesInspector.DetectOs()</c>)
+    /// AND legacy long forms like <c>"Microsoft Windows NT 10.0.19045.0"</c>
+    /// (from older Tentacle binaries that wrote <c>Environment.OSVersion.VersionString</c>
+    /// into the "os" metadata field, or from cache entries seeded before the
+    /// canonical-constant refactor). A strict equality check rejected the legacy
+    /// form and blocked operators with not-yet-upgraded Tentacles from deploying
+    /// IIS — the failure mode the original release pinned. Symmetric tolerance
+    /// for the explicit Linux / macOS markers keeps the rejection path correct
+    /// (we still throw on <c>"Linux"</c> / <c>"macOS"</c> / anything else).</para>
     /// </summary>
     private static void EnsureWindowsTentacleTarget(ActionExecutionContext ctx)
     {
@@ -67,7 +80,7 @@ public class IISDeployActionHandler : IActionHandler
         if (osVariable == null || string.IsNullOrEmpty(osVariable.Value))
             return;   // unknown — proceed optimistically (see XML doc above)
 
-        if (string.Equals(osVariable.Value, "Windows", StringComparison.OrdinalIgnoreCase))
+        if (LooksLikeWindowsOsString(osVariable.Value))
             return;   // confirmed Windows — proceed
 
         var stepName = ctx.Step?.Name ?? "(unknown)";
@@ -78,5 +91,32 @@ public class IISDeployActionHandler : IActionHandler
             $"requires a Windows Tentacle target. The configured target reports '{IISDeployProperties.TentacleOS}'='{osVariable.Value}'. " +
             $"To deploy to IIS, configure a Windows Tentacle (Polling or Listening) and assign it the role this step targets. " +
             $"If you believe the target IS Windows, run a health check against it so the runtime-capabilities cache refreshes.");
+    }
+
+    /// <summary>
+    /// Returns true when the OS string identifies a Windows host. Matches:
+    /// <list type="bullet">
+    ///   <item>The canonical short form <c>"Windows"</c> from
+    ///         <see cref="AgentOperatingSystems.Windows"/></item>
+    ///   <item>Legacy long forms starting with <c>"Microsoft Windows"</c> (e.g.
+    ///         <c>"Microsoft Windows NT 10.0.19045.0"</c> — what
+    ///         <c>Environment.OSVersion.VersionString</c> returns on modern
+    ///         Windows Server / 10 / 11)</item>
+    /// </list>
+    /// Explicitly does NOT match <c>"Linux"</c>, <c>"macOS"</c>, or empty —
+    /// those are caught by the caller's null-or-empty short-circuit + the
+    /// explicit-throw fall-through.
+    /// </summary>
+    internal static bool LooksLikeWindowsOsString(string osValue)
+    {
+        if (string.IsNullOrWhiteSpace(osValue)) return false;
+
+        if (string.Equals(osValue, AgentOperatingSystems.Windows, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Environment.OSVersion.VersionString on Windows always starts with "Microsoft Windows".
+        // Anchoring on the prefix (not a Contains "Windows") avoids false positives like a
+        // hypothetical Linux distro string accidentally containing the word "Windows".
+        return osValue.StartsWith("Microsoft Windows", StringComparison.OrdinalIgnoreCase);
     }
 }
