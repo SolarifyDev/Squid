@@ -48,7 +48,7 @@ public static class MachineCapabilitySet
         if (string.IsNullOrWhiteSpace(osValue)) return;
 
         // Tolerance for two real-world forms — see class-level doc-comment.
-        if (IsWindows(osValue))
+        if (WindowsOsStringHelper.IsWindows(osValue))
         {
             builder.Add(CapabilityKeys.OsSlot, ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase, CapabilityKeys.Os.Windows));
             return;
@@ -97,22 +97,9 @@ public static class MachineCapabilitySet
     }
 
     /// <summary>
-    /// Returns true when the OS string identifies a Windows host. Accepts the
-    /// canonical short form (<see cref="AgentOperatingSystems.Windows"/>) AND
-    /// the legacy long form starting with <c>"Microsoft Windows"</c> (from
-    /// older Tentacle binaries that wrote <c>Environment.OSVersion.VersionString</c>).
-    ///
-    /// <para>Anchored on <c>StartsWith("Microsoft Windows")</c> not
-    /// <c>Contains("Windows")</c> so unrelated strings like
-    /// <c>"LinuxOnWindowsSubsystem"</c> don't false-positive.</para>
+    /// Backward-compatible delegate to <see cref="WindowsOsStringHelper.IsWindows"/>.
+    /// Kept on this class to preserve the existing test surface; new code
+    /// should call the helper directly.
     /// </summary>
-    internal static bool IsWindows(string osValue)
-    {
-        if (string.IsNullOrWhiteSpace(osValue)) return false;
-
-        if (string.Equals(osValue, AgentOperatingSystems.Windows, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return osValue.StartsWith("Microsoft Windows", StringComparison.OrdinalIgnoreCase);
-    }
+    internal static bool IsWindows(string osValue) => WindowsOsStringHelper.IsWindows(osValue);
 }
