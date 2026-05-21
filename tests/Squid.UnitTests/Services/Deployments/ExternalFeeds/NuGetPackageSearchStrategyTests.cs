@@ -445,6 +445,79 @@ public class NuGetPackageSearchStrategyTests
             customMessage: "Empty FeedUri MUST short-circuit before any HTTP call to avoid wasted network round-trips.");
     }
 
+    // ── Edge cases — auth failure, timeout, special chars, pagination ────────
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]    // wrong credentials
+    [InlineData(HttpStatusCode.Forbidden)]       // valid creds but not allowed to read
+    public async Task SearchAsync_AuthFailureOnV3Index_FallsBackToV2_AlsoFails_ReturnsEmpty(HttpStatusCode authError)
+    {
+        // V3 service index returns 401/403 → strategy aborts V3 attempt + tries V2.
+        // V2 /Search() also returns the same auth error → empty result (no exception).
+        // The strategy MUST treat auth failure as "no results", not crash — otherwise
+        // a misconfigured private feed crashes every deploy that searches it.
+        var client = CreateHttpClient(_ => new HttpResponseMessage(authError));
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed
+        {
+            FeedType = "NuGet",
+            FeedUri = "https://example.com/nuget",
+            Username = "wrong",
+            Password = "creds"
+        };
+
+        var result = await sut.SearchAsync(feed, "Newtonsoft", 20, CancellationToken.None);
+
+        result.ShouldBeEmpty(
+            customMessage:
+                $"Auth failure ({authError}) MUST be swallowed by the strategy as 'no results'. " +
+                "Crashing here would block every deploy whose pipeline brushes this feed.");
+    }
+
+    [Fact]
+    public async Task SearchAsync_HttpClientThrows_TaskCanceled_ReturnsEmpty()
+    {
+        // Simulates network timeout / cancellation. The strategy's inner try/catch
+        // MUST absorb the exception and return empty.
+        var client = CreateHttpClient(_ => throw new TaskCanceledException("simulated timeout"));
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "NuGet", FeedUri = "https://slow.example.com/nuget" };
+
+        var result = await sut.SearchAsync(feed, "test", 20, CancellationToken.None);
+
+        result.ShouldBeEmpty(
+            customMessage:
+                "Network exceptions in the search path MUST be swallowed — the strategy's " +
+                "try/catch returns empty so an unreachable feed doesn't crash the entire UI's package picker.");
+    }
+
+    [Theory]
+    [InlineData("foo bar", "foo%20bar")]
+    [InlineData("foo+bar", "foo%2Bbar")]
+    [InlineData("foo/bar", "foo%2Fbar")]
+    [InlineData("foo&bar", "foo%26bar")]
+    [InlineData("foo#bar", "foo%23bar")]
+    [InlineData("foo=bar", "foo%3Dbar")]
+    public void BuildV3SearchEndpoint_SpecialCharsInQuery_AreUrlEncoded(string raw, string expectedEncoded)
+    {
+        // Defense-in-depth: special chars in package query MUST be URL-encoded
+        // before going into the V3 ?q= parameter. Without encoding, '&' / '=' /
+        // '/' break the URL structure and the feed returns garbage.
+        var endpoint = NuGetPackageSearchStrategy.BuildV3SearchEndpoint("https://example.com/search", raw, 20);
+
+        endpoint.ShouldContain($"q={expectedEncoded}",
+            customMessage:
+                $"Query '{raw}' MUST encode to '{expectedEncoded}'. Full endpoint: {endpoint}");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private NuGetPackageSearchStrategy CreateSut() => new(_httpClientFactory.Object);

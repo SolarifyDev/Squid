@@ -406,6 +406,97 @@ public class NuGetPackageVersionStrategyTests
         result.ShouldBeEmpty();
     }
 
+    // ── Edge cases — auth failure, timeout, pagination loop ──────────────────
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task ListVersionsAsync_AuthFailure_ReturnsEmpty(HttpStatusCode authError)
+    {
+        var client = CreateHttpClient(_ => new HttpResponseMessage(authError));
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed
+        {
+            FeedType = "NuGet",
+            FeedUri = "https://example.com/nuget",
+            Username = "wrong",
+            Password = "creds"
+        };
+
+        var result = await sut.ListVersionsAsync(feed, "AnyPackage", CancellationToken.None);
+
+        result.ShouldBeEmpty(
+            customMessage:
+                $"Auth failure ({authError}) MUST return empty (no exception). Otherwise a misconfigured " +
+                "private feed crashes every release-creation that brushes it.");
+    }
+
+    [Fact]
+    public async Task ListVersionsAsync_HttpClientThrows_TaskCanceled_ReturnsEmpty()
+    {
+        var client = CreateHttpClient(_ => throw new TaskCanceledException("simulated timeout"));
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "NuGet", FeedUri = "https://slow.example.com/nuget" };
+
+        var result = await sut.ListVersionsAsync(feed, "AnyPackage", CancellationToken.None);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListVersionsAsync_V2PaginationLoop_TerminatesOnEmptyNextLink()
+    {
+        // Pagination loop safety — must terminate when no <link rel="next">.
+        // Failure mode: infinite loop hanging the UI's version-listing call.
+        // Two pages of versions, second has no next link.
+        var page1 = """
+            <feed xmlns="http://www.w3.org/2005/Atom" xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+              <link rel="next" href="https://example.com/nuget/FindPackagesById()?id='X'&amp;%24skip=1" />
+              <entry><m:properties><d:Version>1.0.0</d:Version></m:properties></entry>
+            </feed>
+            """;
+        var page2 = """
+            <feed xmlns="http://www.w3.org/2005/Atom" xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices" xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata">
+              <entry><m:properties><d:Version>2.0.0</d:Version></m:properties></entry>
+            </feed>
+            """;
+
+        var hits = 0;
+        var client = CreateHttpClient(req =>
+        {
+            hits++;
+            var url = req.RequestUri!.ToString();
+            if (url.EndsWith("/index.json")) return new HttpResponseMessage(HttpStatusCode.NotFound);
+            if (url.Contains("%24skip=1")) return Ok(page2);
+            if (url.Contains("/FindPackagesById()")) return Ok(page1);
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        _httpClientFactory.Setup(x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()))
+            .Returns(client);
+
+        var sut = CreateSut();
+        var feed = new ExternalFeed { FeedType = "NuGet", FeedUri = "https://example.com/nuget" };
+
+        var result = await sut.ListVersionsAsync(feed, "X", CancellationToken.None);
+
+        result.ShouldBe(new[] { "1.0.0", "2.0.0" });
+
+        hits.ShouldBeLessThan(10,
+            customMessage:
+                $"V2 pagination loop made {hits} HTTP requests for a 2-page result. " +
+                "Should be at most 3 (V3 index probe + 2 pages). Anything higher means the loop " +
+                "isn't terminating on missing next-link — fix immediately or production will hang.");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private NuGetPackageVersionStrategy CreateSut() => new(_httpClientFactory.Object);

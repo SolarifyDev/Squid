@@ -98,7 +98,7 @@ public class IISDeployActionHandler : IActionHandler
         if (osVariable == null || string.IsNullOrEmpty(osVariable.Value))
             return;   // unknown — proceed optimistically (see XML doc above)
 
-        if (LooksLikeWindowsOsString(osVariable.Value))
+        if (WindowsOsStringHelper.IsWindows(osVariable.Value))
             return;   // confirmed Windows — proceed
 
         var stepName = ctx.Step?.Name ?? "(unknown)";
@@ -112,29 +112,10 @@ public class IISDeployActionHandler : IActionHandler
     }
 
     /// <summary>
-    /// Returns true when the OS string identifies a Windows host. Matches:
-    /// <list type="bullet">
-    ///   <item>The canonical short form <c>"Windows"</c> from
-    ///         <see cref="AgentOperatingSystems.Windows"/></item>
-    ///   <item>Legacy long forms starting with <c>"Microsoft Windows"</c> (e.g.
-    ///         <c>"Microsoft Windows NT 10.0.19045.0"</c> — what
-    ///         <c>Environment.OSVersion.VersionString</c> returns on modern
-    ///         Windows Server / 10 / 11)</item>
-    /// </list>
-    /// Explicitly does NOT match <c>"Linux"</c>, <c>"macOS"</c>, or empty —
-    /// those are caught by the caller's null-or-empty short-circuit + the
-    /// explicit-throw fall-through.
+    /// Backward-compatible delegate to <see cref="WindowsOsStringHelper.IsWindows"/>.
+    /// The dispatch-time guard above ALSO references this name; the test suite
+    /// pins it under this name. New code should call the helper directly.
     /// </summary>
     internal static bool LooksLikeWindowsOsString(string osValue)
-    {
-        if (string.IsNullOrWhiteSpace(osValue)) return false;
-
-        if (string.Equals(osValue, AgentOperatingSystems.Windows, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Environment.OSVersion.VersionString on Windows always starts with "Microsoft Windows".
-        // Anchoring on the prefix (not a Contains "Windows") avoids false positives like a
-        // hypothetical Linux distro string accidentally containing the word "Windows".
-        return osValue.StartsWith("Microsoft Windows", StringComparison.OrdinalIgnoreCase);
-    }
+        => WindowsOsStringHelper.IsWindows(osValue);
 }
