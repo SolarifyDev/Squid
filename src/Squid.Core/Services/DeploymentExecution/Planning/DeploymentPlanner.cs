@@ -2,6 +2,7 @@ using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Planning.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
@@ -29,14 +30,20 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
 {
     private readonly IActionHandlerRegistry _actionHandlerRegistry;
     private readonly ICapabilityValidator _capabilityValidator;
+    private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
 
-    public DeploymentPlanner(IActionHandlerRegistry actionHandlerRegistry, ICapabilityValidator capabilityValidator)
+    public DeploymentPlanner(
+        IActionHandlerRegistry actionHandlerRegistry,
+        ICapabilityValidator capabilityValidator,
+        IMachineRuntimeCapabilitiesCache capabilitiesCache)
     {
         ArgumentNullException.ThrowIfNull(actionHandlerRegistry);
         ArgumentNullException.ThrowIfNull(capabilityValidator);
+        ArgumentNullException.ThrowIfNull(capabilitiesCache);
 
         _actionHandlerRegistry = actionHandlerRegistry;
         _capabilityValidator = capabilityValidator;
+        _capabilitiesCache = capabilitiesCache;
     }
 
     public Task<DeploymentPlan> PlanAsync(DeploymentPlanRequest request, CancellationToken ct)
@@ -314,7 +321,7 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
         }
 
         var capabilities = targetContext.Transport.Capabilities;
-        var validation = ValidateCapabilities(intent, capabilities, target.CommunicationStyle, action.ActionType);
+        var validation = ValidateCapabilities(intent, capabilities, target, action);
 
         if (!validation.IsValid)
             AddCapabilityBlockers(blockers, validation.Violations, target);
@@ -332,15 +339,46 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
     private CapabilityValidationResult ValidateCapabilities(
         ExecutionIntent intent,
         ITransportCapabilities capabilities,
-        CommunicationStyle communicationStyle,
-        string actionType)
+        PlannedTarget target,
+        DeploymentActionDto action)
     {
-        var violations = _capabilityValidator.Validate(intent, capabilities, communicationStyle, actionType);
+        var violations = new List<CapabilityViolation>();
+
+        violations.AddRange(_capabilityValidator.Validate(intent, capabilities, target.CommunicationStyle, action.ActionType));
+
+        violations.AddRange(ValidateHandlerStaticRequirements(intent, target, action));
 
         if (violations.Count == 0)
             return CapabilityValidationResult.Supported;
 
         return new CapabilityValidationResult { Violations = violations };
+    }
+
+    /// <summary>
+    /// Runs the handler-level static-requirement check that was added so OS / shell
+    /// requirements (e.g. IIS deploy needs Windows) are caught at preview time
+    /// instead of dispatch time. The handler advertises requirements; the target's
+    /// runtime-capabilities cache provides what it offers; <c>CapabilityValidator</c>
+    /// matches slot-by-slot.
+    /// </summary>
+    private IReadOnlyList<CapabilityViolation> ValidateHandlerStaticRequirements(
+        ExecutionIntent intent,
+        PlannedTarget target,
+        DeploymentActionDto action)
+    {
+        var handler = _actionHandlerRegistry.Resolve(action);
+
+        if (handler?.StaticRequirements is null || handler.StaticRequirements.Count == 0)
+            return Array.Empty<CapabilityViolation>();
+
+        var caps = _capabilitiesCache.TryGet(target.MachineId);
+        var targetCapabilitySet = MachineCapabilitySet.From(caps);
+
+        return _capabilityValidator.ValidateStaticRequirements(
+            handler.StaticRequirements,
+            targetCapabilitySet,
+            intent,
+            target.CommunicationStyle);
     }
 
     private static void AddCapabilityBlockers(

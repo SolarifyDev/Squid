@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Planning.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
@@ -24,14 +25,26 @@ public class DeploymentPlannerTests
 {
     private readonly CapabilityValidator _validator = new();
     private readonly Mock<IActionHandlerRegistry> _registry = new();
+    private readonly Mock<IMachineRuntimeCapabilitiesCache> _capabilitiesCache = new();
 
     public DeploymentPlannerTests()
     {
         _registry.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>()))
             .Returns(ExecutionScope.TargetLevel);
+
+        // Default: no handler resolved (so handler-static-requirements check is a no-op
+        // for the existing test cases that didn't set this up). Tests that DO want to
+        // exercise the new dimension can override _registry.Setup(r => r.Resolve(...)).
+        _registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>()))
+            .Returns((IActionHandler)null);
+
+        // Default: empty capabilities cache (target is "unknown" → optimistic-allow
+        // through the new validator dimension; matches pre-existing test assumptions).
+        _capabilitiesCache.Setup(c => c.TryGet(It.IsAny<int>()))
+            .Returns(MachineRuntimeCapabilities.Empty);
     }
 
-    private DeploymentPlanner BuildPlanner() => new(_registry.Object, _validator);
+    private DeploymentPlanner BuildPlanner() => new(_registry.Object, _validator, _capabilitiesCache.Object);
 
     // ---------- guard clauses -------------------------------------------
 

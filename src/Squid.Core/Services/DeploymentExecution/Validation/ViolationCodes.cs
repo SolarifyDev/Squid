@@ -27,6 +27,13 @@ public static class ViolationCodes
     /// <summary>The intent declares packages but the transport has <c>PackageStagingMode.None</c>.</summary>
     public const string PackageStaging = "PACKAGE_STAGING";
 
+    /// <summary>
+    /// The handler declared a static capability requirement (e.g. <c>os: {windows}</c>)
+    /// that the target machine's projected capability set doesn't satisfy. Emitted
+    /// per-slot so the preview UI lists every missing dimension.
+    /// </summary>
+    public const string MissingCapability = "MISSING_CAPABILITY";
+
     /// <summary>The complete set of well-known violation codes. Used by drift tests.</summary>
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -34,6 +41,7 @@ public static class ViolationCodes
         UnsupportedSyntax,
         NestedFiles,
         MissingFeature,
-        PackageStaging
+        PackageStaging,
+        MissingCapability
     };
 }

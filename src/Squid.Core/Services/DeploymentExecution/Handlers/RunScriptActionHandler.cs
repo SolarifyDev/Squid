@@ -2,6 +2,7 @@ using Squid.Core.Extensions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -11,6 +12,27 @@ namespace Squid.Core.Services.DeploymentExecution.Handlers;
 public class RunScriptActionHandler : IActionHandler
 {
     public string ActionType => SpecialVariables.ActionTypes.Script;
+
+    /// <summary>
+    /// Plan-time static requirements: RunScript is OS-agnostic — it works on
+    /// any OS that has a usable shell. The transport-level
+    /// <c>ITransportCapabilities.SupportedSyntaxes</c> + the existing
+    /// <c>CapabilityValidator.ValidateScriptSyntax</c> handle whether the
+    /// specific syntax (bash / powershell / python) is supported. So all we
+    /// need to declare here is "any of windows / linux / macos is fine" —
+    /// which is a no-op match against any concrete-OS target, but EXCLUDES a
+    /// target whose OS is explicitly something unsupported.
+    ///
+    /// <para>Equivalent to declaring zero requirements (since the OR set
+    /// covers every projected OS value) but kept explicit so future operators
+    /// adding a new OS taxonomy entry remember to extend this list.</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlySet<string>> StaticRequirements { get; } =
+        CapabilityRequirements.Empty
+            .Require(CapabilityKeys.OsSlot,
+                CapabilityKeys.Os.Windows,
+                CapabilityKeys.Os.Linux,
+                CapabilityKeys.Os.MacOS);
 
     /// <summary>
     /// Produces a <see cref="RunScriptIntent"/> with <c>InjectRuntimeBundle = true</c> so the
