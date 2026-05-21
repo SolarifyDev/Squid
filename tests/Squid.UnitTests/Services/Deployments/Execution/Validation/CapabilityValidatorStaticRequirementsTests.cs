@@ -126,22 +126,42 @@ public class CapabilityValidatorStaticRequirementsTests
     // ── Optimistic-allow path ────────────────────────────────────────────────
 
     [Fact]
-    public void TargetMissingSlot_HandlerRequiresIt_ViolationWithHealthCheckHint()
+    public void TargetWithNoAdvertisedCapabilities_OptimisticAllow_NoViolations()
     {
-        // Plan-time strict: a slot the target hasn't advertised IS a violation.
-        // The runtime-safety-net is the per-handler dispatch-time guard (e.g.
-        // IISDeployActionHandler.EnsureWindowsTentacleTarget) which retains its
-        // existing optimistic-allow behaviour for cache-went-stale-between-
-        // preview-and-execute scenarios. The plan-time message points the
-        // operator at the actionable next step (run a health check).
-        var reqs = CapabilityRequirements.Empty.Require(CapabilityKeys.OsSlot, CapabilityKeys.Os.Windows);
+        // Cold-cache short-circuit: target has health-checked nothing yet
+        // (empty capabilities map). The validator optimistically allows on
+        // EVERY requirement — the per-handler dispatch-time guard catches
+        // mismatches once the cache populates. This is critical for fresh
+        // target → first deploy UX; without it every new target would get
+        // a torrent of "run a health check first" preview blockers.
+        var reqs = CapabilityRequirements.Empty
+            .Require(CapabilityKeys.OsSlot, CapabilityKeys.Os.Windows)
+            .Require(CapabilityKeys.Shell.PowerShell, CapabilityKeys.Present);
         var caps = MachineCapabilitySet.From(new Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities());
 
         var result = _validator.ValidateStaticRequirements(reqs, caps, BuildIntent(), CommunicationStyle.TentacleListening);
 
+        result.ShouldBeEmpty(
+            customMessage:
+                "Cold-cache target (no advertised capabilities) MUST get optimistic-allow on every slot. " +
+                "Otherwise fresh-target-first-deploy gets a torrent of plan-time blockers and the operator " +
+                "can't deploy at all without an out-of-band health check.");
+    }
+
+    [Fact]
+    public void TargetAdvertisesSomeSlotsButNotTheRequiredOne_StrictReject_WithHealthCheckHint()
+    {
+        // Warm-cache strict: target HAS health-checked (advertises some slots),
+        // but the slot the handler requires isn't among them. That's a real
+        // missing capability — reject with an actionable message.
+        var reqs = CapabilityRequirements.Empty.Require(CapabilityKeys.Shell.PowerShell, CapabilityKeys.Present);
+        var caps = BuildCapSet((CapabilityKeys.OsSlot, CapabilityKeys.Os.Linux));   // has 'os' slot but not 'shell:powershell'
+
+        var result = _validator.ValidateStaticRequirements(reqs, caps, BuildIntent(), CommunicationStyle.Ssh);
+
         result.Count.ShouldBe(1);
         result[0].Code.ShouldBe(ViolationCodes.MissingCapability);
-        result[0].Detail.ShouldBe(CapabilityKeys.OsSlot);
+        result[0].Detail.ShouldBe(CapabilityKeys.Shell.PowerShell);
         result[0].Message.ShouldContain("does not advertise",
             customMessage: "Slot-absent message MUST distinguish from slot-present-but-mismatch — different operator actions.");
         result[0].Message.ShouldContain("health check",

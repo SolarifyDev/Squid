@@ -50,13 +50,14 @@ public interface ICapabilityValidator : IScopedDependency
     ///         by the target.</item>
     ///   <item>OR within a slot — a slot is satisfied when the target advertises
     ///         AT LEAST ONE value in the handler's acceptable-values set for that slot.</item>
-    ///   <item>If the handler declares a slot the target hasn't advertised
-    ///         (e.g. <c>os</c> is unset because the agent hasn't health-checked),
-    ///         it's a violation — the message tells the operator to run a health
-    ///         check. Plan-time strictness is intentional UX: surface the gap at
-    ///         preview, not at dispatch. The per-handler dispatch-time guard
-    ///         remains the runtime safety net for cache-went-stale-between-
-    ///         preview-and-execute scenarios.</item>
+    ///   <item>Cold-cache short-circuit: when the target has advertised NO
+    ///         capabilities at all (fresh registration / no health check yet),
+    ///         every requirement is optimistic-allow. The deploy attempt itself
+    ///         will trigger a health check before dispatch, and the per-handler
+    ///         runtime guard catches any post-cache-population mismatch.</item>
+    ///   <item>Warm-cache strict: when the target HAS advertised some slots
+    ///         but not the one the handler requires, that's a real missing
+    ///         capability — reject with an actionable message.</item>
     ///   <item>Empty <paramref name="handlerRequirements"/> short-circuits to no
     ///         violations — backward-compat for handlers that don't opt in.</item>
     /// </list></para>

@@ -220,17 +220,24 @@ public sealed class CapabilityValidator : ICapabilityValidator
         if (handlerRequirements.Count == 0)
             return Array.Empty<CapabilityViolation>();
 
+        // Cold-cache short-circuit: target has advertised NOTHING (no health
+        // check yet, fresh test fixture, agent-version too old to send caps).
+        // Optimistic-allow on every requirement; the per-handler dispatch-time
+        // guard is the runtime safety net. This is critical for happy-path
+        // first-deploy UX — a freshly-registered target shouldn't get a
+        // torrent of "run a health check first" preview blockers; the deploy
+        // attempt itself will populate the cache via the health-check it
+        // performs before dispatch.
+        if (targetCapabilities.Count == 0)
+            return Array.Empty<CapabilityViolation>();
+
         var violations = new List<CapabilityViolation>();
 
         foreach (var (slot, acceptableValues) in handlerRequirements)
         {
-            // Slot absent from target → violation. The validator runs at preview
-            // time; surfacing a "target hasn't advertised this slot" violation
-            // tells the operator to health-check the target before triggering
-            // deploy. The runtime safety net (per-handler dispatch-time guard
-            // like IISDeployActionHandler.EnsureWindowsTentacleTarget) handles
-            // the "cache went stale between preview and execute" case with
-            // optimistic-allow on its own terms.
+            // Slot absent but target HAS advertised other slots → real missing
+            // capability. The cache is warm; if the slot were present it would
+            // have been advertised. Reject with the actionable message.
             if (!targetCapabilities.TryGetValue(slot, out var advertisedValues))
             {
                 violations.Add(BuildViolation(
