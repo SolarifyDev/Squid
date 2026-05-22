@@ -47,12 +47,31 @@ public sealed class MachineRuntimeCapabilitiesOsConstantsTests
     [InlineData("windows", true)]   // case-insensitive
     [InlineData("WINDOWS", true)]
     [InlineData("WiNdOwS", true)]
+    // Legacy long-form Windows strings — older Tentacle binaries (and any
+    // out-of-band caller that wrote Environment.OSVersion.VersionString into
+    // the cache directly) emit these. The operator-reported failure mode
+    // ("CommunicationStyle 'TentaclePolling' is not supported for in-UI
+    // upgrades") happened because strict equality treated these as a foreign
+    // OS, so BOTH the Windows AND Linux upgrade strategies rejected. Fix:
+    // delegate to WindowsOsStringHelper.IsWindows() — the same shared helper
+    // that already powers the IIS dispatch guard + MachineCapabilitySet
+    // projection (PR #348). Single source of truth for "is this a Windows
+    // host?" across the entire codebase.
+    [InlineData("Microsoft Windows NT 10.0.19045.0", true)]    // Win10 22H2 — operator's specific failure mode
+    [InlineData("Microsoft Windows NT 10.0.22631.0", true)]    // Win11 23H2
+    [InlineData("Microsoft Windows NT 10.0.17763.0", true)]    // Server 2019
+    [InlineData("Microsoft Windows NT 10.0.20348.0", true)]    // Server 2022
+    [InlineData("Microsoft Windows NT 6.3.9600.0", true)]      // Server 2012 R2 / Win 8.1
+    [InlineData("Microsoft Windows Server 2022 Datacenter", true)]    // friendly long form
+    [InlineData("microsoft windows nt 10.0.19045.0", true)]    // case-insensitive long form
     [InlineData("Linux", false)]
     [InlineData("macOS", false)]
     [InlineData("Unknown", false)]
     [InlineData("", false)]
     [InlineData("FreeBSD", false)]
-    [InlineData("Win", false)]      // partial-match must NOT match — guards against future agent rename to abbreviated form
+    [InlineData("Win", false)]                       // partial-match must NOT match — guards against future agent rename to abbreviated form
+    [InlineData("WindowsSomethingElse", false)]      // anti-false-positive anchor — doesn't start with "Microsoft Windows"
+    [InlineData("LinuxOnWindowsSubsystem", false)]   // contains "Windows" but not at start → must reject
     public void IsWindows_MatchesCanonicalString_CaseInsensitive(string os, bool expected)
     {
         var caps = new MachineRuntimeCapabilities { Os = os };
@@ -70,6 +89,14 @@ public sealed class MachineRuntimeCapabilitiesOsConstantsTests
     [InlineData("macOS", false)]
     [InlineData("Unknown", false)]
     [InlineData("", false)]
+    // Drift detector: long-form Windows must NEVER be claimed by IsLinux. Without
+    // this row, a future refactor that accidentally widened IsLinux (e.g.
+    // "if not strictly canonical, fall through to Linux") would silently route
+    // a Windows agent to the Linux upgrade strategy → tarball MD5 mismatch /
+    // /var/lib path missing / cryptic operator error. Single-owner invariant
+    // in MachineUpgradeService.ResolveStrategy depends on this exclusion.
+    [InlineData("Microsoft Windows NT 10.0.19045.0", false)]
+    [InlineData("Microsoft Windows Server 2022 Datacenter", false)]
     public void IsLinux_MatchesCanonicalString_CaseInsensitive(string os, bool expected)
     {
         var caps = new MachineRuntimeCapabilities { Os = os };
@@ -115,6 +142,15 @@ public sealed class MachineRuntimeCapabilitiesOsConstantsTests
     [InlineData("Windows", false)]      // explicit Windows is NOT unknown
     [InlineData("macOS", false)]
     [InlineData("FreeBSD", false)]      // unrecognised but explicit OS is NOT unknown — gives "no strategy registered" instead of falling to Linux
+    // Drift detector: long-form Windows is a RECOGNISED Windows variant, not
+    // Unknown. Without this row, the Linux strategy's `IsLinux || IsUnknown`
+    // claim path would accidentally route long-form Windows agents to the
+    // Linux upgrade strategy (because IsLinux=false, IsUnknown=true historically
+    // when only canonical "Windows" was recognised). The combo of (IsWindows
+    // tolerant) + (IsUnknown strict) is the invariant that keeps single-owner
+    // routing correct.
+    [InlineData("Microsoft Windows NT 10.0.19045.0", false)]
+    [InlineData("Microsoft Windows Server 2022 Datacenter", false)]
     public void IsUnknown_CoversBothColdCacheAndExplicitUnknownFallback(string os, bool expected)
     {
         var caps = new MachineRuntimeCapabilities { Os = os };
@@ -159,5 +195,26 @@ public sealed class MachineRuntimeCapabilitiesOsConstantsTests
         mac.IsLinux.ShouldBeFalse();
         mac.IsMacOS.ShouldBeTrue();
         mac.IsUnknown.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OsPredicates_LegacyMicrosoftWindowsForm_RoutesToWindowsOnly()
+    {
+        // The operator-reported failure mode: agent metadata carries the legacy
+        // "Microsoft Windows NT ..." string from Environment.OSVersion.VersionString.
+        // After the fix, all FOUR predicates must agree with the canonical
+        // "Windows" case — IsWindows=true, IsLinux=false, IsMacOS=false,
+        // IsUnknown=false. Without this, MachineUpgradeService.ResolveStrategy
+        // sees zero claimants and emits "CommunicationStyle 'TentaclePolling'
+        // is not supported for in-UI upgrades" even though the agent IS Windows.
+        var longForm = new MachineRuntimeCapabilities { Os = "Microsoft Windows NT 10.0.19045.0" };
+
+        longForm.IsWindows.ShouldBeTrue(
+            customMessage: "Legacy 'Microsoft Windows NT ...' MUST be recognised as Windows so WindowsTentacleUpgradeStrategy claims it");
+        longForm.IsLinux.ShouldBeFalse(
+            customMessage: "Long-form Windows must NOT trigger IsLinux — would silently route to Linux strategy");
+        longForm.IsMacOS.ShouldBeFalse();
+        longForm.IsUnknown.ShouldBeFalse(
+            customMessage: "Long-form Windows is a recognised Windows variant, not Unknown — Linux's `IsLinux || IsUnknown` claim path must NOT activate");
     }
 }

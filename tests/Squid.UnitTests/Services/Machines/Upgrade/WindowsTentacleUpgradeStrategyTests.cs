@@ -97,6 +97,16 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
     [InlineData("Windows", true)]
     [InlineData("windows", true)]
     [InlineData("WINDOWS", true)]
+    // Legacy long-form Windows strings — the operator's specific failure mode
+    // (TentaclePolling + Windows agent reporting "Microsoft Windows NT
+    // 10.0.19044.0" via Environment.OSVersion.VersionString). Without these
+    // claims, BOTH Windows AND Linux strategies reject → ResolveStrategy
+    // returns null → UI shows "is not supported for in-UI upgrades" even
+    // though the agent IS Windows. The fix in MachineRuntimeCapabilities.IsWindows
+    // (delegate to WindowsOsStringHelper) is what makes these pass.
+    [InlineData("Microsoft Windows NT 10.0.19045.0", true)]    // Win10 22H2 (operator's scenario)
+    [InlineData("Microsoft Windows NT 10.0.22631.0", true)]    // Win11 23H2
+    [InlineData("Microsoft Windows Server 2022 Datacenter", true)]
     [InlineData("Linux", false)]
     [InlineData("macOS", false)]
     [InlineData("", false)]                // cold cache → falls to Linux historical default, NOT Windows

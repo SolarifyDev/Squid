@@ -447,6 +447,15 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     [InlineData("Windows", false)] // explicit Windows skip — WindowsTentacleUpgradeStrategy claims
     [InlineData("windows", false)]
     [InlineData("WINDOWS", false)]
+    // Drift detector for the long-form Windows fix: legacy "Microsoft Windows
+    // NT ..." strings MUST NOT trigger the Linux claim (would route a Windows
+    // agent to a tarball that doesn't exist for win-x64 RIDs). Pairs with
+    // WindowsTentacleUpgradeStrategyTests' matching rows so we pin the
+    // single-owner invariant from BOTH ends — both halves of the resolver
+    // independently agree the long form is Windows-only.
+    [InlineData("Microsoft Windows NT 10.0.19045.0", false)]
+    [InlineData("Microsoft Windows NT 10.0.22631.0", false)]
+    [InlineData("Microsoft Windows Server 2022 Datacenter", false)]
     [InlineData("macOS", false)]   // explicit-claim refactor: Linux NO LONGER claims macOS (was true under "non-Windows" predicate). A future MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS METHOD.
     [InlineData("MACOS", false)]   // case-insensitive
     [InlineData("FreeBSD", false)] // any unknown OS string (not in AgentOperatingSystems) → no Linux claim → resolver says "no strategy registered"; clear operator error vs silent install-tarball-on-FreeBSD attempt
