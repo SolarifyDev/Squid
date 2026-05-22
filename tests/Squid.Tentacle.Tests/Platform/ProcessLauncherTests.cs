@@ -420,4 +420,154 @@ public sealed class ProcessLauncherTests
         // compile-time-visible decision rather than an invisible refactor.
         ProcessLauncherFactory.UseWindowsPowerShellEnvVar.ShouldBe("SQUID_TENTACLE_USE_WINDOWS_POWERSHELL");
     }
+
+    // ── pwsh-Core auto-fallback (operator bug fix) ──────────────────────────────
+    //
+    // The operator-reported failure mode: a Windows tentacle WITHOUT PowerShell 7
+    // installed dispatched a PowerShell upgrade script and crashed with
+    // Win32Exception (2) "系统找不到指定的文件" / "system cannot find the file
+    // specified". pwsh-Core is OPTIONAL on Windows (Microsoft does not bundle it
+    // with the OS); the factory's prior unconditional `pwsh` default stranded
+    // every stock Windows host.
+    //
+    // Fix: probe pwsh.exe availability; when absent, fall back to the always-
+    // present OS-bundled PowerShell.exe 5.1. Tests below pin each cell of the
+    // truth table:
+    //   (isWindows, optInToWindowsPowerShell, pwshAvailable) → expected launcher
+
+    [Fact]
+    public void Factory_PowerShell_OnWindows_PwshMissing_AutoFallsBackToWindowsPowerShell()
+    {
+        // The operator's specific scenario: Windows host, no PS7 installed,
+        // no env-var opt-in set. Without auto-fallback, the dispatch hits
+        // Win32Exception (2) at process spawn. With auto-fallback, the agent
+        // transparently uses Windows PowerShell 5.1 (always present on every
+        // supported Windows release since 2016) and the upgrade succeeds.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var priorEnv = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+        var priorProbe = ProcessLauncherFactory.PwshAvailableProbe;
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, null);
+            ProcessLauncherFactory.PwshAvailableProbe = () => false;    // simulate "no pwsh.exe on host"
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<WindowsPowerShellProcessLauncher>(
+                    customMessage: "Windows host without pwsh-Core MUST auto-fall-back to PowerShell.exe 5.1 — " +
+                                   "without this branch, every stock Windows tentacle crashed with Win32Exception (2) " +
+                                   "on the first PowerShell dispatch (upgrade, deployment, health check).");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, priorEnv);
+            ProcessLauncherFactory.PwshAvailableProbe = priorProbe;
+        }
+    }
+
+    [Fact]
+    public void Factory_PowerShell_OnWindows_PwshAvailable_PrefersPwshCore()
+    {
+        // Inverse of the auto-fallback case: when pwsh-Core IS resolvable on
+        // the host, the factory MUST keep preferring it (UTF-8 stdout,
+        // cross-locale Unicode round-trip). Pinning this row ensures a future
+        // refactor that accidentally widens the fallback branch to "always use
+        // Windows PowerShell on Windows" would fail this test.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var priorEnv = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+        var priorProbe = ProcessLauncherFactory.PwshAvailableProbe;
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, null);
+            ProcessLauncherFactory.PwshAvailableProbe = () => true;
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<PwshCoreProcessLauncher>(
+                    customMessage: "When pwsh-Core IS available on the Windows host, the factory MUST prefer it. " +
+                                   "The auto-fallback branch only fires when the probe returns false.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, priorEnv);
+            ProcessLauncherFactory.PwshAvailableProbe = priorProbe;
+        }
+    }
+
+    [Fact]
+    public void Factory_PowerShell_OnWindows_EnvVarOptIn_BeatsAutoFallback_EvenWhenPwshAvailable()
+    {
+        // Operator opt-in is the explicit user signal "I want Windows PowerShell
+        // 5.1 specifically" (e.g. legacy WMI modules, OEM stdout pinning, or
+        // forcing test reproducibility). It MUST take precedence over the
+        // pwsh-availability probe — otherwise an operator who installs PS7
+        // would silently lose their 5.1 routing without any visible warning.
+        if (!OperatingSystem.IsWindows()) return;
+
+        var priorEnv = Environment.GetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar);
+        var priorProbe = ProcessLauncherFactory.PwshAvailableProbe;
+
+        try
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, "true");
+            ProcessLauncherFactory.PwshAvailableProbe = () => true;    // pwsh IS available but opt-in must still win
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<WindowsPowerShellProcessLauncher>(
+                    customMessage: "Env var opt-in (UseWindowsPowerShellEnvVar=true) MUST beat the pwsh-availability probe. " +
+                                   "Operators who explicitly request PS 5.1 get it deterministically, regardless of PS7 install state.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessLauncherFactory.UseWindowsPowerShellEnvVar, priorEnv);
+            ProcessLauncherFactory.PwshAvailableProbe = priorProbe;
+        }
+    }
+
+    [Fact]
+    public void Factory_PowerShell_OnNonWindows_PwshProbe_DoesNotGate()
+    {
+        // Off-Windows drift detector: even if the probe somehow returns false
+        // on a Linux/macOS host, the factory MUST keep routing to pwsh-Core.
+        // Windows PowerShell 5.1 doesn't exist outside Windows; activating the
+        // fallback off-Windows would route to a launcher whose binary can never
+        // be found. This guard means a future refactor that drops the
+        // `OperatingSystem.IsWindows()` gate would fail loudly here.
+        if (OperatingSystem.IsWindows()) return;
+
+        var priorProbe = ProcessLauncherFactory.PwshAvailableProbe;
+
+        try
+        {
+            ProcessLauncherFactory.PwshAvailableProbe = () => false;
+
+            ProcessLauncherFactory.Resolve(ScriptType.PowerShell)
+                .ShouldBeOfType<PwshCoreProcessLauncher>(
+                    customMessage: "Off-Windows: pwsh-availability probe MUST NOT gate launcher choice — " +
+                                   "Linux/macOS always route to pwsh-Core (PowerShell.exe 5.1 doesn't exist there).");
+        }
+        finally
+        {
+            ProcessLauncherFactory.PwshAvailableProbe = priorProbe;
+        }
+    }
+
+    [Fact]
+    public void DefaultPwshAvailable_ReturnsBoolean_DoesNotThrow_OnAnyPlatform()
+    {
+        // Sanity: the default probe must be safe on every supported runner —
+        // malformed PATH entries, locked directories, empty %ProgramFiles%,
+        // non-Windows hosts all must be handled without throwing. Cold-call
+        // the probe and verify it returns one of {true, false} cleanly.
+        var result = ProcessLauncherFactory.DefaultPwshAvailable();
+
+        // Result must be a real bool (not throw). On non-Windows runners the
+        // probe trivially returns true (it doesn't gate off-Windows anyway —
+        // see the Factory_PowerShell_OnNonWindows_PwshProbe_DoesNotGate test).
+        if (!OperatingSystem.IsWindows())
+            result.ShouldBeTrue(
+                customMessage: "DefaultPwshAvailable() MUST return true off-Windows so the auto-fallback branch never accidentally activates on Linux/macOS where Windows PowerShell doesn't exist.");
+    }
 }
