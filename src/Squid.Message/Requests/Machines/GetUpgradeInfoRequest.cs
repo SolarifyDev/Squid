@@ -60,4 +60,13 @@ public class GetUpgradeInfoResponseData
     /// decision. Safe to render directly in a tooltip without sanitisation.
     /// </summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Structured reason code paired with <see cref="Reason"/>. Frontend can
+    /// branch on the code to drive UI behaviour (e.g. show a "Run health
+    /// check" deep-link for <see cref="UpgradeEligibilityReason.NoOsDetected"/>
+    /// instead of just rendering the text). Added in H1 — existing clients
+    /// that read only <see cref="Reason"/> are unaffected.
+    /// </summary>
+    public UpgradeEligibilityReason ReasonCode { get; set; }
 }

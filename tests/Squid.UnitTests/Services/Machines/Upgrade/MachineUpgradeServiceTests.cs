@@ -1234,8 +1234,10 @@ public sealed class MachineUpgradeServiceTests
     public async Task GetUpgradeInfoAsync_CurrentOlderThanLatest_CanUpgradeTrue()
     {
         // The primary UI signal: "new version N available". FE renders badge.
+        // H1: must seed OS in cache; cold cache now short-circuits to NoOsDetected
+        // for tentacle styles (which is precisely the bug operators hit in 1.7.x).
         ArrangeMachine(id: 1, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(1, new Dictionary<string, string>(), agentVersion: "1.3.9");
+        _runtimeCache.Store(1, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 1 }, CancellationToken.None);
 
@@ -1244,18 +1246,20 @@ public sealed class MachineUpgradeServiceTests
         info.LatestAvailableVersion.ShouldBe("1.4.0");
         info.Reason.ShouldContain("1.4.0");
         info.Reason.ShouldContain("newer than current");
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.Eligible);
     }
 
     [Fact]
     public async Task GetUpgradeInfoAsync_SameVersion_CanUpgradeFalse_WithClearReason()
     {
         ArrangeMachine(id: 2, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(2, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(2, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.4.0");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 2 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeFalse();
         info.Reason.ShouldContain("Already on");
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.AlreadyUpToDate);
     }
 
     [Fact]
@@ -1265,59 +1269,171 @@ public sealed class MachineUpgradeServiceTests
         // FE should NOT show upgrade badge even though versions differ —
         // surfacing the badge would tempt a downgrade via one-click UX.
         ArrangeMachine(id: 3, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(3, new Dictionary<string, string>(), agentVersion: "2.0.0-rc.1");
+        _runtimeCache.Store(3, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "2.0.0-rc.1");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 3 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeFalse();
         info.Reason.ShouldContain("newer than", Case.Insensitive);
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.WouldBeDowngrade);
     }
 
     [Fact]
-    public async Task GetUpgradeInfoAsync_CurrentVersionUnknown_CanUpgradeTrue_DispatchDecidesActualOutcome()
+    public async Task GetUpgradeInfoAsync_OsKnownButVersionUnknown_CanUpgradeTrue_DispatchDecidesActualOutcome()
     {
-        // Cold cache — machine never health-checked. FE shows the upgrade
-        // button (conservative default: let the user dispatch; the
-        // AlreadyUpToDate path on actual upgrade will catch no-ops).
+        // H1 — narrower contract than pre-H1: cold cache no longer counts as
+        // "version unknown / allow upgrade". To hit this branch the agent
+        // must have reported OS (so we know which registry to query) but NOT
+        // have reported its AgentVersion yet. Then optimistic-allow is safe —
+        // the agent's per-version idempotency lock will no-op the run if it's
+        // already on the target.
         ArrangeMachine(id: 4, style: nameof(CommunicationStyle.TentaclePolling));
-        // intentionally not storing in runtimeCache → cold cache
+        _runtimeCache.Store(4, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: string.Empty);
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 4 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeTrue();
         info.CurrentVersion.ShouldBe(string.Empty);
         info.Reason.ShouldContain("unknown", Case.Insensitive);
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.EligibleCurrentVersionUnknown);
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_ColdCacheTentacleStyle_NoOsDetected_PointsAtHealthCheck()
+    {
+        // H1 — the operator's 1.7.x failure mode. Cold cache (no runtime cache
+        // entry at all) on a TentaclePolling machine previously routed through
+        // LinuxTentacleUpgradeStrategy's historical default, producing the
+        // misleading "Docker Hub unreachable, set SQUID_TARGET_LINUX_TENTACLE_VERSION"
+        // message even for Windows machines. Now we short-circuit BEFORE
+        // strategy resolution and tell the operator to run a health check.
+        ArrangeMachine(id: 14, style: nameof(CommunicationStyle.TentaclePolling));
+        // intentionally not storing in runtimeCache → cold cache
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 14 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse(
+            customMessage: "Cold-cache tentacle style MUST NOT dispatch optimistically — we can't tell which OS / registry to use, so a wrong dispatch would either crash the agent or trigger the misleading Linux Docker Hub error path.");
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.NoOsDetected);
+        info.Reason.ShouldContain("health check", Case.Insensitive,
+            customMessage: "Operator MUST be pointed at the health-check endpoint as the actionable next step — the whole point of NoOsDetected is to avoid the 1.7.x 'Docker Hub' misdirection.");
+        // No "Docker Hub" / "SQUID_TARGET_LINUX_TENTACLE_VERSION" leakage when
+        // OS is unknown (those messages belong to RegistryUnreachable + Linux).
+        info.Reason.ShouldNotContain("Docker Hub");
+        info.Reason.ShouldNotContain("SQUID_TARGET_LINUX_TENTACLE_VERSION");
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_ColdCacheSshStyle_StillReportsStyleNotSupported_NotNoOsDetected()
+    {
+        // Drift detector for the IsTentacleStyle guard: non-tentacle styles
+        // (Ssh, future SshAgent) MUST NOT route through the NoOsDetected
+        // short-circuit. Their "not supported for in-UI upgrade" answer is
+        // independent of OS, so falling through to ResolveStrategy (which
+        // returns null for Ssh regardless of capabilities) gives the more
+        // actionable message.
+        ArrangeMachine(id: 15, style: "Ssh");
+        // intentionally cold cache
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 15 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.StyleNotSupported,
+            customMessage: "Ssh has no upgrade strategy in any case — operator gets 'manual upgrade required' regardless of whether OS is known.");
+        info.Reason.ShouldContain("Ssh");
+        info.Reason.ShouldContain("not supported", Case.Insensitive);
     }
 
     [Fact]
     public async Task GetUpgradeInfoAsync_NoStrategyForStyle_CanUpgradeFalse()
     {
         // SSH target or any future style without a strategy.
+        // H1: seed cache with OS so we test StyleNotSupported (NOT NoOsDetected).
+        // The drift detector GetUpgradeInfoAsync_ColdCacheSshStyle_* covers
+        // the cold-cache + Ssh path explicitly.
         ArrangeMachine(id: 5, style: "Ssh");
+        _runtimeCache.Store(5, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 5 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeFalse();
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.StyleNotSupported);
         info.Reason.ShouldContain("Ssh");
         info.Reason.ShouldContain("not supported", Case.Insensitive);
     }
 
     [Fact]
-    public async Task GetUpgradeInfoAsync_RegistryReturnsEmpty_CanUpgradeFalse_WithOpsHint()
+    public async Task GetUpgradeInfoAsync_RegistryReturnsEmptyForLinux_MessageMentionsDockerHub()
     {
-        // Docker Hub unreachable + no env override; registry returns empty.
-        // FE should show "version info unavailable" instead of "update button".
+        // Linux machine + Docker Hub unreachable AND no env override → registry
+        // returns empty. H1 makes the message OS-aware: Linux gets the Docker
+        // Hub + SQUID_TARGET_LINUX_TENTACLE_VERSION hint (the historical text).
         ArrangeMachine(id: 6, style: nameof(CommunicationStyle.TentaclePolling));
         _versionRegistry
             .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(string.Empty);
-        _runtimeCache.Store(6, new Dictionary<string, string>(), agentVersion: "1.3.9");
+        _runtimeCache.Store(6, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 6 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeFalse();
         info.LatestAvailableVersion.ShouldBe(string.Empty);
-        info.Reason.ShouldContain("Could not resolve", Case.Insensitive);
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.RegistryUnreachable);
+        info.Reason.ShouldContain("Docker Hub");
+        info.Reason.ShouldContain("SQUID_TARGET_LINUX_TENTACLE_VERSION");
+        // Defensive: Linux machines must NOT see the Windows env var hint.
+        info.Reason.ShouldNotContain("SQUID_TARGET_WINDOWS_TENTACLE_VERSION");
+        info.Reason.ShouldNotContain("github.com");
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_RegistryReturnsEmptyForWindows_MessageMentionsGitHub_NotDockerHub()
+    {
+        // H1 — the operator's specific 1.7.x bug. Windows machine + registry
+        // returns empty (GitHub Releases unreachable) → message MUST mention
+        // GitHub + SQUID_TARGET_WINDOWS_TENTACLE_VERSION, NOT Docker Hub +
+        // Linux env var. Pre-H1 the Windows case showed Linux hints, sending
+        // operators down the wrong remediation path.
+        ArrangeMachine(id: 16, style: nameof(CommunicationStyle.TentaclePolling));
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
+        _runtimeCache.Store(16, new Dictionary<string, string> { ["os"] = "Windows" }, agentVersion: "1.7.8");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 16 }, CancellationToken.None);
+
+        info.CanUpgrade.ShouldBeFalse();
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.RegistryUnreachable);
+        info.Reason.ShouldContain("github.com",
+            customMessage: "Windows machine MUST be pointed at GitHub Releases — the operator-blocking 1.7.x bug was sending Windows operators to Docker Hub.");
+        info.Reason.ShouldContain("SQUID_TARGET_WINDOWS_TENTACLE_VERSION");
+        // The 1.7.x bug class: Windows operator seeing Linux hints. Pin this.
+        info.Reason.ShouldNotContain("Docker Hub",
+            customMessage: "Windows registry-unreachable message MUST NOT mention Docker Hub — that misdirection is exactly the operator bug H1 fixes.");
+        info.Reason.ShouldNotContain("SQUID_TARGET_LINUX_TENTACLE_VERSION");
+    }
+
+    [Fact]
+    public async Task GetUpgradeInfoAsync_RegistryReturnsEmptyForWindowsLongFormOs_StillMessageMentionsGitHub()
+    {
+        // Drift detector: the operator's actual cache state in 1.7.x had
+        // `Os = "Microsoft Windows NT 10.0.19045.0"` (the long form). Make
+        // sure MachineRuntimeCapabilities.IsWindows still recognizes it
+        // (already fixed in PR #351 via WindowsOsStringHelper) AND that the
+        // registry-unreachable message picks the Windows branch accordingly.
+        ArrangeMachine(id: 17, style: nameof(CommunicationStyle.TentaclePolling));
+        _versionRegistry
+            .Setup(x => x.GetLatestVersionAsync(nameof(CommunicationStyle.TentaclePolling), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(string.Empty);
+        _runtimeCache.Store(17,
+            new Dictionary<string, string> { ["os"] = "Microsoft Windows NT 10.0.19045.0" },
+            agentVersion: "1.7.8");
+
+        var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 17 }, CancellationToken.None);
+
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.RegistryUnreachable);
+        info.Reason.ShouldContain("github.com");
+        info.Reason.ShouldNotContain("Docker Hub");
     }
 
     [Fact]
@@ -1330,6 +1446,7 @@ public sealed class MachineUpgradeServiceTests
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 7 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeFalse();
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.NoCommunicationStyle);
         info.Reason.ShouldContain("endpoint", Case.Insensitive);
     }
 
@@ -1340,11 +1457,12 @@ public sealed class MachineUpgradeServiceTests
         // compare, so the SAFE default is allow (dispatch is idempotent on
         // the agent side anyway). Reason makes the fuzziness explicit.
         ArrangeMachine(id: 8, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(8, new Dictionary<string, string>(), agentVersion: "custom-build-20260419");
+        _runtimeCache.Store(8, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "custom-build-20260419");
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 8 }, CancellationToken.None);
 
         info.CanUpgrade.ShouldBeTrue();
+        info.ReasonCode.ShouldBe(UpgradeEligibilityReason.EligibleNonSemverComparison);
         info.Reason.ShouldContain("cannot compare", Case.Insensitive);
     }
 
