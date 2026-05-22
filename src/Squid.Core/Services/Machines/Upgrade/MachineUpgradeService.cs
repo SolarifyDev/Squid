@@ -4,6 +4,7 @@ using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
+using Squid.Message.Enums;
 using Squid.Message.Requests.Machines;
 
 namespace Squid.Core.Services.Machines.Upgrade;
@@ -226,13 +227,14 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
         // capabilities thread through info path so OS-aware
         // resolver can pick the right strategy (Linux vs Windows tentacle).
-        // Empty fallback for cold cache; LinuxTentacleUpgradeStrategy claims
-        // the empty case as the historical default.
+        // H1: Empty/cold cache no longer silently routes to Linux historical
+        // default — EvaluateUpgradeEligibility short-circuits with NoOsDetected
+        // for tentacle styles before strategy resolution.
         var capabilities = _runtimeCache.TryGet(machine.Id) ?? MachineRuntimeCapabilities.Empty;
 
         var latestVersion = await ResolveLatestForInfoAsync(style, capabilities, ct).ConfigureAwait(false);
 
-        var (canUpgrade, reason) = EvaluateUpgradeEligibility(style, capabilities, currentVersion, latestVersion);
+        var (canUpgrade, reasonCode, reasonMessage) = EvaluateUpgradeEligibility(style, capabilities, currentVersion, latestVersion);
 
         return new GetUpgradeInfoResponseData
         {
@@ -240,7 +242,8 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
             CurrentVersion = currentVersion ?? string.Empty,
             LatestAvailableVersion = latestVersion ?? string.Empty,
             CanUpgrade = canUpgrade,
-            Reason = reason
+            Reason = reasonMessage,
+            ReasonCode = reasonCode
         };
     }
 
@@ -259,32 +262,126 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     /// <summary>
     /// Pure decision: given what we know, is it worth showing the operator
-    /// an upgrade affordance? Each branch returns a reason the FE can
-    /// render verbatim in a tooltip.
+    /// an upgrade affordance? Returns a tuple of <c>(canUpgrade, reasonCode,
+    /// reasonMessage)</c>:
+    /// <list type="bullet">
+    ///   <item><b>canUpgrade</b> — boolean the FE uses to show/hide the upgrade button</item>
+    ///   <item><b>reasonCode</b> — structured <see cref="UpgradeEligibilityReason"/> the FE can branch on (e.g. show a "Run health check" deep-link for <see cref="UpgradeEligibilityReason.NoOsDetected"/>)</item>
+    ///   <item><b>reasonMessage</b> — operator-facing one-liner, safe to render verbatim in a tooltip</item>
+    /// </list>
+    ///
+    /// <para><b>H1 — Cold-cache short-circuit (avoids misleading "Docker Hub" UX)</b>:
+    /// Before H1, when the capability cache was cold (empty <c>Os</c>) for a
+    /// tentacle-style machine, <see cref="LinuxTentacleUpgradeStrategy"/> claimed
+    /// the request as historical default → version registry queried Docker Hub
+    /// → Windows machines saw "Docker Hub unreachable, set
+    /// <c>SQUID_TARGET_LINUX_TENTACLE_VERSION</c>" messages. Operators followed
+    /// the wrong remediation. Now we short-circuit BEFORE strategy resolution
+    /// with <see cref="UpgradeEligibilityReason.NoOsDetected"/> and a message
+    /// that directs the operator to the health-check endpoint instead.</para>
+    ///
+    /// <para><b>H1 — OS-aware <see cref="UpgradeEligibilityReason.RegistryUnreachable"/>
+    /// messages</b>: <see cref="BuildRegistryUnreachableMessage"/> picks the
+    /// right registry endpoint and override env var per OS, so Windows
+    /// machines see "GitHub Releases" + <c>SQUID_TARGET_WINDOWS_TENTACLE_VERSION</c>
+    /// and Linux machines see "Docker Hub" + <c>SQUID_TARGET_LINUX_TENTACLE_VERSION</c>.</para>
     /// </summary>
-    private (bool canUpgrade, string reason) EvaluateUpgradeEligibility(string style, MachineRuntimeCapabilities capabilities, string currentVersion, string latestVersion)
+    private (bool canUpgrade, UpgradeEligibilityReason code, string message) EvaluateUpgradeEligibility(
+        string style, MachineRuntimeCapabilities capabilities, string currentVersion, string latestVersion)
     {
         if (string.IsNullOrWhiteSpace(style))
-            return (false, "Machine endpoint JSON is malformed or missing CommunicationStyle — re-run machine registration.");
+            return (false, UpgradeEligibilityReason.NoCommunicationStyle,
+                "Machine endpoint JSON is malformed or missing CommunicationStyle — re-run machine registration.");
+
+        // H1: cold-cache short-circuit. For tentacle styles we cannot
+        // reliably route to the right strategy / version registry without
+        // OS data; rather than fall through to the Linux historical default,
+        // tell the operator to run an active health check first. Non-tentacle
+        // styles (Ssh, etc.) fall through to ResolveStrategy below, which
+        // correctly returns null → StyleNotSupported regardless of OS.
+        if (IsTentacleStyle(style) && string.IsNullOrWhiteSpace(capabilities?.Os))
+            return (false, UpgradeEligibilityReason.NoOsDetected,
+                "OS not yet detected for this machine — the capability cache is cold (likely a recent " +
+                "server pod restart) or the agent's CapabilitiesResponse is missing the 'os' metadata field. " +
+                "Trigger an active health check (POST /api/machines/{id}/health-check or click 'Health Check' " +
+                "in the UI) to populate the OS metadata. If the cache stays empty AFTER a health check, " +
+                "the agent is too old to report 'os' metadata — upgrade it via the manual install path " +
+                "(see deploy/scripts/install-tentacle.sh / install-tentacle.ps1).");
 
         if (ResolveStrategy(style, capabilities) == null)
-            return (false, $"CommunicationStyle '{style}' is not supported for in-UI upgrades — use the style's manual upgrade path.");
+            return (false, UpgradeEligibilityReason.StyleNotSupported,
+                $"CommunicationStyle '{style}' is not supported for in-UI upgrades — use the style's manual upgrade path.");
 
         if (string.IsNullOrEmpty(latestVersion))
-            return (false, "Could not resolve the latest available version (Docker Hub unreachable and no env override). Set SQUID_TARGET_LINUX_TENTACLE_VERSION on the server pod to pin a version.");
+            return (false, UpgradeEligibilityReason.RegistryUnreachable,
+                BuildRegistryUnreachableMessage(capabilities));
 
         if (string.IsNullOrWhiteSpace(currentVersion))
-            return (true, "Current agent version is unknown (machine has not been health-checked yet). Upgrade will dispatch; AlreadyUpToDate will catch it if the agent is already on the target.");
+            return (true, UpgradeEligibilityReason.EligibleCurrentVersionUnknown,
+                "Current agent version is unknown (machine has not been health-checked yet). " +
+                "Upgrade will dispatch; AlreadyUpToDate will catch it if the agent is already on the target.");
 
         if (!SemVer.TryParse(currentVersion, out var parsedCurrent) || !SemVer.TryParse(latestVersion, out var parsedLatest))
-            return (true, $"Cannot compare versions strictly (non-semver current='{currentVersion}'). Upgrade is allowed; worst case the agent's per-version idempotency lock no-ops the run.");
+            return (true, UpgradeEligibilityReason.EligibleNonSemverComparison,
+                $"Cannot compare versions strictly (non-semver current='{currentVersion}'). " +
+                $"Upgrade is allowed; worst case the agent's per-version idempotency lock no-ops the run.");
 
         var compare = parsedCurrent.CompareTo(parsedLatest);
 
-        if (compare < 0) return (true, $"Latest published version {latestVersion} is newer than current {currentVersion}.");
-        if (compare == 0) return (false, $"Already on version {latestVersion}; nothing to do.");
+        if (compare < 0)
+            return (true, UpgradeEligibilityReason.Eligible,
+                $"Latest published version {latestVersion} is newer than current {currentVersion}.");
+        if (compare == 0)
+            return (false, UpgradeEligibilityReason.AlreadyUpToDate,
+                $"Already on version {latestVersion}; nothing to do.");
 
-        return (false, $"Current version {currentVersion} is newer than the latest published ({latestVersion}) — likely a pre-release or dev build. Use AllowDowngrade=true on the upgrade endpoint if a downgrade is deliberate.");
+        return (false, UpgradeEligibilityReason.WouldBeDowngrade,
+            $"Current version {currentVersion} is newer than the latest published ({latestVersion}) — " +
+            $"likely a pre-release or dev build. Use AllowDowngrade=true on the upgrade endpoint if a downgrade is deliberate.");
+    }
+
+    /// <summary>
+    /// Whether <paramref name="style"/> is a wire-protocol tentacle style
+    /// (<c>TentaclePolling</c> / <c>TentacleListening</c>). Used by the H1
+    /// cold-cache short-circuit — these styles need OS data to resolve the
+    /// correct upgrade strategy, and short-circuiting before
+    /// <see cref="ResolveStrategy"/> avoids the misleading Linux historical
+    /// default. Other styles (<c>Ssh</c>, <c>KubernetesAgent</c>) are
+    /// classified independently of OS and don't need this guard.
+    /// </summary>
+    private static bool IsTentacleStyle(string style)
+        => string.Equals(style, nameof(CommunicationStyle.TentaclePolling), StringComparison.Ordinal)
+        || string.Equals(style, nameof(CommunicationStyle.TentacleListening), StringComparison.Ordinal);
+
+    /// <summary>
+    /// H1: per-OS registry-unreachable message. Replaces the pre-H1 hardcoded
+    /// "Docker Hub … SQUID_TARGET_LINUX_TENTACLE_VERSION" message that
+    /// misdirected Windows operators. Each branch names the exact registry
+    /// endpoint, the network host they need to verify, and the OS-specific
+    /// override env var.
+    /// </summary>
+    internal static string BuildRegistryUnreachableMessage(MachineRuntimeCapabilities capabilities)
+    {
+        if (capabilities != null && capabilities.IsWindows)
+            return "Could not resolve the latest Windows tentacle version from " +
+                   "github.com/SolarifyDev/Squid/releases — check the server's outbound HTTPS access " +
+                   "(api.github.com:443). To pin a specific version offline, set " +
+                   $"{TentacleVersionRegistry.WindowsOverrideEnvVar} on the server pod.";
+
+        if (capabilities != null && capabilities.IsLinux)
+            return "Could not resolve the latest Linux tentacle version from Docker Hub " +
+                   "(squidcd/squid-tentacle-linux) — check the server's outbound HTTPS access " +
+                   "(registry-1.docker.io:443). To pin a specific version offline, set " +
+                   $"{TentacleVersionRegistry.LinuxOverrideEnvVar} on the server pod.";
+
+        // Defensive fallback: capabilities resolved a strategy but the OS
+        // predicate didn't match Windows OR Linux (e.g. KubernetesAgent style
+        // with Unknown OS, or a future macOS strategy). Don't pretend to know
+        // which registry to suggest — give the generic "registry unreachable"
+        // signal so the operator looks at the strategy-specific docs.
+        return "Could not resolve the latest tentacle version — the registry path for this " +
+               "communication style is unreachable and no env-var override is set. " +
+               "Check server logs for the specific registry endpoint and ops hint.";
     }
 
     // ── Loading + reading ────────────────────────────────────────────────────
