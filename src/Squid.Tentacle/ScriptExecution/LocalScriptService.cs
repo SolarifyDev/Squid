@@ -975,9 +975,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 // completion regardless of CancelScript. Now mid-stream
                 // cancel aborts the SaveToAsync via the underlying
                 // CopyToAsync's CT plumbing.
-                file.Contents.Receiver()
-                    .SaveToAsync(tempPath, cancellationToken)
-                    .GetAwaiter().GetResult();
+                //
+                // Wrapped in SaveDataStreamWithRetry to absorb the transient
+                // IOException from Windows Defender / AV holding the source
+                // temp file open during real-time scan. See helper doc-comment
+                // for the failure mode this addresses.
+                SaveDataStreamWithRetry(file, tempPath, cancellationToken);
 
                 File.Move(tempPath, filePath, overwrite: true);
 
@@ -1008,6 +1011,144 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         => fileName.EndsWith(".sh", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase)
         || fileName.EndsWith(".py", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Maximum SaveDataStreamWithRetry attempts. Five attempts × exponential
+    /// backoff (100 / 200 / 400 / 800 ms, max 1000 ms) tops out at ~2.5s total
+    /// wait. Real Windows Defender scan windows are typically &lt;300 ms; five
+    /// attempts is generous headroom.
+    /// </summary>
+    internal const int SaveDataStreamMaxAttempts = 5;
+
+    /// <summary>
+    /// Initial inter-attempt delay (ms) for SaveDataStreamWithRetry. Doubles
+    /// per attempt up to <see cref="SaveDataStreamMaxDelayMs"/>.
+    /// </summary>
+    internal const int SaveDataStreamInitialDelayMs = 100;
+
+    /// <summary>Cap on the per-attempt delay (ms). Above this point we hold steady.</summary>
+    internal const int SaveDataStreamMaxDelayMs = 1000;
+
+    /// <summary>
+    /// Env var override for testing / air-gapped operators with aggressive AV.
+    /// When set to a positive integer, replaces <see cref="SaveDataStreamMaxAttempts"/>.
+    /// Pinned name (Rule 8): tests assert the literal string.
+    /// </summary>
+    internal const string SaveDataStreamMaxAttemptsEnvVar = "SQUID_TENTACLE_SAVE_DATASTREAM_MAX_ATTEMPTS";
+
+    /// <summary>
+    /// Wraps Halibut <c>SaveToAsync</c> in a retry-with-exponential-backoff
+    /// loop. Absorbs transient <see cref="IOException"/> with the "being used
+    /// by another process" pattern — typically Windows Defender / AV real-time
+    /// scan holding the source temp file open briefly after Halibut writes it.
+    ///
+    /// <para><b>Failure mode this fixes</b> (real production report):</para>
+    ///
+    /// <code>
+    ///   IOException: The process cannot access the file 'C:\Windows\TEMP\{guid}_1'
+    ///   because it is being used by another process.
+    ///     at Halibut.Transport.Protocol.TemporaryFileStream.SaveToAsync(string filePath, ...)
+    ///     at Squid.Tentacle.ScriptExecution.LocalScriptService.WriteAdditionalFiles(...)
+    /// </code>
+    ///
+    /// <para>The locked file is Halibut's INTERNAL backing temp where the
+    /// inbound DataStream was buffered. Right after Halibut closes its write
+    /// handle, Windows Defender's real-time protection opens the file
+    /// exclusively to scan it. If we try to read the source during that
+    /// scan window (typically &lt;300 ms but can spike to 1-2 s on slow
+    /// disks / older Defender engines), <see cref="File.Open"/> throws
+    /// IOException — which crashes the entire StartScript RPC.</para>
+    ///
+    /// <para><b>Strategy</b>: 5 attempts × exponential backoff (100 / 200 /
+    /// 400 / 800 / 1000 ms). Only retries on IOException — propagates any
+    /// other exception immediately. Cancellation token observed between
+    /// attempts so an operator-initiated CancelScript doesn't sit through
+    /// the full ~2.5 s budget.</para>
+    /// </summary>
+    internal static void SaveDataStreamWithRetry(ScriptFile file, string tempPath, CancellationToken cancellationToken)
+        => RetryOnTransientIO(
+            operation: () => file.Contents.Receiver()
+                .SaveToAsync(tempPath, cancellationToken)
+                .GetAwaiter().GetResult(),
+            contextName: file?.Name ?? "(unnamed)",
+            cancellationToken: cancellationToken);
+
+    /// <summary>
+    /// Generic retry-with-backoff for transient <see cref="IOException"/>.
+    /// Extracted from <see cref="SaveDataStreamWithRetry"/> so the retry +
+    /// timing + cancellation contract is tested directly with a synthetic
+    /// failing operation, without involving Halibut's DataStream wire types.
+    /// </summary>
+    /// <param name="operation">The IO operation to run. Re-invoked on transient IOException.</param>
+    /// <param name="contextName">Human-readable subject for log messages (typically the file name).</param>
+    /// <param name="cancellationToken">Observed before every attempt + during inter-attempt delay.</param>
+    /// <exception cref="IOException">Re-thrown wrapped after every attempt fails.</exception>
+    /// <exception cref="OperationCanceledException">Thrown when cancellation requested between attempts.</exception>
+    internal static void RetryOnTransientIO(Action operation, string contextName, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var maxAttempts = ResolveMaxAttempts();
+        var delayMs = SaveDataStreamInitialDelayMs;
+        IOException lastException = null;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                operation();
+
+                if (attempt > 1)
+                    Log.Warning(
+                        "IO operation for '{Context}' succeeded on attempt {Attempt}/{Max} after transient file-lock IOException. " +
+                        "Suspect: Windows Defender / AV holding the source temp file during real-time scan.",
+                        contextName, attempt, maxAttempts);
+
+                return;
+            }
+            catch (IOException ex)
+            {
+                // Record EVERY IOException — including the final-attempt one — so the
+                // wrapper thrown after the loop carries the most-recent message as
+                // InnerException. Don't use `when (attempt < maxAttempts)` here — that
+                // would skip the catch on the last attempt and propagate the raw
+                // IOException unwrapped, defeating the retry-count + env-var-hint
+                // operator messaging.
+                lastException = ex;
+
+                if (attempt >= maxAttempts) break;    // fall through to wrap-and-throw
+
+                Log.Debug(ex,
+                    "IO operation attempt {Attempt}/{Max} for '{Context}' hit IOException; retrying after {Delay}ms",
+                    attempt, maxAttempts, contextName, delayMs);
+
+                Task.Delay(delayMs, cancellationToken).GetAwaiter().GetResult();
+
+                delayMs = Math.Min(delayMs * 2, SaveDataStreamMaxDelayMs);
+            }
+        }
+
+        // Fell through: every attempt failed. Surface the LAST IOException with
+        // a richer message so operators see the retry count without having to
+        // tail Tentacle logs.
+        throw new IOException(
+            $"IO operation for '{contextName}' failed after {maxAttempts} attempts. " +
+            $"The source temp file remained locked by another process — most likely Windows Defender / AV. " +
+            $"If your AV is known-aggressive, raise {SaveDataStreamMaxAttemptsEnvVar} above the default {SaveDataStreamMaxAttempts} or exclude " +
+            $"the Tentacle workspace from real-time scanning. See last inner exception for the underlying message.",
+            lastException);
+    }
+
+    private static int ResolveMaxAttempts()
+    {
+        var raw = Environment.GetEnvironmentVariable(SaveDataStreamMaxAttemptsEnvVar);
+
+        if (string.IsNullOrWhiteSpace(raw)) return SaveDataStreamMaxAttempts;
+
+        return int.TryParse(raw, out var parsed) && parsed > 0 ? parsed : SaveDataStreamMaxAttempts;
+    }
 
     private static void SetDirectoryPermissions(string dirPath)
     {
