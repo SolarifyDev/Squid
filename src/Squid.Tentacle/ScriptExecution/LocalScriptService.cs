@@ -1178,14 +1178,39 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var variablesPath = Path.Combine(workDir, "variables.json");
         var sensitiveVariablesPath = Path.Combine(workDir, "sensitiveVariables.json");
 
-        // Calamari only knows how to bootstrap Bash and PowerShell scripts (it
-        // generates `export VAR=...` / `$VAR=...` preambles). For Python /
-        // CSharp / FSharp we bypass Calamari and exec the interpreter directly
-        // — variable injection still happens through process env vars set by
-        // the caller (or the script can read variables.json itself).
-        var canUseCalamari = command.ScriptSyntax == ScriptType.Bash || command.ScriptSyntax == ScriptType.PowerShell;
-
-        if (File.Exists(variablesPath) && canUseCalamari)
+        // Calamari can today only bootstrap BASH scripts — its pipeline contains
+        // exactly one writer step (<see cref="Squid.Calamari.Commands.WriteBootstrappedBashScriptStep"/>)
+        // that does <c>File.ReadAllText("script.sh")</c> + prepends a Bash
+        // <c>export VAR=...</c> preamble. There is NO <c>WriteBootstrappedPowerShellScriptStep</c>
+        // and the Calamari CLI is hardcoded to <c>--script=script.sh</c> at the
+        // call site below — so routing PowerShell through Calamari ALWAYS crashes
+        // with <c>FileNotFoundException</c> (Tentacle wrote <c>script.ps1</c>,
+        // Calamari reads <c>script.sh</c>). The agent's parent process dies, the
+        // server polls GetStatus, the in-memory ticket entry is gone but the
+        // state file still says <c>Progress=Running</c> — orphan detection at
+        // <see cref="GetStatus"/> line 497 then returns <c>Complete + UnknownResult (-1)</c>
+        // which the operator sees as <c>"Unknown result (ticket or process not found)
+        // (exit code -1)"</c>.
+        //
+        // <para><b>Why this is safe for PowerShell flows</b>: every server-side
+        // PowerShell-emitting code path (e.g. <c>IISDeployScriptBuilder</c>,
+        // <c>WindowsTentacleUpgradeStrategy</c>) already inlines all required
+        // variables into the rendered script body via <c>$SquidParameters</c> /
+        // <c>$SquidVariables</c> hashtables. Calamari's bootstrap preamble adds
+        // zero value on top of that — the script is fully self-contained from
+        // the moment the server emits it. Bypassing Calamari for PowerShell
+        // therefore changes nothing about variable visibility; it just routes
+        // through <see cref="StartViaLauncher"/> instead, which in turn picks
+        // <c>PwshCoreProcessLauncher</c> or <c>WindowsPowerShellProcessLauncher</c>
+        // (auto-fallback when pwsh.exe isn't installed — see PR #352).
+        //
+        // <para><b>Future</b>: when Calamari gains a <c>WriteBootstrappedPowerShellScriptStep</c>
+        // AND the Tentacle CLI invocation switches to a per-syntax script path
+        // (<c>--script=script.ps1</c> for PowerShell, <c>--script=script.sh</c>
+        // for Bash), <see cref="IsCalamariCompatible"/> can be widened back to
+        // include PowerShell. Pinned by <c>IsCalamariCompatible_*</c> tests so
+        // a future regression surfaces immediately.
+        if (File.Exists(variablesPath) && IsCalamariCompatible(command.ScriptSyntax))
         {
             // P0-B.2: password no longer on disk — pull it from the in-memory ScriptFile
             // instance. Writing the `.key` sidecar defeated at-rest encryption; passing
@@ -1209,6 +1234,31 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             _ => StartViaLauncher(workDir, ScriptType.Bash, command.Arguments)
         };
     }
+
+    /// <summary>
+    /// Whether the given script <paramref name="syntax"/> can be bootstrapped by
+    /// the bundled <c>squid-calamari</c> CLI.
+    ///
+    /// <para>Today only <see cref="ScriptType.Bash"/> qualifies — Calamari's
+    /// <c>RunScriptCommand</c> pipeline contains a single bootstrap step
+    /// (<c>WriteBootstrappedBashScriptStep</c>) that reads <c>script.sh</c> and
+    /// prepends a Bash <c>export VAR=...</c> preamble. There is intentionally
+    /// NO <c>WriteBootstrappedPowerShellScriptStep</c>: every server-side
+    /// PowerShell-emitting code path (<c>IISDeployScriptBuilder</c>,
+    /// <c>WindowsTentacleUpgradeStrategy</c>, etc.) already inlines all
+    /// variables into the rendered script body via <c>$SquidParameters</c> /
+    /// <c>$SquidVariables</c> hashtables, so Calamari's bootstrap preamble adds
+    /// zero value on top of that.</para>
+    ///
+    /// <para>Routing PowerShell through Calamari ALWAYS crashed with
+    /// <c>FileNotFoundException</c> (Tentacle wrote <c>script.ps1</c>, Calamari
+    /// read <c>script.sh</c>). Operator-visible symptom: <c>"Unknown result
+    /// (ticket or process not found) (exit code -1)"</c> from the
+    /// <see cref="GetStatus"/> orphan-detection path (state file said
+    /// <c>Progress=Running</c> but the Calamari child had already crashed).
+    /// Pinned by <c>IsCalamariCompatible_*</c> tests.</para>
+    /// </summary>
+    internal static bool IsCalamariCompatible(ScriptType syntax) => syntax == ScriptType.Bash;
 
     /// <summary>
     /// dispatches to the platform-resolved
