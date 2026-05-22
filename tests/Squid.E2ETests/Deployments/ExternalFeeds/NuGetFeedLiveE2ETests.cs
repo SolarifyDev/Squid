@@ -1,6 +1,7 @@
 using System.Net.Http;
 using Shouldly;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds.PackageNotes;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Http;
@@ -210,6 +211,50 @@ public class NuGetFeedLiveE2ETests
                 $"Bogus-query search MUST be filtered by the server. Got {packages.Count} results — " +
                 $"if 20 (the take limit), the searchTerm parameter isn't being honoured. Either the " +
                 $"OData URL is malformed (missing quoting / escaping) or the server is ignoring the param.");
+    }
+
+    [Fact]
+    public async Task GetNotesAsync_FetchesV2AtomEntry_WithoutFormatJsonQueryParam_AgainstLiveV2Feed()
+    {
+        // Regression pin for "Nuget feed returned 400" during release creation.
+        // Root cause was the V2 fallback in NuGetPackageNotesStrategy requesting
+        // ?$format=json — which the default NuGet.Server configuration REJECTS
+        // (returns 400/404 with OData error "Query option 'Format' is not
+        // allowed"). The fix removes the format param so the server returns the
+        // default Atom XML; the parser then extracts <d:ReleaseNotes> /
+        // <d:Description> / <d:Published> via XDocument.
+        //
+        // This test runs against the operator's actual NuGet.Server installation
+        // — if the strategy ever regresses to ?$format=json, sjfood's response
+        // changes from 200+Atom to 400+OData-error and this test fails loudly.
+        if (!await IsFeedReachableAsync().ConfigureAwait(false)) return;
+
+        var notesStrategy = new NuGetPackageNotesStrategy(new LiveHttpClientFactory());
+        var searchStrategy = new NuGetPackageSearchStrategy(new LiveHttpClientFactory());
+        var versionStrategy = new NuGetPackageVersionStrategy(new LiveHttpClientFactory());
+        var feed = new ExternalFeed { FeedType = "NuGet", FeedUri = LiveFeedUri };
+
+        // Discover a real package + version pair from the live feed — resilient
+        // to feed contents drift (don't hardcode "AuthorizeNet.NetStandard").
+        var packages = await searchStrategy.SearchAsync(feed, "", 1, CancellationToken.None).ConfigureAwait(false);
+        if (packages.Count == 0) return;
+
+        var firstPackageId = packages[0];
+        var versions = await versionStrategy.ListVersionsAsync(feed, firstPackageId, CancellationToken.None).ConfigureAwait(false);
+        if (versions.Count == 0) return;
+
+        var firstVersion = versions[0];
+
+        var result = await notesStrategy.GetNotesAsync(feed, firstPackageId, firstVersion, CancellationToken.None).ConfigureAwait(false);
+
+        result.ShouldNotBeNull();
+        result.Succeeded.ShouldBeTrue(
+            customMessage:
+                $"GetNotesAsync against the live V2 feed MUST succeed (not Failure). " +
+                $"If FailureReason starts with 'NuGet feed returned 400', the strategy regressed to using " +
+                $"?$format=json which NuGet.Server's EnableQueryAttribute rejects. " +
+                $"Tested package: '{firstPackageId}' v{firstVersion}. " +
+                $"FailureReason: '{result.FailureReason}'.");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

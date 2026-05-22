@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Http;
 
@@ -64,7 +65,21 @@ public class NuGetPackageNotesStrategy(ISquidHttpClientFactory httpClientFactory
 
     private async Task<PackageNotesResult> GetNotesV2Async(string feedUri, string packageId, string version, Dictionary<string, string> headers, CancellationToken ct)
     {
-        var url = $"{feedUri.TrimEnd('/')}/Packages(Id='{packageId}',Version='{version}')?$format=json";
+        // Use Atom XML — the OData V2 default response format. We do NOT request
+        // ?$format=json because the default NuGet.Server (and many derivative
+        // private feeds) reject Format as a disallowed query option, returning
+        // 400/404 with the OData error:
+        //   "URI or query string invalid. Query option 'Format' is not allowed.
+        //    To allow it, set the 'AllowedQueryOptions' property on
+        //    EnableQueryAttribute or QueryValidationSettings."
+        // Asking for Atom XML works on every conformant V2 server (Atom is the
+        // default content negotiation) and matches what the sibling V2 strategies
+        // (search, version) already do. URL-encode the single quotes inside the
+        // OData string literals so feed servers don't reject the raw quotes.
+        var encodedId = Uri.EscapeDataString(packageId);
+        var encodedVersion = Uri.EscapeDataString(version);
+        var url = $"{feedUri.TrimEnd('/')}/Packages(Id=%27{encodedId}%27,Version=%27{encodedVersion}%27)";
+
         var client = httpClientFactory.CreateClient(timeout: Timeout, headers: headers);
 
         try
@@ -74,9 +89,9 @@ public class NuGetPackageNotesStrategy(ISquidHttpClientFactory httpClientFactory
             if (!response.IsSuccessStatusCode)
                 return PackageNotesResult.Failure($"NuGet feed returned {(int)response.StatusCode}");
 
-            var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var xml = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
-            return ParseNuGetV2Entry(json);
+            return ParseNuGetV2AtomEntry(xml);
         }
         catch (Exception ex)
         {
@@ -144,32 +159,39 @@ public class NuGetPackageNotesStrategy(ISquidHttpClientFactory httpClientFactory
         }
     }
 
-    internal static PackageNotesResult ParseNuGetV2Entry(string json)
+    /// <summary>
+    /// Parses an OData V2 Atom <c>&lt;entry&gt;</c> response body and extracts
+    /// release-notes-relevant fields from <c>&lt;m:properties&gt;</c>:
+    /// <c>&lt;d:ReleaseNotes&gt;</c>, <c>&lt;d:Description&gt;</c>,
+    /// <c>&lt;d:Published&gt;</c>. Falls back to Description when ReleaseNotes
+    /// is blank, matching the V3 catalog leaf parser.
+    /// </summary>
+    internal static PackageNotesResult ParseNuGetV2AtomEntry(string xml)
     {
         try
         {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
+            XNamespace d = "http://schemas.microsoft.com/ado/2007/08/dataservices";
 
-            var data = root.TryGetProperty("d", out var dProp) ? dProp : root;
+            var doc = XDocument.Parse(xml);
 
-            var releaseNotes = data.TryGetProperty("ReleaseNotes", out var rnProp) && rnProp.ValueKind == JsonValueKind.String ? rnProp.GetString() : null;
-            var description = data.TryGetProperty("Description", out var descProp) && descProp.ValueKind == JsonValueKind.String ? descProp.GetString() : null;
+            var releaseNotes = doc.Descendants(d + "ReleaseNotes").FirstOrDefault()?.Value;
+            var description = doc.Descendants(d + "Description").FirstOrDefault()?.Value;
 
             DateTimeOffset? published = null;
 
-            if (data.TryGetProperty("Published", out var pubProp) && pubProp.ValueKind == JsonValueKind.String && DateTimeOffset.TryParse(pubProp.GetString(), out var pubDate))
+            var publishedRaw = doc.Descendants(d + "Published").FirstOrDefault()?.Value;
+            if (!string.IsNullOrWhiteSpace(publishedRaw) && DateTimeOffset.TryParse(publishedRaw, out var pubDate))
                 published = pubDate;
 
             var notes = !string.IsNullOrWhiteSpace(releaseNotes) ? releaseNotes : description;
 
-            if (notes == null && published == null) return PackageNotesResult.Empty();
+            if (string.IsNullOrWhiteSpace(notes) && published == null) return PackageNotesResult.Empty();
 
             return PackageNotesResult.Success(notes, published);
         }
-        catch (JsonException)
+        catch
         {
-            return PackageNotesResult.Failure("Failed to parse NuGet V2 JSON");
+            return PackageNotesResult.Failure("Failed to parse NuGet V2 Atom entry");
         }
     }
 
