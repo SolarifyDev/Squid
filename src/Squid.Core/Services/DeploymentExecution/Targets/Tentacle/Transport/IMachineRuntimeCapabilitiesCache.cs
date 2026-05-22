@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Tentacle;
@@ -73,8 +74,25 @@ public sealed class MachineRuntimeCapabilities
     /// <see cref="AgentOperatingSystems"/>. Without these, the agent-side
     /// <c>"Windows"</c> token was duplicated across 4+ consumer sites and
     /// any rename silently broke OS routing.
+    ///
+    /// <para><b>Long-form Windows tolerance</b>: delegates to
+    /// <see cref="WindowsOsStringHelper.IsWindows"/> so that legacy agent
+    /// metadata carrying <c>"Microsoft Windows NT 10.0.19045.0"</c> (the raw
+    /// <c>Environment.OSVersion.VersionString</c> form, written by older
+    /// Tentacle binaries / out-of-band callers) still routes correctly.
+    /// Before this delegation, strict equality with the canonical short form
+    /// <c>"Windows"</c> caused <see cref="WindowsTentacleUpgradeStrategy"/>'s
+    /// <c>CanHandle</c> to reject ALL long-form Windows machines, while the
+    /// Linux strategy's <c>IsLinux || IsUnknown</c> ALSO rejected them
+    /// (because long form is neither empty nor exactly <c>"Unknown"</c>) —
+    /// the operator-visible symptom was <c>"CommunicationStyle
+    /// 'TentaclePolling' is not supported for in-UI upgrades"</c> on a
+    /// perfectly healthy Windows agent. Single source of truth for "is this
+    /// a Windows host?" now lives in <see cref="WindowsOsStringHelper"/>,
+    /// shared with the IIS dispatch guard + <c>MachineCapabilitySet</c>
+    /// projection (PR #348).</para>
     /// </summary>
-    public bool IsWindows => string.Equals(Os, AgentOperatingSystems.Windows, StringComparison.OrdinalIgnoreCase);
+    public bool IsWindows => WindowsOsStringHelper.IsWindows(Os);
 
     /// <summary>True when agent reported Linux OS (any distro) via Capabilities probe.</summary>
     public bool IsLinux => string.Equals(Os, AgentOperatingSystems.Linux, StringComparison.OrdinalIgnoreCase);
