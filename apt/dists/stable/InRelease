@@ -5,44 +5,44 @@ Origin: Squid Tentacle
 Label: Squid Tentacle APT repository
 Suite: stable
 Codename: stable
-Date: Thu, 21 May 2026 11:52:53 UTC
+Date: Fri, 22 May 2026 01:11:38 UTC
 Architectures: amd64 arm64
 Components: main
 Description: Squid Tentacle Linux deployment agent
 MD5Sum:
- 45fd6b5191a3ecb3b638701c556803bb 633 main/binary-amd64/Packages
- 1b11acec555b9d4f827c1baae3ffdf85 437 main/binary-amd64/Packages.gz
+ e8da844efa26a682c10b274da0b76635 633 main/binary-amd64/Packages
+ 4f7d306c6d64cd30ade016db36a26710 436 main/binary-amd64/Packages.gz
  77c9fb903e2d2d0341524664761d840d 163 main/binary-amd64/Release
- 6921868060c3fca87399f3a3fda93b9d 633 main/binary-arm64/Packages
- 0d6457abb85c292af9986a1b9ae6af24 436 main/binary-arm64/Packages.gz
+ 293388c4b583c0fff5b248d0fa64d754 633 main/binary-arm64/Packages
+ 441e9ba975035da6e4708349e8116b65 437 main/binary-arm64/Packages.gz
  07ab0e95f799fed75362392c39787fa0 163 main/binary-arm64/Release
 SHA1:
- d7d86b5eba9d670e3cd4aab08eddd1febbeb1020 633 main/binary-amd64/Packages
- 2b8c88cad9f7fa00fb122c3ab1c141da7176150f 437 main/binary-amd64/Packages.gz
+ 946a7f2b241d1764113aed1e74b6c1288e455a2c 633 main/binary-amd64/Packages
+ 9eb87a828e2554d5fc01ab14ac8693dc19f4f886 436 main/binary-amd64/Packages.gz
  af55fdfe8138ba277651884a53adfcd10ef32c01 163 main/binary-amd64/Release
- 32d64cf7732f24d9d205ed0d7ecf9845c533ba06 633 main/binary-arm64/Packages
- a2175a41c8d2a6842e211a894390479ac7ab458a 436 main/binary-arm64/Packages.gz
+ 8adb25a0f9b60bcfe1fc0c8a3da368b82d5d8d22 633 main/binary-arm64/Packages
+ 74f9b0d9acb81675ff40c841d457c914efd3e8db 437 main/binary-arm64/Packages.gz
  ccefe191de5438e8b467928c0c739e8b49e89aa8 163 main/binary-arm64/Release
 SHA256:
- 62058463537976a17a018222cc9b5e3cd465acfbf0d7c3b986359936ca62eee5 633 main/binary-amd64/Packages
- fc80e348361678ce88c45ef61f0b5b88d5850a37afcf02a8ba45263140cf5da4 437 main/binary-amd64/Packages.gz
+ 1b0901f541b28fa931456ed6c0b5ba46ba9254aababab951e1acbecec08d0a90 633 main/binary-amd64/Packages
+ b1bf1ef0954a9671840456526b7e6417a707534c99cf4c9d2c2a9b26c6c7fefc 436 main/binary-amd64/Packages.gz
  fb59e748f95ae5bdcb3811a2e265a4f215fe36a550d4acb06982d79199075fbb 163 main/binary-amd64/Release
- deadd1e661e4c398d664ecbddaa334e11ee4eb6c409a488900526821d91a9d98 633 main/binary-arm64/Packages
- 6a55570b859089c8308ff684008760766d629091ab8cb87a991e058eaee186af 436 main/binary-arm64/Packages.gz
+ a0977cc37b49494de1974b70dadeede57bb1dfdfb563108a2fc70274540825ff 633 main/binary-arm64/Packages
+ b931321a2b09d56b839343ae23aef5512c45b19a95d8d7e347aa60bcc355859e 437 main/binary-arm64/Packages.gz
  ec4ebc3d8d2a43d4e694840fdf19235fbd093456c3371869def82fcf7434d316 163 main/binary-arm64/Release
 -----BEGIN PGP SIGNATURE-----
 
-iQIzBAEBCgAdFiEErhIS6ldAnyoF8gfr2zL5KCJMzCUFAmoO8hUACgkQ2zL5KCJM
-zCXPCg/9EmobkyfHapmksnNwWKplQzUEkoDiXwHZi+DEL4zwdVrwssumqxLUB5/U
-Exnad5mbwLGWAbKgQTmvkFDNDMZweDFXaVrL/oCfzpoJiH5OXnR90ibwntd5Psx7
-Ca70mqzmzqvS48TmS63GKTCMu13BoT1HCPkEzwVsg+gqcx7kIuVmMhEdEIlaJO/t
-iQAmt08Tae0Y1iE0vGXfCJ1DetFPSB7da2da8JEJM7s8Ay7gYi5tsCDepZ5RDh0B
-ojRLcZnjeUpGp8UTkfgxPxI/8hNIc41a1vLbobErOYANDpIGzwFr9/J8GhmSDrz2
-r9DIlfMSXtEcSeBEsYYJPiqz2IOVTXFCyQkOoDctZ8vvRVBM+nYAMaD3ENLzp5YG
-fKplZdLnay/pkJhLnyp6yXjBTK8eH+ctVHQLct+cKhjN7dkX/fJ9G1U+i8+JkmY1
-U6H/QdBbudcMmXIB22bcU16vy762VK6yKFCShtJulpgc2OJ6pE9RfWximuVqtCo7
-yOz4c/i44qNP/dHKv2txFZXC/6JoXfizdfGjDkxEphrdyXZ/eojvTvuKu0Q/UaNS
-Y7D6IP2mckpV5q7DgT12Wy87cilqehMH5HBl1NBdzhpn2Vc34VZkxiTa8tg8L1Ys
-+52smhAZBy+eb0Bwu1dcnDMolUKxIjNrzZJfCtwNsL5XfUROZSM=
-=Dwfm
+iQIzBAEBCgAdFiEErhIS6ldAnyoF8gfr2zL5KCJMzCUFAmoPrUsACgkQ2zL5KCJM
+zCUIZQ//ZBIN0m712BDkUzK6SZFm/4o8vZclOEFXZo18WNWlem34e7FKM5cXEO3v
+uCbcGtJBcLY77BN0JI/ScQZcqVSQC8F0lfwtBMX4XZv32pABUjCUgnfkNVEjEY2v
+fdj2mPDdVi1w0HNRBdkvn+eS35EjUFH9hoq5iI9JFcapVwWErIPgTTXtY+yR3DCV
+nPIGTOeJovNJ+hbuNoa/7q2Q79LrW+LJnAkmeXOYDQd7LnvpVWTEZyx3kbucHfUT
+FvyCa9y4tnq3k2x8WBUK2TZLA6T75S2SkbuktbbF3BR4P5h4waY6LCET0OASZ+hN
+dr/+o6/kCbDIQl3+FKaiwjEXp+D7Mp2knUM4qoTH6OgdYoNjZG3K1kcAK0X9AKU4
+yxLwt3+WE7CWPmr++crjkwd923vLkikxyv0wx+GIQ2G4eX80gFG92fsVYyJsIpbB
+wYtmRio0YRH4RyqscFGm9nvDtvZlKeZGAtATOOM6kTlGF5O12ZQWlKvK0XPW6hOy
+tnoB48PxxvPOcY0QYcbUwrD3NKwLbGkKU9MA+N6rIdvKjn4DWIurbb0X3VIbyAt9
+d+EAZ5e6gdL6x6dQouTr7+AMZK2XM3lB/nrDu4NWy+L470RSOPJiqdGDnaNzGQe8
+rFqXpdty94C4XYQaQwRGwDvq+sY0Z2tykxquxC8zTqARh0WDlik=
+=FW49
 -----END PGP SIGNATURE-----
