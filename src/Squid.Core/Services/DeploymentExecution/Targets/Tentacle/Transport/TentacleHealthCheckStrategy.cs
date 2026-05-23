@@ -151,7 +151,12 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
             AgentVersion = response.AgentVersion ?? string.Empty,
             // CapabilitiesResponse.SupportedServices is a List<string>; cast to
             // IReadOnlyList<string> for the canonical capabilities shape.
-            SupportedServices = (IReadOnlyList<string>)response.SupportedServices ?? Array.Empty<string>()
+            SupportedServices = (IReadOnlyList<string>)response.SupportedServices ?? Array.Empty<string>(),
+            // H7 — read the agent's detected roles for the H2 persistence layer.
+            // Empty for pre-H7 agents (the metadata key is absent) — null-coalesced
+            // here, then absent role slots in MachineCapabilitySet.From → handler's
+            // role requirement falls to optimistic-allow.
+            InstalledRoles = ReadMetadata(response, "installedRoles") ?? string.Empty
         };
     }
 

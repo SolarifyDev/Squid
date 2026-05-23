@@ -97,12 +97,14 @@ public class CapabilitiesServiceTests
         response.Metadata.ShouldContainKeyAndValue("scriptPodMode", "ScriptPod");
         response.Metadata.ShouldContainKeyAndValue("namespace", "squid-ns");
         response.Metadata.ShouldContainKeyAndValue("workspaceIsolation", "SharedPVC");
-        // Runtime capabilities (os/defaultShell/installedShells/architecture/osVersion)
-        // are merged in addition to the caller-supplied metadata, so the count is
-        // flavor-specific keys (8) + runtime keys (5) = 13.
-        response.Metadata.Count.ShouldBe(13);
+        // Runtime capabilities (os/defaultShell/installedShells/architecture/osVersion/installedRoles)
+        // are merged in addition to the caller-supplied metadata. H7 added
+        // installedRoles → runtime keys = 6, so total = flavor-specific keys (8)
+        // + runtime keys (6) = 14.
+        response.Metadata.Count.ShouldBe(14);
         response.Metadata.ShouldContainKey("os");
         response.Metadata.ShouldContainKey("defaultShell");
+        response.Metadata.ShouldContainKey("installedRoles");
     }
 
     [Fact]

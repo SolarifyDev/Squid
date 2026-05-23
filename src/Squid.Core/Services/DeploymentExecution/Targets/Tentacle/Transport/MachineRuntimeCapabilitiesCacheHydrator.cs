@@ -98,7 +98,8 @@ public sealed class MachineRuntimeCapabilitiesCacheHydrator : IStartable
             ["osVersion"] = capabilities.OsVersion ?? string.Empty,
             ["defaultShell"] = capabilities.DefaultShell ?? string.Empty,
             ["installedShells"] = capabilities.InstalledShells ?? string.Empty,
-            ["architecture"] = capabilities.Architecture ?? string.Empty
+            ["architecture"] = capabilities.Architecture ?? string.Empty,
+            ["installedRoles"] = capabilities.InstalledRoles ?? string.Empty
         };
     }
 }

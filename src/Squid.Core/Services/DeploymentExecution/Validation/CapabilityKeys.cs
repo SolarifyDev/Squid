@@ -110,6 +110,44 @@ public static class CapabilityKeys
     }
 
     /// <summary>
+    /// H7 — installed-service / role slots. Each system role detected on the
+    /// target gets its own slot under the <c>role:</c> namespace with value
+    /// <see cref="Present"/>. Distinct from <see cref="Bin"/> (CLI binaries
+    /// on PATH) — a "role" is a persistent service / daemon / framework the
+    /// agent's OS hosts (IIS web server, Docker daemon, nginx, etc.).
+    ///
+    /// <para><b>Why this exists</b>: pre-H7 the IIS deploy handler only declared
+    /// <c>{os: windows, shell: powershell}</c>. Dispatching IIS deploy to a
+    /// Windows machine without IIS installed would dispatch the script to the
+    /// agent, run it, and ONLY THEN fail with <c>Import-Module
+    /// WebAdministration: module not found</c>. That's a wasted dispatch and
+    /// a confusing operator experience. H7 lets the IIS handler declare
+    /// <c>role:iis</c> as a requirement; <see cref="CapabilityValidator"/>
+    /// catches the missing role at plan-time with an actionable message
+    /// ("Install IIS via Add Roles and Features, then re-run health check").</para>
+    ///
+    /// <para><b>Backward compatibility</b>: old agents that don't yet emit
+    /// installed-roles metadata are treated as "unknown" by the validator
+    /// (optimistic-allow), so existing fleets continue to work. The new
+    /// requirement only activates after the agent is upgraded to a version
+    /// that detects + advertises roles.</para>
+    /// </summary>
+    public static class Role
+    {
+        /// <summary>Windows IIS web server (probe: <c>Get-Service W3SVC</c>).</summary>
+        public const string IIS = "role:iis";
+
+        /// <summary>Docker daemon running on the host (probe: <c>docker info</c> succeeds).</summary>
+        public const string Docker = "role:docker";
+
+        /// <summary>nginx service active on the host (probe: <c>systemctl is-active nginx</c> on Linux).</summary>
+        public const string Nginx = "role:nginx";
+
+        /// <summary>systemd init system available (probe: <c>systemctl --version</c> succeeds).</summary>
+        public const string Systemd = "role:systemd";
+    }
+
+    /// <summary>
     /// All slot keys whose values come from a fixed enumeration (the
     /// "categorical" slots: <see cref="OsSlot"/>, <see cref="ArchSlot"/>).
     /// Helper for pin tests asserting slot taxonomy hasn't drifted.

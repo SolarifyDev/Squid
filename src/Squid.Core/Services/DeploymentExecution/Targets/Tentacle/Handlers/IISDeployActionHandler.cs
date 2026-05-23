@@ -41,7 +41,19 @@ public class IISDeployActionHandler : IActionHandler
     public IReadOnlyDictionary<string, IReadOnlySet<string>> StaticRequirements { get; } =
         CapabilityRequirements.Empty
             .Require(CapabilityKeys.OsSlot, CapabilityKeys.Os.Windows)
-            .Require(CapabilityKeys.Shell.PowerShell, CapabilityKeys.Present);
+            .Require(CapabilityKeys.Shell.PowerShell, CapabilityKeys.Present)
+            // H7 — require IIS role (W3SVC service) installed on the target.
+            // Pre-H7 the dispatch ran the IIS script all the way to
+            // `Import-Module WebAdministration` and ONLY THEN failed with
+            // "module not found" on machines without IIS (real operator
+            // failure mode reported during the 1.7.x chain). Now plan-time
+            // validation catches missing IIS with an actionable hint.
+            // Backward-compat: agents pre-dating H7 don't advertise
+            // InstalledRoles → role:iis slot absent from projection →
+            // CapabilityValidator's "absent slot = unknown = optimistic-allow"
+            // means existing fleets continue to plan/dispatch normally.
+            // Strict validation activates only after agent upgrade.
+            .Require(CapabilityKeys.Role.IIS, CapabilityKeys.Present);
 
     Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {

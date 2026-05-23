@@ -87,7 +87,8 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
             InstalledShells = capabilities.InstalledShells,
             Architecture = capabilities.Architecture,
             AgentVersion = capabilities.AgentVersion,
-            SupportedServices = capabilities.SupportedServices?.ToArray() ?? Array.Empty<string>()
+            SupportedServices = capabilities.SupportedServices?.ToArray() ?? Array.Empty<string>(),
+            InstalledRoles = capabilities.InstalledRoles
         }, SerializerOptions);
 
         var now = DateTimeOffset.UtcNow;
@@ -126,7 +127,8 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
                     InstalledShells = persisted.InstalledShells ?? string.Empty,
                     Architecture = persisted.Architecture ?? string.Empty,
                     AgentVersion = persisted.AgentVersion ?? string.Empty,
-                    SupportedServices = persisted.SupportedServices ?? Array.Empty<string>()
+                    SupportedServices = persisted.SupportedServices ?? Array.Empty<string>(),
+                    InstalledRoles = persisted.InstalledRoles ?? string.Empty
                 }));
             }
             catch (JsonException ex)
@@ -171,5 +173,13 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         public string Architecture { get; set; }
         public string AgentVersion { get; set; }
         public string[] SupportedServices { get; set; }
+
+        /// <summary>
+        /// H7 — comma-separated list of detected system roles
+        /// (e.g. <c>"iis,docker"</c>). Nullable for backward-compat: blobs
+        /// written by pre-H7 servers don't have this field; the LoadAllAsync
+        /// projection coalesces null to empty string.
+        /// </summary>
+        public string InstalledRoles { get; set; }
     }
 }
