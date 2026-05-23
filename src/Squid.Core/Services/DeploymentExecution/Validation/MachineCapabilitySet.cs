@@ -39,6 +39,7 @@ public static class MachineCapabilitySet
         ProjectOs(caps?.Os, builder);
         ProjectArchitecture(caps?.Architecture, builder);
         ProjectShells(caps?.InstalledShells, builder);
+        ProjectRoles(caps?.InstalledRoles, builder);
 
         return builder.ToImmutable();
     }
@@ -93,6 +94,30 @@ public static class MachineCapabilitySet
         {
             var shellSlot = $"shell:{raw.ToLowerInvariant()}";
             builder[shellSlot] = presentSet;
+        }
+    }
+
+    /// <summary>
+    /// H7 — projects detected system roles into <c>role:{name}</c> slots with
+    /// value <see cref="CapabilityKeys.Present"/>. Mirror of
+    /// <see cref="ProjectShells"/> for the role taxonomy.
+    ///
+    /// <para>Empty / whitespace-only <paramref name="installedRoles"/> is the
+    /// expected state for agents that pre-date H7 — the validator treats
+    /// absent role slots as optimistic-allow, so old agents continue to pass
+    /// IIS-deploy plan validation. The strict check kicks in only after the
+    /// agent's been upgraded to a version that detects + advertises roles.</para>
+    /// </summary>
+    private static void ProjectRoles(string installedRoles, ImmutableDictionary<string, IReadOnlySet<string>>.Builder builder)
+    {
+        if (string.IsNullOrWhiteSpace(installedRoles)) return;
+
+        var presentSet = ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase, CapabilityKeys.Present);
+
+        foreach (var raw in installedRoles.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var roleSlot = $"role:{raw.ToLowerInvariant()}";
+            builder[roleSlot] = presentSet;
         }
     }
 

@@ -50,6 +50,16 @@ public sealed class MachineRuntimeCapabilities
     public string AgentVersion { get; init; } = string.Empty;
 
     /// <summary>
+    /// H7 — comma-separated list of installed system roles detected on the
+    /// target (e.g. <c>"iis,docker"</c>). Projected by
+    /// <see cref="Validation.MachineCapabilitySet"/> into per-role
+    /// <c>role:{name}</c> slots so handlers can AND-require multiple roles.
+    /// Empty when the agent doesn't yet report roles (older agent / H7 not
+    /// installed) — the validator treats absent slots as optimistic-allow.
+    /// </summary>
+    public string InstalledRoles { get; init; } = string.Empty;
+
+    /// <summary>
     /// P0-E.3: service-interface strings reported by the agent in
     /// <c>CapabilitiesResponse.SupportedServices</c> (e.g. <c>"IScriptService/v1"</c>).
     /// Populated on every health check. Used by <see cref="SupportsScriptServiceV2"/>
@@ -134,7 +144,8 @@ public sealed class InMemoryMachineRuntimeCapabilitiesCache : IMachineRuntimeCap
             InstalledShells = Read(metadata, "installedShells"),
             Architecture = Read(metadata, "architecture"),
             AgentVersion = agentVersion ?? string.Empty,
-            SupportedServices = supportedServices ?? Array.Empty<string>()
+            SupportedServices = supportedServices ?? Array.Empty<string>(),
+            InstalledRoles = Read(metadata, "installedRoles")
         };
         _cache[machineId] = caps;
     }

@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using Shouldly;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Validation;
@@ -180,5 +182,75 @@ public class MachineCapabilitySetTests
         projected[CapabilityKeys.ArchSlot].ShouldContain(CapabilityKeys.Arch.X64);
         projected[CapabilityKeys.Shell.Pwsh].ShouldContain(CapabilityKeys.Present);
         projected[CapabilityKeys.Shell.PowerShell].ShouldContain(CapabilityKeys.Present);
+    }
+
+    // ── H7: Installed roles projection ──────────────────────────────────────
+
+    [Theory]
+    [InlineData("iis", CapabilityKeys.Role.IIS)]
+    [InlineData("docker", CapabilityKeys.Role.Docker)]
+    [InlineData("nginx", CapabilityKeys.Role.Nginx)]
+    [InlineData("systemd", CapabilityKeys.Role.Systemd)]
+    public void ProjectRoles_SingleRole_ProducesPerRoleSlot(string roleName, string expectedSlot)
+    {
+        // H7 — each agent-detected role becomes its own slot under role:* with
+        // value Present. Handler requirements check via the slot name (e.g.
+        // role:iis → handler declares CapabilityKeys.Role.IIS).
+        var caps = new MachineRuntimeCapabilities { InstalledRoles = roleName };
+
+        var projected = MachineCapabilitySet.From(caps);
+
+        projected.ContainsKey(expectedSlot).ShouldBeTrue();
+        projected[expectedSlot].ShouldContain(CapabilityKeys.Present);
+    }
+
+    [Fact]
+    public void ProjectRoles_MultipleRoles_EachGetsOwnSlot()
+    {
+        // H7 — comma-separated list (the wire shape used by the agent's
+        // RuntimeCapabilitiesInspector.MetaInstalledRoles metadata key)
+        // expands to individual slots so handlers can AND-require multiple
+        // roles (e.g. a future composite handler that wants both IIS and
+        // Docker).
+        var caps = new MachineRuntimeCapabilities { InstalledRoles = "iis,docker,nginx" };
+
+        var projected = MachineCapabilitySet.From(caps);
+
+        projected.ContainsKey(CapabilityKeys.Role.IIS).ShouldBeTrue();
+        projected.ContainsKey(CapabilityKeys.Role.Docker).ShouldBeTrue();
+        projected.ContainsKey(CapabilityKeys.Role.Nginx).ShouldBeTrue();
+        projected[CapabilityKeys.Role.IIS].ShouldContain(CapabilityKeys.Present);
+        projected[CapabilityKeys.Role.Docker].ShouldContain(CapabilityKeys.Present);
+        projected[CapabilityKeys.Role.Nginx].ShouldContain(CapabilityKeys.Present);
+    }
+
+    [Fact]
+    public void ProjectRoles_EmptyRoles_ProducesNoRoleSlots_OptimisticAllow()
+    {
+        // H7 backward-compat invariant: pre-H7 agents don't emit installedRoles
+        // metadata → projection contains no role:* slots → handler's role
+        // requirement (e.g. role:iis on IISDeployActionHandler) falls through
+        // to the validator's "absent slot = unknown = optimistic-allow" path.
+        // Existing fleets keep working without forcing an agent upgrade first.
+        var caps = new MachineRuntimeCapabilities { InstalledRoles = string.Empty };
+
+        var projected = MachineCapabilitySet.From(caps);
+
+        projected.Keys.ShouldNotContain(k => k.StartsWith("role:", StringComparison.OrdinalIgnoreCase),
+            customMessage: "Pre-H7 agent (empty InstalledRoles) MUST NOT project any role slots — operators on the old agent keep working with optimistic-allow on the new handler requirement.");
+    }
+
+    [Fact]
+    public void ProjectRoles_WhitespaceAndDuplicates_NormalisedToLowercase()
+    {
+        // Defensive: agent might emit " IIS ,  Docker , docker" (whitespace,
+        // mixed case, dupes). Projection trims + lowercases + ImmutableDictionary's
+        // last-write-wins handles dupes — no exception, sensible output.
+        var caps = new MachineRuntimeCapabilities { InstalledRoles = " IIS ,  Docker , docker " };
+
+        var projected = MachineCapabilitySet.From(caps);
+
+        projected.ContainsKey(CapabilityKeys.Role.IIS).ShouldBeTrue();
+        projected.ContainsKey(CapabilityKeys.Role.Docker).ShouldBeTrue();
     }
 }
