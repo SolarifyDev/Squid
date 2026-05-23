@@ -431,35 +431,40 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     {
         var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
 
-        // empty capabilities (cold cache) preserves the
-        //  behaviour where Linux strategy claimed all matching
-        // styles regardless of OS. Linux-OS / Windows-OS routing is covered
-        // by the dedicated OS-routing Theories below.
-        strategy.CanHandle(style, MachineRuntimeCapabilities.Empty).ShouldBe(expected);
+        // H5 — pass explicit Linux capabilities so the style-only matrix tests
+        // the style axis in isolation. Pre-H5 we passed MachineRuntimeCapabilities.Empty
+        // and relied on the historical "claim Unknown" default — that default
+        // is removed in H5 because H1's cold-cache short-circuit + the H5 guard
+        // in UpgradeAsync make it unreachable in practice. OS-axis routing has
+        // its own dedicated Theory below.
+        var linuxCaps = new MachineRuntimeCapabilities { Os = "Linux" };
+        strategy.CanHandle(style, linuxCaps).ShouldBe(expected);
     }
 
     [Theory]
     [InlineData("Linux", true)]    // explicit Linux — claims
     [InlineData("linux", true)]    // case-insensitive
     [InlineData("LINUX", true)]
-    [InlineData("", true)]         // cold cache → IsUnknown=true → historical default (preserves behaviour)
-    [InlineData("Unknown", true)]  // agent's "Unknown" fallback (when IsWindows/IsLinux/IsMacOS all false) routes to Linux historical default
-    [InlineData("Windows", false)] // explicit Windows skip — WindowsTentacleUpgradeStrategy claims
+    // H5 — Linux strategy NO LONGER claims cold-cache / Unknown OS. The
+    // pre-H5 "historical default" routed cold-cache Windows machines through
+    // Linux's Docker Hub path → misleading "Docker Hub unreachable" UX.
+    // H1 + the H5 guard in MachineUpgradeService.UpgradeAsync make cold
+    // cache impossible to reach this point, so strict-Linux is now safe.
+    [InlineData("", false)]
+    [InlineData("Unknown", false)]
+    [InlineData("Windows", false)]
     [InlineData("windows", false)]
     [InlineData("WINDOWS", false)]
     // Drift detector for the long-form Windows fix: legacy "Microsoft Windows
     // NT ..." strings MUST NOT trigger the Linux claim (would route a Windows
-    // agent to a tarball that doesn't exist for win-x64 RIDs). Pairs with
-    // WindowsTentacleUpgradeStrategyTests' matching rows so we pin the
-    // single-owner invariant from BOTH ends — both halves of the resolver
-    // independently agree the long form is Windows-only.
+    // agent to a tarball that doesn't exist for win-x64 RIDs).
     [InlineData("Microsoft Windows NT 10.0.19045.0", false)]
     [InlineData("Microsoft Windows NT 10.0.22631.0", false)]
     [InlineData("Microsoft Windows Server 2022 Datacenter", false)]
-    [InlineData("macOS", false)]   // explicit-claim refactor: Linux NO LONGER claims macOS (was true under "non-Windows" predicate). A future MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS METHOD.
-    [InlineData("MACOS", false)]   // case-insensitive
-    [InlineData("FreeBSD", false)] // any unknown OS string (not in AgentOperatingSystems) → no Linux claim → resolver says "no strategy registered"; clear operator error vs silent install-tarball-on-FreeBSD attempt
-    public void CanHandle_RoutesByOs_ClaimsLinuxOrUnknownOnly(string os, bool expected)
+    [InlineData("macOS", false)]
+    [InlineData("MACOS", false)]
+    [InlineData("FreeBSD", false)]
+    public void CanHandle_RoutesByOs_ClaimsLinuxOnly_NotUnknown(string os, bool expected)
     {
         // explicit-claim semantic (was "non-Windows"
         // before): Linux strategy claims TentaclePolling/Listening for
@@ -482,14 +487,53 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     }
 
     [Fact]
-    public void CanHandle_NullCapabilities_TreatedAsEmpty()
+    public void CanHandle_NullCapabilities_StrictlyRejects_NoHistoricalDefault()
     {
-        // Defensive: a future caller passing null capabilities (instead of
-        // MachineRuntimeCapabilities.Empty) should not NPE. Same fallback
-        // as the empty-OS case — Linux strategy claims.
+        // H5 — Defensive: a future caller passing null capabilities (instead
+        // of MachineRuntimeCapabilities.Empty) MUST get strict rejection. The
+        // pre-H5 "claim null for backward compat" was the source of the
+        // operator's cold-cache misdirection — H1 + H5's UpgradeAsync guard
+        // make this code path unreachable in production, but the test pins
+        // strict rejection so any future regression that re-introduces a
+        // "default claim" gets caught.
         var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
 
-        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), capabilities: null).ShouldBeTrue();
+        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), capabilities: null).ShouldBeFalse(
+            customMessage: "H5 — null capabilities MUST NOT trigger a Linux strategy claim. " +
+                           "Cold cache is intercepted at H1's NoOsDetected check or H5's UpgradeAsync guard; " +
+                           "this strategy contract is strict-Linux-only.");
+    }
+
+    [Fact]
+    public void CanHandle_EmptyOsCapabilities_StrictlyRejects_NoHistoricalDefault()
+    {
+        // H5 invariant — symmetric with the Windows strategy. Both are now
+        // strict OS-only claimants; cold cache must NEVER reach the strategy
+        // resolution layer (H1 + H5's UpgradeAsync guard handle it earlier).
+        // Pin both halves: this test + the Windows test pinning IsWindows
+        // strict-equality are the two ends of the single-owner invariant.
+        var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
+        var coldCache = new MachineRuntimeCapabilities { Os = string.Empty };
+
+        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), coldCache).ShouldBeFalse(
+            customMessage: "H5 — empty Os (cold cache) MUST NOT trigger Linux strategy claim. " +
+                           "Pre-H5 the IsUnknown predicate allowed this, producing the operator-facing " +
+                           "'Docker Hub unreachable' bug for Windows machines.");
+    }
+
+    [Fact]
+    public void CanHandle_UnknownOsCapabilities_StrictlyRejects_NoHistoricalDefault()
+    {
+        // H5 — explicit "Unknown" sentinel (when agent reports OS but it's
+        // neither Windows/Linux/macOS) must also be rejected by Linux strategy.
+        // Pre-H5, Linux claimed this case via IsUnknown; H5 removes the claim.
+        var strategy = new LinuxTentacleUpgradeStrategy(halibutClientFactory: null, observer: null);
+        var unknownOs = new MachineRuntimeCapabilities { Os = "Unknown" };
+
+        strategy.CanHandle(nameof(CommunicationStyle.TentaclePolling), unknownOs).ShouldBeFalse(
+            customMessage: "H5 — explicit 'Unknown' OS sentinel MUST NOT trigger Linux strategy claim. " +
+                           "Future MacOSTentacleUpgradeStrategy / BSDTentacleUpgradeStrategy plug in via DI " +
+                           "without modifying Linux; the strict-Linux-only contract is the enabler.");
     }
 
     // ========================================================================

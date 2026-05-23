@@ -188,6 +188,24 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // CommunicationStyle values; the OS reported by the agent's last
         // health check is what differentiates them).
         var capabilities = _runtimeCache.TryGet(machine.Id) ?? MachineRuntimeCapabilities.Empty;
+
+        // H5 — cold-cache short-circuit for tentacle styles. Mirrors the
+        // identical guard in EvaluateUpgradeEligibility (H1) so direct API
+        // callers (curl, scripted automation that bypassed the UI's
+        // upgrade-info gate) can't dispatch with empty OS — pre-H5 they
+        // would have hit LinuxTentacleUpgradeStrategy's historical-default
+        // "claim Unknown" path and dispatched the Linux upgrade script
+        // against a possibly-Windows machine. H5 removes that historical
+        // default in LinuxTentacleUpgradeStrategy.CanHandle AND blocks
+        // the dispatch entry point here so the failure mode is impossible
+        // from BOTH directions.
+        if (IsTentacleStyle(style) && string.IsNullOrWhiteSpace(capabilities.Os))
+            return BuildResponse(machine, currentVersion: null, targetVersion: null, MachineUpgradeStatus.Failed,
+                $"Machine '{machine.Name}' OS is not yet detected (capability cache is cold). " +
+                "Trigger an active health check (POST /api/machines/{id}/health-check or click 'Health Check' in the UI) " +
+                "BEFORE retrying the upgrade. Pre-H5 this would have routed to the Linux upgrade strategy via a " +
+                "historical-default fallback, which broke when the agent was actually Windows.");
+
         var strategy = ResolveStrategy(style, capabilities);
 
         if (strategy == null)
