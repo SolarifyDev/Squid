@@ -29,7 +29,8 @@ public sealed class MachineRuntimeCapabilitiesPersistenceTests
             InstalledShells = "powershell,cmd",
             Architecture = "X64",
             AgentVersion = "1.7.9",
-            SupportedServices = new[] { "IScriptService/v1" }
+            SupportedServices = new[] { "IScriptService/v1" },
+            InstalledRoles = "iis,docker"
         };
 
         var json = JsonSerializer.Serialize(persisted, MachineRuntimeCapabilitiesPersistence.SerializerOptions);
@@ -42,6 +43,12 @@ public sealed class MachineRuntimeCapabilitiesPersistenceTests
         json.ShouldContain("\"architecture\":\"X64\"");
         json.ShouldContain("\"agentVersion\":\"1.7.9\"");
         json.ShouldContain("\"supportedServices\":[\"IScriptService/v1\"]");
+        // H7 — installedRoles wire-name pinned. Audit followup: H7 added the
+        // property but the shape-stability tests didn't assert it appears in
+        // serialised JSON. A rename to PascalCase or a JsonPropertyName attribute
+        // drift would have gone undetected → cross-version hydration silently
+        // skips roles → IIS deploy plan-time validation silently regresses.
+        json.ShouldContain("\"installedRoles\":\"iis,docker\"");
     }
 
     [Fact]
@@ -60,7 +67,8 @@ public sealed class MachineRuntimeCapabilitiesPersistenceTests
               "installedShells": "bash,zsh",
               "architecture": "Arm64",
               "agentVersion": "1.8.0",
-              "supportedServices": ["IScriptService/v1", "IScriptService/v2"]
+              "supportedServices": ["IScriptService/v1", "IScriptService/v2"],
+              "installedRoles": "docker,nginx,systemd"
             }
             """;
 
@@ -75,6 +83,36 @@ public sealed class MachineRuntimeCapabilitiesPersistenceTests
         persisted.Architecture.ShouldBe("Arm64");
         persisted.AgentVersion.ShouldBe("1.8.0");
         persisted.SupportedServices.ShouldBe(new[] { "IScriptService/v1", "IScriptService/v2" });
+        persisted.InstalledRoles.ShouldBe("docker,nginx,systemd");
+    }
+
+    [Fact]
+    public void Deserialise_PreH7Blob_WithoutInstalledRoles_BackwardCompatible()
+    {
+        // H7 backward-compat invariant: blobs written by 1.8.0 servers (which
+        // didn't have InstalledRoles yet) MUST still deserialise on H7-aware
+        // servers. The DTO's InstalledRoles property is nullable specifically
+        // for this — a server upgrading from 1.8.0 → 1.8.x reading its OWN
+        // older DB rows shouldn't get a hydration failure.
+        var preH7Json = """
+            {
+              "os": "Linux",
+              "osVersion": "5.15.0",
+              "defaultShell": "bash",
+              "installedShells": "bash",
+              "architecture": "X64",
+              "agentVersion": "1.8.0",
+              "supportedServices": ["IScriptService/v1"]
+            }
+            """;
+
+        var persisted = JsonSerializer.Deserialize<MachineRuntimeCapabilitiesPersistence.PersistedCapabilities>(
+            preH7Json, MachineRuntimeCapabilitiesPersistence.SerializerOptions);
+
+        persisted.ShouldNotBeNull();
+        persisted!.Os.ShouldBe("Linux");
+        persisted.InstalledRoles.ShouldBeNull(
+            customMessage: "Pre-H7 JSON (no installedRoles field) MUST deserialise to InstalledRoles=null; the hydrator's null-coalesce makes this safe for the cache.");
     }
 
     [Fact]

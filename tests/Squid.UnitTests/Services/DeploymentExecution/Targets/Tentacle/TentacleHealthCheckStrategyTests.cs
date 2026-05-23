@@ -137,6 +137,46 @@ public class TentacleHealthCheckStrategyTests
     }
 
     [Fact]
+    public async Task CheckHealth_InstalledRolesInMetadata_PopulatedIntoCache()
+    {
+        // H7 audit followup. The original H7 test for the cache-population
+        // path didn't include installedRoles in the metadata fixture, so a
+        // regression that broke BuildCapabilitiesFromResponse's read of the
+        // installedRoles key would have gone undetected. The wire contract
+        // is: agent reports comma-separated roles in metadata["installedRoles"]
+        // → server reads into MachineRuntimeCapabilities.InstalledRoles →
+        // MachineCapabilitySet.ProjectRoles produces role:* slots →
+        // CapabilityValidator catches missing role at plan-time. If the read
+        // breaks, the whole chain silently optimistic-allows.
+        var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-99","Thumbprint":"EEFF"}""", machineId: 199);
+
+        var capsClient = new Mock<IAsyncCapabilitiesService>();
+        capsClient.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>()))
+            .ReturnsAsync(new CapabilitiesResponse
+            {
+                AgentVersion = "1.8.1",
+                SupportedServices = new List<string> { "IScriptService/v1" },
+                Metadata = new Dictionary<string, string>
+                {
+                    ["os"] = "Windows",
+                    ["defaultShell"] = "powershell",
+                    ["installedShells"] = "powershell,cmd",
+                    ["installedRoles"] = "iis,docker"
+                }
+            });
+        _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
+
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+
+        await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
+
+        var cached = cache.TryGet(199);
+        cached.InstalledRoles.ShouldBe("iis,docker",
+            customMessage: "H7 wire contract: BuildCapabilitiesFromResponse MUST read metadata[\"installedRoles\"] verbatim into MachineRuntimeCapabilities.InstalledRoles. A read-side regression here silently breaks the IIS deploy plan-time validation chain.");
+    }
+
+    [Fact]
     public async Task CheckHealth_NoMetadata_StillHealthy_AndCacheStoresAgentVersion()
     {
         var machine = MachineWithEndpoint("""{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""", machineId: 88);

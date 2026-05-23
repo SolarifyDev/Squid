@@ -628,8 +628,15 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         var deadline = metadata.DispatchedAt + LockExpiry;
         var remaining = deadline - DateTimeOffset.UtcNow;
 
+        // 1.8.0 hardening audit followup — clock-skew guard. Two server pods
+        // can disagree on UTC by seconds-to-minutes during NTP slew / fresh
+        // pod startup before time-sync converges. If pod B reads metadata
+        // pod A wrote, B can see DispatchedAt in B's future → elapsed turns
+        // negative and the operator sees the cosmetically wrong "~-3599s ago"
+        // in the contention message. `remaining` was already clamped at
+        // construction-time of H4; `elapsed` needed the same treatment.
         return $"Machine '{machine.Name}' is currently being upgraded by another request " +
-               $"(dispatched at {metadata.DispatchedAt:HH:mm:ss} UTC, ~{elapsed.TotalSeconds:F0}s ago, " +
+               $"(dispatched at {metadata.DispatchedAt:HH:mm:ss} UTC, ~{Math.Max(0, elapsed.TotalSeconds):F0}s ago, " +
                $"targeting {metadata.TargetVersion ?? "unknown"}). " +
                $"Expected to complete by {deadline:HH:mm:ss} UTC " +
                $"(~{Math.Max(0, remaining.TotalSeconds):F0}s remaining). " +
