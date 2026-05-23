@@ -117,5 +117,26 @@ public enum MachineUpgradeStatus
     Failed = 3,
 
     /// <summary>Server couldn't determine the current version (cache miss) but proceeded; outcome unknown until the next health check.</summary>
-    Initiated = 4
+    Initiated = 4,
+
+    /// <summary>
+    /// H6 — upgrade attempted, new binary failed post-install health check,
+    /// agent-side install script SUCCESSFULLY rolled back to the previous
+    /// version. The agent is healthy on the OLD binary (machine is safe
+    /// to retry / use). Distinct from <see cref="Failed"/> (binary may
+    /// be broken on either side) and <see cref="Upgraded"/> (binary
+    /// changed).
+    ///
+    /// <para>Operator UX: surface this as a yellow/amber "Upgrade rolled
+    /// back" badge — distinct from green ("Upgraded") and red ("Failed").
+    /// The machine is operational on the previous version; operator can
+    /// retry once they understand why the new version failed health check
+    /// (logs in last-upgrade.json + upgrade.log).</para>
+    ///
+    /// <para>Agent-side detection: Linux install script exit code 4
+    /// (ROLLED_BACK), Windows install script exit code 8 (Invoke-Rollback
+    /// fired). Both scripts already implement comprehensive backup +
+    /// restore; H6 just exposes the outcome to the server-facing API.</para>
+    /// </summary>
+    RolledBack = 5
 }

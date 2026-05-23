@@ -273,6 +273,15 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         }
     }
 
+    /// <summary>
+    /// Exit codes emitted by <c>upgrade-linux-tentacle.sh</c>. Wire contract
+    /// between the agent-side install script and this interpreter — a change
+    /// here MUST be mirrored in the script (pinned by
+    /// <c>LinuxUpgradeExitCodes_PinnedToScriptContract</c>) or rollback
+    /// outcomes get misinterpreted as straight failures.
+    /// </summary>
+    internal const int LinuxExitRolledBack = 4;
+
     private static MachineUpgradeOutcome InterpretScriptResult(Squid.Core.Services.DeploymentExecution.Script.ScriptExecutionResult result, string targetVersion)
     {
         if (result.Success)
@@ -284,6 +293,21 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
             };
 
         var lastLog = result.LogLines is { Count: > 0 } ll ? ll[^1] : "(no log lines)";
+
+        // H6 — distinguish "successfully rolled back to previous version" from
+        // straight failure. Pre-H6 both mapped to MachineUpgradeStatus.Failed,
+        // confusing operators who couldn't tell whether their machine was now
+        // broken (red) or safely restored to baseline (yellow/amber). The
+        // Linux install script's exit code 4 means "post-swap health check
+        // failed; .bak directory or apt/yum snapshot successfully restored
+        // the previous binary; agent is healthy on that baseline".
+        if (result.ExitCode == LinuxExitRolledBack)
+            return new MachineUpgradeOutcome
+            {
+                Status = MachineUpgradeStatus.RolledBack,
+                Detail = $"Upgrade to {targetVersion} failed post-install health check; rolled back to the previous binary. Agent is healthy on the baseline version — safe to retry once root cause is understood. Last log: {lastLog}",
+                AgentVersionMayHaveChanged = false   // back to baseline → cache stays valid
+            };
 
         return new MachineUpgradeOutcome
         {
