@@ -17,5 +17,11 @@ public class MachineConfiguration: IEntityTypeConfiguration<Machine>
             .HasMaxLength(50)
             .IsRequired();
         builder.Property(p => p.HealthLastChecked);
+
+        // H2 — runtime capability persistence (column added by
+        // 20260523_add_machine_runtime_capabilities_persistence.sql). Nullable —
+        // pre-existing machines have NULL until next health check populates them.
+        builder.Property(p => p.RuntimeCapabilitiesJson).HasColumnType("jsonb");
+        builder.Property(p => p.RuntimeCapabilitiesUpdatedAt);
     }
 }

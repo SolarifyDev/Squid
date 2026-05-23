@@ -20,6 +20,16 @@ public class Machine : IEntity<int>, IAuditable
     public DateTimeOffset? HealthLastChecked { get; set; }
     public string HealthDetail { get; set; }
 
+    // H2 — Persisted runtime capability snapshot (full MachineRuntimeCapabilities
+    // serialised as JSON). NULL when the agent has never been health-checked.
+    // The InMemoryMachineRuntimeCapabilitiesCache hydrates from this column at
+    // startup so server pod restarts no longer wipe operators into the H1
+    // cold-cache UX trap. Updated atomically via
+    // IMachineRuntimeCapabilitiesPersistence after every successful Capabilities
+    // probe in TentacleHealthCheckStrategy.
+    public string RuntimeCapabilitiesJson { get; set; }
+    public DateTimeOffset? RuntimeCapabilitiesUpdatedAt { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }
