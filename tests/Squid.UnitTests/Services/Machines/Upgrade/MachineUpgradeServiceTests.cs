@@ -747,6 +747,63 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public async Task UpgradeAsync_Contention_DispatchedAtInFuture_ClockSkewGuarded_NoNegativeSeconds()
+    {
+        // 1.8.0 hardening audit followup. When two server pods disagree on UTC
+        // by seconds-to-minutes during NTP slew, pod B reading metadata pod A
+        // wrote can see DispatchedAt in B's future → `elapsed = now - dispatchedAt`
+        // turns negative → operator sees the cosmetically wrong "~-3599s ago"
+        // in the contention message. `remaining` was already clamped at
+        // construction-time of H4; `elapsed` got the same Math.Max(0, ...)
+        // guard in the followup.
+        ArrangeMachine(id: 64, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(64, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
+
+        // Simulate clock skew — DispatchedAt is 5 minutes IN THE FUTURE from
+        // this server's perspective (i.e. the writer pod's clock was ahead).
+        var futureDispatch = DateTimeOffset.UtcNow.AddMinutes(5);
+        var metadataStore = new Mock<IUpgradeDispatchMetadataStore>();
+        metadataStore
+            .Setup(s => s.ReadAsync(64, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpgradeDispatchMetadata
+            {
+                DispatchedAt = futureDispatch,
+                TargetVersion = "1.8.1",
+                CurrentVersion = "1.7.9"
+            });
+
+        _redisLock
+            .Setup(x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()))
+            .ReturnsAsync((UpgradeMachineResponseData)null);
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object,
+            runtimePersistence: null,
+            dispatchMetadata: metadataStore.Object);
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 64 }, CancellationToken.None);
+
+        // The specific failure mode the guard prevents: '~-{N}s ago'. Pre-fix
+        // a 5-minute-future DispatchedAt produced '~-300s ago' in the message;
+        // the Math.Max(0, ...) clamp turns this into '~0s ago'. Search for
+        // the negative pattern specifically (not all `-` — timestamps in some
+        // cultures legitimately contain hyphens).
+        resp.Detail.ShouldNotContain("~-",
+            customMessage: "Clock-skew guard MUST clamp `elapsed` at zero so operators never see '~-{N}s ago' in the contention message. Pre-fix this happened during NTP slew or fresh-pod startup before time-sync converged.");
+        resp.Detail.ShouldContain("~0s ago",
+            customMessage: "When DispatchedAt is in the future (clock skew), the floor-clamped elapsed MUST format as '~0s ago' — degraded but readable.");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_Contention_NoDispatchMetadata_FallsBackToGenericMessage()
     {
         // H4 fallback path: when the metadata store is unavailable (e.g. Redis

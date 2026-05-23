@@ -101,6 +101,27 @@ public class CapabilityKeysConstantsTests
         actual.ShouldBe(expectedKey);
     }
 
+    [Theory]
+    [InlineData("role:iis", "IIS")]
+    [InlineData("role:docker", "Docker")]
+    [InlineData("role:nginx", "Nginx")]
+    [InlineData("role:systemd", "Systemd")]
+    public void Role_SlotNamespacePinned(string expectedKey, string name)
+    {
+        // H7 — audit followup. Shell / Bin / Privilege namespaces had pinning
+        // tests; the Role namespace shipped in 1.8.0 without one. A rename like
+        // CapabilityKeys.Role.IIS → .Iis would have been a silent contract
+        // break — IISDeployActionHandler.StaticRequirements references the
+        // constant symbol, but a downgrade of its value (e.g. "role:iis" →
+        // "role:IIS") would silently make the validator's case-insensitive
+        // overlap check stop matching the agent's lowercase "iis" advertisement.
+        var actual = typeof(CapabilityKeys.Role)
+            .GetField(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+            ?.GetRawConstantValue() as string;
+
+        actual.ShouldBe(expectedKey);
+    }
+
     [Fact]
     public void CategoricalSlots_ContainsOsAndArch_Only()
     {
