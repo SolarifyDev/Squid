@@ -95,8 +95,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
     private readonly IRedisSafeRunner _redisLock;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
+    private readonly IUpgradeDispatchMetadataStore _dispatchMetadata;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null, IUpgradeDispatchMetadataStore dispatchMetadata = null)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
@@ -105,6 +106,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         _strategies = strategies;
         _redisLock = redisLock;
         _backgroundJobClient = backgroundJobClient;
+        _dispatchMetadata = dispatchMetadata;
     }
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
@@ -487,7 +489,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         {
             result = await _redisLock.ExecuteWithLockAsync<UpgradeMachineResponseData>(
                 lockKey,
-                () => RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct),
+                () => RunStrategyWithMetadataAsync(machine, strategy, targetVersion, currentVersion, ct),
                 expiry: LockExpiry, wait: LockWait, retry: LockRetry).ConfigureAwait(false);
         }
         catch (LockAcquireFailedException ex)
@@ -505,9 +507,115 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
                 "infrastructure recovers, or contact your operator if it persists.");
         }
 
-        return result ?? BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
-            $"Machine '{machine.Name}' is currently being upgraded by another request. " +
-            "Wait for it to complete (typically under 2 minutes) and retry.");
+        if (result != null) return result;
+
+        // H4 — contention path. Pre-H4 we returned a hardcoded "wait 2 min and
+        // retry" message; operator had no idea WHEN the original dispatch
+        // started or what version was targeted (and "2 min" was wrong — the
+        // worst-case wait is LockExpiry = 7 min). Now we read the companion
+        // metadata key and tell the operator exactly when the in-flight
+        // dispatch began + when to expect completion.
+        return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
+            await BuildContentionMessageAsync(machine, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// H4 — wrap <see cref="RunStrategyAsync"/> with metadata write-before /
+    /// delete-after-success. The metadata key lives at
+    /// <c>{lockKey}:meta</c> and shares the lock's TTL, so a crashed
+    /// dispatcher's metadata is auto-cleaned by Redis (no leak). On lock
+    /// release path the explicit DeleteAsync is best-effort — if it fails
+    /// the TTL catches it.
+    /// </summary>
+    private async Task<UpgradeMachineResponseData> RunStrategyWithMetadataAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
+    {
+        if (_dispatchMetadata != null)
+        {
+            try
+            {
+                await _dispatchMetadata.WriteAsync(machine.Id, new UpgradeDispatchMetadata
+                {
+                    DispatchedAt = DateTimeOffset.UtcNow,
+                    TargetVersion = targetVersion,
+                    CurrentVersion = currentVersion ?? string.Empty
+                }, LockExpiry, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // Metadata is best-effort — log + continue. The lock is still
+                // held and the upgrade proceeds; the contention UX just falls
+                // back to the old generic message.
+                Log.Warning(ex,
+                    "Failed to write upgrade dispatch metadata for machine {MachineId}. " +
+                    "Upgrade proceeds; contention UX falls back to generic message.",
+                    machine.Id);
+            }
+        }
+
+        try
+        {
+            return await RunStrategyAsync(machine, strategy, targetVersion, currentVersion, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (_dispatchMetadata != null)
+            {
+                try
+                {
+                    await _dispatchMetadata.DeleteAsync(machine.Id, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    // Best-effort delete; TTL catches stragglers.
+                    Log.Debug(ex,
+                        "Failed to delete upgrade dispatch metadata for machine {MachineId} after dispatch release. " +
+                        "Redis TTL will clean it up within {Ttl}.",
+                        machine.Id, LockExpiry);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// H4 — build the contention error message. If H4's metadata store has a
+    /// record of when the in-flight dispatch started, embed it so the operator
+    /// can wait an INFORMED amount of time. Falls back to the pre-H4 generic
+    /// message when metadata is unavailable (Redis hiccup, race, etc.).
+    /// </summary>
+    private async Task<string> BuildContentionMessageAsync(Persistence.Entities.Deployments.Machine machine, CancellationToken ct)
+    {
+        if (_dispatchMetadata == null)
+            return $"Machine '{machine.Name}' is currently being upgraded by another request. " +
+                   "Wait for it to complete (typically under 2 minutes) and retry.";
+
+        UpgradeDispatchMetadata metadata;
+        try
+        {
+            metadata = await _dispatchMetadata.ReadAsync(machine.Id, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex,
+                "Failed to read upgrade dispatch metadata for machine {MachineId}. " +
+                "Contention message falls back to generic shape.",
+                machine.Id);
+            metadata = null;
+        }
+
+        if (metadata == null)
+            return $"Machine '{machine.Name}' is currently being upgraded by another request. " +
+                   $"Wait for it to complete (at most {LockExpiry.TotalMinutes:F0} minutes from start) and retry.";
+
+        var elapsed = DateTimeOffset.UtcNow - metadata.DispatchedAt;
+        var deadline = metadata.DispatchedAt + LockExpiry;
+        var remaining = deadline - DateTimeOffset.UtcNow;
+
+        return $"Machine '{machine.Name}' is currently being upgraded by another request " +
+               $"(dispatched at {metadata.DispatchedAt:HH:mm:ss} UTC, ~{elapsed.TotalSeconds:F0}s ago, " +
+               $"targeting {metadata.TargetVersion ?? "unknown"}). " +
+               $"Expected to complete by {deadline:HH:mm:ss} UTC " +
+               $"(~{Math.Max(0, remaining.TotalSeconds):F0}s remaining). " +
+               "Retry after that, or contact your operator if it appears genuinely stuck.";
     }
 
     private async Task<UpgradeMachineResponseData> RunStrategyAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)

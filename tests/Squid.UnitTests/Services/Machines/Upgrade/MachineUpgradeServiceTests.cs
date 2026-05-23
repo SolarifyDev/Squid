@@ -704,6 +704,98 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public async Task UpgradeAsync_Contention_WithDispatchMetadata_EnrichesMessageWithDispatchedAt()
+    {
+        // H4 — when the lock is contended AND we have metadata about the
+        // in-flight dispatch, surface dispatchedAt + targetVersion + expected
+        // deadline to the operator. Pre-H4 message ("wait under 2 minutes")
+        // was both wrong (worst case is LockExpiry=7 min) and unhelpful (no
+        // start time, no target version).
+        ArrangeMachine(id: 62, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(62, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
+
+        var dispatchedAt = new DateTimeOffset(2026, 5, 23, 12, 34, 56, TimeSpan.Zero);
+        var metadataStore = new Mock<IUpgradeDispatchMetadataStore>();
+        metadataStore
+            .Setup(s => s.ReadAsync(62, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UpgradeDispatchMetadata
+            {
+                DispatchedAt = dispatchedAt,
+                TargetVersion = "1.8.0",
+                CurrentVersion = "1.7.0"
+            });
+
+        // Lock returns null = contention.
+        _redisLock
+            .Setup(x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()))
+            .ReturnsAsync((UpgradeMachineResponseData)null);
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object,
+            runtimePersistence: null,
+            dispatchMetadata: metadataStore.Object);
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 62 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
+        resp.Detail.ShouldContain("12:34:56 UTC",
+            customMessage: "H4 contention message MUST include the dispatchedAt timestamp so the operator knows when the in-flight dispatch started.");
+        resp.Detail.ShouldContain("1.8.0",
+            customMessage: "H4 contention message MUST name the targetVersion so the operator can decide whether to wait or interrupt.");
+        resp.Detail.ShouldContain("remaining",
+            customMessage: "H4 contention message MUST include the expected-remaining time so the operator can wait an informed amount.");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_Contention_NoDispatchMetadata_FallsBackToGenericMessage()
+    {
+        // H4 fallback path: when the metadata store is unavailable (e.g. Redis
+        // hiccup), the contention message gracefully degrades to the
+        // pre-H4-style generic guidance with a corrected wait time (LockExpiry
+        // = 7 min, not "2 minutes" which was the pre-H4 hardcoded fib).
+        ArrangeMachine(id: 63, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(63, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
+
+        var metadataStore = new Mock<IUpgradeDispatchMetadataStore>();
+        metadataStore
+            .Setup(s => s.ReadAsync(63, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((UpgradeDispatchMetadata)null);
+
+        _redisLock
+            .Setup(x => x.ExecuteWithLockAsync<UpgradeMachineResponseData>(
+                It.IsAny<string>(),
+                It.IsAny<Func<Task<UpgradeMachineResponseData>>>(),
+                It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(),
+                It.IsAny<RedisServer>()))
+            .ReturnsAsync((UpgradeMachineResponseData)null);
+
+        var service = new MachineUpgradeService(
+            _machineDataProvider.Object,
+            _runtimeCache,
+            _versionRegistry.Object,
+            new[] { _linuxStrategy.Object, _k8sStrategy.Object },
+            _redisLock.Object,
+            _backgroundJobClient.Object,
+            runtimePersistence: null,
+            dispatchMetadata: metadataStore.Object);
+
+        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 63 }, CancellationToken.None);
+
+        resp.Detail.ShouldContain("currently being upgraded");
+        resp.Detail.ShouldContain("7 minutes",
+            customMessage: "Fallback message MUST surface the actual LockExpiry (7 min) so the operator's wait expectation matches reality.");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_RedisInfrastructureDown_ReturnsDistinctFailure_NotContention()
     {
         // P0-F3 regression guard (2026-04-24 audit).
