@@ -806,6 +806,53 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
     }
 
     [Fact]
+    public async Task UpgradeAsync_ScriptExitCode4_ReturnsRolledBack_NotFailed()
+    {
+        // H6 — the install script's exit code 4 means "post-swap health check
+        // failed; .bak / apt-snapshot restore succeeded; agent is healthy on
+        // the previous binary". Pre-H6 this collapsed into MachineUpgradeStatus.Failed,
+        // which made operators think their machine was broken. Distinguish
+        // RolledBack so the UI can render the "safely restored" badge instead
+        // of the "broken — investigate" badge.
+        var (strategy, _, observer) = BuildMockedStrategy();
+        var machine = MakeMachine(33, "TentaclePolling", "sub-33", "AABB");
+
+        observer
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .ReturnsAsync(new ScriptExecutionResult
+            {
+                Success = false,
+                ExitCode = LinuxTentacleUpgradeStrategy.LinuxExitRolledBack,
+                LogLines = new List<string> { "Health check failed", "Rollback to previous version succeeded; agent is healthy on the old binary." }
+            });
+
+        var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);
+
+        outcome.Status.ShouldBe(MachineUpgradeStatus.RolledBack,
+            customMessage: "H6 — Linux exit code 4 MUST map to RolledBack so the FE can render the 'safely restored' badge instead of the alarming 'failed' badge.");
+        outcome.Detail.ShouldContain("rolled back", Case.Insensitive);
+        outcome.Detail.ShouldContain("safe to retry", Case.Insensitive,
+            customMessage: "Operator MUST be told the machine is safe to use AND retry-able once they understand why the new version failed health check.");
+        outcome.AgentVersionMayHaveChanged.ShouldBeFalse(
+            "rollback restored the baseline binary → cache stays valid");
+    }
+
+    [Fact]
+    public void LinuxExitRolledBack_PinnedToScriptContract()
+    {
+        // Wire-stability pin (Rule 8): the exit code is the contract between
+        // the agent-side install script (upgrade-linux-tentacle.sh) and the
+        // server-side interpreter (InterpretScriptResult). Drift between the
+        // two means rollback outcomes get misclassified as straight Failed —
+        // operators lose the "safely restored to baseline" signal. Pin to 4
+        // so a refactor on either side becomes a test-visible decision.
+        LinuxTentacleUpgradeStrategy.LinuxExitRolledBack.ShouldBe(4,
+            customMessage: "Exit code 4 is the contract with upgrade-linux-tentacle.sh's ROLLED_BACK status emit. " +
+                           "If you change this, also update the .sh script's `exit 4` lines AND the mirroring " +
+                           "test in tests/Squid.Tentacle.Tests for the script side.");
+    }
+
+    [Fact]
     public async Task UpgradeAsync_ScriptFailedWithEmptyLogs_DoesNotIndexExceptionOnLastLog()
     {
         // Guard for the `LogLines[^1]` pattern — empty list would IndexOutOfRange
