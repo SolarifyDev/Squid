@@ -2,15 +2,30 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Cronos;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Models.Machines;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.Core.Services.Machines;
 
 public interface IMachineHealthCheckService : IScopedDependency
 {
-    Task ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Active health-check probe — runs the per-style <c>IHealthCheckStrategy</c>
+    /// (typically a Halibut Capabilities RPC for tentacles) and returns a
+    /// structured outcome. Updates the capability cache + DB persistence
+    /// (H2) atomically with the probe result.
+    ///
+    /// <para>H3 — return type changed from <c>Task</c> to
+    /// <c>Task&lt;ManualHealthCheckResult&gt;</c> so FE / CLI can render
+    /// "agent_unreachable" vs "agent ok, here are the new capabilities" without
+    /// re-parsing the human-readable detail. Existing callers that ignore the
+    /// result (<c>await svc.ManualHealthCheckAsync(...)</c>) are unaffected —
+    /// the awaitable contract is preserved.</para>
+    /// </summary>
+    Task<ManualHealthCheckResult> ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default);
 
     Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default);
 }
@@ -28,36 +43,79 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly ITransportRegistry _transportRegistry;
+    private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
 
-    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry)
+    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry, IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
     {
         _machineDataProvider = machineDataProvider;
         _policyDataProvider = policyDataProvider;
         _transportRegistry = transportRegistry;
+        _capabilitiesCache = capabilitiesCache;
     }
 
-    public async Task ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
+    public async Task<ManualHealthCheckResult> ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
     {
-        var machine = await LoadMachineAsync(machineId, cancellationToken).ConfigureAwait(false);
+        var checkedAt = DateTimeOffset.UtcNow;
+
+        var machine = await _machineDataProvider.GetMachinesByIdAsync(machineId, cancellationToken).ConfigureAwait(false);
+
+        if (machine == null)
+            return new ManualHealthCheckResult
+            {
+                Successful = false,
+                Detail = $"Machine {machineId} not found",
+                ErrorCode = ManualHealthCheckErrorCodes.MachineNotFound,
+                CheckedAt = checkedAt
+            };
 
         if (machine.IsDisabled)
         {
             Log.Information("Skipping health check for disabled machine {MachineName}", machine.Name);
-            return;
+            return new ManualHealthCheckResult
+            {
+                Successful = false,
+                Detail = $"Machine '{machine.Name}' is disabled — enable it before running a health check.",
+                ErrorCode = ManualHealthCheckErrorCodes.MachineDisabled,
+                CheckedAt = checkedAt
+            };
         }
 
         var transport = ResolveTransport(machine);
 
         if (transport?.HealthChecker == null)
         {
-            await RecordUnavailableAsync(machine, $"No health checker for {CommunicationStyleParser.Parse(machine.Endpoint)}", cancellationToken).ConfigureAwait(false);
-            return;
+            var detail = $"No health checker for {CommunicationStyleParser.Parse(machine.Endpoint)}";
+            await RecordUnavailableAsync(machine, detail, cancellationToken).ConfigureAwait(false);
+            return new ManualHealthCheckResult
+            {
+                Successful = false,
+                Detail = detail,
+                ErrorCode = ManualHealthCheckErrorCodes.NoHealthChecker,
+                CheckedAt = checkedAt
+            };
         }
 
         var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
         var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
 
-        await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
+        var probeResult = await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
+
+        // Read cache POST-probe so the FE sees the freshly-written capabilities
+        // (TentacleHealthCheckStrategy.CacheCapabilitiesFor writes during the
+        // probe). If the cache miss (e.g. non-tentacle transport that doesn't
+        // populate capabilities), AgentVersion / Os stay empty — that's fine,
+        // the success flag + detail give the caller enough signal.
+        var caps = _capabilitiesCache?.TryGet(machine.Id);
+
+        return new ManualHealthCheckResult
+        {
+            Successful = probeResult.Healthy,
+            Detail = probeResult.Detail ?? string.Empty,
+            ErrorCode = probeResult.Healthy ? null : ManualHealthCheckErrorCodes.AgentUnreachable,
+            AgentVersion = caps?.AgentVersion ?? string.Empty,
+            Os = caps?.Os ?? string.Empty,
+            CheckedAt = checkedAt
+        };
     }
 
     public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
@@ -113,7 +171,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     // Core — single entry point, strategy decides how
     // ========================================================================
 
-    private async Task RunAndRecordAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken cancellationToken)
+    private async Task<HealthCheckResult> RunAndRecordAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken cancellationToken)
     {
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
@@ -123,6 +181,8 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
 
         Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
+
+        return result;
     }
 
     // ========================================================================
