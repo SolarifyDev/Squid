@@ -173,25 +173,30 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
 
         if (!matchesStyle) return false;
 
-        // explicit-claim semantic (was "non-Windows"
-        // before): the Linux strategy claims agents whose reported OS is
-        // Linux OR whose capabilities are unknown (cold cache / agent
-        // hasn't health-checked yet / explicit "Unknown" fallback). It
-        // does NOT claim macOS, FreeBSD, or any other future OS — those
-        // get a clear "no strategy registered" error from the resolver
-        // until a dedicated strategy is added, and a future
-        // MacOSTentacleUpgradeStrategy plugs in WITHOUT MODIFYING THIS
-        // METHOD (the prior `!IsWindows` shape would have force-claimed
-        // macOS and required modifying Linux to add a `&& !IsMacOS` skip
-        // — open-closed violation).
+        // H5 — strict-Linux-only: the historical "claim Unknown for cold-cache
+        // backward-compat" behaviour produced the 1.7.x operator bug where a
+        // cold-cache Windows machine got routed to LinuxTentacleUpgradeStrategy,
+        // which then tried Docker Hub for a Linux tarball that doesn't exist
+        // for win-x64. H1 already short-circuits cold cache before reaching
+        // ResolveStrategy via the NoOsDetected reason code, and H5 mirrors
+        // that guard inside <see cref="MachineUpgradeService.UpgradeAsync"/>
+        // so direct API callers can't bypass it either. So this strategy can
+        // now safely refuse anything that's not explicitly Linux.
         //
-        // Cold-cache historical default:  there was no OS
-        // axis, Linux was the only strategy, so a tentacle with
-        // capabilities.Os = empty (never health-checked) MUST still route
-        // to Linux to preserve operator backward compatibility.
-        if (capabilities == null) return true;
+        // <para>Side benefits of the strict refusal:
+        // <list type="bullet">
+        ///   <item>macOS / FreeBSD / future OSes get a clean "no strategy
+        ///         registered" error instead of silent Linux misrouting.</item>
+        ///   <item>Adding a MacOSTentacleUpgradeStrategy plugs in via DI
+        ///         without modifying this method (open-closed).</item>
+        ///   <item>A regression that re-introduces the cold-cache Linux
+        ///         fallback would fail
+        ///         <c>CanHandle_RoutesByOs_ClaimsLinuxOnly_NotUnknown</c>
+        ///         instead of silently misrouting Windows agents.</item>
+        /// </list></para>
+        if (capabilities == null) return false;
 
-        return capabilities.IsLinux || capabilities.IsUnknown;
+        return capabilities.IsLinux;
     }
 
     public async Task<MachineUpgradeOutcome> UpgradeAsync(Machine machine, string targetVersion, CancellationToken ct)

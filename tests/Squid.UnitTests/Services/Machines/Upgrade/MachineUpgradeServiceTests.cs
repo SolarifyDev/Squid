@@ -101,7 +101,7 @@ public sealed class MachineUpgradeServiceTests
     public async Task UpgradeAsync_AlreadyOnTargetVersion_ShortCircuitsWithoutDispatchingStrategy()
     {
         ArrangeMachine(id: 7, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(7, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(7, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.4.0");
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 7 }, CancellationToken.None);
 
@@ -115,7 +115,7 @@ public sealed class MachineUpgradeServiceTests
     public async Task UpgradeAsync_CurrentVersionNewerThanTarget_DefaultBehavior_RejectsAsDowngradeWithHint()
     {
         ArrangeMachine(id: 8, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(8, new Dictionary<string, string>(), agentVersion: "2.0.0");
+        _runtimeCache.Store(8, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "2.0.0");
 
         var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 8 }, CancellationToken.None);
 
@@ -132,7 +132,7 @@ public sealed class MachineUpgradeServiceTests
         // Emergency downgrade scenario (1.4.2 has a nasty regression, want to
         // revert to 1.4.0). Default-safe: blocked. With explicit opt-in: goes.
         ArrangeMachine(id: 81, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(81, new Dictionary<string, string>(), agentVersion: "2.0.0");
+        _runtimeCache.Store(81, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "2.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "forced downgrade applied", AgentVersionMayHaveChanged = true });
@@ -156,7 +156,7 @@ public sealed class MachineUpgradeServiceTests
         // already up-to-date and shouldn't incur a no-op dispatch even with
         // the flag on (would be wasteful filesystem churn).
         ArrangeMachine(id: 82, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(82, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(82, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.4.0");
 
         var resp = await _service.UpgradeAsync(
             new UpgradeMachineCommand { MachineId = 82, TargetVersion = "1.4.0", AllowDowngrade = true },
@@ -176,7 +176,7 @@ public sealed class MachineUpgradeServiceTests
         // Safety: setting AllowDowngrade=true on a genuine upgrade must not
         // change the happy path.
         ArrangeMachine(id: 83, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(83, new Dictionary<string, string>(), agentVersion: "1.3.0");
+        _runtimeCache.Store(83, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "up", AgentVersionMayHaveChanged = true });
@@ -192,7 +192,7 @@ public sealed class MachineUpgradeServiceTests
     public async Task UpgradeAsync_OperatorOverridesTargetVersion_PreferredOverBundle()
     {
         ArrangeMachine(id: 11, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(11, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _runtimeCache.Store(11, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.0.0");
 
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "9.9.9", It.IsAny<CancellationToken>()))
@@ -365,44 +365,35 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_ColdCacheNoOs_RoutesToLinuxAsHistoricalDefault()
+    public async Task UpgradeAsync_ColdCacheNoOs_RejectedAtEntry_PointsToHealthCheck()
     {
-        // Cold cache (machine never health-checked) → capabilities.Os = "" →
-        // Linux strategy claims as the historical default; Windows strategy
-        // skips. Preserves behaviour for the operator base, which
-        // is overwhelmingly Linux. Without this, a freshly-registered tentacle
-        // would surface as "no strategy registered" until its first health
-        // check — confusing, since health checks are async.
-        var windowsStrategy = new Mock<IMachineUpgradeStrategy>();
-        windowsStrategy
-            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os == "Windows")))
-            .Returns(true);
-
-        _linuxStrategy.Reset();
-        _linuxStrategy
-            .Setup(s => s.CanHandle(nameof(CommunicationStyle.TentaclePolling), It.Is<MachineRuntimeCapabilities>(c => c.Os != "Windows")))
-            .Returns(true);
-        _linuxStrategy
-            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "cold-cache default", AgentVersionMayHaveChanged = true });
-
-        var service = new MachineUpgradeService(
-            _machineDataProvider.Object,
-            _runtimeCache,
-            _versionRegistry.Object,
-            new[] { _linuxStrategy.Object, windowsStrategy.Object, _k8sStrategy.Object },
-            _redisLock.Object,
-            _backgroundJobClient.Object);
-
+        // H5 — INVERTS the pre-H5 "cold cache routes to Linux as historical
+        // default" behaviour. That default was the source of the operator-
+        // facing 1.7.x bug where a cold-cache Windows machine dispatched the
+        // Linux upgrade script (which then 404'd on Docker Hub looking for a
+        // tarball that doesn't exist for win-x64).
+        //
+        // Post-H5: cold-cache tentacle styles fail BEFORE strategy resolution,
+        // with an actionable hint pointing the operator at the health-check
+        // endpoint. Mirrors H1's identical guard in GetUpgradeInfoAsync so
+        // direct API callers (curl, scripted automation) can't bypass the
+        // FE's upgrade-info gate.
         ArrangeMachine(id: 303, style: nameof(CommunicationStyle.TentaclePolling));
-        // INTENTIONAL: no _runtimeCache.Store(303, ...) — cold cache scenario.
+        // Override the ArrangeMachine default Linux-OS seed with an explicit
+        // cold-cache state — clear the entry so capabilities.Os == "".
+        _runtimeCache.Invalidate(303);
 
-        var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
+        var resp = await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
 
-        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
-        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once,
-            "cold-cache (empty Os) must route to Linux strategy as historical default — preserves behaviour");
-        windowsStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed,
+            customMessage: "H5 — cold-cache tentacle styles MUST fail at the upgrade entry point, not silently dispatch via the pre-H5 Linux historical default.");
+        resp.Detail.ShouldContain("OS is not yet detected", Case.Insensitive);
+        resp.Detail.ShouldContain("health check", Case.Insensitive,
+            customMessage: "Operator MUST be pointed at the health-check endpoint as the actionable next step.");
+        _linuxStrategy.Verify(
+            s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "H5 — Linux strategy MUST NOT be invoked for cold-cache machines. This is the security/correctness property — pre-H5 dispatch could send a Linux script to a Windows machine.");
     }
 
     [Theory]
@@ -525,7 +516,7 @@ public sealed class MachineUpgradeServiceTests
         // (the agent already runs a NEWER beta but the server thinks not).
         // Per semver, 1.4.0 > 1.4.0-beta.1, so this is correctly NOT up-to-date.
         ArrangeMachine(id: 93, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(93, new Dictionary<string, string>(), agentVersion: "1.4.0-beta.1");
+        _runtimeCache.Store(93, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.4.0-beta.1");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "promoted from beta", AgentVersionMayHaveChanged = true });
@@ -545,7 +536,7 @@ public sealed class MachineUpgradeServiceTests
         // service used to silently allow it; with proper compare, "current
         // already higher than target" → AlreadyUpToDate is the safe answer.
         ArrangeMachine(id: 94, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(94, new Dictionary<string, string>(), agentVersion: "1.4.0");
+        _runtimeCache.Store(94, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.4.0");
 
         var resp = await _service.UpgradeAsync(
             new UpgradeMachineCommand { MachineId = 94, TargetVersion = "1.4.0-beta.1" },
@@ -606,7 +597,7 @@ public sealed class MachineUpgradeServiceTests
         // orchestrator. This test no longer cares which Status was returned —
         // only that the flag means "drop the cache".
         ArrangeMachine(id: 51, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(51, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _runtimeCache.Store(51, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
@@ -621,7 +612,7 @@ public sealed class MachineUpgradeServiceTests
     public async Task UpgradeAsync_StrategyReportsAgentUnchanged_LeavesRuntimeCacheIntact()
     {
         ArrangeMachine(id: 52, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(52, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _runtimeCache.Store(52, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Failed, Detail = "rolled back", AgentVersionMayHaveChanged = false });
@@ -641,7 +632,7 @@ public sealed class MachineUpgradeServiceTests
         // change actually happened" (a hypothetical no-op success), cache
         // is preserved. This pins the orchestrator's flag-only decision.
         ArrangeMachine(id: 53, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(53, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _runtimeCache.Store(53, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "no-op success", AgentVersionMayHaveChanged = false });
@@ -659,7 +650,7 @@ public sealed class MachineUpgradeServiceTests
         // change (e.g. partial-write detected, agent in unknown state).
         // Flag wins — invalidate.
         ArrangeMachine(id: 54, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(54, new Dictionary<string, string>(), agentVersion: "1.0.0");
+        _runtimeCache.Store(54, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.0.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Failed, Detail = "partial swap, unknown state", AgentVersionMayHaveChanged = true });
@@ -1037,7 +1028,7 @@ public sealed class MachineUpgradeServiceTests
         // LinuxTentacleUpgradeStrategy — script never reached the agent,
         // so the binary is unchanged, cache is still accurate.
         ArrangeMachine(id: 302, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(302, new Dictionary<string, string>(), agentVersion: "1.3.0");
+        _runtimeCache.Store(302, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.0");
         _linuxStrategy
             .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachineUpgradeOutcome
@@ -1400,7 +1391,9 @@ public sealed class MachineUpgradeServiceTests
         // message even for Windows machines. Now we short-circuit BEFORE
         // strategy resolution and tell the operator to run a health check.
         ArrangeMachine(id: 14, style: nameof(CommunicationStyle.TentaclePolling));
-        // intentionally not storing in runtimeCache → cold cache
+        // H5 — ArrangeMachine now auto-seeds Linux OS for convenience tests;
+        // explicitly invalidate to preserve the cold-cache intent of this test.
+        _runtimeCache.Invalidate(14);
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 14 }, CancellationToken.None);
 
@@ -1425,7 +1418,8 @@ public sealed class MachineUpgradeServiceTests
         // returns null for Ssh regardless of capabilities) gives the more
         // actionable message.
         ArrangeMachine(id: 15, style: "Ssh");
-        // intentionally cold cache
+        // H5 — explicit cold cache (ArrangeMachine auto-seeds Linux OS).
+        _runtimeCache.Invalidate(15);
 
         var info = await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 15 }, CancellationToken.None);
 
@@ -1565,7 +1559,7 @@ public sealed class MachineUpgradeServiceTests
         // (would serialise readers), must NOT call strategy.UpgradeAsync
         // (would actually upgrade!). Pin both negative contracts.
         ArrangeMachine(id: 9, style: nameof(CommunicationStyle.TentaclePolling));
-        _runtimeCache.Store(9, new Dictionary<string, string>(), agentVersion: "1.3.9");
+        _runtimeCache.Store(9, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.9");
 
         await _service.GetUpgradeInfoAsync(new GetUpgradeInfoRequest { MachineId = 9 }, CancellationToken.None);
 
@@ -1595,5 +1589,22 @@ public sealed class MachineUpgradeServiceTests
                 Endpoint = endpoint,
                 SpaceId = 1
             });
+
+        // H5 — seed default Linux capabilities for the convenience overload so
+        // existing tests that don't explicitly care about OS routing continue
+        // to exercise the lock + strategy + dispatch happy path. Tests that
+        // specifically exercise cold-cache OR Windows routing override via
+        // _runtimeCache.Store(...) AFTER calling ArrangeMachine, which the
+        // InMemoryMachineRuntimeCapabilitiesCache merges atomically.
+        //
+        // Pre-H5 the LinuxTentacleUpgradeStrategy.CanHandle "claim Unknown"
+        // historical default meant a cold-cache machine still got Linux
+        // routing for free. H5 removes that default AND the equivalent guard
+        // at MachineUpgradeService.UpgradeAsync entry, so cold-cache tests
+        // explicitly fail with "OS not yet detected" now. To keep the
+        // pre-H5 default-OK behaviour for tests that aren't about OS routing,
+        // pre-seed Linux here.
+        if (_runtimeCache.TryGet(id)?.Os is null or "")
+            _runtimeCache.Store(id, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: string.Empty);
     }
 }
