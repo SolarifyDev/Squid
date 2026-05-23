@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
+using Squid.Message.Models.Machines;
 using Squid.Core.Services.DeploymentExecution.Transport;
 
 namespace Squid.UnitTests.Services.Machines;
@@ -116,11 +117,101 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
-    public async Task RunHealthCheck_MachineNotFound_Throws()
+    public async Task RunHealthCheck_MachineNotFound_ReturnsStructuredErrorCode()
     {
+        // H3 — manual health check returns a structured ManualHealthCheckResult
+        // instead of throwing. The thrown InvalidOperationException pre-H3 gave
+        // the FE a generic 500; the structured result lets the UI render an
+        // actionable "machine #999 doesn't exist" error.
         _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(999, It.IsAny<CancellationToken>())).ReturnsAsync((Machine)null);
 
-        await Should.ThrowAsync<InvalidOperationException>(() => _service.ManualHealthCheckAsync(999));
+        var result = await _service.ManualHealthCheckAsync(999);
+
+        result.Successful.ShouldBeFalse();
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.MachineNotFound);
+        result.Detail.ShouldContain("999");
+    }
+
+    // ========================================================================
+    // H3 — ManualHealthCheckResult structured outcomes
+    //
+    // Operator-visible motivator: in 1.7.x the FE got an empty success/fail
+    // signal from the health-check endpoint and couldn't tell what the active
+    // probe found OR what to do when it failed. H3 returns a structured
+    // result with AgentVersion / Os / ErrorCode so the UI can render
+    // actionable next steps. Pin each outcome with a dedicated test.
+    // ========================================================================
+
+    [Fact]
+    public async Task ManualHealthCheck_ProbeSucceeds_ReturnsSuccessfulResultWithDetail()
+    {
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        var result = await _service.ManualHealthCheckAsync(machine.Id);
+
+        result.Successful.ShouldBeTrue();
+        result.ErrorCode.ShouldBeNull(
+            customMessage: "Successful probe MUST have null ErrorCode — FE branches on null/non-null to decide whether to show error UI.");
+        result.Detail.ShouldBe("ok");
+        result.CheckedAt.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddSeconds(-10));
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_DisabledMachine_ReturnsMachineDisabledErrorCode()
+    {
+        var machine = new Machine { Id = 5, Name = "disabled-host", IsDisabled = true };
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        var result = await _service.ManualHealthCheckAsync(5);
+
+        result.Successful.ShouldBeFalse();
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.MachineDisabled);
+        result.Detail.ShouldContain("disabled", Case.Insensitive);
+        result.Detail.ShouldContain("disabled-host",
+            customMessage: "Detail MUST include the machine name so the operator can identify which one without consulting another screen.");
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_NoHealthChecker_ReturnsNoHealthCheckerErrorCode()
+    {
+        // Transport exists but doesn't have an IHealthCheckStrategy (e.g. an
+        // SSH transport that doesn't support active probes). H3 surfaces this
+        // distinctly from "agent unreachable" — operator knows it's a server-
+        // side capability gap, not a network issue.
+        _transport.Setup(t => t.HealthChecker).Returns((IHealthCheckStrategy)null);
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        var result = await _service.ManualHealthCheckAsync(machine.Id);
+
+        result.Successful.ShouldBeFalse();
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.NoHealthChecker);
+        result.Detail.ShouldContain("No health checker");
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_HalibutProbeFails_ReturnsAgentUnreachableErrorCode()
+    {
+        // Halibut RPC timed out / connection refused / agent process down →
+        // strategy returns Healthy=false. H3 maps to agent_unreachable so the
+        // FE can render the operator-actionable "check network, check agent
+        // service" hint vs. confusing them with a generic "health check failed".
+        _healthChecker.Setup(h => h.CheckHealthAsync(
+                It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(),
+                It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
+            .ReturnsAsync(new HealthCheckResult(false, "Halibut: connection refused"));
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi);
+        SetupMachineById(machine);
+
+        var result = await _service.ManualHealthCheckAsync(machine.Id);
+
+        result.Successful.ShouldBeFalse();
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.AgentUnreachable,
+            customMessage: "Failed Halibut probe MUST map to agent_unreachable — FE shows the operator a network / agent-service diagnostic, not a generic 500.");
+        result.Detail.ShouldContain("connection refused");
     }
 
     [Fact]
