@@ -36,13 +36,15 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
 
     private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
+    private readonly IMachineRuntimeCapabilitiesPersistence _capabilitiesPersistence;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
     private readonly IUpgradeEventTimelineStore _upgradeEventStore;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _capabilitiesCache = capabilitiesCache;
+        _capabilitiesPersistence = capabilitiesPersistence;
         _upgradeLockReconciler = upgradeLockReconciler;
         _upgradeEventStore = upgradeEventStore;
     }
@@ -73,6 +75,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
                 return new HealthCheckResult(false, "Tentacle returned null capabilities response");
 
             CacheCapabilitiesFor(machine, response);
+            await PersistCapabilitiesForAsync(machine, response, ct).ConfigureAwait(false);
 
             await ProcessUpgradeStatusAsync(machine, response, ct).ConfigureAwait(false);
 
@@ -98,6 +101,58 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
         // P0-E.3: also cache the SupportedServices list so the execution strategy
         // can pick the V1/V2 protocol without another capabilities RPC per script.
         _capabilitiesCache.Store(machine.Id, response.Metadata, response.AgentVersion, response.SupportedServices);
+    }
+
+    /// <summary>
+    /// H2 — write-through to the DB-backed persistence so the next server pod
+    /// restart hydrates the cache from this snapshot instead of starting cold.
+    /// Best-effort: a failed DB write logs a warning but does NOT fail the
+    /// health check (the in-memory cache is still updated and the next
+    /// successful health-check probe will retry the persistence write).
+    /// </summary>
+    private async Task PersistCapabilitiesForAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
+    {
+        if (_capabilitiesPersistence == null || machine == null) return;
+
+        var capabilities = BuildCapabilitiesFromResponse(response);
+
+        try
+        {
+            await _capabilitiesPersistence.SaveAsync(machine.Id, capabilities, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Don't fail the health check on a DB hiccup — in-memory cache
+            // already has the fresh data so this run completes normally; the
+            // NEXT successful health check will retry the persistence write.
+            Log.Warning(ex,
+                "Failed to persist runtime capabilities for machine {MachineId} to DB. " +
+                "In-memory cache is up to date; next health check will retry the DB write.",
+                machine.Id);
+        }
+    }
+
+    /// <summary>
+    /// Project the agent's <see cref="CapabilitiesResponse"/> into the
+    /// canonical <see cref="MachineRuntimeCapabilities"/> shape the
+    /// persistence layer serialises. Keep this method in lockstep with
+    /// <see cref="InMemoryMachineRuntimeCapabilitiesCache.Store"/>'s field
+    /// reads — both consume the same agent-side <c>metadata</c> dictionary.
+    /// </summary>
+    private static MachineRuntimeCapabilities BuildCapabilitiesFromResponse(CapabilitiesResponse response)
+    {
+        return new MachineRuntimeCapabilities
+        {
+            Os = ReadMetadata(response, "os") ?? string.Empty,
+            OsVersion = ReadMetadata(response, "osVersion") ?? string.Empty,
+            DefaultShell = ReadMetadata(response, "defaultShell") ?? string.Empty,
+            InstalledShells = ReadMetadata(response, "installedShells") ?? string.Empty,
+            Architecture = ReadMetadata(response, "architecture") ?? string.Empty,
+            AgentVersion = response.AgentVersion ?? string.Empty,
+            // CapabilitiesResponse.SupportedServices is a List<string>; cast to
+            // IReadOnlyList<string> for the canonical capabilities shape.
+            SupportedServices = (IReadOnlyList<string>)response.SupportedServices ?? Array.Empty<string>()
+        };
     }
 
     /// <summary>

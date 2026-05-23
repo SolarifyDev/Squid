@@ -160,6 +160,13 @@ public class SquidModule : Module
             .ToArray();
 
         builder.RegisterTypes(seederTypes).As<IDataSeeder>().SingleInstance();
+
+        // H2 — hydrate the runtime capability cache from the DB at startup so
+        // a freshly-deployed pod doesn't make every operator action hit the
+        // H1 NoOsDetected path until the next scheduled health check.
+        builder.RegisterType<Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilitiesCacheHydrator>()
+            .As<IStartable>()
+            .SingleInstance();
     }
 
     private void RegisterDependency(ContainerBuilder builder)

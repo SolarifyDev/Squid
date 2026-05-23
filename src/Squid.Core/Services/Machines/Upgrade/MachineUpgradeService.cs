@@ -90,15 +90,17 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
+    private readonly IMachineRuntimeCapabilitiesPersistence _runtimePersistence;
     private readonly ITentacleVersionRegistry _versionRegistry;
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
     private readonly IRedisSafeRunner _redisLock;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
+        _runtimePersistence = runtimePersistence;
         _versionRegistry = versionRegistry;
         _strategies = strategies;
         _redisLock = redisLock;
@@ -557,6 +559,28 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         if (!outcome.AgentVersionMayHaveChanged) return;
 
         _runtimeCache.Invalidate(machineId);
+
+        // H2 — also NULL out the persisted snapshot so the next server pod
+        // restart doesn't hydrate the stale pre-upgrade version. Fire-and-forget
+        // with logging — if the DB write fails, the in-memory invalidation is
+        // already done and the next successful health check will overwrite the
+        // stale row with current data.
+        if (_runtimePersistence == null) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _runtimePersistence.InvalidateAsync(machineId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex,
+                    "Failed to invalidate persisted runtime capabilities for machine {MachineId} after upgrade. " +
+                    "In-memory cache is cleared; next health check will overwrite the stale DB row.",
+                    machineId);
+            }
+        });
     }
 
     /// <summary>
