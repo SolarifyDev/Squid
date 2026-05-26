@@ -1,4 +1,5 @@
 using Squid.Calamari.Commands.Configuration;
+using Squid.Calamari.Commands.Conventions;
 using Squid.Calamari.Commands.Package;
 using Squid.Calamari.Commands.StructuredConfig;
 using Squid.Calamari.Commands.Substitution;
@@ -11,24 +12,25 @@ namespace Squid.Calamari.Commands;
 /// <summary>
 /// Handles the `run-script` subcommand.
 /// Loads variables, optionally extracts a package, applies rewriter steps,
-/// prepends variable exports, then executes the script.
+/// fires PreDeploy hook, prepends variable exports, executes the operator's
+/// main script, fires PostDeploy hook, then cleans up.
 ///
 /// <para><b>Pipeline order matters</b>:
 /// <list type="number">
 ///   <item>ResolveWorkingDirectory — pin the cwd for the rest of the pipeline.</item>
-///   <item>LoadVariablesFromFiles — read variables.json + sensitiveVariables.json
-///         into the in-memory VariableSet so later steps can use them.</item>
-///   <item><b>ExtractPackage (G1.4)</b> — if the wire literal
-///         <c>Squid.Action.Package.OriginalPath</c> is set, extract the
-///         .nupkg/.zip into the working directory. No-op for standalone
-///         scripts (no package). Runs BEFORE rewriters so they have files.</item>
-///   <item><b>SubstituteInFiles (G1.1)</b> — apply <c>#{Token}</c> replacement
-///         to operator-nominated file globs BEFORE the user script runs.
-///         Must come after LoadVariables (needs the values) and before
-///         WriteBootstrappedBashScript (operator's script might reference
-///         the substituted files; we want them fully prepared first).</item>
-///   <item>WriteBootstrappedBashScript — prepend `export VAR=` bash preamble.</item>
-///   <item>ExecuteScriptWithEngine — actually run the user's script.</item>
+///   <item>LoadVariablesFromFiles — read variables.json + sensitiveVariables.json.</item>
+///   <item><b>ExtractPackage (G1.4)</b> — if <c>Squid.Action.Package.OriginalPath</c>
+///         is set, extract the .nupkg/.zip into the working directory.</item>
+///   <item><b>SubstituteInFiles → ConfigurationTransforms → JsonConfigVariables</b>
+///         (G1.1 / G1.2 / G1.3) — token replacement → XDT → JSON leaf replacement.
+///         Run on the extracted files so the application sees fully-prepared config.</item>
+///   <item><b>PreDeploy convention (G1.5)</b> — runs <c>PreDeploy.sh</c> if it
+///         exists in the working directory. After all rewriters; before the
+///         operator's main script. Same variable preamble as the main script.</item>
+///   <item>WriteBootstrappedBashScript — prepend `export VAR=` for the main script.</item>
+///   <item>ExecuteScriptWithEngine — run the operator's main script.</item>
+///   <item><b>PostDeploy convention (G1.5)</b> — runs <c>PostDeploy.sh</c>.
+///         Smoke tests, cache warm-up, service-mesh registration, etc.</item>
 ///   <item>BuildRunScriptCommandResult — collect exit code + outputs.</item>
 ///   <item>CleanupTemporaryFiles — best-effort cleanup (always-runs).</item>
 /// </list></para>
@@ -67,8 +69,18 @@ public class RunScriptCommand
             // their JSON cousins out of sync. Matches Octopus pipeline order:
             // SubstituteInFiles → ConfigurationTransforms → JsonConfigVariables.
             new StructuredConfigVariablesStep(),
+            // G1.5 — PreDeploy convention hook. Runs only when the package
+            // ships a `PreDeploy.sh` file. Operator's chance to do setup
+            // that needs the rewritten configs but happens before the main
+            // script starts the application (e.g. database migrations,
+            // permission fixes, cache invalidation).
+            new ConventionScriptStep(ConventionScriptNames.PreDeploy, scriptEngine),
             new WriteBootstrappedBashScriptStep(),
             new ExecuteScriptWithEngineStep(scriptEngine),
+            // G1.5 — PostDeploy convention hook. Runs only when the package
+            // ships a `PostDeploy.sh` file. Smoke tests, cache warm-up,
+            // registration with a service mesh, etc.
+            new ConventionScriptStep(ConventionScriptNames.PostDeploy, scriptEngine),
             new BuildRunScriptCommandResultStep(),
             new CleanupTemporaryFilesStep<RunScriptCommandContext>()
         ]);
