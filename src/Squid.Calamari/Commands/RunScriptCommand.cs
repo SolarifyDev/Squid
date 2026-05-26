@@ -1,4 +1,5 @@
 using Squid.Calamari.Commands.Configuration;
+using Squid.Calamari.Commands.StructuredConfig;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Execution;
 using Squid.Calamari.Pipeline;
@@ -49,6 +50,12 @@ public class RunScriptCommand
             // Runs after SubstituteInFiles so transform sources have
             // concrete values, not unresolved tokens.
             new ConfigurationTransformsStep(),
+            // G1.3 — JSON-path leaf replacement on operator-nominated JSON
+            // files (typically appsettings.json). Runs after XDT so the
+            // ConfigurationTransforms-rewritten *.config files don't get
+            // their JSON cousins out of sync. Matches Octopus pipeline order:
+            // SubstituteInFiles → ConfigurationTransforms → StructuredConfigurationVariables.
+            new StructuredConfigVariablesStep(),
             new WriteBootstrappedBashScriptStep(),
             new ExecuteScriptWithEngineStep(scriptEngine),
             new BuildRunScriptCommandResultStep(),
