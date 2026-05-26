@@ -94,4 +94,73 @@ internal static class EncodingPreservingFileIO
     /// scan for leftover temps without hard-coding the suffix string.
     /// </summary>
     public const string TempSuffix = ".calamari-tmp";
+
+    // ── File-size guard (T3) ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Operator escape hatch (Rule 8). Default 50 MB is generous — typical
+    /// <c>appsettings.json</c> / <c>web.config</c> is &lt; 100 KB. Operators
+    /// with legitimately huge configs (rare, but possible: large embedded
+    /// catalog, monolith config) set this env var to a larger MB value.
+    /// Pinned by <c>MaxFileSizeMBEnvVar_ConstantNamePinned</c>.
+    /// </summary>
+    public const string MaxFileSizeMBEnvVar = "SQUID_CALAMARI_REWRITER_MAX_FILE_SIZE_MB";
+
+    /// <summary>50 MB default — pinned literal so a "let's lower it" change
+    /// surfaces in test, not in a customer's failed deploy.</summary>
+    public const int DefaultMaxFileSizeMB = 50;
+
+    /// <summary>
+    /// Reads <see cref="MaxFileSizeMBEnvVar"/> at call time. Returns
+    /// <see cref="DefaultMaxFileSizeMB"/> if unset, empty, non-numeric, or
+    /// non-positive. Resolved every call (no caching) so operators editing
+    /// the env var between deploys see the new value without restarting
+    /// the agent.
+    /// </summary>
+    public static int ResolveMaxFileSizeMB()
+    {
+        var raw = Environment.GetEnvironmentVariable(MaxFileSizeMBEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultMaxFileSizeMB;
+        if (!int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var mb)) return DefaultMaxFileSizeMB;
+        if (mb <= 0) return DefaultMaxFileSizeMB;
+        return mb;
+    }
+
+    /// <summary>
+    /// Cheap pre-flight check before any rewriter loads a file into memory.
+    /// Returns <c>false</c> if the file would exceed the configured cap;
+    /// caller logs + skips. Out params let the caller emit a structured log
+    /// line with the exact size + limit + env var name so the operator can
+    /// fix it without grep-and-guess.
+    ///
+    /// <para><b>Why a pre-flight cap and not stream-bounded reads</b>:
+    /// XDT's <c>XmlTransformableDocument.Load</c> and System.Text.Json's
+    /// <c>JsonNode.Parse</c> build full in-memory DOMs — they don't expose
+    /// a "give up after N bytes" knob. The byte-level cap before opening
+    /// the file is the simplest defence; perfect for the common-case
+    /// "operator's glob accidentally matched a 200 MB log file" scenario.</para>
+    ///
+    /// <para>Inaccessible files (permission, race-with-delete) return
+    /// <c>false</c> — same fail-closed pattern as <see cref="GlobMatcher"/>'s
+    /// symlink sandbox.</para>
+    /// </summary>
+    public static bool IsWithinSizeLimit(string path, out long sizeBytes, out long limitBytes)
+    {
+        limitBytes = ResolveMaxFileSizeMB() * 1024L * 1024L;
+        sizeBytes = 0;
+
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists) return false;
+            sizeBytes = info.Length;
+            return sizeBytes <= limitBytes;
+        }
+        catch
+        {
+            // Fail-closed on any FileInfo error (permission, race-with-delete).
+            // The caller already handles the skip-and-log path.
+            return false;
+        }
+    }
 }

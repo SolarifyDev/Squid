@@ -11,7 +11,14 @@ namespace Squid.Calamari.Tests.Calamari.Commands.Common;
 /// G1.3 StructuredConfigVariables). These tests guarantee that every
 /// rewriter behaves identically on the two cross-cutting concerns
 /// (BOM preservation + atomic write).
+///
+/// <para>Marked <c>[Collection]</c> so test methods that mutate the
+/// <c>MaxFileSizeMBEnvVar</c> process-wide env var don't race with the
+/// corresponding T3 tests in the per-step test classes (xUnit
+/// parallelizes across classes by default — env-var leakage would
+/// produce flaky failures).</para>
 /// </summary>
+[Collection(RewriterEnvVarSerialCollection.Name)]
 public sealed class EncodingPreservingFileIOTests : IDisposable
 {
     private readonly string _workDir;
@@ -159,5 +166,146 @@ public sealed class EncodingPreservingFileIOTests : IDisposable
         EncodingPreservingFileIO.WriteAllBytesAtomic(path, payload);
 
         File.ReadAllBytes(path).ShouldBe(payload);
+    }
+
+    // ── T3 — File-size guard ────────────────────────────────────────────────
+
+    [Fact]
+    public void MaxFileSizeMBEnvVar_ConstantNamePinned()
+    {
+        // Rule 8: any env var an operator might pin against MUST be a public
+        // const with the literal pinned in test. Operators on air-gapped
+        // forks have THIS string in their orchestrator config — silent
+        // rename = silent ignored override.
+        EncodingPreservingFileIO.MaxFileSizeMBEnvVar
+            .ShouldBe("SQUID_CALAMARI_REWRITER_MAX_FILE_SIZE_MB");
+    }
+
+    [Fact]
+    public void DefaultMaxFileSizeMB_LiteralValuePinned()
+    {
+        // 50 MB is the published default. Lowering it = breaks operators
+        // with legit 40 MB monolith configs. Raising it = OOM risk grows.
+        // Pin the value so the change is a deliberate test edit.
+        EncodingPreservingFileIO.DefaultMaxFileSizeMB.ShouldBe(50);
+    }
+
+    [Fact]
+    public void ResolveMaxFileSizeMB_EnvVarUnset_ReturnsDefault()
+    {
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+
+        EncodingPreservingFileIO.ResolveMaxFileSizeMB().ShouldBe(EncodingPreservingFileIO.DefaultMaxFileSizeMB);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-number")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("3.14")]
+    public void ResolveMaxFileSizeMB_InvalidEnvVar_FallsBackToDefault(string value)
+    {
+        // Operator typos / mis-set values MUST fall back to the safe default,
+        // not crash or use 0 (which would reject every file).
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, value);
+
+        try
+        {
+            EncodingPreservingFileIO.ResolveMaxFileSizeMB()
+                .ShouldBe(EncodingPreservingFileIO.DefaultMaxFileSizeMB);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
+    }
+
+    [Theory]
+    [InlineData("1", 1)]
+    [InlineData("100", 100)]
+    [InlineData("1024", 1024)]
+    public void ResolveMaxFileSizeMB_ValidEnvVar_OverridesDefault(string value, int expectedMb)
+    {
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, value);
+
+        try
+        {
+            EncodingPreservingFileIO.ResolveMaxFileSizeMB().ShouldBe(expectedMb);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
+    }
+
+    [Fact]
+    public void IsWithinSizeLimit_SmallFile_DefaultCap_ReturnsTrue()
+    {
+        var path = Path.Combine(_workDir, "small.txt");
+        File.WriteAllText(path, new string('x', 1024));    // 1 KB — well under 50 MB default
+
+        var withinLimit = EncodingPreservingFileIO.IsWithinSizeLimit(path, out var sizeBytes, out var limitBytes);
+
+        withinLimit.ShouldBeTrue();
+        sizeBytes.ShouldBe(1024);
+        limitBytes.ShouldBe(50L * 1024 * 1024);    // 50 MB default in bytes
+    }
+
+    [Fact]
+    public void IsWithinSizeLimit_FileExceedsCap_ReturnsFalse_WithSizeAndLimit()
+    {
+        // Set the cap to 1 MB via env var; create a 1.5 MB file; expect rejection.
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, "1");
+
+        try
+        {
+            var path = Path.Combine(_workDir, "big.txt");
+            File.WriteAllBytes(path, new byte[(int)(1.5 * 1024 * 1024)]);
+
+            var withinLimit = EncodingPreservingFileIO.IsWithinSizeLimit(path, out var sizeBytes, out var limitBytes);
+
+            withinLimit.ShouldBeFalse();
+            sizeBytes.ShouldBeGreaterThan(limitBytes,
+                customMessage: "Out param sizeBytes MUST be populated so the caller can log the actual size.");
+            limitBytes.ShouldBe(1L * 1024 * 1024);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
+    }
+
+    [Fact]
+    public void IsWithinSizeLimit_NonExistentFile_ReturnsFalse_FailClosed()
+    {
+        // Fail-closed pattern: if we can't probe the file, refuse to read it.
+        // Matches GlobMatcher's symlink sandbox philosophy.
+        var withinLimit = EncodingPreservingFileIO.IsWithinSizeLimit(
+            Path.Combine(_workDir, "does-not-exist.txt"), out _, out _);
+
+        withinLimit.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsWithinSizeLimit_FileExactlyAtLimit_ReturnsTrue_BoundaryInclusive()
+    {
+        // Boundary case: file size == limit is ALLOWED. Operators near the
+        // limit shouldn't see flaky behavior at the exact byte.
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, "1");
+
+        try
+        {
+            var path = Path.Combine(_workDir, "exact.bin");
+            File.WriteAllBytes(path, new byte[1024 * 1024]);    // exactly 1 MB
+
+            EncodingPreservingFileIO.IsWithinSizeLimit(path, out _, out _).ShouldBeTrue(
+                customMessage: "File EXACTLY at the cap MUST be allowed (limit is inclusive).");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
     }
 }

@@ -164,6 +164,19 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
             {
                 try
                 {
+                    // T3 — pre-flight size cap. Default 50 MB; operator can raise
+                    // via SQUID_CALAMARI_REWRITER_MAX_FILE_SIZE_MB. Defends against
+                    // gobbing into a giant log file by accident — would OOM the agent
+                    // when the regex pass below loads the whole file as string.
+                    if (!EncodingPreservingFileIO.IsWithinSizeLimit(file, out var sizeBytes, out var limitBytes))
+                    {
+                        Console.WriteLine(
+                            $"SubstituteInFiles: skipping '{file}' ({sizeBytes:N0} bytes > {limitBytes:N0} byte limit). " +
+                            $"Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap, or refine the target glob.");
+                        filesSkipped++;
+                        continue;
+                    }
+
                     if (IsBinaryFile(file))
                     {
                         Console.WriteLine($"SubstituteInFiles: skipping '{file}' (binary content detected).");
