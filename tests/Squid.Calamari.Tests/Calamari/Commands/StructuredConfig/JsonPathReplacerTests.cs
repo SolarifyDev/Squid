@@ -208,6 +208,99 @@ public sealed class JsonPathReplacerTests
         Should.Throw<ArgumentNullException>(() => JsonPathReplacer.Replace("{}", null!));
     }
 
+    [Fact]
+    public void Replace_SquidNamespacedVariable_DoesNotClobberJsonLeaf()
+    {
+        // Operators sometimes have JSON like {"Squid": {"Deployment": {"Id": "..."}}}
+        // in their appsettings (an audit / observability section, say). Squid's
+        // own internal variables include `Squid.Deployment.Id` populated to the
+        // CURRENT deploy. If we blindly matched dot-paths we'd silently overwrite
+        // the operator's literal with our runtime id — silent corruption with
+        // no operator-facing cause. Self-namespaced variables MUST be skipped.
+        var json = """{"Squid":{"Deployment":{"Id":"operator-intended-literal"}}}""";
+        var vars = NewVarSet(("Squid.Deployment.Id", "runtime-deploy-guid"));
+
+        var result = JsonPathReplacer.Replace(json, vars);
+
+        result.Succeeded.ShouldBeTrue();
+        result.Output.ShouldContain("\"operator-intended-literal\"",
+            customMessage: "Squid-namespaced variables MUST NOT clobber operator JSON leaves at the same path. " +
+                           "If this fails: a Squid runtime variable is leaking into operator's appsettings.json.");
+        result.Output.ShouldNotContain("runtime-deploy-guid");
+        result.ReplacedCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Replace_SquidNamespacedVariable_OperatorCanStillForceWithColonForm()
+    {
+        // Escape hatch: an operator who DOES want a Squid-prefixed path replaced
+        // (genuinely useful for power users mirroring runtime values into their
+        // JSON) can submit the variable in colon form. The colon form encodes
+        // explicit intent — it's not what Squid's own runtime ever emits.
+        var json = """{"Squid":{"Custom":{"Field":"placeholder"}}}""";
+        var vars = NewVarSet(("Squid:Custom:Field", "operator-chosen-value"));
+
+        var result = JsonPathReplacer.Replace(json, vars);
+
+        result.Output.ShouldContain("\"operator-chosen-value\"");
+        result.ReplacedCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void Replace_OperatorStringContainsUrlSpecialChars_StaysReadable()
+    {
+        // Operator's connection string contains `&` (URL query separator).
+        // The DEFAULT System.Text.Json encoder would escape it to `&`,
+        // making the diff incomprehensible to operators reviewing the rewrite.
+        // UnsafeRelaxedJsonEscaping preserves `& < > +` as-is — safe for
+        // IConfiguration consumption, readable in operator diffs.
+        var json = """{"ConnectionStrings":{"Default":"old"}}""";
+        var vars = NewVarSet(("ConnectionStrings.Default",
+            "Server=db;Database=app;User=u;Password=p+x&Trusted_Connection=true"));
+
+        var result = JsonPathReplacer.Replace(json, vars);
+
+        result.Output.ShouldContain("&Trusted_Connection=true",
+            customMessage: "Operator's `&` MUST stay literal in the rewritten JSON. " +
+                           "If you see `\\u0026` here, the JSON encoder regressed to HTML-safe mode.");
+        result.Output.ShouldContain("p+x",
+            customMessage: "Operator's `+` MUST stay literal.");
+        result.Output.ShouldNotContain("\\u0026");
+        result.Output.ShouldNotContain("\\u002B");
+    }
+
+    [Fact]
+    public void Replace_OperatorStringContainsHtmlAngleBrackets_StaysReadable()
+    {
+        // Operator might have a config string with literal `<` `>` (e.g. an
+        // XML-template description field). Same encoder concern.
+        var json = """{"Description":{"Template":"placeholder"}}""";
+        var vars = NewVarSet(("Description.Template", "Use <env> placeholders, not ${env}."));
+
+        var result = JsonPathReplacer.Replace(json, vars);
+
+        result.Output.ShouldContain("<env>");
+        result.Output.ShouldNotContain("\\u003C");
+        result.Output.ShouldNotContain("\\u003E");
+    }
+
+    [Fact]
+    public void Replace_SquidNamespacedDeepPath_StillSkipped_IgnoredAtAnyDepth()
+    {
+        // Make sure the guard applies at ALL depths, not just the root.
+        // A JSON file deeply nested under e.g. {"Wrapper": {"Squid": {...}}}
+        // would compute a path like "Wrapper.Squid.X" — this is NOT a Squid
+        // self-namespace path (doesn't start with Squid.), so it MUST be allowed.
+        var json = """{"Wrapper":{"Squid":{"X":"old"}}}""";
+        var vars = NewVarSet(("Wrapper.Squid.X", "new"));
+
+        var result = JsonPathReplacer.Replace(json, vars);
+
+        result.Output.ShouldContain("\"new\"",
+            customMessage: "Self-namespace guard MUST only fire when path STARTS WITH 'Squid.', not when 'Squid' appears mid-path.");
+        result.ReplacedCount.ShouldBe(1);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static VariableSet NewVarSet(params (string name, string value)[] entries)

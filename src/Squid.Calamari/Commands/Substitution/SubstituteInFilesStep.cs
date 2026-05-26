@@ -1,4 +1,4 @@
-using System.Text;
+using Squid.Calamari.Commands.Common;
 using Squid.Calamari.Pipeline;
 
 namespace Squid.Calamari.Commands.Substitution;
@@ -133,13 +133,13 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
                         continue;
                     }
 
-                    var (text, encoding) = ReadFilePreservingEncoding(file);
+                    var (text, encoding) = EncodingPreservingFileIO.ReadAllTextPreservingEncoding(file);
                     var result = TokenSubstituter.Replace(text, context.Variables);
 
                     if (result.UnresolvedTokens.Count > 0)
                         allUnresolved.Add((file, result.UnresolvedTokens));
 
-                    File.WriteAllText(file, result.Output, encoding);
+                    EncodingPreservingFileIO.WriteAllTextAtomic(file, result.Output, encoding);
                     filesProcessed++;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -195,27 +195,6 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
         }
     }
 
-    /// <summary>
-    /// Read file detecting UTF-8 BOM so we can write it back exactly the
-    /// same way. Operator's web.config with BOM stays with BOM; without
-    /// stays without. .NET <c>StreamReader</c> with default args would
-    /// strip the BOM and we'd lose it on write-back.
-    /// </summary>
-    private static (string text, Encoding encoding) ReadFilePreservingEncoding(string file)
-    {
-        var bytes = File.ReadAllBytes(file);
-
-        // UTF-8 BOM: EF BB BF
-        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-        {
-            var withBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-            return (withBom.GetString(bytes, 3, bytes.Length - 3), withBom);
-        }
-
-        // No BOM — assume UTF-8 (operator's app is text).
-        var noBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        return (noBom.GetString(bytes), noBom);
-    }
 }
 
 /// <summary>

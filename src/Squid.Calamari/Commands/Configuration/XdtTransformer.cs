@@ -1,5 +1,6 @@
 using System.Xml;
 using Microsoft.Web.XmlTransform;
+using Squid.Calamari.Commands.Common;
 
 namespace Squid.Calamari.Commands.Configuration;
 
@@ -73,9 +74,10 @@ internal static class XdtTransformer
                                                "Check the transform's Locator + xdt:Transform attributes for missing matches.");
             }
 
-            // Atomic write: serialise to temp file, then rename. Avoids
-            // half-written base file on disk if the write itself dies mid-way.
-            var tempPath = basePath + ".xdt-tmp";
+            // Atomic write via the shared FileIO primitive: serialise to a
+            // sibling temp first, then rename. Avoids a half-written base
+            // config on disk if the writer dies mid-way (disk full, kill -9).
+            var tempPath = basePath + EncodingPreservingFileIO.TempSuffix;
             document.Save(tempPath);
             File.Move(tempPath, basePath, overwrite: true);
 

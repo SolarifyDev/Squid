@@ -21,11 +21,19 @@ namespace Squid.Calamari.Commands.Substitution;
 ///   <item><c>**/appsettings.*.json</c> — recurse + wildcard suffix</item>
 /// </list></para>
 ///
-/// <para><b>Anti-injection</b>: dots in glob patterns are literal, not
-/// regex any-char. Path-traversal globs (<c>../*.config</c>) yield zero
-/// matches — substitution stays sandboxed to the working dir. Pinned by
-/// <c>Expand_DotIsLiteral_NotRegexAnyChar</c> and
-/// <c>Expand_PathTraversalAttempt_BoundedToRoot</c>.</para>
+/// <para><b>Anti-injection — two layers</b>:
+/// <list type="number">
+///   <item><b>Pattern-level</b>: dots in glob patterns are literal, not regex
+///         any-char. Path-traversal globs (<c>../*.config</c>) yield zero
+///         matches. Pinned by <c>Expand_DotIsLiteral_NotRegexAnyChar</c> and
+///         <c>Expand_PathTraversalAttempt_BoundedToRoot</c>.</item>
+///   <item><b>Match-level</b>: after a path matches, its canonical real path
+///         (with symlinks resolved) MUST still be inside <c>rootDir</c>.
+///         A malicious package can plant a symlink <c>config -&gt; /etc</c>;
+///         a naive glob <c>**/*.conf</c> would match <c>config/passwd-like</c>
+///         and the rewriter would happily overwrite <c>/etc/passwd</c>.
+///         Pinned by <c>Expand_SymlinkEscapingRoot_Excluded</c>.</item>
+/// </list></para>
 /// </summary>
 internal static class GlobMatcher
 {
@@ -50,7 +58,59 @@ internal static class GlobMatcher
             .Select(absPath => (absPath, relPath: GetRelativePath(rootFull, absPath)))
             .Where(t => regex.IsMatch(t.relPath))
             .Select(t => t.absPath)
+            .Where(absPath => IsCanonicalPathInsideRoot(absPath, rootFull))
             .ToList();    // materialise so caller can mutate files without enumeration races
+    }
+
+    /// <summary>
+    /// After a regex match, resolve the file's REAL canonical path (following
+    /// every symlink in the chain) and confirm it still lives under
+    /// <paramref name="rootFull"/>. Layer-2 sandbox: protects against a
+    /// malicious package planting a symlink inside the working dir that
+    /// points outside.
+    ///
+    /// <para><b>Why .NET's <c>ResolveLinkTarget</c> is preferred over
+    /// <c>Path.GetFullPath</c></b>: <c>GetFullPath</c> only canonicalises
+    /// dots / case / separators — it does NOT follow symlinks. We need to
+    /// follow links to detect the attack. <c>FileInfo.ResolveLinkTarget</c>
+    /// walks the link chain.</para>
+    ///
+    /// <para>On any resolution error (broken link, permission denied), we
+    /// exclude the file — fail-closed. Better to skip a rewrite than to
+    /// accidentally rewrite the wrong file.</para>
+    /// </summary>
+    private static bool IsCanonicalPathInsideRoot(string absPath, string rootFull)
+    {
+        try
+        {
+            var info = new FileInfo(absPath);
+
+            // Walk the link chain. ResolveLinkTarget(returnFinalTarget: true)
+            // resolves through all intermediate symlinks; returns null if not
+            // a link (i.e. the path is its own real target).
+            var realTarget = info.ResolveLinkTarget(returnFinalTarget: true);
+            var realPath = realTarget?.FullName ?? info.FullName;
+
+            // Path.GetFullPath normalises separators + case so the prefix
+            // check below is robust across OSes. Trailing-separator check
+            // avoids false positives like `/workdir-evil` matching `/workdir`.
+            var canonicalReal = Path.GetFullPath(realPath);
+            var canonicalRoot = Path.GetFullPath(rootFull);
+
+            // Ensure root ends with separator so prefix comparison is segment-aligned.
+            if (!canonicalRoot.EndsWith(Path.DirectorySeparatorChar))
+                canonicalRoot += Path.DirectorySeparatorChar;
+
+            // Case-insensitive comparison on Windows + macOS (HFS/APFS default
+            // case-insensitive); on Linux this still works because the FS
+            // would have returned the actual case in EnumerateFiles.
+            return canonicalReal.StartsWith(canonicalRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            // Resolution failed (broken link, permission, race). Fail-closed.
+            return false;
+        }
     }
 
     private static IEnumerable<string> EnumerateAllFiles(string rootDir)

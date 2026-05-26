@@ -127,4 +127,77 @@ public sealed class GlobMatcherTests : IDisposable
         matches.ShouldBeEmpty(
             customMessage: "Path-traversal globs MUST yield zero matches — substitution is sandboxed to the working dir to prevent malicious package content from rewriting host files.");
     }
+
+    [Fact]
+    public void Expand_SymlinkEscapingRoot_Excluded()
+    {
+        // Attack scenario: a malicious package unpacks a symlink
+        // `evil.config -> /etc/passwd` (or any host file). A naive glob
+        // `*.config` would match `evil.config`; the rewriter would happily
+        // overwrite `/etc/passwd`. On a Tentacle running as root (systemd
+        // unit), that's a host compromise.
+        //
+        // The match-level sandbox MUST detect the link target, resolve to
+        // canonical real path, and drop matches whose real path lives
+        // outside the working dir.
+        //
+        // Symlink creation requires elevated privileges on Windows pre-1809;
+        // skip there cleanly so cross-OS dev hosts get green tests.
+        if (OperatingSystem.IsWindows()) return;
+
+        // Set up a victim file OUTSIDE the working dir.
+        var outsideDir = Path.Combine(Path.GetTempPath(), $"glob-victim-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outsideDir);
+        var victim = Path.Combine(outsideDir, "secret.config");
+        File.WriteAllText(victim, "host-secret-content");
+
+        try
+        {
+            // Plant a symlink inside the working dir pointing at the victim.
+            var attackLink = Path.Combine(_root, "evil.config");
+            File.CreateSymbolicLink(attackLink, victim);
+
+            // Also drop a legitimate sibling that SHOULD match — to confirm
+            // the sandbox only excludes the escapee, not the entire glob.
+            File.WriteAllText(Path.Combine(_root, "legit.config"), "");
+
+            var matches = GlobMatcher.Expand(_root, "*.config").ToList();
+
+            matches.Select(Path.GetFileName).ShouldNotContain("evil.config",
+                customMessage: "Symlink pointing outside the working dir MUST be excluded from glob matches. " +
+                               "If this fails, a malicious package can rewrite host files via planted symlinks.");
+            matches.Select(Path.GetFileName).ShouldContain("legit.config",
+                customMessage: "Sibling files NOT pointing outside MUST still match — only the escapee is excluded.");
+
+            // Sanity: the victim file is still intact (the matcher didn't
+            // even need to touch it, but assert just so the test reads honestly).
+            File.ReadAllText(victim).ShouldBe("host-secret-content");
+        }
+        finally
+        {
+            if (Directory.Exists(outsideDir)) Directory.Delete(outsideDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Expand_SymlinkPointingInsideRoot_StillIncluded()
+    {
+        // Counter-test: not every symlink is hostile. A symlink that resolves
+        // to a file INSIDE the working dir is legitimate (operator's package
+        // might use them for shared-config patterns). The sandbox MUST NOT
+        // be overly aggressive — only excludes escapees.
+        if (OperatingSystem.IsWindows()) return;
+
+        var realFile = Path.Combine(_root, "real.config");
+        File.WriteAllText(realFile, "real-content");
+
+        var insideLink = Path.Combine(_root, "alias.config");
+        File.CreateSymbolicLink(insideLink, realFile);
+
+        var matches = GlobMatcher.Expand(_root, "*.config").ToList();
+
+        matches.Select(Path.GetFileName).ShouldContain("alias.config",
+            customMessage: "Symlinks resolving INSIDE the working dir are legitimate and MUST be included.");
+        matches.Select(Path.GetFileName).ShouldContain("real.config");
+    }
 }
