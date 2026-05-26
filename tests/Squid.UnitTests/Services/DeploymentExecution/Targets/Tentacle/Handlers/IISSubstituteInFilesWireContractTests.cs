@@ -7,60 +7,104 @@ namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle.Handlers
 
 /// <summary>
 /// G1.1 — server ↔ Calamari wire-contract drift detector for the
-/// SubstituteInFiles feature. Three variable literals form the contract:
+/// SubstituteInFiles feature. After the A1 wire-literal generalization,
+/// the contract has TWO halves:
 ///
 /// <list type="bullet">
-///   <item><b>Server-side</b>: <c>IISDeployProperties.SubstituteInFilesEnabled</c> /
-///         <c>SubstituteInFilesTargetFiles</c> /
-///         <c>ShouldFailDeploymentOnSubstitutionFails</c> — included in the
-///         deploy-script preamble built by <c>IISDeployScriptBuilder</c>.</item>
-///   <item><b>Agent-side</b>: <c>SubstituteInFilesVariableNames.Enabled</c> /
-///         <c>TargetFiles</c> / <c>ShouldFailOnUnresolved</c> — read by the
-///         Calamari pipeline step.</item>
+///   <item><b>Legacy (IIS-specific) half</b>: the IIS handler's
+///         <c>IISDeployScriptBuilder</c> + its PS1 script emit the
+///         IIS-prefixed names (<c>IISDeployProperties.SubstituteInFiles*</c>).
+///         The Calamari step's <see cref="SubstituteInFilesVariableNames.Legacy"/>
+///         class exposes the matching names so the step's fallback read path
+///         finds them. Existing operator deployments stored before A1
+///         depend on this half.</item>
+///   <item><b>Canonical (handler-agnostic) half</b>: top-level
+///         <see cref="SubstituteInFilesVariableNames.Enabled"/> /
+///         <c>TargetFiles</c> are the preferred names for new handlers
+///         (RunScript, Docker, nginx, …) and for Squid.Web migrations.
+///         The step reads them FIRST, then falls back to legacy. There is
+///         deliberately NO server-side <c>IISDeployProperties</c>
+///         counterpart for these — IIS keeps emitting legacy for
+///         back-compat.</item>
 /// </list>
 ///
-/// <para>If either side renames its constant without the other, the toggle
-/// silently no-ops in production: operator sets it to True, deploy runs as
-/// if substitution were disabled. Pin both sides to the same string
-/// literals so a rename surfaces at build time, not in a customer's
-/// production deploy.</para>
-///
-/// <para><b>Why this test lives in Squid.UnitTests, not Squid.Calamari.Tests</b>:
-/// it spans both projects. Server-side IIS handler constants are in
-/// <c>Squid.Core</c>, agent-side step constants are in <c>Squid.Calamari</c>.
-/// Squid.UnitTests references both, which is why the test lives here.</para>
+/// <para>If either side renames a literal without the other, the toggle
+/// silently no-ops in production. Pin both halves.</para>
 /// </summary>
 public sealed class IISSubstituteInFilesWireContractTests
 {
+    // ── Legacy half: IIS handler emits legacy names; step's Legacy fallback reads them ──
+
     [Fact]
-    public void EnabledVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyEnabledVariable_ServerLiteral_MatchesCalamariLegacyLiteral()
     {
         IISDeployProperties.SubstituteInFilesEnabled
-            .ShouldBe(SubstituteInFilesVariableNames.Enabled,
-                customMessage: "Wire-contract drift: IIS deploy handler advertises this variable in the script preamble; Calamari's SubstituteInFilesStep reads it. A rename on either side breaks the operator's UI toggle silently. Pin BOTH sides to the same literal.");
+            .ShouldBe(SubstituteInFilesVariableNames.Legacy.Enabled,
+                customMessage: "Wire-contract drift: IIS handler advertises the IIS-prefixed Enabled in its PS1 preamble; Calamari's step falls back to it. A rename on either side silently breaks the IIS UI toggle for existing operators. Pin BOTH halves.");
     }
 
     [Fact]
-    public void TargetFilesVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyTargetFilesVariable_ServerLiteral_MatchesCalamariLegacyLiteral()
     {
         IISDeployProperties.SubstituteInFilesTargetFiles
-            .ShouldBe(SubstituteInFilesVariableNames.TargetFiles);
+            .ShouldBe(SubstituteInFilesVariableNames.Legacy.TargetFiles);
     }
 
     [Fact]
-    public void ShouldFailVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyEnabledVariable_LiteralValuePinned()
     {
-        IISDeployProperties.ShouldFailDeploymentOnSubstitutionFails
-            .ShouldBe(SubstituteInFilesVariableNames.ShouldFailOnUnresolved);
-    }
-
-    [Fact]
-    public void EnabledVariable_LiteralValuePinned()
-    {
-        // Defence-in-depth: if BOTH sides happened to rename in lock-step, the
-        // contract-match tests still pass. This third test pins the actual
-        // wire string so a coordinated rename is also a test-visible decision.
+        // Defence-in-depth: a coordinated rename on both sides still passes the
+        // match test above. Pin the actual wire string so the rename is also a
+        // test-visible decision.
         IISDeployProperties.SubstituteInFilesEnabled
             .ShouldBe("Squid.Action.IISWebSite.SubstituteInFiles.Enabled");
+    }
+
+    [Fact]
+    public void LegacyTargetFilesVariable_LiteralValuePinned()
+    {
+        IISDeployProperties.SubstituteInFilesTargetFiles
+            .ShouldBe("Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles");
+    }
+
+    // ── ShouldFailDeployment toggle: always handler-agnostic on both sides ──
+
+    [Fact]
+    public void ShouldFailVariable_ServerLiteral_MatchesCalamariCanonicalLiteral()
+    {
+        IISDeployProperties.ShouldFailDeploymentOnSubstitutionFails
+            .ShouldBe(SubstituteInFilesVariableNames.ShouldFailOnUnresolved,
+                customMessage: "ShouldFailDeploymentOnSubstitutionFails was always handler-agnostic — no IIS-prefixed variant exists on either side.");
+    }
+
+    // ── Canonical half: preferred for new handlers; no server-side counterpart yet ──
+
+    [Fact]
+    public void CanonicalEnabledVariable_LiteralValuePinned_HandlerAgnostic()
+    {
+        // What new handlers (RunScript, Docker, nginx) MUST emit to trigger
+        // the step. If you rename this, every handler-agnostic deploy is
+        // silently broken. Pin the literal.
+        SubstituteInFilesVariableNames.Enabled
+            .ShouldBe("Squid.Action.SubstituteInFiles.Enabled");
+    }
+
+    [Fact]
+    public void CanonicalTargetFilesVariable_LiteralValuePinned_HandlerAgnostic()
+    {
+        SubstituteInFilesVariableNames.TargetFiles
+            .ShouldBe("Squid.Action.SubstituteInFiles.TargetFiles");
+    }
+
+    [Fact]
+    public void CanonicalAndLegacy_AreDistinctLiterals()
+    {
+        // Sanity: if these ever collapsed to the same value, the dual-read
+        // fallback in SubstituteInFilesStep would silently degrade to a
+        // single-read. Pin that they differ.
+        SubstituteInFilesVariableNames.Enabled
+            .ShouldNotBe(SubstituteInFilesVariableNames.Legacy.Enabled);
+        SubstituteInFilesVariableNames.TargetFiles
+            .ShouldNotBe(SubstituteInFilesVariableNames.Legacy.TargetFiles);
     }
 }

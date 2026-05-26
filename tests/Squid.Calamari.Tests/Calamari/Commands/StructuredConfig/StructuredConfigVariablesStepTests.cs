@@ -156,12 +156,61 @@ public sealed class StructuredConfigVariablesStepTests : IDisposable
     }
 
     [Fact]
-    public void EnabledVariableName_PinnedToIISHandlerContract()
-        => StructuredConfigVariableNames.Enabled.ShouldBe("Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled");
+    public void EnabledVariableName_Canonical_PinnedHandlerAgnostic()
+        => StructuredConfigVariableNames.Enabled.ShouldBe("Squid.Action.JsonConfigVariables.Enabled");
 
     [Fact]
-    public void TargetsVariableName_PinnedToIISHandlerContract()
-        => StructuredConfigVariableNames.Targets.ShouldBe("Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets");
+    public void TargetsVariableName_Canonical_PinnedHandlerAgnostic()
+        => StructuredConfigVariableNames.Targets.ShouldBe("Squid.Action.JsonConfigVariables.Targets");
+
+    [Fact]
+    public void LegacyVariableNames_PinnedToIISHandlerContract()
+    {
+        // The IIS handler's PS1 script + existing operator deployments emit
+        // the legacy names. The step's fallback read path MUST find them.
+        StructuredConfigVariableNames.Legacy.Enabled
+            .ShouldBe("Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled");
+        StructuredConfigVariableNames.Legacy.Targets
+            .ShouldBe("Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets");
+    }
+
+    [Fact]
+    public void JsonConfigVariableNames_ForwardAlias_PointsAtCanonical()
+    {
+        // New handlers SHOULD reference JsonConfigVariableNames — the
+        // forward-looking alias matching the canonical feature name. Pin
+        // it stays in sync with the underlying canonical literal.
+        JsonConfigVariableNames.Enabled.ShouldBe(StructuredConfigVariableNames.Enabled);
+        JsonConfigVariableNames.Targets.ShouldBe(StructuredConfigVariableNames.Targets);
+    }
+
+    [Fact]
+    public async Task IsEnabled_LegacyIISNames_StillRunsStep_BackCompat()
+    {
+        // Existing IIS deploys emit only the legacy names — step MUST still run.
+        File.WriteAllText(Path.Combine(_workDir, "appsettings.json"), """{"K":"old"}""");
+
+        var vars = new VariableSet();
+        vars.Set(StructuredConfigVariableNames.Legacy.Enabled, "True");
+        vars.Set(StructuredConfigVariableNames.Legacy.Targets, "appsettings.json");
+        vars.Set("K", "new");
+
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = Path.Combine(_workDir, "s.sh"),
+            VariablesPath = Path.Combine(_workDir, "v.json"),
+            WorkingDirectory = _workDir,
+            Variables = vars
+        };
+
+        new StructuredConfigVariablesStep().IsEnabled(context).ShouldBeTrue(
+            customMessage: "Legacy IIS-prefixed Enabled MUST trigger the step (back-compat).");
+
+        await new StructuredConfigVariablesStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(_workDir, "appsettings.json")).ShouldContain("\"new\"",
+            customMessage: "Legacy Targets glob MUST be honored when canonical is absent.");
+    }
 
     private RunScriptCommandContext BuildContext(string? enabled, string? targets, params (string name, string value)[] extraVars)
     {

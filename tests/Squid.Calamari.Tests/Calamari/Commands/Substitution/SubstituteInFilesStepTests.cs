@@ -240,26 +240,97 @@ public sealed class SubstituteInFilesStepTests : IDisposable
     // ── Wire-contract pinning ───────────────────────────────────────────────
 
     [Fact]
-    public void EnabledVariableName_PinnedToIISHandlerContract()
+    public void EnabledVariableName_Canonical_PinnedHandlerAgnostic()
     {
-        // Drift detector (Rule 8): if either side renames this, the chain
-        // silently no-ops. Pin the wire literal.
+        // Drift detector (Rule 8): canonical wire literal — handler-agnostic.
+        // What new handlers (RunScript, Docker, nginx) MUST emit.
         SubstituteInFilesStep.EnabledVariableName
+            .ShouldBe("Squid.Action.SubstituteInFiles.Enabled");
+    }
+
+    [Fact]
+    public void TargetFilesVariableName_Canonical_PinnedHandlerAgnostic()
+    {
+        SubstituteInFilesStep.TargetFilesVariableName
+            .ShouldBe("Squid.Action.SubstituteInFiles.TargetFiles");
+    }
+
+    [Fact]
+    public void ShouldFailVariableName_HandlerAgnostic_AlwaysWasGeneric()
+    {
+        SubstituteInFilesStep.ShouldFailOnUnresolvedVariableName
+            .ShouldBe("Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails");
+    }
+
+    [Fact]
+    public void LegacyEnabledVariableName_StillExposed_PinnedToIISHandlerContract()
+    {
+        // The IIS handler's PS1 script + existing operator deployments emit
+        // the IIS-prefixed name. The Legacy nested class MUST keep exposing
+        // it so the step's fallback read path works. Drift detector — if the
+        // IIS server-side ever renames its emitted literal, the legacy fallback
+        // here MUST follow.
+        SubstituteInFilesVariableNames.Legacy.Enabled
             .ShouldBe("Squid.Action.IISWebSite.SubstituteInFiles.Enabled");
     }
 
     [Fact]
-    public void TargetFilesVariableName_PinnedToIISHandlerContract()
+    public void LegacyTargetFilesVariableName_StillExposed_PinnedToIISHandlerContract()
     {
-        SubstituteInFilesStep.TargetFilesVariableName
+        SubstituteInFilesVariableNames.Legacy.TargetFiles
             .ShouldBe("Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles");
     }
 
     [Fact]
-    public void ShouldFailVariableName_PinnedToOctopusParity()
+    public async Task IsEnabled_LegacyIISName_StillRunsStep_BackCompat()
     {
-        SubstituteInFilesStep.ShouldFailOnUnresolvedVariableName
-            .ShouldBe("Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails");
+        // Critical back-compat test: operator's existing deployment emits ONLY
+        // the IIS-prefixed name (no canonical). The step MUST still fire.
+        var vars = new VariableSet();
+        vars.Set(SubstituteInFilesVariableNames.Legacy.Enabled, "True");
+        vars.Set(SubstituteInFilesVariableNames.Legacy.TargetFiles, "*.config");
+
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = Path.Combine(_workDir, "s.sh"),
+            VariablesPath = Path.Combine(_workDir, "v.json"),
+            WorkingDirectory = _workDir,
+            Variables = vars
+        };
+
+        new SubstituteInFilesStep().IsEnabled(context).ShouldBeTrue(
+            customMessage: "Legacy IIS-prefixed Enabled MUST trigger the step (back-compat with deploys saved before canonical literals existed).");
+
+        // Also verify ExecuteAsync reads the legacy TargetFiles glob.
+        File.WriteAllText(Path.Combine(_workDir, "test.config"), "value=#{Foo}");
+        vars.Set("Foo", "bar");
+
+        await new SubstituteInFilesStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(_workDir, "test.config")).ShouldBe("value=bar",
+            customMessage: "Legacy TargetFiles glob list MUST be honored when canonical is absent.");
+    }
+
+    [Fact]
+    public void IsEnabled_CanonicalPresent_TakesPrecedenceOverLegacy()
+    {
+        // Both names emitted (server in transition emitting both for safety).
+        // Canonical wins — guarantees one source of truth on the agent side.
+        var vars = new VariableSet();
+        vars.Set(SubstituteInFilesVariableNames.Enabled, "False");           // canonical → skip
+        vars.Set(SubstituteInFilesVariableNames.Legacy.Enabled, "True");     // legacy → run
+
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = Path.Combine(_workDir, "s.sh"),
+            VariablesPath = Path.Combine(_workDir, "v.json"),
+            WorkingDirectory = _workDir,
+            Variables = vars
+        };
+
+        new SubstituteInFilesStep().IsEnabled(context).ShouldBeFalse(
+            customMessage: "When both canonical AND legacy are set, canonical MUST win (precedence). " +
+                           "If this flips, dual-emitting servers would get unpredictable behavior.");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

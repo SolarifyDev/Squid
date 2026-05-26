@@ -50,26 +50,56 @@ namespace Squid.Calamari.Commands.Substitution;
 /// PUBLIC class so the cross-project drift test in Squid.UnitTests can
 /// reference them without InternalsVisibleTo pollution. The step
 /// implementation stays internal — only the literals are public.
+///
+/// <para><b>Canonical vs Legacy</b>: the top-level constants
+/// (<see cref="Enabled"/>, <see cref="TargetFiles"/>) are the
+/// <b>canonical</b>, handler-agnostic wire literals — preferred for new
+/// handlers (Docker, nginx, generic RunScript, …) and what
+/// <see cref="SubstituteInFilesStep"/> reads first. The nested
+/// <see cref="Legacy"/> class holds the IIS-handler-specific names that
+/// existing operator deployments still emit via
+/// <c>IISDeployProperties</c>. The step falls back to those when the
+/// canonical name is absent — fully back-compat with deploys saved before
+/// the canonical surface existed.</para>
 /// </summary>
 public static class SubstituteInFilesVariableNames
 {
-    /// <summary>Wire-contract literal pinned by test (Rule 8). Must match
-    /// <c>IISDeployProperties.SubstituteInFilesEnabled</c> on the server.</summary>
-    public const string Enabled = "Squid.Action.IISWebSite.SubstituteInFiles.Enabled";
+    /// <summary>Canonical, handler-agnostic Enabled toggle. Preferred for
+    /// new handlers + Squid.Web migrations.</summary>
+    public const string Enabled = "Squid.Action.SubstituteInFiles.Enabled";
 
-    /// <summary>Wire-contract literal pinned by test (Rule 8).</summary>
-    public const string TargetFiles = "Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles";
+    /// <summary>Canonical, handler-agnostic TargetFiles glob list.</summary>
+    public const string TargetFiles = "Squid.Action.SubstituteInFiles.TargetFiles";
 
-    /// <summary>Octopus-parity wire literal pinned by test (Rule 8).</summary>
+    /// <summary>Strict-mode toggle — already handler-agnostic in the wire
+    /// (never had an IIS-prefixed variant). Pinned by test (Rule 8).</summary>
     public const string ShouldFailOnUnresolved =
         "Squid.Action.SubstituteInFiles.ShouldFailDeploymentOnSubstitutionFails";
+
+    /// <summary>
+    /// Legacy IIS-handler-specific wire literals. The IIS handler's PS1
+    /// script + existing operator deployment definitions emit these.
+    /// <see cref="SubstituteInFilesStep"/> falls back to these names when
+    /// the canonical literals above are not set. Do not use for new
+    /// handlers — emit the canonical names instead.
+    /// </summary>
+    public static class Legacy
+    {
+        /// <summary>IIS-specific Enabled — kept for back-compat.</summary>
+        public const string Enabled = "Squid.Action.IISWebSite.SubstituteInFiles.Enabled";
+
+        /// <summary>IIS-specific TargetFiles — kept for back-compat.</summary>
+        public const string TargetFiles = "Squid.Action.IISWebSite.SubstituteInFiles.TargetFiles";
+    }
 }
 
 internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandContext>
 {
     /// <summary>Re-exported for backward-compat with the original test
-    /// suite that referenced these on the step. Pin both names so a future
-    /// rename surfaces in tests.</summary>
+    /// suite that referenced these on the step. The values point at the
+    /// CANONICAL names — tests writing to these will exercise the
+    /// canonical-first read path. To exercise the legacy fallback
+    /// explicitly, write to <c>SubstituteInFilesVariableNames.Legacy.Enabled</c>.</summary>
     internal const string EnabledVariableName = SubstituteInFilesVariableNames.Enabled;
     internal const string TargetFilesVariableName = SubstituteInFilesVariableNames.TargetFiles;
     internal const string ShouldFailOnUnresolvedVariableName = SubstituteInFilesVariableNames.ShouldFailOnUnresolved;
@@ -78,7 +108,10 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
     {
         if (context.Variables is null) return false;
 
-        var raw = context.Variables.Get(EnabledVariableName);
+        // Canonical first, legacy fallback. Either-name-set wins → True.
+        // Pinned by IsEnabled_LegacyIISName_StillRunsStep + IsEnabled_CanonicalName_RunsStep.
+        var raw = context.Variables.Get(SubstituteInFilesVariableNames.Enabled)
+                  ?? context.Variables.Get(SubstituteInFilesVariableNames.Legacy.Enabled);
         return string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -91,11 +124,16 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
         if (context.Variables is null)
             throw new InvalidOperationException("Variables have not been loaded — SubstituteInFilesStep must run after LoadVariablesFromFilesStep.");
 
-        var targetFilesRaw = context.Variables.Get(TargetFilesVariableName);
+        // Canonical first, legacy fallback for both Enabled-gate and TargetFiles
+        // glob list. Operators with deploys saved before the canonical surface
+        // existed still hit the legacy path; new handlers emit the canonical name.
+        var targetFilesRaw = context.Variables.Get(SubstituteInFilesVariableNames.TargetFiles)
+                             ?? context.Variables.Get(SubstituteInFilesVariableNames.Legacy.TargetFiles);
         if (string.IsNullOrWhiteSpace(targetFilesRaw)) return;    // no-op, operator left blank
 
+        // ShouldFailOnUnresolved was always handler-agnostic in the wire — no legacy variant.
         var failOnUnresolved = string.Equals(
-            context.Variables.Get(ShouldFailOnUnresolvedVariableName),
+            context.Variables.Get(SubstituteInFilesVariableNames.ShouldFailOnUnresolved),
             "True",
             StringComparison.OrdinalIgnoreCase);
 
