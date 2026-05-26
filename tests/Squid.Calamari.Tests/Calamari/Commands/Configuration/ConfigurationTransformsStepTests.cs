@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Shouldly;
 using Squid.Calamari.Commands;
+using Squid.Calamari.Commands.Common;
 using Squid.Calamari.Commands.Configuration;
 using Squid.Calamari.Variables;
 using Xunit;
@@ -26,6 +27,7 @@ namespace Squid.Calamari.Tests.Calamari.Commands.Configuration;
 /// apply it. <c>*.Release.config</c> is also applied unconditionally
 /// (matches .NET FX build-time XDT defaults).</para>
 /// </summary>
+[Collection(Squid.Calamari.Tests.Calamari.Commands.Common.RewriterEnvVarSerialCollection.Name)]
 public sealed class ConfigurationTransformsStepTests : IDisposable
 {
     private readonly string _workDir;
@@ -267,6 +269,62 @@ public sealed class ConfigurationTransformsStepTests : IDisposable
         ConfigurationTransformsVariableNames.Legacy.Enabled.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.Enabled");
         ConfigurationTransformsVariableNames.Legacy.EnvironmentName.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName");
         ConfigurationTransformsVariableNames.Legacy.AdditionalTransforms.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms");
+    }
+
+    [Fact]
+    public async Task Execute_OversizedConfig_SkippedWithWarning_OtherPairsStillProcessed()
+    {
+        // T3 defence on the XDT path: a base config that's too big (could be
+        // a 200 MB monolith config — rare but possible). XDT MUST refuse to
+        // load it (XmlTransformableDocument builds a 2-5x DOM). Sibling
+        // valid pairs MUST still apply.
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, "1");
+
+        try
+        {
+            // Oversized base (1.5 MB) with a matching env transform
+            var hugeBase = Path.Combine(_workDir, "huge.config");
+            File.WriteAllBytes(hugeBase, new byte[(int)(1.5 * 1024 * 1024)]);
+            File.WriteAllText(Path.Combine(_workDir, "huge.Production.config"),
+                "<?xml version=\"1.0\"?><configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">" +
+                "<appSettings><add key=\"k\" value=\"v\" xdt:Transform=\"SetAttributes\" xdt:Locator=\"Match(key)\" /></appSettings>" +
+                "</configuration>");
+
+            // Normal-sized valid sibling pair
+            File.WriteAllText(Path.Combine(_workDir, "app.config"),
+                "<?xml version=\"1.0\"?><configuration><appSettings><add key=\"x\" value=\"old\" /></appSettings></configuration>");
+            File.WriteAllText(Path.Combine(_workDir, "app.Production.config"),
+                "<?xml version=\"1.0\"?><configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">" +
+                "<appSettings><add key=\"x\" value=\"new\" xdt:Transform=\"SetAttributes\" xdt:Locator=\"Match(key)\" /></appSettings>" +
+                "</configuration>");
+
+            var vars = new VariableSet();
+            vars.Set(ConfigurationTransformsVariableNames.Enabled, "True");
+            vars.Set(ConfigurationTransformsVariableNames.EnvironmentName, "Production");
+
+            var context = new RunScriptCommandContext
+            {
+                ScriptPath = Path.Combine(_workDir, "s.sh"),
+                VariablesPath = Path.Combine(_workDir, "v.json"),
+                WorkingDirectory = _workDir,
+                Variables = vars
+            };
+
+            await Should.NotThrowAsync(() =>
+                new ConfigurationTransformsStep().ExecuteAsync(context, CancellationToken.None));
+
+            // Huge base intact (skipped)
+            File.ReadAllBytes(hugeBase).Length.ShouldBe((int)(1.5 * 1024 * 1024),
+                customMessage: "Oversized base config MUST be skipped — never loaded.");
+
+            // Normal pair applied
+            File.ReadAllText(Path.Combine(_workDir, "app.config")).ShouldContain("value=\"new\"",
+                customMessage: "Normal-sized XDT pair MUST still apply when a sibling base is oversized.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
     }
 
     [Fact]

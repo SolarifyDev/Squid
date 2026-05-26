@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Shouldly;
 using Squid.Calamari.Commands;
+using Squid.Calamari.Commands.Common;
 using Squid.Calamari.Commands.StructuredConfig;
 using Squid.Calamari.Variables;
 using Xunit;
@@ -19,6 +20,7 @@ namespace Squid.Calamari.Tests.Calamari.Commands.StructuredConfig;
 ///         (newline-separated globs of JSON files to rewrite)</item>
 /// </list></para>
 /// </summary>
+[Collection(Squid.Calamari.Tests.Calamari.Commands.Common.RewriterEnvVarSerialCollection.Name)]
 public sealed class StructuredConfigVariablesStepTests : IDisposable
 {
     private readonly string _workDir;
@@ -182,6 +184,54 @@ public sealed class StructuredConfigVariablesStepTests : IDisposable
         // it stays in sync with the underlying canonical literal.
         JsonConfigVariableNames.Enabled.ShouldBe(StructuredConfigVariableNames.Enabled);
         JsonConfigVariableNames.Targets.ShouldBe(StructuredConfigVariableNames.Targets);
+    }
+
+    [Fact]
+    public async Task Execute_OversizedJson_SkippedWithWarning_OtherFilesStillProcessed()
+    {
+        // T3 defence on the JSON path. A 200 MB JSON would build a ~1 GB
+        // JsonNode DOM — OOM territory. Pre-flight size guard rejects it
+        // BEFORE parse. Sibling normal files MUST still process.
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, "1");
+
+        try
+        {
+            // Oversized JSON — 1.5 MB of valid JSON whitespace padding
+            var huge = new System.Text.StringBuilder("""{"K":"old","Padding":" """);
+            huge.Append('x', (int)(1.5 * 1024 * 1024));
+            huge.Append("\"}");
+            File.WriteAllText(Path.Combine(_workDir, "huge.json"), huge.ToString());
+
+            File.WriteAllText(Path.Combine(_workDir, "normal.json"), """{"K":"old"}""");
+
+            var vars = new VariableSet();
+            vars.Set(StructuredConfigVariableNames.Enabled, "True");
+            vars.Set(StructuredConfigVariableNames.Targets, "*.json");
+            vars.Set("K", "new");
+
+            var context = new RunScriptCommandContext
+            {
+                ScriptPath = Path.Combine(_workDir, "s.sh"),
+                VariablesPath = Path.Combine(_workDir, "v.json"),
+                WorkingDirectory = _workDir,
+                Variables = vars
+            };
+
+            await Should.NotThrowAsync(() =>
+                new StructuredConfigVariablesStep().ExecuteAsync(context, CancellationToken.None));
+
+            // Huge file untouched (skipped before parse)
+            File.ReadAllText(Path.Combine(_workDir, "huge.json")).ShouldContain("\"K\":\"old\"",
+                customMessage: "Oversized JSON MUST be skipped — never parsed, never overwritten.");
+
+            // Normal file processed
+            File.ReadAllText(Path.Combine(_workDir, "normal.json")).ShouldContain("\"new\"",
+                customMessage: "Sibling normal-sized JSON MUST still get its leaf replaced.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
     }
 
     [Fact]

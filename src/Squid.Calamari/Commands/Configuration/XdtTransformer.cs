@@ -31,6 +31,18 @@ internal static class XdtTransformer
         if (!File.Exists(transformPath))
             return TransformResult.Failure($"Transform file '{transformPath}' does not exist; nothing to apply.");
 
+        // T3 — pre-flight size cap. XmlTransformableDocument builds a full
+        // in-memory DOM (can be 2-5x the file size). Reject oversized inputs
+        // before loading so a stray glob match doesn't OOM the agent.
+        if (!EncodingPreservingFileIO.IsWithinSizeLimit(basePath, out var baseBytes, out var limitBytes))
+            return TransformResult.Failure(
+                $"Base file '{basePath}' is {baseBytes:N0} bytes, exceeds the rewriter limit of {limitBytes:N0} bytes. " +
+                $"Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap.");
+        if (!EncodingPreservingFileIO.IsWithinSizeLimit(transformPath, out var transformBytes, out _))
+            return TransformResult.Failure(
+                $"Transform file '{transformPath}' is {transformBytes:N0} bytes, exceeds the rewriter limit of {limitBytes:N0} bytes. " +
+                $"Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap.");
+
         XmlTransformableDocument document;
         try
         {

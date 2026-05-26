@@ -114,6 +114,18 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
             {
                 try
                 {
+                    // T3 — pre-flight size cap. JsonNode.Parse builds a full
+                    // in-memory DOM (typically 3-5x the file size). Reject
+                    // oversized inputs so a stray glob match doesn't OOM the agent.
+                    if (!EncodingPreservingFileIO.IsWithinSizeLimit(file, out var sizeBytes, out var limitBytes))
+                    {
+                        Console.Error.WriteLine(
+                            $"::warning::StructuredConfigVariables: skipping '{file}' ({sizeBytes:N0} bytes > {limitBytes:N0} byte limit). " +
+                            $"Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap, or refine the target glob.");
+                        filesFailed++;
+                        continue;
+                    }
+
                     // BOM preservation — Visual Studio writes appsettings.json
                     // with a UTF-8 BOM by default; .NET's File.ReadAllText
                     // strips it. Without the shared helper, every rewrite

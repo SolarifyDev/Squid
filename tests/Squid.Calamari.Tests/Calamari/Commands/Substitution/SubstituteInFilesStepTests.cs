@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Shouldly;
 using Squid.Calamari.Commands;
+using Squid.Calamari.Commands.Common;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Variables;
 using Xunit;
@@ -24,6 +25,7 @@ namespace Squid.Calamari.Tests.Calamari.Commands.Substitution;
 /// step consumed them — the toggle was UI theatre. Pin the operator-
 /// observable behaviours of the new step:</para>
 /// </summary>
+[Collection(Squid.Calamari.Tests.Calamari.Commands.Common.RewriterEnvVarSerialCollection.Name)]
 public sealed class SubstituteInFilesStepTests : IDisposable
 {
     private readonly string _workDir;
@@ -309,6 +311,52 @@ public sealed class SubstituteInFilesStepTests : IDisposable
 
         File.ReadAllText(Path.Combine(_workDir, "test.config")).ShouldBe("value=bar",
             customMessage: "Legacy TargetFiles glob list MUST be honored when canonical is absent.");
+    }
+
+    [Fact]
+    public async Task Execute_OversizedFile_SkippedWithWarning_OtherFilesStillProcessed()
+    {
+        // T3 defence: a glob accidentally matches a huge file (e.g. operator
+        // included a 100 MB log under `**/*.config`). Step MUST skip it with
+        // a structured warning + still process the sibling files.
+        Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, "1");
+
+        try
+        {
+            // Oversized: 1.5 MB — exceeds 1 MB cap set above
+            File.WriteAllBytes(Path.Combine(_workDir, "huge.config"), new byte[(int)(1.5 * 1024 * 1024)]);
+
+            // Normal sibling: should still be processed
+            File.WriteAllText(Path.Combine(_workDir, "normal.config"), "value=#{Foo}");
+
+            var vars = new VariableSet();
+            vars.Set(SubstituteInFilesVariableNames.Enabled, "True");
+            vars.Set(SubstituteInFilesVariableNames.TargetFiles, "*.config");
+            vars.Set("Foo", "bar");
+
+            var context = new RunScriptCommandContext
+            {
+                ScriptPath = Path.Combine(_workDir, "s.sh"),
+                VariablesPath = Path.Combine(_workDir, "v.json"),
+                WorkingDirectory = _workDir,
+                Variables = vars
+            };
+
+            await Should.NotThrowAsync(() =>
+                new SubstituteInFilesStep().ExecuteAsync(context, CancellationToken.None));
+
+            // Huge file untouched (skipped)
+            File.ReadAllBytes(Path.Combine(_workDir, "huge.config")).Length.ShouldBe((int)(1.5 * 1024 * 1024),
+                customMessage: "Oversized file MUST be skipped — no partial rewrite. If you see a different size, the step tried to process it and likely OOM'd or corrupted.");
+
+            // Normal file processed
+            File.ReadAllText(Path.Combine(_workDir, "normal.config")).ShouldBe("value=bar",
+                customMessage: "Sibling files at normal size MUST still be processed — one oversized file MUST NOT abort the whole step.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(EncodingPreservingFileIO.MaxFileSizeMBEnvVar, null);
+        }
     }
 
     [Fact]
