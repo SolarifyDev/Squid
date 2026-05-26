@@ -1,4 +1,5 @@
 using Squid.Calamari.Commands.Configuration;
+using Squid.Calamari.Commands.Package;
 using Squid.Calamari.Commands.StructuredConfig;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Execution;
@@ -9,13 +10,18 @@ namespace Squid.Calamari.Commands;
 
 /// <summary>
 /// Handles the `run-script` subcommand.
-/// Loads variables, prepends them as bash exports, then executes the script.
+/// Loads variables, optionally extracts a package, applies rewriter steps,
+/// prepends variable exports, then executes the script.
 ///
 /// <para><b>Pipeline order matters</b>:
 /// <list type="number">
 ///   <item>ResolveWorkingDirectory — pin the cwd for the rest of the pipeline.</item>
 ///   <item>LoadVariablesFromFiles — read variables.json + sensitiveVariables.json
 ///         into the in-memory VariableSet so later steps can use them.</item>
+///   <item><b>ExtractPackage (G1.4)</b> — if the wire literal
+///         <c>Squid.Action.Package.OriginalPath</c> is set, extract the
+///         .nupkg/.zip into the working directory. No-op for standalone
+///         scripts (no package). Runs BEFORE rewriters so they have files.</item>
 ///   <item><b>SubstituteInFiles (G1.1)</b> — apply <c>#{Token}</c> replacement
 ///         to operator-nominated file globs BEFORE the user script runs.
 ///         Must come after LoadVariables (needs the values) and before
@@ -42,6 +48,11 @@ public class RunScriptCommand
         [
             new ResolveWorkingDirectoryStep<RunScriptCommandContext>(),
             new LoadVariablesFromFilesStep<RunScriptCommandContext>(),
+            // G1.4 — package extraction. No-op when the wire literal is unset.
+            // MUST run before any rewriter step so SubstituteInFiles +
+            // ConfigurationTransforms + JsonConfigVariables have files to
+            // operate on.
+            new ExtractPackageStep(),
             // G1.1 — token replacement in operator-nominated text files.
             // Runs first so any #{Token} inside transform files is resolved
             // before XDT engine reads them.
@@ -54,7 +65,7 @@ public class RunScriptCommand
             // files (typically appsettings.json). Runs after XDT so the
             // ConfigurationTransforms-rewritten *.config files don't get
             // their JSON cousins out of sync. Matches Octopus pipeline order:
-            // SubstituteInFiles → ConfigurationTransforms → StructuredConfigurationVariables.
+            // SubstituteInFiles → ConfigurationTransforms → JsonConfigVariables.
             new StructuredConfigVariablesStep(),
             new WriteBootstrappedBashScriptStep(),
             new ExecuteScriptWithEngineStep(scriptEngine),
