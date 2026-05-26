@@ -71,6 +71,8 @@ internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptComma
             throw new InvalidOperationException("Working directory has not been initialized.");
         if (string.IsNullOrEmpty(context.BootstrappedScriptPath))
             throw new InvalidOperationException("Bootstrapped script path has not been initialized.");
+        if (context.Variables is null)
+            throw new InvalidOperationException("Variables have not been loaded.");
 
         var outputProcessor = new ScriptOutputProcessor();
         context.ScriptResult = await _scriptEngine.ExecuteAsync(
@@ -83,6 +85,18 @@ internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptComma
                 },
                 ct)
             .ConfigureAwait(false);
+
+        // Symmetric with ConventionScriptStep — output variables the main
+        // script set MUST flow into the shared variable set so PostDeploy
+        // (the next pipeline step) can read them. Without this merge,
+        // PostDeploy would only see the pre-main variable snapshot —
+        // smoke tests reading a port the main script computed would silently
+        // fail. CommandResult still receives the same OutputVariables list
+        // via BuildRunScriptCommandResultStep below, so the caller surface
+        // is unchanged. Pinned by
+        // Execute_MainScriptOutputVariables_FlowIntoVariableSet_VisibleToPostDeploy.
+        foreach (var output in context.ScriptResult.OutputVariables)
+            context.Variables.Set(output.Name, output.Value);
     }
 }
 
