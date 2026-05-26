@@ -1,3 +1,4 @@
+using Squid.Calamari.Commands.Configuration;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Execution;
 using Squid.Calamari.Pipeline;
@@ -40,7 +41,14 @@ public class RunScriptCommand
         [
             new ResolveWorkingDirectoryStep<RunScriptCommandContext>(),
             new LoadVariablesFromFilesStep<RunScriptCommandContext>(),
+            // G1.1 — token replacement in operator-nominated text files.
+            // Runs first so any #{Token} inside transform files is resolved
+            // before XDT engine reads them.
             new SubstituteInFilesStep(),
+            // G1.2 — XDT (web.{Env}.config) transforms on *.config files.
+            // Runs after SubstituteInFiles so transform sources have
+            // concrete values, not unresolved tokens.
+            new ConfigurationTransformsStep(),
             new WriteBootstrappedBashScriptStep(),
             new ExecuteScriptWithEngineStep(scriptEngine),
             new BuildRunScriptCommandResultStep(),

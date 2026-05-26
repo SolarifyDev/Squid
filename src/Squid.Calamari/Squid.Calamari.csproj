@@ -19,6 +19,15 @@
 
   <ItemGroup>
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <!--
+    G1.2 — Microsoft.Web.Xdt: XML Document Transform engine, Microsoft's
+    official package backing the .NET Framework `web.{Env}.config` transform
+    feature. Used by ConfigurationTransformsStep. ~150 KB on disk;
+    acceptable agent-zip cost given the operator value of fully working
+    web.config transforms (previously the IIS PS path degraded with a
+    warning when the assembly wasn't on the host).
+    -->
+    <PackageReference Include="Microsoft.Web.Xdt" Version="3.1.0" />
   </ItemGroup>
 
 </Project>
