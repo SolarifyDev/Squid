@@ -248,16 +248,60 @@ public sealed class ConfigurationTransformsStepTests : IDisposable
     // ── Wire-contract pinning ──────────────────────────────────────────────
 
     [Fact]
-    public void EnabledVariableName_PinnedToIISHandlerContract()
-        => ConfigurationTransformsVariableNames.Enabled.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.Enabled");
+    public void EnabledVariableName_Canonical_PinnedHandlerAgnostic()
+        => ConfigurationTransformsVariableNames.Enabled.ShouldBe("Squid.Action.ConfigurationTransforms.Enabled");
 
     [Fact]
-    public void EnvironmentNameVariableName_PinnedToIISHandlerContract()
-        => ConfigurationTransformsVariableNames.EnvironmentName.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName");
+    public void EnvironmentNameVariableName_Canonical_PinnedHandlerAgnostic()
+        => ConfigurationTransformsVariableNames.EnvironmentName.ShouldBe("Squid.Action.ConfigurationTransforms.EnvironmentName");
 
     [Fact]
-    public void AdditionalTransformsVariableName_PinnedToIISHandlerContract()
-        => ConfigurationTransformsVariableNames.AdditionalTransforms.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms");
+    public void AdditionalTransformsVariableName_Canonical_PinnedHandlerAgnostic()
+        => ConfigurationTransformsVariableNames.AdditionalTransforms.ShouldBe("Squid.Action.ConfigurationTransforms.AdditionalTransforms");
+
+    [Fact]
+    public void LegacyVariableNames_PinnedToIISHandlerContract()
+    {
+        // Legacy half — the IIS handler's PS1 script emits these. Pin so a
+        // rename on either side surfaces in tests, not in production deploys.
+        ConfigurationTransformsVariableNames.Legacy.Enabled.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.Enabled");
+        ConfigurationTransformsVariableNames.Legacy.EnvironmentName.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName");
+        ConfigurationTransformsVariableNames.Legacy.AdditionalTransforms.ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms");
+    }
+
+    [Fact]
+    public async Task IsEnabled_LegacyIISNames_StillRunsStep_BackCompat()
+    {
+        // Existing IIS deploys emit only the IIS-prefixed names. Step MUST
+        // still run when the canonical names are absent.
+        var vars = new VariableSet();
+        vars.Set(ConfigurationTransformsVariableNames.Legacy.Enabled, "True");
+        vars.Set(ConfigurationTransformsVariableNames.Legacy.EnvironmentName, "Production");
+
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = Path.Combine(_workDir, "script.sh"),
+            VariablesPath = Path.Combine(_workDir, "variables.json"),
+            WorkingDirectory = _workDir,
+            Variables = vars
+        };
+
+        new ConfigurationTransformsStep().IsEnabled(context).ShouldBeTrue(
+            customMessage: "Legacy IIS-prefixed Enabled MUST trigger the step (back-compat).");
+
+        // Confirm the EnvironmentName legacy fallback is also honored — by
+        // creating a web.Production.config transform file + ensuring it gets applied.
+        File.WriteAllText(Path.Combine(_workDir, "web.config"),
+            "<?xml version=\"1.0\"?><configuration><appSettings><add key=\"x\" value=\"old\" /></appSettings></configuration>");
+        File.WriteAllText(Path.Combine(_workDir, "web.Production.config"),
+            "<?xml version=\"1.0\"?><configuration xmlns:xdt=\"http://schemas.microsoft.com/XML-Document-Transform\">" +
+            "<appSettings><add key=\"x\" value=\"prod\" xdt:Transform=\"SetAttributes\" xdt:Locator=\"Match(key)\" /></appSettings></configuration>");
+
+        await new ConfigurationTransformsStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(_workDir, "web.config")).ShouldContain("value=\"prod\"",
+            customMessage: "Legacy EnvironmentName MUST drive auto-pair discovery — operator's existing deploys depend on this.");
+    }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 

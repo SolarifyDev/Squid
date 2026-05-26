@@ -7,41 +7,73 @@ namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle.Handlers
 
 /// <summary>
 /// G1.2 — cross-project drift detector for the ConfigurationTransforms (XDT)
-/// feature. Same pattern as the G1.1 SubstituteInFiles wire-contract test.
+/// feature. After A1 generalization, the contract has TWO halves:
 ///
-/// <para>Three variable literals form the contract between the server-side
-/// IIS handler preamble and the Calamari pipeline step. A rename on either
-/// side without the other = silent UI-theatre regression (operator flips
-/// toggle, deploy runs as if disabled).</para>
+/// <list type="bullet">
+///   <item><b>Legacy half</b>: IIS handler's <c>IISDeployProperties</c> +
+///         PS1 script emit the IIS-prefixed names. Calamari step's
+///         <c>Legacy</c> nested class exposes the matching names so the
+///         fallback read path finds them. Existing deployments depend on
+///         this half.</item>
+///   <item><b>Canonical half</b>: handler-agnostic names — what new
+///         handlers (RunScript / Docker / nginx) MUST emit. Calamari step
+///         reads them first.</item>
+/// </list>
 /// </summary>
 public sealed class IISConfigurationTransformsWireContractTests
 {
+    // ── Legacy half: IIS server emits these; Calamari step falls back to them ──
+
     [Fact]
-    public void EnabledVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyEnabledVariable_ServerLiteral_MatchesCalamariLegacyLiteral()
     {
         IISDeployProperties.ConfigurationTransformsEnabled
-            .ShouldBe(ConfigurationTransformsVariableNames.Enabled);
+            .ShouldBe(ConfigurationTransformsVariableNames.Legacy.Enabled);
     }
 
     [Fact]
-    public void EnvironmentNameVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyEnvironmentNameVariable_ServerLiteral_MatchesCalamariLegacyLiteral()
     {
         IISDeployProperties.ConfigurationTransformsEnvironmentName
-            .ShouldBe(ConfigurationTransformsVariableNames.EnvironmentName);
+            .ShouldBe(ConfigurationTransformsVariableNames.Legacy.EnvironmentName);
     }
 
     [Fact]
-    public void AdditionalTransformsVariable_ServerLiteral_MatchesCalamariLiteral()
+    public void LegacyAdditionalTransformsVariable_ServerLiteral_MatchesCalamariLegacyLiteral()
     {
         IISDeployProperties.ConfigurationTransformsAdditional
-            .ShouldBe(ConfigurationTransformsVariableNames.AdditionalTransforms);
+            .ShouldBe(ConfigurationTransformsVariableNames.Legacy.AdditionalTransforms);
     }
 
     [Fact]
-    public void EnabledVariable_LiteralValuePinned()
+    public void LegacyEnabledVariable_LiteralValuePinned()
     {
-        // Defence-in-depth pin (coordinate rename → still test-visible).
+        // Defence-in-depth pin — coordinated rename surfaces in tests.
         IISDeployProperties.ConfigurationTransformsEnabled
             .ShouldBe("Squid.Action.IISWebSite.ConfigurationTransforms.Enabled");
+    }
+
+    // ── Canonical half: handler-agnostic; no server-side counterpart yet ──
+
+    [Fact]
+    public void CanonicalLiterals_PinnedHandlerAgnostic()
+    {
+        ConfigurationTransformsVariableNames.Enabled
+            .ShouldBe("Squid.Action.ConfigurationTransforms.Enabled");
+        ConfigurationTransformsVariableNames.EnvironmentName
+            .ShouldBe("Squid.Action.ConfigurationTransforms.EnvironmentName");
+        ConfigurationTransformsVariableNames.AdditionalTransforms
+            .ShouldBe("Squid.Action.ConfigurationTransforms.AdditionalTransforms");
+    }
+
+    [Fact]
+    public void CanonicalAndLegacy_AreDistinctLiterals()
+    {
+        ConfigurationTransformsVariableNames.Enabled
+            .ShouldNotBe(ConfigurationTransformsVariableNames.Legacy.Enabled);
+        ConfigurationTransformsVariableNames.EnvironmentName
+            .ShouldNotBe(ConfigurationTransformsVariableNames.Legacy.EnvironmentName);
+        ConfigurationTransformsVariableNames.AdditionalTransforms
+            .ShouldNotBe(ConfigurationTransformsVariableNames.Legacy.AdditionalTransforms);
     }
 }

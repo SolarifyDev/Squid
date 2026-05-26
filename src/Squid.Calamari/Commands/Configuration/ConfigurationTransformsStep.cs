@@ -4,15 +4,40 @@ namespace Squid.Calamari.Commands.Configuration;
 
 /// <summary>
 /// Wire-contract constants for the ConfigurationTransforms (XDT) feature.
-/// Public so cross-project drift tests in Squid.UnitTests can assert these
-/// match the server-side IIS handler's <c>IISDeployProperties</c> constants
-/// without forcing InternalsVisibleTo pollution.
+/// Public so cross-project drift tests in Squid.UnitTests can assert the
+/// contract without InternalsVisibleTo pollution.
+///
+/// <para><b>Canonical vs Legacy</b>: top-level constants are the
+/// handler-agnostic canonical wire literals — preferred for new handlers.
+/// The nested <see cref="Legacy"/> class holds the IIS-prefixed names that
+/// the IIS handler's PS1 script + existing operator deployments emit.
+/// <see cref="ConfigurationTransformsStep"/> reads canonical first, falls
+/// back to legacy.</para>
 /// </summary>
 public static class ConfigurationTransformsVariableNames
 {
-    public const string Enabled = "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled";
-    public const string EnvironmentName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName";
-    public const string AdditionalTransforms = "Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms";
+    /// <summary>Canonical, handler-agnostic Enabled toggle.</summary>
+    public const string Enabled = "Squid.Action.ConfigurationTransforms.Enabled";
+
+    /// <summary>Canonical environment name driving <c>*.{Env}.config</c> auto-pairs.</summary>
+    public const string EnvironmentName = "Squid.Action.ConfigurationTransforms.EnvironmentName";
+
+    /// <summary>Canonical operator-supplied explicit transform pairs
+    /// (<c>transform.config =&gt; base.config</c>, newline-separated).</summary>
+    public const string AdditionalTransforms = "Squid.Action.ConfigurationTransforms.AdditionalTransforms";
+
+    /// <summary>
+    /// Legacy IIS-handler-specific wire literals. Existing operator deployments
+    /// + the IIS PS1 script still emit these.
+    /// <see cref="ConfigurationTransformsStep"/> falls back to these when the
+    /// canonical literals above are not set.
+    /// </summary>
+    public static class Legacy
+    {
+        public const string Enabled = "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled";
+        public const string EnvironmentName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName";
+        public const string AdditionalTransforms = "Squid.Action.IISWebSite.ConfigurationTransforms.AdditionalTransforms";
+    }
 }
 
 /// <summary>
@@ -44,7 +69,9 @@ internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptComma
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
-        var raw = context.Variables.Get(ConfigurationTransformsVariableNames.Enabled);
+        // Canonical first, legacy fallback.
+        var raw = context.Variables.Get(ConfigurationTransformsVariableNames.Enabled)
+                  ?? context.Variables.Get(ConfigurationTransformsVariableNames.Legacy.Enabled);
         return string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -66,8 +93,11 @@ internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptComma
             return Task.CompletedTask;
         }
 
-        var environmentName = context.Variables.Get(ConfigurationTransformsVariableNames.EnvironmentName);
-        var additionalRaw = context.Variables.Get(ConfigurationTransformsVariableNames.AdditionalTransforms);
+        // Canonical first, legacy fallback — same pattern as IsEnabled.
+        var environmentName = context.Variables.Get(ConfigurationTransformsVariableNames.EnvironmentName)
+                              ?? context.Variables.Get(ConfigurationTransformsVariableNames.Legacy.EnvironmentName);
+        var additionalRaw = context.Variables.Get(ConfigurationTransformsVariableNames.AdditionalTransforms)
+                            ?? context.Variables.Get(ConfigurationTransformsVariableNames.Legacy.AdditionalTransforms);
 
         var applied = 0;
         var failed = 0;

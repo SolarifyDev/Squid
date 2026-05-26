@@ -5,13 +5,49 @@ using Squid.Calamari.Pipeline;
 namespace Squid.Calamari.Commands.StructuredConfig;
 
 /// <summary>
-/// Wire-contract constants for the StructuredConfigVariables feature.
+/// Wire-contract constants for the JSON-leaf configuration-variable feature.
 /// Public so cross-project drift tests in Squid.UnitTests can pin them.
+///
+/// <para><b>Canonical naming</b>: the canonical wire literals use
+/// <c>Squid.Action.JsonConfigVariables.*</c> — matches the frontend feature
+/// ID (<c>Squid.Features.JsonConfigurationVariables</c>) and accurately
+/// describes what the step does (JSON-only leaf replacement). The legacy
+/// literal <c>StructuredConfigurationVariables</c> is kept for back-compat
+/// with the IIS handler's existing emission + operator deployments saved
+/// before the rename.</para>
+///
+/// <para>The C# class keeps the original name <c>StructuredConfigVariableNames</c>
+/// to avoid rippling-rename through tests; <see cref="JsonConfigVariableNames"/>
+/// is provided as a forward-looking alias for new handlers.</para>
 /// </summary>
 public static class StructuredConfigVariableNames
 {
-    public const string Enabled = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled";
-    public const string Targets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
+    /// <summary>Canonical, handler-agnostic Enabled toggle.</summary>
+    public const string Enabled = "Squid.Action.JsonConfigVariables.Enabled";
+
+    /// <summary>Canonical, handler-agnostic Targets glob list.</summary>
+    public const string Targets = "Squid.Action.JsonConfigVariables.Targets";
+
+    /// <summary>
+    /// Legacy IIS-handler-specific wire literals. Existing operator deployments
+    /// emit these. <see cref="StructuredConfigVariablesStep"/> falls back to
+    /// these names when the canonical literals above are not set.
+    /// </summary>
+    public static class Legacy
+    {
+        public const string Enabled = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled";
+        public const string Targets = "Squid.Action.IISWebSite.StructuredConfigurationVariables.Targets";
+    }
+}
+
+/// <summary>Forward-looking alias matching the canonical feature name
+/// (<c>JsonConfigVariables</c>). New handlers SHOULD reference this name —
+/// it telegraphs that the toggle is JSON-only, not "structured config"
+/// in the generic sense (no YAML / XML / Properties support).</summary>
+public static class JsonConfigVariableNames
+{
+    public const string Enabled = StructuredConfigVariableNames.Enabled;
+    public const string Targets = StructuredConfigVariableNames.Targets;
 }
 
 /// <summary>
@@ -36,7 +72,9 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
-        var raw = context.Variables.Get(StructuredConfigVariableNames.Enabled);
+        // Canonical first, legacy fallback.
+        var raw = context.Variables.Get(StructuredConfigVariableNames.Enabled)
+                  ?? context.Variables.Get(StructuredConfigVariableNames.Legacy.Enabled);
         return string.Equals(raw, "True", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -51,7 +89,9 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
             throw new InvalidOperationException(
                 "Variables have not been loaded — StructuredConfigVariablesStep must run after LoadVariablesFromFilesStep.");
 
-        var targetsRaw = context.Variables.Get(StructuredConfigVariableNames.Targets);
+        // Canonical first, legacy fallback for the Targets glob list.
+        var targetsRaw = context.Variables.Get(StructuredConfigVariableNames.Targets)
+                         ?? context.Variables.Get(StructuredConfigVariableNames.Legacy.Targets);
         if (string.IsNullOrWhiteSpace(targetsRaw)) return Task.CompletedTask;
 
         var totalReplaced = 0;
