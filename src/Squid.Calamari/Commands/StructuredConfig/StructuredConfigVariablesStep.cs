@@ -1,3 +1,4 @@
+using Squid.Calamari.Commands.Common;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Pipeline;
 
@@ -73,7 +74,12 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
             {
                 try
                 {
-                    var json = File.ReadAllText(file);
+                    // BOM preservation — Visual Studio writes appsettings.json
+                    // with a UTF-8 BOM by default; .NET's File.ReadAllText
+                    // strips it. Without the shared helper, every rewrite
+                    // would silently change the file's byte content (BOM gone)
+                    // even when no leaves matched, polluting deploy diffs.
+                    var (json, encoding) = EncodingPreservingFileIO.ReadAllTextPreservingEncoding(file);
                     var result = JsonPathReplacer.Replace(json, context.Variables);
 
                     if (!result.Succeeded)
@@ -86,7 +92,12 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
 
                     if (result.ReplacedCount > 0)
                     {
-                        File.WriteAllText(file, result.Output);
+                        // Atomic write — temp + rename. A 50MB appsettings.json
+                        // half-written on a `kill -9` would leave the operator
+                        // with a corrupt config; the temp+rename pattern keeps
+                        // the original intact until the new bytes are fully on
+                        // disk. Same primitive G1.2 XDT uses.
+                        EncodingPreservingFileIO.WriteAllTextAtomic(file, result.Output, encoding);
                         Console.WriteLine(
                             $"StructuredConfigVariables: '{file}' — {result.ReplacedCount} leaf value(s) replaced.");
                     }

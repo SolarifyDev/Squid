@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Squid.Calamari.Variables;
@@ -39,7 +40,16 @@ internal static class JsonPathReplacer
 {
     private static readonly JsonSerializerOptions WriteOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+        // Default encoder escapes `<`, `>`, `&`, `+` into `\uXXXX` for HTML safety.
+        // That mangles operator URL strings and any descriptive text containing
+        // those characters — appsettings.json diff after a rewrite looks like
+        // gibberish to the operator (even though .NET IConfiguration parses it
+        // correctly). UnsafeRelaxedJsonEscaping keeps those characters readable.
+        // The "Unsafe" prefix only matters for HTML-embedded JSON; appsettings.json
+        // is consumed by IConfiguration, never injected into HTML.
+        // Pinned by Replace_OperatorStringContainsUrlSpecialChars_StaysReadable.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     private static readonly JsonDocumentOptions ParseOptions = new()
@@ -152,14 +162,39 @@ internal static class JsonPathReplacer
     /// Try the dot-form first (the canonical computed path), then the
     /// colon-form (ASP.NET Core IConfiguration idiom — same leaf, different
     /// separator). Returns the first match.
+    ///
+    /// <para><b>Self-namespace guard</b>: paths starting with <c>Squid.</c>
+    /// are skipped — Squid's own internal variables (e.g. step toggles,
+    /// release metadata, deployment ids) carry implementation details, and
+    /// letting them clobber an operator's JSON leaf at the same path
+    /// produces surprise corruption with no operator-visible cause.
+    /// Operators targeting a JSON path that genuinely begins with
+    /// <c>Squid.</c> can still hit it via the colon form
+    /// (<c>Squid:Some:Path</c>) — that encodes explicit intent and is
+    /// allowed.</para>
     /// </summary>
     private static bool TryFindVariable(VariableSet variables, string dotPath, out string value)
     {
-        var dot = variables.Get(dotPath);
-        if (dot is not null)
+        value = string.Empty;
+
+        // Self-namespace guard — only on the DOT form (which is what Squid's
+        // own runtime emits for its internal variables, e.g.
+        // `Squid.Action.IISWebSite.Foo.Bar`, `Squid.Deployment.Id`).
+        // Squid's runtime never emits colon-keyed names, so a colon-form
+        // variable with `Squid:...` IS operator-deliberate intent and is
+        // allowed through below. Pinned by
+        // Replace_SquidNamespacedVariable_DoesNotClobberJsonLeaf +
+        // Replace_SquidNamespacedVariable_OperatorCanStillForceWithColonForm.
+        var dotFormAllowed = !dotPath.StartsWith("Squid.", StringComparison.OrdinalIgnoreCase);
+
+        if (dotFormAllowed)
         {
-            value = dot;
-            return true;
+            var dot = variables.Get(dotPath);
+            if (dot is not null)
+            {
+                value = dot;
+                return true;
+            }
         }
 
         var colonPath = dotPath.Replace('.', ':');
@@ -170,7 +205,6 @@ internal static class JsonPathReplacer
             return true;
         }
 
-        value = string.Empty;
         return false;
     }
 
