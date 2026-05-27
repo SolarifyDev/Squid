@@ -1,50 +1,43 @@
 using System.IO.Compression;
-using Squid.Calamari.Commands.Common;
 
 namespace Squid.Calamari.Commands.Package;
 
 /// <summary>
-/// G1.4 — pure-function zip / nupkg extractor used by
-/// <see cref="ExtractPackageStep"/>. Hardened against three classes of
-/// hostile archive content:
+/// G1.4 — zip / nupkg extractor. After PR-2 multi-format dispatch this
+/// is one of several <see cref="IPackageExtractor"/> implementations,
+/// selected by extension via <see cref="PackageExtractorRegistry"/>.
 ///
-/// <list type="number">
-///   <item><b>Zip-slip</b>: an entry path containing <c>..</c> segments that
-///         would canonicalise outside the destination root. Pinned by
-///         <c>Extract_ZipSlipEntry_Rejected</c>. Any single malicious entry
-///         rejects the whole extraction (fail-closed).</item>
-///   <item><b>Absolute paths</b>: an entry like <c>/etc/passwd</c> or
-///         <c>C:\Windows\System32\drivers\etc\hosts</c>. Rejected outright.</item>
-///   <item><b>Per-entry size + total size</b>: defends against zip-bombs
-///         (small archive, multi-GB payload). Per-entry cap reuses the
-///         shared <see cref="EncodingPreservingFileIO.ResolveMaxFileSizeMB"/>
-///         setting; total cap is 10x that (so 50 MB default ⇒ 500 MB total).</item>
-/// </list>
+/// <para><b>Why nupkg + zip share the same code</b>: a <c>.nupkg</c> is
+/// a zip file with a different filename suffix. Same binary format, same
+/// engine.</para>
 ///
-/// <para><b>Symlinks in zip</b>: zip can encode Unix file modes via the
-/// external-attributes field. We don't decode those — every entry is treated
-/// as a regular file or directory. Net effect: symlink entries are extracted
-/// as plain files containing the target-path string. Operator-visible but
-/// not exploitable (file content is the literal target string, not a real
-/// symlink). The companion <c>GlobMatcher</c> symlink-escape sandbox catches
-/// anything the OS treats as a symlink after extraction.</para>
-///
-/// <para><b>Why not <see cref="ZipFile.ExtractToDirectory(string, string)"/></b>:
-/// .NET's built-in extractor does have a path-traversal check (added in .NET
-/// Core 2.1) but doesn't honour our per-entry / total size caps or our
-/// fail-closed-on-first-violation policy. Inlining gives full control of
-/// the safety story.</para>
+/// <para>Safety primitives (zip-slip / size caps / fail-closed) come from
+/// <see cref="ArchiveSafety"/> — shared with the tar / tar.gz extractors
+/// added in PR-2 so the hostile-archive defence story is identical across
+/// formats.</para>
+/// </summary>
+internal sealed class ZipPackageExtractor : IPackageExtractor
+{
+    private static readonly string[] Extensions = { ".zip", ".nupkg" };
+
+    public bool CanHandle(string archivePath)
+    {
+        var ext = Path.GetExtension(archivePath);
+        return Extensions.Any(e => string.Equals(e, ext, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public ExtractResult Extract(string archivePath, string destinationDir)
+        => ZipExtractor.Extract(archivePath, destinationDir);
+}
+
+/// <summary>
+/// Static façade for backward-compat with G1.4 tests that drove
+/// <see cref="ZipExtractor.Extract"/> directly. New code SHOULD go through
+/// <see cref="PackageExtractorRegistry"/> so format dispatch happens
+/// uniformly.
 /// </summary>
 internal static class ZipExtractor
 {
-    /// <summary>
-    /// Multiplier applied to the per-file size cap to derive the total
-    /// archive-extraction cap. 10x is generous — a legitimate 50 MB
-    /// individual file plus surrounding small files easily fits under 500 MB
-    /// total. Zip bombs typically have ratios of 1000x+ so this catches them.
-    /// </summary>
-    private const int TotalSizeCapMultiplier = 10;
-
     public static ExtractResult Extract(string archivePath, string destinationDir)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
@@ -55,12 +48,7 @@ internal static class ZipExtractor
 
         Directory.CreateDirectory(destinationDir);
 
-        var canonicalDest = Path.GetFullPath(destinationDir);
-        if (!canonicalDest.EndsWith(Path.DirectorySeparatorChar))
-            canonicalDest += Path.DirectorySeparatorChar;
-
-        var perEntryCapBytes = EncodingPreservingFileIO.ResolveMaxFileSizeMB() * 1024L * 1024L;
-        var totalCapBytes = perEntryCapBytes * TotalSizeCapMultiplier;
+        var canonicalDest = ArchiveSafety.EnsureTrailingSeparator(destinationDir);
 
         int filesExtracted = 0;
         long totalBytesWritten = 0;
@@ -74,7 +62,7 @@ internal static class ZipExtractor
                 // Directory entry: 0-byte, name ends with `/`. Create dir, no contents.
                 if (string.IsNullOrEmpty(entry.Name) && entry.FullName.EndsWith('/'))
                 {
-                    var dirPath = ResolveSafeEntryPath(entry.FullName, canonicalDest);
+                    var dirPath = ArchiveSafety.ResolveSafeEntryPath(entry.FullName, canonicalDest);
                     if (dirPath is null)
                         return ExtractResult.Failure($"Entry '{entry.FullName}' would escape the destination directory (zip-slip). Aborted.");
                     Directory.CreateDirectory(dirPath);
@@ -84,19 +72,15 @@ internal static class ZipExtractor
                 // Skip 0-length non-directory entries with empty Name (zip-spec weirdness)
                 if (string.IsNullOrEmpty(entry.Name)) continue;
 
-                var entryPath = ResolveSafeEntryPath(entry.FullName, canonicalDest);
+                var entryPath = ArchiveSafety.ResolveSafeEntryPath(entry.FullName, canonicalDest);
                 if (entryPath is null)
                     return ExtractResult.Failure($"Entry '{entry.FullName}' would escape the destination directory (zip-slip). Aborted.");
 
-                if (entry.Length > perEntryCapBytes)
-                    return ExtractResult.Failure(
-                        $"Entry '{entry.FullName}' is {entry.Length:N0} bytes, exceeds per-entry limit of {perEntryCapBytes:N0} bytes. " +
-                        $"Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap.");
+                var perEntryFailure = ArchiveSafety.CheckPerEntryCap(entry.FullName, entry.Length);
+                if (perEntryFailure is not null) return perEntryFailure;
 
-                if (totalBytesWritten + entry.Length > totalCapBytes)
-                    return ExtractResult.Failure(
-                        $"Total extracted size would exceed {totalCapBytes:N0} bytes (suspected zip-bomb). " +
-                        $"Aborted at entry '{entry.FullName}'. Set {EncodingPreservingFileIO.MaxFileSizeMBEnvVar}=<MB> to raise the cap.");
+                var totalFailure = ArchiveSafety.CheckTotalCap(entry.FullName, totalBytesWritten + entry.Length);
+                if (totalFailure is not null) return totalFailure;
 
                 var parentDir = Path.GetDirectoryName(entryPath);
                 if (!string.IsNullOrEmpty(parentDir)) Directory.CreateDirectory(parentDir);
@@ -121,33 +105,6 @@ internal static class ZipExtractor
         }
 
         return ExtractResult.Success(filesExtracted, totalBytesWritten);
-    }
-
-    /// <summary>
-    /// Resolve an archive entry path to its absolute on-disk path AND verify
-    /// it stays inside <paramref name="canonicalDest"/>. Returns null when
-    /// the entry escapes (zip-slip / absolute path / drive-letter).
-    /// </summary>
-    private static string? ResolveSafeEntryPath(string entryName, string canonicalDest)
-    {
-        // Normalise: zip entries use forward slashes; on Windows we need backslashes.
-        var normalised = entryName.Replace('/', Path.DirectorySeparatorChar);
-
-        // Reject absolute paths (POSIX `/` or Windows `C:\`) and drive-relative paths.
-        if (Path.IsPathRooted(normalised)) return null;
-
-        // Combine + canonicalise. Path.GetFullPath resolves `..` segments;
-        // we then check the result is still under the destination.
-        var combined = Path.Combine(canonicalDest, normalised);
-        var resolved = Path.GetFullPath(combined);
-
-        // Compare case-insensitively on Windows / macOS (HFS/APFS default
-        // case-insensitive). Linux ext4 is case-sensitive but
-        // OrdinalIgnoreCase is the safe over-approximation — any case-aliased
-        // attack still gets rejected.
-        if (!resolved.StartsWith(canonicalDest, StringComparison.OrdinalIgnoreCase)) return null;
-
-        return resolved;
     }
 }
 
