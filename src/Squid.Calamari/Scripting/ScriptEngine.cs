@@ -7,7 +7,7 @@ public sealed class ScriptEngine : IScriptEngine
 
     public ScriptEngine()
         : this(
-            [new BashScriptExecutorAdapter()],
+            [new BashScriptExecutorAdapter(), new PowerShellScriptExecutorAdapter()],
             [new EnsureScriptFileExistsDecorator()])
     {
     }

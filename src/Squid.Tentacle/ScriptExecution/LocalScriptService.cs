@@ -1179,7 +1179,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var sensitiveVariablesPath = Path.Combine(workDir, "sensitiveVariables.json");
 
         // Calamari can today only bootstrap BASH scripts — its pipeline contains
-        // exactly one writer step (<see cref="Squid.Calamari.Commands.WriteBootstrappedBashScriptStep"/>)
+        // exactly one writer step (<see cref="Squid.Calamari.Commands.WriteBootstrappedScriptStep"/>)
         // that does <c>File.ReadAllText("script.sh")</c> + prepends a Bash
         // <c>export VAR=...</c> preamble. There is NO <c>WriteBootstrappedPowerShellScriptStep</c>
         // and the Calamari CLI is hardcoded to <c>--script=script.sh</c> at the
@@ -1241,7 +1241,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     ///
     /// <para>Today only <see cref="ScriptType.Bash"/> qualifies — Calamari's
     /// <c>RunScriptCommand</c> pipeline contains a single bootstrap step
-    /// (<c>WriteBootstrappedBashScriptStep</c>) that reads <c>script.sh</c> and
+    /// (<c>WriteBootstrappedScriptStep</c>) that reads <c>script.sh</c> and
     /// prepends a Bash <c>export VAR=...</c> preamble. There is intentionally
     /// NO <c>WriteBootstrappedPowerShellScriptStep</c>: every server-side
     /// PowerShell-emitting code path (<c>IISDeployScriptBuilder</c>,
