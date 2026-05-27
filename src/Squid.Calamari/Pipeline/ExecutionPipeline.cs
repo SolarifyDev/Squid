@@ -32,6 +32,13 @@ public sealed class ExecutionPipeline<TContext>
         }
         catch (Exception ex)
         {
+            // Surface the failure to opt-in failure-aware contexts so cleanup-
+            // phase steps (DeployFailed convention etc.) can fire conditionally.
+            // SourceException is still preserved for re-throw at end of pipeline —
+            // this flag is an additional signal, not a substitution.
+            if (context is IFailureAwareExecutionContext failureAware)
+                failureAware.ExecutionFailed = true;
+
             executionFailure = ExceptionDispatchInfo.Capture(ex);
         }
 

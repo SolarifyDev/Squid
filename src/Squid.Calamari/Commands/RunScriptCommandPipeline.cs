@@ -5,7 +5,7 @@ using Squid.Calamari.Variables;
 
 namespace Squid.Calamari.Commands;
 
-internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVariableLoadingExecutionContext, ITemporaryFileTrackingExecutionContext
+internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVariableLoadingExecutionContext, ITemporaryFileTrackingExecutionContext, IFailureAwareExecutionContext
 {
     public required string ScriptPath { get; init; }
 
@@ -28,6 +28,13 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
     public CommandExecutionResult? CommandResult { get; set; }
 
     public ICollection<string> TemporaryFiles { get; } = new List<string>();
+
+    /// <summary>
+    /// Set to <c>true</c> by <see cref="ExecutionPipeline{TContext}"/> when
+    /// any non-cleanup step raised. Consumed by the DeployFailed convention
+    /// hook (G1.5 followup) to fire only on failure paths. Default false.
+    /// </summary>
+    public bool ExecutionFailed { get; set; }
 }
 
 internal sealed class WriteBootstrappedBashScriptStep : ExecutionStep<RunScriptCommandContext>
