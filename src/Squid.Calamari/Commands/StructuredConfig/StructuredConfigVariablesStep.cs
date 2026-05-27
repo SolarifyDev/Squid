@@ -126,32 +126,45 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
                         continue;
                     }
 
+                    // PR-3: format dispatch. .json / .yaml / .yml / .xml each
+                    // route to a dedicated IStructuredConfigFormat. Files whose
+                    // extension isn't structured-config (e.g. operator's Targets
+                    // glob accidentally matched .txt / .log) are skipped with a
+                    // warning — same fail-soft pattern as binary files in G1.1.
+                    var format = StructuredConfigFormatRegistry.Resolve(file);
+                    if (format is null)
+                    {
+                        Console.Error.WriteLine(
+                            $"::warning::StructuredConfigVariables: skipping '{file}' — extension not recognised. " +
+                            $"Supported: {string.Join(", ", StructuredConfigFormatRegistry.SupportedExtensions)}.");
+                        filesFailed++;
+                        continue;
+                    }
+
                     // BOM preservation — Visual Studio writes appsettings.json
-                    // with a UTF-8 BOM by default; .NET's File.ReadAllText
-                    // strips it. Without the shared helper, every rewrite
-                    // would silently change the file's byte content (BOM gone)
-                    // even when no leaves matched, polluting deploy diffs.
-                    var (json, encoding) = EncodingPreservingFileIO.ReadAllTextPreservingEncoding(file);
-                    var result = JsonPathReplacer.Replace(json, context.Variables);
+                    // (and many editors XML/YAML files) with a UTF-8 BOM by
+                    // default. Round-trip preserves byte signature so rewrites
+                    // that change zero leaves don't pollute diffs.
+                    var (content, encoding) = EncodingPreservingFileIO.ReadAllTextPreservingEncoding(file);
+                    var result = format.Replace(content, context.Variables);
 
                     if (!result.Succeeded)
                     {
                         Console.Error.WriteLine(
-                            $"::warning::StructuredConfigVariables: skipping '{file}' — {result.FailureReason}");
+                            $"::warning::StructuredConfigVariables ({format.FormatName}): skipping '{file}' — {result.FailureReason}");
                         filesFailed++;
                         continue;
                     }
 
                     if (result.ReplacedCount > 0)
                     {
-                        // Atomic write — temp + rename. A 50MB appsettings.json
-                        // half-written on a `kill -9` would leave the operator
-                        // with a corrupt config; the temp+rename pattern keeps
-                        // the original intact until the new bytes are fully on
-                        // disk. Same primitive G1.2 XDT uses.
+                        // Atomic write — temp + rename. Half-written file on
+                        // `kill -9` would leave operator with corrupt config;
+                        // temp+rename keeps original intact until new bytes
+                        // are fully on disk. Same primitive G1.2 XDT uses.
                         EncodingPreservingFileIO.WriteAllTextAtomic(file, result.Output, encoding);
                         Console.WriteLine(
-                            $"StructuredConfigVariables: '{file}' — {result.ReplacedCount} leaf value(s) replaced.");
+                            $"StructuredConfigVariables ({format.FormatName}): '{file}' — {result.ReplacedCount} leaf value(s) replaced.");
                     }
 
                     filesProcessed++;
