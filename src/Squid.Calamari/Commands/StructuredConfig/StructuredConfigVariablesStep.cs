@@ -69,6 +69,8 @@ public static class JsonConfigVariableNames
 /// </summary>
 internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "StructuredConfigVariables";
+
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
@@ -80,6 +82,7 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
 
     public override Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -92,7 +95,11 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
         // Canonical first, legacy fallback for the Targets glob list.
         var targetsRaw = context.Variables.Get(StructuredConfigVariableNames.Targets)
                          ?? context.Variables.Get(StructuredConfigVariableNames.Legacy.Targets);
-        if (string.IsNullOrWhiteSpace(targetsRaw)) return Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(targetsRaw))
+        {
+            context.StepOutcomes.Add(StepOutcome.Skipped(StepName, "Targets glob is empty") with { DurationMs = sw.ElapsedMilliseconds });
+            return Task.CompletedTask;
+        }
 
         var totalReplaced = 0;
         var filesProcessed = 0;
@@ -181,6 +188,13 @@ internal sealed class StructuredConfigVariablesStep : ExecutionStep<RunScriptCom
 
         Console.WriteLine(
             $"StructuredConfigVariables: processed {filesProcessed} file(s), {filesFailed} failure(s), {totalReplaced} total leaf replacement(s).");
+
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["FilesProcessed"] = filesProcessed,
+            ["FilesFailed"] = filesFailed,
+            ["LeavesReplaced"] = totalReplaced
+        }) with { DurationMs = sw.ElapsedMilliseconds });
 
         return Task.CompletedTask;
     }

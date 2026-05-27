@@ -5,7 +5,7 @@ using Squid.Calamari.Variables;
 
 namespace Squid.Calamari.Commands;
 
-internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVariableLoadingExecutionContext, ITemporaryFileTrackingExecutionContext, IFailureAwareExecutionContext
+internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVariableLoadingExecutionContext, ITemporaryFileTrackingExecutionContext, IFailureAwareExecutionContext, IStepOutcomeAwareContext
 {
     public required string ScriptPath { get; init; }
 
@@ -42,6 +42,14 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
     /// hook (G1.5 followup) to fire only on failure paths. Default false.
     /// </summary>
     public bool ExecutionFailed { get; set; }
+
+    /// <summary>
+    /// PR-5 — structured per-step outcomes. Each rewriter / extract /
+    /// convention / main-script step appends one entry as it finishes.
+    /// Surfaced on <c>CommandExecutionResult.StepOutcomes</c> for caller-
+    /// side analytics / UI display.
+    /// </summary>
+    public ICollection<StepOutcome> StepOutcomes { get; } = new List<StepOutcome>();
 }
 
 /// <summary>
@@ -53,8 +61,11 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
 /// </summary>
 internal sealed class WriteBootstrappedScriptStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "WriteBootstrappedScript";
+
     public override Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -81,12 +92,22 @@ internal sealed class WriteBootstrappedScriptStep : ExecutionStep<RunScriptComma
         context.BootstrappedScriptPath = bootstrappedPath;
         context.DetectedScriptSyntax = syntax;
         context.TemporaryFiles.Add(bootstrappedPath);
+
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["VariablesExported"] = context.Variables.Count,
+            ["OriginalScriptBytes"] = originalScript.Length,
+            ["BootstrappedScriptBytes"] = bootstrappedScript.Length
+        }) with { DurationMs = sw.ElapsedMilliseconds, Message = $"Syntax={syntax}" });
+
         return Task.CompletedTask;
     }
 }
 
 internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "ExecuteMainScript";
+
     private readonly IScriptEngine _scriptEngine;
 
     public ExecuteScriptWithEngineStep(IScriptEngine scriptEngine)
@@ -96,6 +117,8 @@ internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptComma
 
     public override async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
         if (string.IsNullOrEmpty(context.WorkingDirectory))
             throw new InvalidOperationException("Working directory has not been initialized.");
         if (string.IsNullOrEmpty(context.BootstrappedScriptPath))
@@ -117,6 +140,17 @@ internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptComma
                 },
                 ct)
             .ConfigureAwait(false);
+
+        // PR-5: emit structured outcome. Status reflects exit code — non-zero
+        // is still a "ran successfully" outcome (the step didn't throw), the
+        // ExitCode metric carries the actual value for downstream consumers.
+        // Failure status is reserved for "the step itself raised" path which
+        // would never reach this line.
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["ExitCode"] = context.ScriptResult.ExitCode,
+            ["OutputVariablesCount"] = context.ScriptResult.OutputVariables.Count
+        }) with { DurationMs = sw.ElapsedMilliseconds, Message = $"Syntax={context.DetectedScriptSyntax}" });
 
         // Symmetric with ConventionScriptStep — output variables the main
         // script set MUST flow into the shared variable set so PostDeploy
@@ -141,9 +175,13 @@ internal sealed class BuildRunScriptCommandResultStep : ExecutionStep<RunScriptC
         if (context.ScriptResult == null)
             throw new InvalidOperationException("Script result has not been produced.");
 
+        // PR-5: thread the accumulated step outcomes through to the caller.
+        // Snapshot-as-list so post-build mutations to context.StepOutcomes
+        // don't retroactively edit the result.
         context.CommandResult = new CommandExecutionResult(
             context.ScriptResult.ExitCode,
-            context.ScriptResult.OutputVariables);
+            context.ScriptResult.OutputVariables,
+            context.StepOutcomes.ToList());
 
         return Task.CompletedTask;
     }

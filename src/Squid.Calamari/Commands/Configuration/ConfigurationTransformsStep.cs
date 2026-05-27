@@ -66,6 +66,8 @@ public static class ConfigurationTransformsVariableNames
 /// </summary>
 internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "ConfigurationTransforms";
+
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
@@ -77,6 +79,7 @@ internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptComma
 
     public override Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -90,6 +93,7 @@ internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptComma
         {
             Console.WriteLine(
                 $"ConfigurationTransforms: working dir '{context.WorkingDirectory}' does not exist; skipping.");
+            context.StepOutcomes.Add(StepOutcome.Skipped(StepName, "Working directory does not exist") with { DurationMs = sw.ElapsedMilliseconds });
             return Task.CompletedTask;
         }
 
@@ -112,6 +116,12 @@ internal sealed class ConfigurationTransformsStep : ExecutionStep<RunScriptComma
         Console.WriteLine(
             $"ConfigurationTransforms: applied {applied} transform(s), {failed} failure(s). " +
             "Operator can grep the deploy log for 'ConfigurationTransforms:' lines to see per-pair outcomes.");
+
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["TransformsApplied"] = applied,
+            ["TransformsFailed"] = failed
+        }) with { DurationMs = sw.ElapsedMilliseconds });
 
         return Task.CompletedTask;
     }
