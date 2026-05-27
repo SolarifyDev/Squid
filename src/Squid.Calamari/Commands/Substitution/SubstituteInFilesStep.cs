@@ -95,6 +95,8 @@ public static class SubstituteInFilesVariableNames
 
 internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "SubstituteInFiles";
+
     /// <summary>Re-exported for backward-compat with the original test
     /// suite that referenced these on the step. The values point at the
     /// CANONICAL names — tests writing to these will exercise the
@@ -117,6 +119,7 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
 
     public override async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -205,6 +208,13 @@ internal sealed class SubstituteInFilesStep : ExecutionStep<RunScriptCommandCont
         Console.WriteLine(
             $"SubstituteInFiles: processed {filesProcessed} file(s), skipped {filesSkipped}. " +
             $"Unresolved tokens in {allUnresolved.Count} file(s).");
+
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["FilesProcessed"] = filesProcessed,
+            ["FilesSkipped"] = filesSkipped,
+            ["FilesWithUnresolvedTokens"] = allUnresolved.Count
+        }) with { DurationMs = sw.ElapsedMilliseconds });
 
         if (failOnUnresolved && allUnresolved.Count > 0)
             throw new SubstituteInFilesException(allUnresolved);

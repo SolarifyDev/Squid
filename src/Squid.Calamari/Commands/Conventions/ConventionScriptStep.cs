@@ -74,6 +74,7 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
 
     public override async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -123,6 +124,12 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
                 "Deploy aborted — fix the hook or remove the script from the package.");
 
         Console.WriteLine($"{_conventionName}: completed successfully.");
+
+        context.StepOutcomes.Add(StepOutcome.Success(_conventionName, new Dictionary<string, long>
+        {
+            ["ExitCode"] = result.ExitCode,
+            ["OutputVariablesCount"] = result.OutputVariables.Count
+        }) with { DurationMs = sw.ElapsedMilliseconds });
     }
 
     /// <summary>

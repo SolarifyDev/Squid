@@ -45,6 +45,8 @@ public static class PackageVariableNames
 /// </summary>
 internal sealed class ExtractPackageStep : ExecutionStep<RunScriptCommandContext>
 {
+    public const string StepName = "ExtractPackage";
+
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
@@ -56,6 +58,7 @@ internal sealed class ExtractPackageStep : ExecutionStep<RunScriptCommandContext
 
     public override Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -87,6 +90,13 @@ internal sealed class ExtractPackageStep : ExecutionStep<RunScriptCommandContext
         Console.WriteLine(
             $"ExtractPackage: '{archivePath}' → '{context.WorkingDirectory}' " +
             $"({result.FilesExtracted:N0} file(s), {result.TotalBytesWritten:N0} bytes).");
+
+        // PR-5: structured outcome for UI / analytics consumers.
+        context.StepOutcomes.Add(StepOutcome.Success(StepName, new Dictionary<string, long>
+        {
+            ["FilesExtracted"] = result.FilesExtracted,
+            ["TotalBytesWritten"] = result.TotalBytesWritten
+        }) with { DurationMs = sw.ElapsedMilliseconds, Message = $"From '{archivePath}'" });
 
         return Task.CompletedTask;
     }

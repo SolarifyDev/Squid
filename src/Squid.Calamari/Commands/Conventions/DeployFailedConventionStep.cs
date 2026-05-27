@@ -64,6 +64,7 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
 
     public async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrEmpty(context.WorkingDirectory))
@@ -116,9 +117,16 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
             Console.Error.WriteLine(
                 $"::warning::{ConventionName}: hook exited with code {result.ExitCode}. " +
                 "Original deploy failure is preserved.");
+            context.StepOutcomes.Add(StepOutcome.Failed(ConventionName, $"Hook exited with code {result.ExitCode}; original deploy failure preserved.")
+                with { DurationMs = sw.ElapsedMilliseconds, Metrics = new Dictionary<string, long> { ["ExitCode"] = result.ExitCode } });
             return;
         }
 
         Console.WriteLine($"{ConventionName}: completed successfully.");
+        context.StepOutcomes.Add(StepOutcome.Success(ConventionName, new Dictionary<string, long>
+        {
+            ["ExitCode"] = result.ExitCode,
+            ["OutputVariablesCount"] = result.OutputVariables.Count
+        }) with { DurationMs = sw.ElapsedMilliseconds });
     }
 }
