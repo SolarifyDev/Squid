@@ -13,11 +13,11 @@ namespace Squid.Tentacle.Tests.ScriptExecution;
 /// <code>
 ///   Unhandled exception. System.IO.FileNotFoundException:
 ///     Could not find file 'C:\Windows\TEMP\squid-tentacle-{ticket}\script.sh'.
-///       at Squid.Calamari.Commands.WriteBootstrappedBashScriptStep.ExecuteAsync(...)
+///       at Squid.Calamari.Commands.WriteBootstrappedScriptStep.ExecuteAsync(...)
 /// </code>
 ///
 /// <para><b>Root cause</b>: Calamari's <c>RunScriptCommand</c> pipeline contains
-/// a SINGLE bootstrap step — <c>WriteBootstrappedBashScriptStep</c> — which does
+/// a SINGLE bootstrap step — <c>WriteBootstrappedScriptStep</c> — which does
 /// <c>File.ReadAllText("script.sh")</c>. The Tentacle CLI invocation hardcodes
 /// <c>--script=script.sh</c>. When the dispatched script is PowerShell, Tentacle
 /// writes <c>script.ps1</c> (right extension) but Calamari reads <c>script.sh</c>

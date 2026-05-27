@@ -75,7 +75,7 @@ public class RunScriptCommand
             // script starts the application (e.g. database migrations,
             // permission fixes, cache invalidation).
             new ConventionScriptStep(ConventionScriptNames.PreDeploy, scriptEngine),
-            new WriteBootstrappedBashScriptStep(),
+            new WriteBootstrappedScriptStep(),
             new ExecuteScriptWithEngineStep(scriptEngine),
             // G1.5 — PostDeploy convention hook. Runs only when the package
             // ships a `PostDeploy.sh` file. Smoke tests, cache warm-up,

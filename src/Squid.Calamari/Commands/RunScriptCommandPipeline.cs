@@ -23,6 +23,13 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
 
     public string? BootstrappedScriptPath { get; set; }
 
+    /// <summary>PR-4: detected from <c>ScriptPath</c>'s extension by
+    /// <c>WriteBootstrappedScriptStep</c>. Consumed by
+    /// <c>ExecuteScriptWithEngineStep</c> to dispatch to the right
+    /// <see cref="Scripting.IScriptExecutor"/>. Default Bash matches
+    /// existing behaviour for scripts without a recognised extension.</summary>
+    public ScriptSyntax DetectedScriptSyntax { get; set; } = ScriptSyntax.Bash;
+
     public ScriptExecutionResult? ScriptResult { get; set; }
 
     public CommandExecutionResult? CommandResult { get; set; }
@@ -37,7 +44,14 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
     public bool ExecutionFailed { get; set; }
 }
 
-internal sealed class WriteBootstrappedBashScriptStep : ExecutionStep<RunScriptCommandContext>
+/// <summary>
+/// PR-4: syntax-aware bootstrap. Picks bash or PowerShell preamble +
+/// matching temp-file extension based on <see cref="ScriptSyntaxDetector"/>
+/// applied to <c>context.ScriptPath</c>. Back-compat: scripts without a
+/// <c>.ps1</c> / <c>.psm1</c> extension default to bash — every existing
+/// operator deploy hits the original code path unchanged.
+/// </summary>
+internal sealed class WriteBootstrappedScriptStep : ExecutionStep<RunScriptCommandContext>
 {
     public override Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
     {
@@ -48,16 +62,24 @@ internal sealed class WriteBootstrappedBashScriptStep : ExecutionStep<RunScriptC
         if (context.Variables == null)
             throw new InvalidOperationException("Variables have not been loaded.");
 
+        var syntax = ScriptSyntaxDetector.DetectFromPath(context.ScriptPath);
+
         var originalScript = File.ReadAllText(context.ScriptPath);
-        var preamble = VariableBootstrapper.GeneratePreamble(context.Variables);
+        var preamble = syntax switch
+        {
+            ScriptSyntax.PowerShell => PowerShellVariableBootstrapper.GeneratePreamble(context.Variables),
+            _ => VariableBootstrapper.GeneratePreamble(context.Variables)
+        };
         var bootstrappedScript = preamble + originalScript;
 
+        var extension = syntax == ScriptSyntax.PowerShell ? ".ps1" : ".sh";
         var bootstrappedPath = Path.Combine(
             context.WorkingDirectory,
-            $".squid-bootstrapped-{Guid.NewGuid():N}.sh");
+            $".squid-bootstrapped-{Guid.NewGuid():N}{extension}");
         File.WriteAllText(bootstrappedPath, bootstrappedScript);
 
         context.BootstrappedScriptPath = bootstrappedPath;
+        context.DetectedScriptSyntax = syntax;
         context.TemporaryFiles.Add(bootstrappedPath);
         return Task.CompletedTask;
     }
@@ -87,7 +109,10 @@ internal sealed class ExecuteScriptWithEngineStep : ExecutionStep<RunScriptComma
                 {
                     ScriptPath = context.BootstrappedScriptPath,
                     WorkingDirectory = context.WorkingDirectory,
-                    Syntax = ScriptSyntax.Bash,
+                    // PR-4: dispatch by what the bootstrap step detected, not
+                    // hardcoded Bash. Default Bash is preserved for any script
+                    // without a recognised PS extension.
+                    Syntax = context.DetectedScriptSyntax,
                     OutputProcessor = outputProcessor
                 },
                 ct)
