@@ -82,6 +82,11 @@ public class RunScriptCommand
             // registration with a service mesh, etc.
             new ConventionScriptStep(ConventionScriptNames.PostDeploy, scriptEngine),
             new BuildRunScriptCommandResultStep(),
+            // DeployFailed convention — IAlwaysRun (cleanup phase). Fires only
+            // when an upstream step threw OR the main script returned non-zero.
+            // Listed BEFORE the temp-file cleanup so the failure script can
+            // still see the bootstrapped + extracted files for forensic capture.
+            new DeployFailedConventionStep(scriptEngine),
             new CleanupTemporaryFilesStep<RunScriptCommandContext>()
         ]);
     }

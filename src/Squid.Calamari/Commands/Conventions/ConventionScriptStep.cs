@@ -147,4 +147,8 @@ public static class ConventionScriptNames
 
     /// <summary>Runs after main script, before cleanup.</summary>
     public const string PostDeploy = "PostDeploy";
+
+    /// <summary>Runs in cleanup phase, ONLY when the main deploy failed
+    /// (prior step exception OR non-zero main-script exit code).</summary>
+    public const string DeployFailed = "DeployFailed";
 }
