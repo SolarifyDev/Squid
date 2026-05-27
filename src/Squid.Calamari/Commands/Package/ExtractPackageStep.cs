@@ -45,12 +45,6 @@ public static class PackageVariableNames
 /// </summary>
 internal sealed class ExtractPackageStep : ExecutionStep<RunScriptCommandContext>
 {
-    /// <summary>Accepted archive extensions. Lower-cased for comparison.
-    /// nupkg is just a zip with a different filename suffix — same engine
-    /// handles both.</summary>
-    private static readonly HashSet<string> AllowedExtensions =
-        new(StringComparer.OrdinalIgnoreCase) { ".nupkg", ".zip" };
-
     public override bool IsEnabled(RunScriptCommandContext context)
     {
         if (context.Variables is null) return false;
@@ -73,13 +67,18 @@ internal sealed class ExtractPackageStep : ExecutionStep<RunScriptCommandContext
 
         var archivePath = context.Variables.Get(PackageVariableNames.OriginalPath)!.Trim();
 
-        var ext = Path.GetExtension(archivePath);
-        if (!AllowedExtensions.Contains(ext))
+        // PR-2: multi-format dispatch via the registry. .zip / .nupkg / .tar
+        // / .tar.gz / .tgz all flow through here, each format-specific
+        // extractor implementing the same IPackageExtractor contract +
+        // sharing the ArchiveSafety primitives.
+        var extractor = PackageExtractorRegistry.Resolve(archivePath);
+        if (extractor is null)
             throw new InvalidOperationException(
-                $"ExtractPackageStep: package '{archivePath}' has unsupported extension '{ext}'. " +
-                $"Supported: {string.Join(", ", AllowedExtensions)}. Skipping the extract step requires unsetting {PackageVariableNames.OriginalPath}.");
+                $"ExtractPackageStep: package '{archivePath}' has unsupported extension. " +
+                $"Supported: {string.Join(", ", PackageExtractorRegistry.SupportedExtensions)}. " +
+                $"Skipping the extract step requires unsetting {PackageVariableNames.OriginalPath}.");
 
-        var result = ZipExtractor.Extract(archivePath, context.WorkingDirectory);
+        var result = extractor.Extract(archivePath, context.WorkingDirectory);
 
         if (!result.Succeeded)
             throw new InvalidOperationException(

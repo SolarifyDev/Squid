@@ -101,10 +101,11 @@ public sealed class ExtractPackageStepTests : IDisposable
     [Fact]
     public async Task Execute_UnsupportedExtension_ThrowsWithGuidance()
     {
-        // .tar.gz / .7z / unknown extensions aren't supported yet. Operator
-        // gets a clear error message naming the wire literal to unset.
-        var bad = Path.Combine(_archiveDir, "package.tar.gz");
-        File.WriteAllText(bad, "fake tar");
+        // PR-2: .tar.gz / .tar are NOW supported. Still-unsupported formats
+        // (.rar, arbitrary text) MUST throw with the operator-facing
+        // supported-formats list naming the wire literal to unset.
+        var bad = Path.Combine(_archiveDir, "package.rar");
+        File.WriteAllText(bad, "fake rar");
 
         var context = BuildContext(packagePath: bad);
 
@@ -113,6 +114,75 @@ public sealed class ExtractPackageStepTests : IDisposable
 
         ex.Message.ShouldContain("unsupported extension");
         ex.Message.ShouldContain(PackageVariableNames.OriginalPath);
+        // Operator-facing list MUST include each supported format so the
+        // operator can repack without guessing.
+        foreach (var ext in PackageExtractorRegistry.SupportedExtensions)
+            ex.Message.ShouldContain(ext);
+    }
+
+    // ── PR-2 — multi-format dispatch ────────────────────────────────────────
+
+    [Fact]
+    public async Task Execute_TarArchive_ExtractsIntoWorkingDir()
+    {
+        var tar = Path.Combine(_archiveDir, "build-output.tar");
+        using (var fs = File.Create(tar))
+        using (var w = new System.Formats.Tar.TarWriter(fs, leaveOpen: true))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes("body");
+            var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "app/run.sh")
+            {
+                DataStream = new MemoryStream(bytes)
+            };
+            w.WriteEntry(entry);
+        }
+
+        var context = BuildContext(packagePath: tar);
+        await new ExtractPackageStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.Exists(Path.Combine(_workDir, "app", "run.sh")).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(_workDir, "app", "run.sh")).ShouldBe("body");
+    }
+
+    [Fact]
+    public async Task Execute_TarGzArchive_ExtractsIntoWorkingDir()
+    {
+        var targz = Path.Combine(_archiveDir, "build-output.tar.gz");
+        using (var fs = File.Create(targz))
+        using (var gz = new System.IO.Compression.GZipStream(fs, System.IO.Compression.CompressionLevel.Optimal))
+        using (var w = new System.Formats.Tar.TarWriter(gz, leaveOpen: true))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes("compressed");
+            w.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, "config.yaml")
+            {
+                DataStream = new MemoryStream(bytes)
+            });
+        }
+
+        var context = BuildContext(packagePath: targz);
+        await new ExtractPackageStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(_workDir, "config.yaml")).ShouldBe("compressed");
+    }
+
+    [Fact]
+    public async Task Execute_SevenZipArchive_ThrowsWithDeferralExplanation()
+    {
+        // .7z is recognised by the dispatcher (so the operator gets a clear
+        // "not yet supported" message instead of "unknown format") but
+        // deliberately returns a failure result — no SharpCompress dep yet.
+        var sevenZ = Path.Combine(_archiveDir, "pkg.7z");
+        File.WriteAllText(sevenZ, "fake 7z bytes");
+
+        var context = BuildContext(packagePath: sevenZ);
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
+            new ExtractPackageStep().ExecuteAsync(context, CancellationToken.None));
+
+        ex.Message.ShouldContain("7z");
+        ex.Message.ShouldContain("not supported",
+            customMessage: "Operator MUST see a clear deferral message naming alternatives, " +
+                           "not a generic 'unsupported extension' error (since the dispatcher DID recognise the format).");
     }
 
     // ── Failure surface ─────────────────────────────────────────────────────
