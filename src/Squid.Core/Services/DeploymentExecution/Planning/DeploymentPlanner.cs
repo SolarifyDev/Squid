@@ -416,30 +416,16 @@ public sealed class DeploymentPlanner : IDeploymentPlanner
 
     // ---------- required-roles helpers ----------------------------------
 
+    // Delegates to StepRoleMatcher — the SINGLE source of truth shared with the
+    // executor's runtime target resolution, so preview-matched targets are
+    // exactly the machines the deployment runs on.
     private static List<string> ExtractRequiredRoles(DeploymentStepDto step)
-    {
-        var rolesProperty = step.Properties?
-            .FirstOrDefault(p => p.PropertyName == SpecialVariables.Step.TargetRoles);
-
-        if (rolesProperty == null || string.IsNullOrWhiteSpace(rolesProperty.PropertyValue))
-            return new List<string>();
-
-        return DeploymentTargetFinder.ParseCsvRoles(rolesProperty.PropertyValue)
-            .OrderBy(role => role, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
+        => StepRoleMatcher.RequiredRoles(step).ToList();
 
     private static List<PlannedTarget> FilterTargetsByRoles(IReadOnlyList<PlannedTarget> candidates, List<string> requiredRoles)
-    {
-        if (requiredRoles.Count == 0)
-            return candidates.ToList();
-
-        var roleSet = new HashSet<string>(requiredRoles, StringComparer.OrdinalIgnoreCase);
-
-        return candidates
-            .Where(t => t.Roles.Any(r => roleSet.Contains(r)))
+        => candidates
+            .Where(t => StepRoleMatcher.Matches(requiredRoles, t.Roles))
             .ToList();
-    }
 
     // ---------- step-skipped factory -----------------------------------
 
