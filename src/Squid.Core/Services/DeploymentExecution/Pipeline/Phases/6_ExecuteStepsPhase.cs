@@ -75,6 +75,8 @@ public sealed partial class ExecuteStepsPhase(
 
         _currentBatchIndex = 0;
 
+        await EnsureCheckpointRowAsync(ct).ConfigureAwait(false);
+
         foreach (var batch in batches)
         {
             if (_ctx.ResumeFromBatchIndex.HasValue && _currentBatchIndex <= _ctx.ResumeFromBatchIndex.Value)
@@ -99,6 +101,23 @@ public sealed partial class ExecuteStepsPhase(
             _currentBatchIndex++;
         }
     }
+
+    /// <summary>
+    /// Resume-by-ticket: ensure a checkpoint row exists before any script is
+    /// dispatched, so in-flight tickets recorded mid-batch (by
+    /// <see cref="Squid.Core.Services.Deployments.Checkpoints.IInFlightScriptStore"/>)
+    /// have a row to land on — the first batch-boundary save happens only AFTER
+    /// batch 0's scripts have already been dispatched.
+    ///
+    /// <para><b>Insert-only-if-absent</b>: on resume the row already holds the
+    /// real prior state (loaded by <c>ResumeCheckpointPhase</c>) and MUST NOT be
+    /// clobbered. A fresh row carries <c>LastCompletedBatchIndex = -1</c> +
+    /// empty state, which makes resume re-run from batch 0 — identical to the
+    /// pre-existing "no row yet" behaviour, only now with the in-flight ledger
+    /// available for re-attach.</para>
+    /// </summary>
+    private async Task EnsureCheckpointRowAsync(CancellationToken ct)
+        => await checkpointService.EnsureExistsAsync(_ctx.ServerTaskId, _ctx.Deployment?.Id ?? 0, ct).ConfigureAwait(false);
 
     /// <summary>
     /// Maximum attempts for <see cref="PersistCheckpointAsync"/> before
@@ -166,8 +185,9 @@ public sealed partial class ExecuteStepsPhase(
             LastCompletedBatchIndex = batchIndex,
             FailureEncountered = _ctx.FailureEncountered,
             OutputVariablesJson = outputVariablesJson,
-            BatchStatesJson = batchStatesJson,
-            InFlightScriptsJson = "{}"
+            BatchStatesJson = batchStatesJson
+            // InFlightScriptsJson is owned by IInFlightScriptStore and deliberately
+            // left untouched here — see DeploymentCheckpointService.SaveAsync.
         };
 
         var delay = CheckpointPersistInitialDelay;
