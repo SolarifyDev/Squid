@@ -79,11 +79,17 @@ internal sealed class WriteBootstrappedScriptStep : ExecutionStep<RunScriptComma
         var preamble = syntax switch
         {
             ScriptSyntax.PowerShell => PowerShellVariableBootstrapper.GeneratePreamble(context.Variables),
+            ScriptSyntax.Python => PythonVariableBootstrapper.GeneratePreamble(context.Variables),
             _ => VariableBootstrapper.GeneratePreamble(context.Variables)
         };
         var bootstrappedScript = preamble + originalScript;
 
-        var extension = syntax == ScriptSyntax.PowerShell ? ".ps1" : ".sh";
+        var extension = syntax switch
+        {
+            ScriptSyntax.PowerShell => ".ps1",
+            ScriptSyntax.Python => ".py",
+            _ => ".sh"
+        };
         var bootstrappedPath = Path.Combine(
             context.WorkingDirectory,
             $".squid-bootstrapped-{Guid.NewGuid():N}{extension}");

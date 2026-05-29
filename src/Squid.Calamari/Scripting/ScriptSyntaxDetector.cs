@@ -28,6 +28,7 @@ public static class ScriptSyntaxDetector
         {
             ".ps1" => ScriptSyntax.PowerShell,
             ".psm1" => ScriptSyntax.PowerShell,
+            ".py" => ScriptSyntax.Python,
             // .sh and everything else → bash (default + back-compat).
             _ => ScriptSyntax.Bash
         };

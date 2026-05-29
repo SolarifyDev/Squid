@@ -16,6 +16,8 @@ public sealed class ScriptSyntaxDetectorTests
     [InlineData("/x/y.ps1", ScriptSyntax.PowerShell)]
     [InlineData("/x/y.PS1", ScriptSyntax.PowerShell)]
     [InlineData("/x/y.psm1", ScriptSyntax.PowerShell)]
+    [InlineData("/x/y.py", ScriptSyntax.Python)]
+    [InlineData("/x/y.PY", ScriptSyntax.Python)]
     [InlineData("/x/y.sh", ScriptSyntax.Bash)]
     [InlineData("/x/y.bash", ScriptSyntax.Bash)]
     [InlineData("/x/y", ScriptSyntax.Bash)]    // no extension → bash default

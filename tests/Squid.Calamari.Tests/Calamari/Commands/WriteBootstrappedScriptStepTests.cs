@@ -73,6 +73,26 @@ public sealed class WriteBootstrappedScriptStepTests : IDisposable
     }
 
     [Fact]
+    public async Task PythonScript_GeneratesPyPreambleAndPyExtension()
+    {
+        var script = Path.Combine(_workDir, "deploy.py");
+        File.WriteAllText(script, "import os\nprint(os.environ['MyVar'])");
+
+        var ctx = BuildContext(script);
+        ctx.Variables!.Set("MyVar", "v");
+
+        await new WriteBootstrappedScriptStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        ctx.BootstrappedScriptPath!.ShouldEndWith(".py");
+        ctx.DetectedScriptSyntax.ShouldBe(ScriptSyntax.Python);
+
+        var bootstrapped = File.ReadAllText(ctx.BootstrappedScriptPath);
+        bootstrapped.ShouldContain("os.environ['MyVar'] = 'v'",
+            customMessage: "Python bootstrap MUST use os.environ injection — not bash export or PS $env:.");
+        bootstrapped.ShouldContain("print(os.environ['MyVar'])");
+    }
+
+    [Fact]
     public async Task ScriptWithoutExtension_DefaultsToBash_BackCompat()
     {
         // Existing operators ship script paths like `script-{guid}` (no
