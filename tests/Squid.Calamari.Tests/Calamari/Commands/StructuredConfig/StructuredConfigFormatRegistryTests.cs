@@ -20,6 +20,9 @@ public sealed class StructuredConfigFormatRegistryTests
     [InlineData("/x/y.YML", typeof(YamlConfigFormat))]
     [InlineData("/x/y.xml", typeof(XmlConfigFormat))]
     [InlineData("/x/y.XML", typeof(XmlConfigFormat))]
+    [InlineData("/x/y.properties", typeof(PropertiesConfigFormat))]
+    [InlineData("/x/y.ini", typeof(PropertiesConfigFormat))]
+    [InlineData("/x/y.PROPERTIES", typeof(PropertiesConfigFormat))]
     public void Resolve_KnownExtension_LandsOnExpectedFormat(string path, Type expectedType)
     {
         var format = StructuredConfigFormatRegistry.Resolve(path);
@@ -30,7 +33,7 @@ public sealed class StructuredConfigFormatRegistryTests
     [Theory]
     [InlineData("/x/y.config")]    // XDT territory — deliberately NOT in this registry
     [InlineData("/x/y.txt")]
-    [InlineData("/x/y.properties")]
+    [InlineData("/x/y.toml")]      // TOML not supported yet
     [InlineData("/x/y")]
     public void Resolve_UnknownExtension_ReturnsNull(string path)
     {
@@ -43,7 +46,7 @@ public sealed class StructuredConfigFormatRegistryTests
         // Operator-facing list — used in skip-warning messages so the
         // operator knows which extensions the step works on.
         StructuredConfigFormatRegistry.SupportedExtensions
-            .ShouldBe(new[] { ".json", ".json5", ".yaml", ".yml", ".xml" });
+            .ShouldBe(new[] { ".json", ".json5", ".yaml", ".yml", ".xml", ".properties", ".ini" });
     }
 
     [Fact]
@@ -53,5 +56,6 @@ public sealed class StructuredConfigFormatRegistryTests
         new JsonConfigFormat().FormatName.ShouldBe("JSON");
         new YamlConfigFormat().FormatName.ShouldBe("YAML");
         new XmlConfigFormat().FormatName.ShouldBe("XML");
+        new PropertiesConfigFormat().FormatName.ShouldBe("Properties");
     }
 }
