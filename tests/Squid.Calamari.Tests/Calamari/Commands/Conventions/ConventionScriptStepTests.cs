@@ -156,6 +156,47 @@ public sealed class ConventionScriptStepTests : IDisposable
     }
 
     [Fact]
+    public async Task Execute_PreDeployPs1_DispatchesPowerShellSyntax_PsPreamble()
+    {
+        // PR-7: a PreDeploy.ps1 (no .sh sibling) MUST run with PowerShell
+        // syntax + the $env: preamble, regardless of the main script.
+        File.WriteAllText(Path.Combine(_workDir, "PreDeploy.ps1"), "Write-Output \"hi $Greeting\"");
+
+        var engine = new StubScriptEngine(exitCode: 0);
+        var ctx = BuildContext();
+        ctx.Variables!.Set("Greeting", "world");
+
+        await new ConventionScriptStep(ConventionScriptNames.PreDeploy, engine).ExecuteAsync(ctx, CancellationToken.None);
+
+        engine.Captured.ShouldNotBeNull();
+        engine.Captured!.Syntax.ShouldBe(ScriptSyntax.PowerShell,
+            customMessage: "PreDeploy.ps1 MUST dispatch with PowerShell syntax so the engine picks the PS executor.");
+        engine.Captured.ScriptPath.ShouldEndWith(".ps1",
+            customMessage: "Bootstrapped temp file for a PS convention MUST carry .ps1 so pwsh -File accepts it.");
+        var bootstrapped = File.ReadAllText(engine.Captured.ScriptPath);
+        bootstrapped.ShouldContain("$env:Greeting = 'world'",
+            customMessage: "PS convention MUST get the $env: preamble, not the bash export preamble.");
+        bootstrapped.ShouldContain("Write-Output \"hi $Greeting\"");
+    }
+
+    [Fact]
+    public async Task Execute_BothShVariants_MainBashWins_RunsShConvention()
+    {
+        // Cross-platform package ships both. Main script is .sh (default) →
+        // bash convention runs. Pins the tie-break wired through the step.
+        File.WriteAllText(Path.Combine(_workDir, "PreDeploy.sh"), "echo from-sh");
+        File.WriteAllText(Path.Combine(_workDir, "PreDeploy.ps1"), "Write-Output from-ps");
+
+        var engine = new StubScriptEngine(exitCode: 0);
+        var ctx = BuildContext();    // ScriptPath ends with .sh → Bash preferred
+
+        await new ConventionScriptStep(ConventionScriptNames.PreDeploy, engine).ExecuteAsync(ctx, CancellationToken.None);
+
+        engine.Captured!.Syntax.ShouldBe(ScriptSyntax.Bash);
+        File.ReadAllText(engine.Captured.ScriptPath).ShouldContain("echo from-sh");
+    }
+
+    [Fact]
     public async Task Execute_PostDeploy_RunsWithSameBootstrapShape()
     {
         // PostDeploy is just another instance of the same class — confirm
