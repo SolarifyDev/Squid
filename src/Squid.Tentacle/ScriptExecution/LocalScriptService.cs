@@ -1219,7 +1219,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 .FirstOrDefault(f => string.Equals(Path.GetFileName(f.Name), "sensitiveVariables.json", StringComparison.Ordinal))
                 ?.EncryptionPassword;
 
-            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitivePassword, command.Arguments);
+            return StartCalamariProcess(workDir, variablesPath, sensitiveVariablesPath, sensitivePassword, command.ScriptSyntax, command.Arguments);
         }
 
         return command.ScriptSyntax switch
@@ -1258,7 +1258,48 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     /// <c>Progress=Running</c> but the Calamari child had already crashed).
     /// Pinned by <c>IsCalamariCompatible_*</c> tests.</para>
     /// </summary>
-    internal static bool IsCalamariCompatible(ScriptType syntax) => syntax == ScriptType.Bash;
+    /// <summary>
+    /// Opt-in env var (Rule 8). When set to a truthy value, PowerShell
+    /// scripts ALSO route through Calamari (gaining the full rewriter +
+    /// convention pipeline). Default OFF preserves the conservative
+    /// bash-only routing — zero behaviour change for every existing agent.
+    ///
+    /// <para><b>Why opt-in, not default-on</b>: server-side PowerShell-
+    /// emitting paths (IISDeployScriptBuilder, WindowsTentacleUpgradeStrategy)
+    /// already inline variables into the script body via $SquidParameters,
+    /// so Calamari's bootstrap adds nothing for them — and routing them
+    /// through the extra Calamari child process changes the process tree /
+    /// cancellation / output-capture path. Operators with CUSTOM PowerShell
+    /// package deploys (who want SubstituteInFiles / ConfigurationTransforms /
+    /// conventions applied) opt in explicitly + reversibly.</para>
+    ///
+    /// <para>Pinned by <c>CalamariPowerShellEnvVar_ConstantNamePinned</c>.</para>
+    /// </summary>
+    public const string CalamariPowerShellEnvVar = "SQUID_TENTACLE_CALAMARI_POWERSHELL";
+
+    /// <summary>
+    /// Calamari routing predicate. Bash always qualifies. PowerShell
+    /// qualifies ONLY when <see cref="CalamariPowerShellEnvVar"/> is set to
+    /// a truthy value (1 / true / yes / on, case-insensitive) — the PR-4
+    /// PowerShell-aware bootstrap + the per-syntax <c>--script=</c> path
+    /// (PR-8) are the prerequisites that make this safe; the env gate keeps
+    /// it opt-in so the default agent behaviour is unchanged.
+    /// </summary>
+    internal static bool IsCalamariCompatible(ScriptType syntax) => syntax switch
+    {
+        ScriptType.Bash => true,
+        ScriptType.PowerShell => IsCalamariPowerShellEnabled(),
+        _ => false
+    };
+
+    /// <summary>Parse the opt-in env flag. Truthy = 1 / true / yes / on
+    /// (case-insensitive). Anything else (incl. unset) = false.</summary>
+    internal static bool IsCalamariPowerShellEnabled()
+    {
+        var raw = Environment.GetEnvironmentVariable(CalamariPowerShellEnvVar);
+        if (string.IsNullOrWhiteSpace(raw)) return false;
+        return raw.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+    }
 
     /// <summary>
     /// dispatches to the platform-resolved
@@ -1280,7 +1321,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     }
 
     private static Process StartCalamariProcess(
-        string workDir, string variablesPath, string sensitiveVariablesPath, string? sensitivePassword, string[] arguments)
+        string workDir, string variablesPath, string sensitiveVariablesPath, string? sensitivePassword, ScriptType syntax, string[] arguments)
     {
         var psi = BuildCalamariProcessStartInfo(
             workDir,
@@ -1288,6 +1329,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             sensitiveVariablesPath,
             sensitivePassword,
             sensitiveCiphertextExists: File.Exists(sensitiveVariablesPath),
+            syntax,
             arguments);
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -1307,6 +1349,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         string sensitiveVariablesPath,
         string? sensitivePassword,
         bool sensitiveCiphertextExists,
+        ScriptType syntax,
         string[] arguments)
     {
         var psi = new ProcessStartInfo
@@ -1322,7 +1365,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         };
 
         psi.ArgumentList.Add("run-script");
-        psi.ArgumentList.Add("--script=script.sh");
+        // PR-8: per-syntax script path. Bash → script.sh, PowerShell →
+        // script.ps1 — matches what WriteScriptFile already wrote to disk
+        // (ScriptFileNameFor). Calamari's PR-4 ScriptSyntaxDetector picks the
+        // executor from this extension. The hardcoded "script.sh" here was
+        // the co-dependent reason PowerShell couldn't route through Calamari.
+        psi.ArgumentList.Add($"--script={ScriptFileNameFor(syntax)}");
         psi.ArgumentList.Add($"--variables={variablesPath}");
 
         if (sensitiveCiphertextExists && !string.IsNullOrEmpty(sensitivePassword))

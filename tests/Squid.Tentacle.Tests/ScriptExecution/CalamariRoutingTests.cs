@@ -39,61 +39,111 @@ namespace Squid.Tentacle.Tests.ScriptExecution;
 /// </summary>
 public sealed class CalamariRoutingTests
 {
-    // ── IsCalamariCompatible — exhaustive truth table ───────────────────────────
+    // ── IsCalamariCompatible — truth table (PR-8: PowerShell now env-gated) ─────
 
     [Theory]
-    [InlineData(ScriptType.Bash, true)]                // ONLY syntax Calamari handles today
-    [InlineData(ScriptType.PowerShell, false)]         // PR #353 bug fix — must NOT route to Calamari
-    [InlineData(ScriptType.Python, false)]             // Calamari has no Python pipeline
+    [InlineData(ScriptType.Bash, true)]                // always routes to Calamari
+    [InlineData(ScriptType.PowerShell, false)]         // default OFF — env flag not set
+    [InlineData(ScriptType.Python, false)]             // Calamari has no Python pipeline (this PR)
     [InlineData(ScriptType.CSharp, false)]             // Calamari has no C# pipeline
     [InlineData(ScriptType.FSharp, false)]             // Calamari has no F# pipeline
-    public void IsCalamariCompatible_ReturnsTrueOnlyForBash(ScriptType syntax, bool expected)
+    public void IsCalamariCompatible_DefaultEnv_TrueOnlyForBash(ScriptType syntax, bool expected)
     {
+        // Default agent environment (flag unset). PowerShell stays FALSE —
+        // identical to pre-PR-8 behaviour. Back-compat pin.
+        Environment.SetEnvironmentVariable(LocalScriptService.CalamariPowerShellEnvVar, null);
         LocalScriptService.IsCalamariCompatible(syntax).ShouldBe(expected);
     }
 
-    [Fact]
-    public void IsCalamariCompatible_PowerShell_ExplicitlyFalse_RegressionPin()
+    [Theory]
+    [InlineData("1")]
+    [InlineData("true")]
+    [InlineData("TRUE")]
+    [InlineData("yes")]
+    [InlineData("on")]
+    public void IsCalamariCompatible_PowerShell_TrueWhenEnvFlagSet(string truthy)
     {
-        // The operator-reported failure mode was caused by this returning TRUE.
-        // A future refactor that flips it back without ALSO adding
-        // WriteBootstrappedPowerShellScriptStep to Calamari AND a per-syntax
-        // --script=... path in BuildCalamariProcessStartInfo would re-introduce
-        // the FileNotFoundException + UnknownResult crash. This standalone Fact
-        // exists so the failure message names the operator-visible symptom
-        // (not just "expected false but was true") if anyone widens the rule
-        // without checking the downstream prerequisites.
-        LocalScriptService.IsCalamariCompatible(ScriptType.PowerShell)
-            .ShouldBeFalse(
-                customMessage: "Routing PowerShell through Calamari crashes the child process " +
-                               "with FileNotFoundException ('script.sh' vs 'script.ps1' mismatch) " +
-                               "and surfaces as 'Unknown result (ticket or process not found) (exit code -1)' " +
-                               "to the operator. See LocalScriptService.IsCalamariCompatible docstring for " +
-                               "the full prerequisite list before flipping this back.");
+        Environment.SetEnvironmentVariable(LocalScriptService.CalamariPowerShellEnvVar, truthy);
+        try
+        {
+            LocalScriptService.IsCalamariCompatible(ScriptType.PowerShell).ShouldBeTrue(
+                customMessage: $"With {LocalScriptService.CalamariPowerShellEnvVar}={truthy}, PowerShell MUST route through Calamari " +
+                               "(opt-in). PR-4 added the PS-aware bootstrap; PR-8 added the per-syntax --script path.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(LocalScriptService.CalamariPowerShellEnvVar, null);
+        }
     }
 
-    // ── BuildCalamariProcessStartInfo — Bash-only argv contract ────────────────
+    [Theory]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("false")]
+    [InlineData("no")]
+    [InlineData("disabled")]
+    [InlineData("garbage")]
+    public void IsCalamariCompatible_PowerShell_FalseWhenEnvFlagFalsy(string falsy)
+    {
+        // Anything non-truthy keeps the conservative default. Bash is
+        // never affected by the flag.
+        Environment.SetEnvironmentVariable(LocalScriptService.CalamariPowerShellEnvVar, falsy);
+        try
+        {
+            LocalScriptService.IsCalamariCompatible(ScriptType.PowerShell).ShouldBeFalse();
+            LocalScriptService.IsCalamariCompatible(ScriptType.Bash).ShouldBeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(LocalScriptService.CalamariPowerShellEnvVar, null);
+        }
+    }
 
     [Fact]
-    public void BuildCalamariProcessStartInfo_HardcodesScriptSh_DocumentsBashOnlyContract()
+    public void CalamariPowerShellEnvVar_ConstantNamePinned()
     {
-        // Drift detector for the prerequisite call out in IsCalamariCompatible's
-        // docstring: Calamari's argv is hardcoded to --script=script.sh. If this
-        // EVER changes (e.g. someone adds per-syntax script paths), they MUST
-        // also widen IsCalamariCompatible — the two are co-dependent. Pinning the
-        // literal here makes any breaking refactor a test-time-visible decision.
+        // Rule 8 — operators pin this env var name in their agent config.
+        // Silent rename = silently-ignored opt-in.
+        LocalScriptService.CalamariPowerShellEnvVar.ShouldBe("SQUID_TENTACLE_CALAMARI_POWERSHELL");
+    }
+
+    // ── BuildCalamariProcessStartInfo — per-syntax --script path (PR-8) ─────────
+
+    [Fact]
+    public void BuildCalamariProcessStartInfo_Bash_UsesScriptSh()
+    {
         var psi = LocalScriptService.BuildCalamariProcessStartInfo(
             workDir: "/tmp/work",
             variablesPath: "/tmp/work/variables.json",
             sensitiveVariablesPath: "/tmp/work/sensitiveVariables.json",
             sensitivePassword: null,
             sensitiveCiphertextExists: false,
+            syntax: ScriptType.Bash,
             arguments: System.Array.Empty<string>());
 
         psi.ArgumentList.ShouldContain("--script=script.sh",
-            customMessage: "Calamari's --script= path is hardcoded to script.sh, which is why " +
-                           "IsCalamariCompatible must only return true for Bash. If you change this " +
-                           "to a per-syntax path (e.g. --script=<computed>), update IsCalamariCompatible " +
-                           "and the Calamari pipeline in the SAME PR — both halves are co-dependent.");
+            customMessage: "Bash MUST still use script.sh — back-compat with every existing bash deploy.");
+    }
+
+    [Fact]
+    public void BuildCalamariProcessStartInfo_PowerShell_UsesScriptPs1()
+    {
+        // PR-8 co-dependent fix: the per-syntax --script path. Without this,
+        // routing PS through Calamari would crash with FileNotFoundException
+        // (Tentacle wrote script.ps1, Calamari read script.sh). This pins the
+        // fix that makes the opt-in safe.
+        var psi = LocalScriptService.BuildCalamariProcessStartInfo(
+            workDir: "/tmp/work",
+            variablesPath: "/tmp/work/variables.json",
+            sensitiveVariablesPath: "/tmp/work/sensitiveVariables.json",
+            sensitivePassword: null,
+            sensitiveCiphertextExists: false,
+            syntax: ScriptType.PowerShell,
+            arguments: System.Array.Empty<string>());
+
+        psi.ArgumentList.ShouldContain("--script=script.ps1",
+            customMessage: "PowerShell MUST use script.ps1 — matches what WriteScriptFile wrote to disk. " +
+                           "The old hardcoded script.sh was why PS-through-Calamari crashed.");
+        psi.ArgumentList.ShouldNotContain("--script=script.sh");
     }
 }
