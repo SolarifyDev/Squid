@@ -5,7 +5,9 @@ using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Settings.Halibut;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Tentacle;
@@ -32,6 +34,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly IHalibutScriptObserver _observer;
     private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
+    private readonly IInFlightScriptStore _inFlightStore;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -40,13 +43,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         IHalibutScriptObserver observer,
         HalibutSetting halibutSetting,
         IMachineCircuitBreakerRegistry breakerRegistry = null,
-        IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
+        IMachineRuntimeCapabilitiesCache capabilitiesCache = null,
+        IInFlightScriptStore inFlightStore = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
         _capabilitiesCache = capabilitiesCache;
+        _inFlightStore = inFlightStore;
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -168,12 +173,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             TargetNamespace = request.TargetNamespace
         };
 
-        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
-        Log.Information("[Deploy] Starting packaged YAML deployment on agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, scriptTicket);
-
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
+        return await DispatchOrReattachAsync(request, scriptClient, endpoint, scriptTicket, command, scriptTimeout, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -205,13 +205,111 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             TargetNamespace = request.TargetNamespace
         };
 
+        return await DispatchOrReattachAsync(request, scriptClient, endpoint, scriptTicket, command, scriptTimeout, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Dispatch a script to the agent and observe it to completion — or, on a
+    /// resumed deployment, re-attach to a still-running script from a prior
+    /// (crashed) run instead of launching a duplicate. The in-flight ScriptTicket
+    /// is recorded right after <c>StartScript</c> and cleared once observation
+    /// completes, so a server crash mid-script leaves a durable pointer the next
+    /// run can re-attach to.
+    /// </summary>
+    private async Task<ScriptExecutionResult> DispatchOrReattachAsync(
+        ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint,
+        ScriptTicket scriptTicket, StartScriptCommand command, TimeSpan scriptTimeout, CancellationToken ct)
+    {
+        var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
+        if (reattached != null) return reattached;
+
         var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
-        Log.Information("[Deploy] Starting direct script on agent {MachineName} with ticket {Ticket}",
+        if (_inFlightStore != null)
+            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, request.Machine.Id, scriptTicket.TaskId, ct).ConfigureAwait(false);
+
+        Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
+        try
+        {
+            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (_inFlightStore != null)
+                await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+        }
     }
+
+    /// <summary>
+    /// If a prior run recorded an in-flight ticket for this machine and the agent
+    /// still has a usable script for it, observe that script to completion and
+    /// return its result (no duplicate dispatch). Returns <see langword="null"/>
+    /// — meaning "dispatch fresh" — when there is no record, the probe fails, or
+    /// the agent has no usable script (<see cref="AgentHasUsableScript"/>). The
+    /// fresh-dispatch fallback is exactly today's behaviour, so re-attach can only
+    /// ever AVOID a duplicate, never change a deployment that wasn't resuming.
+    /// </summary>
+    private async Task<ScriptExecutionResult> TryReattachAsync(
+        ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, TimeSpan scriptTimeout, CancellationToken ct)
+    {
+        if (_inFlightStore == null) return null;
+
+        var existingTicketId = await _inFlightStore.TryGetTicketAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(existingTicketId)) return null;
+
+        var existingTicket = new ScriptTicket(existingTicketId);
+
+        ScriptStatusResponse probe;
+        try
+        {
+            probe = await scriptClient.GetStatusAsync(new ScriptStatusRequest(existingTicket, 0)).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
+                request.Machine.Name, existingTicketId);
+            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+            return null;
+        }
+
+        if (!AgentHasUsableScript(probe))
+        {
+            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+            return null;
+        }
+
+        Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
+            request.Machine.Name, existingTicketId, probe.State);
+
+        try
+        {
+            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint).ConfigureAwait(false);
+        }
+        finally
+        {
+            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Whether a <c>GetStatus</c> probe shows the agent still holds the script,
+    /// so we re-attach instead of dispatching a duplicate. The Tentacle returns
+    /// <c>Complete + UnknownResult (-1)</c> for an UNKNOWN ticket — the single
+    /// "agent doesn't have it" signal — so ONLY that case dispatches fresh.
+    ///
+    /// <para>Every other state means the agent demonstrably holds the ticket and
+    /// MUST be re-attached to — including <see cref="ProcessState.Pending"/>: a
+    /// queued-but-not-started script left by the crashed run would otherwise run
+    /// <i>alongside</i> a fresh dispatch (new ticket), causing the exact
+    /// double-execution this feature prevents. A real script that genuinely
+    /// exited -1 collides with the sentinel and is conservatively re-dispatched
+    /// (today's behaviour) — an accepted rare edge.</para>
+    /// </summary>
+    internal static bool AgentHasUsableScript(ScriptStatusResponse probe)
+        => probe is not null
+           && !(probe.State == ProcessState.Complete && probe.ExitCode == ScriptExitCodes.UnknownResult);
 
     private static ScriptFile[] BuildDirectScriptFiles(
         DeploymentFileCollection deploymentFiles,

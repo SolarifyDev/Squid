@@ -9,6 +9,15 @@ public interface IDeploymentCheckpointService : IScopedDependency
 
     Task<DeploymentExecutionCheckpoint> LoadAsync(int serverTaskId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Insert an empty checkpoint row (LastCompletedBatchIndex = -1, empty state)
+    /// if none exists for the task — no-op when one already exists, so a resume
+    /// row is never overwritten. Lets the in-flight-script ledger
+    /// (<see cref="IInFlightScriptStore"/>) land tickets dispatched in the very
+    /// first batch, before the first batch-boundary save creates the row.
+    /// </summary>
+    Task EnsureExistsAsync(int serverTaskId, int deploymentId, CancellationToken ct = default);
+
     Task DeleteAsync(int serverTaskId, CancellationToken ct = default);
 }
 
@@ -22,7 +31,11 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
                   .SetProperty(c => c.FailureEncountered, checkpoint.FailureEncountered)
                   .SetProperty(c => c.OutputVariablesJson, checkpoint.OutputVariablesJson)
                   .SetProperty(c => c.BatchStatesJson, checkpoint.BatchStatesJson ?? "{}")
-                  .SetProperty(c => c.InFlightScriptsJson, checkpoint.InFlightScriptsJson ?? "{}")
+                  // InFlightScriptsJson is intentionally NOT set here: it is owned
+                  // by IInFlightScriptStore, which records/clears tickets at script
+                  // dispatch/completion time (out of band with batch-boundary saves).
+                  // Overwriting it on every batch save would wipe in-flight tickets
+                  // dispatched mid-batch, defeating resume-by-ticket.
                   .SetProperty(c => c.LastModifiedDate, DateTimeOffset.UtcNow),
             ct).ConfigureAwait(false);
 
@@ -35,6 +48,27 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
     public async Task<DeploymentExecutionCheckpoint> LoadAsync(int serverTaskId, CancellationToken ct = default)
     {
         return await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task EnsureExistsAsync(int serverTaskId, int deploymentId, CancellationToken ct = default)
+    {
+        var exists = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
+            .AnyAsync(ct).ConfigureAwait(false);
+
+        if (exists) return;
+
+        await repository.InsertAsync(new DeploymentExecutionCheckpoint
+        {
+            ServerTaskId = serverTaskId,
+            DeploymentId = deploymentId,
+            LastCompletedBatchIndex = -1,
+            FailureEncountered = false,
+            OutputVariablesJson = "[]",
+            BatchStatesJson = "{}",
+            InFlightScriptsJson = "{}"
+        }, ct).ConfigureAwait(false);
+
+        await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(int serverTaskId, CancellationToken ct = default)
