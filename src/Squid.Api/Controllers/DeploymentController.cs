@@ -23,6 +23,15 @@ public class DeploymentController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("rollback")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(RollbackDeploymentResponse))]
+    public async Task<IActionResult> RollbackDeploymentAsync([FromBody] RollbackDeploymentCommand command)
+    {
+        var response = await _mediator.SendAsync<RollbackDeploymentCommand, RollbackDeploymentResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("preview")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(PreviewDeploymentResponse))]
     public async Task<IActionResult> PreviewDeploymentAsync([FromBody] PreviewDeploymentRequest request)
