@@ -58,8 +58,8 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
                          || (context.ScriptResult is not null && context.ScriptResult.ExitCode != 0);
         if (!hadFailure) return false;
 
-        var scriptPath = Path.Combine(context.WorkingDirectory, $"{ConventionName}.sh");
-        return File.Exists(scriptPath);
+        return ConventionScriptResolver.Resolve(
+            context.WorkingDirectory, ConventionName, PreferredSyntax(context)) is not null;
     }
 
     public async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
@@ -74,22 +74,19 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
             throw new InvalidOperationException(
                 $"{ConventionName}: variables have not been loaded.");
 
-        var scriptPath = Path.Combine(context.WorkingDirectory, $"{ConventionName}.sh");
+        var resolved = ConventionScriptResolver.Resolve(
+                           context.WorkingDirectory, ConventionName, PreferredSyntax(context))
+                       ?? throw new InvalidOperationException(
+                           $"{ConventionName}: convention script vanished between IsEnabled and ExecuteAsync.");
 
-        var originalScript = File.ReadAllText(scriptPath);
-        var preamble = VariableBootstrapper.GeneratePreamble(context.Variables);
-        var bootstrappedScript = preamble + originalScript;
-
-        var bootstrappedPath = Path.Combine(
-            context.WorkingDirectory,
-            $".squid-{ConventionName.ToLowerInvariant()}-{Guid.NewGuid():N}.sh");
-        File.WriteAllText(bootstrappedPath, bootstrappedScript);
+        var bootstrappedPath = ConventionBootstrap.WriteBootstrappedConventionScript(
+            context, ConventionName, resolved);
         context.TemporaryFiles.Add(bootstrappedPath);
 
         var failureSignal = context.ExecutionFailed
             ? "prior step exception"
             : $"main script exit code {context.ScriptResult?.ExitCode}";
-        Console.WriteLine($"{ConventionName}: deploy failed ({failureSignal}); running '{scriptPath}'.");
+        Console.WriteLine($"{ConventionName}: deploy failed ({failureSignal}); running '{resolved.Path}' ({resolved.Syntax}).");
 
         var outputProcessor = new ScriptOutputProcessor();
         var result = await _scriptEngine.ExecuteAsync(
@@ -97,7 +94,7 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
                 {
                     ScriptPath = bootstrappedPath,
                     WorkingDirectory = context.WorkingDirectory,
-                    Syntax = ScriptSyntax.Bash,
+                    Syntax = resolved.Syntax,
                     OutputProcessor = outputProcessor
                 },
                 ct)
@@ -127,6 +124,11 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
         {
             ["ExitCode"] = result.ExitCode,
             ["OutputVariablesCount"] = result.OutputVariables.Count
-        }) with { DurationMs = sw.ElapsedMilliseconds });
+        }) with { DurationMs = sw.ElapsedMilliseconds, Message = $"Syntax={resolved.Syntax}" });
     }
+
+    /// <summary>The main script's syntax — breaks ties when a package ships
+    /// both <c>DeployFailed.sh</c> and <c>DeployFailed.ps1</c>.</summary>
+    private static ScriptSyntax PreferredSyntax(RunScriptCommandContext context)
+        => ScriptSyntaxDetector.DetectFromPath(context.ScriptPath);
 }

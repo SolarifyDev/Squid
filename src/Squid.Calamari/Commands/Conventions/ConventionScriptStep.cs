@@ -68,8 +68,8 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
         if (string.IsNullOrEmpty(context.WorkingDirectory)) return false;
         if (context.Variables is null) return false;
 
-        var scriptPath = ResolveConventionScriptPath(context.WorkingDirectory);
-        return File.Exists(scriptPath);
+        return ConventionScriptResolver.Resolve(
+            context.WorkingDirectory, _conventionName, PreferredSyntax(context)) is not null;
     }
 
     public override async Task ExecuteAsync(RunScriptCommandContext context, CancellationToken ct)
@@ -84,21 +84,16 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
             throw new InvalidOperationException(
                 $"{_conventionName}: variables have not been loaded.");
 
-        var scriptPath = ResolveConventionScriptPath(context.WorkingDirectory);
+        var resolved = ConventionScriptResolver.Resolve(
+                           context.WorkingDirectory, _conventionName, PreferredSyntax(context))
+                       ?? throw new InvalidOperationException(
+                           $"{_conventionName}: convention script vanished between IsEnabled and ExecuteAsync.");
 
-        // Generate the same export-VAR preamble used for the main script so
-        // operator's PreDeploy.sh / PostDeploy.sh see identical variable scope.
-        var originalScript = File.ReadAllText(scriptPath);
-        var preamble = VariableBootstrapper.GeneratePreamble(context.Variables);
-        var bootstrappedScript = preamble + originalScript;
-
-        var bootstrappedPath = Path.Combine(
-            context.WorkingDirectory,
-            $".squid-{_conventionName.ToLowerInvariant()}-{Guid.NewGuid():N}.sh");
-        File.WriteAllText(bootstrappedPath, bootstrappedScript);
+        var bootstrappedPath = ConventionBootstrap.WriteBootstrappedConventionScript(
+            context, _conventionName, resolved);
         context.TemporaryFiles.Add(bootstrappedPath);
 
-        Console.WriteLine($"{_conventionName}: running '{scriptPath}'.");
+        Console.WriteLine($"{_conventionName}: running '{resolved.Path}' ({resolved.Syntax}).");
 
         var outputProcessor = new ScriptOutputProcessor();
         var result = await _scriptEngine.ExecuteAsync(
@@ -106,7 +101,7 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
                 {
                     ScriptPath = bootstrappedPath,
                     WorkingDirectory = context.WorkingDirectory,
-                    Syntax = ScriptSyntax.Bash,
+                    Syntax = resolved.Syntax,
                     OutputProcessor = outputProcessor
                 },
                 ct)
@@ -120,7 +115,7 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
 
         if (result.ExitCode != 0)
             throw new InvalidOperationException(
-                $"{_conventionName}: hook script '{scriptPath}' exited with code {result.ExitCode}. " +
+                $"{_conventionName}: hook script '{resolved.Path}' exited with code {result.ExitCode}. " +
                 "Deploy aborted — fix the hook or remove the script from the package.");
 
         Console.WriteLine($"{_conventionName}: completed successfully.");
@@ -129,17 +124,13 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
         {
             ["ExitCode"] = result.ExitCode,
             ["OutputVariablesCount"] = result.OutputVariables.Count
-        }) with { DurationMs = sw.ElapsedMilliseconds });
+        }) with { DurationMs = sw.ElapsedMilliseconds, Message = $"Syntax={resolved.Syntax}" });
     }
 
-    /// <summary>
-    /// Resolve the absolute path of the convention script. Centralised so
-    /// the lookup logic is identical between <c>IsEnabled</c> and
-    /// <c>ExecuteAsync</c> — drift between them would mean "step enabled,
-    /// script vanished, race / mystery error mid-execute".
-    /// </summary>
-    private string ResolveConventionScriptPath(string workingDir)
-        => Path.Combine(workingDir, $"{_conventionName}.sh");
+    /// <summary>The main script's syntax — used to break ties when a
+    /// package ships BOTH a .sh and .ps1 variant of the convention.</summary>
+    private static ScriptSyntax PreferredSyntax(RunScriptCommandContext context)
+        => ScriptSyntaxDetector.DetectFromPath(context.ScriptPath);
 }
 
 /// <summary>
