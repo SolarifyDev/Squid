@@ -15,7 +15,8 @@ internal static class StructuredConfigFormatRegistry
     {
         new JsonConfigFormat(),
         new YamlConfigFormat(),
-        new XmlConfigFormat()
+        new XmlConfigFormat(),
+        new PropertiesConfigFormat()
     };
 
     /// <summary>Operator-facing extension list. Used in log lines when a
@@ -24,7 +25,8 @@ internal static class StructuredConfigFormatRegistry
     {
         ".json", ".json5",
         ".yaml", ".yml",
-        ".xml"
+        ".xml",
+        ".properties", ".ini"
     };
 
     public static IStructuredConfigFormat? Resolve(string filePath)
