@@ -117,7 +117,11 @@ public sealed partial class ExecuteStepsPhase(
     /// available for re-attach.</para>
     /// </summary>
     private async Task EnsureCheckpointRowAsync(CancellationToken ct)
-        => await checkpointService.EnsureExistsAsync(_ctx.ServerTaskId, _ctx.Deployment?.Id ?? 0, ct).ConfigureAwait(false);
+        => await RunCheckpointWriteWithRetryAsync(
+            () => checkpointService.EnsureExistsAsync(_ctx.ServerTaskId, _ctx.Deployment?.Id ?? 0, ct),
+            "ensure the checkpoint row exists",
+            "Resume-by-ticket is disabled for this run; a mid-script server restart will re-dispatch instead of re-attaching.",
+            ct).ConfigureAwait(false);
 
     /// <summary>
     /// Maximum attempts for <see cref="PersistCheckpointAsync"/> before
@@ -190,6 +194,28 @@ public sealed partial class ExecuteStepsPhase(
             // left untouched here — see DeploymentCheckpointService.SaveAsync.
         };
 
+        await RunCheckpointWriteWithRetryAsync(
+            () => checkpointService.SaveAsync(checkpoint, ct),
+            $"persist checkpoint at batch {batchIndex}",
+            "A server restart at this point will replay batches that completed in the current run — manual reconciliation may be needed.",
+            ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Shared retry + exponential backoff for a checkpoint DB write — used by
+    /// both the batch-boundary persist and the up-front ensure-row. Up to
+    /// <see cref="CheckpointPersistMaxAttempts"/> attempts; transient DB blips
+    /// (connection drop, lock-wait) recover for free. On exhaustion it escalates
+    /// to <c>Log.Error</c> (so Error-threshold alerting catches it) and RETURNS —
+    /// the deploy keeps progressing, only the crash-recovery story is degraded.
+    /// Cancellation propagates immediately.
+    ///
+    /// <para>Before this was extracted, only the batch-boundary persist retried;
+    /// the ensure-row was a single un-retried write, so one transient blip could
+    /// silently disable resume-by-ticket for the whole run. Both now share this.</para>
+    /// </summary>
+    private async Task RunCheckpointWriteWithRetryAsync(Func<Task> write, string operation, string exhaustedGuidance, CancellationToken ct)
+    {
         var delay = CheckpointPersistInitialDelay;
         Exception lastException = null;
 
@@ -197,23 +223,19 @@ public sealed partial class ExecuteStepsPhase(
         {
             try
             {
-                await checkpointService.SaveAsync(checkpoint, ct).ConfigureAwait(false);
+                await write().ConfigureAwait(false);
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                // Cancellation is not a checkpoint-persist failure. Surface
-                // it to the caller's CT path, which is already handled by
-                // the pipeline runner's cancel-vs-failure precedence.
                 throw;
             }
             catch (Exception ex) when (attempt < CheckpointPersistMaxAttempts)
             {
                 lastException = ex;
                 Log.Warning(ex,
-                    "[Deploy] Failed to persist checkpoint at batch {BatchIndex}, " +
-                    "attempt {Attempt}/{MaxAttempts}, retrying in {Delay}ms",
-                    batchIndex, attempt, CheckpointPersistMaxAttempts, delay.TotalMilliseconds);
+                    "[Deploy] Failed to {Operation}, attempt {Attempt}/{MaxAttempts}, retrying in {Delay}ms",
+                    operation, attempt, CheckpointPersistMaxAttempts, delay.TotalMilliseconds);
 
                 try
                 {
@@ -232,15 +254,9 @@ public sealed partial class ExecuteStepsPhase(
             }
         }
 
-        // All retries exhausted — escalate to Error (not Warning) so the
-        // failure surfaces in alerting configured at Error threshold.
-        // Continue execution; the deploy is still progressing, only the
-        // resume story for this batch is degraded.
         Log.Error(lastException,
-            "[Deploy] Failed to persist checkpoint at batch {BatchIndex} after {MaxAttempts} attempts. " +
-            "Deploy will continue, but a server restart at this point will replay batches that " +
-            "completed in the current run — manual reconciliation may be needed.",
-            batchIndex, CheckpointPersistMaxAttempts);
+            "[Deploy] Failed to {Operation} after {MaxAttempts} attempts. {Guidance}",
+            operation, CheckpointPersistMaxAttempts, exhaustedGuidance);
     }
 
     private string SerializeBatchStates()

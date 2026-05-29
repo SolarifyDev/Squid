@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 
@@ -15,9 +14,12 @@ namespace Squid.Core.Services.Deployments.Checkpoints;
 /// <para><b>Concurrency</b>: a parallel batch dispatches to several targets at
 /// once, each recording its ticket. A single Hangfire worker owns a given
 /// deployment task, so all writes for one <c>serverTaskId</c> happen in one
-/// process — an in-process per-task lock serialises the read-modify-write of
-/// the shared JSON column. (Cross-process contention can't occur: task
-/// ownership is exclusive.)</para>
+/// process — a fixed set of lock stripes (keyed by <c>serverTaskId</c>)
+/// serialises the read-modify-write of the shared JSON column. Striping is
+/// bounded (no per-task growth over the server's lifetime); two tasks hashing
+/// to the same stripe serialise harmlessly, and a given task always maps to the
+/// same stripe so its own writes are always serialised. (Cross-process
+/// contention can't occur: task ownership is exclusive.)</para>
 ///
 /// <para><b>Fail-safe</b>: if the checkpoint row does not exist yet, recording
 /// is silently skipped — the worst case is that resume re-dispatches (today's
@@ -35,7 +37,16 @@ public interface IInFlightScriptStore : IScopedDependency
 
 public sealed class InFlightScriptStore(IRepository repository) : IInFlightScriptStore
 {
-    private static readonly ConcurrentDictionary<int, SemaphoreSlim> TaskLocks = new();
+    // Bounded lock stripes — one async gate per stripe, NOT one per task, so the
+    // set never grows over the server's lifetime. A task always maps to the same
+    // stripe (so its own RMW serialises); distinct tasks colliding on a stripe
+    // just serialise harmlessly.
+    private const int LockStripeCount = 64;
+
+    private static readonly SemaphoreSlim[] Stripes =
+        Enumerable.Range(0, LockStripeCount).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+
+    private static SemaphoreSlim LockFor(int serverTaskId) => Stripes[(uint)serverTaskId % LockStripeCount];
 
     public Task RecordDispatchedAsync(int serverTaskId, int machineId, string scriptTicket, CancellationToken cancellationToken = default)
         => MutateAsync(serverTaskId, current => InFlightScriptMap.Add(current, machineId, scriptTicket), cancellationToken);
@@ -53,7 +64,7 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
 
     private async Task MutateAsync(int serverTaskId, Func<string, string> mutate, CancellationToken cancellationToken)
     {
-        var gate = TaskLocks.GetOrAdd(serverTaskId, _ => new SemaphoreSlim(1, 1));
+        var gate = LockFor(serverTaskId);
 
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
 

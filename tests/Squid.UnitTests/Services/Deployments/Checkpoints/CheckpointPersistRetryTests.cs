@@ -168,6 +168,34 @@ public sealed class CheckpointPersistRetryTests
             customMessage: "Total retry should be well under 5s; longer indicates an unbounded backoff.");
     }
 
+    [Fact]
+    public async Task EnsureCheckpointRow_TransientFailureThenSuccess_Retries()
+    {
+        // M2: the up-front ensure-row write (resume-by-ticket substrate) must
+        // retry transient failures like the batch-boundary persist does — a
+        // single blip must not silently disable resume-by-ticket for the run.
+        var ensureAttempts = 0;
+
+        var checkpointService = new Mock<IDeploymentCheckpointService>();
+        checkpointService
+            .Setup(s => s.EnsureExistsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                ensureAttempts++;
+                if (ensureAttempts == 1)
+                    throw new InvalidOperationException("transient DB blip");
+                return Task.CompletedTask;
+            });
+        checkpointService
+            .Setup(s => s.SaveAsync(It.IsAny<DeploymentExecutionCheckpoint>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await DriveOneBatchAsync(checkpointService.Object);
+
+        ensureAttempts.ShouldBe(2,
+            customMessage: "EnsureCheckpointRowAsync must retry (1 fail + 1 success); fewer = no retry, more = over-retry.");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     /// <summary>
