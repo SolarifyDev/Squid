@@ -20,7 +20,8 @@ public sealed class PackageExtractorRegistryTests
     [InlineData("/x/y.tar.gz", typeof(TarGzPackageExtractor))]
     [InlineData("/x/y.tgz", typeof(TarGzPackageExtractor))]
     [InlineData("/x/y.TAR.GZ", typeof(TarGzPackageExtractor))]
-    [InlineData("/x/y.7z", typeof(SevenZipUnsupportedExtractor))]
+    [InlineData("/x/y.7z", typeof(SevenZipPackageExtractor))]
+    [InlineData("/x/y.7Z", typeof(SevenZipPackageExtractor))]
     public void Resolve_KnownExtension_LandsOnExpectedExtractor(string archivePath, Type expectedType)
     {
         var extractor = PackageExtractorRegistry.Resolve(archivePath);
@@ -57,6 +58,6 @@ public sealed class PackageExtractorRegistryTests
         // SupportedExtensions isn't updated, operators won't see the new
         // format in error messages.
         PackageExtractorRegistry.SupportedExtensions
-            .ShouldBe(new[] { ".zip", ".nupkg", ".tar", ".tar.gz", ".tgz" });
+            .ShouldBe(new[] { ".zip", ".nupkg", ".tar", ".tar.gz", ".tgz", ".7z" });
     }
 }

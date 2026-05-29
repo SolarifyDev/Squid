@@ -5,7 +5,7 @@ namespace Squid.Calamari.Commands.Package;
 /// <summary>
 /// Shared hostile-archive defence primitives used by every
 /// <see cref="IPackageExtractor"/>. Each format-specific extractor (zip /
-/// tar / tar.gz / future 7z / wim) hits the SAME safety story, so the
+/// tar / tar.gz / 7z / future wim) hits the SAME safety story, so the
 /// rules live here once.
 ///
 /// <para>Three independent defences a malicious archive must clear:

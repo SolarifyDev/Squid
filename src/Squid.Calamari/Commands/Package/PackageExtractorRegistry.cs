@@ -10,8 +10,8 @@ namespace Squid.Calamari.Commands.Package;
 ///         <c>.tar.gz</c> / <c>.tgz</c> compound suffix.</item>
 ///   <item><see cref="ZipPackageExtractor"/> — <c>.zip</c> / <c>.nupkg</c>.</item>
 ///   <item><see cref="TarPackageExtractor"/> — plain <c>.tar</c>.</item>
-///   <item><see cref="SevenZipUnsupportedExtractor"/> — recognised but
-///         deliberately failing extractor for <c>.7z</c> (deferred dep).</item>
+///   <item><see cref="SevenZipPackageExtractor"/> — <c>.7z</c> via
+///         SharpCompress (managed, no external 7z binary).</item>
 /// </list>
 ///
 /// <para>If none match, <see cref="Resolve"/> returns null — caller
@@ -26,7 +26,7 @@ internal static class PackageExtractorRegistry
         new TarGzPackageExtractor(),
         new ZipPackageExtractor(),
         new TarPackageExtractor(),
-        new SevenZipUnsupportedExtractor()
+        new SevenZipPackageExtractor()
     };
 
     /// <summary>List of file-extension-style strings the dispatcher
@@ -38,7 +38,8 @@ internal static class PackageExtractorRegistry
         ".nupkg",
         ".tar",
         ".tar.gz",
-        ".tgz"
+        ".tgz",
+        ".7z"
     };
 
     public static IPackageExtractor? Resolve(string archivePath)
