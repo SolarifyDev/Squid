@@ -20,6 +20,12 @@ public class Machine : IEntity<int>, IAuditable
     public DateTimeOffset? HealthLastChecked { get; set; }
     public string HealthDetail { get; set; }
 
+    // Instant the machine FIRST transitioned into Unavailable (set on entry, cleared
+    // when it next reports Healthy, preserved while it stays Unavailable). NULL means
+    // "not currently known-unavailable". Drives the machine-policy cleanup grace
+    // period — we only auto-delete a target whose continuous downtime we can prove.
+    public DateTimeOffset? UnavailableSince { get; set; }
+
     // H2 — Persisted runtime capability snapshot (full MachineRuntimeCapabilities
     // serialised as JSON). NULL when the agent has never been health-checked.
     // The InMemoryMachineRuntimeCapabilitiesCache hydrates from this column at
