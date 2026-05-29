@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -329,6 +330,7 @@ public class OpenClawIntentRendererTests
             },
             Step = new DeploymentStepDto { Name = "step-1" },
             EffectiveVariables = variables ?? new List<VariableDto>(),
+            VariableDictionary = VariableDictionaryFactory.Create(variables ?? new List<VariableDto>()),
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout

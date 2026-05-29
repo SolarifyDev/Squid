@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Ssh.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -279,6 +280,7 @@ public class SshIntentRendererTests
             },
             Step = new DeploymentStepDto { Name = "step-1" },
             EffectiveVariables = variables ?? new List<VariableDto>(),
+            VariableDictionary = VariableDictionaryFactory.Create(variables ?? new List<VariableDto>()),
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
