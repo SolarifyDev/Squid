@@ -87,6 +87,7 @@ public sealed class SensitiveVariablePasswordTransportTests
             sensitiveVariablesPath: "/tmp/some-work/sensitiveVariables.json",
             sensitivePassword: "super-secret-pw",
             sensitiveCiphertextExists: true,
+            syntax: ScriptType.Bash,
             arguments: Array.Empty<string>());
 
         psi.Environment[LocalScriptService.CalamariSensitivePasswordEnvVar].ShouldBe("super-secret-pw",
@@ -115,6 +116,7 @@ public sealed class SensitiveVariablePasswordTransportTests
             sensitiveVariablesPath: "/tmp/some-work/sensitiveVariables.json",
             sensitivePassword: null,
             sensitiveCiphertextExists: false,
+            syntax: ScriptType.Bash,
             arguments: Array.Empty<string>());
 
         psi.Environment.ContainsKey(LocalScriptService.CalamariSensitivePasswordEnvVar).ShouldBeFalse(
@@ -136,6 +138,7 @@ public sealed class SensitiveVariablePasswordTransportTests
             sensitiveVariablesPath: "/tmp/some-work/sensitiveVariables.json",
             sensitivePassword: "pw-without-ciphertext",
             sensitiveCiphertextExists: false,
+            syntax: ScriptType.Bash,
             arguments: Array.Empty<string>());
 
         psi.Environment.ContainsKey(LocalScriptService.CalamariSensitivePasswordEnvVar).ShouldBeFalse();
@@ -152,6 +155,7 @@ public sealed class SensitiveVariablePasswordTransportTests
             sensitiveVariablesPath: "/tmp/some-work/sensitiveVariables.json",
             sensitivePassword: null,
             sensitiveCiphertextExists: false,
+            syntax: ScriptType.Bash,
             arguments: new[] { "arg-one", "arg-two" });
 
         psi.ArgumentList.ShouldContain("--");
