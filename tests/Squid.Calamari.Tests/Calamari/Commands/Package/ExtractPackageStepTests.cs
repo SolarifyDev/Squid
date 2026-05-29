@@ -166,23 +166,19 @@ public sealed class ExtractPackageStepTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_SevenZipArchive_ThrowsWithDeferralExplanation()
+    public async Task Execute_SevenZipArchive_ExtractsIntoWorkingDir()
     {
-        // .7z is recognised by the dispatcher (so the operator gets a clear
-        // "not yet supported" message instead of "unknown format") but
-        // deliberately returns a failure result — no SharpCompress dep yet.
-        var sevenZ = Path.Combine(_archiveDir, "pkg.7z");
-        File.WriteAllText(sevenZ, "fake 7z bytes");
+        // PR-11: .7z is now extracted via SharpCompress (previously a deferral
+        // failure). Real py7zr-generated 7z bytes drive the production extractor
+        // end-to-end through the pipeline step.
+        var sevenZ = SevenZipTestFixtures.WriteToFile(
+            SevenZipTestFixtures.Happy, Path.Combine(_archiveDir, "pkg.7z"));
 
         var context = BuildContext(packagePath: sevenZ);
+        await new ExtractPackageStep().ExecuteAsync(context, CancellationToken.None);
 
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() =>
-            new ExtractPackageStep().ExecuteAsync(context, CancellationToken.None));
-
-        ex.Message.ShouldContain("7z");
-        ex.Message.ShouldContain("not supported",
-            customMessage: "Operator MUST see a clear deferral message naming alternatives, " +
-                           "not a generic 'unsupported extension' error (since the dispatcher DID recognise the format).");
+        File.ReadAllText(Path.Combine(_workDir, "readme.txt")).ShouldBe("hello from 7z");
+        File.ReadAllText(Path.Combine(_workDir, "bin", "app.dll")).ShouldBe("fake-binary-content");
     }
 
     // ── Failure surface ─────────────────────────────────────────────────────

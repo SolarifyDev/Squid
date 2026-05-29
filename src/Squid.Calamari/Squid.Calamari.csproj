@@ -28,6 +28,16 @@
     warning when the assembly wasn't on the host).
     -->
     <PackageReference Include="Microsoft.Web.Xdt" Version="3.1.0" />
+    <!--
+    PR-11 — SharpCompress: managed (pure-.NET) 7z reader. Picked over
+    shelling out to a `7z` CLI because (a) it works in minimal Linux
+    containers with no external binary, and (b) it lets the .7z path reuse
+    the SAME ArchiveSafety zip-slip / size-cap / fail-closed sandbox as the
+    zip + tar extractors, instead of carving a lawless exception for one
+    format. MIT-licensed, pure-managed, ~1.5 MB on disk; extraction-only need
+    (we never write 7z).
+    -->
+    <PackageReference Include="SharpCompress" Version="1.0.0" />
   </ItemGroup>
 
 </Project>

@@ -177,22 +177,3 @@ internal sealed class TarGzPackageExtractor : IPackageExtractor
         }
     }
 }
-
-/// <summary>
-/// PR-2 — placeholder for <c>.7z</c>. Native .NET has NO 7z support;
-/// SharpCompress would be a new NuGet dep. Deferred until operator demand
-/// justifies the dependency footprint on the agent. This extractor
-/// matches the extension so the dispatcher hits it (instead of silently
-/// not-found-ing) and returns a CLEAR not-supported message rather than
-/// crashing.
-/// </summary>
-internal sealed class SevenZipUnsupportedExtractor : IPackageExtractor
-{
-    public bool CanHandle(string archivePath)
-        => string.Equals(Path.GetExtension(archivePath), ".7z", StringComparison.OrdinalIgnoreCase);
-
-    public ExtractResult Extract(string archivePath, string destinationDir)
-        => ExtractResult.Failure(
-            $"7z archive '{archivePath}' is recognised but not supported in Squid.Calamari yet. " +
-            "Convert to .zip / .nupkg / .tar / .tar.gz, or file a feature request to add SharpCompress.");
-}
