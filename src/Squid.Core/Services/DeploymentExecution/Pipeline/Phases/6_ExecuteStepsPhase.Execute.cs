@@ -432,27 +432,20 @@ public sealed partial class ExecuteStepsPhase
 
         var packageReferences = BuildPackageReferences(actionName);
 
-        // Resolve the target namespace with project-overrides-endpoint precedence AND
-        // template expansion. effectiveVariables lists project vars FIRST, then endpoint
-        // vars, so FirstOrDefault picks the project version when both exist. The raw
-        // value may contain `#{X}` templates (a real use-case: Namespace=#{Environment}-
-        // app expanding to "prod-app"), so we feed it through VariableExpander.
-        var rawTargetNamespace = effectiveVariables
-            .FirstOrDefault(v => v.Name == SpecialVariables.Kubernetes.Namespace)?.Value;
-        var resolvedTargetNamespace = string.IsNullOrEmpty(rawTargetNamespace)
-            ? rawTargetNamespace
-            : VariableExpander.ExpandString(rawTargetNamespace, prepared.VariableDictionary);
-
+        // The render context is transport-agnostic: it carries the effective variables and the
+        // variable dictionary, and each transport's renderer resolves whatever target-specific
+        // values it needs (e.g. the Kubernetes renderers read + expand their own namespace
+        // variable). The generic pipeline deliberately knows nothing about namespaces.
         var renderContext = new IntentRenderContext
         {
             Target = tc,
             Step = step,
             EffectiveVariables = effectiveVariables,
+            VariableDictionary = prepared.VariableDictionary,
             ServerTaskId = _ctx.ServerTaskId,
             ReleaseVersion = _ctx.Release?.Version,
             StepTimeout = stepTimeout,
-            PackageReferences = packageReferences,
-            TargetNamespace = resolvedTargetNamespace
+            PackageReferences = packageReferences
         };
 
         var renderer = intentRendererRegistry.Resolve(tc.CommunicationStyle, expandedIntent);

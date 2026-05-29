@@ -70,7 +70,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            TargetNamespace = context.TargetNamespace,
+            TargetNamespace = KubernetesTargetNamespaceResolver.Resolve(context),
             PackageReferences = context.PackageReferences.ToList()
         };
     }
@@ -107,7 +107,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            TargetNamespace = context.TargetNamespace,
+            TargetNamespace = KubernetesTargetNamespaceResolver.Resolve(context),
             DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
@@ -135,7 +135,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = ((ExecutionIntent)intent).Timeout ?? context.StepTimeout,
-            TargetNamespace = context.TargetNamespace,
+            TargetNamespace = KubernetesTargetNamespaceResolver.Resolve(context),
             DeploymentFiles = deploymentFiles,
             PackageReferences = context.PackageReferences.ToList()
         };
@@ -161,7 +161,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
             ServerTaskId = context.ServerTaskId,
             ReleaseVersion = context.ReleaseVersion,
             Timeout = intent.Timeout ?? context.StepTimeout,
-            TargetNamespace = context.TargetNamespace,
+            TargetNamespace = KubernetesTargetNamespaceResolver.Resolve(context),
             PackageReferences = context.PackageReferences.ToList()
         };
     }

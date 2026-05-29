@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Tentacle.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -157,6 +158,7 @@ public class TentacleIntentRendererTests
             },
             Step = new DeploymentStepDto { Name = "step-1" },
             EffectiveVariables = new List<VariableDto>(),
+            VariableDictionary = VariableDictionaryFactory.Create(new List<VariableDto>()),
             ServerTaskId = 42,
             ReleaseVersion = "1.0.0",
             StepTimeout = stepTimeout

@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.VariableSubstitution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -21,6 +22,15 @@ public sealed class IntentRenderContext
     /// <summary>Effective variables for this target/action (deployment vars + endpoint vars + action scope).</summary>
     public required IReadOnlyList<VariableDto> EffectiveVariables { get; init; }
 
+    /// <summary>
+    /// Variable dictionary for evaluating <c>#{...}</c> templates at render time. Built from the
+    /// same action-scoped variables as <see cref="EffectiveVariables"/> (plus package metadata).
+    /// Transports that resolve target-specific values from variable templates (e.g. a Kubernetes
+    /// namespace like <c>#{Environment}-app</c>) expand them through this dictionary, so the
+    /// generic pipeline never needs to know transport-specific variable names.
+    /// </summary>
+    public required VariableDictionary VariableDictionary { get; init; }
+
     /// <summary>Release version string, or <c>null</c> for a non-release-driven deployment.</summary>
     public string? ReleaseVersion { get; init; }
 
@@ -29,13 +39,6 @@ public sealed class IntentRenderContext
 
     /// <summary>Optional per-step wall-clock timeout; <c>null</c> means "transport default".</summary>
     public TimeSpan? StepTimeout { get; init; }
-
-    /// <summary>
-    /// Target namespace for the deployment action, resolved from endpoint variables.
-    /// Transports that support namespace isolation (e.g. Kubernetes) use this to
-    /// scope script execution. <c>null</c> when the transport has no namespace concept.
-    /// </summary>
-    public string? TargetNamespace { get; init; }
 
     /// <summary>
     /// Post-acquisition package references for this action, matched from acquired packages

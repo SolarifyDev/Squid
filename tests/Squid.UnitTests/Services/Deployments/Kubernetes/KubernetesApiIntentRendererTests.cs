@@ -13,6 +13,7 @@ using Squid.Core.Services.DeploymentExecution.Rendering.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
@@ -96,6 +97,24 @@ public class KubernetesApiIntentRendererTests
         var rendered = await _renderer.RenderAsync(intent, NewContext(targetNamespace: "production"), CancellationToken.None);
 
         rendered.TargetNamespace.ShouldBe("production");
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_NamespaceVariableTemplate_ExpandedIntoRequest()
+    {
+        // The renderer reads the Squid.Action.Kubernetes.Namespace variable and expands its
+        // #{...} template through the dictionary (logic moved out of the generic pipeline).
+        SetupBuilder(returnValue: "wrapped");
+        var intent = NewRunScriptIntent(syntax: ScriptSyntax.Bash);
+        var variables = new List<VariableDto>
+        {
+            new() { Name = "Environment", Value = "prod" },
+            new() { Name = SpecialVariables.Kubernetes.Namespace, Value = "#{Environment}-app" }
+        };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(variables: variables), CancellationToken.None);
+
+        rendered.TargetNamespace.ShouldBe("prod-app");
     }
 
     [Fact]
@@ -1213,6 +1232,8 @@ public class KubernetesApiIntentRendererTests
         List<PackageAcquisitionResult>? packageReferences = null,
         string? targetNamespace = null)
     {
+        var effective = WithTargetNamespace(variables ?? new List<VariableDto>(), targetNamespace);
+
         return new IntentRenderContext
         {
             Target = target ?? new DeploymentTargetContext
@@ -1222,12 +1243,25 @@ public class KubernetesApiIntentRendererTests
                 EndpointContext = new EndpointContext()
             },
             Step = new DeploymentStepDto { Name = "step-1" },
-            EffectiveVariables = variables ?? new List<VariableDto>(),
+            EffectiveVariables = effective,
+            VariableDictionary = VariableDictionaryFactory.Create(effective),
             ServerTaskId = serverTaskId,
             ReleaseVersion = releaseVersion,
             StepTimeout = stepTimeout,
-            TargetNamespace = targetNamespace,
             PackageReferences = packageReferences ?? new List<PackageAcquisitionResult>()
+        };
+    }
+
+    // The namespace now travels as the Squid.Action.Kubernetes.Namespace variable (the
+    // renderer reads + expands it), so the helper injects it when a test asks for one.
+    private static List<VariableDto> WithTargetNamespace(List<VariableDto> variables, string? targetNamespace)
+    {
+        if (targetNamespace == null || variables.Any(v => v.Name == SpecialVariables.Kubernetes.Namespace))
+            return variables;
+
+        return new List<VariableDto>(variables)
+        {
+            new() { Name = SpecialVariables.Kubernetes.Namespace, Value = targetNamespace }
         };
     }
 }
