@@ -456,13 +456,13 @@ public class TestDataBuilder
         return entity;
     }
 
-    public async Task<DeploymentCompletion> CreateDeploymentCompletionAsync(int deploymentId, string state = "Success")
+    public async Task<DeploymentCompletion> CreateDeploymentCompletionAsync(int deploymentId, string state = "Success", DateTimeOffset? completedTime = null)
     {
         var entity = new DeploymentCompletion
         {
             DeploymentId = deploymentId,
             State = state,
-            CompletedTime = DateTimeOffset.UtcNow,
+            CompletedTime = completedTime ?? DateTimeOffset.UtcNow,
             SpaceId = 1
         };
 
