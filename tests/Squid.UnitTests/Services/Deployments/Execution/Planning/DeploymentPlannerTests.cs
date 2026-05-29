@@ -1,6 +1,7 @@
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Planning.Exceptions;
@@ -179,6 +180,37 @@ public class DeploymentPlannerTests
         planned.MatchedTargets.Count.ShouldBe(1);
         planned.MatchedTargets[0].MachineId.ShouldBe(1);
         planned.Dispatches.Count.ShouldBe(1);
+    }
+
+    // ---------- preview == runtime target consistency -------------------
+
+    [Theory]
+    [InlineData("web")]      // scoped: only web targets
+    [InlineData("web,db")]   // scoped: multiple roles
+    [InlineData(null)]       // unscoped: matches all
+    [InlineData("   ")]      // whitespace-only roles → unscoped (the edge the two old matchers disagreed on)
+    public async Task PreviewMatchedTargets_EqualExecutorRuntimeMatch(string roles)
+    {
+        // The machines a preview reports as matched MUST be exactly the machines
+        // the executor's runtime resolution selects — they now share StepRoleMatcher.
+        var step = BuildStep(id: 10, order: 1, name: "Deploy", roles: roles);
+        step.Actions.Add(BuildAction(id: 100, order: 1, actionType: SpecialVariables.ActionTypes.Script, name: "Run"));
+
+        var targets = new List<DeploymentTargetContext>
+        {
+            BuildTargetContext(1, "web-1", "web", CommunicationStyle.KubernetesApi),
+            BuildTargetContext(2, "db-1", "db", CommunicationStyle.KubernetesApi),
+            BuildTargetContext(3, "web-2", "web", CommunicationStyle.KubernetesApi)
+        };
+
+        var plan = await BuildPlanner().PlanAsync(BuildRequest(PlanMode.Preview, [step], targets), CancellationToken.None);
+        var previewMatched = plan.Steps.Single().MatchedTargets.Select(t => t.MachineId).OrderBy(id => id).ToList();
+
+        var runtimeMatched = TargetStepMatcher.FindMatchingTargetsForStep(step, targets)
+            .Select(tc => tc.Machine.Id).OrderBy(id => id).ToList();
+
+        runtimeMatched.ShouldBe(previewMatched,
+            customMessage: "Preview-matched machines MUST equal the executor's runtime match — one source of truth (StepRoleMatcher).");
     }
 
     [Fact]

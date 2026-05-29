@@ -1,4 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Core.Services.DeploymentExecution.Planning.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Validation;
+using Squid.Message.Hardening;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -51,6 +54,30 @@ public sealed class PlanDeploymentPhase(IDeploymentPlanner planner) : IDeploymen
         var request = BuildPlanRequest(ctx);
 
         ctx.Plan = await planner.PlanAsync(request, ct).ConfigureAwait(false);
+
+        EnforceCapabilityStrict(ctx.Plan);
+    }
+
+    /// <summary>
+    /// Capability enforcement (Rule 11), strict mode only: fail the deployment
+    /// PRE-FLIGHT (before any step runs) when the plan contains a known
+    /// capability mismatch. Scoped to <see cref="PlanBlockingReasonCodes.CapabilityViolation"/>
+    /// — other blockers (no matching targets, unresolved transport) are a
+    /// separate concern and never escalated by this toggle. off/warn never throw
+    /// here; they let <see cref="ExecuteStepsPhase"/> skip the incompatible
+    /// (action × target) at dispatch time.
+    /// </summary>
+    private static void EnforceCapabilityStrict(DeploymentPlan plan)
+    {
+        if (CapabilityEnforcement.ResolveMode() != EnforcementMode.Strict) return;
+
+        var capabilityBlockers = plan.BlockingReasons
+            .Where(b => b.Code == PlanBlockingReasonCodes.CapabilityViolation)
+            .ToList();
+
+        if (capabilityBlockers.Count == 0) return;
+
+        throw new DeploymentPlanValidationException(plan with { BlockingReasons = capabilityBlockers });
     }
 
     private static bool ShouldSkip(DeploymentTaskContext ctx)

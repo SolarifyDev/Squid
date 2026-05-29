@@ -11,7 +11,9 @@ using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Message.Constants;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Models.Deployments.Execution;
+using Squid.Message.Hardening;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
@@ -142,7 +144,15 @@ public sealed partial class ExecuteStepsPhase
             ? string.Join("; ", dispatch.Validation.Violations.Select(v => v.Message))
             : "dispatch blocked by capability validation";
 
-        Log.Warning("[Deploy] Action {ActionName} skipped on {MachineName}: {Message}", action.Name, tc.Machine.Name, message);
+        // Capability enforcement (Rule 11). Strict already failed pre-flight in
+        // PlanDeploymentPhase, so here we only distinguish off (quiet, debug) from
+        // warn (the default — a visible warning naming the strict/off escape
+        // hatch). Both still skip the incompatible dispatch + emit the deploy-log
+        // event, so warn reproduces the prior behaviour exactly (non-breaking).
+        if (CapabilityEnforcement.ResolveMode() == EnforcementMode.Off)
+            Log.Debug("[Deploy] Action {ActionName} skipped on {MachineName} (capability mismatch, enforcement=off): {Message}", action.Name, tc.Machine.Name, message);
+        else
+            Log.Warning("[Deploy] Action {ActionName} skipped on {MachineName}: {Message}. Set {EnvVar}=strict to fail the deployment instead, or =off to silence.", action.Name, tc.Machine.Name, message, CapabilityEnforcement.EnvVar);
 
         await lifecycle.EmitAsync(new ActionCapabilityFilteredEvent(new DeploymentEventContext
         {
