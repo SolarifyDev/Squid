@@ -96,9 +96,26 @@ public class RetentionPolicyEnforcer(
             Log.Information("Retention: deleting {Count} deployments for project {ProjectId} environment {EnvironmentId}", deploymentsToDelete.Count, projectId, environmentId);
 
             var ids = deploymentsToDelete.Select(d => d.Id).ToList();
+            var taskIds = deploymentsToDelete.Where(d => d.TaskId.HasValue).Select(d => d.TaskId!.Value).Distinct().ToList();
+
+            // Delete the deployment LAST. It is the retention anchor: if any child delete
+            // below crashes mid-way, the surviving deployment is re-selected next run and the
+            // whole cleanup retries idempotently, so nothing is left permanently orphaned.
+            await DeleteServerTaskDataAsync(taskIds, cancellationToken).ConfigureAwait(false);
             await deploymentCompletionDataProvider.DeleteByDeploymentIdsAsync(ids, cancellationToken).ConfigureAwait(false);
             await deploymentDataProvider.DeleteDeploymentsAsync(ids, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task DeleteServerTaskDataAsync(List<int> taskIds, CancellationToken cancellationToken)
+    {
+        if (taskIds.Count == 0) return;
+
+        await repository.ExecuteDeleteAsync<ServerTaskLog>(l => taskIds.Contains(l.ServerTaskId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<DeploymentInterruption>(i => taskIds.Contains(i.ServerTaskId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<DeploymentExecutionCheckpoint>(c => taskIds.Contains(c.ServerTaskId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.ActivityLog>(a => taskIds.Contains(a.ServerTaskId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.ServerTask>(t => taskIds.Contains(t.Id), cancellationToken).ConfigureAwait(false);
     }
 
     public static List<Deployment> GetDeploymentsExceedingRetention(List<Deployment> deployments, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds)
