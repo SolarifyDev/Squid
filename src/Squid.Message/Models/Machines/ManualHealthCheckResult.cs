@@ -61,4 +61,9 @@ public static class ManualHealthCheckErrorCodes
     public const string MachineDisabled = "machine_disabled";
     public const string NoHealthChecker = "no_health_checker";
     public const string AgentUnreachable = "agent_unreachable";
+
+    /// <summary>Agent unreachable, but the machine policy's connectivity behaviour is
+    /// <c>MayBeOfflineAndCanBeSkipped</c> — the offline state is expected and reported as
+    /// tolerated, so the FE can render a benign "offline (expected)" rather than a hard error.</summary>
+    public const string OfflineTolerated = "offline_tolerated";
 }

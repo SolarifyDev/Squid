@@ -34,6 +34,10 @@ public sealed class ManualHealthCheckErrorCodesIntegrityTests
         => ManualHealthCheckErrorCodes.AgentUnreachable.ShouldBe("agent_unreachable");
 
     [Fact]
+    public void OfflineTolerated_LiteralPinned()
+        => ManualHealthCheckErrorCodes.OfflineTolerated.ShouldBe("offline_tolerated");
+
+    [Fact]
     public void AllCodes_LowerSnakeCase_StableConvention()
     {
         // Convention: lower_snake_case so consumers can split-on-underscore +
@@ -44,7 +48,8 @@ public sealed class ManualHealthCheckErrorCodesIntegrityTests
             ManualHealthCheckErrorCodes.MachineNotFound,
             ManualHealthCheckErrorCodes.MachineDisabled,
             ManualHealthCheckErrorCodes.NoHealthChecker,
-            ManualHealthCheckErrorCodes.AgentUnreachable
+            ManualHealthCheckErrorCodes.AgentUnreachable,
+            ManualHealthCheckErrorCodes.OfflineTolerated
         };
 
         foreach (var code in codes)
