@@ -78,6 +78,8 @@ public class RetentionPolicyEnforcer(
                 projectId, environmentIds, effectiveUnit, effectiveQuantity,
                 currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
         }
+
+        await PruneExpiredReleasesAsync(projectId, lifecycle.ReleaseRetentionKeepForever, lifecycle.ReleaseRetentionUnit, lifecycle.ReleaseRetentionQuantity, currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task EnforceForEnvironmentsAsync(int projectId, List<int> environmentIds, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
@@ -116,6 +118,96 @@ public class RetentionPolicyEnforcer(
         await repository.ExecuteDeleteAsync<DeploymentExecutionCheckpoint>(c => taskIds.Contains(c.ServerTaskId), cancellationToken).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.ActivityLog>(a => taskIds.Contains(a.ServerTaskId), cancellationToken).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.ServerTask>(t => taskIds.Contains(t.Id), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PruneExpiredReleasesAsync(int projectId, bool keepForever, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
+    {
+        if (keepForever) return;
+
+        var cutoff = CalculateCutoff(unit, quantity);
+
+        var releases = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => r.ProjectId == projectId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var releaseIdsWithDeployments = (await repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId)
+            .Select(d => d.ReleaseId).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
+
+        var releasesToDelete = GetReleasesExceedingRetention(releases, cutoff, currentlyDeployedReleaseIds, releaseIdsWithDeployments);
+
+        if (releasesToDelete.Count == 0) return;
+
+        Log.Information("Retention: deleting {Count} releases for project {ProjectId}", releasesToDelete.Count, projectId);
+
+        var releaseIds = releasesToDelete.Select(r => r.Id).ToList();
+        var processSnapshotIds = releasesToDelete.Select(r => r.ProjectDeploymentProcessSnapshotId).Where(id => id != 0).Distinct().ToList();
+        var variableSnapshotIds = releasesToDelete.Select(r => r.ProjectVariableSetSnapshotId).Where(id => id != 0).Distinct().ToList();
+
+        // Atomic anti-race guard: re-check at DELETE time that no deployment references the
+        // release. A deployment created between the in-memory read above and these deletes
+        // (e.g. someone deploys a long-undeployed release just as retention runs) must protect
+        // its release. The subquery re-evaluates per DELETE, so such a release is excluded from
+        // BOTH deletes — never leaving a release without its packages, nor a deployment whose
+        // release was pruned. (Its snapshots are likewise kept: the surviving release and the
+        // new deployment both still reference them, so DeleteOrphanedSnapshotsAsync skips them.)
+        var releaseIdsReferencedByDeployment = repository.QueryNoTracking<Deployment>().Select(d => d.ReleaseId);
+
+        // Children before parent: delete package selections, then the release (the anchor) last,
+        // so a mid-sequence crash leaves the release for the next run to retry idempotently.
+        await repository.ExecuteDeleteAsync<ReleaseSelectedPackage>(p => releaseIds.Contains(p.ReleaseId) && !releaseIdsReferencedByDeployment.Contains(p.ReleaseId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.Release>(r => releaseIds.Contains(r.Id) && !releaseIdsReferencedByDeployment.Contains(r.Id), cancellationToken).ConfigureAwait(false);
+
+        await DeleteOrphanedSnapshotsAsync(processSnapshotIds, variableSnapshotIds, cancellationToken).ConfigureAwait(false);
+    }
+
+    public static List<Persistence.Entities.Deployments.Release> GetReleasesExceedingRetention(List<Persistence.Entities.Deployments.Release> releases, DateTimeOffset cutoff, HashSet<int> currentlyDeployedReleaseIds, HashSet<int> releaseIdsWithDeployments)
+    {
+        var result = new List<Persistence.Entities.Deployments.Release>();
+
+        foreach (var release in releases)
+        {
+            if (currentlyDeployedReleaseIds.Contains(release.Id)) continue;
+
+            if (releaseIdsWithDeployments.Contains(release.Id)) continue;
+
+            if (release.CreatedDate >= cutoff) continue;
+
+            result.Add(release);
+        }
+
+        return result;
+    }
+
+    private async Task DeleteOrphanedSnapshotsAsync(List<int> processSnapshotIds, List<int> variableSnapshotIds, CancellationToken cancellationToken)
+    {
+        if (processSnapshotIds.Count > 0)
+        {
+            var referencedByRelease = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => processSnapshotIds.Contains(r.ProjectDeploymentProcessSnapshotId))
+                .Select(r => r.ProjectDeploymentProcessSnapshotId).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var referencedByDeployment = await repository.QueryNoTracking<Deployment>(d => d.ProcessSnapshotId != null && processSnapshotIds.Contains(d.ProcessSnapshotId.Value))
+                .Select(d => d.ProcessSnapshotId!.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var stillReferenced = referencedByRelease.Concat(referencedByDeployment).ToHashSet();
+            var orphaned = processSnapshotIds.Where(id => !stillReferenced.Contains(id)).ToList();
+
+            if (orphaned.Count > 0)
+                await repository.ExecuteDeleteAsync<DeploymentProcessSnapshot>(s => orphaned.Contains(s.Id), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (variableSnapshotIds.Count > 0)
+        {
+            var referencedByRelease = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => variableSnapshotIds.Contains(r.ProjectVariableSetSnapshotId))
+                .Select(r => r.ProjectVariableSetSnapshotId).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var referencedByDeployment = await repository.QueryNoTracking<Deployment>(d => d.VariableSetSnapshotId != null && variableSnapshotIds.Contains(d.VariableSetSnapshotId.Value))
+                .Select(d => d.VariableSetSnapshotId!.Value).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+            var stillReferenced = referencedByRelease.Concat(referencedByDeployment).ToHashSet();
+            var orphaned = variableSnapshotIds.Where(id => !stillReferenced.Contains(id)).ToList();
+
+            if (orphaned.Count > 0)
+                await repository.ExecuteDeleteAsync<VariableSetSnapshot>(s => orphaned.Contains(s.Id), cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public static List<Deployment> GetDeploymentsExceedingRetention(List<Deployment> deployments, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds)

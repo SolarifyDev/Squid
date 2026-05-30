@@ -9,6 +9,7 @@ using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Message.Enums.Deployments;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
 namespace Squid.UnitTests.Services.Deployments.Retention;
 
@@ -182,5 +183,78 @@ public class RetentionPolicyEnforcerTests
             ProjectId = 1,
             EnvironmentId = 1
         };
+    }
+
+    // ─── GetReleasesExceedingRetention (pure static) ───
+
+    [Fact]
+    public void Release_OldUndeployedNotCurrent_Pruned()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingRetention(
+            new List<ReleaseEntity> { MakeRelease(1, now.AddDays(-40)) },
+            cutoff: now.AddDays(-30), new HashSet<int>(), new HashSet<int>());
+
+        result.Select(r => r.Id).ShouldBe(new[] { 1 });
+    }
+
+    [Fact]
+    public void Release_CurrentlyDeployed_Kept()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingRetention(
+            new List<ReleaseEntity> { MakeRelease(1, now.AddDays(-100)) },
+            cutoff: now.AddDays(-30), new HashSet<int> { 1 }, new HashSet<int>());
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Release_WithSurvivingDeployments_Kept()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingRetention(
+            new List<ReleaseEntity> { MakeRelease(1, now.AddDays(-100)) },
+            cutoff: now.AddDays(-30), new HashSet<int>(), new HashSet<int> { 1 });
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Release_Recent_Kept()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingRetention(
+            new List<ReleaseEntity> { MakeRelease(1, now.AddDays(-5)) },
+            cutoff: now.AddDays(-30), new HashSet<int>(), new HashSet<int>());
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Releases_MixedSet_OnlyEligiblePruned()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var releases = new List<ReleaseEntity>
+        {
+            MakeRelease(1, now.AddDays(-40)),  // old, undeployed, not current → prune
+            MakeRelease(2, now.AddDays(-40)),  // old but currently deployed → keep
+            MakeRelease(3, now.AddDays(-40)),  // old but has surviving deployments → keep
+            MakeRelease(4, now.AddDays(-5))    // recent → keep
+        };
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingRetention(
+            releases, cutoff: now.AddDays(-30), new HashSet<int> { 2 }, new HashSet<int> { 3 });
+
+        result.Select(r => r.Id).ShouldBe(new[] { 1 });
+    }
+
+    private static ReleaseEntity MakeRelease(int id, DateTimeOffset created)
+    {
+        return new ReleaseEntity { Id = id, ProjectId = 1, CreatedDate = created };
     }
 }
