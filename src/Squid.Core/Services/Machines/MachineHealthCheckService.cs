@@ -207,11 +207,25 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
     private async Task RecordHealthStatusAsync(Machine machine, MachineHealthStatus status, string detail, CancellationToken cancellationToken)
     {
+        var now = DateTimeOffset.UtcNow;
+
+        machine.UnavailableSince = ResolveUnavailableSince(machine.HealthStatus, machine.UnavailableSince, status, now);
         machine.HealthStatus = status;
-        machine.HealthLastChecked = DateTimeOffset.UtcNow;
+        machine.HealthLastChecked = now;
         machine.HealthDetail = detail;
 
         await _machineDataProvider.UpdateMachineAsync(machine, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    // Track the FIRST instant a machine became Unavailable: stamp it on entry,
+    // preserve it while the machine stays Unavailable, clear it once the machine
+    // recovers to any non-Unavailable status. Pure so the transition is
+    // unit-testable and the cleanup grace period measures continuous downtime.
+    internal static DateTimeOffset? ResolveUnavailableSince(MachineHealthStatus previous, DateTimeOffset? previousUnavailableSince, MachineHealthStatus next, DateTimeOffset now)
+    {
+        if (next != MachineHealthStatus.Unavailable) return null;
+
+        return previous == MachineHealthStatus.Unavailable ? previousUnavailableSince : now;
     }
 
     private Task RecordUnavailableAsync(Machine machine, string detail, CancellationToken cancellationToken)
