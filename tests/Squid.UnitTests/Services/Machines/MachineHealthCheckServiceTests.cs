@@ -215,6 +215,41 @@ public class MachineHealthCheckServiceTests
     }
 
     [Fact]
+    public async Task ManualHealthCheck_ProbeFails_ExpectedToBeOnline_ReturnsAgentUnreachable()
+    {
+        // Default machine-policy connectivity behaviour: an offline agent is a genuine
+        // failure (today's behaviour, preserved).
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
+            .ReturnsAsync(new HealthCheckResult(false, "connection refused"));
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
+        SetupMachineById(machine);
+        SetupConnectivityPolicy(1, MachineConnectivityBehavior.ExpectedToBeOnline);
+
+        var result = await _service.ManualHealthCheckAsync(machine.Id);
+
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.AgentUnreachable);
+    }
+
+    [Fact]
+    public async Task ManualHealthCheck_ProbeFails_MayBeOffline_ReturnsOfflineTolerated()
+    {
+        // MayBeOfflineAndCanBeSkipped: an offline agent is expected (elastic / transient
+        // target) — reported as the benign offline_tolerated, not a hard failure.
+        _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
+            .ReturnsAsync(new HealthCheckResult(false, "connection refused"));
+
+        var machine = CreateActiveMachineWithEndpoint(CommunicationStyle.KubernetesApi, machinePolicyId: 1);
+        SetupMachineById(machine);
+        SetupConnectivityPolicy(1, MachineConnectivityBehavior.MayBeOfflineAndCanBeSkipped);
+
+        var result = await _service.ManualHealthCheckAsync(machine.Id);
+
+        result.ErrorCode.ShouldBe(ManualHealthCheckErrorCodes.OfflineTolerated,
+            customMessage: "MayBeOfflineAndCanBeSkipped MUST report the benign offline_tolerated so the FE renders 'offline (expected)' rather than a hard agent_unreachable error.");
+    }
+
+    [Fact]
     public async Task RunHealthCheck_NoTransport_RecordsUnavailable()
     {
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns((IDeploymentTransport)null);
@@ -572,5 +607,14 @@ public class MachineHealthCheckServiceTests
 
         _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MachinePolicy { Id = policyId, MachineHealthCheckPolicy = policyJson });
+    }
+
+    private void SetupConnectivityPolicy(int policyId, MachineConnectivityBehavior behavior)
+    {
+        var connectivity = new MachineConnectivityPolicyDto { MachineConnectivityBehavior = behavior };
+        var policyJson = JsonSerializer.Serialize(connectivity, JsonOptions);
+
+        _policyDataProvider.Setup(p => p.GetByIdAsync(policyId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachinePolicy { Id = policyId, MachineConnectivityPolicy = policyJson });
     }
 }

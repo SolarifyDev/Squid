@@ -111,11 +111,24 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         {
             Successful = probeResult.Healthy,
             Detail = probeResult.Detail ?? string.Empty,
-            ErrorCode = probeResult.Healthy ? null : ManualHealthCheckErrorCodes.AgentUnreachable,
+            ErrorCode = ResolveUnreachableErrorCode(probeResult.Healthy, connectivityPolicy),
             AgentVersion = caps?.AgentVersion ?? string.Empty,
             Os = caps?.Os ?? string.Empty,
             CheckedAt = checkedAt
         };
+    }
+
+    // A reachable probe has no error code. An unreachable one is a hard
+    // agent_unreachable unless the machine policy's connectivity behaviour tolerates
+    // offline targets (MayBeOfflineAndCanBeSkipped), in which case it is reported as
+    // the benign offline_tolerated. Default / no policy → agent_unreachable (unchanged).
+    private static string ResolveUnreachableErrorCode(bool healthy, MachineConnectivityPolicyDto connectivityPolicy)
+    {
+        if (healthy) return null;
+
+        return MachineConnectivityEvaluator.AllowsOffline(connectivityPolicy)
+            ? ManualHealthCheckErrorCodes.OfflineTolerated
+            : ManualHealthCheckErrorCodes.AgentUnreachable;
     }
 
     public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
