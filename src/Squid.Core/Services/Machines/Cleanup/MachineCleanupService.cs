@@ -2,11 +2,10 @@ using Squid.Core.DependencyInjection;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
-using Squid.Message.Hardening;
 
 namespace Squid.Core.Services.Machines.Cleanup;
 
-public sealed record MachineCleanupOutcome(EnforcementMode Mode, int Scanned, int Eligible, int Deleted);
+public sealed record MachineCleanupOutcome(int Scanned, int Eligible, int Deleted);
 
 public interface IMachineCleanupService : IScopedDependency
 {
@@ -17,14 +16,15 @@ public interface IMachineCleanupService : IScopedDependency
 /// Enforces the machine-policy "Clean up — delete unavailable deployment targets
 /// after N" behaviour. Runs on a schedule via <c>MachineCleanupRecurringJob</c>.
 ///
-/// <para>Double-opt-in for this destructive operation: a machine is eligible only
-/// when its policy sets <see cref="DeleteMachinesBehavior.DeleteUnavailableMachines"/>
-/// AND it has been continuously unavailable for the configured grace period
-/// (<see cref="MachineCleanupEvaluator"/>). Whether an eligible machine is merely
-/// logged or actually deleted is then gated by <see cref="MachineCleanupEnforcement"/>
-/// (default <c>warn</c> = dry-run). Deletion goes through the same
-/// <see cref="IMachineService.DeleteMachinesAsync"/> path the operator-facing delete
-/// uses, so Halibut trust is reconfigured exactly as for a manual removal.</para>
+/// <para>The per-policy <see cref="DeleteMachinesBehavior"/> is the sole control:
+/// the default <c>DoNotDelete</c> makes a machine ineligible, so the sweep is a
+/// no-op until an operator explicitly opts a policy into
+/// <see cref="DeleteMachinesBehavior.DeleteUnavailableMachines"/> AND the target
+/// has been continuously unavailable for the configured grace period
+/// (<see cref="MachineCleanupEvaluator"/>). Eligible machines are removed through
+/// the same <see cref="IMachineService.DeleteMachinesAsync"/> path the
+/// operator-facing delete uses, so Halibut trust is reconfigured exactly as for a
+/// manual removal.</para>
 /// </summary>
 public sealed class MachineCleanupService(
     IMachineDataProvider machineDataProvider,
@@ -33,14 +33,6 @@ public sealed class MachineCleanupService(
 {
     public async Task<MachineCleanupOutcome> EnforceCleanupAsync(CancellationToken cancellationToken = default)
     {
-        var mode = MachineCleanupEnforcement.ResolveMode();
-
-        if (mode == EnforcementMode.Off)
-        {
-            Log.Debug("[MachineCleanup] Disabled via {EnvVar}=off — skipping sweep.", MachineCleanupEnforcement.EnvVar);
-            return new MachineCleanupOutcome(mode, 0, 0, 0);
-        }
-
         var now = DateTimeOffset.UtcNow;
 
         var (_, machines) = await machineDataProvider.GetMachinesAllSpacesPagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -48,17 +40,11 @@ public sealed class MachineCleanupService(
         var eligible = await ResolveEligibleAsync(machines, now, cancellationToken).ConfigureAwait(false);
 
         if (eligible.Count == 0)
-            return new MachineCleanupOutcome(mode, machines.Count, 0, 0);
-
-        if (mode == EnforcementMode.Warn)
-        {
-            WarnWouldDelete(eligible);
-            return new MachineCleanupOutcome(mode, machines.Count, eligible.Count, 0);
-        }
+            return new MachineCleanupOutcome(machines.Count, 0, 0);
 
         var deleted = await DeleteAsync(eligible, cancellationToken).ConfigureAwait(false);
 
-        return new MachineCleanupOutcome(mode, machines.Count, eligible.Count, deleted);
+        return new MachineCleanupOutcome(machines.Count, eligible.Count, deleted);
     }
 
     private async Task<List<Machine>> ResolveEligibleAsync(List<Machine> machines, DateTimeOffset now, CancellationToken cancellationToken)
@@ -78,15 +64,6 @@ public sealed class MachineCleanupService(
         }
 
         return eligible;
-    }
-
-    private void WarnWouldDelete(List<Machine> eligible)
-    {
-        foreach (var machine in eligible)
-            Log.Warning(
-                "[MachineCleanup] WOULD delete unavailable target {MachineName} (id {MachineId}, unavailable since {Since:o}) per its machine policy. " +
-                "Set {EnvVar}=strict to actually delete, or =off to silence.",
-                machine.Name, machine.Id, machine.UnavailableSince, MachineCleanupEnforcement.EnvVar);
     }
 
     private async Task<int> DeleteAsync(List<Machine> eligible, CancellationToken cancellationToken)
