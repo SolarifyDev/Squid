@@ -35,6 +35,9 @@ public sealed class LoadDeploymentDataPhase(
         ctx.Deployment.DeploymentRequestPayload = DeploymentTargetFinder.ParseRequestPayload(deployment.Json);
 
         var release = await releaseDataProvider.GetReleaseByIdAsync(deployment.ReleaseId, ct).ConfigureAwait(false);
+
+        if (release == null) throw new DeploymentEntityNotFoundException("Release", $"id:{deployment.ReleaseId}");
+
         var project = await projectDataProvider.GetProjectByIdAsync(deployment.ProjectId, ct).ConfigureAwait(false);
         var environment = await environmentDataProvider.GetEnvironmentByIdAsync(deployment.EnvironmentId, ct).ConfigureAwait(false);
         var channel = await channelDataProvider.GetChannelByIdAsync(deployment.ChannelId, ct).ConfigureAwait(false);

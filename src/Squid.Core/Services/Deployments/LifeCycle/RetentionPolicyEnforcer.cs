@@ -142,10 +142,19 @@ public class RetentionPolicyEnforcer(
         var processSnapshotIds = releasesToDelete.Select(r => r.ProjectDeploymentProcessSnapshotId).Where(id => id != 0).Distinct().ToList();
         var variableSnapshotIds = releasesToDelete.Select(r => r.ProjectVariableSetSnapshotId).Where(id => id != 0).Distinct().ToList();
 
+        // Atomic anti-race guard: re-check at DELETE time that no deployment references the
+        // release. A deployment created between the in-memory read above and these deletes
+        // (e.g. someone deploys a long-undeployed release just as retention runs) must protect
+        // its release. The subquery re-evaluates per DELETE, so such a release is excluded from
+        // BOTH deletes — never leaving a release without its packages, nor a deployment whose
+        // release was pruned. (Its snapshots are likewise kept: the surviving release and the
+        // new deployment both still reference them, so DeleteOrphanedSnapshotsAsync skips them.)
+        var releaseIdsReferencedByDeployment = repository.QueryNoTracking<Deployment>().Select(d => d.ReleaseId);
+
         // Children before parent: delete package selections, then the release (the anchor) last,
         // so a mid-sequence crash leaves the release for the next run to retry idempotently.
-        await repository.ExecuteDeleteAsync<ReleaseSelectedPackage>(p => releaseIds.Contains(p.ReleaseId), cancellationToken).ConfigureAwait(false);
-        await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.Release>(r => releaseIds.Contains(r.Id), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<ReleaseSelectedPackage>(p => releaseIds.Contains(p.ReleaseId) && !releaseIdsReferencedByDeployment.Contains(p.ReleaseId), cancellationToken).ConfigureAwait(false);
+        await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.Release>(r => releaseIds.Contains(r.Id) && !releaseIdsReferencedByDeployment.Contains(r.Id), cancellationToken).ConfigureAwait(false);
 
         await DeleteOrphanedSnapshotsAsync(processSnapshotIds, variableSnapshotIds, cancellationToken).ConfigureAwait(false);
     }
