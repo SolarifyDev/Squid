@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
@@ -91,17 +92,36 @@ public sealed class PrepareDeploymentPhase(
     {
         ctx.AllTargets = await targetFinder.FindTargetsAsync(ctx.Deployment, ct).ConfigureAwait(false);
 
-        var (healthy, excludedByHealth) = DeploymentTargetFinder.FilterByHealthStatus(ctx.AllTargets);
-
-        if (excludedByHealth.Count > 0)
-        {
-            ctx.AllTargets = healthy;
-            ctx.ExcludedByHealthTargets = excludedByHealth;
-        }
+        ApplyTransientTargetPolicy(ctx);
 
         if (ctx.AllTargets.Count == 0) throw new DeploymentTargetException($"No target machines found for deployment {ctx.Deployment.Id}", ctx.Deployment.Id);
 
         Log.Information("[Deploy] Found {Count} target machines for deployment {DeploymentId}", ctx.AllTargets.Count, ctx.Deployment.Id);
+    }
+
+    // Honour the project's "Transient Deployment Targets" setting. Defaults
+    // (SkipAndContinue + Exclude) reproduce the historical unconditional exclusion of
+    // unavailable + unhealthy targets, so an unconfigured project behaves exactly as
+    // before. FailDeployment on an unavailable target aborts the deployment up front.
+    internal static void ApplyTransientTargetPolicy(DeploymentTaskContext ctx)
+    {
+        var transient = DeploymentSettingsSerializer.Deserialize(ctx.Project?.DeploymentSettingsJson).TransientDeploymentTargets;
+
+        var result = TransientDeploymentTargetEvaluator.Apply(
+            ctx.AllTargets, transient.UnavailableDeploymentTargets, transient.UnhealthyDeploymentTargets);
+
+        if (result.FailedUnavailable.Count > 0)
+        {
+            var names = string.Join(", ", result.FailedUnavailable.Select(m => m.Name));
+            throw new DeploymentTargetException(
+                $"Deployment {ctx.Deployment.Id} cannot start: {result.FailedUnavailable.Count} deployment target(s) are unavailable and the project's Transient Deployment Targets setting is 'Fail deployment': {names}",
+                ctx.Deployment.Id);
+        }
+
+        ctx.AllTargets = result.Kept;
+
+        if (result.Skipped.Count > 0)
+            ctx.ExcludedByHealthTargets = result.Skipped;
     }
 
     private static void ConvertSnapshotToSteps(DeploymentTaskContext ctx)

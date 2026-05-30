@@ -60,6 +60,26 @@ public class ProjectController : ControllerBase
         return Ok(response);
     }
 
+    [HttpGet("{id:int}/deployment-settings")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentSettingsResponse))]
+    public async Task<IActionResult> GetDeploymentSettingsAsync(int id)
+    {
+        var request = new GetDeploymentSettingsRequest { ProjectId = id };
+        var response = await _mediator.RequestAsync<GetDeploymentSettingsRequest, GetDeploymentSettingsResponse>(request).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{id:int}/deployment-settings")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(SaveDeploymentSettingsResponse))]
+    public async Task<IActionResult> SaveDeploymentSettingsAsync(int id, [FromBody] SaveDeploymentSettingsCommand command)
+    {
+        command.ProjectId = id;
+        var response = await _mediator.SendAsync<SaveDeploymentSettingsCommand, SaveDeploymentSettingsResponse>(command).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("summaries")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectSummariesResponse))]
     public async Task<IActionResult> GetProjectSummariesAsync([FromQuery] GetProjectSummariesRequest request)
