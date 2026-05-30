@@ -18,8 +18,6 @@ public class EnforceMachineCleanupResponse : SquidResponse<EnforceMachineCleanup
 
 public class EnforceMachineCleanupResponseData
 {
-    public string Mode { get; set; }
-
     public int Scanned { get; set; }
 
     public int Eligible { get; set; }

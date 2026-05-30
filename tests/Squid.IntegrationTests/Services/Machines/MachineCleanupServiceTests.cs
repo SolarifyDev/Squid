@@ -8,21 +8,17 @@ using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Cleanup;
 using Squid.IntegrationTests.Base;
 using Squid.Message.Enums;
-using Squid.Message.Hardening;
 using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.IntegrationTests.Services.Machines;
 
 /// <summary>
 /// Integration coverage for machine-policy cleanup enforcement against a real
-/// Postgres DB. Verifies the three-mode gate end-to-end: off skips, warn is a
-/// dry run (the eligible machine survives), strict actually deletes it through the
-/// real <c>IMachineService</c> path. Also pins the per-policy eligibility gates
-/// (DoNotDelete, within-grace, unknown go-bad instant) against the live DB, and the
-/// UnavailableSince column round-trip.
-///
-/// <para>Env var is process-global; this class runs serially (xUnit doesn't
-/// parallelise within a class) and each test restores the prior value.</para>
+/// Postgres DB. The per-policy <c>DeleteMachinesBehavior</c> is the sole control:
+/// an eligible long-unavailable target under a <c>DeleteUnavailableMachines</c>
+/// policy is removed via the real <c>IMachineService</c> path; every other case
+/// (DoNotDelete, within-grace, unknown go-bad instant, healthy) is kept. Also pins
+/// the <c>UnavailableSince</c> column round-trip.
 /// </summary>
 public class MachineCleanupServiceTests : TestBase
 {
@@ -37,78 +33,51 @@ public class MachineCleanupServiceTests : TestBase
     }
 
     [Fact]
-    public async Task StrictMode_EligibleMachine_IsDeleted()
+    public async Task EligibleMachine_IsDeleted()
     {
         var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
             status: MachineHealthStatus.Unavailable, unavailableSince: DateTimeOffset.UtcNow.AddDays(-7)).ConfigureAwait(false);
 
-        var outcome = await EnforceAsync("strict").ConfigureAwait(false);
+        var outcome = await EnforceAsync().ConfigureAwait(false);
 
+        outcome.Eligible.ShouldBe(1);
         outcome.Deleted.ShouldBe(1);
-        outcome.Eligible.ShouldBe(1);
         (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeFalse(
-            customMessage: "Strict mode must delete an eligible long-unavailable target via the real delete path.");
+            customMessage: "A DeleteUnavailableMachines policy must delete a target unavailable past its grace period, via the real delete path.");
     }
 
     [Fact]
-    public async Task WarnMode_EligibleMachine_IsReportedButNotDeleted()
-    {
-        var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
-            status: MachineHealthStatus.Unavailable, unavailableSince: DateTimeOffset.UtcNow.AddDays(-7)).ConfigureAwait(false);
-
-        var outcome = await EnforceAsync("warn").ConfigureAwait(false);
-
-        outcome.Eligible.ShouldBe(1);
-        outcome.Deleted.ShouldBe(0,
-            customMessage: "Warn mode is a dry run — it must report eligibility but delete nothing (non-breaking default).");
-        (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task OffMode_SkipsSweepEntirely()
-    {
-        var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
-            status: MachineHealthStatus.Unavailable, unavailableSince: DateTimeOffset.UtcNow.AddDays(-7)).ConfigureAwait(false);
-
-        var outcome = await EnforceAsync("off").ConfigureAwait(false);
-
-        outcome.Scanned.ShouldBe(0);
-        outcome.Deleted.ShouldBe(0);
-        (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task DoNotDeletePolicy_StrictMode_KeepsMachine()
+    public async Task DoNotDeletePolicy_KeepsMachine()
     {
         var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DoNotDelete, afterSeconds: 86400,
             status: MachineHealthStatus.Unavailable, unavailableSince: DateTimeOffset.UtcNow.AddDays(-30)).ConfigureAwait(false);
 
-        var outcome = await EnforceAsync("strict").ConfigureAwait(false);
+        var outcome = await EnforceAsync().ConfigureAwait(false);
 
         outcome.Eligible.ShouldBe(0);
         (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue(
-            customMessage: "A DoNotDelete policy must never make a machine eligible, even in strict mode.");
+            customMessage: "The default DoNotDelete policy must never delete a machine — it is the opt-in gate.");
     }
 
     [Fact]
-    public async Task WithinGracePeriod_StrictMode_KeepsMachine()
+    public async Task WithinGracePeriod_KeepsMachine()
     {
         var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
             status: MachineHealthStatus.Unavailable, unavailableSince: DateTimeOffset.UtcNow.AddHours(-1)).ConfigureAwait(false);
 
-        var outcome = await EnforceAsync("strict").ConfigureAwait(false);
+        var outcome = await EnforceAsync().ConfigureAwait(false);
 
         outcome.Eligible.ShouldBe(0);
         (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue();
     }
 
     [Fact]
-    public async Task UnknownGoBadInstant_StrictMode_KeepsMachine()
+    public async Task UnknownGoBadInstant_KeepsMachine()
     {
         var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
             status: MachineHealthStatus.Unavailable, unavailableSince: null).ConfigureAwait(false);
 
-        var outcome = await EnforceAsync("strict").ConfigureAwait(false);
+        var outcome = await EnforceAsync().ConfigureAwait(false);
 
         outcome.Eligible.ShouldBe(0);
         (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue(
@@ -116,12 +85,12 @@ public class MachineCleanupServiceTests : TestBase
     }
 
     [Fact]
-    public async Task HealthyMachine_StrictMode_KeepsMachine()
+    public async Task HealthyMachine_KeepsMachine()
     {
         var machineId = await SeedMachineAsync(DeleteMachinesBehavior.DeleteUnavailableMachines, afterSeconds: 86400,
             status: MachineHealthStatus.Healthy, unavailableSince: null).ConfigureAwait(false);
 
-        var outcome = await EnforceAsync("strict").ConfigureAwait(false);
+        var outcome = await EnforceAsync().ConfigureAwait(false);
 
         outcome.Eligible.ShouldBe(0);
         (await MachineExistsAsync(machineId).ConfigureAwait(false)).ShouldBeTrue();
@@ -143,23 +112,8 @@ public class MachineCleanupServiceTests : TestBase
 
     // ── helpers ──
 
-    private Task<MachineCleanupOutcome> EnforceAsync(string mode)
-    {
-        var original = System.Environment.GetEnvironmentVariable(MachineCleanupEnforcement.EnvVar);
-        System.Environment.SetEnvironmentVariable(MachineCleanupEnforcement.EnvVar, mode);
-
-        return Run<IMachineCleanupService, MachineCleanupOutcome>(async svc =>
-        {
-            try
-            {
-                return await svc.EnforceCleanupAsync(CancellationToken.None).ConfigureAwait(false);
-            }
-            finally
-            {
-                System.Environment.SetEnvironmentVariable(MachineCleanupEnforcement.EnvVar, original);
-            }
-        });
-    }
+    private Task<MachineCleanupOutcome> EnforceAsync()
+        => Run<IMachineCleanupService, MachineCleanupOutcome>(svc => svc.EnforceCleanupAsync(CancellationToken.None));
 
     private async Task<int> SeedMachineAsync(DeleteMachinesBehavior behavior, int afterSeconds, MachineHealthStatus status, DateTimeOffset? unavailableSince)
     {

@@ -14,7 +14,6 @@ public class EnforceMachineCleanupCommandHandler(IMachineCleanupService machineC
         {
             Data = new EnforceMachineCleanupResponseData
             {
-                Mode = outcome.Mode.ToString(),
                 Scanned = outcome.Scanned,
                 Eligible = outcome.Eligible,
                 Deleted = outcome.Deleted
