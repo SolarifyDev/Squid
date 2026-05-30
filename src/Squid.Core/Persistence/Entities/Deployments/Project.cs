@@ -25,6 +25,11 @@ public class Project : IEntity<int>, IAuditable
 
     public string Json { get; set; }
 
+    // Project-level deployment settings (DeploymentSettingsDto) as JSON. NULL means
+    // "all defaults", which preserve today's runtime behaviour. Currently carries the
+    // transient-target behaviour; the blob can grow without a per-setting migration.
+    public string DeploymentSettingsJson { get; set; }
+
     public string IncludedLibraryVariableSetIds { get; set; }
 
     public List<int> GetIncludedLibraryVariableSetIdList()
