@@ -204,22 +204,37 @@ public class RetentionPolicyEnforcer(
         return releaseIds.ToHashSet();
     }
 
-    private async Task CascadeDeleteReleasesAsync(int projectId, List<Persistence.Entities.Deployments.Release> releasesToDelete, CancellationToken cancellationToken)
+    private async Task CascadeDeleteReleasesAsync(int projectId, List<Persistence.Entities.Deployments.Release> candidates, CancellationToken cancellationToken)
     {
-        var releaseIds = releasesToDelete.Select(r => r.Id).ToList();
+        var candidateIds = candidates.Select(r => r.Id).ToList();
 
-        // Snapshot the deployments at read time and delete them by their captured Ids only. A
-        // deployment created concurrently (new Id) is never in this list, so an in-flight deploy of
-        // a beyond-window release is never killed — the guarded release delete below then skips it.
-        var deployments = await repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId && releaseIds.Contains(d.ReleaseId))
+        var deployments = await repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId && candidateIds.Contains(d.ReleaseId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        await DeleteDeploymentsCascadeAsync(deployments, cancellationToken).ConfigureAwait(false);
+        // Re-validate preservation at delete time. A candidate that gained an in-progress deployment
+        // between selection and now (someone deploys a beyond-window release just as retention runs)
+        // is spared ENTIRELY — its deployments, packages, release and snapshots are all kept — so we
+        // never delete an in-flight deployment. The release-delete guard below covers the residual
+        // window for any deployment created after this re-check.
+        var activeReleaseIds = await GetReleaseIdsWithActiveDeploymentAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var releasesToDelete = candidates.Where(r => !activeReleaseIds.Contains(r.Id)).ToList();
+
+        if (releasesToDelete.Count == 0) return;
+
+        var releaseIds = releasesToDelete.Select(r => r.Id).ToList();
+        var releaseIdSet = releaseIds.ToHashSet();
+
+        // Delete only the deployments captured for the releases we are actually pruning. A deployment
+        // created after the capture above is never in this list (so an in-flight deploy is never
+        // killed); the release-delete guard then skips a release such a deployment now references.
+        var deploymentsToDelete = deployments.Where(d => releaseIdSet.Contains(d.ReleaseId)).ToList();
+
+        await DeleteDeploymentsCascadeAsync(deploymentsToDelete, cancellationToken).ConfigureAwait(false);
 
         await DeleteReleasesWithPackagesAsync(releaseIds, cancellationToken).ConfigureAwait(false);
 
-        var processSnapshotIds = CollectProcessSnapshotIds(releasesToDelete, deployments);
-        var variableSnapshotIds = CollectVariableSnapshotIds(releasesToDelete, deployments);
+        var processSnapshotIds = CollectProcessSnapshotIds(releasesToDelete, deploymentsToDelete);
+        var variableSnapshotIds = CollectVariableSnapshotIds(releasesToDelete, deploymentsToDelete);
 
         await DeleteOrphanedSnapshotsAsync(processSnapshotIds, variableSnapshotIds, cancellationToken).ConfigureAwait(false);
     }

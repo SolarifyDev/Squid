@@ -360,6 +360,41 @@ public class RetentionPolicyEnforcerTests
     }
 
     [Fact]
+    public void Count_UnevenChannels_KeepNewestNPerChannelIndependently()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var releases = new List<ReleaseEntity>
+        {
+            MakeReleaseInChannel(1, channelId: 10, now.AddDays(-1)),
+            MakeReleaseInChannel(2, channelId: 10, now.AddDays(-2)),
+            MakeReleaseInChannel(3, channelId: 10, now.AddDays(-3)),
+            MakeReleaseInChannel(4, channelId: 20, now.AddDays(-1))   // lone release in its channel
+        };
+
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingCount(releases, keepCount: 2, new HashSet<int>());
+
+        // channel 10 keeps newest 2 (1,2) → prune 3; channel 20 has fewer than keepCount → keep all
+        result.Select(r => r.Id).ShouldBe(new[] { 3 });
+    }
+
+    [Fact]
+    public void Count_NegativeKeepCount_PrunesAllNonPreserved()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var releases = new List<ReleaseEntity>
+        {
+            MakeRelease(1, now.AddDays(-1)),
+            MakeRelease(2, now.AddDays(-2))
+        };
+
+        // Skip(negative) skips nothing → all non-preserved prune. The "<=0 means no-op" policy is the
+        // caller's (PruneReleasesByCountAsync); this pins the raw pure-function contract.
+        var result = RetentionPolicyEnforcer.GetReleasesExceedingCount(releases, keepCount: -5, new HashSet<int>());
+
+        result.Select(r => r.Id).OrderBy(id => id).ShouldBe(new[] { 1, 2 });
+    }
+
+    [Fact]
     public void Count_AllBeyondWindowButAllPreserved_ReturnsEmpty()
     {
         var now = DateTimeOffset.UtcNow;

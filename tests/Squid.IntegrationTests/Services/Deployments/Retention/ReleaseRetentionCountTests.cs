@@ -192,6 +192,178 @@ public class ReleaseRetentionCountTests : TestBase
         (await ReleaseExistsAsync(b.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task BeyondKeepCount_ReleaseWithMultipleDeployments_AllDeploymentsCascade()
+    {
+        var graph = await SeedGraphAsync(keepCount: 1).ConfigureAwait(false);
+
+        var kept = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);
+        var pruned = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 5).ConfigureAwait(false);
+
+        // The pruned release was deployed twice (e.g. two environments / re-deploys); both finished
+        // unsuccessfully, so it is neither currently deployed nor in-flight. Every deployment + its
+        // task data must cascade.
+        var d1 = await SeedDeploymentAsync(graph, pruned.ReleaseId, graph.ChannelId, ageDays: 5, TaskState.Failed, completionState: TaskState.Failed).ConfigureAwait(false);
+        var d2 = await SeedDeploymentAsync(graph, pruned.ReleaseId, graph.ChannelId, ageDays: 6, TaskState.Failed, completionState: TaskState.Failed).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(pruned.ReleaseId).ConfigureAwait(false)).ShouldBeFalse();
+
+        foreach (var (deploymentId, taskId) in new[] { d1, d2 })
+        {
+            (await DeploymentExistsAsync(deploymentId).ConfigureAwait(false)).ShouldBeFalse(customMessage: "Every deployment of the pruned release must cascade.");
+            (await TaskExistsAsync(taskId).ConfigureAwait(false)).ShouldBeFalse();
+            (await LogCountAsync(taskId).ConfigureAwait(false)).ShouldBe(0);
+            (await InterruptionCountAsync(taskId).ConfigureAwait(false)).ShouldBe(0);
+            (await CheckpointCountAsync(taskId).ConfigureAwait(false)).ShouldBe(0);
+        }
+
+        (await ReleaseExistsAsync(kept.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task EnforceRunTwice_Idempotent_KeepsSurvivorsPrunesOnce()
+    {
+        var graph = await SeedGraphAsync(keepCount: 2).ConfigureAwait(false);
+
+        var r1 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);
+        var r2 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 2).ConfigureAwait(false);
+        var r3 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 3).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);   // second run must be a clean no-op
+
+        (await ReleaseExistsAsync(r1.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(r2.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+        (await PackageCountAsync(r1.ReleaseId).ConfigureAwait(false)).ShouldBe(1, customMessage: "Surviving release's package must remain intact across repeated runs.");
+        (await PackageCountAsync(r2.ReleaseId).ConfigureAwait(false)).ShouldBe(1);
+        (await ProcessSnapshotExistsAsync(r1.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
+        (await ProcessSnapshotExistsAsync(r2.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
+
+        (await ReleaseExistsAsync(r3.ReleaseId).ConfigureAwait(false)).ShouldBeFalse();
+        (await ProcessSnapshotExistsAsync(r3.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PruningOneChannel_LeavesOtherChannelFullyIntact()
+    {
+        var graph = await SeedGraphAsync(keepCount: 1).ConfigureAwait(false);
+        var otherChannelId = await SeedExtraChannelAsync(graph).ConfigureAwait(false);
+
+        var aNew = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);
+        var aOld = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 5).ConfigureAwait(false);
+
+        // Other channel: a single old release with a full deployment graph. As the only (hence newest)
+        // release in its channel it stays within keep=1, so NOTHING of it may be touched.
+        var bOnly = await SeedReleaseWithOwnSnapshotsAsync(graph, otherChannelId, ageDays: 9).ConfigureAwait(false);
+        var (bDeployment, bTask) = await SeedDeploymentAsync(graph, bOnly.ReleaseId, otherChannelId, ageDays: 9, TaskState.Failed, completionState: TaskState.Failed).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(aNew.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(aOld.ReleaseId).ConfigureAwait(false)).ShouldBeFalse(customMessage: "Channel A's oldest is beyond keep=1 → pruned.");
+
+        (await ReleaseExistsAsync(bOnly.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "The other channel's release must be left fully intact.");
+        (await PackageCountAsync(bOnly.ReleaseId).ConfigureAwait(false)).ShouldBe(1);
+        (await DeploymentExistsAsync(bDeployment).ConfigureAwait(false)).ShouldBeTrue(customMessage: "The other channel's deployment must not be cascaded.");
+        (await TaskExistsAsync(bTask).ConfigureAwait(false)).ShouldBeTrue();
+        (await LogCountAsync(bTask).ConfigureAwait(false)).ShouldBe(1);
+        (await ProcessSnapshotExistsAsync(bOnly.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task MixedRetentionBatch_PreservedAndWithinCountKept_RestPrunedWithCascade()
+    {
+        var graph = await SeedGraphAsync(keepCount: 1).ConfigureAwait(false);
+
+        var newest = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);       // within keep=1
+        var deployedOld = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 4).ConfigureAwait(false);  // currently deployed
+        var activeOld = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 6).ConfigureAwait(false);    // in-progress
+        var prunedWithDep = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 8).ConfigureAwait(false); // pruned + cascade
+        var prunedBare = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 10).ConfigureAwait(false);   // pruned (no deployment)
+
+        var (depKeep, _) = await SeedDeploymentAsync(graph, deployedOld.ReleaseId, graph.ChannelId, ageDays: 4, TaskState.Success, completionState: TaskState.Success).ConfigureAwait(false);
+        var (depActive, _) = await SeedDeploymentAsync(graph, activeOld.ReleaseId, graph.ChannelId, ageDays: 6, TaskState.Executing, completionState: null).ConfigureAwait(false);
+        var (depPruned, taskPruned) = await SeedDeploymentAsync(graph, prunedWithDep.ReleaseId, graph.ChannelId, ageDays: 8, TaskState.Failed, completionState: TaskState.Failed).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(newest.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "newest is within keep=1");
+        (await ReleaseExistsAsync(deployedOld.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "currently-deployed release preserved beyond count");
+        (await ReleaseExistsAsync(activeOld.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "in-progress release preserved beyond count");
+        (await DeploymentExistsAsync(depKeep).ConfigureAwait(false)).ShouldBeTrue();
+        (await DeploymentExistsAsync(depActive).ConfigureAwait(false)).ShouldBeTrue();
+
+        (await ReleaseExistsAsync(prunedWithDep.ReleaseId).ConfigureAwait(false)).ShouldBeFalse();
+        (await DeploymentExistsAsync(depPruned).ConfigureAwait(false)).ShouldBeFalse();
+        (await TaskExistsAsync(taskPruned).ConfigureAwait(false)).ShouldBeFalse();
+        (await ReleaseExistsAsync(prunedBare.ReleaseId).ConfigureAwait(false)).ShouldBeFalse();
+        (await ProcessSnapshotExistsAsync(prunedBare.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task KeepCountEqualsReleaseCount_PrunesNothing()
+    {
+        var graph = await SeedGraphAsync(keepCount: 3).ConfigureAwait(false);
+
+        var r1 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);
+        var r2 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 5).ConfigureAwait(false);
+        var r3 = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 9).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(r1.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(r2.ReleaseId).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(r3.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "keepCount == release count → nothing exceeds the window.");
+    }
+
+    [Fact]
+    public async Task TwoPrunedReleasesSharingSnapshot_SnapshotGarbageCollectedOnce()
+    {
+        var graph = await SeedGraphAsync(keepCount: 1).ConfigureAwait(false);
+        var keptSnap = await SeedSnapshotPairAsync().ConfigureAwait(false);
+        var sharedSnap = await SeedSnapshotPairAsync().ConfigureAwait(false);
+
+        var kept = await SeedReleaseAsync(graph.ProjectId, graph.ChannelId, ageDays: 1, keptSnap.ProcessSnapshotId, keptSnap.VariableSnapshotId).ConfigureAwait(false);
+        // Two old releases share the SAME snapshot pair; both are beyond keep=1 and unpreserved, so the
+        // snapshot becomes truly orphaned and must be GC'd exactly once (the id appears twice → dedup).
+        var prunedA = await SeedReleaseAsync(graph.ProjectId, graph.ChannelId, ageDays: 5, sharedSnap.ProcessSnapshotId, sharedSnap.VariableSnapshotId).ConfigureAwait(false);
+        var prunedB = await SeedReleaseAsync(graph.ProjectId, graph.ChannelId, ageDays: 7, sharedSnap.ProcessSnapshotId, sharedSnap.VariableSnapshotId).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(kept).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(prunedA).ConfigureAwait(false)).ShouldBeFalse();
+        (await ReleaseExistsAsync(prunedB).ConfigureAwait(false)).ShouldBeFalse();
+        (await ProcessSnapshotExistsAsync(sharedSnap.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeFalse(customMessage: "A snapshot orphaned by pruning ALL its referencing releases must be GC'd.");
+        (await VariableSnapshotExistsAsync(sharedSnap.VariableSnapshotId).ConfigureAwait(false)).ShouldBeFalse();
+        (await ProcessSnapshotExistsAsync(keptSnap.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task PrunedReleaseSnapshot_KeptWhenReferencedBySurvivingDeployment()
+    {
+        var graph = await SeedGraphAsync(keepCount: 1).ConfigureAwait(false);
+        var keptSnap = await SeedSnapshotPairAsync().ConfigureAwait(false);
+        var sharedSnap = await SeedSnapshotPairAsync().ConfigureAwait(false);
+
+        // The kept (newest) release references its OWN snapshot, but carries a surviving deployment that
+        // references the SHARED snapshot. The pruned (old) release also references the shared snapshot.
+        // After pruning, no surviving RELEASE references the shared snapshot — only the surviving
+        // deployment does — so ref-count GC must keep it (never delete a snapshot still in use).
+        var kept = await SeedReleaseAsync(graph.ProjectId, graph.ChannelId, ageDays: 1, keptSnap.ProcessSnapshotId, keptSnap.VariableSnapshotId).ConfigureAwait(false);
+        await SeedDeploymentReferencingSnapshotsAsync(graph, kept, graph.ChannelId, sharedSnap.ProcessSnapshotId, sharedSnap.VariableSnapshotId).ConfigureAwait(false);
+        var pruned = await SeedReleaseAsync(graph.ProjectId, graph.ChannelId, ageDays: 5, sharedSnap.ProcessSnapshotId, sharedSnap.VariableSnapshotId).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(kept).ConfigureAwait(false)).ShouldBeTrue();
+        (await ReleaseExistsAsync(pruned).ConfigureAwait(false)).ShouldBeFalse();
+        (await ProcessSnapshotExistsAsync(sharedSnap.ProcessSnapshotId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "A snapshot still referenced by a surviving deployment must NOT be GC'd.");
+        (await VariableSnapshotExistsAsync(sharedSnap.VariableSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
+    }
+
     // ── enforce / assertion helpers ──
 
     private Task EnforceAsync(int projectId)
@@ -468,4 +640,20 @@ public class ReleaseRetentionCountTests : TestBase
 
         return result;
     }
+
+    // Seeds a surviving (terminal, no success completion) deployment on an existing release and points
+    // its snapshot ids at a specific pair — used to prove ref-count GC keeps a snapshot still in use.
+    private Task SeedDeploymentReferencingSnapshotsAsync((int ProjectId, int EnvironmentId, int ChannelId, int LifecycleId) graph, int releaseId, int channelId, int processSnapshotId, int variableSnapshotId)
+        => Run<IRepository, IUnitOfWork>(async (repo, uow) =>
+        {
+            var builder = new TestDataBuilder(repo, uow);
+
+            var task = await builder.CreateServerTaskAsync("Failed").ConfigureAwait(false);
+            var deployment = await builder.CreateDeploymentAsync(graph.ProjectId, graph.EnvironmentId, releaseId, task.Id, channelId).ConfigureAwait(false);
+
+            await repo.ExecuteUpdateAsync<Deployment>(
+                d => d.Id == deployment.Id,
+                s => s.SetProperty(d => d.ProcessSnapshotId, processSnapshotId).SetProperty(d => d.VariableSetSnapshotId, variableSnapshotId),
+                CancellationToken.None).ConfigureAwait(false);
+        });
 }
