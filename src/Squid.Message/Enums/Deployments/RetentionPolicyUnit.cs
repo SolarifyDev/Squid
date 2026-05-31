@@ -5,5 +5,6 @@ public enum RetentionPolicyUnit
     Days,
     Weeks,
     Months,
-    Years
+    Years,
+    Items
 }
