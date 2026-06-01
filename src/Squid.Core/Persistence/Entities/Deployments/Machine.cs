@@ -36,6 +36,16 @@ public class Machine : IEntity<int>, IAuditable
     public string RuntimeCapabilitiesJson { get; set; }
     public DateTimeOffset? RuntimeCapabilitiesUpdatedAt { get; set; }
 
+    // Durable upgrade trace — the LAST TERMINAL upgrade outcome (status payload +
+    // event timeline + Phase B log) serialised as JSON. NULL when no terminal
+    // upgrade has ever been observed for this machine. Written once per upgrade
+    // (when the agent first reports a terminal status) by IUpgradeTracePersistence;
+    // hydrated back into InMemoryUpgradeEventTimelineStore at startup by
+    // UpgradeTraceHydrator so a server pod restart no longer erases the operator's
+    // view of how the most recent upgrade concluded.
+    public string LastUpgradeTraceJson { get; set; }
+    public DateTimeOffset? LastUpgradeTraceUpdatedAt { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

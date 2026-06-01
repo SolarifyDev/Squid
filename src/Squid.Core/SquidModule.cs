@@ -167,6 +167,14 @@ public class SquidModule : Module
         builder.RegisterType<Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilitiesCacheHydrator>()
             .As<IStartable>()
             .SingleInstance();
+
+        // Hydrate the in-memory upgrade timeline cache from the persisted
+        // last_upgrade_trace_json column at startup, so a server pod restart
+        // doesn't erase the operator's view of how the most recent upgrade
+        // concluded (and so the dedup gate doesn't re-persist on-disk snapshots).
+        builder.RegisterType<Squid.Core.Services.Machines.Upgrade.UpgradeTraceHydrator>()
+            .As<IStartable>()
+            .SingleInstance();
     }
 
     private void RegisterDependency(ContainerBuilder builder)
