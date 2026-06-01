@@ -380,6 +380,15 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     // === Script Output ===
 
+    // Live (incremental) script output — persisted to the task log as it streams in, so a
+    // long-running action shows progress instead of an empty "Running" node until completion.
+    protected override Task OnScriptProgressReceivedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    {
+        var actionNodeId = LookupActionNode(ctx.StepDisplayOrder, ctx.MachineName, ctx.ActionSortOrder);
+
+        return PersistScriptChunkAsync(ctx.ScriptOutputChunk, ctx.MachineName, actionNodeId, ct);
+    }
+
     protected override Task OnScriptOutputReceivedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var actionNodeId = LookupActionNode(ctx.StepDisplayOrder, ctx.MachineName, ctx.ActionSortOrder);
@@ -551,9 +560,37 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         }
     }
 
+    private async Task PersistScriptChunkAsync(IReadOnlyList<ScriptOutputLine> chunk, string source, long? activityNodeId, CancellationToken ct)
+    {
+        if (chunk == null || chunk.Count == 0) return;
+
+        try
+        {
+            var entries = chunk.Select(line => new ServerTaskLogWriteEntry
+            {
+                Category = line.IsStdErr ? ServerTaskLogCategory.Error : ServerTaskLogCategory.Info,
+                MessageText = MaskSensitiveValues(line.Text),
+                Source = source,
+                OccurredAt = DateTimeOffset.UtcNow,
+                SequenceNumber = Ctx.NextLogSequence(),
+                ActivityNodeId = activityNodeId
+            }).ToList();
+
+            await _logWriter.AddLogsAsync(Ctx.ServerTaskId, entries, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[Deploy] Failed to persist live script output for task {TaskId}", Ctx.ServerTaskId);
+        }
+    }
+
     private async Task PersistScriptOutputAsync(ScriptExecutionResult execResult, string source, long? activityNodeId, CancellationToken ct)
     {
         if (execResult?.LogLines == null || execResult.LogLines.Count == 0) return;
+
+        // Output already streamed live (line-by-line) while the script ran — skip the bulk persist
+        // so those lines are not duplicated. (Set only on the live-streaming Halibut path.)
+        if (execResult.OutputStreamed) return;
 
         var stderrSet = execResult.StderrLines?.Count > 0 ? new HashSet<string>(execResult.StderrLines, StringComparer.Ordinal) : null;
 

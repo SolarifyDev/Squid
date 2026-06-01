@@ -42,6 +42,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         ActionExecutingEvent e => OnActionExecutingAsync(e.Context, ct),
         ActionSucceededEvent e => OnActionSucceededAsync(e.Context, ct),
         ActionFailedEvent e => OnActionFailedAsync(e.Context, ct),
+        ScriptProgressReceivedEvent e => OnScriptProgressReceivedAsync(e.Context, ct),
         ScriptOutputReceivedEvent e => OnScriptOutputReceivedAsync(e.Context, ct),
         OutputVariablesCapturedEvent e => OnOutputVariablesCapturedAsync(e.Context, ct),
         GuidedFailurePromptEvent e => OnGuidedFailurePromptAsync(e.Context, ct),
@@ -102,6 +103,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnActionFailedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
     // === Script Output ===
+    protected virtual Task OnScriptProgressReceivedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnScriptOutputReceivedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnOutputVariablesCapturedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 

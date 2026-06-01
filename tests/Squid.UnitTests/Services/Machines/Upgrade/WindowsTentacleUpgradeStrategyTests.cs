@@ -1072,7 +1072,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(2, "TentaclePolling", "sub-2", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "[upgrade-wrapper] Task triggered" } });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);
@@ -1093,7 +1093,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(3, "TentaclePolling", "sub-3", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { "Connecting...", "::error:: schtasks /Create failed" } });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);
@@ -1112,7 +1112,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(4, "TentaclePolling", "sub-4", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string>() });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);
@@ -1128,7 +1128,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(5, "TentaclePolling", "sub-5", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new HalibutClientException("connection closed"));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);
@@ -1146,7 +1146,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(25, "TentaclePolling", "sub-25", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new AgentUnreachableException("win-agent", consecutiveFailures: 2));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);
@@ -1191,7 +1191,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(6, "TentaclePolling", "sub-6", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new OperationCanceledException());
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
@@ -1205,7 +1205,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(7, "TentaclePolling", "sub-7", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new InvalidOperationException("observer state corrupted"));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.6.0", CancellationToken.None);

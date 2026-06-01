@@ -9,6 +9,13 @@ public class ScriptExecutionResult
     public List<string> StderrLines { get; set; } = new();
     public int ExitCode { get; set; }
 
+    /// <summary>
+    /// True when output was streamed live to the task log as the script ran. The bulk
+    /// post-completion persistence is then skipped to avoid duplicating those lines. Defaults to
+    /// false, so any execution path that does not stream behaves exactly as before.
+    /// </summary>
+    public bool OutputStreamed { get; set; }
+
     public string BuildErrorSummary(int maxLines = 10)
     {
         var description = ScriptExitCodes.Describe(ExitCode);

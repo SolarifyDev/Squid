@@ -38,6 +38,13 @@ public class ScriptExecutionRequest
     public string StepName { get; set; }
     public string ActionName { get; set; }
 
+    /// <summary>
+    /// Optional live-output sink. When set, an execution strategy that observes incremental output
+    /// (the Halibut/Tentacle poll loop) invokes it with each new batch of lines as they arrive, so
+    /// the task log tails live. Runtime-only (never serialized to an agent); null = legacy behavior.
+    /// </summary>
+    public ScriptOutputSink OutputSink { get; set; }
+
     public ExecutionMode ResolveExecutionMode()
     {
         if (ExecutionMode == ExecutionMode.Unspecified)

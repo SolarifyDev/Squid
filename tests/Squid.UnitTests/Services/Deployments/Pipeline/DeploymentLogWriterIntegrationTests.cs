@@ -268,6 +268,71 @@ public class DeploymentLogWriterIntegrationTests : IAsyncDisposable
         logs.ShouldContain(l => l.Category == ServerTaskLogCategory.Error && l.MessageText.Contains("error line"));
     }
 
+    // === Live log tail: streamed chunks persist incrementally, final bulk skipped (no dup) ===
+
+    [Fact]
+    public async Task LiveStreaming_ChunksPersistIncrementally_FinalBulkSkipped_NoDuplication()
+    {
+        var ctx = CreateContext(taskId: 50);
+        _lifecycle.Initialize(ctx);
+
+        await EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()));
+        await EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = "Deploy", StepDisplayOrder = 1 }));
+        await EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1 }));
+
+        // Two live chunks arrive WHILE the script runs.
+        await EmitAsync(new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1, ScriptOutputChunk = new List<ScriptOutputLine> { new("step 1 of 3", false) } }));
+        await EmitAsync(new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1, ScriptOutputChunk = new List<ScriptOutputLine> { new("step 2 of 3", false), new("a warning", true) } }));
+
+        // Completion: result is marked OutputStreamed → the bulk persist MUST be skipped (no dup),
+        // even though the result still carries every line (for the failure summary / output capture).
+        await EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1, ScriptResult = new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "step 1 of 3", "step 2 of 3", "a warning" }, OutputStreamed = true } }));
+
+        await EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1, ExitCode = 0 }));
+        await EmitAsync(new StepCompletedEvent(new DeploymentEventContext { StepName = "Deploy", StepDisplayOrder = 1 }));
+        await EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()));
+
+        await using var db = new SquidDbContext(_dbOptions);
+        var logs = await db.Set<ServerTaskLog>().Where(l => l.ServerTaskId == 50).ToListAsync();
+
+        // Each streamed line appears EXACTLY ONCE — final bulk persist did not duplicate them.
+        logs.Count(l => l.MessageText == "step 1 of 3").ShouldBe(1);
+        logs.Count(l => l.MessageText == "step 2 of 3").ShouldBe(1);
+
+        var warning = logs.Single(l => l.MessageText == "a warning");
+        warning.Category.ShouldBe(ServerTaskLogCategory.Error);   // stderr chunk line
+        warning.Source.ShouldBe("agent-1");
+
+        // Streamed lines are attributed to the action node, just like the bulk path.
+        var actionNode = await db.Set<ActivityLog>().FirstAsync(n => n.ServerTaskId == 50 && n.NodeType == DeploymentActivityLogNodeType.Action);
+        logs.Single(l => l.MessageText == "step 1 of 3").ActivityNodeId.ShouldBe(actionNode.Id);
+
+        // Sequence numbers remain unique + increasing across the whole task.
+        var seqs = logs.Select(l => l.SequenceNumber).ToList();
+        seqs.ShouldBe(seqs.Distinct().ToList());
+    }
+
+    [Fact]
+    public async Task NotStreamed_FinalBulkPersistsScriptOutput_LegacyPathUnchanged()
+    {
+        var ctx = CreateContext(taskId: 51);
+        _lifecycle.Initialize(ctx);
+
+        await EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()));
+        await EmitAsync(new StepStartingEvent(new DeploymentEventContext { StepName = "Deploy", StepDisplayOrder = 1 }));
+        await EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1 }));
+
+        // No live chunks; OutputStreamed=false → final bulk persist writes the output (legacy path).
+        await EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = 1, MachineName = "agent-1", ActionSortOrder = 1, ScriptResult = new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string> { "only-at-end" }, OutputStreamed = false } }));
+
+        await EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()));
+
+        await using var db = new SquidDbContext(_dbOptions);
+        var logs = await db.Set<ServerTaskLog>().Where(l => l.ServerTaskId == 51).ToListAsync();
+
+        logs.Count(l => l.MessageText == "only-at-end").ShouldBe(1);
+    }
+
     // === Helpers ===
 
     private Task EmitAsync(DeploymentLifecycleEvent @event)

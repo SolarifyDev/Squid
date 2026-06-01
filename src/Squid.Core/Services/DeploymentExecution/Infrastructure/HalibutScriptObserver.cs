@@ -45,8 +45,10 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         CancellationToken ct,
         SensitiveValueMasker masker = null,
         ScriptStatusResponse initialStartResponse = null,
-        ServiceEndPoint? endpoint = null)
+        ServiceEndPoint? endpoint = null,
+        ScriptOutputSink outputSink = null)
     {
+        var streamed = outputSink != null;
         var startTime = DateTime.UtcNow;
         var pollInterval = TimeSpan.FromMilliseconds(_observerSettings.InitialPollIntervalMs);
         var maxPollInterval = TimeSpan.FromMilliseconds(_observerSettings.MaxPollIntervalMs);
@@ -54,12 +56,45 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         var statusResponse = initialStartResponse
             ?? new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
         var allLogs = new List<ProcessOutput>();
+        var streamFailed = false;
+
+        // Live streaming is best-effort: on any sink failure we set streamFailed so the bulk persist
+        // at completion runs as a fallback, guaranteeing lines are never lost (at-least-once; the
+        // fallback may duplicate already-streamed lines, which is preferable to losing them).
+        async Task StreamLinesAsync(IReadOnlyList<ScriptOutputLine> lines)
+        {
+            if (outputSink == null || lines == null || lines.Count == 0) return;
+
+            try
+            {
+                await outputSink(lines, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                streamFailed = true;
+                Log.Warning(ex, "[Deploy] Live log streaming failed for agent {MachineName}", machine.Name);
+            }
+        }
+
+        Task StreamBatchAsync(List<ProcessOutput> batch)
+        {
+            if (outputSink == null || batch == null || batch.Count == 0) return Task.CompletedTask;
+
+            var lines = batch
+                .OrderBy(l => l.Occurred)
+                .Where(l => !string.IsNullOrEmpty(l.Text))
+                .Select(l => new ScriptOutputLine(l.Text, l.Source == ProcessOutputSource.StdErr))
+                .ToList();
+
+            return StreamLinesAsync(lines);
+        }
 
         if (initialStartResponse != null)
         {
             allLogs.AddRange(initialStartResponse.Logs);
             TruncateIfExceeded(allLogs);
             LogOutput(initialStartResponse.Logs, machine.Name, masker);
+            await StreamBatchAsync(initialStartResponse.Logs).ConfigureAwait(false);
         }
 
         // Agent liveness probe: independent probing stream alongside the main polling
@@ -85,13 +120,16 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                     .Select(l => masker?.Mask(l.Text) ?? l.Text)
                     .ToList();
 
-                collectedLogLines.Add($"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout");
+                var timeoutLine = $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout";
+                collectedLogLines.Add(timeoutLine);
+                await StreamLinesAsync(new[] { new ScriptOutputLine(timeoutLine, IsStdErr: true) }).ConfigureAwait(false);
 
                 return new ScriptExecutionResult
                 {
                     Success = false,
                     ExitCode = ScriptExitCodes.Timeout,
-                    LogLines = collectedLogLines
+                    LogLines = collectedLogLines,
+                    OutputStreamed = streamed && !streamFailed
                 };
             }
 
@@ -127,6 +165,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             allLogs.AddRange(statusResponse.Logs);
             TruncateIfExceeded(allLogs);
             LogOutput(statusResponse.Logs, machine.Name, masker);
+            await StreamBatchAsync(statusResponse.Logs).ConfigureAwait(false);
 
             if (statusResponse.State != ProcessState.Complete)
             {
@@ -155,6 +194,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         allLogs.AddRange(completeResponse.Logs);
         TruncateIfExceeded(allLogs);
         LogOutput(completeResponse.Logs, machine.Name, masker);
+        await StreamBatchAsync(completeResponse.Logs).ConfigureAwait(false);
 
         var orderedLogs = allLogs
             .OrderBy(l => l.Occurred)
@@ -181,7 +221,8 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             Success = success,
             LogLines = logLines,
             StderrLines = stderrLines,
-            ExitCode = completeResponse.ExitCode
+            ExitCode = completeResponse.ExitCode,
+            OutputStreamed = streamed && !streamFailed
         };
     }
 

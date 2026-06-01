@@ -55,6 +55,9 @@ public class DeploymentEventContext
     // Script output
     public ScriptExecutionResult ScriptResult { get; init; }
 
+    // Live script output chunk (incremental lines streamed while the script is still running)
+    public IReadOnlyList<ScriptOutputLine> ScriptOutputChunk { get; init; }
+
     // Output variables
     public List<string> OutputVariableNames { get; init; }
 
@@ -119,6 +122,7 @@ public sealed record ActionSucceededEvent(DeploymentEventContext Context) : Depl
 public sealed record ActionFailedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
 // === Script Output ===
+public sealed record ScriptProgressReceivedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record ScriptOutputReceivedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 public sealed record OutputVariablesCapturedEvent(DeploymentEventContext Context) : DeploymentLifecycleEvent(Context);
 
