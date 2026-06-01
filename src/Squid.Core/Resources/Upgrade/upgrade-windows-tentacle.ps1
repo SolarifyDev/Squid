@@ -134,9 +134,31 @@ $STATUS_FILE = Join-Path $STATUS_DIR 'last-upgrade.json'
 $LOCK_FILE   = Join-Path $STATUS_DIR 'upgrade.lock'
 $LOG_FILE    = Join-Path $STATUS_DIR 'upgrade.log'
 
+# Per-phase event timeline, parity with the Linux script's upgrade-events.jsonl.
+# The Squid server reads this via WindowsUpgradeStatusStorage on every
+# Capabilities RPC (EventsFileSubPath = upgrade\upgrade-events.jsonl) and
+# surfaces it as the per-phase upgrade timeline in the UI.
+$EVENTS_FILE = Join-Path $STATUS_DIR 'upgrade-events.jsonl'
+
+# Hard cap so a runaway loop can't fill the disk. Terminal-state events bypass
+# the cap so the operator-visible narrative always reaches a conclusion. Kept
+# in sync with the Linux script's EVENTS_MAX (drift-pinned by the parity test).
+$EVENTS_MAX  = 50
+
+# Current upgrade phase ('A' pre-swap, 'B' post-detach). Write-UpgradeStatus
+# auto-emits a matching event tagged with this phase; flipped to 'B' at the
+# Phase B entry below.
+$script:CURRENT_PHASE = 'A'
+
 if (-not (Test-Path $STATUS_DIR)) {
     New-Item -ItemType Directory -Path $STATUS_DIR -Force | Out-Null
 }
+
+# Truncate the events file at the start of this (single-invocation) upgrade so
+# stale events from a previous attempt don't pollute this run's timeline.
+# BOM-less UTF8 (PS 5.1's Set-Content -Encoding UTF8 prepends a BOM that would
+# corrupt the first JSON line the server parses). Best-effort.
+try { [System.IO.File]::WriteAllText($EVENTS_FILE, '', (New-Object System.Text.UTF8Encoding($false))) } catch { }
 
 # ── Status file helper — atomic write via temp+rename ────────────────────────
 function Write-UpgradeStatus {
@@ -164,6 +186,23 @@ function Write-UpgradeStatus {
     $temp = "$STATUS_FILE.tmp"
     Set-Content -Path $temp -Value $payload -Encoding UTF8 -Force
     Move-Item -Path $temp -Destination $STATUS_FILE -Force
+
+    # Mirror the status transition into the per-phase event timeline (parity
+    # with Linux). Phase comes from $script:CURRENT_PHASE; the kind is mapped
+    # from the status so the timeline tracks the status file 1:1.
+    $eventKind = switch ($Status) {
+        'IN_PROGRESS'              { 'start' }
+        'SWAPPED'                  { 'swapped' }
+        'SUCCESS'                  { 'success' }
+        'FAILED'                   { 'method-exhausted' }
+        'ROLLBACK_NEEDED'          { 'rollback-fail' }
+        'ROLLED_BACK'              { 'rollback-ok' }
+        'ROLLBACK_CRITICAL_FAILED' { 'rollback-critical-failed' }
+        default                    { $null }
+    }
+    if ($null -ne $eventKind) {
+        Write-UpgradeEvent -Phase $script:CURRENT_PHASE -Kind $eventKind -Msg $Detail
+    }
 }
 
 function Append-UpgradeLog {
@@ -172,6 +211,43 @@ function Append-UpgradeLog {
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     Add-Content -Path $LOG_FILE -Value "[$stamp] $Line"
     Write-Host $Line
+}
+
+# ── Event timeline helper — append one structured event (parity with the ─────
+# Linux script's emit_event). One JSON object per line:
+#   {"t":"2026-06-01T02:57:04Z","phase":"A","kind":"start","msg":"..."}
+function Write-UpgradeEvent {
+    param(
+        [string] $Phase,
+        [string] $Kind,
+        [string] $Msg = ''
+    )
+
+    # Terminal-state events ALWAYS emit regardless of the cap — operators MUST
+    # see the final outcome. This set MUST stay in sync with the Linux script's
+    # emit_event terminal list (drift-pinned by the cross-script parity test)
+    # and the FE's UPGRADE_EVENTS_TERMINAL_KINDS.
+    $terminalKinds = @('success', 'rollback-ok', 'rollback-fail', 'rollback-critical-failed', 'method-exhausted', 'restart-fail', 'healthz-fail')
+
+    if ($terminalKinds -notcontains $Kind) {
+        $lineCount = @(Get-Content -Path $EVENTS_FILE -ErrorAction SilentlyContinue).Count
+        if ($lineCount -ge $EVENTS_MAX) { return }
+    }
+
+    # Minimal JSON-safe escaping: drop quotes and backslashes (events originate
+    # from our own controlled strings — versions, methods, exit codes). Matches
+    # the Linux emit_event `tr -d '"\\'`.
+    $safeMsg = $Msg -replace '["\\]', ''
+
+    $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $line = '{"t":"' + $now + '","phase":"' + $Phase + '","kind":"' + $Kind + '","msg":"' + $safeMsg + '"}'
+
+    # BOM-less UTF8 append — PS 5.1's Add-Content -Encoding UTF8 prepends a BOM
+    # that would corrupt the first JSON line the server parses. Best-effort:
+    # events are advisory, never fail the upgrade on an event-write hiccup.
+    try {
+        [System.IO.File]::AppendAllText($EVENTS_FILE, $line + "`n", (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
 }
 
 # ── Rollback helper (J.E.6) ──────────────────────────────────────────────────
@@ -511,6 +587,9 @@ try {
     # concern owned by E.3's strategy, not by this template.
     Append-UpgradeLog "[upgrade] Phase B starting — stopping service '$SERVICE_NAME' and swapping binary"
 
+    # Entering Phase B — events emitted from here are tagged phase 'B'.
+    $script:CURRENT_PHASE = 'B'
+
     $serviceWasRunning = $false
     $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
 
@@ -582,6 +661,7 @@ try {
     # that synchronously so the catch is reachable.
     if ($null -ne (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) {
         Append-UpgradeLog "[upgrade] Starting service $SERVICE_NAME"
+        Write-UpgradeEvent -Phase 'B' -Kind 'restart-start' -Msg "Starting service $SERVICE_NAME"
         try {
             Start-Service -Name $SERVICE_NAME
 
@@ -620,6 +700,7 @@ try {
 
             if ($resp.StatusCode -eq 200) {
                 $healthOk = $true
+                Write-UpgradeEvent -Phase 'B' -Kind 'healthz-pass' -Msg "Service healthy after restart (attempt $($i + 1))"
                 break
             }
         }
