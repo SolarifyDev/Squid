@@ -39,14 +39,16 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     private readonly IMachineRuntimeCapabilitiesPersistence _capabilitiesPersistence;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
     private readonly IUpgradeEventTimelineStore _upgradeEventStore;
+    private readonly IUpgradeTracePersister _upgradeTracePersister;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null, IUpgradeTracePersister upgradeTracePersister = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _capabilitiesCache = capabilitiesCache;
         _capabilitiesPersistence = capabilitiesPersistence;
         _upgradeLockReconciler = upgradeLockReconciler;
         _upgradeEventStore = upgradeEventStore;
+        _upgradeTracePersister = upgradeTracePersister;
     }
 
     /// <summary>
@@ -80,6 +82,8 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
             await ProcessUpgradeStatusAsync(machine, response, ct).ConfigureAwait(false);
 
             CaptureUpgradeEventTimeline(machine, response);
+
+            await PersistUpgradeTraceIfTerminalAsync(machine, ct).ConfigureAwait(false);
 
             var os = ReadMetadata(response, "os");
             var shell = ReadMetadata(response, "defaultShell");
@@ -282,6 +286,24 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
                 Log.Warning(ex, "[UpgradeAudit] Failed to capture Phase B log for machine {MachineId}", machine.Id);
             }
         }
+    }
+
+    /// <summary>
+    /// Durable backstop for the in-memory upgrade timeline. Delegates to
+    /// <see cref="IUpgradeTracePersister"/>, which persists the current trace
+    /// snapshot to the DB only when the agent has reported a TERMINAL status and
+    /// that outcome hasn't been persisted yet — so it survives a server pod
+    /// restart. Runs after <see cref="ProcessUpgradeStatusAsync"/> +
+    /// <see cref="CaptureUpgradeEventTimeline"/> have populated the in-memory
+    /// store from THIS probe, so the snapshot is internally consistent.
+    /// Optional dependency: a strategy wired without the persister simply skips
+    /// durable persistence. Never throws (the persister swallows DB errors).
+    /// </summary>
+    private async Task PersistUpgradeTraceIfTerminalAsync(Machine machine, CancellationToken ct)
+    {
+        if (_upgradeTracePersister == null || machine == null) return;
+
+        await _upgradeTracePersister.PersistIfTerminalAsync(machine.Id, ct).ConfigureAwait(false);
     }
 
     private static string ReadMetadata(CapabilitiesResponse response, string key)
