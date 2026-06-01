@@ -35,15 +35,15 @@ public class HalibutModule : Module
 
     protected override void Load(ContainerBuilder builder)
     {
-        // Connection-log factory: Halibut's own per-endpoint in-memory connection
-        // log (bounded recent-events buffer). Registered as a singleton and wired
-        // into the runtime via WithLogFactory so we hold the reference and can
-        // read the REAL connection events back per machine (OpeningNewConnection,
-        // SecurityNegotiation, MessageExchange, Error, ...) — surfaced to operators
-        // via GET /api/machine/{id}/connection-log instead of only the last
-        // health-check summary. Without this, Halibut builds its own factory
-        // internally and the events are unreachable.
-        builder.Register(_ => new LogFactory()).As<ILogFactory>().SingleInstance();
+        // Connection-log factory: expose the runtime's OWN per-endpoint connection
+        // log (Halibut builds a bounded in-memory recent-events LogFactory by default
+        // and writes every connection event to it — OpeningNewConnection,
+        // SecurityNegotiation, MessageExchange, Error, ...). We surface that built-in
+        // factory as ILogFactory so the connection-log reader shares the exact
+        // instance the runtime uses (no parallel factory to keep in sync) and serves
+        // GET /api/machine/{id}/connection-log. Mirrors Octopus's CommunicationLogFactory,
+        // which reads halibut.Logs directly.
+        builder.Register(ctx => ctx.Resolve<HalibutRuntime>().Logs).As<ILogFactory>().SingleInstance();
 
         builder.Register(ctx =>
         {
@@ -60,7 +60,6 @@ public class HalibutModule : Module
                 .WithServiceFactory(services)
                 .WithServerCertificate(serverCert)
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
-                .WithLogFactory(ctx.Resolve<ILogFactory>())
                 .Build();
 
             Log.Information("HalibutRuntime created. ServerCertThumbprint={Thumbprint}", serverCert.Thumbprint);
