@@ -226,6 +226,25 @@ public class MachineController : ControllerBase
     }
 
     /// <summary>
+    /// The machine's REAL Halibut connection log — the transport-level events
+    /// the server runtime recorded for this agent's endpoint (opening a new
+    /// connection, TLS/security negotiation, message exchange, listener accept,
+    /// errors). The genuine "why is this agent connected / why did it fail",
+    /// versus the health-status summary which only reflects the last Capabilities
+    /// probe. In-memory recent-events buffer (not persisted across restarts).
+    /// </summary>
+    [HttpGet("{machineId:int}/connection-log")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetMachineConnectionLogResponse))]
+    public async Task<IActionResult> GetConnectionLogAsync([FromRoute] int machineId, [FromQuery] GetMachineConnectionLogRequest request, CancellationToken ct)
+    {
+        request.MachineId = machineId;   // route value is authoritative over any query binding
+
+        var response = await _mediator.RequestAsync<GetMachineConnectionLogRequest, GetMachineConnectionLogResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    /// <summary>
     /// agent-reported upgrade-status snapshot for the
     /// most recent upgrade attempt. Exposes the structured <c>ExitCode</c>
     /// field that <c>GET /upgrade-events</c> (event stream) and
