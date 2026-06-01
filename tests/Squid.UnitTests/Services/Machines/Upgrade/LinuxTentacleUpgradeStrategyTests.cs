@@ -775,7 +775,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(2, "TentaclePolling", "sub-2", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, LogLines = new List<string> { "downloading…", "swapping…", "✓ done" }, ExitCode = 0 });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);
@@ -793,7 +793,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(3, "TentaclePolling", "sub-3", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "Downloading…", "::error:: SHA256 mismatch. Expected ABC, got DEF" } });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);
@@ -818,7 +818,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(33, "TentaclePolling", "sub-33", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult
             {
                 Success = false,
@@ -861,7 +861,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(4, "TentaclePolling", "sub-4", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 9, LogLines = new List<string>() });
 
         var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);
@@ -883,7 +883,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(5, "TentaclePolling", "sub-5", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new HalibutClientException("connection closed"));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);
@@ -912,7 +912,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(25, "TentaclePolling", "sub-25", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new AgentUnreachableException("mars mac", consecutiveFailures: 2));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.5.5", CancellationToken.None);
@@ -1028,7 +1028,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(6, "TentaclePolling", "sub-6", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new OperationCanceledException());
 
         await Should.ThrowAsync<OperationCanceledException>(() =>
@@ -1044,7 +1044,7 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         var machine = MakeMachine(7, "TentaclePolling", "sub-7", "AABB");
 
         observer
-            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>()))
+            .Setup(o => o.ObserveAndCompleteAsync(It.IsAny<Machine>(), It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptTicket>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>(), It.IsAny<SensitiveValueMasker>(), It.IsAny<ScriptStatusResponse>(), It.IsAny<ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
             .ThrowsAsync(new InvalidOperationException("hash provider exploded"));
 
         var outcome = await strategy.UpgradeAsync(machine, "1.4.2", CancellationToken.None);

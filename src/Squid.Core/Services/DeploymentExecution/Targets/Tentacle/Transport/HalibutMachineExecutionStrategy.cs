@@ -233,7 +233,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         try
         {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint).ConfigureAwait(false);
+            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
         }
         finally
         {
@@ -285,7 +285,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         try
         {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint).ConfigureAwait(false);
+            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
         }
         finally
         {

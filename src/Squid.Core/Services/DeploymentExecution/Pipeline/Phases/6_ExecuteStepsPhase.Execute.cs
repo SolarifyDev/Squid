@@ -367,6 +367,11 @@ public sealed partial class ExecuteStepsPhase
 
             var request = await DescribeExpandAndRenderAsync(prepared, tc, step, effectiveVariables, stepTimeout, stepDisplayOrder, ct).ConfigureAwait(false);
 
+            // Live log tail: stream each incremental output batch to the task log as it arrives, so a
+            // long-running action shows progress instead of sitting on an empty node until completion.
+            request.OutputSink = (lines, sinkCt) => lifecycle.EmitAsync(
+                new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptOutputChunk = lines }), sinkCt);
+
             var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
             // P1-B.7: cross-reference output-variable values against the

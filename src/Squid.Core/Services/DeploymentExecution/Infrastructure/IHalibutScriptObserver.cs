@@ -15,5 +15,6 @@ public interface IHalibutScriptObserver : IScopedDependency
         CancellationToken ct,
         SensitiveValueMasker masker,
         ScriptStatusResponse initialStartResponse = null,
-        ServiceEndPoint endpoint = null);
+        ServiceEndPoint endpoint = null,
+        ScriptOutputSink outputSink = null);
 }
