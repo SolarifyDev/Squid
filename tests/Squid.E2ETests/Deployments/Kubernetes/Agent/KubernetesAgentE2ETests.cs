@@ -230,6 +230,36 @@ public class KubernetesAgentE2ETests
         response.AgentVersion.ShouldNotBeNullOrWhiteSpace();
     }
 
+    [Fact]
+    public async Task Agent_ConnectionLog_RecordsRealHalibutEvents_ForPollingEndpoint()
+    {
+        // Connection truth: drive a real Halibut RPC to the polling agent, then
+        // read back the per-endpoint connection log the server runtime recorded.
+        // Proves (a) HalibutModule.WithLogFactory is wired to the same ILogFactory
+        // we read, and (b) the polling endpoint IS populated with real transport
+        // events — the genuine "why is this agent connected" trace the
+        // GET /connection-log endpoint surfaces (vs. the health-check summary).
+        var endpoint = new ServiceEndPoint(
+            $"poll://{_fixture.Stub.SubscriptionId}/",
+            _fixture.Stub.Thumbprint,
+            HalibutTimeoutsAndLimits.RecommendedValues());
+
+        var halibutRuntime = _fixture.LifetimeScope.Resolve<HalibutRuntime>();
+        var client = halibutRuntime.CreateAsyncClient<ICapabilitiesService, IAsyncCapabilitiesService>(endpoint);
+
+        await client.GetCapabilitiesAsync(new CapabilitiesRequest());
+
+        var logFactory = _fixture.LifetimeScope.Resolve<ILogFactory>();
+        var events = logFactory.ForEndpoint(endpoint.BaseUri).GetLogs();
+
+        events.ShouldNotBeNull();
+        events.ShouldNotBeEmpty(
+            "the server Halibut runtime must record real connection events for the polling endpoint after an RPC — " +
+            "if empty, either WithLogFactory isn't wired or polling connections are logged under a different key.");
+        events.ShouldContain(e => !string.IsNullOrEmpty(e.FormattedMessage),
+            "connection-log events must carry human-readable messages for operators.");
+    }
+
     // ========================================================================
     // Seed Helpers
     // ========================================================================

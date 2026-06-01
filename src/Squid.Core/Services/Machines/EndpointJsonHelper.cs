@@ -80,4 +80,24 @@ public static class EndpointJsonHelper
             return null;
         }
     }
+
+    /// <summary>
+    /// Resolve the Halibut endpoint <see cref="Uri"/> a machine's connection log
+    /// is keyed under — <c>poll://{subscriptionId}/</c> for polling tentacles,
+    /// <c>https://host:port/</c> for listening. Returns null when the endpoint
+    /// JSON is missing required fields. Derives from the SAME
+    /// <see cref="ParseHalibutEndpoint"/> / <see cref="ParseTentacleListeningEndpoint"/>
+    /// methods the health-check + dispatch paths use, so the resolved Uri matches
+    /// the key Halibut recorded connection events under.
+    /// </summary>
+    public static Uri ResolveConnectionEndpointUri(string endpointJson)
+    {
+        var style = GetField(endpointJson, "CommunicationStyle");
+
+        var endpoint = style == nameof(Squid.Message.Enums.CommunicationStyle.TentacleListening)
+            ? ParseTentacleListeningEndpoint(endpointJson)
+            : ParseHalibutEndpoint(endpointJson);
+
+        return endpoint?.BaseUri;
+    }
 }

@@ -35,6 +35,16 @@ public class HalibutModule : Module
 
     protected override void Load(ContainerBuilder builder)
     {
+        // Connection-log factory: Halibut's own per-endpoint in-memory connection
+        // log (bounded recent-events buffer). Registered as a singleton and wired
+        // into the runtime via WithLogFactory so we hold the reference and can
+        // read the REAL connection events back per machine (OpeningNewConnection,
+        // SecurityNegotiation, MessageExchange, Error, ...) — surfaced to operators
+        // via GET /api/machine/{id}/connection-log instead of only the last
+        // health-check summary. Without this, Halibut builds its own factory
+        // internally and the events are unreachable.
+        builder.Register(_ => new LogFactory()).As<ILogFactory>().SingleInstance();
+
         builder.Register(ctx =>
         {
             var selfCertSetting = ctx.Resolve<SelfCertSetting>();
@@ -50,6 +60,7 @@ public class HalibutModule : Module
                 .WithServiceFactory(services)
                 .WithServerCertificate(serverCert)
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
+                .WithLogFactory(ctx.Resolve<ILogFactory>())
                 .Build();
 
             Log.Information("HalibutRuntime created. ServerCertThumbprint={Thumbprint}", serverCert.Thumbprint);
