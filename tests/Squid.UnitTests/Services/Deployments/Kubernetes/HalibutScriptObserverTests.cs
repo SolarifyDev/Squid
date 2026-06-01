@@ -285,7 +285,11 @@ public class HalibutScriptObserverTests
             _machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.LogLines.Count.ShouldBeLessThanOrEqualTo(HalibutScriptObserver.DefaultMaxLogEntries);
+        // Real lines are capped at the buffer; the only addition beyond the cap
+        // is the single operator-visible gap marker (#5a) inserted at the head.
+        result.LogLines.Count.ShouldBeLessThanOrEqualTo(HalibutScriptObserver.DefaultMaxLogEntries + 1);
+        result.LogLines.ShouldContain(l => l.Contains("truncated"),
+            customMessage: "verbose output past the buffer must leave an operator-visible gap marker, not a silent jump.");
     }
 
     [Fact]

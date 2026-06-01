@@ -12,6 +12,11 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
 {
     internal const int DefaultMaxLogEntries = 100_000;
 
+    // Stable prefix of the truncation gap marker. Used both to render the marker
+    // and to recognise a prior marker at the buffer head, so a re-truncation of
+    // an otherwise-unchanged buffer doesn't emit a duplicate marker.
+    internal const string TruncationMarkerPrefix = "[Squid] Older log lines were truncated here";
+
     private readonly ObserverSettings _observerSettings;
     private readonly LivenessSettings _livenessSettings;
     private readonly IAgentLivenessProbe? _livenessProbe;
@@ -89,10 +94,21 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             return StreamLinesAsync(lines);
         }
 
+        // Cap the buffer; if truncation produced a gap marker, stream it too so
+        // it persists even when the streaming path skips the bulk persist (the
+        // marker is also left in allLogs for the non-streaming bulk path — so it
+        // lands exactly once in either mode).
+        async Task TruncateAndStreamMarkerAsync()
+        {
+            var marker = TruncateIfExceeded(allLogs);
+            if (marker != null)
+                await StreamLinesAsync(new[] { new ScriptOutputLine(marker.Text, IsStdErr: false) }).ConfigureAwait(false);
+        }
+
         if (initialStartResponse != null)
         {
             allLogs.AddRange(initialStartResponse.Logs);
-            TruncateIfExceeded(allLogs);
+            await TruncateAndStreamMarkerAsync().ConfigureAwait(false);
             LogOutput(initialStartResponse.Logs, machine.Name, masker);
             await StreamBatchAsync(initialStartResponse.Logs).ConfigureAwait(false);
         }
@@ -163,7 +179,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
             allLogs.AddRange(statusResponse.Logs);
-            TruncateIfExceeded(allLogs);
+            await TruncateAndStreamMarkerAsync().ConfigureAwait(false);
             LogOutput(statusResponse.Logs, machine.Name, masker);
             await StreamBatchAsync(statusResponse.Logs).ConfigureAwait(false);
 
@@ -192,7 +208,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             new CompleteScriptCommand(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
 
         allLogs.AddRange(completeResponse.Logs);
-        TruncateIfExceeded(allLogs);
+        await TruncateAndStreamMarkerAsync().ConfigureAwait(false);
         LogOutput(completeResponse.Logs, machine.Name, masker);
         await StreamBatchAsync(completeResponse.Logs).ConfigureAwait(false);
 
@@ -279,14 +295,42 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 machineName, log.Source, masker?.Mask(log.Text) ?? log.Text);
     }
 
-    private void TruncateIfExceeded(List<ProcessOutput> logs)
+    /// <summary>
+    /// Cap the in-memory log buffer for a single script. When truncation occurs,
+    /// inserts an operator-visible gap marker at the head and RETURNS it so the
+    /// caller can also stream it — without a marker the operator's log silently
+    /// jumps (oldest lines vanish with only a Seq warning). Returns null when no
+    /// truncation was needed.
+    /// </summary>
+    private ProcessOutput TruncateIfExceeded(List<ProcessOutput> logs)
     {
         var max = _observerSettings.MaxLogEntries > 0 ? _observerSettings.MaxLogEntries : DefaultMaxLogEntries;
-        if (logs.Count <= max) return;
+
+        // A marker already at the head shouldn't itself count toward the cap —
+        // otherwise it would trigger a redundant re-truncation (and a duplicate
+        // marker) on the next call even when no real lines need dropping.
+        var hasMarker = logs.Count > 0 && logs[0].Text.StartsWith(TruncationMarkerPrefix, StringComparison.Ordinal);
+        var realCount = logs.Count - (hasMarker ? 1 : 0);
+
+        if (realCount <= max) return null;
+
+        if (hasMarker) logs.RemoveAt(0);   // drop the stale marker; a fresh one is re-inserted below
 
         var overflow = logs.Count - max;
         logs.RemoveRange(0, overflow);
         Log.Warning("[Deploy] Log buffer exceeded {Max} entries, truncated {Overflow} oldest entries", max, overflow);
+
+        // Anchor the marker to the oldest-retained entry's timestamp so the
+        // stable Occurred-ordering keeps it just ahead of that entry (i.e. at
+        // the head of the final log). Source = StdOut so it surfaces as an
+        // informational notice, never a false error signal.
+        var anchor = logs.Count > 0 ? logs[0].Occurred : DateTimeOffset.UtcNow;
+        var marker = new ProcessOutput(
+            ProcessOutputSource.StdOut,
+            $"{TruncationMarkerPrefix} - this step's output exceeded the {max}-line retention buffer and the oldest lines were dropped.",
+            anchor);
+        logs.Insert(0, marker);
+        return marker;
     }
 
     private static async Task TryCancelScriptAsync(

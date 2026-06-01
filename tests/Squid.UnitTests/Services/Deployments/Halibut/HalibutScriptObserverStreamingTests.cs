@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Settings.Halibut;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 
@@ -166,5 +167,68 @@ public class HalibutScriptObserverStreamingTests
         result.ExitCode.ShouldBe(ScriptExitCodes.Timeout);
         result.OutputStreamed.ShouldBeTrue();
         streamed.ShouldContain(l => l.Text.Contains("timeout") && l.IsStdErr);
+    }
+
+    // ── Gap marker on log-buffer truncation (#5a) ────────────────────────────
+    // When a single script's output exceeds the retention buffer, the observer
+    // drops the oldest entries. Without a marker the operator sees a silent jump;
+    // these pin that an operator-visible marker is inserted (bulk path) AND
+    // streamed (so it persists when the streaming path skips the bulk persist).
+
+    private static ScriptStatusResponse CompleteWith(ScriptTicket ticket, List<ProcessOutput> logs)
+        => new(ticket, ProcessState.Complete, 0, logs, logs.Count);
+
+    private static List<ProcessOutput> Lines(int count)
+    {
+        var logs = new List<ProcessOutput>();
+        for (var i = 1; i <= count; i++)
+            logs.Add(new ProcessOutput(ProcessOutputSource.StdOut, $"line-{i}", DateTimeOffset.UtcNow.AddSeconds(i)));
+        return logs;
+    }
+
+    [Fact]
+    public async Task Truncation_InsertsGapMarkerAtHead_AndDropsOldest()
+    {
+        var observer = new HalibutScriptObserver(new ObserverSettings { MaxLogEntries = 3 });
+        _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>())).ReturnsAsync(CompleteWith(_ticket, Lines(5)));
+        _scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var result = await observer.ObserveAndCompleteAsync(_machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
+
+        result.LogLines[0].ShouldContain("truncated", customMessage: "the gap marker must sort to the head of the log so the operator sees it where the older lines were.");
+        result.LogLines.ShouldContain("line-5", customMessage: "newest lines are retained.");
+        result.LogLines.ShouldNotContain("line-1", customMessage: "oldest lines are dropped past the buffer cap.");
+    }
+
+    [Fact]
+    public async Task Truncation_StreamsGapMarker_AsInformationalNotErrorLine()
+    {
+        var observer = new HalibutScriptObserver(new ObserverSettings { MaxLogEntries = 3 });
+        _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>())).ReturnsAsync(CompleteWith(_ticket, Lines(5)));
+        _scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+        var (streamed, _) = RecordingSink(out var sink);
+
+        await observer.ObserveAndCompleteAsync(_machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None, outputSink: sink);
+
+        streamed.ShouldContain(l => l.Text.Contains("truncated"),
+            customMessage: "the marker must be streamed so it persists even when bulk persist is skipped in streaming mode.");
+        streamed.Single(l => l.Text.Contains("truncated")).IsStdErr.ShouldBeFalse(
+            customMessage: "truncation is an informational notice, not a script error — must not surface as stderr/Error.");
+    }
+
+    [Fact]
+    public async Task NoTruncation_EmitsNoGapMarker()
+    {
+        var observer = new HalibutScriptObserver(new ObserverSettings { MaxLogEntries = 100 });
+        _scriptClient.Setup(s => s.GetStatusAsync(It.IsAny<ScriptStatusRequest>())).ReturnsAsync(CompleteWith(_ticket, Lines(3)));
+        _scriptClient.Setup(s => s.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>()))
+            .ReturnsAsync(new ScriptStatusResponse(_ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var result = await observer.ObserveAndCompleteAsync(_machine, _scriptClient.Object, _ticket, _timeout, CancellationToken.None);
+
+        result.LogLines.ShouldNotContain(l => l.Contains("truncated"));
+        result.LogLines.Count.ShouldBe(3);
     }
 }
