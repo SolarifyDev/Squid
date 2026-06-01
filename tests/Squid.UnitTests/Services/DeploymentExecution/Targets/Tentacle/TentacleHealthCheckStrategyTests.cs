@@ -397,7 +397,8 @@ public class TentacleHealthCheckStrategyTests
         var gate = new UpgradeTracePersistenceGate();
         var (persistence, captured) = CapturingPersistence();
 
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersistence: persistence.Object, upgradeTraceGate: gate);
+        var persister = new UpgradeTracePersister(store, persistence.Object, gate);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersister: persister);
 
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -425,7 +426,7 @@ public class TentacleHealthCheckStrategyTests
         var store = new InMemoryUpgradeEventTimelineStore();
         var (persistence, _) = CapturingPersistence();
 
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersistence: persistence.Object, upgradeTraceGate: new UpgradeTracePersistenceGate());
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersister: new UpgradeTracePersister(store, persistence.Object, new UpgradeTracePersistenceGate()));
 
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -447,7 +448,8 @@ public class TentacleHealthCheckStrategyTests
         var gate = new UpgradeTracePersistenceGate();
         var (persistence, _) = CapturingPersistence();
 
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersistence: persistence.Object, upgradeTraceGate: gate);
+        var persister = new UpgradeTracePersister(store, persistence.Object, gate);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersister: persister);
 
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
@@ -471,7 +473,8 @@ public class TentacleHealthCheckStrategyTests
         persistence.Setup(p => p.SaveAsync(It.IsAny<int>(), It.IsAny<UpgradeTraceSnapshot>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("db down"));
 
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersistence: persistence.Object, upgradeTraceGate: gate);
+        var persister = new UpgradeTracePersister(store, persistence.Object, gate);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, upgradeEventStore: store, upgradeTracePersister: persister);
 
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 

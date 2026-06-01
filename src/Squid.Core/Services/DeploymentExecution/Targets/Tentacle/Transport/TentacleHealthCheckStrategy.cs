@@ -39,18 +39,16 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     private readonly IMachineRuntimeCapabilitiesPersistence _capabilitiesPersistence;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
     private readonly IUpgradeEventTimelineStore _upgradeEventStore;
-    private readonly IUpgradeTracePersistence _upgradeTracePersistence;
-    private readonly IUpgradeTracePersistenceGate _upgradeTraceGate;
+    private readonly IUpgradeTracePersister _upgradeTracePersister;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null, IUpgradeTracePersistence upgradeTracePersistence = null, IUpgradeTracePersistenceGate upgradeTraceGate = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null, IUpgradeTracePersister upgradeTracePersister = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _capabilitiesCache = capabilitiesCache;
         _capabilitiesPersistence = capabilitiesPersistence;
         _upgradeLockReconciler = upgradeLockReconciler;
         _upgradeEventStore = upgradeEventStore;
-        _upgradeTracePersistence = upgradeTracePersistence;
-        _upgradeTraceGate = upgradeTraceGate;
+        _upgradeTracePersister = upgradeTracePersister;
     }
 
     /// <summary>
@@ -291,53 +289,21 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     }
 
     /// <summary>
-    /// Durable backstop for the in-memory upgrade timeline. When the agent has
-    /// reported a TERMINAL upgrade status (the upgrade concluded), persist the
-    /// current trace snapshot (status + events + Phase B log) to the DB so it
-    /// survives a server pod restart. Gated by
-    /// <see cref="IUpgradeTracePersistenceGate"/> so the SAME terminal outcome —
-    /// which the agent keeps re-reporting on every subsequent probe — is written
-    /// exactly once, not on every probe (that per-probe write cost is the whole
-    /// reason the timeline cache is in-memory).
-    ///
-    /// <para>Reads the snapshot from the in-memory store, which the preceding
-    /// <see cref="ProcessUpgradeStatusAsync"/> + <see cref="CaptureUpgradeEventTimeline"/>
-    /// steps have already populated from THIS probe — so the persisted snapshot
-    /// is internally consistent (status, events, log all from one probe).</para>
-    ///
-    /// <para>Never throws: durable persistence is advisory; a DB hiccup must not
-    /// turn a healthy tentacle unhealthy. The in-memory store still holds the
-    /// trace and the gate is left open so the next probe retries the write.</para>
+    /// Durable backstop for the in-memory upgrade timeline. Delegates to
+    /// <see cref="IUpgradeTracePersister"/>, which persists the current trace
+    /// snapshot to the DB only when the agent has reported a TERMINAL status and
+    /// that outcome hasn't been persisted yet — so it survives a server pod
+    /// restart. Runs after <see cref="ProcessUpgradeStatusAsync"/> +
+    /// <see cref="CaptureUpgradeEventTimeline"/> have populated the in-memory
+    /// store from THIS probe, so the snapshot is internally consistent.
+    /// Optional dependency: a strategy wired without the persister simply skips
+    /// durable persistence. Never throws (the persister swallows DB errors).
     /// </summary>
     private async Task PersistUpgradeTraceIfTerminalAsync(Machine machine, CancellationToken ct)
     {
-        if (_upgradeTracePersistence == null || _upgradeTraceGate == null || _upgradeEventStore == null || machine == null) return;
+        if (_upgradeTracePersister == null || machine == null) return;
 
-        var status = _upgradeEventStore.GetStatus(machine.Id);
-
-        if (status == null || !UpgradeStatusClassifier.IsTerminal(status.Status)) return;
-
-        var snapshot = new UpgradeTraceSnapshot
-        {
-            Status = status,
-            Events = _upgradeEventStore.Get(machine.Id),
-            Log = _upgradeEventStore.GetLog(machine.Id)
-        };
-
-        if (_upgradeTraceGate.AlreadyPersisted(machine.Id, snapshot.Signature)) return;
-
-        try
-        {
-            await _upgradeTracePersistence.SaveAsync(machine.Id, snapshot, ct).ConfigureAwait(false);
-
-            _upgradeTraceGate.MarkPersisted(machine.Id, snapshot.Signature);
-
-            Log.Information("[UpgradeAudit] Persisted terminal upgrade trace for machine {MachineId} (status {Status}) — survives server pod restart.", machine.Id, status.Status);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[UpgradeAudit] Failed to persist terminal upgrade trace for machine {MachineId} — in-memory cache still holds it; next health-check probe will retry the DB write.", machine.Id);
-        }
+        await _upgradeTracePersister.PersistIfTerminalAsync(machine.Id, ct).ConfigureAwait(false);
     }
 
     private static string ReadMetadata(CapabilitiesResponse response, string key)
