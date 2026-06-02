@@ -1,18 +1,26 @@
 name: Tentacle Windows Smoke E2E
 
-# PR GATE for the Windows tentacle's own self-management lifecycle.
+# PR GATE for the Windows tentacle's own service + upgrade lifecycle.
 #
 # Why this exists: the comprehensive Windows suite (tentacle-windows-e2e.yml,
 # ~210 tests incl. the 66-test IIS surface) runs nightly + on merge to main,
 # NOT on PRs, because windows-latest is billed at 2x and the full suite would
-# exhaust the Team-plan minute budget. That left a real gap: a PowerShell
-# upgrade-script / sc.exe service-host / install-script regression could merge
-# green (the unit + Linux-container gates pass) and only surface post-merge.
+# exhaust the Team-plan minute budget. That left a gap: a PowerShell
+# upgrade-script or sc.exe service-host regression could merge green (the unit
+# + Linux-container gates pass) and only surface post-merge. This gate closes
+# it, mirroring how the Linux upgrade path is PR-gated by e2e-upgrade-matrix.yml.
 #
-# This workflow closes that gap with a FAST, high-value subset that gates PRs,
-# mirroring how the Linux upgrade path is PR-gated by e2e-upgrade-matrix.yml.
-# It is paths-filtered to Windows-relevant source so unrelated PRs (frontend,
-# server, K8s, docs) never spend a Windows minute.
+# Three-job "sentinel" layout so this can be a REQUIRED status check WITHOUT
+# blocking PRs that don't touch Tentacle code:
+#   1. detect  (ubuntu, ~20s)  -- did the PR change Tentacle-relevant paths?
+#   2. tests   (windows-latest) -- runs ONLY when detect says relevant; the 54
+#                                  real-OS lifecycle tests. Skipped (0 Windows
+#                                  minutes) on unrelated PRs.
+#   3. gate    (ubuntu, ~5s, ALWAYS runs) -- carries the required check. Green
+#      when the tests passed OR weren't needed; red when they failed.
+# A plain paths-filtered workflow can't be a required check: it never reports on
+# unrelated PRs, so they get stuck "Expected -- waiting for status". The sentinel
+# always reports, so "Windows Lifecycle Smoke (PR gate)" is a safe required check.
 #
 # Smoke scope = the agent's service + upgrade lifecycle on a real Windows host:
 # sc.exe service install/start/stop/uninstall -> blue-green versioned upgrade
@@ -22,19 +30,12 @@ name: Tentacle Windows Smoke E2E
 # XDT engine), the real-binary publish path, deploy/register/capabilities/
 # diagnostic (cross-platform logic already exercised by unit + Linux E2E), and
 # TentacleInstallScriptE2E -- install-tentacle.ps1's UAC + install-info tests
-# have pre-existing test-quality issues (fragile cmdlet mock + a shared-path
-# parallel race) being fixed separately; that category is re-added to this gate
-# once it is deterministic. Skipping IIS lets this job skip the slow IIS+XDT
-# setup steps entirely.
+# have pre-existing test-quality issues (fragile cmdlet mock + a shared-
+# %ProgramData% parallel race) being fixed separately; re-added once
+# deterministic. Skipping IIS lets the tests job skip the slow IIS+XDT setup.
 
 on:
   pull_request:
-    paths:
-      - 'src/Squid.Tentacle/**'
-      - 'src/Squid.Core/Resources/Upgrade/upgrade-windows-tentacle.ps1'
-      - 'src/Squid.Core/Services/Machines/Upgrade/**'
-      - 'tests/Squid.WindowsTentacleE2ETests/**'
-      - '.github/workflows/tentacle-windows-smoke-e2e.yml'
   workflow_dispatch:
     inputs:
       test_filter:
@@ -44,16 +45,51 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
-# Cancel an in-flight smoke run when the PR is pushed again — a windows-latest
-# VM is 2x-billed, so superseded runs are pure waste.
+# Cancel an in-flight run when the PR is pushed again — a windows-latest VM is
+# 2x-billed, so superseded runs are pure waste.
 concurrency:
   group: windows-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  windows-smoke-e2e:
-    name: Windows Lifecycle Smoke (PR gate)
+  detect:
+    name: Detect Tentacle changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.check.outputs.relevant }}
+    steps:
+      - name: Check changed paths
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manual dispatch has no PR diff — always run.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Manual dispatch -> relevant=true"
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json files --jq '.files[].path')
+          echo "Changed files:"; printf '%s\n' "$files"
+
+          # Same path set the gate cares about (Tentacle source, the Windows
+          # upgrade script, the server-side upgrade strategy, the Windows E2E
+          # project, and this workflow itself).
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.WindowsTentacleE2ETests/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "-> relevant=true (Tentacle paths changed)"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "-> relevant=false (no Tentacle paths changed; Windows tests will be skipped)"
+          fi
+
+  tests:
+    name: Windows Lifecycle Smoke (tests)
+    needs: detect
+    if: needs.detect.outputs.relevant == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -99,3 +135,29 @@ jobs:
           Get-Service -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match 'squid' -or $_.Name -match 'SquidUpgradeE2E' } |
             Format-Table -Property Name, Status, StartType | Out-String
+
+  gate:
+    name: Windows Lifecycle Smoke (PR gate)
+    needs: [detect, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reflect smoke result
+        run: |
+          detect='${{ needs.detect.result }}'
+          tests='${{ needs.tests.result }}'
+          relevant='${{ needs.detect.outputs.relevant }}'
+          echo "detect=$detect  tests=$tests  relevant=$relevant"
+
+          if [ "$detect" != "success" ]; then
+            echo "::error::Path detection job did not succeed ($detect) -- cannot confirm whether the Windows smoke was needed."
+            exit 1
+          fi
+
+          if [ "$tests" = "failure" ] || [ "$tests" = "cancelled" ]; then
+            echo "::error::Windows lifecycle smoke tests failed (result=$tests)."
+            exit 1
+          fi
+
+          # tests == 'success' (ran + passed) OR 'skipped' (no Tentacle changes) -> gate passes.
+          echo "Gate passed (tests result=$tests)."
