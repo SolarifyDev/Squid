@@ -10,10 +10,11 @@ namespace Squid.WindowsTentacleE2ETests;
 /// <para><b>Tier</b>: 🟢 High-fidelity for the structural invariants we CAN
 /// observe without a real UAC prompt (a real prompt would block the CI runner
 /// forever). Real <c>powershell.exe</c> running real <c>install-tentacle.ps1</c>
-/// from disk; <c>Test-IsAdministrator</c> + <c>Start-Process</c> are overridden
-/// at <c>global:</c> scope by a wrapper script, redirecting the would-be UAC
-/// re-launch into a JSON capture file. Skip-on-non-Windows guard keeps the
-/// rest of the dev fleet green.</para>
+/// from disk; <c>Test-IsAdministrator</c> + <c>Invoke-UacRelaunch</c> are
+/// overridden at <c>global:</c> scope by a wrapper script (install-tentacle.ps1
+/// guard-defines both with <c>if (-not (Test-Path Function:\...))</c> so an
+/// ambient override wins), redirecting the would-be UAC re-launch into a JSON
+/// capture file. Skip-on-non-Windows guard keeps the rest of the dev fleet green.</para>
 ///
 /// <para><b>Production gap closed</b>: <see cref="TentacleInstallScriptResilienceE2ETests"/>
 /// covers every SKIP-elevation path (already admin / user-owned dir / explicit
@@ -25,8 +26,8 @@ namespace Squid.WindowsTentacleE2ETests;
 ///
 /// <para><b>How the capture works</b>: the wrapper script defines
 /// <c>function global:Test-IsAdministrator { return $false }</c> (forcing the
-/// elevation branch) and <c>function global:Start-Process</c> (capturing
-/// <c>$ArgumentList</c> to a JSON file then returning a fake exit). It then
+/// elevation branch) and <c>function global:Invoke-UacRelaunch</c> (capturing
+/// <c>$ArgumentList</c> to a JSON file then returning 99). It then
 /// calls <c>install-tentacle.ps1</c> with <c>-InstallDir 'C:\Program Files\Squid Tentacle'</c>
 /// — the default — so <c>$needsElevation</c> evaluates to <c>$true</c> and the
 /// elevation branch fires.</para>
@@ -263,9 +264,9 @@ public sealed class TentacleUacElevationE2ETests
             // PowerShell wrapper that:
             //   1. Replaces Test-IsAdministrator with a stub returning $false
             //      (forcing the $needsElevation branch in install-tentacle.ps1)
-            //   2. Replaces Start-Process with a stub that captures $ArgumentList
-            //      (+ FilePath + Verb) to a JSON file and returns a fake proc with
-            //      ExitCode=99 (so we can confirm elevation actually fired)
+            //   2. Replaces Invoke-UacRelaunch (the overridable elevation seam) with
+            //      a stub that captures $ArgumentList (+ FilePath + Verb) to a JSON
+            //      file and returns 99 (so we can confirm elevation actually fired)
             //   3. Invokes install-tentacle.ps1 with -InstallDir set to the DEFAULT
             //      path ("C:\Program Files\Squid Tentacle") so $needsElevation is true.
             //
@@ -280,16 +281,16 @@ $ErrorActionPreference = 'Stop'
 function global:Test-IsAdministrator {{ return $false }}
 
 # Override 2: capture the elevation invocation instead of actually triggering UAC.
-# install-tentacle.ps1's Invoke-SelfElevation calls:
-#   Start-Process powershell.exe -Verb RunAs -ArgumentList $childArgs -Wait -PassThru
-function global:Start-Process {{
-    [CmdletBinding()]
+# install-tentacle.ps1's Invoke-SelfElevation calls the overridable seam:
+#   Invoke-UacRelaunch -FilePath powershell.exe -Verb RunAs -ArgumentList $childArgs
+# (Overriding this named function is reliable; overriding the built-in
+# Start-Process cmdlet is NOT -- the -Verb RunAs / ShellExecute path bypassed it,
+# so the real elevated process ran and the captured exit code came back 0.)
+function global:Invoke-UacRelaunch {{
     param(
-        [Parameter(Position = 0)] [string] $FilePath,
+        [string] $FilePath,
         [string] $Verb,
-        [object[]] $ArgumentList,
-        [switch] $Wait,
-        [switch] $PassThru
+        [string[]] $ArgumentList
     )
 
     $captured = @{{
@@ -299,18 +300,24 @@ function global:Start-Process {{
     }}
     $captured | ConvertTo-Json -Depth 5 | Out-File -FilePath '{ctx_CapturePathEscaped(CapturePath)}' -Encoding UTF8
 
-    # Return a fake process with ExitCode=99 so the wrapper test can confirm
-    # the elevation branch actually fired (not just no-op'd).
-    return [pscustomobject]@{{ ExitCode = 99 }}
+    # Return ExitCode 99 so the wrapper test can confirm the elevation branch
+    # actually fired (install-tentacle.ps1 does `exit $childExit`).
+    return 99
 }}
 
 # Drive install-tentacle.ps1 with -InstallDir pointed at the default path so
 # `$needsElevation` is $true. -DownloadBase is required but won't be used
-# because Start-Process is mocked + the script exits before download.
+# because Invoke-UacRelaunch is mocked + the script exits before download.
 & '{ctx_CapturePathEscaped(installScriptPath)}' `
     -Version '9.9.9-test' `
     -InstallDir 'C:\Program Files\Squid Tentacle' `
     -DownloadBase 'https://example.invalid/dl'
+
+# Propagate install-tentacle.ps1's exit code. `exit N` inside a script invoked
+# via the call operator (&) sets $LASTEXITCODE but does NOT set the wrapper
+# process's exit code -- without this the elevation exit (99) is lost and the
+# test reads 0. This (not mock interception) was why the assertion saw 0.
+exit $LASTEXITCODE
 ";
 
             File.WriteAllText(WrapperPath, script);

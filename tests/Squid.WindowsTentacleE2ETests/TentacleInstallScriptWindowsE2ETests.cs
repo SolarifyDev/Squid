@@ -33,8 +33,21 @@ namespace Squid.WindowsTentacleE2ETests;
 /// </list>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.TentacleInstallScript)]
-public sealed class TentacleInstallScriptWindowsE2ETests
+public sealed class TentacleInstallScriptWindowsE2ETests : IDisposable
 {
+    // Test-isolated %ProgramData% so install-tentacle.ps1's install-info.json
+    // write doesn't collide with sibling install-script test classes running in
+    // parallel (shared canonical path = cross-class race) and doesn't litter the
+    // runner's real C:\ProgramData. xUnit news-up this class per test method.
+    private readonly string _programData =
+        Path.Combine(Path.GetTempPath(), $"squid-install-pd-{Guid.NewGuid():N}");
+
+    public void Dispose()
+    {
+        try { if (Directory.Exists(_programData)) Directory.Delete(_programData, recursive: true); }
+        catch { /* best-effort */ }
+    }
+
     // ========================================================================
     // A1.h + A4.h + A7.h — Happy path: custom dir + DOWNLOAD_BASE override
     //                       + -NoServiceInstall extracts binary cleanly
@@ -170,7 +183,7 @@ public sealed class TentacleInstallScriptWindowsE2ETests
     /// in under 5s against a loopback mirror; if it hangs, that's a
     /// script-level regression worth surfacing.
     /// </summary>
-    private static async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
+    private async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
     {
         var scriptPath = LocateInstallScript();
 
@@ -182,6 +195,10 @@ public sealed class TentacleInstallScriptWindowsE2ETests
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // Redirect the child's %ProgramData% so install-info.json lands in this
+        // test's isolated dir, never the shared canonical path (cross-class race).
+        psi.EnvironmentVariables["ProgramData"] = _programData;
 
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-NonInteractive");

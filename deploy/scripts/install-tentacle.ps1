@@ -134,10 +134,31 @@ $rid = Resolve-Rid -Arch $arch
 #   - Already admin (Test-IsAdministrator)
 #   - Installing to a user-owned path (InstallDir != default) -- admin not required
 #   - -NoAutoElevate switch was passed (CI, SYSTEM-context invocations)
-function Test-IsAdministrator {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
-    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+# Defined only when no ambient definition exists, so a test harness can inject a
+# mock via a parent-scope `function global:Test-IsAdministrator`. A plain
+# script-local `function` would shadow any global override (PowerShell resolves
+# the script-local definition first), so the mock would never fire. Normal
+# installs have no ambient definition and use the real principal check below.
+if (-not (Test-Path Function:\Test-IsAdministrator)) {
+    function Test-IsAdministrator {
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+        return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+}
+
+# The UAC re-launch itself, factored into an overridable seam (same guard
+# rationale as Test-IsAdministrator). A test harness overrides this via a
+# parent-scope `function global:Invoke-UacRelaunch` to capture the invocation
+# instead of spawning a real elevated process -- mocking the built-in
+# Start-Process cmdlet is unreliable for the -Verb RunAs / ShellExecute path
+# (the returned process often doesn't expose ExitCode). Returns the child exit code.
+if (-not (Test-Path Function:\Invoke-UacRelaunch)) {
+    function Invoke-UacRelaunch {
+        param([string] $FilePath, [string] $Verb, [string[]] $ArgumentList)
+        $proc = Start-Process -FilePath $FilePath -Verb $Verb -ArgumentList $ArgumentList -Wait -PassThru
+        return $proc.ExitCode
+    }
 }
 
 function Get-OriginalArgs {
@@ -184,8 +205,7 @@ function Invoke-SelfElevation {
     Write-Host ""
 
     try {
-        $proc = Start-Process powershell.exe -Verb RunAs -ArgumentList $childArgs -Wait -PassThru
-        $childExit = $proc.ExitCode
+        $childExit = Invoke-UacRelaunch -FilePath 'powershell.exe' -Verb 'RunAs' -ArgumentList $childArgs
     } catch {
         Write-Error @"
 UAC elevation failed: $($_.Exception.Message)

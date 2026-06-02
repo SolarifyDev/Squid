@@ -36,8 +36,27 @@ namespace Squid.WindowsTentacleE2ETests;
 /// <c>docs/windows-tentacle-install.md</c> as known operator workflows.</para>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.TentacleInstallScript)]
-public sealed class TentacleInstallScriptResilienceE2ETests
+public sealed class TentacleInstallScriptResilienceE2ETests : IDisposable
 {
+    // Test-isolated %ProgramData% so install-tentacle.ps1's install-info.json
+    // (written to $env:ProgramData\Squid\Tentacle\) cannot collide with other
+    // install-script test classes running in parallel -- the shared canonical
+    // path was a cross-class race (a sibling test's BinaryPath leaked in). xUnit
+    // news-up this class per test method, so each test gets a unique dir; the
+    // child process inherits it via EnvironmentVariables["ProgramData"] in
+    // RunInstallScriptAsync.
+    private readonly string _programData =
+        Path.Combine(Path.GetTempPath(), $"squid-install-pd-{Guid.NewGuid():N}");
+
+    private string InstallInfoPath =>
+        Path.Combine(_programData, "Squid", "Tentacle", "install-info.json");
+
+    public void Dispose()
+    {
+        try { if (Directory.Exists(_programData)) Directory.Delete(_programData, recursive: true); }
+        catch { /* best-effort */ }
+    }
+
     // ========================================================================
     // Group 1 -- install-info.json discovery file
     // ========================================================================
@@ -62,9 +81,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
         exitCode.ShouldBe(0,
             customMessage: $"install MUST succeed. stdout:\n{stdout}\nstderr:\n{stderr}");
 
-        var infoPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Squid", "Tentacle", "install-info.json");
+        var infoPath = InstallInfoPath;
 
         File.Exists(infoPath).ShouldBeTrue(
             customMessage:
@@ -94,9 +111,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
 
         exitCode.ShouldBe(0, customMessage: $"install MUST succeed. stdout:\n{stdout}\nstderr:\n{stderr}");
 
-        var infoPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Squid", "Tentacle", "install-info.json");
+        var infoPath = InstallInfoPath;
         ctx.RegisterCleanupPath(infoPath);
 
         var raw = await File.ReadAllTextAsync(infoPath);
@@ -157,9 +172,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
 
         exitCode.ShouldBe(0, customMessage: $"deep-nested install dir must work. stderr:\n{stderr}");
 
-        var infoPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Squid", "Tentacle", "install-info.json");
+        var infoPath = InstallInfoPath;
         ctx.RegisterCleanupPath(infoPath);
 
         var info = JsonDocument.Parse(await File.ReadAllTextAsync(infoPath)).RootElement;
@@ -210,10 +223,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
             try { Directory.Delete(defaultInstallDir, recursive: true); } catch { }
             try
             {
-                var infoPath = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                    "Squid", "Tentacle", "install-info.json");
-                File.Delete(infoPath);
+                File.Delete(InstallInfoPath);
             }
             catch { }
         }
@@ -358,9 +368,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
         using var ctx = new InstallScriptTestContext();
         mirror.StageBinary("Squid.Tentacle.exe", System.Text.Encoding.UTF8.GetBytes("# test\n"));
 
-        var infoDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Squid", "Tentacle");
+        var infoDir = Path.Combine(_programData, "Squid", "Tentacle");
         var infoPath = Path.Combine(infoDir, "install-info.json");
         ctx.RegisterCleanupPath(infoPath);
 
@@ -417,9 +425,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
         File.Exists(Path.Combine(pathWithSpaces, "Squid.Tentacle.exe")).ShouldBeTrue();
 
         // install-info.json must roundtrip the spaced path correctly.
-        var infoPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Squid", "Tentacle", "install-info.json");
+        var infoPath = InstallInfoPath;
         ctx.RegisterCleanupPath(infoPath);
 
         var info = JsonDocument.Parse(await File.ReadAllTextAsync(infoPath)).RootElement;
@@ -433,7 +439,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests
     // a cross-cutting fixture that two classes share state through).
     // ========================================================================
 
-    private static async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
+    private async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
     {
         var scriptPath = LocateInstallScript();
 
@@ -445,6 +451,10 @@ public sealed class TentacleInstallScriptResilienceE2ETests
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // Redirect the child's %ProgramData% so install-info.json lands in this
+        // test's isolated dir, never the shared canonical path (cross-class race).
+        psi.EnvironmentVariables["ProgramData"] = _programData;
 
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-NonInteractive");
