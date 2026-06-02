@@ -1231,4 +1231,57 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
 
         return (new WindowsTentacleUpgradeStrategy(halibut.Object, observer.Object), halibut, observer);
     }
+
+    // ── Versioned (blue-green) upgrade ──────────────────────────────────────
+
+    [Fact]
+    public void RenderInnerScript_Versioned_DetectsCurrentJunctionAndCapturesAnchor()
+    {
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("[System.IO.FileAttributes]::ReparsePoint",
+            customMessage: "must detect the versioned layout by testing whether $INSTALL_DIR\\current is a reparse point (junction)");
+        inner.ShouldContain("$isVersioned = $true");
+        inner.ShouldContain("$oldVerTarget = ",
+            customMessage: "must capture the previous version dir (the rollback anchor) from the current junction target");
+    }
+
+    [Fact]
+    public void RenderInnerScript_Versioned_SwapsViaJunctionWithoutTouchingRunningVersion()
+    {
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("$newVerDir = Join-Path $versionsRoot $TARGET_VERSION",
+            customMessage: "the new version must be staged into versions\\<target>, not over the running version");
+        inner.ShouldContain("($newVerDir -ne $oldVerTarget)",
+            customMessage: "the Remove-Item must be guarded so the currently-running version directory is never deleted");
+        inner.ShouldContain("[System.IO.Directory]::Delete($currentPointer, $false)",
+            customMessage: "the old junction must be removed non-recursively so the target version's files are never wiped");
+        inner.ShouldContain("New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir",
+            customMessage: "current must be repointed at the new version via a junction");
+    }
+
+    [Fact]
+    public void RenderInnerScript_Versioned_RollbackRepointsToPreviousVersion_AndKeepsItIntact()
+    {
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("New-Item -ItemType Junction -Path $currentPointer -Target $oldVerTarget",
+            customMessage: "the versioned rollback must repoint current back to the previous version dir ($oldVerTarget)");
+        inner.ShouldContain("previous version intact at $oldVerTarget",
+            customMessage: "ROLLBACK_CRITICAL_FAILED status must state the previous version is still intact on disk");
+    }
+
+    [Fact]
+    public void RenderInnerScript_FlatPathUnchanged_StillHasBakAndFailedSwap()
+    {
+        // Non-breaking guard: the flat (.bak / .failed) swap + restore must still be
+        // present — the blue-green path is purely additive, gated on $isVersioned.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("$installLeaf.bak",
+            customMessage: "the flat .bak swap must remain for non-versioned installs (non-breaking)");
+        inner.ShouldContain("$installLeaf.failed",
+            customMessage: "the flat rollback's .failed post-mortem archive must remain for non-versioned installs");
+    }
 }

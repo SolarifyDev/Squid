@@ -202,11 +202,21 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           $"OR symlink chain didn't put `squid-tentacle` on PATH. " +
                           $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
 
-        // Binary exists at INSTALL_DIR/Squid.Tentacle (extracted by tar).
-        var binaryPath = Path.Combine(ctx.InstallDir, "Squid.Tentacle");
-        File.Exists(binaryPath).ShouldBeTrue(
-            customMessage: $"Squid.Tentacle binary MUST exist at {binaryPath} after install. " +
-                          "If absent: tar extraction failed silently, OR tarball had a different entry name (mirror serving wrong content?), OR INSTALL_DIR override didn't propagate to .sh.");
+        // Versioned layout: the binary lives under versions/<v>, selected by a stable
+        // `current` symlink. (The placeholder reports "unknown" — no version.txt in the
+        // install tarball — so the dir is versions/unknown; the test asserts the
+        // structure, not the specific name.)
+        var versionsDir = Path.Combine(ctx.InstallDir, "versions");
+        Directory.Exists(versionsDir).ShouldBeTrue(
+            customMessage: $"versioned install MUST create {versionsDir}. If absent: the .sh fell back to flat layout (binary couldn't report a version) OR the versioned extract regressed.");
+
+        var currentPointer = Path.Combine(ctx.InstallDir, "current");
+        new DirectoryInfo(currentPointer).LinkTarget.ShouldNotBeNull(
+            $"{currentPointer} MUST be a symlink (the version pointer). If null: `current` is a real dir, not the atomic pointer — the `ln -sfn` / `mv -T` swap regressed.");
+
+        File.Exists(Path.Combine(currentPointer, "Squid.Tentacle")).ShouldBeTrue(
+            customMessage: $"binary MUST be reachable at {currentPointer}/Squid.Tentacle (through the `current` pointer). " +
+                          "If absent: `current` points at the wrong dir OR the staged tree wasn't moved into versions/<v>.");
 
         // Symlink within INSTALL_DIR — `ln -sf $INSTALL_DIR/Squid.Tentacle $INSTALL_DIR/squid-tentacle`.
         var binaryNameSymlink = Path.Combine(ctx.InstallDir, "squid-tentacle");
@@ -322,8 +332,11 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           "Operators verify which URL form succeeded by reading this log.");
 
         // Sanity: the install actually completed end-to-end via the v-prefix path.
-        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
-            customMessage: $"Squid.Tentacle binary MUST exist at {ctx.InstallDir}/Squid.Tentacle after v-prefix fallback install. " +
+        // Assert the stable `squid-tentacle` entry point (resolves through `current`
+        // in the versioned layout, or directly in a flat install) rather than the
+        // version-specific binary path.
+        File.Exists(Path.Combine(ctx.InstallDir, "squid-tentacle")).ShouldBeTrue(
+            customMessage: $"squid-tentacle entry point MUST exist at {ctx.InstallDir}/squid-tentacle after v-prefix fallback install. " +
                           "If absent: .sh logged retry but never actually downloaded — retry construction may produce a malformed URL.");
 
         File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
@@ -399,7 +412,7 @@ public sealed class TentacleLinuxInstallScriptE2ETests
         output1.ShouldContain("Verified: squid-tentacle executable",
             customMessage: "first run MUST log verification — sanity check before re-run.");
 
-        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue("first run MUST install binary");
+        File.Exists(Path.Combine(ctx.InstallDir, "squid-tentacle")).ShouldBeTrue("first run MUST install binary (stable squid-tentacle entry point, resolves through `current` when versioned)");
         File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue("first run MUST create PATH symlink");
 
         // ── Run 2: re-run on existing state ────────────────────────────────
@@ -428,9 +441,11 @@ public sealed class TentacleLinuxInstallScriptE2ETests
         output2.ShouldNotContain("Error: install dir not empty",
             customMessage: "second run MUST NOT error on non-empty INSTALL_DIR. The .sh uses tar xzf which overwrites existing files; a regression to 'fail-if-not-empty' breaks every fleet refresh.");
 
-        // Final state assertions — same as single-install.
-        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
-            customMessage: $"binary MUST still exist at {ctx.InstallDir}/Squid.Tentacle after re-install. If absent: re-extract failed silently OR rm-then-extract pattern dropped the binary mid-flight.");
+        // Final state assertions — same as single-install. Re-running the versioned
+        // installer replaces versions/<v> and repoints `current`, so assert the stable
+        // entry point that survives the swap.
+        File.Exists(Path.Combine(ctx.InstallDir, "squid-tentacle")).ShouldBeTrue(
+            customMessage: $"squid-tentacle entry point MUST still exist at {ctx.InstallDir}/squid-tentacle after re-install. If absent: re-extract failed silently OR the current-pointer repoint dropped the binary mid-flight.");
 
         File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
             customMessage: "/usr/local/bin/squid-tentacle MUST still exist after re-install. ln -sf overwrites; if symlink is gone, ln -sf regressed to plain ln (fails on existing target).");
@@ -758,9 +773,10 @@ public sealed class TentacleLinuxInstallScriptE2ETests
         output.ShouldContain("Installation Complete",
             customMessage: "stdout MUST contain 'Installation Complete' even on the latest path — operators tail this banner for confirmation regardless of version arg.");
 
-        // Final state: binary installed.
-        File.Exists(Path.Combine(ctx.InstallDir, "Squid.Tentacle")).ShouldBeTrue(
-            customMessage: $"Squid.Tentacle binary MUST exist at {ctx.InstallDir}/Squid.Tentacle after latest-version install.");
+        // Final state: binary installed (assert the stable squid-tentacle entry point,
+        // which resolves through `current` in the versioned layout).
+        File.Exists(Path.Combine(ctx.InstallDir, "squid-tentacle")).ShouldBeTrue(
+            customMessage: $"squid-tentacle entry point MUST exist at {ctx.InstallDir}/squid-tentacle after latest-version install.");
 
         File.Exists("/usr/local/bin/squid-tentacle").ShouldBeTrue(
             customMessage: "/usr/local/bin/squid-tentacle symlink MUST exist after latest-version install — confirms post-extract steps ran the same way as tagged-version paths.");

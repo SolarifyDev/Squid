@@ -134,6 +134,30 @@ $STATUS_FILE = Join-Path $STATUS_DIR 'last-upgrade.json'
 $LOCK_FILE   = Join-Path $STATUS_DIR 'upgrade.lock'
 $LOG_FILE    = Join-Path $STATUS_DIR 'upgrade.log'
 
+# ── Layout detection (blue-green) ────────────────────────────────────────────
+# A versioned install selects its active version via the `current` junction
+# ({INSTALL_DIR}\current -> versions\<v>). When versioned, Phase B activates the
+# new version by repointing `current` and NEVER touches the running version's
+# directory, so any failure leaves the old version intact and instantly
+# restorable. Flat installs (no `current` junction) keep today's .bak swap
+# byte-for-byte — the entire blue-green path is gated on $isVersioned. We only
+# treat the install as versioned when `current` is a reparse point AND its
+# target reads back cleanly; anything else falls back to the flat path.
+$isVersioned = $false
+$oldVerTarget = ''
+$currentPointer = Join-Path $INSTALL_DIR 'current'
+try {
+    $cp = Get-Item -LiteralPath $currentPointer -Force -ErrorAction SilentlyContinue
+    if ($null -ne $cp -and (($cp.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        $t = @($cp.Target)[0]
+        if (-not [string]::IsNullOrWhiteSpace($t)) {
+            # Strip a leading \??\ NT-path prefix that some junctions report.
+            $oldVerTarget = ($t -replace '^\\\?\?\\', '')
+            $isVersioned = $true
+        }
+    }
+} catch { }
+
 # Per-phase event timeline, parity with the Linux script's upgrade-events.jsonl.
 # The Squid server reads this via WindowsUpgradeStatusStorage on every
 # Capabilities RPC (EventsFileSubPath = upgrade\upgrade-events.jsonl) and
@@ -291,6 +315,35 @@ function Invoke-Rollback {
         }
     } catch {
         Append-UpgradeLog "[rollback] Couldn't cleanly stop new service: $($_.Exception.Message). Proceeding with restore — Move-Item might still succeed if SCM has released the binary."
+    }
+
+    # ── Versioned (blue-green) rollback ──────────────────────────────────────
+    # Repoint `current` back to the previous version. The previous version
+    # directory was never touched during the swap, so this cannot lose it — even
+    # if the repoint or the restart fails, the previous binaries remain intact at
+    # $oldVerTarget. Flat installs fall through to the .bak restore below.
+    if ($isVersioned) {
+        Append-UpgradeLog "[rollback] Repointing current -> $oldVerTarget (previous version)"
+        try {
+            if (Test-Path $currentPointer) { [System.IO.Directory]::Delete($currentPointer, $false) }
+            New-Item -ItemType Junction -Path $currentPointer -Target $oldVerTarget | Out-Null
+        } catch {
+            Append-UpgradeLog "::error:: [rollback] Failed to repoint current back to previous version: $($_.Exception.Message)"
+            Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod $INSTALL_METHOD -Detail "Failed to repoint current; previous version intact at $oldVerTarget, manual repoint required. Failure: $Reason." -ExitCode $ExitCode
+            exit $ExitCode
+        }
+
+        try {
+            Append-UpgradeLog "[rollback] Starting service on previous version"
+            Start-Service -Name $SERVICE_NAME
+            (Get-Service -Name $SERVICE_NAME).WaitForStatus('Running', $SERVICE_TIMEOUT_SPAN)
+            Append-UpgradeLog "[rollback] Service running on previous version"
+            Write-UpgradeStatus -Status 'ROLLED_BACK' -InstallMethod $INSTALL_METHOD -Detail "Rolled back by repointing current to the previous version. Reason: $Reason." -ExitCode $ExitCode
+        } catch {
+            Append-UpgradeLog "::error:: [rollback] Repointed to previous version but service won't start: $($_.Exception.Message)"
+            Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod $INSTALL_METHOD -Detail "Repointed current to previous version but service won't start; previous binaries intact at $oldVerTarget. Reason: $Reason." -ExitCode $ExitCode
+        }
+        exit $ExitCode
     }
 
     # Resolve the .bak path the same way Phase B's backup step did.
@@ -610,8 +663,40 @@ try {
         Append-UpgradeLog "[upgrade] Service $SERVICE_NAME not registered yet — first install path"
     }
 
-    # Backup current install (zip method requires explicit swap)
-    if ($INSTALL_METHOD -eq 'zip') {
+    # ── Conditional swap ────────────────────────────────────────────────────
+    # Versioned (blue-green): stage the new version into versions\<target> and
+    # repoint the `current` junction; the running version directory is NEVER
+    # touched, so any failure leaves it intact. Flat: legacy move-aside .bak swap.
+    if ($isVersioned) {
+        if (-not (Test-Path $extractDir)) {
+            Append-UpgradeLog "::error:: Phase B can't find Phase A staging dir at expected path: $extractDir"
+            Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod 'zip' -Detail "Staging dir disappeared between phases: $extractDir" -ExitCode 14
+            exit 14
+        }
+
+        $versionsRoot = Join-Path $INSTALL_DIR 'versions'
+        $newVerDir = Join-Path $versionsRoot $TARGET_VERSION
+        New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null
+
+        # Never delete the currently-running version's directory.
+        if ((Test-Path $newVerDir) -and ($newVerDir -ne $oldVerTarget)) {
+            Remove-Item -Path $newVerDir -Recurse -Force
+        }
+
+        Append-UpgradeLog "[upgrade] Staging new version into $newVerDir"
+        Move-Item -Path $extractDir -Destination $newVerDir -Force
+
+        # Repoint `current` junction. Delete the old junction NON-recursively
+        # ([Directory]::Delete(path,$false)) so we remove only the reparse point,
+        # never the target version's files.
+        Append-UpgradeLog "[upgrade] Repointing current -> $newVerDir"
+        if (Test-Path $currentPointer) { [System.IO.Directory]::Delete($currentPointer, $false) }
+        New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir | Out-Null
+
+        Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Activated versions\$TARGET_VERSION via current junction — restarting service"
+    }
+    elseif ($INSTALL_METHOD -eq 'zip') {
+        # Backup current install (zip method requires explicit swap).
         # Robust .bak sibling path: Split-Path normalises trailing separators
         # so a future operator setting INSTALL_DIR with a trailing backslash
         # ("C:\Squid\") doesn't produce a hidden ".bak" leaf inside the dir.

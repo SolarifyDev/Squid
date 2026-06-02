@@ -80,6 +80,60 @@ public sealed class UpgradeLinuxTentacleScriptTests
         RenderedScript.ShouldContain("set -euo pipefail");
     }
 
+    // ── Versioned (blue-green) upgrade ──────────────────────────────────────
+
+    [Fact]
+    public void Versioned_DetectsCurrentPointerAndCapturesRollbackAnchor()
+    {
+        RenderedScript.ShouldContain("if [ -L \"$INSTALL_DIR/current\" ]; then",
+            customMessage: "must detect the versioned layout by testing whether $INSTALL_DIR/current is a symlink");
+        RenderedScript.ShouldContain("IS_VERSIONED=1");
+        RenderedScript.ShouldContain("OLD_VER_TARGET=$(readlink -f \"$INSTALL_DIR/current\"",
+            customMessage: "must capture the previous version dir (the rollback anchor) before any change");
+    }
+
+    [Fact]
+    public void Versioned_ForcesTarballMethod_SkippingAptYum()
+    {
+        // apt/yum write flat files and would orphan the `current` pointer, so a
+        // versioned install must always upgrade via the inline tarball path.
+        RenderedScript.ShouldContain("Versioned installs bypass the package-manager methods",
+            customMessage: "versioned installs must skip apt/yum and force the tarball path");
+    }
+
+    [Fact]
+    public void Versioned_SwapsAtomicallyWithoutTouchingRunningVersion()
+    {
+        RenderedScript.ShouldContain("NEW_VER_DIR=\"$INSTALL_DIR/versions/$TARGET_VERSION\"",
+            customMessage: "the new version must be staged into versions/<target>, not over the running version");
+        RenderedScript.ShouldContain("[ \"$NEW_VER_DIR\" != \"$OLD_VER_TARGET\" ]",
+            customMessage: "the rm must be guarded so the currently-running version directory is never deleted");
+        RenderedScript.ShouldContain("mv -T \"$INSTALL_DIR/current.tmp\" \"$INSTALL_DIR/current\"",
+            customMessage: "current must be repointed atomically via `mv -T` (rename), never rm+recreate");
+    }
+
+    [Fact]
+    public void Versioned_RollbackRepointsToPreviousVersion_AndKeepsItIntactOnFailure()
+    {
+        RenderedScript.ShouldContain("Versioned rollback: repointing current to previous version",
+            customMessage: "the versioned rollback must repoint `current` back to the previous version");
+        RenderedScript.ShouldContain("ln -sfn \"$OLD_VER_TARGET\" \"$INSTALL_DIR/current.tmp\"",
+            customMessage: "rollback must point current back at the previous version dir ($OLD_VER_TARGET)");
+        // The previous version dir is never touched during the swap, so even a failed
+        // rollback leaves it intact — the critical-failure status must say so.
+        RenderedScript.ShouldContain("previous version intact at $OLD_VER_TARGET",
+            customMessage: "ROLLBACK_CRITICAL_FAILED status must state the previous version is still intact on disk");
+    }
+
+    [Fact]
+    public void Versioned_PropagatesFlagsThroughScopeHandoff()
+    {
+        RenderedScript.ShouldContain("--setenv=IS_VERSIONED=\"$IS_VERSIONED\"",
+            customMessage: "IS_VERSIONED must cross the systemd-run scope boundary into Phase B");
+        RenderedScript.ShouldContain("--setenv=OLD_VER_TARGET=\"$OLD_VER_TARGET\"",
+            customMessage: "OLD_VER_TARGET (the rollback anchor) must cross into Phase B");
+    }
+
     // ── Exit code taxonomy — 9 codes, each anchor pinned ────────────────────
 
     [Theory]
