@@ -678,20 +678,35 @@ try {
         $newVerDir = Join-Path $versionsRoot $TARGET_VERSION
         New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null
 
-        # Never delete the currently-running version's directory.
-        if ((Test-Path $newVerDir) -and ($newVerDir -ne $oldVerTarget)) {
-            Remove-Item -Path $newVerDir -Recurse -Force
+        # Normalised compare: is the target already the active version?
+        $newFull = [System.IO.Path]::GetFullPath($newVerDir).TrimEnd('\')
+        $oldFull = if ($oldVerTarget) { [System.IO.Path]::GetFullPath($oldVerTarget).TrimEnd('\') } else { '' }
+
+        if ($oldFull -and ($newFull -eq $oldFull)) {
+            # Re-upgrade to the already-active version: nothing to stage or repoint
+            # (current already points here). Discard the downloaded copy so we don't
+            # leave an extract residue inside the live version dir. (The pre-upgrade
+            # ProductVersion short-circuit usually catches this; this is the dir-based
+            # belt-and-braces for the pre-release case where the stamp differs.)
+            Append-UpgradeLog "[upgrade] Target version $TARGET_VERSION is already active; skipping stage + repoint (no-op)."
+            Write-UpgradeEvent -Phase 'B' -Kind 'already-active' -Msg "Target $TARGET_VERSION already active; no swap needed"
+            Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
         }
+        else {
+            # Target differs from the active version, so removing any stale same-version
+            # dir can never touch the running version.
+            if (Test-Path $newVerDir) { Remove-Item -Path $newVerDir -Recurse -Force }
 
-        Append-UpgradeLog "[upgrade] Staging new version into $newVerDir"
-        Move-Item -Path $extractDir -Destination $newVerDir -Force
+            Append-UpgradeLog "[upgrade] Staging new version into $newVerDir"
+            Move-Item -Path $extractDir -Destination $newVerDir -Force
 
-        # Repoint `current` junction. Delete the old junction NON-recursively
-        # ([Directory]::Delete(path,$false)) so we remove only the reparse point,
-        # never the target version's files.
-        Append-UpgradeLog "[upgrade] Repointing current -> $newVerDir"
-        if (Test-Path $currentPointer) { [System.IO.Directory]::Delete($currentPointer, $false) }
-        New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir | Out-Null
+            # Repoint `current` junction. Delete the old junction NON-recursively
+            # ([Directory]::Delete(path,$false)) so we remove only the reparse point,
+            # never the target version's files.
+            Append-UpgradeLog "[upgrade] Repointing current -> $newVerDir"
+            if (Test-Path $currentPointer) { [System.IO.Directory]::Delete($currentPointer, $false) }
+            New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir | Out-Null
+        }
 
         Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Activated versions\$TARGET_VERSION via current junction — restarting service"
     }
@@ -812,6 +827,42 @@ try {
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
     Append-UpgradeLog "[upgrade] Phase B complete — version $TARGET_VERSION installed via $INSTALL_METHOD"
+
+    # Version GC (versioned only, best-effort): keep the newest N version dirs and
+    # prune older ones so versions\ doesn't grow unbounded. Runs only AFTER success
+    # is recorded, and NEVER deletes the active version (current's target). Retention
+    # is tunable via SQUID_UPGRADE_KEEP_VERSIONS (default 3 = active + a couple of
+    # rollback targets); floored at 2 so a bad value can't strand rollback.
+    if ($isVersioned) {
+        try {
+            $keep = 3
+            if ($env:SQUID_UPGRADE_KEEP_VERSIONS -and ($env:SQUID_UPGRADE_KEEP_VERSIONS -as [int])) {
+                $keep = [int]$env:SQUID_UPGRADE_KEEP_VERSIONS
+            }
+            if ($keep -lt 2) { $keep = 2 }
+
+            $currentReal = if (Test-Path $currentPointer) { @((Get-Item $currentPointer -Force).Target)[0] } else { $null }
+            if ($currentReal) { $currentReal = [System.IO.Path]::GetFullPath(($currentReal -replace '^\\\?\?\\', '')).TrimEnd('\') }
+
+            $versionsRoot = Join-Path $INSTALL_DIR 'versions'
+            if (Test-Path $versionsRoot) {
+                # Sort by CreationTimeUtc (install order) — newest first. (Deliberately
+                # not LastWriteTimeUtc: that's reserved for the Phase B staging-dir
+                # anti-pattern guard, and creation time is the version's install moment.)
+                $dirs = @(Get-ChildItem -Path $versionsRoot -Directory | Sort-Object CreationTimeUtc -Descending)
+                for ($i = $keep; $i -lt $dirs.Count; $i++) {
+                    $full = [System.IO.Path]::GetFullPath($dirs[$i].FullName).TrimEnd('\')
+                    if ($currentReal -and ($full -eq $currentReal)) { continue }
+                    Remove-Item -Path $dirs[$i].FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+                Write-UpgradeEvent -Phase 'B' -Kind 'gc' -Msg "Version GC: kept newest $keep version(s), pruned older"
+            }
+        }
+        catch {
+            Append-UpgradeLog "[upgrade] Version GC skipped (best-effort): $($_.Exception.Message)"
+        }
+    }
+
     exit 0
 }
 finally {

@@ -134,6 +134,66 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
         ctx.MarkClean();
     }
 
+    // ========================================================================
+    // Version GC — beyond the retention floor, the oldest version is pruned.
+    // ========================================================================
+
+    [Fact]
+    public void Versioned_GC_PrunesOldestBeyondRetention()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        var healthz = new Dictionary<string, string> { ["SQUID_TEST_SERVICE_HEALTHZ"] = "1" };
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceScript, initialVersion: V1, startTimeout: TimeSpan.FromSeconds(15), extraEnvironment: healthz);
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running");
+
+        // Default retention is 3. v1 (install) + 3 upgrades = 4 versions, so after the
+        // final upgrade the oldest (v1) must be pruned while the newest 3 are kept.
+        foreach (var v in new[] { "2.0.0-test", "3.0.0-test", "4.0.0-test" })
+        {
+            ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: v));
+            var (exit, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: v));
+            exit.ShouldBe(0, customMessage: Tail($"upgrade to {v} must succeed", exit, output));
+            WaitForFileContent(ctx.Fixture.VersionedMarkerPath(v), v, TimeSpan.FromSeconds(30)).ShouldBeTrue($"{v} must run after upgrade");
+        }
+
+        Directory.Exists(ctx.Fixture.VersionDir(V1)).ShouldBeFalse(
+            "the oldest version (v1) MUST be GC-pruned once retention (default 3) is exceeded");
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0-test")).ShouldBeTrue("the newest 3 versions MUST be kept (v2)");
+        Directory.Exists(ctx.Fixture.VersionDir("3.0.0-test")).ShouldBeTrue("the newest 3 versions MUST be kept (v3)");
+        Directory.Exists(ctx.Fixture.VersionDir("4.0.0-test")).ShouldBeTrue("the newest 3 versions MUST be kept (v4)");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("4.0.0-test", customMessage: "current MUST point at the newest version");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void Versioned_SameVersionReupgrade_IsNoOp_NoResidue()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        var healthz = new Dictionary<string, string> { ["SQUID_TEST_SERVICE_HEALTHZ"] = "1" };
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceScript, initialVersion: V1, startTimeout: TimeSpan.FromSeconds(15), extraEnvironment: healthz);
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running");
+
+        // Re-upgrade to the SAME version that is already active.
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: V1));
+        var (exit, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V1));
+        exit.ShouldBe(0, customMessage: Tail("same-version re-upgrade must exit 0 (no-op)", exit, output));
+
+        // The no-op must NOT move the download into the live version dir.
+        Directory.Exists(Path.Combine(ctx.Fixture.VersionDir(V1), "extract")).ShouldBeFalse(
+            "a same-version re-upgrade MUST NOT leave an extract/ residue inside the live version dir");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe(V1, customMessage: "current still points at the (unchanged) active version");
+        ctx.Fixture.IsActive().ShouldBeTrue(customMessage: "service MUST still be active after the no-op re-upgrade");
+
+        ctx.MarkClean();
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private static string ReadThroughCurrent(LinuxLifecycleContext ctx, string fileName)

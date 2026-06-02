@@ -562,6 +562,7 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     --setenv=OLD_VERSION_RPM="$OLD_VERSION_RPM" \
     --setenv=IS_VERSIONED="$IS_VERSIONED" \
     --setenv=OLD_VER_TARGET="$OLD_VER_TARGET" \
+    --setenv=SQUID_UPGRADE_KEEP_VERSIONS="${SQUID_UPGRADE_KEEP_VERSIONS:-3}" \
     bash "$SCOPED_SCRIPT" || {
       echo "::error:: Failed to spawn scope for upgrade handoff."
       write_status "FAILED" "systemd-run --scope failed to launch"
@@ -599,29 +600,41 @@ if [ "$IS_VERSIONED" = "1" ]; then
   NEW_VER_DIR="$INSTALL_DIR/versions/$TARGET_VERSION"
   sudo mkdir -p "$INSTALL_DIR/versions"
 
-  # Never delete the currently-running version's directory.
-  if [ -d "$NEW_VER_DIR" ] && [ "$NEW_VER_DIR" != "$OLD_VER_TARGET" ]; then sudo rm -rf "$NEW_VER_DIR"; fi
+  if [ -n "$OLD_VER_TARGET" ] && [ "$NEW_VER_DIR" = "$OLD_VER_TARGET" ]; then
+    # Re-upgrade to the already-active version: the running version dir IS the
+    # target, so there is nothing to stage or repoint. Discard the freshly
+    # downloaded copy (so we don't leave an extract/ residue inside the live
+    # version dir) and fall through to the restart/health-check as a no-op
+    # re-validation. `current` already points here.
+    echo "[upgrade] Target version $TARGET_VERSION is already active; skipping stage + repoint (no-op)."
+    emit_event B already-active "Target $TARGET_VERSION already active; no swap needed"
+    rm -rf "$EXTRACT" 2>/dev/null || true
+  else
+    # The target differs from the active version (guaranteed by the branch above),
+    # so removing any stale same-version dir can never touch the running version.
+    if [ -d "$NEW_VER_DIR" ]; then sudo rm -rf "$NEW_VER_DIR"; fi
 
-  if ! sudo mv "$EXTRACT" "$NEW_VER_DIR"; then
-    echo "::error:: Failed to stage new version into $NEW_VER_DIR. Running version untouched; no damage."
-    write_status "FAILED" "Failed to stage new version (versioned); running version intact at $OLD_VER_TARGET"
-    exit 10
-  fi
+    if ! sudo mv "$EXTRACT" "$NEW_VER_DIR"; then
+      echo "::error:: Failed to stage new version into $NEW_VER_DIR. Running version untouched; no damage."
+      write_status "FAILED" "Failed to stage new version (versioned); running version intact at $OLD_VER_TARGET"
+      exit 10
+    fi
 
-  sudo chmod +x "$NEW_VER_DIR/Squid.Tentacle"
-  [ -f "$NEW_VER_DIR/Squid.Calamari" ] && sudo chmod +x "$NEW_VER_DIR/Squid.Calamari"
+    sudo chmod +x "$NEW_VER_DIR/Squid.Tentacle"
+    [ -f "$NEW_VER_DIR/Squid.Calamari" ] && sudo chmod +x "$NEW_VER_DIR/Squid.Calamari"
 
-  if id "$SERVICE_USER" >/dev/null 2>&1; then
-    sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$NEW_VER_DIR" 2>/dev/null || true
-  fi
+    if id "$SERVICE_USER" >/dev/null 2>&1; then
+      sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$NEW_VER_DIR" 2>/dev/null || true
+    fi
 
-  # Activate atomically: ln into a temp name then rename onto `current`.
-  sudo ln -sfn "$NEW_VER_DIR" "$INSTALL_DIR/current.tmp"
-  if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
-    sudo rm -rf "$INSTALL_DIR/current.tmp" 2>/dev/null || true
-    echo "::error:: Failed to repoint current -> $NEW_VER_DIR. Running version untouched; no damage."
-    write_status "FAILED" "Failed to activate new version (current repoint); running version intact at $OLD_VER_TARGET"
-    exit 10
+    # Activate atomically: ln into a temp name then rename onto `current`.
+    sudo ln -sfn "$NEW_VER_DIR" "$INSTALL_DIR/current.tmp"
+    if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
+      sudo rm -rf "$INSTALL_DIR/current.tmp" 2>/dev/null || true
+      echo "::error:: Failed to repoint current -> $NEW_VER_DIR. Running version untouched; no damage."
+      write_status "FAILED" "Failed to activate new version (current repoint); running version intact at $OLD_VER_TARGET"
+      exit 10
+    fi
   fi
 elif [ "$INSTALL_METHOD" = "tarball" ]; then
   if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
@@ -725,6 +738,28 @@ if [ "$HEALTH_OK" = "1" ]; then
   if [ "$INSTALL_METHOD" = "tarball" ]; then
     sudo rm -rf "$BAK_DIR"
   fi
+
+  # Version GC (versioned only, best-effort): keep the newest N version dirs and
+  # prune older ones so versions/ doesn't grow unbounded. Runs only AFTER success
+  # is recorded, and NEVER deletes the active version (current's target). Retention
+  # is tunable via SQUID_UPGRADE_KEEP_VERSIONS (default 3 = active + a couple of
+  # rollback targets); a floor of 2 is enforced so a bad value can't strand rollback.
+  if [ "$IS_VERSIONED" = "1" ]; then
+    KEEP="${SQUID_UPGRADE_KEEP_VERSIONS:-3}"
+    if ! [ "$KEEP" -ge 2 ] 2>/dev/null; then KEEP=2; fi
+
+    CURRENT_REAL=$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)
+    KEPT=0
+    for d in $(ls -1dt "$INSTALL_DIR"/versions/*/ 2>/dev/null); do
+      d="${d%/}"
+      KEPT=$((KEPT + 1))
+      if [ "$KEPT" -le "$KEEP" ]; then continue; fi
+      if [ "$(readlink -f "$d" 2>/dev/null)" = "$CURRENT_REAL" ]; then continue; fi
+      sudo rm -rf "$d" 2>/dev/null || true
+    done
+    emit_event B gc "Version GC: kept newest $KEEP version(s), pruned older"
+  fi
+
   exit 0
 fi
 
