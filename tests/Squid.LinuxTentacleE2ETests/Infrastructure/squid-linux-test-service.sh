@@ -45,8 +45,18 @@ MARKER_FILE="$INSTALL_DIR/service-running.marker"
 # itself wrote it correctly. Bug found by J.L.E.7.4 diagnostic dump
 # (Linux runner). Real Squid.Tentacle's CLI handles `version` similarly.
 if [ "${1:-}" = "version" ]; then
-    if [ -f "$VERSION_FILE" ]; then
-        cat "$VERSION_FILE" | tr -d '[:space:]'
+    # Resolve version.txt relative to THIS binary's own directory, independent of
+    # the INSTALL_DIR env var. A real Squid.Tentacle reports its own embedded
+    # version regardless of cwd/env; the upgrade script's post-restart check runs
+    # `$INSTALL_DIR/squid-tentacle version` with INSTALL_DIR set to the install
+    # ROOT, but in the versioned layout each versions/<v>/ has its own version.txt,
+    # so we must read from the resolved binary dir (versions/<v>) — not $INSTALL_DIR.
+    # For a flat install the resolved dir IS the install dir, so behaviour is
+    # unchanged. Bug class: env-based read returned the root's (absent) version.txt
+    # -> "unknown" != TARGET_VERSION -> the versioned happy-path wrongly rolled back.
+    SELF_VERSION_FILE="$(dirname "$(readlink -f "$0")")/version.txt"
+    if [ -f "$SELF_VERSION_FILE" ]; then
+        cat "$SELF_VERSION_FILE" | tr -d '[:space:]'
     else
         echo "unknown"
     fi
