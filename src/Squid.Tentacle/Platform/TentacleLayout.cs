@@ -82,8 +82,9 @@ public static class TentacleLayout
     {
         if (string.IsNullOrWhiteSpace(installDir)) return false;
 
-        var pointer = CurrentPointer(installDir);
-
-        return Directory.Exists(pointer) || File.Exists(pointer);
+        // `current` is a directory pointer (symlink on Linux/macOS, junction on Windows);
+        // Directory.Exists follows the link/junction. A dangling or non-directory pointer
+        // reports false, so callers safely fall back to the flat layout.
+        return Directory.Exists(CurrentPointer(installDir));
     }
 }
