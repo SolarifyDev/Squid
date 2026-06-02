@@ -1254,6 +1254,59 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         ctx.MarkClean();
     }
 
+    [Fact]
+    public void Versioned_GC_PrunesOldestBeyondRetention()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running");
+
+        // Default retention is 3. v1 (install) + 3 upgrades = 4 versions, so after the
+        // final upgrade the oldest (v1) must be pruned while the newest 3 are kept.
+        foreach (var v in new[] { "2.0.0", "3.0.0", "4.0.0" })
+        {
+            ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: v));
+            var (exit, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(v));
+            exit.ShouldBe(0, customMessage: $"upgrade to {v} must succeed. Got {exit}.\nstdout:\n{stdout}");
+            WaitForFileContent(ctx.Fixture.VersionedMarkerPath(v), v, TimeSpan.FromSeconds(30)).ShouldBeTrue($"{v} must run after upgrade");
+        }
+
+        Directory.Exists(ctx.Fixture.VersionDir("1.0.0")).ShouldBeFalse(
+            "the oldest version (v1) MUST be GC-pruned once retention (default 3) is exceeded");
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0")).ShouldBeTrue("the newest 3 versions MUST be kept (v2)");
+        Directory.Exists(ctx.Fixture.VersionDir("3.0.0")).ShouldBeTrue("the newest 3 versions MUST be kept (v3)");
+        Directory.Exists(ctx.Fixture.VersionDir("4.0.0")).ShouldBeTrue("the newest 3 versions MUST be kept (v4)");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("4.0.0", customMessage: "current MUST point at the newest version");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void Versioned_SameVersionReupgrade_IsNoOp_NoResidue()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running");
+
+        // Re-upgrade to the SAME version that is already active.
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "1.0.0"));
+        var (exit, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("1.0.0"));
+        exit.ShouldBe(0, customMessage: $"same-version re-upgrade must exit 0 (no-op). Got {exit}.\nstdout:\n{stdout}");
+
+        // The no-op must NOT move the download into the live version dir.
+        Directory.Exists(Path.Combine(ctx.Fixture.VersionDir("1.0.0"), "extract")).ShouldBeFalse(
+            "a same-version re-upgrade MUST NOT leave an extract residue inside the live version dir");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("1.0.0", customMessage: "current still points at the (unchanged) active version");
+
+        ctx.MarkClean();
+    }
+
     private static string ReadThroughCurrent(UpgradeLifecycleContext ctx, string fileName)
     {
         var path = Path.Combine(ctx.Fixture.CurrentPointer, fileName);
