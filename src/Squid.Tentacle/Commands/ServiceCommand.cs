@@ -205,13 +205,27 @@ public sealed class ServiceCommand : ITentacleCommand
     /// Uses <see cref="Environment.ProcessPath"/> (real exe — works for single-file
     /// PublishSingleFile deployments) + <see cref="AppContext.BaseDirectory"/> (install dir).
     /// </summary>
-    internal static (string ExecStart, string WorkingDir) ResolveServiceExecution()
-    {
-        var workingDir = (AppContext.BaseDirectory ?? "/opt/squid-tentacle").TrimEnd('/', '\\');
-        var execStart = Environment.ProcessPath;
+    internal static (string ExecStart, string WorkingDir) ResolveServiceExecution() =>
+        ResolveServiceExecution(AppContext.BaseDirectory, Environment.ProcessPath, Platform.TentacleLayout.IsVersioned);
 
-        if (string.IsNullOrEmpty(execStart))
-            execStart = Path.Combine(workingDir, "Squid.Tentacle");
+    /// <summary>
+    /// Testable core. When the running binary lives inside a versioned install
+    /// (<c>{root}/versions/{ver}</c> or <c>{root}/current</c>) AND that root has a live
+    /// <c>current</c> pointer, the service is registered against the STABLE pointer path
+    /// so an upgrade can repoint <c>current</c> to a new version without re-registering the
+    /// service. Flat installs (and a versioned-shaped path whose pointer isn't live yet)
+    /// keep today's behaviour — <paramref name="processPath"/> verbatim.
+    /// </summary>
+    internal static (string ExecStart, string WorkingDir) ResolveServiceExecution(string baseDir, string processPath, Func<string, bool> isVersioned)
+    {
+        var workingDir = (baseDir ?? "/opt/squid-tentacle").TrimEnd('/', '\\');
+
+        var installRoot = Platform.TentacleLayout.TryGetInstallRootFromRunningDir(workingDir);
+
+        if (installRoot != null && isVersioned(installRoot))
+            return (Platform.TentacleLayout.PointerBinaryPath(installRoot), Platform.TentacleLayout.CurrentPointer(installRoot));
+
+        var execStart = string.IsNullOrEmpty(processPath) ? Path.Combine(workingDir, Platform.TentacleLayout.BinaryFileName) : processPath;
 
         return (execStart, workingDir);
     }

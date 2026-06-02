@@ -1,4 +1,6 @@
+using System.IO;
 using Squid.Tentacle.Commands;
+using Squid.Tentacle.Platform;
 
 namespace Squid.Tentacle.Tests.Commands;
 
@@ -91,5 +93,89 @@ public class ServiceCommandTests
         // Working dir must be a plausible absolute-ish path (no trailing slash)
         workingDir.ShouldNotEndWith("/");
         workingDir.ShouldNotEndWith("\\");
+    }
+
+    // ========================================================================
+    // ResolveServiceExecution (testable overload) — flat vs versioned layout
+    // ========================================================================
+
+    private static string Root() => Path.Combine(Path.DirectorySeparatorChar.ToString(), "opt", "squid-tentacle");
+
+    [Fact]
+    public void ResolveServiceExecution_FlatInstall_ReturnsProcessPathVerbatim()
+    {
+        var root = Root();
+        var processPath = Path.Combine(root, TentacleLayout.BinaryFileName);
+
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(root, processPath, _ => false);
+
+        // Flat layout: register against the real exe exactly as today.
+        execStart.ShouldBe(processPath);
+        workingDir.ShouldBe(root);
+    }
+
+    [Fact]
+    public void ResolveServiceExecution_VersionedRunningDir_LivePointer_ReturnsStablePointerPath()
+    {
+        var root = Root();
+        var runningDir = TentacleLayout.VersionDir(root, "1.8.7");
+        var processPath = TentacleLayout.VersionBinaryPath(root, "1.8.7");
+
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(runningDir, processPath, _ => true);
+
+        // Versioned + live pointer: register against the STABLE pointer, not the
+        // version-specific path, so upgrades repoint `current` without re-registering.
+        execStart.ShouldBe(TentacleLayout.PointerBinaryPath(root));
+        workingDir.ShouldBe(TentacleLayout.CurrentPointer(root));
+    }
+
+    [Fact]
+    public void ResolveServiceExecution_CurrentPointerRunningDir_LivePointer_ReturnsStablePointerPath()
+    {
+        var root = Root();
+        var runningDir = TentacleLayout.CurrentPointer(root);
+        var processPath = TentacleLayout.PointerBinaryPath(root);
+
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(runningDir, processPath, _ => true);
+
+        execStart.ShouldBe(TentacleLayout.PointerBinaryPath(root));
+        workingDir.ShouldBe(TentacleLayout.CurrentPointer(root));
+    }
+
+    [Fact]
+    public void ResolveServiceExecution_VersionedShapeButPointerNotLive_FallsBackToProcessPath()
+    {
+        // Safety: a path that LOOKS versioned but has no live `current` pointer (e.g.
+        // mid-migration) must NOT be registered against a pointer that doesn't exist.
+        var root = Root();
+        var runningDir = TentacleLayout.VersionDir(root, "1.8.7");
+        var processPath = TentacleLayout.VersionBinaryPath(root, "1.8.7");
+
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(runningDir, processPath, _ => false);
+
+        execStart.ShouldBe(processPath);
+        workingDir.ShouldBe(runningDir);
+    }
+
+    [Fact]
+    public void ResolveServiceExecution_EmptyProcessPath_FlatFallback_UsesBinaryName()
+    {
+        var root = Root();
+
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(root, processPath: "", _ => false);
+
+        execStart.ShouldBe(Path.Combine(root, TentacleLayout.BinaryFileName));
+        workingDir.ShouldBe(root);
+    }
+
+    [Fact]
+    public void ResolveServiceExecution_NullBaseDir_FallsBackToDefaultInstallDir()
+    {
+        var (execStart, workingDir) = ServiceCommand.ResolveServiceExecution(baseDir: null, processPath: "/usr/local/bin/Squid.Tentacle", _ => false);
+
+        // Null base dir is never expected in practice (AppContext.BaseDirectory is always
+        // set) but must degrade safely rather than throw.
+        execStart.ShouldBe("/usr/local/bin/Squid.Tentacle");
+        workingDir.ShouldBe("/opt/squid-tentacle");
     }
 }
