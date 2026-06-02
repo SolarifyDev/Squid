@@ -1118,8 +1118,13 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         var v1Exe = ctx.Fixture.VersionedServiceExePath("1.0.0");
         var v1HashBefore = Sha256Hex(v1Exe);
 
-        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test"));
-        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+        // Release-style target versions (no pre-release suffix): BuildV2BundleZip on
+        // Windows writes a stripped version.txt, so a "2.0.0-test" target would land
+        // version.txt="2.0.0" — a dir-name-vs-content mismatch. Using "2.0.0" keeps the
+        // version dir, version.txt, and marker all consistent (the suffix-handling
+        // pre-release case is covered on the Linux side, whose bundle preserves it).
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0"));
+        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0"));
 
         exitCode.ShouldBe(0, customMessage: $"versioned happy-path upgrade MUST exit 0. Got {exitCode}.\nstdout:\n{stdout}");
 
@@ -1127,9 +1132,9 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         status.ShouldNotBeNull(customMessage: $"last-upgrade.json MUST be written. Path: {ctx.StatusFilePath}");
         status.Status.ShouldBe("SUCCESS", customMessage: $"status MUST be SUCCESS. Got '{status.Status}'. Detail: {status.Detail}");
 
-        // current now resolves to versions\2.0.0-test (junction repointed).
-        ReadThroughCurrent(ctx, "version.txt").ShouldBe("2.0.0-test",
-            customMessage: "current\\version.txt MUST be V2 — the `current` junction was repointed to versions\\2.0.0-test");
+        // current now resolves to versions\2.0.0 (junction repointed).
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("2.0.0",
+            customMessage: "current\\version.txt MUST be V2 — the `current` junction was repointed to versions\\2.0.0");
 
         // versions\1.0.0 untouched: blue-green staged V2 into a SEPARATE dir and
         // repointed the junction; it never moved/overwrote/deleted the prior version.
@@ -1138,7 +1143,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         Sha256Hex(v1Exe).ShouldBe(v1HashBefore,
             "the previous version's exe MUST be byte-for-byte unchanged — the upgrade never touches the running version's directory");
 
-        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0-test"), "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0"), "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
             "after junction repoint + restart, the V2 service MUST write its per-version marker (started on the new version through `current`)");
 
         ctx.MarkClean();
@@ -1159,8 +1164,9 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         var v1HashBefore = Sha256Hex(v1Exe);
 
         // crashOnStart=true → v2's OnStart throws → SCM start fails → Invoke-Rollback.
-        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test", crashOnStart: true));
-        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+        // Release-style version (no suffix) — see the happy-path note.
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0", crashOnStart: true));
+        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0"));
 
         // Exit 8 = Start-Service post-swap failed → rollback fired.
         exitCode.ShouldBe(8, customMessage: $"crashing OnStart MUST trigger the versioned rollback (exit 8). Got {exitCode}.\nstdout:\n{stdout}");
@@ -1181,8 +1187,8 @@ public sealed class TentacleUpgradeLifecycleE2ETests
 
         // The broken v2 is preserved in its own version dir for post-mortem (the
         // versioned equivalent of the flat .failed archive — not silently deleted).
-        Directory.Exists(ctx.Fixture.VersionDir("2.0.0-test")).ShouldBeTrue(
-            "the broken V2 MUST remain at versions\\2.0.0-test for post-mortem");
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0")).ShouldBeTrue(
+            "the broken V2 MUST remain at versions\\2.0.0 for post-mortem");
 
         WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
             "the V1 service MUST be running again after rollback (current repointed back + restart)");
@@ -1202,26 +1208,28 @@ public sealed class TentacleUpgradeLifecycleE2ETests
 
         var v1Hash = Sha256Hex(ctx.Fixture.VersionedServiceExePath("1.0.0"));
 
-        // Upgrade 1.0.0 -> 2.0.0-test
-        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test"));
-        var (exit2, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+        // Release-style versions (no pre-release suffix) — see the happy-path note;
+        // the Windows bundle strips suffixes, so suffix-free keeps dir == version.txt.
+        // Upgrade 1.0.0 -> 2.0.0
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0"));
+        var (exit2, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0"));
         exit2.ShouldBe(0, customMessage: "first upgrade (v1->v2) must succeed");
-        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0-test"), "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue("v2 must run after the first upgrade");
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0"), "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue("v2 must run after the first upgrade");
 
-        var v2Hash = Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0-test"));
+        var v2Hash = Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0"));
 
-        // Upgrade 2.0.0-test -> 3.0.0-test
-        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "3.0.0-test"));
-        var (exit3, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("3.0.0-test"));
+        // Upgrade 2.0.0 -> 3.0.0
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "3.0.0"));
+        var (exit3, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("3.0.0"));
         exit3.ShouldBe(0, customMessage: "second upgrade (v2->v3) must succeed");
-        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("3.0.0-test"), "3.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue("v3 must run after the second upgrade");
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("3.0.0"), "3.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue("v3 must run after the second upgrade");
 
         // All three version dirs coexist (no GC yet); current -> v3; v1 & v2 byte-unchanged.
         Directory.Exists(ctx.Fixture.VersionDir("1.0.0")).ShouldBeTrue("v1 dir MUST be preserved across two upgrades");
-        Directory.Exists(ctx.Fixture.VersionDir("2.0.0-test")).ShouldBeTrue("v2 dir MUST be preserved");
-        ReadThroughCurrent(ctx, "version.txt").ShouldBe("3.0.0-test", customMessage: "current MUST point at v3 after two upgrades");
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0")).ShouldBeTrue("v2 dir MUST be preserved");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("3.0.0", customMessage: "current MUST point at v3 after two upgrades");
         Sha256Hex(ctx.Fixture.VersionedServiceExePath("1.0.0")).ShouldBe(v1Hash, "v1 exe MUST be byte-unchanged across two upgrades");
-        Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0-test")).ShouldBe(v2Hash, "v2 exe MUST be byte-unchanged after the v3 upgrade");
+        Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0")).ShouldBe(v2Hash, "v2 exe MUST be byte-unchanged after the v3 upgrade");
 
         ctx.MarkClean();
     }
