@@ -1,0 +1,101 @@
+name: Tentacle Windows Smoke E2E
+
+# PR GATE for the Windows tentacle's own self-management lifecycle.
+#
+# Why this exists: the comprehensive Windows suite (tentacle-windows-e2e.yml,
+# ~210 tests incl. the 66-test IIS surface) runs nightly + on merge to main,
+# NOT on PRs, because windows-latest is billed at 2x and the full suite would
+# exhaust the Team-plan minute budget. That left a real gap: a PowerShell
+# upgrade-script / sc.exe service-host / install-script regression could merge
+# green (the unit + Linux-container gates pass) and only surface post-merge.
+#
+# This workflow closes that gap with a FAST, high-value subset that gates PRs,
+# mirroring how the Linux upgrade path is PR-gated by e2e-upgrade-matrix.yml.
+# It is paths-filtered to Windows-relevant source so unrelated PRs (frontend,
+# server, K8s, docs) never spend a Windows minute.
+#
+# Smoke scope = the agent's service + upgrade lifecycle on a real Windows host:
+# sc.exe service install/start/stop/uninstall -> blue-green versioned upgrade
+# (download + SHA256 verify + extract + swap + health-check + rollback + GC +
+# last-upgrade.json) -> Task Scheduler detach. Deliberately EXCLUDED and left to
+# the nightly suite: IISDeployE2E (66 tests; needs a ~1m IIS feature install +
+# XDT engine), the real-binary publish path, deploy/register/capabilities/
+# diagnostic (cross-platform logic already exercised by unit + Linux E2E), and
+# TentacleInstallScriptE2E -- install-tentacle.ps1's UAC + install-info tests
+# have pre-existing test-quality issues (fragile cmdlet mock + a shared-path
+# parallel race) being fixed separately; that category is re-added to this gate
+# once it is deterministic. Skipping IIS lets this job skip the slow IIS+XDT
+# setup steps entirely.
+
+on:
+  pull_request:
+    paths:
+      - 'src/Squid.Tentacle/**'
+      - 'src/Squid.Core/Resources/Upgrade/upgrade-windows-tentacle.ps1'
+      - 'src/Squid.Core/Services/Machines/Upgrade/**'
+      - 'tests/Squid.WindowsTentacleE2ETests/**'
+      - '.github/workflows/tentacle-windows-smoke-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "xUnit --filter override for the smoke subset"
+        required: false
+        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E"
+
+permissions:
+  contents: read
+
+# Cancel an in-flight smoke run when the PR is pushed again — a windows-latest
+# VM is 2x-billed, so superseded runs are pure waste.
+concurrency:
+  group: windows-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-smoke-e2e:
+    name: Windows Lifecycle Smoke (PR gate)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        shell: pwsh
+        run: dotnet nuget disable source SJ.Nuget --configfile "$env:NUGET_CONFIG"
+
+      - name: Confirm PowerShell runtimes present
+        shell: pwsh
+        run: |
+          Write-Host "pwsh: $(pwsh -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
+          Write-Host "powershell: $(powershell -NoLogo -Command 'Write-Output $PSVersionTable.PSVersion')"
+
+      - name: Restore Squid.WindowsTentacleE2ETests
+        shell: pwsh
+        run: dotnet restore tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Windows lifecycle smoke subset
+        shell: pwsh
+        run: |
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E" }
+          dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
+            --configuration Release --no-restore `
+            --filter $filter `
+            --logger "console;verbosity=normal"
+
+      - name: Capture leaked test services on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Write-Host "=== Services matching squid/upgrade test-name patterns (GUID-suffixed; should be none after cleanup) ==="
+          Get-Service -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'squid' -or $_.Name -match 'SquidUpgradeE2E' } |
+            Format-Table -Property Name, Status, StartType | Out-String
