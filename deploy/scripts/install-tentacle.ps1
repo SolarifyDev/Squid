@@ -282,17 +282,61 @@ Possible causes:
         exit 1
     }
 
-    # ── Extract ─────────────────────────────────────────────────────────────
+    # ── Extract into a versioned ("blue-green") layout ───────────────────────
+    # Binary lives in versions\<v>; a stable `current` junction selects the active
+    # version. A later upgrade repoints `current` without touching the running
+    # version's directory, so any failure leaves the old version intact. Stage
+    # first, then name the dir by the concrete version the binary reports (works
+    # for both `latest` and an explicit -Version). Junctions need no elevation.
     if (-not (Test-Path $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
-    Write-Host "Extracting to $InstallDir..."
-    Expand-Archive -Path $archivePath -DestinationPath $InstallDir -Force
+    $stagingDir = Join-Path $tempDir 'extract'
+    New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
-    $binaryPath = Join-Path $InstallDir $BinaryName
+    Write-Host "Extracting..."
+    Expand-Archive -Path $archivePath -DestinationPath $stagingDir -Force
+
+    $stagedBinary = Join-Path $stagingDir $BinaryName
+    if (-not (Test-Path $stagedBinary)) {
+        Write-Error "Extraction completed but $BinaryName is missing. The archive may be corrupt."
+        exit 1
+    }
+
+    $resolvedVersion = ''
+    try {
+        $verOut = & $stagedBinary version 2>$null | Select-Object -First 1
+        if ($verOut) { $resolvedVersion = ($verOut -replace '[^0-9A-Za-z._-]', '') }
+    } catch { }
+
+    if ($resolvedVersion) {
+        $versionsRoot = Join-Path $InstallDir 'versions'
+        $versionDir = Join-Path $versionsRoot $resolvedVersion
+        if (-not (Test-Path $versionsRoot)) { New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null }
+        if (Test-Path $versionDir) { Remove-Item -Path $versionDir -Recurse -Force }
+        Move-Item -Path $stagingDir -Destination $versionDir
+
+        # Repoint `current` at the new version. Delete the old junction
+        # NON-recursively ([Directory]::Delete(path, $false)) so we remove only the
+        # reparse point, never the target version's files.
+        $currentPath = Join-Path $InstallDir 'current'
+        if (Test-Path $currentPath) { [System.IO.Directory]::Delete($currentPath, $false) }
+        New-Item -ItemType Junction -Path $currentPath -Target $versionDir | Out-Null
+
+        $binaryPath = Join-Path $currentPath $BinaryName
+        Write-Host "Installed versioned layout: current -> versions\$resolvedVersion"
+    } else {
+        # Best-effort fallback: the binary couldn't report its version. Extract flat
+        # so the install completes exactly as it did before the versioned layout
+        # existed. Never fail an install that used to succeed.
+        Write-Host "Warning: binary did not report a version; using flat layout (no versioned upgrades)."
+        Copy-Item -Path (Join-Path $stagingDir '*') -Destination $InstallDir -Recurse -Force
+        $binaryPath = Join-Path $InstallDir $BinaryName
+    }
+
     if (-not (Test-Path $binaryPath)) {
-        Write-Error "Extraction completed but $BinaryName is missing from $InstallDir. The archive may be corrupt."
+        Write-Error "Install completed but $BinaryName is missing at $binaryPath. The archive may be corrupt."
         exit 1
     }
 
