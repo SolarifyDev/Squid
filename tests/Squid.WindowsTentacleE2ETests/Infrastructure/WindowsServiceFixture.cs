@@ -62,6 +62,26 @@ public sealed class WindowsServiceFixture : IDisposable
     /// <summary>The path to the marker file the service writes on Start (containing the version it read).</summary>
     public string MarkerFilePath => Path.Combine(_installDir, "service-running.marker");
 
+    // ── Versioned (blue-green) layout helpers ───────────────────────────────
+
+    /// <summary>Versioned layout: {InstallDir}\versions parent directory.</summary>
+    public string VersionsRoot => Path.Combine(_installDir, "versions");
+
+    /// <summary>Versioned layout: the stable {InstallDir}\current junction.</summary>
+    public string CurrentPointer => Path.Combine(_installDir, "current");
+
+    /// <summary>Versioned layout: {InstallDir}\versions\{version} directory.</summary>
+    public string VersionDir(string version) => Path.Combine(VersionsRoot, version);
+
+    /// <summary>
+    /// Versioned layout: a version's marker file. The test service writes its
+    /// marker next to its own exe, so each version has its marker inside its dir.
+    /// </summary>
+    public string VersionedMarkerPath(string version) => Path.Combine(VersionDir(version), "service-running.marker");
+
+    /// <summary>Versioned layout: the service exe inside a specific version dir.</summary>
+    public string VersionedServiceExePath(string version) => Path.Combine(VersionDir(version), "SquidUpgradeE2ETestService.exe");
+
     /// <summary>
     /// Construct the fixture against a UNIQUE service name + UNIQUE install
     /// dir. Caller responsibility to make these unique across concurrent
@@ -156,6 +176,94 @@ public sealed class WindowsServiceFixture : IDisposable
         );
 
         WaitForState("RUNNING", startTimeout);
+    }
+
+    /// <summary>
+    /// Stage the test service in a VERSIONED ("blue-green") layout and start it: the
+    /// service tree lives at versions\&lt;version&gt; selected by a `current` junction,
+    /// and the SCM binPath runs through the junction
+    /// (<c>"{InstallDir}\current\SquidUpgradeE2ETestService.exe" --service</c>) — the
+    /// production versioned shape the upgrade script's blue-green path operates on.
+    /// Additive — the flat <see cref="InstallAndStart"/> is untouched.
+    /// </summary>
+    public void InstallVersionedAndStart(string testServiceExeSourcePath, string initialVersion, TimeSpan startTimeout)
+    {
+        if (!IsAvailable) throw new PlatformNotSupportedException("WindowsServiceFixture only runs on Windows");
+
+        TryDeleteService(_serviceName);
+
+        // Copy the ENTIRE source tree into versions\<v1> (a framework-dependent .NET
+        // exe needs its siblings co-located — same reason as the flat path).
+        var v1Dir = VersionDir(initialVersion);
+        Directory.CreateDirectory(v1Dir);
+
+        var sourceDir = Path.GetDirectoryName(testServiceExeSourcePath)
+            ?? throw new InvalidOperationException($"Test service source path has no directory: {testServiceExeSourcePath}");
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, sourceFile);
+            var destFile = Path.Combine(v1Dir, relativePath);
+            var destDir = Path.GetDirectoryName(destFile);
+            if (!string.IsNullOrEmpty(destDir)) Directory.CreateDirectory(destDir);
+            File.Copy(sourceFile, destFile, overwrite: true);
+        }
+
+        // version.txt lives inside the version dir; the test service reads it relative
+        // to its own exe, so each version reports its own version.
+        File.WriteAllText(Path.Combine(v1Dir, "version.txt"), initialVersion);
+
+        // current -> versions\<v1> (junction, unprivileged — matches install-tentacle.ps1
+        // and what the upgrade script repoints to).
+        CreateJunction(CurrentPointer, v1Dir);
+
+        // SCM binPath runs through the junction, so an upgrade activates a new version
+        // by repointing `current` without re-registering the service.
+        RunScExpectingSuccess(
+            "/Create failed",
+            "create", _serviceName,
+            "binPath=", $"\"{Path.Combine(CurrentPointer, "SquidUpgradeE2ETestService.exe")}\" --service",
+            "type=", "own",
+            "start=", "demand"
+        );
+        _installed = true;
+
+        RunScExpectingSuccess("/Start failed", "start", _serviceName);
+
+        WaitForState("RUNNING", startTimeout);
+    }
+
+    /// <summary>Creates a directory junction via <c>mklink /J</c> (a cmd builtin) — unprivileged, unlike symlinks.</summary>
+    private static void CreateJunction(string link, string target)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        psi.ArgumentList.Add("/c");
+        psi.ArgumentList.Add("mklink");
+        psi.ArgumentList.Add("/J");
+        psi.ArgumentList.Add(link);
+        psi.ArgumentList.Add(target);
+
+        using var p = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to launch cmd.exe for mklink");
+
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+
+        if (!p.WaitForExit(15_000))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException("mklink did not exit within 15s");
+        }
+
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"mklink /J '{link}' -> '{target}' failed (exit {p.ExitCode}).\nstdout: {stdoutTask.Result}\nstderr: {stderrTask.Result}");
     }
 
     /// <summary>

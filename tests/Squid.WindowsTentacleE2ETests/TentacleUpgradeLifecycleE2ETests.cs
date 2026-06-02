@@ -1099,6 +1099,166 @@ public sealed class TentacleUpgradeLifecycleE2ETests
     }
 
     // ========================================================================
+    // Versioned (blue-green) upgrade — real SCM, junction repoint.
+    // Proves the failure-isolation guarantee on Windows: the running version's
+    // directory is never touched; rollback is a junction flip back to it.
+    // ========================================================================
+
+    [Fact]
+    public void Versioned_HappyPath_RepointsCurrentToV2_AndLeavesV1Intact()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running (per-version marker) before the versioned upgrade can be validated");
+
+        var v1Exe = ctx.Fixture.VersionedServiceExePath("1.0.0");
+        var v1HashBefore = Sha256Hex(v1Exe);
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test"));
+        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+
+        exitCode.ShouldBe(0, customMessage: $"versioned happy-path upgrade MUST exit 0. Got {exitCode}.\nstdout:\n{stdout}");
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: $"last-upgrade.json MUST be written. Path: {ctx.StatusFilePath}");
+        status.Status.ShouldBe("SUCCESS", customMessage: $"status MUST be SUCCESS. Got '{status.Status}'. Detail: {status.Detail}");
+
+        // current now resolves to versions\2.0.0-test (junction repointed).
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("2.0.0-test",
+            customMessage: "current\\version.txt MUST be V2 — the `current` junction was repointed to versions\\2.0.0-test");
+
+        // versions\1.0.0 untouched: blue-green staged V2 into a SEPARATE dir and
+        // repointed the junction; it never moved/overwrote/deleted the prior version.
+        Directory.Exists(ctx.Fixture.VersionDir("1.0.0")).ShouldBeTrue(
+            "versions\\1.0.0 MUST remain after a blue-green upgrade (failure isolation — old version preserved)");
+        Sha256Hex(v1Exe).ShouldBe(v1HashBefore,
+            "the previous version's exe MUST be byte-for-byte unchanged — the upgrade never touches the running version's directory");
+
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0-test"), "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "after junction repoint + restart, the V2 service MUST write its per-version marker (started on the new version through `current`)");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void Versioned_CrashOnStart_RollsBackByRepointingCurrentToV1()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before the rollback scenario can be validated");
+
+        var v1Exe = ctx.Fixture.VersionedServiceExePath("1.0.0");
+        var v1HashBefore = Sha256Hex(v1Exe);
+
+        // crashOnStart=true → v2's OnStart throws → SCM start fails → Invoke-Rollback.
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test", crashOnStart: true));
+        var (exitCode, stdout) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+
+        // Exit 8 = Start-Service post-swap failed → rollback fired.
+        exitCode.ShouldBe(8, customMessage: $"crashing OnStart MUST trigger the versioned rollback (exit 8). Got {exitCode}.\nstdout:\n{stdout}");
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: $"last-upgrade.json MUST be written on the rollback path. Path: {ctx.StatusFilePath}");
+        status.Status.ShouldBe("ROLLED_BACK",
+            customMessage: $"status MUST be ROLLED_BACK after a successful versioned rollback. Got '{status.Status}'. Detail: {status.Detail}");
+
+        // current repointed BACK to versions\1.0.0.
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("1.0.0",
+            customMessage: "current\\version.txt MUST be back to V1 — rollback repointed `current` to the previous version");
+
+        // v1 exe byte-unchanged: the rollback is a junction flip, and the v1 dir was
+        // never touched during the (failed) upgrade attempt.
+        Sha256Hex(v1Exe).ShouldBe(v1HashBefore,
+            "the previous version's exe MUST be byte-for-byte unchanged through a failed upgrade + rollback");
+
+        // The broken v2 is preserved in its own version dir for post-mortem (the
+        // versioned equivalent of the flat .failed archive — not silently deleted).
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0-test")).ShouldBeTrue(
+            "the broken V2 MUST remain at versions\\2.0.0-test for post-mortem");
+
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "the V1 service MUST be running again after rollback (current repointed back + restart)");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void Versioned_MultiUpgrade_PreservesEveryPriorVersion()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("1.0.0"), "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running");
+
+        var v1Hash = Sha256Hex(ctx.Fixture.VersionedServiceExePath("1.0.0"));
+
+        // Upgrade 1.0.0 -> 2.0.0-test
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "2.0.0-test"));
+        var (exit2, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("2.0.0-test"));
+        exit2.ShouldBe(0, customMessage: "first upgrade (v1->v2) must succeed");
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("2.0.0-test"), "2.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue("v2 must run after the first upgrade");
+
+        var v2Hash = Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0-test"));
+
+        // Upgrade 2.0.0-test -> 3.0.0-test
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleZip(targetVersion: "3.0.0-test"));
+        var (exit3, _) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion("3.0.0-test"));
+        exit3.ShouldBe(0, customMessage: "second upgrade (v2->v3) must succeed");
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath("3.0.0-test"), "3.0.0-test", TimeSpan.FromSeconds(30)).ShouldBeTrue("v3 must run after the second upgrade");
+
+        // All three version dirs coexist (no GC yet); current -> v3; v1 & v2 byte-unchanged.
+        Directory.Exists(ctx.Fixture.VersionDir("1.0.0")).ShouldBeTrue("v1 dir MUST be preserved across two upgrades");
+        Directory.Exists(ctx.Fixture.VersionDir("2.0.0-test")).ShouldBeTrue("v2 dir MUST be preserved");
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe("3.0.0-test", customMessage: "current MUST point at v3 after two upgrades");
+        Sha256Hex(ctx.Fixture.VersionedServiceExePath("1.0.0")).ShouldBe(v1Hash, "v1 exe MUST be byte-unchanged across two upgrades");
+        Sha256Hex(ctx.Fixture.VersionedServiceExePath("2.0.0-test")).ShouldBe(v2Hash, "v2 exe MUST be byte-unchanged after the v3 upgrade");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void FlatInstall_DoesNotCreateVersionedLayout()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        // Non-breaking guard: the flat install path MUST NOT create the versioned
+        // layout — versions\ / current only appear via InstallVersionedAndStart.
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue("flat v1 must be running");
+
+        Directory.Exists(ctx.Fixture.VersionsRoot).ShouldBeFalse(
+            "flat InstallAndStart MUST NOT create a versions\\ dir — the versioned layout is opt-in");
+        Directory.Exists(ctx.Fixture.CurrentPointer).ShouldBeFalse(
+            "flat InstallAndStart MUST NOT create a `current` junction");
+
+        ctx.MarkClean();
+    }
+
+    private static string ReadThroughCurrent(UpgradeLifecycleContext ctx, string fileName)
+    {
+        var path = Path.Combine(ctx.Fixture.CurrentPointer, fileName);
+        return File.Exists(path) ? File.ReadAllText(path).Trim() : "(absent)";
+    }
+
+    private static string Sha256Hex(string path)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        return Convert.ToHexString(sha.ComputeHash(File.ReadAllBytes(path)));
+    }
+
+    // ========================================================================
     // Per-test context — owns every OS resource the test stages. IDisposable
     // best-effort cleanup runs on every exit path (Rule 12.3) so a failed
     // assertion mid-test doesn't leak SCM entries / scheduled tasks / temp dirs.
