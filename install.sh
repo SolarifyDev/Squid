@@ -246,17 +246,62 @@ if [ "$PKG_INSTALL_DONE" != "1" ]; then
         fi
     fi
 
-    # Extract (tar contents are flat - no wrapper dir)
-    mkdir -p "$INSTALL_DIR"
-    tar xzf "$ARCHIVE_PATH" -C "$INSTALL_DIR"
+    # Extract into a versioned ("blue-green") layout: the binary lives in
+    # versions/<v> and a stable `current` symlink selects the active version.
+    # A later in-UI upgrade activates a new version by atomically repointing
+    # `current`, so it never touches the running version's directory — any
+    # upgrade failure leaves the old version intact. tar contents are flat (no
+    # wrapper dir), so stage first, then name the directory by the concrete
+    # version the binary reports (works for both `latest` and explicit --version).
+    STAGING_DIR="$TMP_DIR/extract"
+    mkdir -p "$STAGING_DIR"
+    tar xzf "$ARCHIVE_PATH" -C "$STAGING_DIR"
+
+    chmod +x "$STAGING_DIR/Squid.Tentacle"
+
+    RESOLVED_VERSION=$(timeout 10 "$STAGING_DIR/Squid.Tentacle" version </dev/null 2>/dev/null | head -1 | tr -cd '[:alnum:]._-' || true)
+
+    if [ -n "$RESOLVED_VERSION" ]; then
+        VERSION_DIR="$INSTALL_DIR/versions/$RESOLVED_VERSION"
+        mkdir -p "$INSTALL_DIR/versions"
+
+        # Replace any prior copy of this exact version, then move the staged tree in.
+        if [ -d "$VERSION_DIR" ]; then rm -rf "$VERSION_DIR"; fi
+        mv "$STAGING_DIR" "$VERSION_DIR"
+
+        # Point `current` at the new version atomically (symlink rename is atomic).
+        ln -sfn "$VERSION_DIR" "$INSTALL_DIR/current.tmp"
+        mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"
+
+        VERSIONED=1
+        echo "Installed versioned layout: current -> versions/$RESOLVED_VERSION"
+    else
+        # Best-effort fallback: the binary couldn't report its version (e.g. missing
+        # runtime deps). Extract flat so the install still completes exactly as it did
+        # before the versioned layout existed; the binary-verify step below surfaces
+        # any real runtime problem. Never fail an install that used to succeed.
+        echo "Warning: binary did not report a version; using flat layout (no versioned upgrades)."
+        mkdir -p "$INSTALL_DIR"
+        cp -a "$STAGING_DIR/." "$INSTALL_DIR/"
+    fi
+fi
+
+# Resolve the directory holding the runnable binaries. Versioned (tarball) installs
+# run through the stable `current` pointer; package-manager (apt/yum) installs are
+# flat in $INSTALL_DIR. Everything below is layout-agnostic via $BIN_DIR.
+if [ "${VERSIONED:-0}" = "1" ]; then
+    BIN_DIR="$INSTALL_DIR/current"
+else
+    BIN_DIR="$INSTALL_DIR"
 fi
 
 # Make binaries executable. Calamari is spawned by Tentacle at runtime, so it also needs +x.
-chmod +x "$INSTALL_DIR/Squid.Tentacle"
-[ -f "$INSTALL_DIR/Squid.Calamari" ] && chmod +x "$INSTALL_DIR/Squid.Calamari"
+chmod +x "$BIN_DIR/Squid.Tentacle"
+[ -f "$BIN_DIR/Squid.Calamari" ] && chmod +x "$BIN_DIR/Squid.Calamari"
 
-# Create well-known-name symlink inside install dir
-ln -sf "$INSTALL_DIR/Squid.Tentacle" "$INSTALL_DIR/${BINARY_NAME}"
+# Well-known-name symlink at the install root. Stable across upgrades — for versioned
+# installs it resolves through `current`, so the path survives a version swap.
+ln -sf "$BIN_DIR/Squid.Tentacle" "$INSTALL_DIR/${BINARY_NAME}"
 
 # Expose on PATH
 if [ -d /usr/local/bin ]; then
