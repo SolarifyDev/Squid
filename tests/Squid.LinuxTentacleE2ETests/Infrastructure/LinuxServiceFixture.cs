@@ -94,6 +94,24 @@ public sealed class LinuxServiceFixture : IDisposable
     /// <summary>Path to the systemd unit file under <c>/etc/systemd/system/</c>.</summary>
     public string UnitFilePath => $"/etc/systemd/system/{_serviceName}.service";
 
+    // ── Versioned (blue-green) layout helpers ───────────────────────────────
+
+    /// <summary>Versioned layout: {InstallDir}/versions parent directory.</summary>
+    public string VersionsRoot => Path.Combine(_installDir, "versions");
+
+    /// <summary>Versioned layout: the stable {InstallDir}/current pointer.</summary>
+    public string CurrentPointer => Path.Combine(_installDir, "current");
+
+    /// <summary>Versioned layout: {InstallDir}/versions/{version} directory.</summary>
+    public string VersionDir(string version) => Path.Combine(VersionsRoot, version);
+
+    /// <summary>
+    /// Versioned layout: a version's marker file. The test service (run via the
+    /// `current` pointer with no INSTALL_DIR env) auto-resolves INSTALL_DIR to its
+    /// own version directory, so each version writes its marker there.
+    /// </summary>
+    public string VersionedMarkerPath(string version) => Path.Combine(VersionDir(version), "service-running.marker");
+
     /// <summary>
     /// Construct against a UNIQUE service name + UNIQUE install dir.
     /// Caller responsible for uniqueness (recommended: GUID-suffix).
@@ -193,6 +211,93 @@ public sealed class LinuxServiceFixture : IDisposable
         var status = RunSudoCapture($"systemctl status {Quote(_serviceName)} --no-pager") ?? "(systemctl status unavailable)";
         throw new TimeoutException(
             $"systemd service '{_serviceName}' did not reach active(running) within {startTimeout}. " +
+            $"systemctl status:\n{status}");
+    }
+
+    /// <summary>
+    /// Stage the test service in a VERSIONED ("blue-green") layout and start it: the
+    /// binary lives at versions/&lt;version&gt;/Squid.Tentacle selected by a `current`
+    /// symlink, and the systemd unit's ExecStart runs through the pointer
+    /// (`bash {InstallDir}/current/Squid.Tentacle`). Deliberately does NOT set an
+    /// INSTALL_DIR env var, so the service auto-resolves INSTALL_DIR to its own
+    /// version directory (per-version version.txt + marker) — the production
+    /// versioned shape the upgrade script's blue-green path operates on.
+    /// </summary>
+    public void InstallVersionedAndStart(string testServiceScriptSourcePath, string initialVersion, TimeSpan startTimeout, IReadOnlyDictionary<string, string> extraEnvironment = null)
+    {
+        if (!IsAvailable) throw new PlatformNotSupportedException("LinuxServiceFixture only runs on Linux with passwordless sudo");
+
+        if (!File.Exists(testServiceScriptSourcePath))
+            throw new FileNotFoundException($"test service script not found at: {testServiceScriptSourcePath}");
+
+        TryUninstall();
+
+        // Stage versions/<v1>/{Squid.Tentacle, version.txt}.
+        var v1Dir = VersionDir(initialVersion);
+        Directory.CreateDirectory(v1Dir);
+
+        var v1Binary = Path.Combine(v1Dir, "Squid.Tentacle");
+        File.Copy(testServiceScriptSourcePath, v1Binary, overwrite: true);
+        File.WriteAllText(Path.Combine(v1Dir, "version.txt"), initialVersion);
+        RunSudo("chmod +x " + Quote(v1Binary));
+
+        // current -> versions/<v1>, and the stable squid-tentacle name symlink ->
+        // current/Squid.Tentacle (the upgrade script's version checks read it).
+        RunSudo($"ln -sfn {Quote(v1Dir)} {Quote(CurrentPointer)}");
+        RunSudo($"ln -sf {Quote(Path.Combine(CurrentPointer, "Squid.Tentacle"))} {Quote(Path.Combine(_installDir, "squid-tentacle"))}");
+
+        // Unit: ExecStart through the pointer; NO INSTALL_DIR env so the service
+        // auto-resolves INSTALL_DIR to its own version dir via readlink.
+        var execTarget = Path.Combine(CurrentPointer, "Squid.Tentacle");
+        var unitBuilder = new StringBuilder()
+            .AppendLine("[Unit]")
+            .AppendLine($"Description=Squid Linux Tentacle E2E Versioned Test Service — {_serviceName}")
+            .AppendLine()
+            .AppendLine("[Service]")
+            .AppendLine("Type=simple");
+
+        if (extraEnvironment != null)
+        {
+            foreach (var kvp in extraEnvironment)
+                unitBuilder.AppendLine($"Environment={kvp.Key}={kvp.Value}");
+        }
+
+        var unitContent = unitBuilder
+            .AppendLine($"ExecStart=/usr/bin/env bash {execTarget}")
+            .AppendLine("KillMode=mixed")
+            .AppendLine("Restart=no")
+            .AppendLine()
+            .AppendLine("[Install]")
+            .AppendLine("WantedBy=multi-user.target")
+            .ToString();
+
+        var tempUnit = Path.Combine(Path.GetTempPath(), $"{_serviceName}.versioned-unit-staging");
+        File.WriteAllText(tempUnit, unitContent);
+        try
+        {
+            RunSudo($"cp {Quote(tempUnit)} {Quote(UnitFilePath)}");
+            RunSudo($"chmod 644 {Quote(UnitFilePath)}");
+        }
+        finally
+        {
+            try { File.Delete(tempUnit); } catch { /* best-effort */ }
+        }
+
+        RunSudo("systemctl daemon-reload");
+        RunSudo($"systemctl start {Quote(_serviceName)}");
+
+        _installed = true;
+
+        var deadline = DateTime.UtcNow + startTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (IsActive()) return;
+            Thread.Sleep(200);
+        }
+
+        var status = RunSudoCapture($"systemctl status {Quote(_serviceName)} --no-pager") ?? "(systemctl status unavailable)";
+        throw new TimeoutException(
+            $"versioned systemd service '{_serviceName}' did not reach active(running) within {startTimeout}. " +
             $"systemctl status:\n{status}");
     }
 
