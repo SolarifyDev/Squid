@@ -1,0 +1,138 @@
+name: Tentacle Linux Smoke E2E
+
+# PR GATE for the Linux tentacle's blue-green VERSIONED upgrade.
+#
+# Coverage gap this closes: e2e-upgrade-matrix.yml already PR-gates Linux
+# install + FLAT upgrade across 7 distros (real apt/yum/tarball in systemd
+# containers). But the newer blue-green VERSIONED upgrade (versions/<v> +
+# `current` symlink, atomic repoint, rollback, GC) is exercised only by the
+# .NET E2E in tentacle-linux-e2e.yml, which runs nightly + on push — NOT on PRs.
+# So a regression in upgrade-linux-tentacle.sh's versioned path could merge
+# green and only surface post-merge. This gate closes that, symmetric with the
+# Windows lifecycle gate (tentacle-windows-smoke-e2e.yml).
+#
+# Three-job "sentinel" layout (same as the Windows gate) so this can be a
+# REQUIRED status check WITHOUT blocking PRs that don't touch Tentacle code:
+#   1. detect (ubuntu, ~20s)  -- did the PR change versioned-upgrade-relevant paths?
+#   2. tests  (ubuntu-latest) -- runs ONLY when relevant; the versioned blue-green
+#                                upgrade E2E (real systemd on the runner).
+#   3. gate   (ubuntu, ~5s, ALWAYS runs) -- carries the required check. Green when
+#      the tests passed OR weren't needed; red when they failed.
+# A plain paths-filtered workflow can't be a required check: it never reports on
+# unrelated PRs, so they jam on "Expected -- waiting for status". The sentinel
+# always reports, so "Linux Lifecycle Smoke (PR gate)" is a safe required check.
+#
+# Scope = the blue-green versioned upgrade only (LinuxTentacleUpgradeScriptE2E +
+# LinuxTentacleUpgradeLifecycleE2E). Install + flat upgrade stay with
+# e2e-upgrade-matrix.yml; service / install-script / real-binary stay nightly.
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: "xUnit --filter override for the smoke subset"
+        required: false
+        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: linux-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect:
+    name: Detect Tentacle changes
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.check.outputs.relevant }}
+    steps:
+      - name: Check changed paths
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manual dispatch has no PR diff — always run.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Manual dispatch -> relevant=true"
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          files=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json files --jq '.files[].path')
+          echo "Changed files:"; printf '%s\n' "$files"
+
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-linux-tentacle\.sh|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.LinuxTentacleE2ETests/|\.github/workflows/tentacle-linux-smoke-e2e\.yml)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "-> relevant=true (versioned-upgrade paths changed)"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "-> relevant=false (no relevant paths changed; Linux upgrade tests will be skipped)"
+          fi
+
+  tests:
+    name: Linux Lifecycle Smoke (tests)
+    needs: detect
+    if: needs.detect.outputs.relevant == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Disable unreachable NuGet source
+        run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
+
+      - name: Confirm bash + systemd available
+        run: |
+          bash --version | head -1
+          systemctl --version | head -1
+
+      - name: Restore Squid.LinuxTentacleE2ETests
+        run: dotnet restore tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj --configfile "$NUGET_CONFIG"
+
+      - name: Run Linux versioned-upgrade smoke subset
+        run: |
+          FILTER="${{ github.event.inputs.test_filter }}"
+          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E"; fi
+          dotnet test tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj \
+            --configuration Release --no-restore \
+            --filter "$FILTER" \
+            --logger "console;verbosity=normal"
+
+  gate:
+    name: Linux Lifecycle Smoke (PR gate)
+    needs: [detect, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reflect smoke result
+        run: |
+          detect='${{ needs.detect.result }}'
+          tests='${{ needs.tests.result }}'
+          relevant='${{ needs.detect.outputs.relevant }}'
+          echo "detect=$detect  tests=$tests  relevant=$relevant"
+
+          if [ "$detect" != "success" ]; then
+            echo "::error::Path detection job did not succeed ($detect) -- cannot confirm whether the Linux smoke was needed."
+            exit 1
+          fi
+
+          if [ "$tests" = "failure" ] || [ "$tests" = "cancelled" ]; then
+            echo "::error::Linux versioned-upgrade smoke tests failed (result=$tests)."
+            exit 1
+          fi
+
+          # tests == 'success' (ran + passed) OR 'skipped' (no relevant changes) -> gate passes.
+          echo "Gate passed (tests result=$tests)."
