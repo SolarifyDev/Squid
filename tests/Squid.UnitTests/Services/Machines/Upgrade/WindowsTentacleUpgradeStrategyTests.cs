@@ -1253,12 +1253,34 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
 
         inner.ShouldContain("$newVerDir = Join-Path $versionsRoot $TARGET_VERSION",
             customMessage: "the new version must be staged into versions\\<target>, not over the running version");
-        inner.ShouldContain("($newVerDir -ne $oldVerTarget)",
-            customMessage: "the Remove-Item must be guarded so the currently-running version directory is never deleted");
+        inner.ShouldContain("($newFull -eq $oldFull)",
+            customMessage: "a re-upgrade to the already-active version must be a no-op — the running version directory is never deleted/overwritten (it IS the active target)");
         inner.ShouldContain("[System.IO.Directory]::Delete($currentPointer, $false)",
             customMessage: "the old junction must be removed non-recursively so the target version's files are never wiped");
         inner.ShouldContain("New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir",
             customMessage: "current must be repointed at the new version via a junction");
+    }
+
+    [Fact]
+    public void RenderInnerScript_Versioned_GC_PrunesOldVersionsKeepingNewest()
+    {
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("SQUID_UPGRADE_KEEP_VERSIONS",
+            customMessage: "version GC retention must be tunable via the SQUID_UPGRADE_KEEP_VERSIONS env var");
+        inner.ShouldContain("if ($keep -lt 2) { $keep = 2 }",
+            customMessage: "GC must floor retention at 2 (active + a rollback target) so a bad value can't strand rollback");
+        inner.ShouldContain("Sort-Object CreationTimeUtc -Descending",
+            customMessage: "GC must enumerate version dirs newest-first (by install/creation time) to keep the newest N and prune older");
+    }
+
+    [Fact]
+    public void RenderInnerScript_Versioned_SameVersionReupgrade_IsNoOp()
+    {
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        inner.ShouldContain("already-active",
+            customMessage: "a re-upgrade to the already-active version must emit an `already-active` event and skip stage+repoint (no extract residue in the live version dir)");
     }
 
     [Fact]

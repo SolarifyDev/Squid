@@ -106,10 +106,28 @@ public sealed class UpgradeLinuxTentacleScriptTests
     {
         RenderedScript.ShouldContain("NEW_VER_DIR=\"$INSTALL_DIR/versions/$TARGET_VERSION\"",
             customMessage: "the new version must be staged into versions/<target>, not over the running version");
-        RenderedScript.ShouldContain("[ \"$NEW_VER_DIR\" != \"$OLD_VER_TARGET\" ]",
-            customMessage: "the rm must be guarded so the currently-running version directory is never deleted");
+        RenderedScript.ShouldContain("[ \"$NEW_VER_DIR\" = \"$OLD_VER_TARGET\" ]",
+            customMessage: "a re-upgrade to the already-active version must be a no-op — the running version directory is never deleted/overwritten (it IS the active target)");
         RenderedScript.ShouldContain("mv -T \"$INSTALL_DIR/current.tmp\" \"$INSTALL_DIR/current\"",
             customMessage: "current must be repointed atomically via `mv -T` (rename), never rm+recreate");
+    }
+
+    [Fact]
+    public void Versioned_GC_PrunesOldVersionsKeepingNewest()
+    {
+        RenderedScript.ShouldContain("SQUID_UPGRADE_KEEP_VERSIONS",
+            customMessage: "version GC retention must be tunable via the SQUID_UPGRADE_KEEP_VERSIONS env var");
+        RenderedScript.ShouldContain("KEEP=2",
+            customMessage: "GC must floor retention at 2 (active + a rollback target) so a bad value can't strand rollback");
+        RenderedScript.ShouldContain("ls -1dt",
+            customMessage: "GC must enumerate version dirs newest-first (by mtime) to keep the newest N and prune older");
+    }
+
+    [Fact]
+    public void Versioned_SameVersionReupgrade_IsNoOp()
+    {
+        RenderedScript.ShouldContain("already-active",
+            customMessage: "a re-upgrade to the already-active version must emit an `already-active` event and skip stage+repoint (no extract/ residue in the live version dir)");
     }
 
     [Fact]
