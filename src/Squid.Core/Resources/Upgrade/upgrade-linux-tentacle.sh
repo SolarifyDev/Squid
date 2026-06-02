@@ -374,11 +374,37 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   require_free_mb "$(dirname "$INSTALL_DIR")" 500 "install directory"
   emit_event A disk-precheck-pass "Disk space sufficient (>=500MB on /tmp and install dir)"
 
+  # ── Layout detection (blue-green) ────────────────────────────────────────
+  # A versioned install selects its active version via the `current` symlink
+  # ({INSTALL_DIR}/current -> versions/<v>). Upgrades of a versioned install MUST
+  # go through the blue-green tarball path: extract the new version into
+  # versions/<target> and atomically repoint `current`, NEVER touching the
+  # running version's directory — so any failure leaves the old version intact
+  # and instantly restorable. apt/yum write flat files and would orphan the
+  # pointer, so they are skipped when versioned. Flat installs (no `current`
+  # symlink) keep today's behaviour unchanged.
+  IS_VERSIONED=0
+  OLD_VER_TARGET=""
+  if [ -L "$INSTALL_DIR/current" ]; then
+    IS_VERSIONED=1
+    OLD_VER_TARGET=$(readlink -f "$INSTALL_DIR/current" 2>/dev/null || true)
+    emit_event A versioned-detected "Versioned layout; current -> ${OLD_VER_TARGET:-unknown}"
+  fi
+
   # ── Method dispatch (apt → yum → tarball-marker, server-injected) ────────
   # Each snippet's contract: short-circuit when INSTALL_OK=1 (a higher-
   # priority method already succeeded), otherwise probe the host and either
   # install + set INSTALL_OK=1 or fall through silently.
-  {{INSTALL_METHODS}}
+  #
+  # Versioned installs bypass the package-manager methods entirely and use the
+  # inline tarball path below — apt/yum would write flat files and break the
+  # `current` pointer. DOWNLOAD_URL is a top-level template var, so the inline
+  # tarball block has everything it needs without the injected marker.
+  if [ "$IS_VERSIONED" = "1" ]; then
+    INSTALL_METHOD="tarball"
+  else
+{{INSTALL_METHODS}}
+  fi
 
   # ── Tarball install (only when no package-manager method matched) ────────
   # Kept inline (not in the INSTALL_METHODS placeholder block) because the
@@ -534,6 +560,8 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
     --setenv=INSTALL_METHOD="$INSTALL_METHOD" \
     --setenv=OLD_VERSION_APT="$OLD_VERSION_APT" \
     --setenv=OLD_VERSION_RPM="$OLD_VERSION_RPM" \
+    --setenv=IS_VERSIONED="$IS_VERSIONED" \
+    --setenv=OLD_VER_TARGET="$OLD_VER_TARGET" \
     bash "$SCOPED_SCRIPT" || {
       echo "::error:: Failed to spawn scope for upgrade handoff."
       write_status "FAILED" "systemd-run --scope failed to launch"
@@ -562,8 +590,40 @@ echo "=== In scope: continuing upgrade to $TARGET_VERSION (method=$INSTALL_METHO
 
 BAK_DIR="${INSTALL_DIR}.bak"
 
-# ── Conditional swap (tarball only — apt/yum already wrote files via dpkg/rpm)
-if [ "$INSTALL_METHOD" = "tarball" ]; then
+# ── Conditional swap ──────────────────────────────────────────────────────
+# Versioned (blue-green): extract the new version into versions/<target> and
+# atomically repoint `current`; the running version directory is NEVER touched,
+# so any failure here or below leaves it intact and instantly restorable.
+# Flat tarball: legacy move-aside (.bak) swap. apt/yum: dpkg/rpm wrote files.
+if [ "$IS_VERSIONED" = "1" ]; then
+  NEW_VER_DIR="$INSTALL_DIR/versions/$TARGET_VERSION"
+  sudo mkdir -p "$INSTALL_DIR/versions"
+
+  # Never delete the currently-running version's directory.
+  if [ -d "$NEW_VER_DIR" ] && [ "$NEW_VER_DIR" != "$OLD_VER_TARGET" ]; then sudo rm -rf "$NEW_VER_DIR"; fi
+
+  if ! sudo mv "$EXTRACT" "$NEW_VER_DIR"; then
+    echo "::error:: Failed to stage new version into $NEW_VER_DIR. Running version untouched; no damage."
+    write_status "FAILED" "Failed to stage new version (versioned); running version intact at $OLD_VER_TARGET"
+    exit 10
+  fi
+
+  sudo chmod +x "$NEW_VER_DIR/Squid.Tentacle"
+  [ -f "$NEW_VER_DIR/Squid.Calamari" ] && sudo chmod +x "$NEW_VER_DIR/Squid.Calamari"
+
+  if id "$SERVICE_USER" >/dev/null 2>&1; then
+    sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$NEW_VER_DIR" 2>/dev/null || true
+  fi
+
+  # Activate atomically: ln into a temp name then rename onto `current`.
+  sudo ln -sfn "$NEW_VER_DIR" "$INSTALL_DIR/current.tmp"
+  if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
+    sudo rm -rf "$INSTALL_DIR/current.tmp" 2>/dev/null || true
+    echo "::error:: Failed to repoint current -> $NEW_VER_DIR. Running version untouched; no damage."
+    write_status "FAILED" "Failed to activate new version (current repoint); running version intact at $OLD_VER_TARGET"
+    exit 10
+  fi
+elif [ "$INSTALL_METHOD" = "tarball" ]; then
   if [ -d "$BAK_DIR" ]; then sudo rm -rf "$BAK_DIR"; fi
 
   INSTALL_DIR_BACKED_UP=0
@@ -691,6 +751,50 @@ BASELINE_HEALTHZ_PRE="${SQUID_UPGRADE_BASELINE_HEALTHZ:-unknown}"
 BASELINE_VERSION="${SQUID_UPGRADE_BASELINE_VERSION:-unknown}"
 if [ "$BASELINE_HEALTHZ_PRE" = "FAIL" ]; then
   emit_event B baseline-was-fail "Pre-upgrade healthz was already FAIL — failure may be environmental, not upgrade-caused"
+fi
+
+if [ "$IS_VERSIONED" = "1" ]; then
+  # Blue-green rollback: repoint `current` back to the previous version. The old
+  # version directory was never touched during the swap, so this is instant and
+  # cannot lose the previous binaries — even if the repoint or the restart fails,
+  # the previous version remains intact on disk at $OLD_VER_TARGET.
+  echo "Rolling back: repointing current -> $OLD_VER_TARGET ..."
+  emit_event B rollback-start "Versioned rollback: repointing current to previous version"
+  write_status "ROLLING_BACK" "Health check failed after restart — repointing current to previous version"
+
+  timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+
+  sudo ln -sfn "$OLD_VER_TARGET" "$INSTALL_DIR/current.tmp"
+  if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
+    sudo rm -rf "$INSTALL_DIR/current.tmp" 2>/dev/null || true
+    echo "::error:: CRITICAL: failed to repoint current back to previous version."
+    emit_event B rollback-fail "Failed to repoint current back; previous version dir still intact at $OLD_VER_TARGET"
+    write_status "ROLLBACK_CRITICAL_FAILED" "Failed to repoint current; previous version intact at $OLD_VER_TARGET, manual repoint required"
+    exit 9
+  fi
+
+  timeout 30 sudo systemctl start "$SERVICE_NAME"
+
+  ROLLBACK_OK=0
+  for i in $(seq 1 30); do
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+      ROLLBACK_OK=1
+      break
+    fi
+    sleep 1
+  done
+
+  if [ "$ROLLBACK_OK" = "1" ]; then
+    echo "Rollback succeeded; agent is healthy on the previous version."
+    emit_event B rollback-ok "Versioned rollback succeeded; running previous version $BASELINE_VERSION"
+    write_status "ROLLED_BACK" "New version failed health check; repointed current to previous version (was: $BASELINE_VERSION, healthz=$BASELINE_HEALTHZ_PRE)"
+    exit 4
+  fi
+
+  echo "::error:: CRITICAL: rollback repoint succeeded but service won't start on the previous version."
+  emit_event B rollback-fail "Repointed to previous version but service won't start; previous binaries intact at $OLD_VER_TARGET"
+  write_status "ROLLBACK_CRITICAL_FAILED" "Repointed to previous version but service won't start; previous binaries intact at $OLD_VER_TARGET"
+  exit 9
 fi
 
 if [ "$INSTALL_METHOD" = "tarball" ]; then
