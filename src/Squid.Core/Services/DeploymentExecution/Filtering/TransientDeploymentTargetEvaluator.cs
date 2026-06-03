@@ -1,3 +1,4 @@
+using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
 using Machine = Squid.Core.Persistence.Entities.Deployments.Machine;
@@ -28,6 +29,19 @@ public sealed record TransientTargetResult(
 /// </summary>
 public static class TransientDeploymentTargetEvaluator
 {
+    /// <summary>
+    /// Resolves the project's "Transient Deployment Targets" policy from its
+    /// deployment-settings JSON and applies it. This is the single entry point both the
+    /// deployment pipeline (phase 4) and the deployment preview call, so the two cannot
+    /// disagree about which targets are eligible.
+    /// </summary>
+    public static TransientTargetResult ApplyProjectPolicy(IReadOnlyList<Machine> candidates, string deploymentSettingsJson)
+    {
+        var transient = DeploymentSettingsSerializer.Deserialize(deploymentSettingsJson).TransientDeploymentTargets;
+
+        return Apply(candidates, transient.UnavailableDeploymentTargets, transient.UnhealthyDeploymentTargets);
+    }
+
     public static TransientTargetResult Apply(
         IReadOnlyList<Machine> candidates,
         UnavailableDeploymentTargetBehavior unavailableBehavior,
