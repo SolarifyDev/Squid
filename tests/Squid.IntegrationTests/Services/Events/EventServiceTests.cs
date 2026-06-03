@@ -105,4 +105,121 @@ public class EventServiceTests : TestBase
             page.Events[0].ReleaseId.ShouldBe(100);
         }).ConfigureAwait(false);
     }
+
+    [Fact]
+    public async Task GetEventsAsync_NoDocumentFilter_ReturnsWholeSpaceFeed()
+    {
+        const int spaceId = 31;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentQueued, SpaceId = spaceId, ProjectId = 1 });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DocumentCreated, SpaceId = spaceId, EnvironmentId = 9 });
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        await Run<IEventService>(async events =>
+        {
+            var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId });
+
+            page.Events.Count.ShouldBe(2, "no document filter == the whole space feed");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_MultipleFilters_AreAnded()
+    {
+        const int spaceId = 32;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentSucceeded, SpaceId = spaceId, ProjectId = 5, EnvironmentId = 3 });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentSucceeded, SpaceId = spaceId, ProjectId = 5, EnvironmentId = 4 });
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        await Run<IEventService>(async events =>
+        {
+            var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, ProjectId = 5, EnvironmentId = 3 });
+
+            page.Events.Count.ShouldBe(1, "project AND environment filters must both apply");
+            page.Events[0].EnvironmentId.ShouldBe(3);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_CrossDocument_EventVisibleUnderEachRelatedDocument()
+    {
+        const int spaceId = 33;
+        const int projectId = 61;
+        const int environmentId = 62;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentSucceeded, SpaceId = spaceId, ProjectId = projectId, EnvironmentId = environmentId });
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        await Run<IEventService>(async events =>
+        {
+            (await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, ProjectId = projectId })).Events.Count.ShouldBe(1, "visible on the project feed");
+            (await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, EnvironmentId = environmentId })).Events.Count.ShouldBe(1, "and on the environment feed");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_EmptyFeed_ReturnsEmpty()
+    {
+        await Run<IEventService>(async events =>
+        {
+            var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = 999, ReleaseId = 777 });
+
+            page.Events.ShouldBeEmpty();
+            page.HasMore.ShouldBeFalse();
+            page.NextCursor.ShouldBeNull();
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task RecordAsync_NullReferences_StoresEmptyJsonObject()
+    {
+        const int spaceId = 34;
+        const int releaseId = 71;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentStarted, SpaceId = spaceId, ReleaseId = releaseId, References = null });
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        await Run<IEventService>(async events =>
+        {
+            var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, ReleaseId = releaseId });
+
+            page.Events[0].ReferencesJson.ShouldBe("{}");
+        }).ConfigureAwait(false);
+    }
+
+    [Theory]
+    [InlineData(0)]      // below floor -> clamps to 1
+    [InlineData(10_000)] // above ceiling -> clamps, must not throw
+    public async Task GetEventsAsync_ClampsPageSize(int requestedTake)
+    {
+        const int spaceId = 35;
+        var releaseId = 80 + requestedTake % 7;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentQueued, SpaceId = spaceId, ReleaseId = releaseId });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentQueued, SpaceId = spaceId, ReleaseId = releaseId });
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        await Run<IEventService>(async events =>
+        {
+            var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, ReleaseId = releaseId, Take = requestedTake });
+
+            page.Events.Count.ShouldBeGreaterThanOrEqualTo(1, "Take must be clamped to a sane range, never returning zero rows for a non-empty feed");
+        }).ConfigureAwait(false);
+    }
 }
