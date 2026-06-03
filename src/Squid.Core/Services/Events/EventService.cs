@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Events;
 using Squid.Core.Services.Identity;
@@ -27,7 +26,7 @@ public class EventService : IEventService
         // Document snapshots (the EventDocumentSnapshot side table) are written by
         // the document-audit path in a later step, where the saved event id is
         // available to link them. PR-1 records the event itself.
-        await _repository.InsertAsync(BuildEvent(request), cancellationToken).ConfigureAwait(false);
+        await _repository.InsertAsync(EventFactory.Build(request, _currentUser), cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<GetEventsResponseData> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default)
@@ -44,27 +43,6 @@ public class EventService : IEventService
 
         return BuildPage(rows, take);
     }
-
-    private Event BuildEvent(RecordEventRequest request) => new()
-    {
-        Category = request.Category,
-        ReferencesJson = Serialize(request.References),
-        SpaceId = request.SpaceId,
-        ProjectId = request.ProjectId,
-        ReleaseId = request.ReleaseId,
-        DeploymentId = request.DeploymentId,
-        EnvironmentId = request.EnvironmentId,
-        MachineId = request.MachineId,
-        ServerTaskId = request.ServerTaskId,
-        UserId = ResolveUserId(),
-        Username = ResolveUsername(),
-        // established-with + user-agent need the HTTP auth scheme / request headers;
-        // PR-4 (provenance polish) resolves those via a dedicated resolver. A real
-        // portal/API actor is still attributed via ICurrentUser (ResolveUserId/Name).
-        EstablishedWith = _currentUser.IsInternal ? EventIdentityEstablishedWith.Server : EventIdentityEstablishedWith.SessionCookie,
-        UserAgent = null,
-        Occurred = DateTimeOffset.UtcNow
-    };
 
     private IQueryable<Event> BuildFilteredQuery(GetEventsRequest request)
     {
@@ -119,14 +97,6 @@ public class EventService : IEventService
             Occurred = e.Occurred
         };
     }
-
-    private static string Serialize(object? references) =>
-        references is null ? "{}" : JsonSerializer.Serialize(references);
-
-    private int? ResolveUserId() => _currentUser.IsInternal ? null : _currentUser.Id;
-
-    private string ResolveUsername() =>
-        _currentUser.IsInternal || string.IsNullOrWhiteSpace(_currentUser.Name) ? "system" : _currentUser.Name;
 
     private static string DescribeEstablishedWith(EventIdentityEstablishedWith value) => value switch
     {

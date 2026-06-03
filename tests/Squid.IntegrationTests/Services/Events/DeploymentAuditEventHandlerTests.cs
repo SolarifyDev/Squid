@@ -16,6 +16,7 @@ namespace Squid.IntegrationTests.Services.Events;
 /// lifecycle seam records the right category + document references + provenance, and that a
 /// pre-deployment-data event is skipped rather than persisted as an orphan.
 /// </summary>
+[Collection("EventsAudit")]
 public class DeploymentAuditEventHandlerTests : TestBase
 {
     public DeploymentAuditEventHandlerTests()

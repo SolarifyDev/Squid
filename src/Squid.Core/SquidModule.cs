@@ -2,6 +2,7 @@ using Squid.Core.Caching;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DataSeeding;
+using Squid.Core.Services.Events;
 using Squid.Core.Services.Identity;
 
 using Squid.Core.Settings.System;
@@ -120,7 +121,8 @@ public class SquidModule : Module
             {
                 var options = c.Resolve<DbContextOptions<SquidDbContext>>();
                 var currentUser = c.ResolveOptional<ICurrentUser>();
-                return new SquidDbContext(options, currentUser);
+                var auditDocuments = c.ResolveOptional<IAuditDocumentRegistry>();
+                return new SquidDbContext(options, currentUser, auditDocuments);
             })
             .AsSelf()
             .As<DbContext>()

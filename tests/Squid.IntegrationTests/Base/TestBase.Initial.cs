@@ -6,6 +6,7 @@ using Npgsql;
 using Serilog;
 using Microsoft.AspNetCore.Http;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Events;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Settings.SelfCert;
@@ -48,11 +49,11 @@ public partial class TestBase
             .As<IHttpContextAccessor>()
             .SingleInstance();
 
-        containerBuilder.Register(_ =>
+        containerBuilder.Register(c =>
             {
                 var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
                 dbContextBuilder.UseNpgsql(isolatedConnectionString).UseSnakeCaseNamingConvention();
-                return new SquidDbContext(dbContextBuilder.Options, new InternalUser());
+                return new SquidDbContext(dbContextBuilder.Options, new InternalUser(), c.Resolve<IAuditDocumentRegistry>());
             })
             .AsSelf()
             .As<DbContext>()
