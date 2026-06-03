@@ -1,6 +1,5 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
@@ -105,10 +104,7 @@ public sealed class PrepareDeploymentPhase(
     // before. FailDeployment on an unavailable target aborts the deployment up front.
     internal static void ApplyTransientTargetPolicy(DeploymentTaskContext ctx)
     {
-        var transient = DeploymentSettingsSerializer.Deserialize(ctx.Project?.DeploymentSettingsJson).TransientDeploymentTargets;
-
-        var result = TransientDeploymentTargetEvaluator.Apply(
-            ctx.AllTargets, transient.UnavailableDeploymentTargets, transient.UnhealthyDeploymentTargets);
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(ctx.AllTargets, ctx.Project?.DeploymentSettingsJson);
 
         if (result.FailedUnavailable.Count > 0)
         {

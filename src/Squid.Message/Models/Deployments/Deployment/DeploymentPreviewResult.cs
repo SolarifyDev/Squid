@@ -14,6 +14,14 @@ public class DeploymentPreviewResult
 
     public List<DeploymentPreviewTargetResult> CandidateTargets { get; set; } = [];
 
+    /// <summary>
+    /// Targets that matched the environment but were excluded by the project's Transient
+    /// Deployment Targets policy (unavailable / unhealthy) — the same exclusion the real
+    /// deployment applies. Surfaced so the UI can explain why the available count is lower
+    /// than the number of machines in the environment.
+    /// </summary>
+    public List<DeploymentPreviewTargetResult> ExcludedTargets { get; set; } = [];
+
     public List<DeploymentPreviewStepResult> Steps { get; set; } = [];
 
     public string Message => CanDeploy
@@ -28,6 +36,9 @@ public class DeploymentPreviewTargetResult
     public string MachineName { get; set; }
 
     public List<string> Roles { get; set; } = [];
+
+    /// <summary>Machine health at preview time (e.g. Healthy / Unavailable / Unhealthy / Unknown).</summary>
+    public string HealthStatus { get; set; } = string.Empty;
 }
 
 public class DeploymentPreviewStepResult

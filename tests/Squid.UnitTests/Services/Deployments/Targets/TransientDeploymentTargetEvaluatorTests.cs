@@ -2,8 +2,10 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Deployments;
+using Squid.Message.Models.Deployments.Project;
 
 namespace Squid.UnitTests.Services.Deployments.Targets;
 
@@ -125,5 +127,68 @@ public class TransientDeploymentTargetEvaluatorTests
         result.Kept.ShouldBeEmpty();
         result.Skipped.ShouldBeEmpty();
         result.FailedUnavailable.ShouldBeEmpty();
+    }
+
+    // ── ApplyProjectPolicy: the single entry point BOTH the deployment pipeline (phase 4)
+    //    and the deployment preview call, so the two cannot disagree about eligibility. ──
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-json")]
+    public void ApplyProjectPolicy_NoOrInvalidSettings_UsesHistoricalDefaults(string settingsJson)
+    {
+        var machines = new[]
+        {
+            M("healthy", MachineHealthStatus.Healthy),
+            M("unhealthy", MachineHealthStatus.Unhealthy),
+            M("unavailable", MachineHealthStatus.Unavailable)
+        };
+
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(machines, settingsJson);
+
+        result.Kept.Select(m => m.Name).ShouldBe(new[] { "healthy" });
+        result.Skipped.Select(m => m.Name).ShouldBe(new[] { "unhealthy", "unavailable" });
+        result.FailedUnavailable.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ApplyProjectPolicy_FailDeploymentSetting_FailsOnUnavailable()
+    {
+        var json = DeploymentSettingsSerializer.Serialize(new DeploymentSettingsDto
+        {
+            TransientDeploymentTargets = new TransientDeploymentTargetsDto
+            {
+                UnavailableDeploymentTargets = UnavailableDeploymentTargetBehavior.FailDeployment,
+                UnhealthyDeploymentTargets = UnhealthyDeploymentTargetBehavior.Exclude
+            }
+        });
+
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(new[] { M("down", MachineHealthStatus.Unavailable) }, json);
+
+        result.FailedUnavailable.Select(m => m.Name).ShouldBe(new[] { "down" });
+        result.Kept.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ApplyProjectPolicy_IsApplyWithPolicyFromJson_SoPreviewAndDeployConverge()
+    {
+        // Convergence guarantee: ApplyProjectPolicy == Apply with the policy resolved from the
+        // project settings JSON. Preview and the deploy pipeline both route through it, so for
+        // the same machines + settings they produce identical Kept / Skipped / Failed sets.
+        var machines = new[]
+        {
+            M("healthy", MachineHealthStatus.Healthy),
+            M("unhealthy", MachineHealthStatus.Unhealthy),
+            M("unavailable", MachineHealthStatus.Unavailable)
+        };
+        var defaultsJson = DeploymentSettingsSerializer.Serialize(new DeploymentSettingsDto());
+
+        var viaProjectPolicy = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(machines, defaultsJson);
+        var viaApply = Apply(machines);
+
+        viaProjectPolicy.Kept.Select(m => m.Name).ShouldBe(viaApply.Kept.Select(m => m.Name));
+        viaProjectPolicy.Skipped.Select(m => m.Name).ShouldBe(viaApply.Skipped.Select(m => m.Name));
+        viaProjectPolicy.FailedUnavailable.Select(m => m.Name).ShouldBe(viaApply.FailedUnavailable.Select(m => m.Name));
     }
 }

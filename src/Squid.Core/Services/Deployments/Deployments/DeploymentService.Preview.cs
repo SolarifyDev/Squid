@@ -1,4 +1,5 @@
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -47,13 +48,25 @@ public partial class DeploymentService
 
         var selectedMachines = ApplyMachineSelection(machines, context.SpecificMachineIds, context.ExcludedMachineIds);
 
+        // Apply the SAME transient-target eligibility the deployment pipeline applies
+        // (phase 4 -> TransientDeploymentTargetEvaluator), so preview's available targets are
+        // exactly the targets a real deployment would keep. Unavailable/unhealthy machines are
+        // excluded here, never counted as "available".
+        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
+        var eligibility = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(selectedMachines, project?.DeploymentSettingsJson);
+
+        result.ExcludedTargets = eligibility.Skipped.Concat(eligibility.FailedUnavailable).Select(MapMachineTarget).ToList();
+
+        if (eligibility.FailedUnavailable.Count > 0)
+            blockingReasons.Add($"{eligibility.FailedUnavailable.Count} deployment target(s) are unavailable and the project's Transient Deployment Targets policy is 'Fail deployment': {string.Join(", ", eligibility.FailedUnavailable.Select(m => m.Name))}.");
+
         await PopulateLifecycleValidationAsync(result, release, context, blockingReasons, cancellationToken).ConfigureAwait(false);
 
         var ruleReport = await _deploymentValidationOrchestrator.ValidateAsync(stage, context, cancellationToken).ConfigureAwait(false);
 
         blockingReasons.AddRange(ruleReport.Issues.Where(issue => issue.IsBlocking).Select(issue => issue.Message));
 
-        await PopulateStepsAndBlockersFromPlanAsync(result, release, context, selectedMachines, blockingReasons, cancellationToken).ConfigureAwait(false);
+        await PopulateStepsAndBlockersFromPlanAsync(result, release, context, eligibility.Kept, blockingReasons, cancellationToken).ConfigureAwait(false);
 
         return FinalizePreview(result, blockingReasons);
     }
@@ -64,7 +77,7 @@ public partial class DeploymentService
         DeploymentPreviewResult result,
         Persistence.Entities.Deployments.Release release,
         DeploymentValidationContext context,
-        List<Persistence.Entities.Deployments.Machine> selectedMachines,
+        List<Persistence.Entities.Deployments.Machine> eligibleMachines,
         List<string> blockingReasons,
         CancellationToken cancellationToken)
     {
@@ -72,7 +85,7 @@ public partial class DeploymentService
 
         try
         {
-            plan = await BuildPlanAsync(release, context, selectedMachines, cancellationToken).ConfigureAwait(false);
+            plan = await BuildPlanAsync(release, context, eligibleMachines, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -81,12 +94,44 @@ public partial class DeploymentService
             return;
         }
 
+        var healthByMachineId = eligibleMachines.ToDictionary(m => m.Id, m => m.HealthStatus.ToString());
+
         result.Steps = plan.Steps.Select(MapPlannedStep).ToList();
-        result.CandidateTargets = plan.CandidateTargets.Select(MapPlannedTarget).ToList();
+        result.CandidateTargets = plan.CandidateTargets.Select(target => MapPlannedTargetWithHealth(target, healthByMachineId)).ToList();
         result.AvailableMachineCount = result.CandidateTargets.Count;
 
         blockingReasons.AddRange(plan.BlockingReasons.Select(reason => reason.Message));
+
+        AddNoHealthyTargetsBlockerIfNeeded(result, blockingReasons);
     }
+
+    // Mirrors the deployment pipeline's "No target machines found" failure (phase 4): if a step
+    // genuinely needs targets (has roles, not run-on-server/step-level) but matched none, AND
+    // targets were excluded by health, the real deployment would fail — so the preview blocks too.
+    internal static void AddNoHealthyTargetsBlockerIfNeeded(DeploymentPreviewResult result, List<string> blockingReasons)
+    {
+        var stepNeedsTargetsButHasNone = result.Steps.Any(step =>
+            step.IsApplicable && !step.IsRunOnServer && !step.IsStepLevelOnly && step.RequiredRoles.Count > 0 && step.MatchedTargets.Count == 0);
+
+        if (stepNeedsTargetsButHasNone && result.ExcludedTargets.Count > 0)
+            blockingReasons.Add($"No healthy deployment targets are available — {result.ExcludedTargets.Count} matching target(s) were excluded as unavailable or unhealthy.");
+    }
+
+    private static DeploymentPreviewTargetResult MapPlannedTargetWithHealth(PlannedTarget target, IReadOnlyDictionary<int, string> healthByMachineId) => new()
+    {
+        MachineId = target.MachineId,
+        MachineName = target.MachineName,
+        Roles = target.Roles.ToList(),
+        HealthStatus = healthByMachineId.TryGetValue(target.MachineId, out var health) ? health : string.Empty
+    };
+
+    private static DeploymentPreviewTargetResult MapMachineTarget(Persistence.Entities.Deployments.Machine machine) => new()
+    {
+        MachineId = machine.Id,
+        MachineName = machine.Name,
+        Roles = DeploymentTargetFinder.ParseRoles(machine.Roles).ToList(),
+        HealthStatus = machine.HealthStatus.ToString()
+    };
 
     private async Task<DeploymentPlan> BuildPlanAsync(
         Persistence.Entities.Deployments.Release release,
