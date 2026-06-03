@@ -147,6 +147,89 @@ public class KubernetesApiIntentRendererTests
         rendered.TargetNamespace.ShouldBe("kustomize-ns");
     }
 
+    // ========== Namespace flows from intent into the kubectl-context ScriptContext ==========
+    // Regression (prd): the namespace declared on the action (e.g. Deploy Kubernetes containers
+    // with #{namespace}) is carried on intent.Namespace (already variable-expanded). It MUST be
+    // threaded into the ScriptContext so the kubectl-context preamble creates the target
+    // namespace before `kubectl apply`. Previously the Api path dropped it and the auto-create
+    // fell back to the endpoint/default namespace, so a fresh prd namespace was never created
+    // and the deploy failed with: namespaces "..." not found. The Agent transport already uses
+    // intent.Namespace; these pin the Api transport to the same source.
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_IntentNamespace_FlowsToScriptContext()
+    {
+        var captured = CaptureScriptContext();
+        var intent = NewKubernetesApplyIntent() with { Namespace = "squid-web-prd" };
+
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        captured().ShouldNotBeNull();
+        captured()!.Namespace.ShouldBe("squid-web-prd");
+    }
+
+    [Fact]
+    public async Task RenderAsync_HelmUpgradeIntent_IntentNamespace_FlowsToScriptContext()
+    {
+        var captured = CaptureScriptContext();
+        var intent = NewHelmUpgradeIntent() with { Namespace = "squid-web-prd" };
+
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        captured().ShouldNotBeNull();
+        captured()!.Namespace.ShouldBe("squid-web-prd");
+    }
+
+    [Fact]
+    public async Task RenderAsync_KustomizeIntent_IntentNamespace_FlowsToScriptContext()
+    {
+        var captured = CaptureScriptContext();
+        var intent = NewKustomizeIntent() with { Namespace = "squid-web-prd" };
+
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        captured().ShouldNotBeNull();
+        captured()!.Namespace.ShouldBe("squid-web-prd");
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_TargetNamespace_FlowsToScriptContext()
+    {
+        // RunScript carries no intent.Namespace; the renderer resolves it from the
+        // Squid.Action.Kubernetes.Namespace variable (same source as TargetNamespace) so the
+        // kubectl-context preamble still creates/sets the right namespace.
+        var captured = CaptureScriptContext();
+
+        await _renderer.RenderAsync(
+            NewRunScriptIntent(syntax: ScriptSyntax.Bash),
+            NewContext(targetNamespace: "rs-ns"),
+            CancellationToken.None);
+
+        captured().ShouldNotBeNull();
+        captured()!.Namespace.ShouldBe("rs-ns");
+    }
+
+    [Fact]
+    public async Task RenderAsync_RunScriptIntent_NamespaceVariableTemplate_ExpandedIntoScriptContext()
+    {
+        // The namespace variable may itself be a #{...} template — it must be expanded before
+        // reaching the context builder (a raw #{...} is not a valid namespace name).
+        var captured = CaptureScriptContext();
+        var variables = new List<VariableDto>
+        {
+            new() { Name = "Environment", Value = "prod" },
+            new() { Name = SpecialVariables.Kubernetes.Namespace, Value = "#{Environment}-app" }
+        };
+
+        await _renderer.RenderAsync(
+            NewRunScriptIntent(syntax: ScriptSyntax.Bash),
+            NewContext(variables: variables),
+            CancellationToken.None);
+
+        captured().ShouldNotBeNull();
+        captured()!.Namespace.ShouldBe("prod-app");
+    }
+
     // ========== RunScriptIntent: wrapping behaviour ==========
 
     [Fact]
@@ -1157,6 +1240,18 @@ public class KubernetesApiIntentRendererTests
         _builderMock
             .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
             .Returns(returnValue);
+    }
+
+    private Func<ScriptContext?> CaptureScriptContext()
+    {
+        ScriptContext? captured = null;
+
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((_, ctx, _) => captured = ctx)
+            .Returns("wrapped");
+
+        return () => captured;
     }
 
     private static RunScriptIntent NewRunScriptIntent(string scriptBody = "echo default", ScriptSyntax syntax = ScriptSyntax.Bash)

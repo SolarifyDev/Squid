@@ -246,6 +246,101 @@ public class KubernetesApiContextScriptBuilderTests
         result.ShouldNotContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
     }
 
+    [Fact]
+    public void WrapWithContext_ContextNamespace_OverridesEndpointNamespace()
+    {
+        // Regression: the action/step namespace (e.g. "Deploy Kubernetes containers" with
+        // namespace #{namespace}) is carried on ScriptContext.Namespace by the renderer and
+        // MUST drive the kubectl context + namespace auto-create — taking precedence over the
+        // endpoint namespace. Previously the namespace fell back to the endpoint/default value
+        // so the target namespace was never created and `kubectl apply` failed on a fresh
+        // cluster with: namespaces "..." not found.
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+        ctx.Namespace = "squid-web-prd";
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("squid-web-prd"));
+        result.ShouldNotContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
+    }
+
+    [Fact]
+    public void WrapWithContext_ContextNamespace_EmptyEndpointNamespace_StillDrivesNamespace()
+    {
+        // The exact prd failure shape: endpoint has no namespace, the namespace lives only on
+        // the action. Without the fix, {{Namespace}} resolved to "" -> the create block was
+        // skipped and apply targeted a non-existent namespace.
+        var ctx = CreateContext(ns: "", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+        ctx.Namespace = "squid-web-prd";
+
+        var result = _builder.WrapWithContext("kubectl apply -f configmap.yaml", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("squid-web-prd"));
+    }
+
+    [Fact]
+    public void WrapWithContext_NoContextNamespace_FallsBackToEndpointNamespace_Unchanged()
+    {
+        // Backward-compat: when the renderer does not set ScriptContext.Namespace (null), the
+        // existing ActionProperties -> endpoint -> default resolution is preserved verbatim.
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
+    }
+
+    [Fact]
+    public void WrapWithContext_ContextNamespaceWhitespace_FallsBackToEndpointNamespace()
+    {
+        // Whitespace-only must not win over the endpoint fallback (IsNullOrWhiteSpace guard).
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }));
+        ctx.Namespace = "   ";
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
+    }
+
+    [Fact]
+    public void WrapWithContext_ContextNamespace_TakesPrecedenceOverActionProperties()
+    {
+        // ScriptContext.Namespace (renderer-resolved, already expanded) is the most specific
+        // source and must win even over ActionProperties.
+        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Squid.Action.KubernetesContainers.Namespace"] = "action-props-ns"
+        };
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            actionProperties: props);
+        ctx.Namespace = "squid-web-prd";
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("squid-web-prd"));
+        result.ShouldNotContain(ShellEscapeHelper.Base64Encode("action-props-ns"));
+        result.ShouldNotContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
+    }
+
+    [Fact]
+    public void WrapWithContext_ContextNamespace_PowerShell_DrivesNamespace()
+    {
+        var ctx = CreateContext(ns: "endpoint-ns", accountType: AccountType.Token,
+            credentialsJson: JsonSerializer.Serialize(new TokenCredentials { Token = "t" }),
+            syntax: ScriptSyntax.PowerShell);
+        ctx.Namespace = "squid-web-prd";
+
+        var result = _builder.WrapWithContext("echo hi", ctx);
+
+        result.ShouldContain(ShellEscapeHelper.Base64Encode("squid-web-prd"));
+        result.ShouldNotContain(ShellEscapeHelper.Base64Encode("endpoint-ns"));
+    }
+
     // === TLS Skip Tests ===
 
     [Fact]

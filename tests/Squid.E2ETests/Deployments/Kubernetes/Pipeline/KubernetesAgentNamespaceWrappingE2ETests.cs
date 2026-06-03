@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
@@ -124,6 +125,45 @@ data:
             // (full auth + namespace via KubectlContext.sh template)
             captured.ScriptBody.ShouldNotContain("kubectl config set-context --current --namespace=");
         }
+    }
+
+    [Fact]
+    public async Task Api_DeployRawYaml_ActionNamespace_DrivesNamespaceCreation_WhenEndpointHasNone()
+    {
+        // Regression (prd): namespace is declared on the action (e.g. Deploy Kubernetes
+        // containers with #{namespace}) while the EKS/endpoint has none. The KubernetesApi
+        // path MUST render the action namespace into the kubectl-context preamble so it is
+        // auto-created before `kubectl apply`. Pre-fix it fell back to the endpoint/default
+        // namespace, so a fresh prd namespace was never created and apply failed with
+        // namespaces "squid-web-prd" not found. Drives the real renderer + context builder
+        // through the full pipeline (no mocks).
+        var inlineYaml = @"apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: configurations-squidweb
+  namespace: squid-web-prd
+data:
+  .env: hello";
+
+        var serverTaskId = await SeedActionAsync(
+            "Squid.KubernetesDeployRawYaml",
+            ns: "",                       // endpoint namespace empty — the exact prd shape
+            communicationStyle: "KubernetesApi",
+            ("Squid.Action.KubernetesYaml.InlineYaml", inlineYaml),
+            ("Squid.Action.Script.Syntax", "Bash"),
+            ("Squid.Action.KubernetesContainers.Namespace", "squid-web-prd"));
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        ExecutionCapture.CapturedRequests.ShouldNotBeEmpty();
+
+        var captured = ExecutionCapture.CapturedRequests[0];
+
+        // KubernetesApi base64-encodes the namespace into the context template; the create
+        // block (KubectlContext.sh) then runs against it. base64("squid-web-prd") is the
+        // discriminator — pre-fix the template carried the empty endpoint namespace instead.
+        captured.ScriptBody.ShouldContain(ShellEscapeHelper.Base64Encode("squid-web-prd"));
+        captured.ScriptBody.ShouldContain("create namespace");
     }
 
     // ========================================================================
