@@ -80,7 +80,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         if (!ScriptSyntaxHelper.IsShellSyntax(intent.Syntax))
             return intent.ScriptBody;
 
-        return WrapWithKubectlContext(intent.ScriptBody, intent.Syntax, context);
+        return WrapWithKubectlContext(intent.ScriptBody, intent.Syntax, context, KubernetesTargetNamespaceResolver.Resolve(context));
     }
 
     private ScriptExecutionRequest RenderKubernetesApply(KubernetesApplyIntent intent, IntentRenderContext context)
@@ -118,7 +118,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
     {
         var deploymentFiles = HelmUpgradeScriptBuilder.BuildDeploymentFiles(intent);
         var rawScript = HelmUpgradeScriptBuilder.Build(intent, intent.Syntax);
-        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context);
+        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context, intent.Namespace);
 
         return new ScriptExecutionRequest
         {
@@ -144,7 +144,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
     private ScriptExecutionRequest RenderKustomize(KubernetesKustomizeIntent intent, IntentRenderContext context)
     {
         var rawScript = KubernetesKustomizeScriptBuilder.Build(intent, intent.Syntax);
-        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context);
+        var wrappedScript = WrapShellBody(rawScript, intent.Syntax, context, intent.Namespace);
 
         return new ScriptExecutionRequest
         {
@@ -171,24 +171,25 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
         if (!ScriptSyntaxHelper.IsShellSyntax(intent.Syntax))
             return scriptBody;
 
-        return WrapWithKubectlContext(scriptBody, intent.Syntax, context);
+        return WrapWithKubectlContext(scriptBody, intent.Syntax, context, intent.Namespace);
     }
 
-    private string WrapShellBody(string scriptBody, ScriptSyntax syntax, IntentRenderContext context)
+    private string WrapShellBody(string scriptBody, ScriptSyntax syntax, IntentRenderContext context, string targetNamespace)
     {
         if (!ScriptSyntaxHelper.IsShellSyntax(syntax))
             return scriptBody;
 
-        return WrapWithKubectlContext(scriptBody, syntax, context);
+        return WrapWithKubectlContext(scriptBody, syntax, context, targetNamespace);
     }
 
-    private string WrapWithKubectlContext(string scriptBody, ScriptSyntax syntax, IntentRenderContext context)
+    private string WrapWithKubectlContext(string scriptBody, ScriptSyntax syntax, IntentRenderContext context, string targetNamespace)
     {
         var scriptContext = new ScriptContext
         {
             Endpoint = context.Target.EndpointContext,
             Syntax = syntax,
-            Variables = context.EffectiveVariables.ToList()
+            Variables = context.EffectiveVariables.ToList(),
+            Namespace = targetNamespace
         };
 
         var customKubectl = context.EffectiveVariables

@@ -130,6 +130,9 @@ public class KubernetesApiContextScriptBuilder : IKubernetesApiContextScriptBuil
 
     private static string ResolveNamespace(ScriptContext context, KubernetesApiEndpointDto endpoint)
     {
+        if (!string.IsNullOrWhiteSpace(context?.Namespace))
+            return context.Namespace;
+
         if (context?.ActionProperties != null && context.ActionProperties.Count > 0)
             return KubernetesPropertyParser.GetNamespace(context.ActionProperties);
 

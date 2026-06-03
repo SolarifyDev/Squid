@@ -56,4 +56,13 @@ public class ScriptContext
     public ScriptSyntax Syntax { get; set; }
     public List<VariableDto> Variables { get; set; }
     public Dictionary<string, string> ActionProperties { get; set; }
+
+    // Resolved, already-expanded target namespace for this action (e.g. the
+    // "Deploy Kubernetes containers" step namespace). When set it is the authoritative
+    // source for the kubectl-context default namespace AND the namespace auto-create
+    // preamble — taking precedence over ActionProperties / endpoint namespace. This is
+    // what the Agent transport already does via intent.Namespace; carrying it here keeps
+    // the Api transport consistent so an action-scoped namespace is created on a fresh
+    // cluster instead of silently falling back to the endpoint/default namespace.
+    public string Namespace { get; set; }
 }
