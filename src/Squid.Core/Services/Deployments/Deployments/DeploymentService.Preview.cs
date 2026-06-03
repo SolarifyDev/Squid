@@ -46,7 +46,15 @@ public partial class DeploymentService
         var machines = await _machineDataProvider
             .GetMachinesByFilterAsync([context.EnvironmentId], [], cancellationToken).ConfigureAwait(false);
 
-        var selectedMachines = ApplyMachineSelection(machines, context.SpecificMachineIds, context.ExcludedMachineIds);
+        // Select via the SAME primitive the real deployment uses (DeploymentTargetFinder), so
+        // preview's specific/excluded filtering can never diverge from what actually deploys.
+        var selection = new DeploymentTargetFinder.DeploymentMachineSelection
+        {
+            SpecificMachineIds = context.SpecificMachineIds,
+            ExcludedMachineIds = context.ExcludedMachineIds
+        };
+
+        var selectedMachines = DeploymentTargetFinder.ApplyMachineSelection(machines, selection);
 
         // Apply the SAME transient-target eligibility the deployment pipeline applies
         // (phase 4 -> TransientDeploymentTargetEvaluator), so preview's available targets are
@@ -324,19 +332,4 @@ public partial class DeploymentService
         };
     }
 
-    private static List<Persistence.Entities.Deployments.Machine> ApplyMachineSelection(List<Persistence.Entities.Deployments.Machine> machines, HashSet<int> specificMachineIds, HashSet<int> excludedMachineIds)
-    {
-        if (machines.Count == 0)
-            return machines;
-
-        var selected = machines;
-
-        if (specificMachineIds.Count > 0)
-            selected = selected.Where(machine => specificMachineIds.Contains(machine.Id)).ToList();
-
-        if (excludedMachineIds.Count > 0)
-            selected = selected.Where(machine => !excludedMachineIds.Contains(machine.Id)).ToList();
-
-        return selected;
-    }
 }
