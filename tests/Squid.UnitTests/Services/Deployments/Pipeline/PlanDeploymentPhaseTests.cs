@@ -81,6 +81,34 @@ public class PlanDeploymentPhaseTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ForwardsSkipActionIdsToPlanner_SoDeployHonoursManualSkip()
+    {
+        // Manual skip (DeploymentRequestPayload.SkipActionIds) MUST reach the planner here,
+        // exactly as the deployment preview passes it (DeploymentService.BuildPlanAsync). If it
+        // doesn't, the shadow plan lists the skipped action as runnable and
+        // ExecuteStepsPhase.SplitActionsUsingPlan runs it — so an action shown as skipped in
+        // preview would execute on the real deployment. This pins that preview == deploy.
+        DeploymentPlanRequest captured = null;
+
+        var planner = new Mock<IDeploymentPlanner>();
+        planner.Setup(p => p.PlanAsync(It.IsAny<DeploymentPlanRequest>(), It.IsAny<CancellationToken>()))
+            .Callback((DeploymentPlanRequest req, CancellationToken _) => captured = req)
+            .ReturnsAsync(new DeploymentPlan { Mode = PlanMode.Preview, ReleaseId = 0, EnvironmentId = 0, DeploymentProcessSnapshotId = 0 });
+
+        var ctx = BuildContext();
+        ctx.Deployment.DeploymentRequestPayload = new Squid.Message.Models.Deployments.Deployment.DeploymentRequestPayload
+        {
+            SkipActionIds = new List<int> { 100, 250 }
+        };
+
+        await new PlanDeploymentPhase(planner.Object).ExecuteAsync(ctx, CancellationToken.None);
+
+        captured.SkipActionIds.ShouldContain(100);
+        captured.SkipActionIds.ShouldContain(250);
+        captured.SkipActionIds.Count.ShouldBe(2);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_UsesPreviewModeSoBlockersDoNotThrow()
     {
         DeploymentPlanRequest captured = null;

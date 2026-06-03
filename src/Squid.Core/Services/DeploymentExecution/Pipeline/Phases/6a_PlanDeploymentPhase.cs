@@ -98,6 +98,10 @@ public sealed class PlanDeploymentPhase(IDeploymentPlanner planner) : IDeploymen
         Steps = ctx.Steps,
         Variables = ctx.Variables ?? new List<Message.Models.Deployments.Variable.VariableDto>(),
         TargetContexts = ctx.AllTargetsContext ?? new List<DeploymentTargetContext>(),
+        // Forward manual skip exactly as the preview does (DeploymentService.BuildPlanAsync), so the
+        // shadow plan filters skipped actions identically — otherwise ExecuteStepsPhase would run an
+        // action the preview reported as skipped.
+        SkipActionIds = ctx.Deployment?.DeploymentRequestPayload?.SkipActionIds?.ToHashSet() ?? new HashSet<int>(),
         DeploymentId = ctx.Deployment?.Id ?? 0,
         ServerTaskId = ctx.ServerTaskId
     };
