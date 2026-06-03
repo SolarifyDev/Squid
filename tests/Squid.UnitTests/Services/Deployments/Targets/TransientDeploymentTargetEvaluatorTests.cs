@@ -40,8 +40,9 @@ public class TransientDeploymentTargetEvaluatorTests
     [Fact]
     public void Defaults_ReproduceHistoricalExclusion()
     {
-        // SkipAndContinue + Exclude (the defaults) == FilterByHealthStatus: unavailable
-        // + unhealthy are removed (skipped), everything else kept, nothing fails.
+        // SkipAndContinue + Exclude (the defaults) reproduce the historical unconditional
+        // exclusion: unavailable + unhealthy are removed (skipped), everything else kept,
+        // nothing fails. This is the single health gate shared by deploy and preview.
         var machines = new[]
         {
             M("healthy", MachineHealthStatus.Healthy),

@@ -370,6 +370,46 @@ public class DeploymentTargetFinderTests
     }
 
     // ============================
+    // Selection convergence: preview path == deploy path
+    // ============================
+    // The deployment preview (DeploymentService.PreviewInternalAsync) and the real
+    // deployment (FindTargetsAsync) MUST select the same machines for identical
+    // specific/excluded inputs — otherwise preview lies about what will run. Both now
+    // route through the SINGLE DeploymentTargetFinder.ApplyMachineSelection primitive.
+    // This test pins that equivalence so introducing a second selection implementation
+    // (the historical divergence cause) breaks the build instead of shipping silently.
+
+    [Theory]
+    [InlineData(new int[0], new int[0], new[] { 1, 2, 3 })]      // no constraints -> all kept
+    [InlineData(new[] { 1, 3 }, new int[0], new[] { 1, 3 })]     // specific only
+    [InlineData(new int[0], new[] { 2 }, new[] { 1, 3 })]        // excluded only
+    [InlineData(new[] { 1, 2, 3 }, new[] { 2 }, new[] { 1, 3 })] // specific + excluded
+    public async Task Selection_PreviewPrimitive_MatchesDeployPath(int[] specific, int[] excluded, int[] expectedIds)
+    {
+        var deployPool = new List<Machine> { CreateMachine(1), CreateMachine(2), CreateMachine(3) };
+        SetupGetByFilter(deployPool);
+
+        var deployment = CreateDeployment(environmentId: 1, json: SelectionJson(
+            specificMachineIds: specific.Select(id => id.ToString()),
+            excludedMachineIds: excluded.Select(id => id.ToString())));
+
+        var deployResult = await _finder.FindTargetsAsync(deployment, CancellationToken.None);
+
+        // Preview builds a DeploymentMachineSelection from its HashSet inputs and calls the SAME primitive.
+        var previewPool = new List<Machine> { CreateMachine(1), CreateMachine(2), CreateMachine(3) };
+        var selection = new DeploymentTargetFinder.DeploymentMachineSelection
+        {
+            SpecificMachineIds = specific.ToHashSet(),
+            ExcludedMachineIds = excluded.ToHashSet()
+        };
+
+        var previewResult = DeploymentTargetFinder.ApplyMachineSelection(previewPool, selection);
+
+        deployResult.Select(m => m.Id).OrderBy(id => id).ShouldBe(expectedIds);
+        previewResult.Select(m => m.Id).OrderBy(id => id).ShouldBe(expectedIds);
+    }
+
+    // ============================
     // ParseIds (static utility)
     // ============================
 
