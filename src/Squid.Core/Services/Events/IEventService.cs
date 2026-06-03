@@ -17,8 +17,9 @@ public interface IEventService : IScopedDependency
     /// across handlers/services:
     /// <list type="bullet">
     ///   <item>the EF Core SaveChanges interceptor (document Created/Modified/Deleted), and</item>
-    ///   <item>the Mediator publish-pipe audit middleware that records any published
-    ///   domain event implementing the auditable marker (deployment lifecycle, etc.).</item>
+    ///   <item>the deployment lifecycle audit handler (one <c>IDeploymentLifecycleHandler</c>
+    ///   that subscribes to the pipeline's existing lifecycle events and maps each milestone
+    ///   to a category — no producer changes, no scattered calls).</item>
     /// </list>
     /// Keeping emission centralized is what makes the audit stream generic and
     /// maintainable; do not add ad-hoc RecordAsync calls in feature code.

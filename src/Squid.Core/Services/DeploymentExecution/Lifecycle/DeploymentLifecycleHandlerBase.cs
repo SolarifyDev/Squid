@@ -51,6 +51,7 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
         ManualInterventionResolvedEvent e => OnManualInterventionResolvedAsync(e.Context, ct),
         DeploymentCancelledEvent e => OnDeploymentCancelledAsync(e.Context, ct),
         DeploymentPausedEvent e => OnDeploymentPausedAsync(e.Context, ct),
+        DeploymentTimedOutEvent e => OnDeploymentTimedOutAsync(e.Context, ct),
         _ => Task.CompletedTask
     };
 
@@ -115,7 +116,8 @@ public abstract class DeploymentLifecycleHandlerBase : IDeploymentLifecycleHandl
     protected virtual Task OnManualInterventionPromptAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 
-    // === Cancellation / Pause ===
+    // === Cancellation / Pause / Timeout ===
     protected virtual Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
     protected virtual Task OnDeploymentPausedAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
+    protected virtual Task OnDeploymentTimedOutAsync(DeploymentEventContext ctx, CancellationToken ct) => Task.CompletedTask;
 }
