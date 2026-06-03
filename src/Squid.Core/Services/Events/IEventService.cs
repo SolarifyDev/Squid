@@ -27,4 +27,11 @@ public interface IEventService : IScopedDependency
     Task RecordAsync(RecordEventRequest request, CancellationToken cancellationToken = default);
 
     Task<GetEventsResponseData> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Prunes audit events (and their snapshots, via FK cascade) for the given server-task
+    /// ids — invoked by retention when the owning deployments are pruned, so the audit
+    /// stream stays bounded alongside the deployments it describes. Returns rows deleted.
+    /// </summary>
+    Task<int> PruneByServerTaskIdsAsync(IReadOnlyCollection<int> serverTaskIds, CancellationToken cancellationToken = default);
 }

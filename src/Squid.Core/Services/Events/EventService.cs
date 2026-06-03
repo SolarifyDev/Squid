@@ -44,6 +44,14 @@ public class EventService : IEventService
         return BuildPage(rows, take);
     }
 
+    public async Task<int> PruneByServerTaskIdsAsync(IReadOnlyCollection<int> serverTaskIds, CancellationToken cancellationToken = default)
+    {
+        if (serverTaskIds is null || serverTaskIds.Count == 0) return 0;
+
+        // event_document_snapshot rows cascade via the FK (ON DELETE CASCADE).
+        return await _repository.ExecuteDeleteAsync<Event>(e => e.ServerTaskId != null && serverTaskIds.Contains(e.ServerTaskId.Value), cancellationToken).ConfigureAwait(false);
+    }
+
     private IQueryable<Event> BuildFilteredQuery(GetEventsRequest request)
     {
         var query = _repository.QueryNoTracking<Event>(e => e.SpaceId == request.SpaceId!.Value);

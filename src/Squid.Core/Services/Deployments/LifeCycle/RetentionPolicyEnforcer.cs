@@ -4,6 +4,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
+using Squid.Core.Services.Events;
 using Squid.Message.Enums.Deployments;
 using TaskState = Squid.Core.Services.Deployments.ServerTask.TaskState;
 
@@ -22,6 +23,7 @@ public class RetentionPolicyEnforcer(
     IReleaseDataProvider releaseDataProvider,
     IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
     IDeploymentDataProvider deploymentDataProvider,
+    IEventService eventService,
     IRepository repository) : IRetentionPolicyEnforcer
 {
     private static readonly string[] NonTerminalTaskStates = { TaskState.Pending, TaskState.Executing, TaskState.Cancelling, TaskState.Paused };
@@ -116,6 +118,7 @@ public class RetentionPolicyEnforcer(
     {
         if (taskIds.Count == 0) return;
 
+        await eventService.PruneByServerTaskIdsAsync(taskIds, cancellationToken).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<ServerTaskLog>(l => taskIds.Contains(l.ServerTaskId), cancellationToken).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<DeploymentInterruption>(i => taskIds.Contains(i.ServerTaskId), cancellationToken).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<DeploymentExecutionCheckpoint>(c => taskIds.Contains(c.ServerTaskId), cancellationToken).ConfigureAwait(false);
