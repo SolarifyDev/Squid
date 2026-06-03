@@ -1,18 +1,21 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities;
 using Squid.Core.Persistence.EntityConfigurations;
+using Squid.Core.Services.Events;
 using Squid.Core.Services.Identity;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Persistence;
 
-public class SquidDbContext : DbContext, IUnitOfWork
+public partial class SquidDbContext : DbContext, IUnitOfWork
 {
     private readonly ICurrentUser _currentUser;
+    private readonly IAuditDocumentRegistry _auditDocuments;
 
-    public SquidDbContext(DbContextOptions<SquidDbContext> options, ICurrentUser currentUser = null) : base(options)
+    public SquidDbContext(DbContextOptions<SquidDbContext> options, ICurrentUser currentUser = null, IAuditDocumentRegistry auditDocuments = null) : base(options)
     {
         _currentUser = currentUser;
+        _auditDocuments = auditDocuments;
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -27,7 +30,13 @@ public class SquidDbContext : DbContext, IUnitOfWork
         ChangeTracker.DetectChanges();
         ApplyAuditFields();
 
-        return await base.SaveChangesAsync(cancellationToken);
+        var documentAudits = CaptureDocumentAudits();
+
+        var result = await base.SaveChangesAsync(cancellationToken);
+
+        await EmitDocumentAuditsAsync(documentAudits, cancellationToken);
+
+        return result;
     }
 
     private void ApplyAuditFields()

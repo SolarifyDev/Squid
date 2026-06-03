@@ -6,6 +6,7 @@ using Squid.Message.Requests.Events;
 
 namespace Squid.IntegrationTests.Services.Events;
 
+[Collection("EventsAudit")]
 public class EventServiceTests : TestBase
 {
     public EventServiceTests()
