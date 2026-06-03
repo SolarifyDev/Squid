@@ -223,4 +223,48 @@ public class EventServiceTests : TestBase
             page.Events.Count.ShouldBeGreaterThanOrEqualTo(1, "Take must be clamped to a sane range, never returning zero rows for a non-empty feed");
         }).ConfigureAwait(false);
     }
+
+    [Fact]
+    public async Task PruneByServerTaskIdsAsync_DeletesOnlyTheTargetedTasksEvents_KeepingOthersAndOrphans()
+    {
+        const int spaceId = 40;
+        const int prunedTask = 5001;
+        const int keptTask = 5002;
+
+        await Run<IEventService, IUnitOfWork>(async (events, uow) =>
+        {
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentStarted, SpaceId = spaceId, ServerTaskId = prunedTask });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentSucceeded, SpaceId = spaceId, ServerTaskId = prunedTask });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DeploymentSucceeded, SpaceId = spaceId, ServerTaskId = keptTask });
+            await events.RecordAsync(new RecordEventRequest { Category = EventCategory.DocumentModified, SpaceId = spaceId, ProjectId = 9 }); // no server task — a config-audit orphan
+            await uow.SaveChangesAsync();
+        }).ConfigureAwait(false);
+
+        var deleted = 0;
+        await Run<IEventService>(async events => deleted = await events.PruneByServerTaskIdsAsync(new[] { prunedTask })).ConfigureAwait(false);
+
+        deleted.ShouldBe(2, "exactly the two events for the pruned task");
+
+        await Run<IEventService>(async events =>
+        {
+            var remaining = (await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, Take = 100 })).Events;
+
+            remaining.ShouldNotContain(e => e.ServerTaskId == prunedTask, "the pruned task's events are gone");
+            remaining.Count(e => e.ServerTaskId == keptTask).ShouldBe(1, "another task's events survive");
+            remaining.Count(e => e.Category == (int)EventCategory.DocumentModified).ShouldBe(1, "config-audit events without a server task are not touched");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task PruneByServerTaskIdsAsync_EmptyInput_IsANoOp()
+    {
+        (await RunResult<IEventService, int>(events => events.PruneByServerTaskIdsAsync(Array.Empty<int>()))).ShouldBe(0);
+    }
+
+    private async Task<TResult> RunResult<T, TResult>(Func<T, Task<TResult>> action)
+    {
+        var result = default(TResult);
+        await Run<T>(async svc => result = await action(svc)).ConfigureAwait(false);
+        return result;
+    }
 }

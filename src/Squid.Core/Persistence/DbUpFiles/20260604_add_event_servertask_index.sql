@@ -1,0 +1,11 @@
+-- Add the missing per-server-task index on the audit event stream.
+--
+-- Two access paths need it and had no supporting index in the original
+-- 20260603_add_event_audit_stream.sql:
+--   1. GetEvents filtered by ServerTaskId (the per-task audit feed).
+--   2. Retention pruning (DELETE FROM event WHERE server_task_id IN (...)) when the
+--      owning deployments age out — without this the prune scans the whole table.
+--
+-- Partial (WHERE ... IS NOT NULL) + keyset-ordered by id, matching the other
+-- per-document feed indexes.
+CREATE INDEX IF NOT EXISTS ix_event_server_task ON event (server_task_id, id) WHERE server_task_id IS NOT NULL;
