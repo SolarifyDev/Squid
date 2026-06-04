@@ -104,6 +104,12 @@ switch -Regex ($arch) {
 # ── Placeholders filled by WindowsTentacleUpgradeStrategy before transmission ─
 $TARGET_VERSION   = '{{TARGET_VERSION}}'
 $DOWNLOAD_URL     = '{{DOWNLOAD_URL}}'
+# The server can't know the agent's architecture, so it emits the URL with a literal
+# '$RID' token. The single-quoted assignment above keeps it literal (PowerShell never
+# re-expands a stored value at use time), so resolve it now that arch detection has set
+# $RID. A targeted Replace — not a double-quoted re-assignment — leaves any other '$' or
+# backtick in an operator-overridden base URL untouched.
+$DOWNLOAD_URL     = $DOWNLOAD_URL.Replace('$RID', $RID)
 $EXPECTED_SHA256  = '{{EXPECTED_SHA256}}'
 $INSTALL_DIR      = '{{INSTALL_DIR}}'
 $SERVICE_NAME     = '{{SERVICE_NAME}}'

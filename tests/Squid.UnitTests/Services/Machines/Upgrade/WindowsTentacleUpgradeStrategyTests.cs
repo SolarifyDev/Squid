@@ -280,6 +280,35 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
             customMessage: "Stop-Service WaitForStatus REGRESSED — must use $SERVICE_TIMEOUT_SPAN");
     }
 
+    [Fact]
+    public void RenderInnerScript_DownloadUrl_RewritesLiteralRidTokenBeforeDownload()
+    {
+        // PRODUCTION BUG GUARD (Windows upgrade "Download failed: (404)"):
+        // The server emits the download URL with a LITERAL '$RID' token
+        // ($DOWNLOAD_URL = '.../squid-tentacle-<ver>-$RID.zip'). PowerShell single-quoted
+        // assignment does NOT expand $RID, and PowerShell never re-expands a variable's
+        // stored value at use time — so the script MUST explicitly rewrite the '$RID' token
+        // to the architecture-resolved $RID BEFORE Invoke-WebRequest consumes $DOWNLOAD_URL.
+        // Without it the agent requests .../squid-tentacle-<ver>-$RID.zip → GitHub 404.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        var literalUrlIdx = inner.IndexOf("-$RID.zip'", StringComparison.Ordinal);
+        var rewriteIdx = inner.IndexOf(".Replace('$RID', $RID)", StringComparison.Ordinal);
+        var downloadIdx = inner.IndexOf("Invoke-WebRequest -Uri $DOWNLOAD_URL", StringComparison.Ordinal);
+
+        literalUrlIdx.ShouldBeGreaterThan(-1,
+            customMessage: "Expected the server to emit the single-quoted URL with a literal $RID token.");
+
+        rewriteIdx.ShouldBeGreaterThan(literalUrlIdx,
+            customMessage: "Download URL must rewrite the literal '$RID' token to the resolved $RID. " +
+                           "PowerShell will NOT expand $RID inside a single-quoted value, so without " +
+                           "$DOWNLOAD_URL = $DOWNLOAD_URL.Replace('$RID', $RID) the agent downloads " +
+                           ".../squid-tentacle-<ver>-$RID.zip and GitHub returns 404.");
+
+        downloadIdx.ShouldBeGreaterThan(rewriteIdx,
+            customMessage: "The $RID rewrite MUST happen before Invoke-WebRequest consumes $DOWNLOAD_URL.");
+    }
+
     // ── J.E.7: HealthcheckFatalEnvVar pins ──────────────────────────────────
 
     [Fact]
