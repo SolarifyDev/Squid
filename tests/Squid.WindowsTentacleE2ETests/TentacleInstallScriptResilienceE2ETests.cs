@@ -319,9 +319,9 @@ public sealed class TentacleInstallScriptResilienceE2ETests : IDisposable
         for (var i = 0; i < iterations; i++)
         {
             // Each iteration stages a different binary content so we can verify
-            // the latest install actually overwrote the previous one. If
-            // Expand-Archive -Force broke and silently no-op'd, we'd see stale
-            // content here.
+            // the latest install actually overwrote the previous one. If the
+            // re-install overwrite (Copy-Item -Force on the flat fallback path)
+            // broke and silently no-op'd, we'd see stale content here.
             var marker = $"iter-{i}-{Guid.NewGuid():N}";
             mirror.StageBinary("Squid.Tentacle.exe", System.Text.Encoding.UTF8.GetBytes(marker));
 
@@ -341,7 +341,7 @@ public sealed class TentacleInstallScriptResilienceE2ETests : IDisposable
 
             var content = await File.ReadAllTextAsync(Path.Combine(ctx.InstallDir, "Squid.Tentacle.exe"));
             if (!content.Contains(marker))
-                failures.Add($"iter {i}: binary content '{content}' missing marker '{marker}' -- Expand-Archive -Force did not overwrite.");
+                failures.Add($"iter {i}: binary content '{content}' missing marker '{marker}' -- re-install (Copy-Item -Force flat fallback) did not overwrite.");
         }
 
         failures.ShouldBeEmpty(

@@ -75,7 +75,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── Defaults (Rule 8 -- pinned literals) ─────────────────────────────────────
+# -- Defaults (Rule 8 -- pinned literals) -------------------------------------
 # Renaming any of these breaks operator runbooks, MDM playbooks, and the
 # in-UI script-generator's expectations.
 $DefaultVersion       = 'latest'
@@ -94,7 +94,7 @@ if ([string]::IsNullOrWhiteSpace($Version))      { $Version = $DefaultVersion }
 if ([string]::IsNullOrWhiteSpace($InstallDir))   { $InstallDir = $DefaultInstallDir }
 if ([string]::IsNullOrWhiteSpace($DownloadBase)) { $DownloadBase = $DefaultDownloadBase }
 
-# ── Arch detection ──────────────────────────────────────────────────────────
+# -- Arch detection ----------------------------------------------------------
 function Resolve-Rid {
     param([string] $Arch)
 
@@ -114,13 +114,13 @@ if ([string]::IsNullOrWhiteSpace($arch)) {
 
 $rid = Resolve-Rid -Arch $arch
 
-# ── UAC auto-elevation ──────────────────────────────────────────────────────
+# -- UAC auto-elevation ------------------------------------------------------
 # Default install dir (%ProgramFiles%) + writing %ProgramData%\Squid both
 # require Administrator. Rather than refuse to run for non-admin operators,
 # we re-launch this script under UAC.
 #
 # Two invocation modes need handling:
-#   1. File-invocation  (`.\install-tentacle.ps1 …`) -- $PSCommandPath is set;
+#   1. File-invocation  (`.\install-tentacle.ps1 ...`) -- $PSCommandPath is set;
 #                       we relaunch the same file.
 #   2. Pipe-invocation  (`irm <url> | iex`) -- $PSCommandPath is empty; the
 #                       script body lives in $MyInvocation.MyCommand.ScriptContents.
@@ -211,7 +211,7 @@ function Invoke-SelfElevation {
 UAC elevation failed: $($_.Exception.Message)
 
 Workarounds:
-  1. Right-click PowerShell → 'Run as Administrator', then re-run this script
+  1. Right-click PowerShell -> 'Run as Administrator', then re-run this script
   2. From an admin terminal: powershell -NoProfile -ExecutionPolicy Bypass -File '$scriptPath' $(($forwarded -join ' '))
   3. Install to a user-owned path (no admin needed):
        .\install-tentacle.ps1 -InstallDir "$env:USERPROFILE\squid-tentacle"
@@ -250,7 +250,7 @@ Write-Host "Arch:     $rid"
 Write-Host "Install:  $InstallDir"
 Write-Host ''
 
-# ── Download URL resolution ─────────────────────────────────────────────────
+# -- Download URL resolution -------------------------------------------------
 function Resolve-DownloadUrls {
     param(
         [string] $Version,
@@ -281,7 +281,13 @@ try {
         Write-Host "Downloading from $url..."
 
         try {
-            Invoke-WebRequest -Uri $url -OutFile $archivePath -UseBasicParsing -TimeoutSec 300
+            # System.Net.WebClient + forced TLS 1.2, NOT Invoke-WebRequest: PS 5.1's
+            # Invoke-WebRequest -OutFile corrupts large binary downloads on some hosts
+            # (truncated zip -> extraction "End of central directory not found"); WebClient
+            # streams the bytes verbatim. Same fix as upgrade-windows-tentacle.ps1.
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+            $wc = New-Object System.Net.WebClient
+            try { $wc.DownloadFile($url, $archivePath) } finally { $wc.Dispose() }
             $downloaded = $true
             break
         } catch {
@@ -302,7 +308,7 @@ Possible causes:
         exit 1
     }
 
-    # ── Extract into a versioned ("blue-green") layout ───────────────────────
+    # -- Extract into a versioned ("blue-green") layout -----------------------
     # Binary lives in versions\<v>; a stable `current` junction selects the active
     # version. A later upgrade repoints `current` without touching the running
     # version's directory, so any failure leaves the old version intact. Stage
@@ -316,7 +322,8 @@ Possible causes:
     New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
     Write-Host "Extracting..."
-    Expand-Archive -Path $archivePath -DestinationPath $stagingDir -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $stagingDir)
 
     $stagedBinary = Join-Path $stagingDir $BinaryName
     if (-not (Test-Path $stagedBinary)) {
@@ -365,7 +372,7 @@ Possible causes:
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ── Discovery file ──────────────────────────────────────────────────────────
+# -- Discovery file ----------------------------------------------------------
 # Downstream scripts read %ProgramData%\Squid\Tentacle\install-info.json to
 # locate the binary. Without this, the server-generated register/service-install
 # snippet would have to hardcode the install path -- breaking custom InstallDir.
@@ -410,7 +417,7 @@ Write-InstallInfo `
     -InfoPath $InstallInfoPath `
     -Schema $InstallInfoSchema
 
-# ── Firewall rule for Listening Tentacle ────────────────────────────────────
+# -- Firewall rule for Listening Tentacle ------------------------------------
 function Add-ListeningFirewallRule {
     param(
         [string] $RuleName,
@@ -441,7 +448,7 @@ try {
     Write-Warning "Failed to add firewall rule: $($_.Exception.Message). For Listening Tentacle, manually run: New-NetFirewallRule -DisplayName 'Squid Tentacle' -Direction Inbound -Protocol TCP -LocalPort $ListeningPort -Action Allow"
 }
 
-# ── Service install ─────────────────────────────────────────────────────────
+# -- Service install ---------------------------------------------------------
 if ($NoServiceInstall) {
     Write-Host ''
     Write-Host '-NoServiceInstall set -- skipping service install.'
@@ -463,7 +470,7 @@ if ($NoServiceInstall) {
     Write-Host ''
 }
 
-# ── Next-step hints ─────────────────────────────────────────────────────────
+# -- Next-step hints ---------------------------------------------------------
 Write-Host '=== Next steps ==='
 Write-Host ''
 Write-Host 'Register the agent with your Squid server (the install-info.json above'

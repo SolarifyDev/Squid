@@ -122,7 +122,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 customMessage: "v2Bundle MUST contain Squid.Tentacle.exe at the top level. " +
                               "If null: BuildV2BundleZip dropped the placeholder OR the test wired the bundle through StageBinary " +
                               "(which auto-wraps content in a fresh zip — caller's pre-built zip becomes a single inner entry, " +
-                              "no top-level Squid.Tentacle.exe after Expand-Archive runs on the agent).");
+                              "no top-level Squid.Tentacle.exe after the agent extracts the bundle).");
         }
 
         // 3. Render production .ps1 with placeholders pointed at our fixtures.
@@ -831,7 +831,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         // ZERO download requests. If the .ps1 reached Phase A, it would
         // hit DOWNLOAD_URL → mirror would log the request.
         ctx.Mirror.ReceivedRequests.ShouldBeEmpty(
-            customMessage: $"short-circuit MUST fire BEFORE Phase A's Invoke-WebRequest. " +
+            customMessage: $"short-circuit MUST fire BEFORE Phase A's archive download. " +
                           $"Mirror received: [{string.Join(", ", ctx.Mirror.ReceivedRequests)}]. " +
                           "If non-empty: the short-circuit didn't fire → operator's no-op click triggered a download (waste of bandwidth + agent IO).");
 

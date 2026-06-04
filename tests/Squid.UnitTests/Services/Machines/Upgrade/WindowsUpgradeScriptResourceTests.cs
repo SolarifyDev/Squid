@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using Squid.Core.Services.Machines.Upgrade;
 
@@ -206,9 +207,9 @@ public sealed class WindowsUpgradeScriptResourceTests
         var content = LoadResource();
 
         content.ShouldContain("$DOWNLOAD_URL.sha256",
-            customMessage: "must construct .sha256 companion URL by appending '.sha256' to the download URL — same convention Linux uses + same convention 's release workflows publish");
-        content.ShouldContain("Invoke-WebRequest",
-            customMessage: "must use PowerShell's HTTP client (no external curl dep on Windows)");
+            customMessage: "must construct .sha256 companion URL by appending '.sha256' to the download URL — same convention Linux uses + same convention the release workflows publish");
+        content.ShouldContain("DownloadString",
+            customMessage: "SHA companion must be fetched via WebClient.DownloadString, NOT Invoke-WebRequest. PS 5.1's Invoke-WebRequest returns .Content as byte[] for application/octet-stream companions (GitHub Releases' default Content-Type), so the whitespace split yields garbage, the 64-hex regex fails, and verification is silently skipped — letting a corrupt download through. DownloadString always returns a string.");
         content.ShouldContain("'^[0-9a-f]{64}$'",
             customMessage: "must validate the fetched content is exactly 64 hex chars — guards against HTML 404 pages, partial bytes, etc. masquerading as a SHA");
     }
@@ -223,10 +224,10 @@ public sealed class WindowsUpgradeScriptResourceTests
         // Linux's "::info::" non-error log line.
         var content = LoadResource();
 
-        // The catch block must exist (Invoke-WebRequest with -ErrorAction Stop
-        // throws on 404 — must be caught + treated as "no SHA, fall through").
+        // The catch block must exist (WebClient.DownloadString throws a
+        // WebException on 404 — must be caught + treated as "no SHA, fall through").
         content.ShouldContain("catch",
-            customMessage: "Invoke-WebRequest 404 / network failure on .sha256 fetch MUST be caught — air-gap mirrors without companion files would otherwise fail every upgrade with a transport error");
+            customMessage: "WebClient.DownloadString 404 / network failure on .sha256 fetch MUST be caught — air-gap mirrors without companion files would otherwise fail every upgrade with a transport error");
         content.ShouldContain("No .sha256 companion at",
             customMessage: "fall-through log line must explain the absence — operators investigating a 'why didn't SHA verify' question see the absent-companion reason");
     }
@@ -294,5 +295,84 @@ public sealed class WindowsUpgradeScriptResourceTests
             customMessage: "Get-ChildItem | LastWriteTime racy search must be gone; Phase B reads $extractDir directly");
         content.ShouldContain("if (-not (Test-Path $extractDir))",
             customMessage: "Phase B must validate $extractDir exists (defense against Phase A leaving the variable empty / temp dir cleanup) and exit cleanly with a clear staging-disappeared message");
+    }
+
+    [Fact]
+    public void Resource_ZipDownload_UsesWebClient_ForcesTls12_NotInvokeWebRequestOutFile()
+    {
+        // Root cause of the field report (upgrade to 1.8.13 failed with
+        // "End of central directory record could not be found", exit 14):
+        // Windows PowerShell 5.1's `Invoke-WebRequest -OutFile` corrupts large
+        // binary downloads on some hosts (truncated/garbled bytes), so the
+        // downstream archive extraction can't find the central directory.
+        // WebClient.DownloadFile streams the bytes verbatim. Verified on the
+        // reporting operator's box: WebClient returned the byte-exact archive
+        // (size + SHA match) where Invoke-WebRequest had returned a corrupt one.
+        var content = LoadResource();
+
+        content.ShouldContain("System.Net.WebClient",
+            customMessage: "the zip archive MUST be downloaded via System.Net.WebClient — Invoke-WebRequest -OutFile corrupts large binaries on PS 5.1");
+        content.ShouldContain("DownloadFile",
+            customMessage: "WebClient.DownloadFile streams bytes verbatim, unlike Invoke-WebRequest -OutFile");
+        content.ShouldContain("SecurityProtocolType]::Tls12",
+            customMessage: "must force TLS 1.2 before the download — PS 5.1 may negotiate 1.0/1.1 by default, which GitHub rejects with a connection reset");
+
+        // -OutFile (the Invoke-WebRequest binary-download pattern that corrupts
+        // large archives) may appear in an explanatory comment, but must never
+        // be INVOKED. Scan non-comment lines only. The health-check probe uses
+        // Invoke-WebRequest legitimately but without -OutFile, so it's unaffected.
+        var executableLines = string.Join("\n", content
+            .Split('\n')
+            .Where(line => !line.TrimStart().StartsWith("#")));
+
+        executableLines.ShouldNotContain("-OutFile",
+            customMessage: "the binary archive download must NOT use Invoke-WebRequest -OutFile (the PS 5.1 large-binary corruption pattern that produced the 'End of central directory' failure). Use WebClient.DownloadFile.");
+    }
+
+    [Fact]
+    public void Resource_Extraction_UsesZipFileExtractToDirectory_NotExpandArchive()
+    {
+        // Companion to the WebClient fix: extraction uses the BCL
+        // [System.IO.Compression.ZipFile]::ExtractToDirectory rather than the
+        // Expand-Archive cmdlet. The BCL API is more robust on large /
+        // Linux-`zip`-built archives and surfaces a clearer error than the
+        // cmdlet wrapper. Add-Type loads the assembly on PS 5.1.
+        var content = LoadResource();
+
+        content.ShouldContain("ZipFile]::ExtractToDirectory",
+            customMessage: "extraction MUST use [System.IO.Compression.ZipFile]::ExtractToDirectory — more robust than Expand-Archive on large / cross-platform-built zips");
+
+        // Expand-Archive may legitimately appear in an explanatory comment
+        // ("...NOT Expand-Archive..."). What must NOT appear is an actual
+        // invocation — scan non-comment lines only.
+        var executableLines = string.Join("\n", content
+            .Split('\n')
+            .Where(line => !line.TrimStart().StartsWith("#")));
+
+        executableLines.ShouldNotContain("Expand-Archive",
+            customMessage: "Expand-Archive must not be INVOKED — it was flaky on the large agent archive and produced the opaque 'End of central directory' failure. (An explanatory comment mentioning it is fine.)");
+    }
+
+    [Fact]
+    public void Resource_ContainsNoNonAsciiCharacters_PreventsMojibakeInWebLog()
+    {
+        // The field report also showed mojibake in the web-surfaced upgrade log
+        // ("ʹ�á�3�...", box-drawing turned to "â??"). Windows PowerShell 5.1
+        // mis-decodes non-ASCII (em-dashes, arrows, box-drawing) under the OEM
+        // codepage, and those bytes flow into the upgrade log the server renders.
+        // The entire script must be pure ASCII so log lines stay legible without
+        // RDP. Mirrors the WindowsPowerShellScriptBuilder em-dash drift detector.
+        var content = LoadResource();
+
+        var offenders = content
+            .Select((ch, idx) => (ch, idx))
+            .Where(t => t.ch > '\x7F')
+            .Take(10)
+            .Select(t => $"U+{(int)t.ch:X4} at offset {t.idx}")
+            .ToList();
+
+        offenders.ShouldBeEmpty(
+            customMessage: "upgrade-windows-tentacle.ps1 must be pure ASCII so PS 5.1 + the web log don't mojibake it. " +
+                           $"Non-ASCII found: {string.Join(", ", offenders)}. Replace em-dashes/arrows/box-drawing with ASCII (--, ->, -).");
     }
 }
