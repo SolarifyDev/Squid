@@ -343,7 +343,9 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         // Any {{PLACEHOLDER}} left in the dispatched script is a substitution the strategy forgot
         // to fill; it reaches the agent verbatim and breaks at runtime (the $RID bug's cousin).
         // One invariant guards the entire server-side placeholder surface, not just the ones with
-        // bespoke tests.
+        // bespoke tests. The token pattern is [A-Z0-9_]+ (matches {{EXPECTED_SHA256}} and friends)
+        // — deliberately NOT a broad {{...}} match, which would false-positive on the script
+        // header's own `{{...}}` documentation comment.
         var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
 
         System.Text.RegularExpressions.Regex.Matches(inner, @"\{\{[A-Z0-9_]+\}\}").Count
