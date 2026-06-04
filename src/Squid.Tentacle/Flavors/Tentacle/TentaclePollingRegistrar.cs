@@ -2,7 +2,7 @@ using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Registration;
 
-namespace Squid.Tentacle.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Flavors.Tentacle;
 
 public sealed class TentaclePollingRegistrar : ITentacleRegistrar
 {

@@ -31,7 +31,7 @@ public sealed class LinuxBinaryScriptBuilder : TentacleInstallScriptBuilderBase
             "sudo squid-tentacle register",
             $"--server \"{command.ServerUrl}\"",
             $"--api-key \"{ctx.ApiKey}\"",
-            "--flavor LinuxTentacle"
+            "--flavor Tentacle"
         };
 
         if (!string.IsNullOrWhiteSpace(ctx.RolesCsv))

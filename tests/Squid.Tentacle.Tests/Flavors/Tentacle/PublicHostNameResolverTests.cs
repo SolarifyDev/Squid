@@ -1,7 +1,7 @@
 using System.Net;
-using Squid.Tentacle.Flavors.LinuxTentacle;
+using Squid.Tentacle.Flavors.Tentacle;
 
-namespace Squid.Tentacle.Tests.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Tests.Flavors.Tentacle;
 
 public class PublicHostNameResolverTests
 {

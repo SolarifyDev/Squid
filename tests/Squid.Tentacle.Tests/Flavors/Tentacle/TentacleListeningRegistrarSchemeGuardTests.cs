@@ -1,7 +1,7 @@
 using Squid.Message.Hardening;
-using Squid.Tentacle.Flavors.LinuxTentacle;
+using Squid.Tentacle.Flavors.Tentacle;
 
-namespace Squid.Tentacle.Tests.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Tests.Flavors.Tentacle;
 
 /// <summary>
 /// P0-T.8 regression guard, refactored under the project-wide three-mode

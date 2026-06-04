@@ -70,7 +70,7 @@ public sealed class TentacleLinuxBoundaryE2ETests
             "--api-key", "API-H1u1-test",
             "--role", "h1-role",
             "--environment", "test",
-            "--flavor", "LinuxTentacle"
+            "--flavor", "Tentacle"
         );
 
         exitCode.ShouldNotBe(0,
@@ -126,7 +126,7 @@ public sealed class TentacleLinuxBoundaryE2ETests
             "--api-key", "API-H2u1-test",
             "--role", "h2-role",
             "--environment", "test",
-            "--flavor", "LinuxTentacle"
+            "--flavor", "Tentacle"
         );
 
         exitCode.ShouldNotBe(0,

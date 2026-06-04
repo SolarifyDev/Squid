@@ -51,7 +51,7 @@ namespace Squid.LinuxTentacleE2ETests;
 /// <list type="bullet">
 ///   <item>B3h registers as Listening (no <c>--comms-url</c>); this test
 ///         registers as Polling — different code path through
-///         <c>LinuxTentacleFlavor.ResolveCommunicationMode</c>.</item>
+///         <c>TentacleFlavor.ResolveCommunicationMode</c>.</item>
 ///   <item>B3h asserts systemctl is-active = active and stops; this test
 ///         goes further and asserts the agent's polling channel is up
 ///         (via <see cref="StubSquidServer.ProbeCapabilitiesPollingAsync"/>)
@@ -85,7 +85,7 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
     //     --api-key API-XXXX \
     //     --role web-server \
     //     --environment Production \
-    //     --flavor LinuxTentacle
+    //     --flavor Tentacle
     //
     //   sudo squid-tentacle service install
     //     # systemd starts squid-tentacle which polls the server
@@ -172,7 +172,7 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
             "--api-key", "API-PHASE13-PR1-1234",
             "--role", "phase13-polling-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
 
         regExit.ShouldBe(0,
             customMessage: $"Step 1 (register Polling) MUST exit 0. Got {regExit}. " +
@@ -189,7 +189,7 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
         registration.Kind.ShouldBe(RegistrationKind.Polling,
             customMessage: $"register MUST hit the Polling endpoint when --comms-url is provided. " +
                           $"Got {registration.Kind}. " +
-                          "If Listening: LinuxTentacleFlavor.ResolveCommunicationMode regressed to ignore --comms-url, " +
+                          "If Listening: TentacleFlavor.ResolveCommunicationMode regressed to ignore --comms-url, " +
                           "OR ArgMapping for --comms-url broke (so Tentacle:ServerCommsUrl stayed empty).");
 
         // Extract the agent's identity from the recorded registration. The
@@ -238,7 +238,7 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
         // The unit file's ExecStart launches `Squid.Tentacle run`. Run
         // command:
         //   1. Loads config from /etc/squid-tentacle/instances/Default.config.json
-        //   2. Resolves flavor = LinuxTentacle, mode = Polling (because
+        //   2. Resolves flavor = Tentacle (legacy alias LinuxTentacle still accepted), mode = Polling (because
         //      ServerCommsUrl is set)
         //   3. NoOpRegistrar.RegisterAsync returns serverThumbprint =
         //      stub's thumbprint (from settings.ServerCertificate)
@@ -486,7 +486,7 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
             "--api-key", "API-PHASE13-PR4-SOAK-1234",
             "--role", "phase13-soak-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
         regExit.ShouldBe(0, $"R2h precondition: register MUST exit 0.\noutput:\n{regOutput}");
 
         var registration = ctx.Stub.ReceivedRegistrations.Single();

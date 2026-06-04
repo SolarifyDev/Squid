@@ -114,7 +114,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.AlphaMachineName,
             "--role", "alpha-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
 
         alphaRegExit.ShouldBe(0,
@@ -141,7 +141,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.BetaMachineName,
             "--role", "beta-role",
             "--environment", "Staging",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
 
         betaRegExit.ShouldBe(0,
@@ -330,7 +330,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.AlphaMachineName,
             "--role", "alpha-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
         alphaRegExit.ShouldBe(0, "G2h precondition: register Alpha must succeed");
 
@@ -345,7 +345,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.BetaMachineName,
             "--role", "beta-role",
             "--environment", "Staging",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
         betaRegExit.ShouldBe(0, "G2h precondition: register Beta must succeed");
 
@@ -518,7 +518,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.AlphaMachineName,
             "--role", "alpha-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
         alphaRegExit.ShouldBe(0, "G3h precondition: register Alpha must succeed");
 
@@ -533,7 +533,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.BetaMachineName,
             "--role", "beta-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
         betaRegExit.ShouldBe(0, "G3h precondition: register Beta must succeed");
 
@@ -700,7 +700,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.AlphaMachineName,
             "--role", "alpha-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.AlphaListeningPort.ToString(CultureInfo.InvariantCulture));
         alphaRegExit.ShouldBe(0, "G4h precondition: register Alpha must succeed");
 
@@ -715,7 +715,7 @@ public sealed class TentacleLinuxMultiInstanceE2ETests
             "--name", ctx.BetaMachineName,
             "--role", "beta-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.BetaListeningPort.ToString(CultureInfo.InvariantCulture));
         betaRegExit.ShouldBe(0, "G4h precondition: register Beta must succeed");
 

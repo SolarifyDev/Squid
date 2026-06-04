@@ -1,7 +1,7 @@
 using System.Net;
 using Serilog;
 
-namespace Squid.Tentacle.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Flavors.Tentacle;
 
 /// <summary>
 /// Resolves the hostname or IP that a Listening Tentacle registers with the

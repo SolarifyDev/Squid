@@ -81,7 +81,7 @@ else
     echo "     --api-key API-XXXX \\"
     echo "     --role web-server \\"
     echo "     --environment Production \\"
-    echo "     --flavor LinuxTentacle"
+    echo "     --flavor Tentacle"
     echo ""
     echo "2. Install the systemd service:"
     echo ""

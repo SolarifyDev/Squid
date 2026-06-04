@@ -8,7 +8,7 @@ using Squid.Tentacle.Certificate;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
-namespace Squid.Tentacle.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Flavors.Tentacle;
 
 /// <summary>
 /// Registers a Listening Tentacle with the Squid Server via

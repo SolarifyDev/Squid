@@ -2,7 +2,7 @@ using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
-namespace Squid.Tentacle.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Flavors.Tentacle;
 
 /// <summary>
 /// Listening Tentacles are registered manually on the Server side (via UI/API),

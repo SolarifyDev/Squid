@@ -440,7 +440,7 @@ public sealed class TentacleLinuxServiceCommandE2ETests
             "--api-key", "API-FULL-WORKFLOW-1234",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         regExit.ShouldBe(0,
@@ -568,7 +568,7 @@ public sealed class TentacleLinuxServiceCommandE2ETests
             "--api-key", "API-STOP-TEST-1234",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         regExit.ShouldBe(0, "B4h precondition: register must succeed");
 
@@ -702,7 +702,7 @@ public sealed class TentacleLinuxServiceCommandE2ETests
             "--api-key", "API-UNINSTALL-PRESERVE-1234",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         regExit.ShouldBe(0, $"B6h precondition: register must succeed.\noutput:\n{regOutput}");
 
@@ -826,7 +826,7 @@ public sealed class TentacleLinuxServiceCommandE2ETests
             "--api-key", "API-UNINSTALL-PURGE-1234",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
         regExit.ShouldBe(0, $"B7h precondition: register must succeed.\noutput:\n{regOutput}");
 

@@ -110,7 +110,7 @@ public sealed class TentacleLinuxUpgradeBinaryIntegrationE2ETests
             "--api-key", "API-U1-test-key",
             "--role", "u1-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(CultureInfo.InvariantCulture));
         regExit.ShouldBe(0,
             customMessage: $"U1h precondition: register MUST succeed using per-test v1 binary.\noutput:\n{regOutput}");
