@@ -7,9 +7,14 @@ name: Tentacle Windows E2E
 #
 # Single-job, multi-step layout (vs tests.yml's one-job-per-project) is a
 # deliberate cost optimization — splitting into separate jobs would spin up an
-# additional windows-latest VM per project (2x billing applies per VM). The
-# trade-off is sequential execution + slightly muddier failure attribution;
-# the per-step name + per-step filter input are how we keep both clear.
+# additional VM per project (2x billing applies per VM). The trade-off is
+# sequential execution + slightly muddier failure attribution; the per-step
+# name + per-step filter input are how we keep both clear.
+#
+# OS matrix: the job fans out over windows-2019 AND windows-2022 to prove the
+# self-upgrade across Windows versions (older SCM / TLS defaults on 2019). This
+# multiplies the VM minutes by the matrix size — acceptable because the run is
+# nightly/dispatch-gated, not per-PR.
 
 on:
   schedule:
@@ -32,8 +37,14 @@ permissions:
 
 jobs:
   windows-tentacle-e2e:
-    name: Windows Tentacle End-to-End
-    runs-on: windows-latest
+    name: Windows Tentacle End-to-End (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Prove the upgrade across Windows versions: 2019 (older SCM / TLS defaults)
+      # AND 2022. fail-fast: false so one OS's failure doesn't mask the other's result.
+      fail-fast: false
+      matrix:
+        os: [windows-2019, windows-2022]
     env:
       NUGET_CONFIG: ${{ github.workspace }}/NuGet.Config
 

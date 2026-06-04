@@ -243,6 +243,40 @@ function Append-UpgradeLog {
     Write-Host $Line
 }
 
+# -- Generic retry helper -- run an action, retrying transient failures with -----
+# linear backoff. Used for the network download, archive extraction, and the
+# binary swap: all three hit transient Windows failures (TCP resets / CDN 503s /
+# proxy hiccups on download; Defender holding a lock on a freshly-written file
+# during extract or Move-Item). Without retry a single transient blip fails the
+# whole upgrade -- the dominant cause of sub-100% upgrade success in the field.
+# Re-throws the last exception once attempts are exhausted so the caller's own
+# catch records the terminal status.
+function Invoke-WithRetry {
+    param(
+        [scriptblock] $Action,
+        [string] $Label,
+        [int] $MaxAttempts = 3,
+        [int] $BaseDelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                Append-UpgradeLog "[retry] $Label failed after $MaxAttempts attempt(s): $($_.Exception.Message)"
+                throw
+            }
+
+            $delay = $BaseDelaySeconds * $attempt
+            Append-UpgradeLog "[retry] $Label attempt $attempt/$MaxAttempts failed: $($_.Exception.Message) -- retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
 # -- Event timeline helper -- append one structured event (parity with the -----
 # Linux script's emit_event). One JSON object per line:
 #   {"t":"2026-06-01T02:57:04Z","phase":"A","kind":"start","msg":"..."}
@@ -523,8 +557,36 @@ try {
                 # GitHub rejects. Verified on a real agent: WebClient returns the byte-exact
                 # archive where Invoke-WebRequest returned a corrupt one.
                 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-                $downloadClient = New-Object System.Net.WebClient
-                try { $downloadClient.DownloadFile($DOWNLOAD_URL, $archivePath) } finally { $downloadClient.Dispose() }
+
+                # Retry transient network failures (TCP reset / DNS blip / CDN 503 /
+                # proxy hiccup) -- a single blip must not fail the whole upgrade. Count is
+                # env-tunable for flaky or air-gapped links (floored at 1).
+                $downloadAttempts = 3
+                if ($env:SQUID_UPGRADE_DOWNLOAD_RETRIES -as [int]) { $downloadAttempts = [int]$env:SQUID_UPGRADE_DOWNLOAD_RETRIES }
+                if ($downloadAttempts -lt 1) { $downloadAttempts = 1 }
+
+                Invoke-WithRetry -Label 'archive download' -MaxAttempts $downloadAttempts -Action {
+                    # Clear any partial file from a prior failed attempt so a half-written
+                    # archive can't masquerade as a complete download.
+                    if (Test-Path $archivePath) { Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue }
+
+                    $downloadClient = New-Object System.Net.WebClient
+                    # Route through the machine's configured proxy with the caller's
+                    # credentials so authenticated corporate proxies (407) don't block it.
+                    $downloadClient.UseDefaultCredentials = $true
+                    if ($downloadClient.Proxy) { $downloadClient.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+
+                    try { $downloadClient.DownloadFile($DOWNLOAD_URL, $archivePath) } finally { $downloadClient.Dispose() }
+                }
+
+                # Sanity-check the size: a 0-byte / truncated file (proxy error page
+                # returned with HTTP 200, disk full mid-write) would otherwise fail later
+                # at extraction with an opaque "central directory" error. Catch it here.
+                $archiveSize = (Get-Item $archivePath).Length
+                if ($archiveSize -lt 1024) {
+                    throw "Downloaded archive is only $archiveSize byte(s) -- expected a multi-MB zip. The server likely returned an error page with HTTP 200, or the write was truncated."
+                }
+                Append-UpgradeLog "[upgrade-method:zip] Downloaded $archiveSize bytes"
             }
             catch {
                 Append-UpgradeLog "[upgrade-method:zip] Download failed: $($_.Exception.Message)"
@@ -618,7 +680,6 @@ try {
             }
 
             $extractDir = Join-Path $stagingDir 'extract'
-            New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
 
             Append-UpgradeLog "[upgrade-method:zip] Extracting to $extractDir"
             # [System.IO.Compression.ZipFile]::ExtractToDirectory, NOT Expand-Archive: the BCL
@@ -626,7 +687,15 @@ try {
             # error than the cmdlet wrapper. Add-Type loads the assembly on PS 5.1 (already
             # present in pwsh 7). Consistent with the direct-.NET SHA path above.
             Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-            [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
+
+            # Retry extraction: Defender can briefly lock a freshly-written file mid-extract.
+            # ExtractToDirectory has no overwrite overload on .NET Framework, so clear any
+            # partial output before each attempt (else a retry throws "file already exists").
+            Invoke-WithRetry -Label 'archive extraction' -Action {
+                if (Test-Path $extractDir) { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
+            }
 
             $extractedExe = Join-Path $extractDir 'Squid.Tentacle.exe'
 
@@ -721,7 +790,8 @@ try {
             if (Test-Path $newVerDir) { Remove-Item -Path $newVerDir -Recurse -Force }
 
             Append-UpgradeLog "[upgrade] Staging new version into $newVerDir"
-            Move-Item -Path $extractDir -Destination $newVerDir -Force
+            # Retry the swap: Defender may briefly lock a freshly-extracted file.
+            Invoke-WithRetry -Label 'binary swap' -Action { Move-Item -Path $extractDir -Destination $newVerDir -Force }
 
             # Repoint `current` junction. Delete the old junction NON-recursively
             # ([Directory]::Delete(path,$false)) so we remove only the reparse point,
@@ -769,7 +839,8 @@ try {
         }
 
         Append-UpgradeLog "[upgrade] Moving $extractDir -> $INSTALL_DIR"
-        Move-Item -Path $extractDir -Destination $INSTALL_DIR -Force
+        # Retry the swap: Defender may briefly lock a freshly-extracted file.
+        Invoke-WithRetry -Label 'binary swap' -Action { Move-Item -Path $extractDir -Destination $INSTALL_DIR -Force }
 
         Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Binary swapped -- restarting service"
     }

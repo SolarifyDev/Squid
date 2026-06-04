@@ -105,6 +105,13 @@ public sealed class LocalReleaseMirror : IDisposable
     /// PR but the toggle is here for future use).
     /// </summary>
     private bool _suppressSha256;
+    /// <summary>
+    /// Number of upcoming archive (.zip / .tar.gz) requests to fail with HTTP
+    /// 503 before serving normally. Simulates a transient CDN / network blip so
+    /// the production script's download-retry loop can be proven to recover.
+    /// Decremented per injected failure; 0 = serve normally.
+    /// </summary>
+    private int _archiveFailuresRemaining;
     private bool _disposed;
 
     /// <summary>The mirror's base URL. Pass this as <c>--DownloadBase</c>
@@ -242,6 +249,18 @@ public sealed class LocalReleaseMirror : IDisposable
         _suppressSha256 = true;
     }
 
+    /// <summary>
+    /// Make the next <paramref name="count"/> archive (.zip / .tar.gz) requests
+    /// return HTTP 503, then serve normally. Simulates a transient CDN/network
+    /// failure so a test can prove the production script's download-retry loop
+    /// recovers — the upgrade still succeeds, and <see cref="ReceivedRequests"/>
+    /// shows more than one archive hit for the same URL.
+    /// </summary>
+    public void FailNextArchiveRequests(int count)
+    {
+        lock (_requestsLock) { _archiveFailuresRemaining = count; }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -314,6 +333,27 @@ public sealed class LocalReleaseMirror : IDisposable
         {
             ServeSha256(ctx, path);
             return;
+        }
+
+        // Transient-failure injection (download-retry coverage): fail the first N
+        // archive requests with 503 so the production script's retry loop must
+        // recover. Applies only to the binary archive, never the .sha256 companion.
+        if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            bool injectFailure;
+            lock (_requestsLock)
+            {
+                injectFailure = _archiveFailuresRemaining > 0;
+                if (injectFailure) _archiveFailuresRemaining--;
+            }
+
+            if (injectFailure)
+            {
+                ctx.Response.StatusCode = 503;
+                ctx.Response.OutputStream.Close();
+                return;
+            }
         }
 
         if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))

@@ -268,6 +268,32 @@ function Resolve-DownloadUrls {
     )
 }
 
+# -- Generic retry helper -- retry transient failures (network blips, Defender
+# file locks) with linear backoff so a single hiccup doesn't fail the install.
+# Re-throws once attempts are exhausted so the caller's catch handles it.
+function Invoke-WithRetry {
+    param(
+        [scriptblock] $Action,
+        [string] $Label,
+        [int] $MaxAttempts = 3,
+        [int] $BaseDelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) { throw }
+
+            $delay = $BaseDelaySeconds * $attempt
+            Write-Host "  $Label attempt $attempt/$MaxAttempts failed: $($_.Exception.Message) -- retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
 $urls = Resolve-DownloadUrls -Version $Version -Rid $rid -DownloadBase $DownloadBase
 
 $tempDir = Join-Path $env:TEMP "squid-tentacle-install-$([guid]::NewGuid().ToString('N'))"
@@ -286,8 +312,26 @@ try {
             # (truncated zip -> extraction "End of central directory not found"); WebClient
             # streams the bytes verbatim. Same fix as upgrade-windows-tentacle.ps1.
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
-            $wc = New-Object System.Net.WebClient
-            try { $wc.DownloadFile($url, $archivePath) } finally { $wc.Dispose() }
+
+            # Retry each URL a few times before falling through to the next candidate,
+            # and route through the configured proxy with default creds (407 on
+            # authenticated corporate proxies).
+            Invoke-WithRetry -Label "download" -Action {
+                if (Test-Path $archivePath) { Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue }
+
+                $wc = New-Object System.Net.WebClient
+                $wc.UseDefaultCredentials = $true
+                if ($wc.Proxy) { $wc.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+                try { $wc.DownloadFile($url, $archivePath) } finally { $wc.Dispose() }
+            }
+
+            # Reject a 0-byte / truncated file (error page returned with HTTP 200) so it
+            # fails here with a clear message instead of an opaque extraction error.
+            $archiveSize = (Get-Item $archivePath).Length
+            if ($archiveSize -lt 1024) {
+                throw "Downloaded archive is only $archiveSize byte(s) -- expected a multi-MB zip (likely an error page returned with HTTP 200)."
+            }
+
             $downloaded = $true
             break
         } catch {
@@ -319,11 +363,17 @@ Possible causes:
     }
 
     $stagingDir = Join-Path $tempDir 'extract'
-    New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
     Write-Host "Extracting..."
     Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $stagingDir)
+
+    # Retry extraction: Defender can briefly lock a freshly-written file. Clear any
+    # partial output first since ExtractToDirectory has no overwrite overload on PS 5.1.
+    Invoke-WithRetry -Label "extraction" -Action {
+        if (Test-Path $stagingDir) { Remove-Item -Path $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $stagingDir)
+    }
 
     $stagedBinary = Join-Path $stagingDir $BinaryName
     if (-not (Test-Path $stagedBinary)) {
@@ -342,7 +392,8 @@ Possible causes:
         $versionDir = Join-Path $versionsRoot $resolvedVersion
         if (-not (Test-Path $versionsRoot)) { New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null }
         if (Test-Path $versionDir) { Remove-Item -Path $versionDir -Recurse -Force }
-        Move-Item -Path $stagingDir -Destination $versionDir
+        # Retry the swap: Defender may briefly lock a freshly-extracted file.
+        Invoke-WithRetry -Label "version swap" -Action { Move-Item -Path $stagingDir -Destination $versionDir }
 
         # Repoint `current` at the new version. Delete the old junction
         # NON-recursively ([Directory]::Delete(path, $false)) so we remove only the

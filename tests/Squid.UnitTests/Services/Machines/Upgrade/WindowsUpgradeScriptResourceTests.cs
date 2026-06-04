@@ -375,4 +375,39 @@ public sealed class WindowsUpgradeScriptResourceTests
             customMessage: "upgrade-windows-tentacle.ps1 must be pure ASCII so PS 5.1 + the web log don't mojibake it. " +
                            $"Non-ASCII found: {string.Join(", ", offenders)}. Replace em-dashes/arrows/box-drawing with ASCII (--, ->, -).");
     }
+
+    [Fact]
+    public void Resource_DownloadPath_HardenedForReliability_RetryProxyAndExtractSwap()
+    {
+        // Near-100% upgrade success requires surviving the common transient
+        // Windows failures: a network blip on the download, an authenticated
+        // corporate proxy, and a Defender file-lock on extract / swap. Pin each
+        // hardening measure so a future edit can't silently drop it.
+        var content = LoadResource();
+
+        content.ShouldContain("function Invoke-WithRetry",
+            customMessage: "must define a generic retry helper so a single transient failure doesn't fail the whole upgrade");
+        content.ShouldContain("Invoke-WithRetry -Label 'archive download'",
+            customMessage: "the binary download MUST be wrapped in retry — a single TCP reset / CDN 503 / proxy blip is the #1 field cause of upgrade failure");
+        content.ShouldContain("UseDefaultCredentials",
+            customMessage: "WebClient MUST use default credentials so authenticated corporate proxies (407) don't block the download");
+        content.ShouldContain("DefaultNetworkCredentials",
+            customMessage: "the proxy MUST be given default network credentials for NTLM/Kerberos corporate proxies");
+        content.ShouldContain("Invoke-WithRetry -Label 'archive extraction'",
+            customMessage: "extraction MUST retry — Defender can briefly lock a freshly-written file mid-extract");
+        content.ShouldContain("Invoke-WithRetry -Label 'binary swap'",
+            customMessage: "the Move-Item swap MUST retry — Defender can briefly lock the freshly-extracted binary");
+    }
+
+    [Fact]
+    public void Resource_DownloadSizeSanityCheck_RejectsTruncatedArchive()
+    {
+        // A 0-byte / truncated download (proxy error page returned with HTTP 200,
+        // disk full mid-write) must fail with a clear message here, not an opaque
+        // "central directory" error at extraction time.
+        var content = LoadResource();
+
+        content.ShouldMatch(@"\$archiveSize\s*-lt\s*\d+",
+            customMessage: "must sanity-check the downloaded archive size and reject a clearly-too-small file before extraction");
+    }
 }
