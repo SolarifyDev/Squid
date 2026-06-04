@@ -560,8 +560,9 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
         // stale placeholder. The script's header comment contains the
         // literal sequence `{{...}}` (three dots) as documentation about
         // the placeholder convention — that's NOT a placeholder, so the
-        // ALL-CAPS regex skips it cleanly.
-        var stalePlaceholderPattern = new System.Text.RegularExpressions.Regex(@"\{\{[A-Z_]+\}\}");
+        // token regex skips it cleanly. Digits are included so a forgotten
+        // digit-bearing placeholder (e.g. {{EXPECTED_SHA256}}) is also caught.
+        var stalePlaceholderPattern = new System.Text.RegularExpressions.Regex(@"\{\{[A-Z0-9_]+\}\}");
         stalePlaceholderPattern.IsMatch(script).ShouldBeFalse(
             customMessage: "an unsubstituted '{{ALL_CAPS}}' placeholder ships a broken script — add a per-placeholder check above when introducing new placeholders");
     }

@@ -284,6 +284,19 @@ public sealed class LocalReleaseMirror : IDisposable
             _receivedRequests.Add(path);
         }
 
+        // Real GitHub returns 404 for an asset whose name still carries an UNEXPANDED token
+        // — e.g. a script that failed to resolve PowerShell's $RID, or a {{PLACEHOLDER}} the
+        // server forgot to substitute. A permissive "serve any .zip" mirror masks that class
+        // of bug: the Windows "$RID not expanded → 404" outage shipped precisely because this
+        // stub served the literal ".../squid-tentacle-<ver>-$RID.zip" path with a 200. Mirror
+        // the real contract — an unresolved-token path does not exist.
+        if (ContainsUnresolvedToken(path))
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.OutputStream.Close();
+            return;
+        }
+
         // 404 if the path mentions any of the configured "not found" versions.
         if (_notFoundVersions.Any(v => path.Contains(v, StringComparison.OrdinalIgnoreCase)))
         {
@@ -319,6 +332,15 @@ public sealed class LocalReleaseMirror : IDisposable
         ctx.Response.StatusCode = 404;
         ctx.Response.OutputStream.Close();
     }
+
+    // A well-formed release asset path never contains a server placeholder or an unexpanded
+    // PowerShell variable. If one is present the agent failed to resolve it, and real GitHub
+    // would 404 — so we do too, instead of papering over it by serving any .zip.
+    private static bool ContainsUnresolvedToken(string path) =>
+        path.Contains("$RID", StringComparison.Ordinal) ||
+        path.Contains("$TARGET_VERSION", StringComparison.Ordinal) ||
+        path.Contains("{{", StringComparison.Ordinal) ||
+        path.Contains("{RID}", StringComparison.Ordinal);
 
     /// <summary>
     /// Serves the SHA256 companion for the underlying archive. Production
