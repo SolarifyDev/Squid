@@ -36,7 +36,7 @@ public static class WindowsUpgradeE2ECategories
     /// companion-file fetch + verification logic in
     /// <c>upgrade-windows-tentacle.ps1</c>. Uses an in-process HTTP
     /// listener serving a known .sha256 + .zip pair so the .ps1's
-    /// <c>Invoke-WebRequest</c> + <c>Get-FileHash</c> path runs against
+    /// <c>WebClient.DownloadString</c> + <c>SHA256</c> verify path runs against
     /// a real local server (no GitHub Releases dependency for the test
     /// — the fixture controls EVERY response: 404, invalid body, valid
     /// match, valid mismatch).
@@ -117,11 +117,11 @@ public static class WindowsUpgradeE2ECategories
     /// against a <see cref="Infrastructure.LocalReleaseMirror"/> serving
     /// fake zip / tarball downloads. Tier 🟢 high-fidelity — every
     /// component except the upstream GitHub Releases CDN is real
-    /// (real shell, real script, real Expand-Archive / tar xzf, real
+    /// (real shell, real script, real ZipFile extraction / tar xzf, real
     /// install-dir IO).
     ///
     /// <para><b>OS scope</b>: install-tentacle.ps1 is Windows-only (uses
-    /// <c>Expand-Archive</c>, <c>New-NetFirewallRule</c>); install-tentacle.sh
+    /// <c>New-NetFirewallRule</c> + directory junctions); install-tentacle.sh
     /// is Linux-only (uses <c>apt</c>/<c>dnf</c>/<c>useradd</c>/<c>tar</c>).
     /// Each test method skip-guards on its target OS.</para>
     /// </summary>
@@ -162,8 +162,8 @@ public static class WindowsUpgradeE2ECategories
     /// — the round-trip operator UI relies on for post-upgrade status.
     ///
     /// <para><b>Tier</b>: 🟢 High-fidelity (Rule 12). Production .ps1
-    /// loaded from disk verbatim, real <c>Invoke-WebRequest</c> +
-    /// <c>Get-FileHash</c> + <c>Expand-Archive</c> + <c>Stop-Service</c> +
+    /// loaded from disk verbatim, real <c>WebClient.DownloadFile</c> +
+    /// <c>SHA256</c> verify + <c>ZipFile.ExtractToDirectory</c> + <c>Stop-Service</c> +
     /// <c>Move-Item</c> + <c>Start-Service</c> — only the upstream GitHub
     /// Releases CDN is replaced (LocalReleaseMirror) and <c>$env:ProgramData</c>
     /// is redirected to a test-isolated dir so <c>last-upgrade.json</c> /
@@ -179,12 +179,12 @@ public static class WindowsUpgradeE2ECategories
     /// restart sequence, AND asserts on the resulting
     /// <c>last-upgrade.json</c> payload (the operator-visible outcome).
     /// Catches regressions invisible to PhaseB tests: download URL
-    /// construction, SHA companion fetch, Expand-Archive layout
+    /// construction, SHA companion fetch, extraction layout
     /// assumptions, status JSON schema.</para>
     ///
     /// <para><b>Windows-only</b>: uses sc.exe-installed service +
-    /// PowerShell-only cmdlets (<c>Stop-Service</c>, <c>Start-Service</c>,
-    /// <c>Expand-Archive</c>, <c>Get-FileHash</c>). Skip-guards on
+    /// PowerShell service-control cmdlets (<c>Stop-Service</c>, <c>Start-Service</c>)
+    /// + directory junctions. Skip-guards on
     /// non-Windows dev hosts.</para>
     /// </summary>
     public const string TentacleUpgradeLifecycle = "TentacleUpgradeLifecycleE2E";

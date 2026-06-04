@@ -288,13 +288,13 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
         // ($DOWNLOAD_URL = '.../squid-tentacle-<ver>-$RID.zip'). PowerShell single-quoted
         // assignment does NOT expand $RID, and PowerShell never re-expands a variable's
         // stored value at use time — so the script MUST explicitly rewrite the '$RID' token
-        // to the architecture-resolved $RID BEFORE Invoke-WebRequest consumes $DOWNLOAD_URL.
+        // to the architecture-resolved $RID BEFORE WebClient.DownloadFile consumes $DOWNLOAD_URL.
         // Without it the agent requests .../squid-tentacle-<ver>-$RID.zip → GitHub 404.
         var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
 
         var literalUrlIdx = inner.IndexOf("-$RID.zip'", StringComparison.Ordinal);
         var rewriteIdx = inner.IndexOf(".Replace('$RID', $RID)", StringComparison.Ordinal);
-        var downloadIdx = inner.IndexOf("Invoke-WebRequest -Uri $DOWNLOAD_URL", StringComparison.Ordinal);
+        var downloadIdx = inner.IndexOf("DownloadFile($DOWNLOAD_URL", StringComparison.Ordinal);
 
         literalUrlIdx.ShouldBeGreaterThan(-1,
             customMessage: "Expected the server to emit the single-quoted URL with a literal $RID token.");
@@ -306,7 +306,7 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
                            ".../squid-tentacle-<ver>-$RID.zip and GitHub returns 404.");
 
         downloadIdx.ShouldBeGreaterThan(rewriteIdx,
-            customMessage: "The $RID rewrite MUST happen before Invoke-WebRequest consumes $DOWNLOAD_URL.");
+            customMessage: "The $RID rewrite MUST happen before WebClient.DownloadFile consumes $DOWNLOAD_URL.");
     }
 
     [Theory]

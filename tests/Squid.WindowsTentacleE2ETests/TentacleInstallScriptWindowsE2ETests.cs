@@ -10,16 +10,16 @@ namespace Squid.WindowsTentacleE2ETests;
 /// <see cref="LocalReleaseMirror"/> serving fake zip downloads.
 ///
 /// <para><b>Tier</b>: 🟢 High-fidelity (Rule 12). Real powershell.exe
-/// running real install script, real Expand-Archive into a real install
+/// running real install script, real ZipFile extraction into a real install
 /// directory, real Test-Path verification. Only the upstream release CDN
 /// is replaced.</para>
 ///
 /// <para><b>Skip-on-non-Windows</b>: install-tentacle.ps1 uses
-/// <c>Expand-Archive</c>, <c>New-NetFirewallRule</c>, and <c>powershell.exe</c>
+/// <c>New-NetFirewallRule</c>, directory junctions, and <c>powershell.exe</c>
 /// — all Windows-specific. Tests no-op cleanly on macOS / Linux.</para>
 ///
 /// <para><b>What this catches</b>: a regression in the script's URL
-/// composition, arg parsing, fallback URL logic, Expand-Archive flag use,
+/// composition, arg parsing, fallback URL logic, extraction,
 /// or post-extract verification. Every install-tentacle.ps1 release
 /// hereafter MUST keep these tests green.</para>
 ///
@@ -152,7 +152,10 @@ public sealed class TentacleInstallScriptWindowsE2ETests : IDisposable
         firstResult.exitCode.ShouldBe(0,
             customMessage: $"first install MUST succeed. stdout:\n{firstResult.stdout}\nstderr:\n{firstResult.stderr}");
 
-        // Second install over the same dir — Expand-Archive -Force overwrites.
+        // Second install over the same dir overwrites. The fake text binary can't
+        // report a version, so the script takes the flat-layout fallback whose
+        // Copy-Item -Force overwrites the install dir (extraction itself goes into
+        // a fresh per-run staging dir, so ZipFile.ExtractToDirectory never collides).
         // Stage a different content so we can verify the second install took.
         mirror.StageBinary("Squid.Tentacle.exe", System.Text.Encoding.UTF8.GetBytes("# v2\n"));
 
@@ -166,11 +169,11 @@ public sealed class TentacleInstallScriptWindowsE2ETests : IDisposable
         secondResult.exitCode.ShouldBe(0,
             customMessage: $"second install over existing dir MUST succeed (idempotent). stdout:\n{secondResult.stdout}\nstderr:\n{secondResult.stderr}");
 
-        // Binary content was updated (proves Expand-Archive -Force overwrote).
+        // Binary content was updated (proves the re-install overwrote the install dir).
         var binaryPath = Path.Combine(ctx.InstallDir, "Squid.Tentacle.exe");
         var contentAfterSecond = await File.ReadAllTextAsync(binaryPath);
         contentAfterSecond.ShouldContain("v2",
-            customMessage: $"after re-install with new content, binary MUST reflect the new version. Got: '{contentAfterSecond}'. Expand-Archive -Force isn't overwriting?");
+            customMessage: $"after re-install with new content, binary MUST reflect the new version. Got: '{contentAfterSecond}'. Copy-Item -Force (flat fallback) isn't overwriting the install dir?");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

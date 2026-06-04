@@ -122,7 +122,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
                 customMessage: "v2Bundle MUST contain Squid.Tentacle.exe at the top level. " +
                               "If null: BuildV2BundleZip dropped the placeholder OR the test wired the bundle through StageBinary " +
                               "(which auto-wraps content in a fresh zip — caller's pre-built zip becomes a single inner entry, " +
-                              "no top-level Squid.Tentacle.exe after Expand-Archive runs on the agent).");
+                              "no top-level Squid.Tentacle.exe after the agent extracts the bundle).");
         }
 
         // 3. Render production .ps1 with placeholders pointed at our fixtures.
@@ -166,6 +166,51 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         var bakDir = Path.Combine(Path.GetDirectoryName(ctx.Fixture.InstallDir)!, Path.GetFileName(ctx.Fixture.InstallDir) + ".bak");
         Directory.Exists(bakDir).ShouldBeTrue(
             customMessage: $".bak dir at {bakDir} MUST exist after swap — Phase B's rollback contract requires the OLD binary preserved alongside the new install.");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public void E1h_TransientDownloadFailure_RetryRecovers_UpgradeStillSucceeds()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new UpgradeLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceExe, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(30));
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before the retry test can validate recovery");
+
+        var v2Bundle = ctx.BuildV2BundleZip(targetVersion: "2.0.0-test");
+        ctx.Mirror.StagePreBuiltArchive(v2Bundle);
+
+        // Inject a transient failure: the FIRST archive download returns 503.
+        // The production download-retry loop must recover on the next attempt, so
+        // the upgrade still succeeds. Without the retry (pre-hardening) this single
+        // blip would fail the whole upgrade with exit 2 — the dominant field cause
+        // of sub-100% upgrade success. This is the behavioural proof of the retry.
+        ctx.Mirror.FailNextArchiveRequests(1);
+
+        var script = ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test");
+        var (exitCode, stdout) = ctx.RunUpgradeScript(script);
+
+        exitCode.ShouldBe(0,
+            customMessage: $"a single transient 503 on the archive download MUST be recovered by the retry loop (upgrade still succeeds). " +
+                          $"If exit 2: the download isn't retrying. Logs at {ctx.StatusDir}\\upgrade.log; stdout:\n{stdout}");
+
+        var statusPayload = ctx.ReadLastUpgradeStatus();
+        statusPayload.ShouldNotBeNull("last-upgrade.json must be written after the retry-recovered upgrade");
+        statusPayload.Status.ShouldBe("SUCCESS",
+            customMessage: $"upgrade MUST report SUCCESS after recovering from the transient download failure. Got: '{statusPayload.Status}', detail: {statusPayload.Detail}");
+
+        // Prove the retry actually re-fetched: the mirror saw the archive requested
+        // more than once (the 503'd attempt + the successful retry).
+        var archiveRequests = ctx.Mirror.ReceivedRequests.Count(p => p.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+        archiveRequests.ShouldBeGreaterThan(1,
+            customMessage: $"the archive must have been requested >1 time (503 then retry). Saw {archiveRequests} .zip request(s) — the retry loop didn't re-fetch.");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: "after retry-recovered download + swap + restart, marker MUST show 2.0.0");
 
         ctx.MarkClean();
     }
@@ -831,7 +876,7 @@ public sealed class TentacleUpgradeLifecycleE2ETests
         // ZERO download requests. If the .ps1 reached Phase A, it would
         // hit DOWNLOAD_URL → mirror would log the request.
         ctx.Mirror.ReceivedRequests.ShouldBeEmpty(
-            customMessage: $"short-circuit MUST fire BEFORE Phase A's Invoke-WebRequest. " +
+            customMessage: $"short-circuit MUST fire BEFORE Phase A's archive download. " +
                           $"Mirror received: [{string.Join(", ", ctx.Mirror.ReceivedRequests)}]. " +
                           "If non-empty: the short-circuit didn't fire → operator's no-op click triggered a download (waste of bandwidth + agent IO).");
 

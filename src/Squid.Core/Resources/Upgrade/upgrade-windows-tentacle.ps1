@@ -3,36 +3,36 @@
 # ------------------------------------------------------------------------------
 # Sent over a Halibut polling RPC by the server's WindowsTentacleUpgradeStrategy
 # at ScriptIsolationLevel.FullIsolation, so the agent serialises
-# this behind any in-flight deployment scripts — we never restart a tentacle
+# this behind any in-flight deployment scripts -- we never restart a tentacle
 # mid-deploy.
 #
 # Placeholders ({{...}}) are filled by the server before transmission.
 #
 # Mirrors the Linux upgrade-linux-tentacle.sh structure for operator-readability
-# parity: same Phase A → Phase B split, same INSTALL_OK / INSTALL_METHOD
+# parity: same Phase A -> Phase B split, same INSTALL_OK / INSTALL_METHOD
 # variables, same status-file shape (WindowsUpgradeStatusStorage
 # layout: %ProgramData%\Squid\Tentacle\upgrade\last-upgrade.json).
 #
 # ARCHITECTURE:
 #   Phase A (in tentacle process / Halibut sees logs):
-#     • Pre-flight (arch, status file setup, idempotency lock).
-#     • INSTALL_METHODS block (server-injected): ordered chocolatey → MSI →
+#     * Pre-flight (arch, status file setup, idempotency lock).
+#     * INSTALL_METHODS block (server-injected): ordered chocolatey -> MSI ->
 #       zip-marker dispatch (ships chocolatey + MSI;
 #       ships zip-marker only). The first method whose detection branch matches
 #       sets $INSTALL_OK = $true.
-#     • If $INSTALL_METHOD = 'zip', the existing zip download/verify/extract
+#     * If $INSTALL_METHOD = 'zip', the existing zip download/verify/extract
 #       block runs (separate from the marker so its ~80 lines stay in the
 #       template, not in C#).
 #
-#   Phase B (after Phase A — see "Detach mechanism" note below):
-#     • Conditional swap: zip method requires Move-Item .\bak / Move-Item
+#   Phase B (after Phase A -- see "Detach mechanism" note below):
+#     * Conditional swap: zip method requires Move-Item .\bak / Move-Item
 #       .\staging; chocolatey/MSI methods are no-ops here (the package
 #       manager already wrote %ProgramFiles%\Squid Tentacle).
-#     • Stop-Service squid-tentacle.
-#     • Move-Item swap.
-#     • Start-Service squid-tentacle.
-#     • Health poll + version verify.
-#     • Status file at %ProgramData%\Squid\Tentacle\upgrade\last-upgrade.json
+#     * Stop-Service squid-tentacle.
+#     * Move-Item swap.
+#     * Start-Service squid-tentacle.
+#     * Health poll + version verify.
+#     * Status file at %ProgramData%\Squid\Tentacle\upgrade\last-upgrade.json
 #       (Octopus parity: server reads on next health check via
 #       Capabilities RPC).
 #
@@ -42,36 +42,36 @@
 #   restart, the WindowsTentacleUpgradeStrategy will wrap the
 #   template invocation in a detach mechanism (likely Task Scheduler one-shot
 #   task running as SYSTEM, equivalent to Linux's `systemd-run --scope`).
-#   This template is written ASSUMING the detach has already happened — it
+#   This template is written ASSUMING the detach has already happened -- it
 #   runs end-to-end synchronously without trying to self-detach.
 #
 # Status progression (matches Linux):
-#   IN_PROGRESS → SWAPPED → SUCCESS
-#                          → ROLLED_BACK
-#                          → ROLLBACK_NEEDED
-#                          → ROLLBACK_CRITICAL_FAILED
+#   IN_PROGRESS -> SWAPPED -> SUCCESS
+#                          -> ROLLED_BACK
+#                          -> ROLLBACK_NEEDED
+#                          -> ROLLBACK_CRITICAL_FAILED
 #
 # Exit codes (Halibut-visible from Phase A):
-#   0   — dispatched to Phase B OR no-op (already on target version)
-#   1   — unsupported architecture
-#   2   — download failure (zip method only)
-#   3   — missing binary in extracted archive
-#   5   — insufficient disk space
-#   7   — SHA256 mismatch (only when EXPECTED_SHA256 is non-empty)
-#   8   — Start-Service post-swap failed → rollback fired (J.E.6)
-#   9   — Healthcheck timeout in FATAL mode → rollback fired (J.E.7)
-#   12  — Windows version too old (PowerShell 5.0+ required, Server 2016+)
-#   13  — failed to acquire upgrade lock (concurrent upgrade in progress)
-#   14  — no install method succeeded (zip + future chocolatey/MSI all skipped or failed)
-#   15  — insufficient privileges (must run as Administrator or LocalSystem)
+#   0   -- dispatched to Phase B OR no-op (already on target version)
+#   1   -- unsupported architecture
+#   2   -- download failure (zip method only)
+#   3   -- missing binary in extracted archive
+#   5   -- insufficient disk space
+#   7   -- SHA256 mismatch (only when EXPECTED_SHA256 is non-empty)
+#   8   -- Start-Service post-swap failed -> rollback fired (J.E.6)
+#   9   -- Healthcheck timeout in FATAL mode -> rollback fired (J.E.7)
+#   12  -- Windows version too old (PowerShell 5.0+ required, Server 2016+)
+#   13  -- failed to acquire upgrade lock (concurrent upgrade in progress)
+#   14  -- no install method succeeded (zip + future chocolatey/MSI all skipped or failed)
+#   15  -- insufficient privileges (must run as Administrator or LocalSystem)
 # ==============================================================================
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-# ── Identity gate ──────────────────────────────────────────────
+# -- Identity gate ----------------------------------------------
 # The WindowsTentacleUpgradeStrategy wraps invocation in a
-# Task Scheduler one-shot task with `/RU SYSTEM` — equivalent to Linux's
+# Task Scheduler one-shot task with `/RU SYSTEM` -- equivalent to Linux's
 # `systemd-run --scope` running as root. If we see a non-elevated identity
 # here, the wrapper failed silently and Phase B's `Stop-Service` /
 # `Move-Item` will fail at a confusing layer. Fail fast with a clear message.
@@ -85,9 +85,9 @@ if (-not $isElevated -and -not $isSystem) {
     exit 15
 }
 
-# ── Arch detection MUST run before DOWNLOAD_URL is consumed ───────────────────
+# -- Arch detection MUST run before DOWNLOAD_URL is consumed -------------------
 # $env:PROCESSOR_ARCHITECTURE on a 64-bit OS is "AMD64" (x64) or "ARM64".
-# 32-bit Windows is NOT supported — docs analysis concluded
+# 32-bit Windows is NOT supported -- docs analysis concluded
 # x86 has no real audience in 2026 (Server 2012 R2 was the last 32-bit
 # Windows Server, EOL 2023).
 $arch = $env:PROCESSOR_ARCHITECTURE
@@ -101,25 +101,25 @@ switch -Regex ($arch) {
     }
 }
 
-# ── Placeholders filled by WindowsTentacleUpgradeStrategy before transmission ─
+# -- Placeholders filled by WindowsTentacleUpgradeStrategy before transmission -
 $TARGET_VERSION   = '{{TARGET_VERSION}}'
 $DOWNLOAD_URL     = '{{DOWNLOAD_URL}}'
 # The server can't know the agent's architecture, so it emits the URL with a literal
 # '$RID' token. The single-quoted assignment above keeps it literal (PowerShell never
 # re-expands a stored value at use time), so resolve it now that arch detection has set
-# $RID. A targeted Replace — not a double-quoted re-assignment — leaves any other '$' or
+# $RID. A targeted Replace -- not a double-quoted re-assignment -- leaves any other '$' or
 # backtick in an operator-overridden base URL untouched.
 $DOWNLOAD_URL     = $DOWNLOAD_URL.Replace('$RID', $RID)
 $EXPECTED_SHA256  = '{{EXPECTED_SHA256}}'
 $INSTALL_DIR      = '{{INSTALL_DIR}}'
 $SERVICE_NAME     = '{{SERVICE_NAME}}'
 $HEALTHCHECK_URL  = '{{HEALTHCHECK_URL}}'
-# Retry count substituted as a numeric literal (no quotes) — `[int]` cast
+# Retry count substituted as a numeric literal (no quotes) -- `[int]` cast
 # would fail on a quoted-and-cast empty string if the placeholder ever
 # defaults to empty.
 $HEALTHCHECK_RETRIES = {{HEALTHCHECK_RETRIES}}
 # Healthcheck failure mode. Substituted by the strategy as `$true` /
-# `$false` (PowerShell boolean literals — no quotes) so this assignment
+# `$false` (PowerShell boolean literals -- no quotes) so this assignment
 # is type-safe regardless of operator's env var format. Default `$false`
 # = warning + proceed (matches Octopus Tentacle); `$true` = strict =
 # rollback on timeout. See WindowsTentacleUpgradeStrategy.HealthcheckFatalEnvVar.
@@ -140,13 +140,13 @@ $STATUS_FILE = Join-Path $STATUS_DIR 'last-upgrade.json'
 $LOCK_FILE   = Join-Path $STATUS_DIR 'upgrade.lock'
 $LOG_FILE    = Join-Path $STATUS_DIR 'upgrade.log'
 
-# ── Layout detection (blue-green) ────────────────────────────────────────────
+# -- Layout detection (blue-green) --------------------------------------------
 # A versioned install selects its active version via the `current` junction
 # ({INSTALL_DIR}\current -> versions\<v>). When versioned, Phase B activates the
 # new version by repointing `current` and NEVER touches the running version's
 # directory, so any failure leaves the old version intact and instantly
 # restorable. Flat installs (no `current` junction) keep today's .bak swap
-# byte-for-byte — the entire blue-green path is gated on $isVersioned. We only
+# byte-for-byte -- the entire blue-green path is gated on $isVersioned. We only
 # treat the install as versioned when `current` is a reparse point AND its
 # target reads back cleanly; anything else falls back to the flat path.
 $isVersioned = $false
@@ -190,7 +190,7 @@ if (-not (Test-Path $STATUS_DIR)) {
 # corrupt the first JSON line the server parses). Best-effort.
 try { [System.IO.File]::WriteAllText($EVENTS_FILE, '', (New-Object System.Text.UTF8Encoding($false))) } catch { }
 
-# ── Status file helper — atomic write via temp+rename ────────────────────────
+# -- Status file helper -- atomic write via temp+rename ------------------------
 function Write-UpgradeStatus {
     param(
         [string] $Status,
@@ -210,7 +210,7 @@ function Write-UpgradeStatus {
         scriptPid     = $PID
     } | ConvertTo-Json -Depth 5
 
-    # Temp + rename for atomicity — readers (Squid server's
+    # Temp + rename for atomicity -- readers (Squid server's
     # WindowsUpgradeStatusStorage via Capabilities RPC) can never see a
     # half-written JSON.
     $temp = "$STATUS_FILE.tmp"
@@ -243,7 +243,41 @@ function Append-UpgradeLog {
     Write-Host $Line
 }
 
-# ── Event timeline helper — append one structured event (parity with the ─────
+# -- Generic retry helper -- run an action, retrying transient failures with -----
+# linear backoff. Used for the network download, archive extraction, and the
+# binary swap: all three hit transient Windows failures (TCP resets / CDN 503s /
+# proxy hiccups on download; Defender holding a lock on a freshly-written file
+# during extract or Move-Item). Without retry a single transient blip fails the
+# whole upgrade -- the dominant cause of sub-100% upgrade success in the field.
+# Re-throws the last exception once attempts are exhausted so the caller's own
+# catch records the terminal status.
+function Invoke-WithRetry {
+    param(
+        [scriptblock] $Action,
+        [string] $Label,
+        [int] $MaxAttempts = 3,
+        [int] $BaseDelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                Append-UpgradeLog "[retry] $Label failed after $MaxAttempts attempt(s): $($_.Exception.Message)"
+                throw
+            }
+
+            $delay = $BaseDelaySeconds * $attempt
+            Append-UpgradeLog "[retry] $Label attempt $attempt/$MaxAttempts failed: $($_.Exception.Message) -- retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
+# -- Event timeline helper -- append one structured event (parity with the -----
 # Linux script's emit_event). One JSON object per line:
 #   {"t":"2026-06-01T02:57:04Z","phase":"A","kind":"start","msg":"..."}
 function Write-UpgradeEvent {
@@ -253,7 +287,7 @@ function Write-UpgradeEvent {
         [string] $Msg = ''
     )
 
-    # Terminal-state events ALWAYS emit regardless of the cap — operators MUST
+    # Terminal-state events ALWAYS emit regardless of the cap -- operators MUST
     # see the final outcome. This set MUST stay in sync with the Linux script's
     # emit_event terminal list (drift-pinned by the cross-script parity test)
     # and the FE's UPGRADE_EVENTS_TERMINAL_KINDS.
@@ -265,14 +299,14 @@ function Write-UpgradeEvent {
     }
 
     # Minimal JSON-safe escaping: drop quotes and backslashes (events originate
-    # from our own controlled strings — versions, methods, exit codes). Matches
+    # from our own controlled strings -- versions, methods, exit codes). Matches
     # the Linux emit_event `tr -d '"\\'`.
     $safeMsg = $Msg -replace '["\\]', ''
 
     $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     $line = '{"t":"' + $now + '","phase":"' + $Phase + '","kind":"' + $Kind + '","msg":"' + $safeMsg + '"}'
 
-    # BOM-less UTF8 append — PS 5.1's Add-Content -Encoding UTF8 prepends a BOM
+    # BOM-less UTF8 append -- PS 5.1's Add-Content -Encoding UTF8 prepends a BOM
     # that would corrupt the first JSON line the server parses. Best-effort:
     # events are advisory, never fail the upgrade on an event-write hiccup.
     try {
@@ -280,14 +314,14 @@ function Write-UpgradeEvent {
     } catch { }
 }
 
-# ── Rollback helper (J.E.6) ──────────────────────────────────────────────────
+# -- Rollback helper (J.E.6) --------------------------------------------------
 # Restores the previous binary from .bak when Phase B can't bring the new
 # binary up. Three failure modes drive this:
-#   1. Start-Service throws (new binary's OnStart raised → SCM 1067 / "the
+#   1. Start-Service throws (new binary's OnStart raised -> SCM 1067 / "the
 #      service did not start in a timely fashion"). E.g., new binary has a
 #      broken DI graph that throws at construction time.
 #   2. Service start succeeded but new binary's healthcheck never returned
-#      200 within $HEALTHCHECK_RETRIES * 2 seconds — currently a warning
+#      200 within $HEALTHCHECK_RETRIES * 2 seconds -- currently a warning
 #      (matches Octopus Tentacle's behaviour: capabilities probe will detect
 #      a missing version on the next health probe). A future env-var-gated
 #      "fatal" mode will make this a rollback trigger.
@@ -299,9 +333,9 @@ function Write-UpgradeEvent {
 # $TARGET_VERSION are in scope (defined earlier in Phase A / Phase B).
 #
 # Status writes:
-#   - ROLLED_BACK              — clean restoration: old service is RUNNING again
-#   - ROLLBACK_NEEDED          — no .bak available (somehow), can't auto-restore
-#   - ROLLBACK_CRITICAL_FAILED — restored .bak but old service won't start either
+#   - ROLLED_BACK              -- clean restoration: old service is RUNNING again
+#   - ROLLBACK_NEEDED          -- no .bak available (somehow), can't auto-restore
+#   - ROLLBACK_CRITICAL_FAILED -- restored .bak but old service won't start either
 function Invoke-Rollback {
     param(
         [Parameter(Mandatory)] [string] $Reason,
@@ -311,7 +345,7 @@ function Invoke-Rollback {
     Append-UpgradeLog "::warning:: [rollback] Initiating rollback: $Reason"
 
     # Stop new service first if it managed to come up (degraded but running).
-    # Best-effort — SCM may already have force-killed it.
+    # Best-effort -- SCM may already have force-killed it.
     try {
         $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
         if ($null -ne $svc -and $svc.Status -ne 'Stopped') {
@@ -320,12 +354,12 @@ function Invoke-Rollback {
             $svc.WaitForStatus('Stopped', $SERVICE_TIMEOUT_SPAN)
         }
     } catch {
-        Append-UpgradeLog "[rollback] Couldn't cleanly stop new service: $($_.Exception.Message). Proceeding with restore — Move-Item might still succeed if SCM has released the binary."
+        Append-UpgradeLog "[rollback] Couldn't cleanly stop new service: $($_.Exception.Message). Proceeding with restore -- Move-Item might still succeed if SCM has released the binary."
     }
 
-    # ── Versioned (blue-green) rollback ──────────────────────────────────────
+    # -- Versioned (blue-green) rollback --------------------------------------
     # Repoint `current` back to the previous version. The previous version
-    # directory was never touched during the swap, so this cannot lose it — even
+    # directory was never touched during the swap, so this cannot lose it -- even
     # if the repoint or the restart fails, the previous binaries remain intact at
     # $oldVerTarget. Flat installs fall through to the .bak restore below.
     if ($isVersioned) {
@@ -358,8 +392,8 @@ function Invoke-Rollback {
     $bakDir = Join-Path $installParent "$installLeaf.bak"
 
     if (-not (Test-Path $bakDir)) {
-        Append-UpgradeLog "::error:: [rollback] No .bak directory at $bakDir — cannot auto-restore. Operator must manually reinstall."
-        Write-UpgradeStatus -Status 'ROLLBACK_NEEDED' -InstallMethod $INSTALL_METHOD -Detail "Failure: $Reason. No .bak available — manual reinstall required." -ExitCode $ExitCode
+        Append-UpgradeLog "::error:: [rollback] No .bak directory at $bakDir -- cannot auto-restore. Operator must manually reinstall."
+        Write-UpgradeStatus -Status 'ROLLBACK_NEEDED' -InstallMethod $INSTALL_METHOD -Detail "Failure: $Reason. No .bak available -- manual reinstall required." -ExitCode $ExitCode
         exit $ExitCode
     }
 
@@ -372,16 +406,16 @@ function Invoke-Rollback {
             Remove-Item -Path $failedDir -Recurse -Force
         }
         if (Test-Path $INSTALL_DIR) {
-            Append-UpgradeLog "[rollback] Moving broken $INSTALL_DIR → $failedDir for post-mortem"
+            Append-UpgradeLog "[rollback] Moving broken $INSTALL_DIR -> $failedDir for post-mortem"
             Move-Item -Path $INSTALL_DIR -Destination $failedDir -Force
         }
     } catch {
         Append-UpgradeLog "::error:: [rollback] Couldn't archive broken binary: $($_.Exception.Message). Restore may fail next step."
     }
 
-    # Restore .bak → INSTALL_DIR.
+    # Restore .bak -> INSTALL_DIR.
     try {
-        Append-UpgradeLog "[rollback] Restoring $bakDir → $INSTALL_DIR"
+        Append-UpgradeLog "[rollback] Restoring $bakDir -> $INSTALL_DIR"
         Move-Item -Path $bakDir -Destination $INSTALL_DIR -Force
     } catch {
         Append-UpgradeLog "::error:: [rollback] Restore Move-Item failed: $($_.Exception.Message)"
@@ -394,7 +428,7 @@ function Invoke-Rollback {
         Append-UpgradeLog "[rollback] Starting service (old binary)"
         Start-Service -Name $SERVICE_NAME
 
-        # Wait for SCM to confirm RUNNING — synchronous proof that the old
+        # Wait for SCM to confirm RUNNING -- synchronous proof that the old
         # service is genuinely back up before we report ROLLED_BACK.
         $svc = Get-Service -Name $SERVICE_NAME
         $svc.WaitForStatus('Running', $SERVICE_TIMEOUT_SPAN)
@@ -409,7 +443,7 @@ function Invoke-Rollback {
     exit $ExitCode
 }
 
-# ── Idempotency: lock file ───────────────────────────────────────────────────
+# -- Idempotency: lock file ---------------------------------------------------
 # Single per-host lock (NOT per-target-version) so two concurrent operator
 # clicks targeting different versions can't race the SCM Stop-Service +
 # Move-Item swap + Start-Service sequence. Mirrors the Linux flock layout.
@@ -427,7 +461,7 @@ if (Test-Path $LOCK_FILE) {
 
     # Regex-parse PID. Avoids `[int]::TryParse([ref])` which has fragile
     # PowerShell binding behaviour. Empty / non-numeric / negative content
-    # leaves $existingPid at 0 → falls through the > 0 guard → treated
+    # leaves $existingPid at 0 -> falls through the > 0 guard -> treated
     # as stale (correct: a non-numeric lock file is corrupt and should
     # be broken).
     $existingPid = 0
@@ -447,13 +481,13 @@ if (Test-Path $LOCK_FILE) {
     }
 
     if ($holderAlive) {
-        Append-UpgradeLog "::error:: Upgrade lock $LOCK_FILE held by LIVE PID $existingPid — refusing concurrent upgrade dispatch"
+        Append-UpgradeLog "::error:: Upgrade lock $LOCK_FILE held by LIVE PID $existingPid -- refusing concurrent upgrade dispatch"
         exit 13
     }
 
-    # Stale lock — log + break + proceed. Operator-visible recovery from
+    # Stale lock -- log + break + proceed. Operator-visible recovery from
     # a previously-crashed dispatch that left the lock orphaned.
-    Append-UpgradeLog "::warning:: Upgrade lock $LOCK_FILE held by stale PID '$existing' (no live process) — breaking lock to recover from a previously-crashed dispatch"
+    Append-UpgradeLog "::warning:: Upgrade lock $LOCK_FILE held by stale PID '$existing' (no live process) -- breaking lock to recover from a previously-crashed dispatch"
     try { Remove-Item -Path $LOCK_FILE -Force -ErrorAction Stop } catch {
         # Couldn't break the lock (permissions / IO error). Operator must
         # intervene; surface the failure clearly.
@@ -465,34 +499,34 @@ if (Test-Path $LOCK_FILE) {
 Set-Content -Path $LOCK_FILE -Value "$PID" -Force
 
 try {
-    Append-UpgradeLog "[upgrade] Phase A starting — target version $TARGET_VERSION on $RID"
+    Append-UpgradeLog "[upgrade] Phase A starting -- target version $TARGET_VERSION on $RID"
     Write-UpgradeStatus -Status 'IN_PROGRESS' -Detail "Phase A starting (target $TARGET_VERSION)"
 
-    # ── Already-on-target short-circuit ─────────────────────────────────────
+    # -- Already-on-target short-circuit -------------------------------------
     # If the running binary is already at the target version, short-circuit.
     # The strategy would normally do this server-side via the
     # AlreadyUpToDate path, but a stale runtime-cache could let an upgrade
-    # dispatch through anyway — this is the agent-side defence-in-depth.
+    # dispatch through anyway -- this is the agent-side defence-in-depth.
     $tentacleExe = Join-Path $INSTALL_DIR 'Squid.Tentacle.exe'
 
     if (Test-Path $tentacleExe) {
         $currentVersion = (Get-Item $tentacleExe).VersionInfo.ProductVersion
 
         if ($currentVersion -eq $TARGET_VERSION) {
-            Append-UpgradeLog "[upgrade] Already on target version $TARGET_VERSION — no-op"
+            Append-UpgradeLog "[upgrade] Already on target version $TARGET_VERSION -- no-op"
             Write-UpgradeStatus -Status 'SUCCESS' -Detail "Already on target $TARGET_VERSION (no-op)"
             exit 0
         }
     }
 
-    # ── INSTALL_METHODS dispatch (server-injected) ──────────────────────────
+    # -- INSTALL_METHODS dispatch (server-injected) --------------------------
     # The server replaces the placeholder below with the concatenated snippets
     # from each IWindowsUpgradeMethod's RenderDetectAndInstall.
     # ships zip-marker only;  will add chocolatey + MSI.
     #
     # IMPORTANT: do NOT mention the placeholder name verbatim anywhere except
     # the actual substitution site below. WindowsTentacleUpgradeStrategy uses
-    # String.Replace which matches every occurrence — a comment-line mention
+    # String.Replace which matches every occurrence -- a comment-line mention
     # would be rewritten too, splicing multi-line PowerShell into a `#`-prefixed
     # line and producing parse errors that ONLY surface at agent-side Task
     # Scheduler invocation (operator sees Initiated, no upgrade actually runs).
@@ -502,7 +536,7 @@ try {
 
     {{INSTALL_METHODS}}
 
-    # ── Zip-method execution block ──────────────────────────────────────────
+    # -- Zip-method execution block ------------------------------------------
     # The marker emitted by ZipUpgradeMethod.RenderDetectAndInstall sets
     # $INSTALL_METHOD = 'zip'. This block does the actual work.
     if ($INSTALL_METHOD -eq 'zip' -and $INSTALL_OK -ne $true) {
@@ -512,13 +546,52 @@ try {
         try {
             New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
-            Append-UpgradeLog "[upgrade-method:zip] Downloading $DOWNLOAD_URL → $archivePath"
+            Append-UpgradeLog "[upgrade-method:zip] Downloading $DOWNLOAD_URL -> $archivePath"
 
             try {
-                # -UseBasicParsing avoids needing IE first-run config on
-                # stripped Server Core images. -TimeoutSec 600 = 10 min budget
-                # for the download (matches install-tentacle.ps1's pattern).
-                Invoke-WebRequest -Uri $DOWNLOAD_URL -OutFile $archivePath -UseBasicParsing -TimeoutSec 600
+                # System.Net.WebClient, NOT Invoke-WebRequest: Windows PowerShell 5.1's
+                # Invoke-WebRequest -OutFile corrupts large binary downloads on some hosts
+                # (truncated zip -> "End of central directory record could not be found" at
+                # extract time, exit 14) while WebClient.DownloadFile streams the bytes
+                # verbatim. Force TLS 1.2 first -- 5.1 may still negotiate 1.0/1.1, which
+                # GitHub rejects. Verified on a real agent: WebClient returns the byte-exact
+                # archive where Invoke-WebRequest returned a corrupt one.
+                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+
+                # Retry transient network failures (TCP reset / DNS blip / CDN 503 /
+                # proxy hiccup) -- a single blip must not fail the whole upgrade. Count is
+                # env-tunable for flaky or air-gapped links (floored at 1).
+                $downloadAttempts = 3
+                if ($env:SQUID_UPGRADE_DOWNLOAD_RETRIES -as [int]) { $downloadAttempts = [int]$env:SQUID_UPGRADE_DOWNLOAD_RETRIES }
+                if ($downloadAttempts -lt 1) { $downloadAttempts = 1 }
+
+                Invoke-WithRetry -Label 'archive download' -MaxAttempts $downloadAttempts -Action {
+                    # Clear any partial file from a prior failed attempt so a half-written
+                    # archive can't masquerade as a complete download.
+                    if (Test-Path $archivePath) { Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue }
+
+                    $downloadClient = New-Object System.Net.WebClient
+                    # Route through the machine's configured proxy with the caller's
+                    # credentials so authenticated corporate proxies (407) don't block it.
+                    $downloadClient.UseDefaultCredentials = $true
+                    if ($downloadClient.Proxy) { $downloadClient.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+
+                    try { $downloadClient.DownloadFile($DOWNLOAD_URL, $archivePath) } finally { $downloadClient.Dispose() }
+                }
+
+                # Validate the download is actually a zip via its PK magic bytes
+                # (0x50 0x4B). A proxy error page returned with HTTP 200, a truncated /
+                # 0-byte write, or an HTML 404 would otherwise fail later at extraction
+                # with an opaque "central directory" error. A valid zip of ANY size
+                # passes (a fixed size floor would wrongly reject small archives);
+                # non-zip content (HTML '<', JSON '{', empty) is rejected here clearly.
+                $archiveSize = (Get-Item $archivePath).Length
+                $zipStream = [System.IO.File]::OpenRead($archivePath)
+                try { $zipB0 = $zipStream.ReadByte(); $zipB1 = $zipStream.ReadByte() } finally { $zipStream.Dispose() }
+                if ($zipB0 -ne 0x50 -or $zipB1 -ne 0x4B) {
+                    throw "Downloaded file is not a zip archive (missing PK header, $archiveSize bytes) -- the server likely returned an error page with HTTP 200, or the download was truncated."
+                }
+                Append-UpgradeLog "[upgrade-method:zip] Downloaded $archiveSize bytes (valid zip header)"
             }
             catch {
                 Append-UpgradeLog "[upgrade-method:zip] Download failed: $($_.Exception.Message)"
@@ -530,7 +603,7 @@ try {
             # upgrade-linux-tentacle.sh:418-429 pattern. Resolution chain:
             #
             #   (1) Strategy-substituted EXPECTED_SHA256 (server-side override
-            #       — operator pinned a specific hash via env var, or strategy
+            #       -- operator pinned a specific hash via env var, or strategy
             #       in the future starts substituting from a manifest)
             #
             #   (2) <DOWNLOAD_URL>.sha256 companion file (has
@@ -539,33 +612,39 @@ try {
             #
             #   (3) Fall through with skip-with-warning (matches Linux's
             #       behaviour for older releases that don't have .sha256
-            #       companions yet — backward compat for in-the-wild artifacts)
+            #       companions yet -- backward compat for in-the-wild artifacts)
             #
             # Format expected: `sha256sum`'s default output (`<64-hex>  <filename>`).
             # We strip whitespace + tail and validate hex-only-64-chars before
-            # using — anything else is treated as "no valid SHA available"
+            # using -- anything else is treated as "no valid SHA available"
             # and falls through. Mirrors Linux's grep-and-validate guard.
             if ([string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {
                 $shaUrl = "$DOWNLOAD_URL.sha256"
-                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty — opportunistic fetch from $shaUrl"
+                Append-UpgradeLog "[upgrade-method:zip] EXPECTED_SHA256 empty -- opportunistic fetch from $shaUrl"
                 try {
-                    $shaResponse = Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                    # WebClient.DownloadString, NOT Invoke-WebRequest -- same PS 5.1 robustness
+                    # reason as the archive download above.
+                    $shaClient = New-Object System.Net.WebClient
+                    try { $shaContent = $shaClient.DownloadString($shaUrl) } finally { $shaClient.Dispose() }
                     # Take ONLY the first whitespace-delimited token (hex digest).
                     # `sha256sum file > file.sha256` writes "<hex>  <filename>".
-                    $fetched = ($shaResponse.Content -split '\s+', 2)[0].Trim().ToLower()
+                    $fetched = ($shaContent -split '\s+', 2)[0].Trim().ToLower()
                     if ($fetched -match '^[0-9a-f]{64}$') {
                         $EXPECTED_SHA256 = $fetched
                         Append-UpgradeLog "[upgrade-method:zip] Fetched expected SHA256 from $shaUrl"
                     }
                     else {
-                        Append-UpgradeLog "[upgrade-method:zip] Companion at $shaUrl returned non-hex / wrong-length content — skipping verification"
+                        # Log the actual content (ASCII-sanitised, truncated) so a malformed or
+                        # redirected companion is diagnosable from the web log without RDP.
+                        $shaSnippet = ($shaContent.Substring(0, [Math]::Min(80, $shaContent.Length))) -replace '[^\x20-\x7E]', '?'
+                        Append-UpgradeLog "[upgrade-method:zip] Companion at $shaUrl returned non-hex/wrong-length content (first 80 chars: '$shaSnippet') -- skipping verification"
                     }
                 }
                 catch {
                     # Common, expected case for older releases without .sha256
                     # companions OR for air-gap mirrors that haven't replicated
                     # the companion files yet. NOT a fatal error.
-                    Append-UpgradeLog "[upgrade-method:zip] No .sha256 companion at $shaUrl — skipping verification (release pipeline does not yet publish per-archive hashes for this version)"
+                    Append-UpgradeLog "[upgrade-method:zip] No .sha256 companion at $shaUrl -- skipping verification (release pipeline does not yet publish per-archive hashes for this version)"
                 }
             }
 
@@ -578,7 +657,7 @@ try {
                 # auto-loader; some Windows runner images + stripped-down
                 # PowerShell installations have observed the auto-loader fail
                 # with `CommandNotFoundException` for the SHA cmdlet even when
-                # `Invoke-WebRequest` (same module) loads fine — likely a
+                # `Invoke-WebRequest` (same module) loads fine -- likely a
                 # partial module-cache state under the combination of
                 # `$ErrorActionPreference = 'Stop'` and
                 # `Set-StrictMode -Version Latest`. Direct .NET avoids the
@@ -606,10 +685,22 @@ try {
             }
 
             $extractDir = Join-Path $stagingDir 'extract'
-            New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
 
             Append-UpgradeLog "[upgrade-method:zip] Extracting to $extractDir"
-            Expand-Archive -Path $archivePath -DestinationPath $extractDir -Force
+            # [System.IO.Compression.ZipFile]::ExtractToDirectory, NOT Expand-Archive: the BCL
+            # API is more robust on large / Linux-`zip`-built archives and surfaces a clearer
+            # error than the cmdlet wrapper. Add-Type loads the assembly on PS 5.1 (already
+            # present in pwsh 7). Consistent with the direct-.NET SHA path above.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+
+            # Retry extraction: Defender can briefly lock a freshly-written file mid-extract.
+            # ExtractToDirectory has no overwrite overload on .NET Framework, so clear any
+            # partial output before each attempt (else a retry throws "file already exists").
+            Invoke-WithRetry -Label 'archive extraction' -Action {
+                if (Test-Path $extractDir) { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+                New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+                [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractDir)
+            }
 
             $extractedExe = Join-Path $extractDir 'Squid.Tentacle.exe'
 
@@ -620,7 +711,7 @@ try {
             }
 
             $INSTALL_OK = $true
-            Append-UpgradeLog "[upgrade-method:zip] Phase A complete — staging dir $extractDir ready for swap"
+            Append-UpgradeLog "[upgrade-method:zip] Phase A complete -- staging dir $extractDir ready for swap"
         }
         catch {
             Append-UpgradeLog "[upgrade-method:zip] Unexpected failure: $($_.Exception.Message)"
@@ -629,24 +720,24 @@ try {
         }
     }
 
-    # ── No method matched — operator must investigate ───────────────────────
+    # -- No method matched -- operator must investigate -----------------------
     if ($INSTALL_OK -ne $true) {
-        Append-UpgradeLog "::error:: No install method succeeded — INSTALL_METHOD='$INSTALL_METHOD'"
+        Append-UpgradeLog "::error:: No install method succeeded -- INSTALL_METHOD='$INSTALL_METHOD'"
         Write-UpgradeStatus -Status 'FAILED' -InstallMethod $INSTALL_METHOD -Detail "No install method succeeded" -ExitCode 14
         exit 14
     }
 
-    # ── Phase B: Stop service → swap → start service → health check ─────────
+    # -- Phase B: Stop service -> swap -> start service -> health check ---------
     # This block runs SYNCHRONOUSLY and assumes the strategy has
     # already detached the script process from the Tentacle service tree
     # (likely via a Task Scheduler one-shot wrapper, equivalent to Linux's
     # `systemd-run --scope`). If the script is invoked directly inside the
     # Tentacle process tree without a detach wrapper, Stop-Service will
-    # terminate this process before Phase B completes — an orchestration
+    # terminate this process before Phase B completes -- an orchestration
     # concern owned by E.3's strategy, not by this template.
-    Append-UpgradeLog "[upgrade] Phase B starting — stopping service '$SERVICE_NAME' and swapping binary"
+    Append-UpgradeLog "[upgrade] Phase B starting -- stopping service '$SERVICE_NAME' and swapping binary"
 
-    # Entering Phase B — events emitted from here are tagged phase 'B'.
+    # Entering Phase B -- events emitted from here are tagged phase 'B'.
     $script:CURRENT_PHASE = 'B'
 
     $serviceWasRunning = $false
@@ -666,10 +757,10 @@ try {
         }
     }
     else {
-        Append-UpgradeLog "[upgrade] Service $SERVICE_NAME not registered yet — first install path"
+        Append-UpgradeLog "[upgrade] Service $SERVICE_NAME not registered yet -- first install path"
     }
 
-    # ── Conditional swap ────────────────────────────────────────────────────
+    # -- Conditional swap ----------------------------------------------------
     # Versioned (blue-green): stage the new version into versions\<target> and
     # repoint the `current` junction; the running version directory is NEVER
     # touched, so any failure leaves it intact. Flat: legacy move-aside .bak swap.
@@ -704,7 +795,8 @@ try {
             if (Test-Path $newVerDir) { Remove-Item -Path $newVerDir -Recurse -Force }
 
             Append-UpgradeLog "[upgrade] Staging new version into $newVerDir"
-            Move-Item -Path $extractDir -Destination $newVerDir -Force
+            # Retry the swap: Defender may briefly lock a freshly-extracted file.
+            Invoke-WithRetry -Label 'binary swap' -Action { Move-Item -Path $extractDir -Destination $newVerDir -Force }
 
             # Repoint `current` junction. Delete the old junction NON-recursively
             # ([Directory]::Delete(path,$false)) so we remove only the reparse point,
@@ -714,7 +806,7 @@ try {
             New-Item -ItemType Junction -Path $currentPointer -Target $newVerDir | Out-Null
         }
 
-        Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Activated versions\$TARGET_VERSION via current junction — restarting service"
+        Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Activated versions\$TARGET_VERSION via current junction -- restarting service"
     }
     elseif ($INSTALL_METHOD -eq 'zip') {
         # Backup current install (zip method requires explicit swap).
@@ -722,7 +814,7 @@ try {
         # so a future operator setting INSTALL_DIR with a trailing backslash
         # ("C:\Squid\") doesn't produce a hidden ".bak" leaf inside the dir.
         # Linux side doesn't have this concern (no spaces, no trailing-slash
-        # convention drift) — Windows ProgramFiles paths often round-trip
+        # convention drift) -- Windows ProgramFiles paths often round-trip
         # through clipboards/CLIs that re-add separators, so guard for it.
         $installParent = Split-Path -Parent $INSTALL_DIR
         $installLeaf = Split-Path -Leaf $INSTALL_DIR
@@ -733,7 +825,7 @@ try {
         }
 
         if (Test-Path $INSTALL_DIR) {
-            Append-UpgradeLog "[upgrade] Backing up $INSTALL_DIR → $bakDir"
+            Append-UpgradeLog "[upgrade] Backing up $INSTALL_DIR -> $bakDir"
             Move-Item -Path $INSTALL_DIR -Destination $bakDir -Force
         }
 
@@ -751,17 +843,18 @@ try {
             exit 14
         }
 
-        Append-UpgradeLog "[upgrade] Moving $extractDir → $INSTALL_DIR"
-        Move-Item -Path $extractDir -Destination $INSTALL_DIR -Force
+        Append-UpgradeLog "[upgrade] Moving $extractDir -> $INSTALL_DIR"
+        # Retry the swap: Defender may briefly lock a freshly-extracted file.
+        Invoke-WithRetry -Label 'binary swap' -Action { Move-Item -Path $extractDir -Destination $INSTALL_DIR -Force }
 
-        Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Binary swapped — restarting service"
+        Write-UpgradeStatus -Status 'SWAPPED' -InstallMethod 'zip' -Detail "Binary swapped -- restarting service"
     }
 
     # Start the service (may already be running for first-install path).
-    # Wrap in try/catch — if the new binary's OnStart throws (e.g. SCM 1067
+    # Wrap in try/catch -- if the new binary's OnStart throws (e.g. SCM 1067
     # "service did not start in a timely fashion"), call Invoke-Rollback so
     # the agent recovers to the old binary instead of being left in a half-
-    # swapped Stopped state. Wait for RUNNING state too — Start-Service
+    # swapped Stopped state. Wait for RUNNING state too -- Start-Service
     # returns when SCM accepts the start command, but the actual process
     # OnStart may still throw a few seconds later. WaitForStatus surfaces
     # that synchronously so the catch is reachable.
@@ -783,8 +876,8 @@ try {
         }
     }
 
-    # ── Health check ────────────────────────────────────────────────────────
-    # Retry count is server-substituted per dispatch (default 30 attempts ×
+    # -- Health check --------------------------------------------------------
+    # Retry count is server-substituted per dispatch (default 30 attempts x
     # 2s sleep = 60s wait window, see WindowsTentacleUpgradeStrategy.DefaultHealthcheckRetries).
     # Operator override via SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_RETRIES
     # env var on the SERVER side: deployments with slow-starting agents
@@ -794,7 +887,7 @@ try {
     # doesn't expose HTTP, so every poll attempt 404s and the wait is pure
     # cost). Pinned by `WindowsTentacleUpgradeStrategyTests.HealthcheckRetriesEnvVar_*`.
     $totalWaitSeconds = $HEALTHCHECK_RETRIES * 2
-    Append-UpgradeLog "[upgrade] Waiting for healthcheck $HEALTHCHECK_URL (max $HEALTHCHECK_RETRIES attempts × 2s = ${totalWaitSeconds}s)"
+    Append-UpgradeLog "[upgrade] Waiting for healthcheck $HEALTHCHECK_URL (max $HEALTHCHECK_RETRIES attempts x 2s = ${totalWaitSeconds}s)"
 
     $healthOk = $false
 
@@ -811,7 +904,7 @@ try {
             }
         }
         catch {
-            # Expected during the restart window — keep polling
+            # Expected during the restart window -- keep polling
         }
     }
 
@@ -822,17 +915,17 @@ try {
             # rather than leave the operator with a Stopped+swapped service
             # that the next capabilities probe will report as broken anyway.
             # Exit 9 is the documented "healthcheck timeout (FATAL mode)
-            # → rollback fired" code.
+            # -> rollback fired" code.
             Invoke-Rollback -Reason "Healthcheck didn't respond within ${totalWaitSeconds}s and SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true (strict mode)" -ExitCode 9
         }
 
         # Default mode (matches Octopus Tentacle): warning + proceed.
         # Capabilities probe will detect a dead agent on the next probe.
-        Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s — proceeding anyway, server will retry on next health probe (set SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true to roll back instead)"
+        Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s -- proceeding anyway, server will retry on next health probe (set SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true to roll back instead)"
     }
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
-    Append-UpgradeLog "[upgrade] Phase B complete — version $TARGET_VERSION installed via $INSTALL_METHOD"
+    Append-UpgradeLog "[upgrade] Phase B complete -- version $TARGET_VERSION installed via $INSTALL_METHOD"
 
     # Version GC (versioned only, best-effort): keep the newest N version dirs and
     # prune older ones so versions\ doesn't grow unbounded. Runs only AFTER success
@@ -852,7 +945,7 @@ try {
 
             $versionsRoot = Join-Path $INSTALL_DIR 'versions'
             if (Test-Path $versionsRoot) {
-                # Sort by CreationTimeUtc (install order) — newest first. (Deliberately
+                # Sort by CreationTimeUtc (install order) -- newest first. (Deliberately
                 # not LastWriteTimeUtc: that's reserved for the Phase B staging-dir
                 # anti-pattern guard, and creation time is the version's install moment.)
                 $dirs = @(Get-ChildItem -Path $versionsRoot -Directory | Sort-Object CreationTimeUtc -Descending)

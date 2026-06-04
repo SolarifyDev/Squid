@@ -75,7 +75,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ── Defaults (Rule 8 -- pinned literals) ─────────────────────────────────────
+# -- Defaults (Rule 8 -- pinned literals) -------------------------------------
 # Renaming any of these breaks operator runbooks, MDM playbooks, and the
 # in-UI script-generator's expectations.
 $DefaultVersion       = 'latest'
@@ -94,7 +94,7 @@ if ([string]::IsNullOrWhiteSpace($Version))      { $Version = $DefaultVersion }
 if ([string]::IsNullOrWhiteSpace($InstallDir))   { $InstallDir = $DefaultInstallDir }
 if ([string]::IsNullOrWhiteSpace($DownloadBase)) { $DownloadBase = $DefaultDownloadBase }
 
-# ── Arch detection ──────────────────────────────────────────────────────────
+# -- Arch detection ----------------------------------------------------------
 function Resolve-Rid {
     param([string] $Arch)
 
@@ -114,13 +114,13 @@ if ([string]::IsNullOrWhiteSpace($arch)) {
 
 $rid = Resolve-Rid -Arch $arch
 
-# ── UAC auto-elevation ──────────────────────────────────────────────────────
+# -- UAC auto-elevation ------------------------------------------------------
 # Default install dir (%ProgramFiles%) + writing %ProgramData%\Squid both
 # require Administrator. Rather than refuse to run for non-admin operators,
 # we re-launch this script under UAC.
 #
 # Two invocation modes need handling:
-#   1. File-invocation  (`.\install-tentacle.ps1 …`) -- $PSCommandPath is set;
+#   1. File-invocation  (`.\install-tentacle.ps1 ...`) -- $PSCommandPath is set;
 #                       we relaunch the same file.
 #   2. Pipe-invocation  (`irm <url> | iex`) -- $PSCommandPath is empty; the
 #                       script body lives in $MyInvocation.MyCommand.ScriptContents.
@@ -211,7 +211,7 @@ function Invoke-SelfElevation {
 UAC elevation failed: $($_.Exception.Message)
 
 Workarounds:
-  1. Right-click PowerShell → 'Run as Administrator', then re-run this script
+  1. Right-click PowerShell -> 'Run as Administrator', then re-run this script
   2. From an admin terminal: powershell -NoProfile -ExecutionPolicy Bypass -File '$scriptPath' $(($forwarded -join ' '))
   3. Install to a user-owned path (no admin needed):
        .\install-tentacle.ps1 -InstallDir "$env:USERPROFILE\squid-tentacle"
@@ -250,7 +250,7 @@ Write-Host "Arch:     $rid"
 Write-Host "Install:  $InstallDir"
 Write-Host ''
 
-# ── Download URL resolution ─────────────────────────────────────────────────
+# -- Download URL resolution -------------------------------------------------
 function Resolve-DownloadUrls {
     param(
         [string] $Version,
@@ -268,6 +268,32 @@ function Resolve-DownloadUrls {
     )
 }
 
+# -- Generic retry helper -- retry transient failures (network blips, Defender
+# file locks) with linear backoff so a single hiccup doesn't fail the install.
+# Re-throws once attempts are exhausted so the caller's catch handles it.
+function Invoke-WithRetry {
+    param(
+        [scriptblock] $Action,
+        [string] $Label,
+        [int] $MaxAttempts = 3,
+        [int] $BaseDelaySeconds = 2
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            & $Action
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) { throw }
+
+            $delay = $BaseDelaySeconds * $attempt
+            Write-Host "  $Label attempt $attempt/$MaxAttempts failed: $($_.Exception.Message) -- retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
 $urls = Resolve-DownloadUrls -Version $Version -Rid $rid -DownloadBase $DownloadBase
 
 $tempDir = Join-Path $env:TEMP "squid-tentacle-install-$([guid]::NewGuid().ToString('N'))"
@@ -281,7 +307,35 @@ try {
         Write-Host "Downloading from $url..."
 
         try {
-            Invoke-WebRequest -Uri $url -OutFile $archivePath -UseBasicParsing -TimeoutSec 300
+            # System.Net.WebClient + forced TLS 1.2, NOT Invoke-WebRequest: PS 5.1's
+            # Invoke-WebRequest -OutFile corrupts large binary downloads on some hosts
+            # (truncated zip -> extraction "End of central directory not found"); WebClient
+            # streams the bytes verbatim. Same fix as upgrade-windows-tentacle.ps1.
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+
+            # Retry each URL a few times before falling through to the next candidate,
+            # and route through the configured proxy with default creds (407 on
+            # authenticated corporate proxies).
+            Invoke-WithRetry -Label "download" -Action {
+                if (Test-Path $archivePath) { Remove-Item -Path $archivePath -Force -ErrorAction SilentlyContinue }
+
+                $wc = New-Object System.Net.WebClient
+                $wc.UseDefaultCredentials = $true
+                if ($wc.Proxy) { $wc.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials }
+                try { $wc.DownloadFile($url, $archivePath) } finally { $wc.Dispose() }
+            }
+
+            # Validate the download is actually a zip via its PK magic bytes (0x50 0x4B)
+            # so an error page returned with HTTP 200 / a truncated write fails here with
+            # a clear message instead of an opaque extraction error. Any valid zip passes
+            # regardless of size (a fixed size floor would wrongly reject small archives).
+            $archiveSize = (Get-Item $archivePath).Length
+            $zipStream = [System.IO.File]::OpenRead($archivePath)
+            try { $zipB0 = $zipStream.ReadByte(); $zipB1 = $zipStream.ReadByte() } finally { $zipStream.Dispose() }
+            if ($zipB0 -ne 0x50 -or $zipB1 -ne 0x4B) {
+                throw "Downloaded file is not a zip archive (missing PK header, $archiveSize bytes) -- likely an error page returned with HTTP 200, or a truncated download."
+            }
+
             $downloaded = $true
             break
         } catch {
@@ -302,7 +356,7 @@ Possible causes:
         exit 1
     }
 
-    # ── Extract into a versioned ("blue-green") layout ───────────────────────
+    # -- Extract into a versioned ("blue-green") layout -----------------------
     # Binary lives in versions\<v>; a stable `current` junction selects the active
     # version. A later upgrade repoints `current` without touching the running
     # version's directory, so any failure leaves the old version intact. Stage
@@ -313,10 +367,17 @@ Possible causes:
     }
 
     $stagingDir = Join-Path $tempDir 'extract'
-    New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
     Write-Host "Extracting..."
-    Expand-Archive -Path $archivePath -DestinationPath $stagingDir -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+
+    # Retry extraction: Defender can briefly lock a freshly-written file. Clear any
+    # partial output first since ExtractToDirectory has no overwrite overload on PS 5.1.
+    Invoke-WithRetry -Label "extraction" -Action {
+        if (Test-Path $stagingDir) { Remove-Item -Path $stagingDir -Recurse -Force -ErrorAction SilentlyContinue }
+        New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $stagingDir)
+    }
 
     $stagedBinary = Join-Path $stagingDir $BinaryName
     if (-not (Test-Path $stagedBinary)) {
@@ -335,7 +396,8 @@ Possible causes:
         $versionDir = Join-Path $versionsRoot $resolvedVersion
         if (-not (Test-Path $versionsRoot)) { New-Item -ItemType Directory -Path $versionsRoot -Force | Out-Null }
         if (Test-Path $versionDir) { Remove-Item -Path $versionDir -Recurse -Force }
-        Move-Item -Path $stagingDir -Destination $versionDir
+        # Retry the swap: Defender may briefly lock a freshly-extracted file.
+        Invoke-WithRetry -Label "version swap" -Action { Move-Item -Path $stagingDir -Destination $versionDir }
 
         # Repoint `current` at the new version. Delete the old junction
         # NON-recursively ([Directory]::Delete(path, $false)) so we remove only the
@@ -365,7 +427,7 @@ Possible causes:
     Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# ── Discovery file ──────────────────────────────────────────────────────────
+# -- Discovery file ----------------------------------------------------------
 # Downstream scripts read %ProgramData%\Squid\Tentacle\install-info.json to
 # locate the binary. Without this, the server-generated register/service-install
 # snippet would have to hardcode the install path -- breaking custom InstallDir.
@@ -410,7 +472,7 @@ Write-InstallInfo `
     -InfoPath $InstallInfoPath `
     -Schema $InstallInfoSchema
 
-# ── Firewall rule for Listening Tentacle ────────────────────────────────────
+# -- Firewall rule for Listening Tentacle ------------------------------------
 function Add-ListeningFirewallRule {
     param(
         [string] $RuleName,
@@ -441,7 +503,7 @@ try {
     Write-Warning "Failed to add firewall rule: $($_.Exception.Message). For Listening Tentacle, manually run: New-NetFirewallRule -DisplayName 'Squid Tentacle' -Direction Inbound -Protocol TCP -LocalPort $ListeningPort -Action Allow"
 }
 
-# ── Service install ─────────────────────────────────────────────────────────
+# -- Service install ---------------------------------------------------------
 if ($NoServiceInstall) {
     Write-Host ''
     Write-Host '-NoServiceInstall set -- skipping service install.'
@@ -463,7 +525,7 @@ if ($NoServiceInstall) {
     Write-Host ''
 }
 
-# ── Next-step hints ─────────────────────────────────────────────────────────
+# -- Next-step hints ---------------------------------------------------------
 Write-Host '=== Next steps ==='
 Write-Host ''
 Write-Host 'Register the agent with your Squid server (the install-info.json above'

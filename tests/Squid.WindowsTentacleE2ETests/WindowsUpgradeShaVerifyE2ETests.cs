@@ -17,9 +17,10 @@ namespace Squid.WindowsTentacleE2ETests;
 /// dependency, fully deterministic, runs in seconds.
 ///
 /// <para><b>Why a fixture HTTP server (not a static-file path)</b>: the
-/// production .ps1 uses <c>Invoke-WebRequest</c> via a real URL, and the
-/// behaviour we want to pin is THE NETWORK FETCH (transport-error
-/// handling, 404 fall-through, content-type tolerance). A pure file://
+/// production .ps1 fetches the companion via <c>WebClient.DownloadString</c>
+/// over a real URL, and the behaviour we want to pin is THE NETWORK FETCH
+/// (transport-error handling, 404 fall-through, content-type tolerance —
+/// including the application/octet-stream case GitHub Releases serve). A pure file://
 /// or static-file approach would bypass the HTTP layer that's the actual
 /// cross-platform contract. <c>HttpListener</c> on a random localhost
 /// port matches production traffic shape minus TLS — sufficient for the
@@ -57,11 +58,11 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
         var keyOperations = new[]
         {
             "$DOWNLOAD_URL.sha256",         // companion URL convention
-            "Invoke-WebRequest",            // PowerShell HTTP fetch
-            "-UseBasicParsing",             // no IE-engine dep on Server Core
-            "-TimeoutSec",                  // bounded fetch
+            "System.Net.WebClient",         // PS 5.1-robust fetch — Invoke-WebRequest returns .Content as byte[] for application/octet-stream companions (GitHub's default) → garbage split → false "non-hex" → silent skip
+            "DownloadString",               // companion fetched as a string regardless of Content-Type
+            "SecurityProtocolType]::Tls12", // force TLS 1.2 (PS 5.1 may negotiate 1.0/1.1, which GitHub rejects)
             "'^[0-9a-f]{64}$'",             // 64-hex validation regex
-            "[System.Security.Cryptography.SHA256]",  // direct .NET hash compute (Get-FileHash auto-loader was unreliable on some Windows runner images — see J.E.3.1 fix in upgrade-windows-tentacle.ps1)
+            "[System.Security.Cryptography.SHA256]",  // direct .NET hash compute (Get-FileHash auto-loader unreliable on some Windows runner images)
             "ComputeHash",                  // hash invocation
             "exit 7",                       // documented mismatch exit code
         };
@@ -92,7 +93,7 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
     }
 
     // ========================================================================
-    // E2E: real Invoke-WebRequest against a localhost HTTP fixture.
+    // E2E: real WebClient.DownloadString against a localhost HTTP fixture.
     // Each test gets its own HttpListener on a fresh random port so they
     // can run in parallel without cross-pollution.
     // ========================================================================
@@ -115,6 +116,35 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
             customMessage: $"fetch-and-extract script must exit 0 on valid 64-hex SHA companion. stdout:\n{stdout}");
         stdout.ShouldContain(expectedSha,
             customMessage: $"PowerShell must extract the 64-hex digest from the sha256sum-format response (got: {stdout})");
+    }
+
+    [Fact]
+    public void OpportunisticFetch_OctetStreamContentType_StillExtractsHex()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // Regression pin for the real-world SHA-skip seam: GitHub Releases serve
+        // .sha256 assets as application/octet-stream. PS 5.1's Invoke-WebRequest
+        // returns .Content as byte[] for octet-stream, so the -split produced
+        // garbage, the 64-hex regex failed, and verification was SILENTLY SKIPPED
+        // (so a corrupt download went uncaught — exactly the field-reported
+        // "returned non-hex / wrong-length content -- skipping verification").
+        // WebClient.DownloadString returns a string regardless of Content-Type,
+        // so the hex extracts correctly. This test would FAIL against the old
+        // Invoke-WebRequest implementation — it pins the fix to the real cause.
+        var archiveContent = Encoding.UTF8.GetBytes("octet-stream companion fixture");
+        var expectedSha = ComputeSha256Hex(archiveContent);
+
+        using var fixture = new ShaFixtureHttpServer();
+        fixture.Routes["/octet.zip.sha256"] = (status: 200, body: $"{expectedSha}  octet.zip\n");
+        fixture.ContentTypes["/octet.zip.sha256"] = "application/octet-stream";
+
+        var (exitCode, stdout) = RunFetchAndExtract(fixture.BaseUrl + "/octet.zip");
+
+        exitCode.ShouldBe(0,
+            customMessage: $"octet-stream SHA companion must still yield exit 0. stdout:\n{stdout}");
+        stdout.ShouldContain(expectedSha,
+            customMessage: "WebClient.DownloadString MUST extract the hex digest even when the companion is served as application/octet-stream (GitHub Releases' default). The old Invoke-WebRequest path returned byte[] here and silently skipped verification — this is the exact seam that let a corrupt 1.8.13 download through.");
     }
 
     [Fact]
@@ -178,11 +208,11 @@ public sealed class WindowsUpgradeShaVerifyE2ETests
     {
         if (!OperatingSystem.IsWindows()) return;
 
-        // Pin the timeout-handling path: -TimeoutSec 10 in the .ps1 means
-        // Invoke-WebRequest throws on >10s server delay. The catch must
-        // treat this as fall-through (NOT propagate). We test by pointing
-        // at a port nothing listens on — Invoke-WebRequest fails with
-        // connection refused, same catch path.
+        // Pin the transport-failure path: WebClient.DownloadString throws a
+        // WebException on connection failure / timeout. The catch must treat
+        // this as fall-through (NOT propagate). We test by pointing at a port
+        // nothing listens on — DownloadString fails with connection refused,
+        // same catch path the production .ps1 relies on.
         var (exitCode, stdout) = RunFetchAndExtract("http://127.0.0.1:1/squid-tentacle.zip");
 
         exitCode.ShouldBe(0,
@@ -212,17 +242,24 @@ if ([string]::IsNullOrWhiteSpace($EXPECTED_SHA256)) {{
     $shaUrl = ""$DOWNLOAD_URL.sha256""
     Write-Host ""[fetch] opportunistic fetch from $shaUrl""
     try {{
-        $shaResponse = Invoke-WebRequest -Uri $shaUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-        $fetched = ($shaResponse.Content -split '\s+', 2)[0].Trim().ToLower()
+        # WebClient.DownloadString + forced TLS 1.2 -- mirrors production
+        # upgrade-windows-tentacle.ps1. Invoke-WebRequest in PS 5.1 returns
+        # .Content as byte[] for application/octet-stream companions (GitHub's
+        # default Content-Type), which breaks the -split and yields a false
+        # non-hex result. DownloadString always returns a string.
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+        $shaClient = New-Object System.Net.WebClient
+        try {{ $shaContent = $shaClient.DownloadString($shaUrl) }} finally {{ $shaClient.Dispose() }}
+        $fetched = ($shaContent -split '\s+', 2)[0].Trim().ToLower()
         if ($fetched -match '^[0-9a-f]{{64}}$') {{
             $EXPECTED_SHA256 = $fetched
             Write-Host ""[fetch] valid SHA256: $EXPECTED_SHA256""
         }} else {{
-            Write-Host ""[fetch] non-hex / wrong length — skipping verification""
+            Write-Host ""[fetch] non-hex / wrong length -- skipping verification""
         }}
     }}
     catch {{
-        Write-Host ""[fetch] No .sha256 companion at $shaUrl — skipping verification""
+        Write-Host ""[fetch] No .sha256 companion at $shaUrl -- skipping verification""
     }}
 }}
 
@@ -310,6 +347,15 @@ exit 0
     private sealed class ShaFixtureHttpServer : IDisposable
     {
         public Dictionary<string, (int status, string body)> Routes { get; } = new();
+
+        /// <summary>
+        /// Optional per-path Content-Type override. Defaults to
+        /// "text/plain; charset=utf-8" when a path is absent. The octet-stream
+        /// regression test uses this to reproduce GitHub Releases' default
+        /// application/octet-stream Content-Type on .sha256 assets.
+        /// </summary>
+        public Dictionary<string, string> ContentTypes { get; } = new();
+
         public string BaseUrl { get; }
 
         private readonly HttpListener _listener;
@@ -343,13 +389,17 @@ exit 0
                     if (Routes.TryGetValue(path, out var route))
                     {
                         ctx.Response.StatusCode = route.status;
-                        // CRITICAL: Set Content-Type explicitly. Without it, PowerShell 5.1's
-                        // Invoke-WebRequest may auto-detect octet-stream and return .Content
-                        // as byte[] instead of string. The .ps1's `-split '\s+'` then operates
-                        // on a byte[] and produces no usable hex token → the regex fails →
-                        // "non-hex / wrong length" path executes when the test expected the
-                        // valid-SHA path. text/plain forces string interpretation.
-                        ctx.Response.ContentType = "text/plain; charset=utf-8";
+                        // Content-Type: defaults to text/plain; per-path override via
+                        // ContentTypes. Production fetches the companion with
+                        // WebClient.DownloadString, which returns a string regardless of
+                        // Content-Type, so the octet-stream regression test (mimicking
+                        // GitHub Releases' default) still extracts the hex. The OLD
+                        // Invoke-WebRequest path returned .Content as byte[] for
+                        // octet-stream, the -split produced garbage, the regex failed,
+                        // and verification was silently skipped.
+                        ctx.Response.ContentType = ContentTypes.TryGetValue(path, out var contentType)
+                            ? contentType
+                            : "text/plain; charset=utf-8";
                         var bytes = Encoding.UTF8.GetBytes(route.body);
                         ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
                     }
