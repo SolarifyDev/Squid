@@ -47,7 +47,7 @@ public sealed class TentacleLinuxRegisterE2ETests
     //     --api-key API-XXXXXXXX \
     //     --role web-server \
     //     --environment Production \
-    //     --flavor LinuxTentacle
+    //     --flavor Tentacle
     //
     // The binary's RegisterCommand:
     //   1. Reads --server / --api-key / --role / --environment from args
@@ -100,7 +100,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-STUB-1234567890",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
 
         exitCode.ShouldBe(0,
             customMessage: $"register MUST exit 0 against the stub server. Got exit {exitCode}. " +
@@ -238,7 +238,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-INVALID-KEY",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
 
         exitCode.ShouldNotBe(0,
             customMessage: $"register MUST exit non-zero on 401. Got exit {exitCode}. " +
@@ -319,7 +319,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-STUB-1234567890",
             "--role", "web-server",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
 
         exitCode.ShouldNotBe(0,
             customMessage: $"register MUST exit non-zero on non-JSON response body. Got exit {exitCode}. " +
@@ -353,10 +353,10 @@ public sealed class TentacleLinuxRegisterE2ETests
     //     --api-key API-XXXX \
     //     --role web-server \
     //     --environment Production \
-    //     --flavor LinuxTentacle
+    //     --flavor Tentacle
     //
     // Key differences from C1.h Listening:
-    //   - --comms-url present → LinuxTentacleFlavor.ResolveCommunicationMode
+    //   - --comms-url present → TentacleFlavor.ResolveCommunicationMode
     //     returns Polling (line 50-54)
     //   - Different registrar: TentaclePollingRegistrar wraps
     //     TentacleRegistrationClient (vs Listening's bespoke HTTP code)
@@ -403,7 +403,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-STUB-POLLING-1234",
             "--role", "polling-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
 
         exitCode.ShouldBe(0,
             customMessage: $"polling register MUST exit 0. Got exit {exitCode}. " +
@@ -481,7 +481,7 @@ public sealed class TentacleLinuxRegisterE2ETests
     // This pins the CURRENT production behavior — discovered via test
     // iteration:
     //
-    //   LinuxTentacleFlavor.ResolveRegistrar (line ~74) returns
+    //   TentacleFlavor.ResolveRegistrar (line ~74) returns
     //   NoOpRegistrar when settings.Registered == "true", which is set
     //   by the FIRST register's PersistInstanceConfig. Therefore a
     //   subsequent `register` call:
@@ -492,7 +492,7 @@ public sealed class TentacleLinuxRegisterE2ETests
     //       happen to differ from the persisted ones)
     //     - Exits 0
     //
-    // Production rationale (from LinuxTentacleFlavor doc-comment):
+    // Production rationale (from TentacleFlavor doc-comment):
     // "The flag Tentacle:Registered=true is set by the register command
     //  after a successful registration ... This is the only reliable
     //  indicator that the Server already knows about this Tentacle." The
@@ -549,7 +549,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-C3-FIRST-RUN",
             "--role", "first-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", "51950");
 
         firstExit.ShouldBe(0,
@@ -584,7 +584,7 @@ public sealed class TentacleLinuxRegisterE2ETests
             "--api-key", "API-C3-SECOND-RUN",
             "--role", "first-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", "51950");
 
         secondExit.ShouldBe(0,
@@ -595,7 +595,7 @@ public sealed class TentacleLinuxRegisterE2ETests
                           $"\noutput:\n{secondOutput}");
 
         // ── Assertion (THE PIN): stub receives EXACTLY 1 call ─────────────
-        // Production behavior: LinuxTentacleFlavor.ResolveRegistrar returns
+        // Production behavior: TentacleFlavor.ResolveRegistrar returns
         // NoOpRegistrar when settings.Registered == "true". The second
         // register call hits NoOpRegistrar.RegisterAsync which logs but
         // does no HTTP. So the stub still has only 1 received call.
@@ -608,7 +608,7 @@ public sealed class TentacleLinuxRegisterE2ETests
         // precondition assertion above would already have caught this).
         ctx.Stub.ReceivedRegistrations.Count.ShouldBe(1,
             customMessage: $"stub MUST have received EXACTLY 1 register call after BOTH register invocations — the " +
-                          $"second hits NoOpRegistrar (settings.Registered=true skip in LinuxTentacleFlavor.ResolveRegistrar). " +
+                          $"second hits NoOpRegistrar (settings.Registered=true skip in TentacleFlavor.ResolveRegistrar). " +
                           $"Got {ctx.Stub.ReceivedRegistrations.Count}. " +
                           $"If 2: skip path was removed without updating this test (or a --force flag was added). " +
                           $"\n\n=== first register output ===\n{firstOutput}" +

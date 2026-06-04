@@ -90,7 +90,7 @@ public class TentacleSettings
 
     /// <summary>
     /// Explicit flag set to <c>"true"</c> by the <c>register</c> command after a
-    /// successful registration. Used by <see cref="LinuxTentacleFlavor.ResolveRegistrar"/>
+    /// successful registration. Used by <see cref="TentacleFlavor.ResolveRegistrar"/>
     /// to distinguish "already registered → skip" from "user supplied ServerCertificate
     /// for TLS pinning but hasn't registered yet" (Docker first-run scenario).
     ///

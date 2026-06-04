@@ -127,7 +127,7 @@ public sealed class TentacleLinuxLongSoakE2ETests
             "--api-key", "API-R6H-LONGSOAK-1234",
             "--role", "r6h-soak-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
         regExit.ShouldBe(0, $"R6h precondition: register MUST succeed.\noutput:\n{regOutput}");
 
         var registration = ctx.Stub.ReceivedRegistrations.Single();

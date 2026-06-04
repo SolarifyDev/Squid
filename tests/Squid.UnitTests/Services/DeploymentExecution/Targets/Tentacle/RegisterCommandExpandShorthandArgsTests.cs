@@ -145,14 +145,14 @@ public class RegisterCommandExpandShorthandArgsTests
             "--role", "web-server",
             "--role", "db-replica",
             "--environment", "production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
         };
 
         var expanded = RegisterCommand.ExpandShorthandArgs(input);
 
         expanded.ShouldContain("--Tentacle:ServerUrl=https://test.example");
         expanded.ShouldContain("--Tentacle:ApiKey=API-key-1");
-        expanded.ShouldContain("--Tentacle:Flavor=LinuxTentacle");
+        expanded.ShouldContain("--Tentacle:Flavor=Tentacle");
         expanded.ShouldContain("--Tentacle:Roles=web-server,db-replica");
         expanded.ShouldContain("--Tentacle:Environments=production");
     }

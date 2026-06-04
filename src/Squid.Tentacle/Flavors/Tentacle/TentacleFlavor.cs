@@ -1,26 +1,35 @@
 using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
-using Squid.Tentacle.Flavors.LinuxTentacle.Configuration;
+using Squid.Tentacle.Flavors.Tentacle.Configuration;
 using Squid.Tentacle.ScriptExecution;
 using Serilog;
 
-namespace Squid.Tentacle.Flavors.LinuxTentacle;
+namespace Squid.Tentacle.Flavors.Tentacle;
 
-public sealed class LinuxTentacleFlavor : ITentacleFlavor
+public sealed class TentacleFlavor : ITentacleFlavor
 {
-    public string Id => "LinuxTentacle";
+    public string Id => "Tentacle";
+
+    // "LinuxTentacle" was the original id — kept as an alias so already-deployed agents
+    // (Linux AND Windows: this flavor is cross-platform) and old install snippets that pass
+    // --flavor LinuxTentacle keep resolving. New snippets emit --flavor Tentacle.
+    public IReadOnlyCollection<string> Aliases => new[] { "LinuxTentacle" };
 
     public TentacleFlavorRuntime CreateRuntime(TentacleFlavorContext context)
     {
         var tentacleSettings = context.TentacleSettings;
 
-        var settings = new LinuxTentacleSettings();
+        var settings = new TentacleFlavorSettings();
+        // Read the legacy "LinuxTentacle" section first, then the neutral "TentacleFlavor"
+        // section (a distinct section name so it never collides with the general "Tentacle"
+        // settings). If both are present, the neutral section wins.
         context.Configuration.GetSection("LinuxTentacle").Bind(settings);
+        context.Configuration.GetSection("TentacleFlavor").Bind(settings);
 
         var communicationMode = ResolveCommunicationMode(tentacleSettings);
 
-        Log.Information("LinuxTentacle starting in {Mode} mode", communicationMode);
+        Log.Information("Tentacle ({Os}) starting in {Mode} mode", System.Environment.OSVersion.Platform, communicationMode);
 
         var registrar = ResolveRegistrar(communicationMode, tentacleSettings, context.ForceRegistration);
 
@@ -98,7 +107,7 @@ public sealed class LinuxTentacleFlavor : ITentacleFlavor
             && string.IsNullOrWhiteSpace(settings.BearerToken))
         {
             Log.Warning("Listening mode without credentials — machine must be added via the UI or by running " +
-                "'squid-tentacle register --server URL --api-key KEY --flavor LinuxTentacle' first");
+                "'squid-tentacle register --server URL --api-key KEY --flavor Tentacle' first");
             return new NoOpRegistrar(settings);
         }
 

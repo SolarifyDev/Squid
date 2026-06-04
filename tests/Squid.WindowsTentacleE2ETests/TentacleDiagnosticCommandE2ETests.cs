@@ -256,7 +256,7 @@ public sealed class TentacleDiagnosticCommandE2ETests
         // ── Mode-detection pin (regex \s+ for spacing resilience) ─────────
         Regex.IsMatch(showOutput, @"Detected Mode:\s+Listening").ShouldBeTrue(
             customMessage: "show-config MUST report 'Detected Mode:' followed by 'Listening' when no --comms-url passed. " +
-                          "If 'Polling' instead: mode-detection regressed (LinuxTentacleFlavor.ResolveCommunicationMode logic broke). " +
+                          "If 'Polling' instead: mode-detection regressed (TentacleFlavor.ResolveCommunicationMode logic broke). " +
                           $"\noutput:\n{showOutput}");
 
         // ── Reverse-pin: cert-error fallback MUST NOT fire ────────────────

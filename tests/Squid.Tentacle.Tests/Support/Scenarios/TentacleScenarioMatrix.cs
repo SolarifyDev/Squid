@@ -12,14 +12,14 @@ public static class TentacleScenarioMatrix
             Communication: TentacleCommunicationKind.HalibutPolling);
 
         yield return new TentacleScenarioCase(
-            Name: "LinuxTentacle.LocalProcess.HalibutPolling",
-            FlavorId: "LinuxTentacle",
+            Name: "Tentacle.LocalProcess.HalibutPolling",
+            FlavorId: "Tentacle",
             ExecutionBackend: TentacleExecutionBackendKind.LocalProcess,
             Communication: TentacleCommunicationKind.HalibutPolling);
 
         yield return new TentacleScenarioCase(
-            Name: "LinuxTentacle.LocalProcess.HalibutListening",
-            FlavorId: "LinuxTentacle",
+            Name: "Tentacle.LocalProcess.HalibutListening",
+            FlavorId: "Tentacle",
             ExecutionBackend: TentacleExecutionBackendKind.LocalProcess,
             Communication: TentacleCommunicationKind.HalibutListening);
     }

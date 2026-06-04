@@ -41,11 +41,40 @@ public class TentacleFlavorResolverTests
         ex.Message.ShouldContain("Linux");
     }
 
+    [Fact]
+    public void Resolve_LegacyAliasId_ReturnsSameFlavorAsPrimaryId()
+    {
+        // A renamed flavor (primary id "Tentacle") must keep resolving under its legacy alias
+        // ("LinuxTentacle") so already-deployed agents / old install snippets don't break.
+        var tentacle = new TestFlavor("Tentacle", "LinuxTentacle");
+        var resolver = new TentacleFlavorResolver(new ITentacleFlavor[] { tentacle, new TestFlavor("KubernetesAgent") });
+
+        resolver.Resolve("Tentacle").ShouldBeSameAs(tentacle);
+        resolver.Resolve("LinuxTentacle").ShouldBeSameAs(tentacle);
+        resolver.Resolve("linuxtentacle").ShouldBeSameAs(tentacle);  // case-insensitive
+    }
+
+    [Fact]
+    public void Resolve_RealTentacleFlavor_ResolvesUnderNewIdAndLegacyAlias()
+    {
+        // Pins the production flavor's rename: "Tentacle" is canonical, "LinuxTentacle" the alias.
+        var resolver = new TentacleFlavorResolver(new ITentacleFlavor[] { new Squid.Tentacle.Flavors.Tentacle.TentacleFlavor() });
+
+        resolver.Resolve("Tentacle").ShouldBeOfType<Squid.Tentacle.Flavors.Tentacle.TentacleFlavor>();
+        resolver.Resolve("LinuxTentacle").ShouldBeOfType<Squid.Tentacle.Flavors.Tentacle.TentacleFlavor>();
+    }
+
     private sealed class TestFlavor : ITentacleFlavor
     {
-        public TestFlavor(string id) => Id = id;
+        public TestFlavor(string id, params string[] aliases)
+        {
+            Id = id;
+            Aliases = aliases;
+        }
 
         public string Id { get; }
+
+        public IReadOnlyCollection<string> Aliases { get; }
 
         public TentacleFlavorRuntime CreateRuntime(TentacleFlavorContext context)
         {

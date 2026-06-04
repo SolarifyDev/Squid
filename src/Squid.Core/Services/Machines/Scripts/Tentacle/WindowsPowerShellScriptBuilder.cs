@@ -35,11 +35,10 @@ namespace Squid.Core.Services.Machines.Scripts.Tentacle;
 /// path-separator typo and the register call would fail with cryptic
 /// argv-parse errors.</para>
 ///
-/// <para><b>Flavor selection</b>: emits <c>--flavor LinuxTentacle</c>
-/// matching what <c>install-tentacle.sh</c> uses today. The shipped
-/// <c>Squid.Tentacle.exe</c> binary supports the LinuxTentacle flavor's
-/// registration mechanics on Windows; a dedicated WindowsTentacleFlavor is
-/// a future concern.</para>
+/// <para><b>Flavor selection</b>: emits <c>--flavor Tentacle</c> — the OS-neutral
+/// flavor used by both Windows and Linux (its registration mechanics are
+/// cross-platform). The legacy id <c>LinuxTentacle</c> still resolves via the
+/// flavor's alias, so older agents and snippets keep working.</para>
 /// </summary>
 public sealed class WindowsPowerShellScriptBuilder : TentacleInstallScriptBuilderBase
 {
@@ -141,7 +140,7 @@ public sealed class WindowsPowerShellScriptBuilder : TentacleInstallScriptBuilde
             "& $tentacle register",
             $"--server \"{command.ServerUrl}\"",
             $"--api-key \"{context.ApiKey}\"",
-            "--flavor LinuxTentacle"
+            "--flavor Tentacle"
         };
 
         if (!string.IsNullOrWhiteSpace(context.RolesCsv))

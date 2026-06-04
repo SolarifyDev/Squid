@@ -1,6 +1,6 @@
-namespace Squid.Tentacle.Flavors.LinuxTentacle.Configuration;
+namespace Squid.Tentacle.Flavors.Tentacle.Configuration;
 
-public class LinuxTentacleSettings
+public class TentacleFlavorSettings
 {
     public string WorkspacePath { get; set; } = "/opt/squid/work";
     public int ListeningPort { get; set; } = 10933;

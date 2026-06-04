@@ -31,10 +31,10 @@ public sealed record TentacleScenarioCase(
             Flavor = FlavorId
         };
 
-        if (Communication == TentacleCommunicationKind.HalibutPolling && FlavorId == "LinuxTentacle")
+        if (Communication == TentacleCommunicationKind.HalibutPolling && FlavorId == "Tentacle")
             tentacleSettings.ServerCommsUrl = "https://localhost:10943";
 
-        if (Communication == TentacleCommunicationKind.HalibutListening && FlavorId == "LinuxTentacle")
+        if (Communication == TentacleCommunicationKind.HalibutListening && FlavorId == "Tentacle")
             tentacleSettings.ServerCertificate = "E2E_PLACEHOLDER_THUMBPRINT";
 
         var useScriptPods = ExecutionBackend == TentacleExecutionBackendKind.KubernetesScriptPod;
@@ -42,8 +42,8 @@ public sealed record TentacleScenarioCase(
         var configData = new Dictionary<string, string>
         {
             ["Kubernetes:UseScriptPods"] = useScriptPods.ToString(),
-            ["LinuxTentacle:WorkspacePath"] = "/opt/squid/work",
-            ["LinuxTentacle:ListeningPort"] = "10933"
+            ["TentacleFlavor:WorkspacePath"] = "/opt/squid/work",
+            ["TentacleFlavor:ListeningPort"] = "10933"
         };
 
         var configuration = new ConfigurationBuilder()

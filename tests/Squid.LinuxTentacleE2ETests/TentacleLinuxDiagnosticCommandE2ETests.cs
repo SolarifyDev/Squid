@@ -99,7 +99,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             "--name", ctx.MachineName,
             "--role", "diagnostic-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(CultureInfo.InvariantCulture));
 
         regExit.ShouldBe(0,
@@ -341,7 +341,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             "--name", ctx.MachineName,
             "--role", role,
             "--environment", environment,
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", listeningPort.ToString(CultureInfo.InvariantCulture));
 
         regExit.ShouldBe(0,
@@ -401,7 +401,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
         System.Text.RegularExpressions.Regex.IsMatch(showOutput, @"Detected Mode:\s+Listening")
             .ShouldBeTrue(
                 customMessage: "show-config MUST report 'Detected Mode:' followed by 'Listening' when no --comms-url was passed. " +
-                              "If 'Polling' instead: mode-detection regressed (LinuxTentacleFlavor.ResolveCommunicationMode logic broke). " +
+                              "If 'Polling' instead: mode-detection regressed (TentacleFlavor.ResolveCommunicationMode logic broke). " +
                               $"\noutput:\n{showOutput}");
 
         // Reverse-pin: the cert-error fallback path MUST NOT fire on the
@@ -503,7 +503,7 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             "--name", ctx.MachineName,
             "--role", "d4-role",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle",
+            "--flavor", "Tentacle",
             "--listening-port", ctx.ListeningPort.ToString(CultureInfo.InvariantCulture));
         regExit.ShouldBe(0,
             customMessage: $"D4h precondition: register MUST succeed (sets up CertsPath that new-certificate reads).\noutput:\n{regOutput}");

@@ -153,7 +153,7 @@ fi
 echo ""
 echo "[4/6] Registering tentacle to server..."
 docker exec \
-  -e Tentacle__Flavor=LinuxTentacle \
+  -e Tentacle__Flavor=Tentacle \
   -e Tentacle__SpaceId="$SQUID_SPACE_ID" \
   -e Tentacle__ServerCertificate="$SQUID_SERVER_THUMBPRINT" \
   -e Tentacle__MachineName="$MACHINE_NAME" \

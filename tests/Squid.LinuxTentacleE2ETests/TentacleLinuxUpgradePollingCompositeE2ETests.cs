@@ -113,7 +113,7 @@ public sealed class TentacleLinuxUpgradePollingCompositeE2ETests
             "--api-key", "API-R5H-1234",
             "--role", "r5h-upgrade-polling-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
         regExit.ShouldBe(0,
             customMessage: $"R5h precondition: register MUST succeed using per-test v1 binary.\noutput:\n{regOutput}");
 

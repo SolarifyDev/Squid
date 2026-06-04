@@ -96,7 +96,7 @@ public sealed class TentacleLinuxServerRestartReconnectE2ETests
             "--api-key", "API-P0-2-RECONNECT-1234",
             "--role", "p0-reconnect-agent",
             "--environment", "Production",
-            "--flavor", "LinuxTentacle");
+            "--flavor", "Tentacle");
         regExit.ShouldBe(0, $"register MUST exit 0.\noutput:\n{regOutput}");
 
         var registration = ctx.Stub.ReceivedRegistrations.Single();
