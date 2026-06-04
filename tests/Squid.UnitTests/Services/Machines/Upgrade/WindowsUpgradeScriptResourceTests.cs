@@ -400,14 +400,19 @@ public sealed class WindowsUpgradeScriptResourceTests
     }
 
     [Fact]
-    public void Resource_DownloadSizeSanityCheck_RejectsTruncatedArchive()
+    public void Resource_DownloadValidatedAsZip_RejectsNonZipContent()
     {
-        // A 0-byte / truncated download (proxy error page returned with HTTP 200,
-        // disk full mid-write) must fail with a clear message here, not an opaque
-        // "central directory" error at extraction time.
+        // A non-zip download (proxy error page returned with HTTP 200, an HTML 404,
+        // a 0-byte / truncated write) must fail with a clear message here, not an
+        // opaque "central directory" error at extraction time. The check validates
+        // the PK magic bytes (0x50 0x4B) rather than a size floor — a valid zip of
+        // ANY size passes (a fixed floor would wrongly reject small archives, and
+        // would miss large HTML error pages).
         var content = LoadResource();
 
-        content.ShouldMatch(@"\$archiveSize\s*-lt\s*\d+",
-            customMessage: "must sanity-check the downloaded archive size and reject a clearly-too-small file before extraction");
+        content.ShouldContain("0x50",
+            customMessage: "must validate the download starts with the zip 'PK' magic byte 0x50");
+        content.ShouldContain("0x4B",
+            customMessage: "must validate the download's second byte is the zip 'PK' magic byte 0x4B — rejects HTML/JSON error pages and truncated downloads of any size");
     }
 }

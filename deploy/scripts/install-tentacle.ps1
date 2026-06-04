@@ -325,11 +325,15 @@ try {
                 try { $wc.DownloadFile($url, $archivePath) } finally { $wc.Dispose() }
             }
 
-            # Reject a 0-byte / truncated file (error page returned with HTTP 200) so it
-            # fails here with a clear message instead of an opaque extraction error.
+            # Validate the download is actually a zip via its PK magic bytes (0x50 0x4B)
+            # so an error page returned with HTTP 200 / a truncated write fails here with
+            # a clear message instead of an opaque extraction error. Any valid zip passes
+            # regardless of size (a fixed size floor would wrongly reject small archives).
             $archiveSize = (Get-Item $archivePath).Length
-            if ($archiveSize -lt 1024) {
-                throw "Downloaded archive is only $archiveSize byte(s) -- expected a multi-MB zip (likely an error page returned with HTTP 200)."
+            $zipStream = [System.IO.File]::OpenRead($archivePath)
+            try { $zipB0 = $zipStream.ReadByte(); $zipB1 = $zipStream.ReadByte() } finally { $zipStream.Dispose() }
+            if ($zipB0 -ne 0x50 -or $zipB1 -ne 0x4B) {
+                throw "Downloaded file is not a zip archive (missing PK header, $archiveSize bytes) -- likely an error page returned with HTTP 200, or a truncated download."
             }
 
             $downloaded = $true

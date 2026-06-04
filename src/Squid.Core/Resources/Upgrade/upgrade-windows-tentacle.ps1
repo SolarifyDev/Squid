@@ -579,14 +579,19 @@ try {
                     try { $downloadClient.DownloadFile($DOWNLOAD_URL, $archivePath) } finally { $downloadClient.Dispose() }
                 }
 
-                # Sanity-check the size: a 0-byte / truncated file (proxy error page
-                # returned with HTTP 200, disk full mid-write) would otherwise fail later
-                # at extraction with an opaque "central directory" error. Catch it here.
+                # Validate the download is actually a zip via its PK magic bytes
+                # (0x50 0x4B). A proxy error page returned with HTTP 200, a truncated /
+                # 0-byte write, or an HTML 404 would otherwise fail later at extraction
+                # with an opaque "central directory" error. A valid zip of ANY size
+                # passes (a fixed size floor would wrongly reject small archives);
+                # non-zip content (HTML '<', JSON '{', empty) is rejected here clearly.
                 $archiveSize = (Get-Item $archivePath).Length
-                if ($archiveSize -lt 1024) {
-                    throw "Downloaded archive is only $archiveSize byte(s) -- expected a multi-MB zip. The server likely returned an error page with HTTP 200, or the write was truncated."
+                $zipStream = [System.IO.File]::OpenRead($archivePath)
+                try { $zipB0 = $zipStream.ReadByte(); $zipB1 = $zipStream.ReadByte() } finally { $zipStream.Dispose() }
+                if ($zipB0 -ne 0x50 -or $zipB1 -ne 0x4B) {
+                    throw "Downloaded file is not a zip archive (missing PK header, $archiveSize bytes) -- the server likely returned an error page with HTTP 200, or the download was truncated."
                 }
-                Append-UpgradeLog "[upgrade-method:zip] Downloaded $archiveSize bytes"
+                Append-UpgradeLog "[upgrade-method:zip] Downloaded $archiveSize bytes (valid zip header)"
             }
             catch {
                 Append-UpgradeLog "[upgrade-method:zip] Download failed: $($_.Exception.Message)"
