@@ -306,6 +306,17 @@ public sealed class LocalReleaseMirror : IDisposable
             _receivedRequests.Add(path);
         }
 
+        // Real GitHub returns 404 for an asset whose name still carries an UNEXPANDED token
+        // — a script that failed to resolve $RID, or a {{PLACEHOLDER}} the server forgot to
+        // substitute. A permissive "serve any archive" mirror masks that class of bug; mirror
+        // the real contract so an unresolved-token path does not exist.
+        if (ContainsUnresolvedToken(path))
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.OutputStream.Close();
+            return;
+        }
+
         // 404 if the path mentions any of the configured "not found" versions
         // OR matches any of the path-substring "not found" entries. Versions
         // are coarse (substring of any URL); paths are surgical (used to 404
@@ -345,6 +356,15 @@ public sealed class LocalReleaseMirror : IDisposable
         ctx.Response.StatusCode = 404;
         ctx.Response.OutputStream.Close();
     }
+
+    // A well-formed release asset path never contains a server placeholder or an unexpanded
+    // shell/PowerShell variable. If one is present the agent failed to resolve it, and real
+    // GitHub would 404 — so we do too, instead of papering over it by serving any archive.
+    private static bool ContainsUnresolvedToken(string path) =>
+        path.Contains("$RID", StringComparison.Ordinal) ||
+        path.Contains("$TARGET_VERSION", StringComparison.Ordinal) ||
+        path.Contains("{{", StringComparison.Ordinal) ||
+        path.Contains("{RID}", StringComparison.Ordinal);
 
     /// <summary>
     /// Serves the SHA256 companion for the underlying archive. Production

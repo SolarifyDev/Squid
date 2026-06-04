@@ -309,6 +309,59 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
             customMessage: "The $RID rewrite MUST happen before Invoke-WebRequest consumes $DOWNLOAD_URL.");
     }
 
+    [Theory]
+    [InlineData("win-x64")]
+    [InlineData("win-arm64")]
+    public void RenderInnerScript_AgentResolvedDownloadUrl_EqualsBuilderForEachArch(string rid)
+    {
+        // Closes the gap that let the 404 ship: BuildDownloadUrl_DefaultsToGitHubReleasesZipPath
+        // passed a CONCRETE rid and proved the builder — but the real dispatch path embeds
+        // BuildDownloadUrl(version,"{RID}") → "$RID" into a single-quoted line and defers
+        // resolution to the agent, which the isolated test never exercised. Reproduce the
+        // agent's resolution from the rendered script and pin it to the canonical builder URL
+        // for EVERY supported arch. Fails if the rewrite is missing (URL keeps $RID ≠ builder)
+        // or if the embedded URL/extension/version ever diverges from the builder.
+        const string version = "1.6.0";
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript(version, WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        System.Text.RegularExpressions.Regex.IsMatch(inner, @"\$DOWNLOAD_URL\s*=\s*\$DOWNLOAD_URL\.Replace\('\$RID',\s*\$RID\)")
+            .ShouldBeTrue(customMessage: "the script must rewrite the literal $RID token — a single-quoted assignment never expands it.");
+
+        var embeddedLiteral = ExtractDownloadUrlLiteral(inner);
+        var agentResolved = embeddedLiteral.Replace("$RID", rid, StringComparison.Ordinal);
+
+        agentResolved.ShouldBe(WindowsTentacleUpgradeStrategy.BuildDownloadUrl(version, rid),
+            customMessage: $"agent-resolved download URL for {rid} diverged from BuildDownloadUrl — " +
+                           "the dispatched script and the builder must produce the same URL.");
+        agentResolved.ShouldNotContain("$RID", customMessage: "resolved URL still carries a literal $RID token.");
+        agentResolved.ShouldNotContain("{RID}", customMessage: "resolved URL still carries a {RID} placeholder.");
+    }
+
+    [Fact]
+    public void RenderInnerScript_NoUnsubstitutedServerPlaceholdersRemain()
+    {
+        // Any {{PLACEHOLDER}} left in the dispatched script is a substitution the strategy forgot
+        // to fill; it reaches the agent verbatim and breaks at runtime (the $RID bug's cousin).
+        // One invariant guards the entire server-side placeholder surface, not just the ones with
+        // bespoke tests.
+        var inner = WindowsTentacleUpgradeStrategy.RenderInnerScript("1.6.0", WindowsTentacleUpgradeStrategy.DefaultMethodOrder);
+
+        System.Text.RegularExpressions.Regex.Matches(inner, @"\{\{[A-Z0-9_]+\}\}").Count
+            .ShouldBe(0, customMessage: "an unsubstituted {{PLACEHOLDER}} survived into the dispatched script.");
+    }
+
+    // The URL the server embedded in `$DOWNLOAD_URL = '<url>'` (single-quoted → PowerShell stores
+    // it verbatim). The rewrite line below it carries no single-quoted URL, so the first match is
+    // the assignment.
+    private static string ExtractDownloadUrlLiteral(string renderedScript)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(renderedScript, @"\$DOWNLOAD_URL\s*=\s*'([^']*)'");
+
+        match.Success.ShouldBeTrue(customMessage: "could not find the $DOWNLOAD_URL single-quoted assignment in the rendered script.");
+
+        return match.Groups[1].Value;
+    }
+
     // ── J.E.7: HealthcheckFatalEnvVar pins ──────────────────────────────────
 
     [Fact]
