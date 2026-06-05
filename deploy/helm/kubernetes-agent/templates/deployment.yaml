@@ -86,6 +86,12 @@ spec:
           value: {{ join "," .Values.tentacle.roles | quote }}
         - name: Tentacle__Flavor
           value: "{{ .Values.tentacle.flavor }}"
+        # Bind the health-check server to all interfaces so kubelet's httpGet
+        # liveness/readiness probes reach it over the pod network. Service-based
+        # tentacles default to loopback (avoids a Windows Firewall prompt), so the
+        # Kubernetes agent must opt back in here.
+        - name: Tentacle__HealthCheckBindHost
+          value: "{{ .Values.tentacle.healthCheckBindHost | default "+" }}"
         - name: Tentacle__MachineName
           value: "{{ .Values.tentacle.machineName }}"
         - name: Tentacle__ReleaseName

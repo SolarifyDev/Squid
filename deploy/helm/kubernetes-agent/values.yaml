@@ -28,6 +28,10 @@ tentacle:
       cpu: "500m"
 
   healthCheckPort: 8080
+  # Host the in-pod health-check server binds. "+" = all interfaces so kubelet's
+  # httpGet liveness/readiness probes can reach it. (The tentacle binary defaults
+  # to loopback for service installs to avoid a Windows Firewall prompt.)
+  healthCheckBindHost: "+"
 
   startupProbe:
     failureThreshold: 100

@@ -10,11 +10,18 @@ public class HealthCheckServer : IHealthCheckServer
     private CancellationTokenSource _cts;
     private Task _listenTask;
 
-    public HealthCheckServer(int port, Func<bool> readinessCheck)
+    public HealthCheckServer(int port, Func<bool> readinessCheck, string? bindHost = null)
     {
         _readinessCheck = readinessCheck;
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://*:{port}/");
+        // Default: loopback on Windows (firewall-exempt -- the only Windows consumer,
+        // the upgrade script, probes 127.0.0.1), all interfaces elsewhere (Linux /
+        // docker localhost probes + kubelet httpGet over the pod network). Mirrors
+        // TentacleSettings.HealthCheckBindHost; the Kubernetes agent passes "+".
+        var host = string.IsNullOrWhiteSpace(bindHost)
+            ? (OperatingSystem.IsWindows() ? "127.0.0.1" : "*")
+            : bindHost;
+        _listener.Prefixes.Add($"http://{host}:{port}/");
     }
 
     public void Start()
@@ -29,7 +36,10 @@ public class HealthCheckServer : IHealthCheckServer
     private int GetPort()
     {
         var prefix = _listener.Prefixes.FirstOrDefault() ?? "";
-        var uri = new Uri(prefix.Replace("*", "localhost"));
+        // "*"/"+" are valid HttpListener wildcard hosts but not valid URI hosts,
+        // so normalise them to a parseable host before extracting the port.
+        var parseable = prefix.Replace("://*:", "://localhost:").Replace("://+:", "://localhost:");
+        var uri = new Uri(parseable);
         return uri.Port;
     }
 

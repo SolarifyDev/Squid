@@ -100,7 +100,7 @@ public sealed class TentacleApp
             return true;
         };
 
-        await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, readinessCheck);
+        await using var healthServer = _dependencies.HealthCheckServerFactory(tentacleSettings.HealthCheckPort, tentacleSettings.HealthCheckBindHost, readinessCheck);
 
         try
         {
@@ -213,8 +213,8 @@ public sealed class TentacleAppDependencies
     public Func<X509Certificate2, Squid.Message.Contracts.Tentacle.IScriptService, TentacleSettings, Squid.Message.Contracts.Tentacle.ICapabilitiesService, ITentacleHalibutHost> HalibutHostFactory { get; init; } =
         (cert, scriptService, settings, capabilitiesService) => new TentacleHalibutHost(cert, scriptService, settings, capabilitiesService);
 
-    public Func<int, Func<bool>, IHealthCheckServer> HealthCheckServerFactory { get; init; } =
-        (port, readiness) => new HealthCheckServer(port, readiness);
+    public Func<int, string, Func<bool>, IHealthCheckServer> HealthCheckServerFactory { get; init; } =
+        (port, bindHost, readiness) => new HealthCheckServer(port, readiness, bindHost);
 
     public static TentacleAppDependencies CreateDefault() => new();
 }

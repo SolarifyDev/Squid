@@ -44,7 +44,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -93,7 +93,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -130,7 +130,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -163,7 +163,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -206,7 +206,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
@@ -242,7 +242,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (port, readiness) =>
+            HealthCheckServerFactory = (port, _, readiness) =>
             {
                 capturedReadiness = readiness;
                 return healthServer;
@@ -284,7 +284,7 @@ public class TentacleAppTests : TimedTestBase
             BuiltInFlavorsProvider = () => [flavor],
             FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
             HalibutHostFactory = (_, _, _, _) => halibutHost,
-            HealthCheckServerFactory = (_, _) => healthServer
+            HealthCheckServerFactory = (_, _, _) => healthServer
         });
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
