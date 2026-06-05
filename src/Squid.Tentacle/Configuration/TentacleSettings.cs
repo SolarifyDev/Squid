@@ -38,6 +38,16 @@ public class TentacleSettings
     public string WorkspacePath { get; set; } = string.Empty;
     public string CertsPath { get; set; } = string.Empty;
     public int HealthCheckPort { get; set; } = 8080;
+
+    // Host the local health-check HTTP server binds. On Windows it defaults to the
+    // loopback address so the listener is NOT network-exposed -- binding all
+    // interfaces pops a Defender Firewall "allow access" prompt on every
+    // versioned-path upgrade, and the only Windows consumer of healthz is the
+    // upgrade script (which probes 127.0.0.1). On non-Windows it keeps "*" (all
+    // interfaces) so Linux/docker localhost probes and the Kubernetes agent's
+    // kubelet httpGet liveness/readiness probes (over the pod network) still work.
+    public string HealthCheckBindHost { get; set; } = OperatingSystem.IsWindows() ? "127.0.0.1" : "*";
+
     public int ListeningPort { get; set; } = 10933;
     public string ListeningHostName { get; set; } = string.Empty;
 

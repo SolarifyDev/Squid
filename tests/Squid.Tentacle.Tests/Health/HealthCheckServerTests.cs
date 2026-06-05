@@ -27,6 +27,36 @@ public class HealthCheckServerTests : TimedTestBase
     }
 
     [Fact]
+    public void HealthCheckBindHost_DefaultsToLoopbackOnWindows_AllInterfacesElsewhere()
+    {
+        // Windows default = loopback so the healthz listener isn't network-exposed
+        // and doesn't pop a Defender Firewall prompt on each versioned-path upgrade
+        // (the only Windows consumer, the upgrade script, probes 127.0.0.1).
+        // Non-Windows keeps "*" so Linux/docker localhost probes + kubelet httpGet
+        // (over the pod network) still reach it.
+        var settings = new Squid.Tentacle.Configuration.TentacleSettings();
+
+        if (OperatingSystem.IsWindows())
+            settings.HealthCheckBindHost.ShouldBe("127.0.0.1");
+        else
+            settings.HealthCheckBindHost.ShouldBe("*");
+    }
+
+    [Fact]
+    public async Task ExplicitLoopbackBindHost_IsReachableViaIpv4Loopback()
+    {
+        // The firewall-fix path: an explicit loopback bind still serves the upgrade
+        // script's 127.0.0.1 health probe.
+        var port = TcpPortAllocator.GetEphemeralPort();
+        await using var server = new HealthCheckServer(port, () => true, "127.0.0.1");
+        server.Start();
+
+        using var client = new HttpClient();
+        var result = await GetAsync(client, port, "/healthz");
+        result.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task Readiness_Endpoints_Reflect_Callback_State()
     {
         var ready = false;
