@@ -69,6 +69,12 @@
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Force English/invariant .NET messages so exception text is plain ASCII in the
+# web log on non-Latin OS locales. On a Chinese-Windows host a DNS failure
+# otherwise surfaces as localized (non-Latin) text that the web log renders as
+# mojibake. Best-effort -- never let a culture set fail the run.
+try { [System.Threading.Thread]::CurrentThread.CurrentUICulture = [System.Globalization.CultureInfo]::GetCultureInfo('en-US') } catch { }
+
 # -- Identity gate ----------------------------------------------
 # The WindowsTentacleUpgradeStrategy wraps invocation in a
 # Task Scheduler one-shot task with `/RU SYSTEM` -- equivalent to Linux's
@@ -238,9 +244,14 @@ function Write-UpgradeStatus {
 function Append-UpgradeLog {
     param([string] $Line)
 
+    # Sanitize to printable ASCII (keep tab) so OS-localized exception text or
+    # non-Latin paths can never mojibake in the web-surfaced upgrade log. With
+    # CurrentUICulture forced to en-US the content is already English; this is the
+    # belt-and-braces guarantee for any message that bypasses the culture setting.
+    $safeLine = $Line -replace '[^\x09\x20-\x7E]', '?'
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
-    Add-Content -Path $LOG_FILE -Value "[$stamp] $Line"
-    Write-Host $Line
+    Add-Content -Path $LOG_FILE -Value "[$stamp] $safeLine"
+    Write-Host $safeLine
 }
 
 # -- Generic retry helper -- run an action, retrying transient failures with -----
@@ -301,7 +312,7 @@ function Write-UpgradeEvent {
     # Minimal JSON-safe escaping: drop quotes and backslashes (events originate
     # from our own controlled strings -- versions, methods, exit codes). Matches
     # the Linux emit_event `tr -d '"\\'`.
-    $safeMsg = $Msg -replace '["\\]', ''
+    $safeMsg = $Msg -replace '["\\]', '' -replace '[^\x20-\x7E]', '?'
 
     $now = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     $line = '{"t":"' + $now + '","phase":"' + $Phase + '","kind":"' + $Kind + '","msg":"' + $safeMsg + '"}'
@@ -499,8 +510,8 @@ if (Test-Path $LOCK_FILE) {
 Set-Content -Path $LOCK_FILE -Value "$PID" -Force
 
 try {
-    Append-UpgradeLog "[upgrade] Phase A starting -- target version $TARGET_VERSION on $RID"
-    Write-UpgradeStatus -Status 'IN_PROGRESS' -Detail "Phase A starting (target $TARGET_VERSION)"
+    Append-UpgradeLog "[upgrade] Preparing upgrade to $TARGET_VERSION on $RID"
+    Write-UpgradeStatus -Status 'IN_PROGRESS' -Detail "Preparing upgrade to $TARGET_VERSION"
 
     # -- Already-on-target short-circuit -------------------------------------
     # If the running binary is already at the target version, short-circuit.
@@ -711,7 +722,7 @@ try {
             }
 
             $INSTALL_OK = $true
-            Append-UpgradeLog "[upgrade-method:zip] Phase A complete -- staging dir $extractDir ready for swap"
+            Append-UpgradeLog "[upgrade-method:zip] Download and verification complete -- ready to install"
         }
         catch {
             Append-UpgradeLog "[upgrade-method:zip] Unexpected failure: $($_.Exception.Message)"
@@ -735,7 +746,7 @@ try {
     # Tentacle process tree without a detach wrapper, Stop-Service will
     # terminate this process before Phase B completes -- an orchestration
     # concern owned by E.3's strategy, not by this template.
-    Append-UpgradeLog "[upgrade] Phase B starting -- stopping service '$SERVICE_NAME' and swapping binary"
+    Append-UpgradeLog "[upgrade] Installing $TARGET_VERSION -- stopping service '$SERVICE_NAME' and swapping binary"
 
     # Entering Phase B -- events emitted from here are tagged phase 'B'.
     $script:CURRENT_PHASE = 'B'
@@ -766,7 +777,7 @@ try {
     # touched, so any failure leaves it intact. Flat: legacy move-aside .bak swap.
     if ($isVersioned) {
         if (-not (Test-Path $extractDir)) {
-            Append-UpgradeLog "::error:: Phase B can't find Phase A staging dir at expected path: $extractDir"
+            Append-UpgradeLog "::error:: Cannot find the staged files at expected path: $extractDir"
             Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod 'zip' -Detail "Staging dir disappeared between phases: $extractDir" -ExitCode 14
             exit 14
         }
@@ -838,7 +849,7 @@ try {
         # line ~145 already prevents the truly concurrent case, but reading
         # the in-scope variable removes any remaining ambiguity.
         if (-not (Test-Path $extractDir)) {
-            Append-UpgradeLog "::error:: Phase B can't find Phase A staging dir at expected path: $extractDir"
+            Append-UpgradeLog "::error:: Cannot find the staged files at expected path: $extractDir"
             Write-UpgradeStatus -Status 'ROLLBACK_CRITICAL_FAILED' -InstallMethod 'zip' -Detail "Staging dir disappeared between phases: $extractDir" -ExitCode 14
             exit 14
         }
@@ -925,7 +936,7 @@ try {
     }
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
-    Append-UpgradeLog "[upgrade] Phase B complete -- version $TARGET_VERSION installed via $INSTALL_METHOD"
+    Append-UpgradeLog "[upgrade] Upgrade complete -- version $TARGET_VERSION installed via $INSTALL_METHOD"
 
     # Version GC (versioned only, best-effort): keep the newest N version dirs and
     # prune older ones so versions\ doesn't grow unbounded. Runs only AFTER success

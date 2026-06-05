@@ -415,4 +415,37 @@ public sealed class WindowsUpgradeScriptResourceTests
         content.ShouldContain("0x4B",
             customMessage: "must validate the download's second byte is the zip 'PK' magic byte 0x4B — rejects HTML/JSON error pages and truncated downloads of any size");
     }
+
+    [Fact]
+    public void Resource_UpgradeLog_UsesPlainLanguage_NotPhaseAbJargon()
+    {
+        // Operator feedback: "Phase A / Phase B" jargon is opaque in the web log.
+        // The raw upgrade log must describe what's happening in plain language.
+        // (The structured event `phase` field stays 'A'/'B' as the data contract;
+        // the web relabels it for display.)
+        var content = LoadResource();
+
+        content.ShouldContain("Preparing upgrade to",
+            customMessage: "the download phase must log 'Preparing upgrade to <version>', not 'Phase A starting'");
+        content.ShouldContain("Installing $TARGET_VERSION",
+            customMessage: "the swap phase must log 'Installing <version>', not 'Phase B starting'");
+        content.ShouldContain("Upgrade complete --",
+            customMessage: "completion must log 'Upgrade complete', not 'Phase B complete'");
+    }
+
+    [Fact]
+    public void Resource_ForcesEnglishCulture_AndSanitizesLog_PreventsExceptionMojibake()
+    {
+        // Exception messages on a non-Latin OS (e.g. Chinese Windows) are localized
+        // and mojibake in the web-surfaced upgrade log. Force en-US .NET messages so
+        // the text is English, AND ASCII-sanitize every log line as belt-and-braces.
+        var content = LoadResource();
+
+        content.ShouldContain("CurrentUICulture",
+            customMessage: "must force the thread UI culture so .NET exception messages render in English, not the OS locale");
+        content.ShouldContain("'en-US'",
+            customMessage: "must pin en-US so exception text is plain ASCII English regardless of OS locale");
+        content.ShouldMatch(@"\$safeLine\s*=\s*\$Line\s*-replace",
+            customMessage: "Append-UpgradeLog must ASCII-sanitize each line so OS-localized exception text can't mojibake the web log");
+    }
 }
