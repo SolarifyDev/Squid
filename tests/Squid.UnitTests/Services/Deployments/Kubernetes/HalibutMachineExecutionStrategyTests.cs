@@ -311,48 +311,64 @@ public class HalibutMachineExecutionStrategyTests
             CreateRequest(machine, calamariCommand: calamariCommand), CancellationToken.None);
 
         capturedCommand.ShouldNotBeNull();
-        capturedCommand.TaskId.ShouldNotBeNullOrEmpty();
-        capturedCommand.TaskId.Length.ShouldBe(32); // Guid without hyphens
+        // The ScriptTicket carries the Guid-per-attempt id; TaskId carries the
+        // server task id (correlation), NOT the ticket.
+        capturedCommand.ScriptTicket.TaskId.Length.ShouldBe(32); // Guid 'N' form
+        capturedCommand.ScriptTicket.TaskId.ShouldMatch("^[a-f0-9]{32}$");
     }
 
-    // === Ticket ID — fresh-per-attempt (ARCH.7) ===
-    //
-    //  these tests pinned `GenerateTicketId` as a pure function of
-    // the (taskId, step, action, machineId) tuple — same input, same output.
-    // ARCH.7 deliberately broke that property: ticket is now Guid-per-attempt
-    // so retries don't trap on agent-side state from the previous attempt.
-    // The stable-derivation half (used as the IsolationMutexName so concurrent
-    // dispatches still serialise on the agent) lives in `GenerateMutexName`,
-    // which IS pinned by these tests instead.
-
-    [Fact]
-    public void GenerateMutexName_SameInputs_ProducesSameResult()
+    [Theory]
+    [InlineData(null)]                   // direct-script dispatch site
+    [InlineData("calamari-run-script")]  // packaged / Calamari dispatch site
+    public async Task ExecuteScriptAsync_PassesMachineScopedMutexNameAsIsolationMutexName_NotTaskId(string calamariCommand)
     {
-        // The mutex-name MUST stay deterministic — that's what makes
-        // concurrent same-action dispatches serialise on the agent.
-        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
-        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
+        // Regression pin for the ctor-arg-position bug: the generated isolation
+        // mutex name MUST reach the wire as IsolationMutexName (arg 5) — the field
+        // the agent uses to serialise FullIsolation scripts. Before the fix it was
+        // misassigned to TaskId (arg 7), leaving IsolationMutexName null, which
+        // silently falls back to the global "default" mutex. No prior test captured
+        // this wire field, so the bug survived.
+        //
+        // Covers BOTH dispatch sites (direct + Calamari) since the bug existed in
+        // both. Uses DISTINCT machine.Id (42) and ServerTaskId (777) so the
+        // assertions prove WHICH field carries WHICH value — with a single shared 0
+        // the test couldn't distinguish ForMachine(machine.Id) from
+        // ForMachine(serverTaskId), nor TaskId=machineId from TaskId=serverTaskId.
+        var machine = new Machine
+        {
+            Id = 42,
+            Name = "test-agent",
+            Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-test","Thumbprint":"AABBCCDD"}"""
+        };
+        StartScriptCommand captured = null;
+        var scriptClient = SetupScriptClient("poll://sub-test/");
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => captured = cmd)
+            .ReturnsAsync(NewStartResponse("ticket"));
 
-        n1.ShouldBe(n2);
+        var request = CreateRequest(machine, calamariCommand: calamariCommand);
+        request.ServerTaskId = 777;
+
+        await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured.Isolation.ShouldBe(ScriptIsolationLevel.FullIsolation);
+        captured.IsolationMutexName.ShouldBe(ScriptIsolationMutexNames.ForMachine(42),
+            customMessage: "IsolationMutexName (arg 5) must be ForMachine(machine.Id=42) — keyed on machine id, " +
+                           "reaching the wire — not null (the global 'default' fallback) and not serverTaskId");
+        captured.IsolationMutexName.ShouldBe("squid/machine/42");
+        captured.TaskId.ShouldBe("777",
+            customMessage: "TaskId (arg 7) must carry the server task id (777), not the machine id or the mutex name");
     }
 
-    [Fact]
-    public void GenerateMutexName_DifferentMachineId_ProducesDifferentResult()
-    {
-        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
-        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 43);
-
-        n1.ShouldNotBe(n2);
-    }
-
-    [Fact]
-    public void GenerateMutexName_DifferentStepName_ProducesDifferentResult()
-    {
-        var n1 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Deploy", "RunScript", 42);
-        var n2 = HalibutMachineExecutionStrategy.GenerateMutexName(1, "Rollback", "RunScript", 42);
-
-        n1.ShouldNotBe(n2);
-    }
+    // Isolation mutex name is now machine-scoped: the strategy sends
+    // ScriptIsolationMutexNames.ForMachine(machineId) on IsolationMutexName so
+    // EVERY FullIsolation script on a machine serialises behind one writer lock
+    // (the earlier per-action SHA keyed by serverTaskId would have let two
+    // deployments to the same machine run concurrently — the opposite of
+    // FullIsolation's purpose). The strategy's use of it is pinned by
+    // ExecuteScriptAsync_PassesMachineScopedMutexNameAsIsolationMutexName_NotTaskId
+    // above; the name's own contract is pinned by ScriptIsolationMutexNamesTests.
 
     // === Helpers ===
 

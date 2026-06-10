@@ -682,6 +682,9 @@ public sealed class LinuxTentacleUpgradeStrategyTests : IDisposable
 
         cmd.Isolation.ShouldBe(ScriptIsolationLevel.FullIsolation);
         cmd.ScriptSyntax.ShouldBe(ScriptType.Bash);
+        cmd.IsolationMutexName.ShouldBe(ScriptIsolationMutexNames.ForMachine(7),
+            customMessage: "upgrade must share the machine-scoped mutex name deployments use, so the agent " +
+                           "serializes the (service-restarting) upgrade behind any in-flight deployment script");
     }
 
     [Fact]

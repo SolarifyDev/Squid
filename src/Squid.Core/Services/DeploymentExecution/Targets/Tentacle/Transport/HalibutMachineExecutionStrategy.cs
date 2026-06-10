@@ -151,11 +151,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
-        // ARCH.7: ticket is fresh-per-attempt (Guid); mutex name is stable
-        // hash of the dispatch tuple so concurrent dispatches of the same
-        // action still serialise on the agent.
+        // Ticket is fresh-per-attempt (Guid) so a retry doesn't trap on agent-side
+        // state from the previous attempt. IsolationMutexName is MACHINE-SCOPED
+        // (the 5th ctor arg) so every FullIsolation script on this machine —
+        // deployments AND upgrades, all via ScriptIsolationMutexNames.ForMachine —
+        // serialises behind one writer lock. The server task id rides the 7th arg
+        // (taskId) purely for correlation.
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
-        var mutexName = GenerateMutexName(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
         var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
@@ -163,9 +165,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             scriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
-            null,
+            ScriptIsolationMutexNames.ForMachine(request.Machine.Id),
             Array.Empty<string>(),
-            mutexName,
+            request.ServerTaskId.ToString(),
             TimeSpan.Zero,
             scriptFiles)
         {
@@ -185,9 +187,10 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
-        // ARCH.7: see ExecuteCalamariViaHalibutAsync above for the ticket-vs-mutex split rationale.
+        // See ExecuteCalamariViaHalibutAsync above for the ticket-vs-mutex-name
+        // rationale: ticket is Guid-per-attempt; IsolationMutexName (arg 5) is the
+        // machine-scoped name that serialises FullIsolation scripts on the agent.
         var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
-        var mutexName = GenerateMutexName(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
         var scriptTicket = new ScriptTicket(ticketId);
 
         var command = new StartScriptCommand(
@@ -195,9 +198,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             request.ScriptBody,
             ScriptIsolationLevel.FullIsolation,
             scriptTimeout,
-            null,
+            ScriptIsolationMutexNames.ForMachine(request.Machine.Id),
             Array.Empty<string>(),
-            mutexName,
+            request.ServerTaskId.ToString(),
             TimeSpan.Zero,
             scriptFiles)
         {
@@ -351,43 +354,21 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     /// <summary>
-    /// ARCH.7: produces a fresh
-    /// <see cref="ScriptTicket"/> id per dispatch attempt. The
-    /// <paramref name="serverTaskId"/> / <paramref name="stepName"/> /
-    /// <paramref name="actionName"/> / <paramref name="machineId"/> tuple is
-    /// IGNORED for the ticket itself — kept on the signature for symmetry
-    /// with <see cref="GenerateMutexName"/>, which is the value that DOES
-    /// need stability across attempts.
-    ///
-    /// <para>Pre-fix this method derived the ticket from the tuple via SHA256.
-    /// Same-tuple retries (server-side double-dispatch, network-glitch
-    /// resend) reused the same ticket — agent-side state from the previous
-    /// attempt (workspace, mutex) could trap the retry. Octopus matches this
-    /// fix with <c>Guid.NewGuid()</c> per dispatch.</para>
+    /// Produces a fresh <see cref="ScriptTicket"/> id per dispatch attempt
+    /// (<c>Guid.NewGuid()</c>). The (<paramref name="serverTaskId"/>,
+    /// <paramref name="stepName"/>, <paramref name="actionName"/>,
+    /// <paramref name="machineId"/>) tuple is IGNORED — the ticket is deliberately
+    /// non-deterministic so a retry doesn't trap on agent-side state (workspace,
+    /// mutex) left by the previous attempt. The arguments are kept on the signature
+    /// for call-site readability and test pinning. Cross-dispatch serialisation is
+    /// handled separately by the machine-scoped
+    /// <see cref="ScriptIsolationMutexNames.ForMachine"/> on
+    /// <see cref="StartScriptCommand.IsolationMutexName"/>, NOT by the ticket.
     ///
     /// <para>Pinned by <c>HalibutMachineExecutionStrategyRoutingTests.GenerateTicketId_*</c>.</para>
     /// </summary>
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
         => Guid.NewGuid().ToString("N");
-
-    /// <summary>
-    /// Stable hash of the dispatch tuple — used as the agent-side
-    /// <c>ScriptIsolationMutexName</c> so two concurrent dispatches of the
-    /// SAME logical action (e.g. genuine retry overlapping with original)
-    /// serialise on the agent, even though they carry distinct tickets.
-    ///
-    /// <para>This is the part of the pre-fix <c>GenerateTicketId</c> that was
-    /// actually load-bearing; it survives unchanged after we split ticket
-    /// (Guid-per-attempt) from mutex name (deterministic).</para>
-    ///
-    /// <para>Pinned by <c>HalibutMachineExecutionStrategyRoutingTests.GenerateMutexName_*</c>.</para>
-    /// </summary>
-    internal static string GenerateMutexName(int serverTaskId, string stepName, string actionName, int machineId)
-    {
-        var input = $"{serverTaskId}|{stepName}|{actionName}|{machineId}";
-        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hash)[..32].ToLowerInvariant();
-    }
 
     /// <summary>
     /// P0-E.3: emit a structured log line naming which script-service protocol

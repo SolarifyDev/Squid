@@ -1077,6 +1077,9 @@ public sealed class WindowsTentacleUpgradeStrategyTests : IDisposable
             "FullIsolation lets the agent's ScriptIsolationMutex serialize upgrades behind active deployments");
         cmd.ScriptSyntax.ShouldBe(ScriptType.PowerShell,
             "Windows must dispatch as PowerShell — Bash would be silently rejected by the agent's executor");
+        cmd.IsolationMutexName.ShouldBe(ScriptIsolationMutexNames.ForMachine(7),
+            customMessage: "upgrade must share the machine-scoped mutex name deployments use, so the agent " +
+                           "serializes the (service-restarting) upgrade behind any in-flight deployment script");
     }
 
     [Fact]
