@@ -358,6 +358,43 @@ public class KubernetesResumeCheckpointE2ETests
     }
 
     // ────────────────────────────────────────────────────────────────────────
+    // 5. RESUME-AFTER-TIMEOUT — the full loop, end to end
+    // ────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ResumeAfterTimeoutPause_CompletesDeploymentFromCheckpoint()
+    {
+        // The post-timeout state the resumable-timeout feature produces: the
+        // deployment completed batch 0, then exceeded the wall-clock timeout and
+        // was PAUSED with its checkpoint preserved (LastCompletedBatchIndex=0).
+        // Resuming it (what ServerTaskControlService.ResumeTaskAsync re-dispatches
+        // — ProcessAsync on the same task) must finish batches 1+2 WITHOUT
+        // re-running batch 0, end in Success, and clean up the checkpoint. This
+        // proves the work done before the timeout is never thrown away.
+        ExecutionCapture.Clear();
+        ExecutionCapture.ResultFactory = _ => new ScriptExecutionResult { Success = true, ExitCode = 0 };
+
+        var serverTaskId = await SeedThreeStepDeployAsync();
+
+        await PlantCheckpointAsync(serverTaskId, outputVariablesJson: "[]", lastCompletedBatchIndex: 0);
+        await SetTaskStateAsync(serverTaskId, TaskState.Paused);
+
+        await ExecutePipelineAsync(serverTaskId);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(2,
+            customMessage: "Resume after a timeout-pause must skip the already-completed batch 0 and run only " +
+                          $"batches 1+2 (2 requests). Got {ExecutionCapture.CapturedRequests.Count}. " +
+                          "3 = the pre-timeout work was thrown away (the regression this feature fixes).");
+
+        await AssertTaskSuccessAsync(serverTaskId);
+
+        var checkpoint = await LoadCheckpointAsync(serverTaskId);
+        checkpoint.ShouldBeNull(
+            customMessage: "After a successful resume the checkpoint MUST be cleaned up — the deployment is now " +
+                          "terminally Success and the resume point is no longer needed.");
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
     // Helpers
     // ────────────────────────────────────────────────────────────────────────
 

@@ -93,4 +93,14 @@ public class ServerTaskController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("{taskId:int}/resume")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResumeServerTaskResponse))]
+    public async Task<IActionResult> ResumeTaskAsync(int taskId)
+    {
+        var response = await _mediator.SendAsync<ResumeServerTaskCommand, ResumeServerTaskResponse>(
+            new ResumeServerTaskCommand { TaskId = taskId }).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

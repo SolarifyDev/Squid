@@ -10,6 +10,7 @@ namespace Squid.Core.Services.Deployments.ServerTask;
 public interface IServerTaskControlService : IScopedDependency
 {
     Task CancelTaskAsync(int serverTaskId, CancellationToken ct = default);
+    Task ResumeTaskAsync(int serverTaskId, CancellationToken ct = default);
     Task TryAutoResumeAsync(int serverTaskId, CancellationToken ct = default);
 }
 
@@ -52,6 +53,33 @@ public class ServerTaskControlService(
         }
     }
 
+    /// <summary>
+    /// Operator-initiated resume of a paused deployment (e.g. one paused by the
+    /// timeout-resumable path). Unlike <see cref="TryAutoResumeAsync"/>, which
+    /// silently no-ops on an ineligible task because it fires opportunistically
+    /// after an interruption response, this is an explicit request and surfaces
+    /// every precondition failure as a typed exception so the API can return an
+    /// actionable error instead of a misleading 200. A task awaiting a manual
+    /// interruption must be resumed by submitting that interruption — not here.
+    /// </summary>
+    public async Task ResumeTaskAsync(int serverTaskId, CancellationToken ct = default)
+    {
+        var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        if (task == null)
+            throw new ServerTaskNotFoundException(serverTaskId);
+
+        if (!string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase))
+            throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
+
+        if (task.HasPendingInterruptions)
+            throw new ServerTaskAwaitingInterruptionException(serverTaskId);
+
+        var jobId = await EnqueueResumeAsync(task, ct).ConfigureAwait(false);
+
+        Log.Information("Manually resumed task {TaskId} with new job {JobId}", serverTaskId, jobId);
+    }
+
     public async Task TryAutoResumeAsync(int serverTaskId, CancellationToken ct = default)
     {
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
@@ -60,7 +88,14 @@ public class ServerTaskControlService(
         if (!string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return;
         if (task.HasPendingInterruptions) return;
 
-        var jobId = backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTaskId, CancellationToken.None));
+        var jobId = await EnqueueResumeAsync(task, ct).ConfigureAwait(false);
+
+        Log.Information("Auto-resumed task {TaskId} with new job {JobId}", serverTaskId, jobId);
+    }
+
+    private async Task<string> EnqueueResumeAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+    {
+        var jobId = backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(task.Id, CancellationToken.None));
 
         if (!string.IsNullOrEmpty(jobId))
         {
@@ -68,7 +103,7 @@ public class ServerTaskControlService(
             await serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, task.State, cancellationToken: ct).ConfigureAwait(false);
         }
 
-        Log.Information("Auto-resumed task {TaskId} with new job {JobId}", serverTaskId, jobId);
+        return jobId;
     }
 
     private async Task CancelPendingTaskAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)

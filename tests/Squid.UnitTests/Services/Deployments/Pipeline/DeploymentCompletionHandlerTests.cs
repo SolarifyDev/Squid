@@ -137,6 +137,64 @@ public class DeploymentCompletionHandlerTests
         _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ========== OnTimedOutAsync ==========
+    // Timeout is treated as a resumable pause: transition to Paused, KEEP the
+    // checkpoint (it's the resume point), and write NO completion record (the
+    // deployment hasn't completed — it's suspended).
+
+    [Fact]
+    public async Task OnTimedOut_TransitionsExecutingToPaused()
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnTimedOutAsync(ctx, new Exception("timed out"), CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnTimedOut_DoesNotCleanupCheckpoint()
+    {
+        // The headline behaviour: the checkpoint is the resume point. Deleting it
+        // (as OnFailure does) would make the timed-out deployment unrecoverable —
+        // exactly the regression this feature fixes.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnTimedOutAsync(ctx, new Exception("timed out"), CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnTimedOut_DoesNotRecordCompletion()
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnTimedOutAsync(ctx, new Exception("timed out"), CancellationToken.None);
+
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnTimedOut_DoesNotTriggerAutoDeployments()
+    {
+        // Auto-deploy chaining only happens on a genuine success. A paused/timed-out
+        // deployment hasn't produced a result, so nothing downstream should fire.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnTimedOutAsync(ctx, new Exception("timed out"), CancellationToken.None);
+
+        _autoDeployService.Verify(a => a.TriggerAutoDeploymentsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ========== Helpers ==========
 
     private static DeploymentTaskContext CreateContext()
