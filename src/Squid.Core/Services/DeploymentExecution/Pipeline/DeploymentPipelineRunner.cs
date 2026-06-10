@@ -8,11 +8,24 @@ namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
-    private static readonly TimeSpan DefaultDeploymentTimeout = TimeSpan.FromMinutes(60);
     private static readonly TimeSpan DefaultConcurrencyMaxWait = TimeSpan.FromSeconds(300);
     private static readonly TimeSpan DefaultConcurrencyPollInterval = TimeSpan.FromMilliseconds(3000);
 
-    internal TimeSpan DeploymentTimeout { get; init; } = DefaultDeploymentTimeout;
+    /// <summary>
+    /// Operator escape hatch (Rule 8): maximum wall-clock minutes a single
+    /// deployment may run before the pipeline is force-cancelled and the task
+    /// fails with <see cref="DeploymentTimeoutException"/>. Unset / blank /
+    /// non-positive-integer → <see cref="DefaultDeploymentTimeoutMinutes"/>.
+    /// Raise it for long-running deployments (large DB migrations, multi-stage
+    /// rollouts) that legitimately exceed the default; leaving it unset
+    /// preserves the historical 60-minute behaviour exactly.
+    /// </summary>
+    public const string DeploymentTimeoutMinutesEnvVar = "SQUID_DEPLOYMENT_TIMEOUT_MINUTES";
+
+    internal const int DefaultDeploymentTimeoutMinutes = 60;
+    private static readonly TimeSpan DefaultDeploymentTimeout = TimeSpan.FromMinutes(DefaultDeploymentTimeoutMinutes);
+
+    internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
     internal TimeSpan ConcurrencyMaxWait { get; init; } = DefaultConcurrencyMaxWait;
     internal TimeSpan ConcurrencyPollInterval { get; init; } = DefaultConcurrencyPollInterval;
 
@@ -141,4 +154,30 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         Log.Warning("[Deploy] Task {TaskId} exceeded concurrency wait timeout ({Timeout}), proceeding anyway", serverTaskId, ConcurrencyMaxWait);
     }
+
+    /// <summary>
+    /// Parses the operator-supplied deployment timeout (in minutes). Blank,
+    /// non-integer, or non-positive input falls back to the historical
+    /// <see cref="DefaultDeploymentTimeoutMinutes"/> default so a typo'd env var
+    /// can never disable the safety timer or crash construction. Pure + static
+    /// (internal, surfaced to the unit suite via InternalsVisibleTo) so the full
+    /// input matrix is testable without the pipeline.
+    /// </summary>
+    internal static TimeSpan ParseDeploymentTimeout(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultDeploymentTimeout;
+
+        if (!int.TryParse(raw.Trim(), out var minutes) || minutes <= 0)
+        {
+            Log.Warning(
+                "{EnvVar}='{RawValue}' is not a valid positive integer (minutes); falling back to default {Default} min.",
+                DeploymentTimeoutMinutesEnvVar, raw, DefaultDeploymentTimeoutMinutes);
+            return DefaultDeploymentTimeout;
+        }
+
+        return TimeSpan.FromMinutes(minutes);
+    }
+
+    private static TimeSpan ResolveDeploymentTimeout()
+        => ParseDeploymentTimeout(Environment.GetEnvironmentVariable(DeploymentTimeoutMinutesEnvVar));
 }
