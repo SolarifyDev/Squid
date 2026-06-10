@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Hosting.WindowsServices;
 using Squid.Tentacle.Core;
 using Serilog;
-using Serilog.Events;
 
 // Direct ALL Serilog output to stderr (Unix convention: diagnostic
 // log lines on stderr, command output on stdout). This keeps stdout
@@ -28,12 +27,13 @@ using Serilog.Events;
 // (`register`, `service install`) still emit their summary output
 // (MachineId, etc.) to stdout via Console.WriteLine — log noise just
 // moves to stderr where it belongs.
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Information()
-    .WriteTo.Console(
-        standardErrorFromLevel: LogEventLevel.Verbose,
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-    .CreateLogger();
+// Resolve the launch mode ONCE: a Windows-SCM-launched service has its console
+// attached to NUL, so it gets a persistent rolling FILE sink (otherwise its
+// entire runtime log is lost). Short-lived CLI commands stay console-only.
+// Reused below to drive the SCM lifetime branch.
+var runsUnderScm = TentacleEntry.ShouldRunUnderScm(args, OperatingSystem.IsWindows(), WindowsServiceHelpers.IsWindowsService);
+
+Log.Logger = TentacleLogging.BuildLoggerConfiguration(addPersistentFileSink: runsUnderScm).CreateLogger();
 
 try
 {
@@ -48,7 +48,7 @@ try
     // Console mode (interactive CLI, register, service install, etc.)
     // — including SSH-launched `run` for systemd's ExecStart on Linux
     // — falls through to the existing Console-CT path below.
-    if (TentacleEntry.ShouldRunUnderScm(args, OperatingSystem.IsWindows(), WindowsServiceHelpers.IsWindowsService))
+    if (runsUnderScm)
         return await RunUnderScmLifetimeAsync(args).ConfigureAwait(false);
 
     // Console mode — existing flow. Console.CancelKeyPress + ProcessExit
@@ -191,6 +191,10 @@ static class ScmDiagnosticLog
         {
             lock (Lock)
             {
+                // Single-generation rotation so this append-only diagnostic can't
+                // grow unbounded across thousands of service restarts.
+                TentacleLogging.RotateIfOversized(LogPath, TentacleLogging.ScmDiagnosticMaxBytes);
+
                 System.IO.File.AppendAllText(
                     LogPath,
                     $"[{DateTimeOffset.UtcNow:HH:mm:ss.fff}] {line}{Environment.NewLine}");
