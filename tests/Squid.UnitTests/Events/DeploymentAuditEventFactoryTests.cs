@@ -51,6 +51,7 @@ public class DeploymentAuditEventFactoryTests
     [InlineData(EventCategory.DeploymentSucceeded)]
     [InlineData(EventCategory.DeploymentFailed)]
     [InlineData(EventCategory.DeploymentCanceled)]
+    [InlineData(EventCategory.DeploymentTimedOut)]
     [InlineData(EventCategory.ManualInterventionRaised)]
     [InlineData(EventCategory.ManualInterventionSubmitted)]
     [InlineData(EventCategory.GuidedFailureRaised)]

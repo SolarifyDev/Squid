@@ -24,5 +24,6 @@ public enum EventCategory : short
     DeploymentResumed = 15,
     DeploymentSucceeded = 16,
     DeploymentFailed = 17,
-    DeploymentCanceled = 18
+    DeploymentCanceled = 18,
+    DeploymentTimedOut = 19
 }

@@ -33,8 +33,10 @@ public sealed class DeploymentAuditEventHandler : DeploymentLifecycleHandlerBase
 
     protected override Task OnDeploymentFailedAsync(DeploymentEventContext ctx, CancellationToken ct) => RecordAsync(EventCategory.DeploymentFailed, ct);
 
-    // A timeout is a failure outcome for audit purposes.
-    protected override Task OnDeploymentTimedOutAsync(DeploymentEventContext ctx, CancellationToken ct) => RecordAsync(EventCategory.DeploymentFailed, ct);
+    // A wall-clock timeout is a distinct, recoverable outcome from a genuine
+    // failure — the deployment is paused and its checkpoint preserved for resume —
+    // so it is audited as DeploymentTimedOut rather than DeploymentFailed.
+    protected override Task OnDeploymentTimedOutAsync(DeploymentEventContext ctx, CancellationToken ct) => RecordAsync(EventCategory.DeploymentTimedOut, ct);
 
     protected override Task OnDeploymentCancelledAsync(DeploymentEventContext ctx, CancellationToken ct) => RecordAsync(EventCategory.DeploymentCanceled, ct);
 
