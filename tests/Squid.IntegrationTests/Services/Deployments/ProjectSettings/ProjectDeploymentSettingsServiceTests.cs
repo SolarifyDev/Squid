@@ -27,7 +27,7 @@ public class ProjectDeploymentSettingsServiceTests : TestBase
 
         var settings = await Run<IProjectDeploymentSettingsService, DeploymentSettingsDto>(s => s.GetAsync(projectId)).ConfigureAwait(false);
 
-        settings.TransientDeploymentTargets.UnavailableDeploymentTargets.ShouldBe(UnavailableDeploymentTargetBehavior.SkipAndContinue);
+        settings.TransientDeploymentTargets.UnavailableDeploymentTargets.ShouldBe(UnavailableDeploymentTargetBehavior.FailDeployment);
         settings.TransientDeploymentTargets.UnhealthyDeploymentTargets.ShouldBe(UnhealthyDeploymentTargetBehavior.Exclude);
     }
 

@@ -98,10 +98,11 @@ public sealed class PrepareDeploymentPhase(
         Log.Information("[Deploy] Found {Count} target machines for deployment {DeploymentId}", ctx.AllTargets.Count, ctx.Deployment.Id);
     }
 
-    // Honour the project's "Transient Deployment Targets" setting. Defaults
-    // (SkipAndContinue + Exclude) reproduce the historical unconditional exclusion of
-    // unavailable + unhealthy targets, so an unconfigured project behaves exactly as
-    // before. FailDeployment on an unavailable target aborts the deployment up front.
+    // Honour the project's "Transient Deployment Targets" setting. For an
+    // unconfigured project the defaults are FailDeployment (an unavailable target
+    // aborts the deployment up front rather than being silently skipped) + Exclude
+    // (unhealthy targets are dropped). Explicit SkipAndContinue is the opt-out that
+    // restores the lenient skip behaviour for unavailable targets.
     internal static void ApplyTransientTargetPolicy(DeploymentTaskContext ctx)
     {
         var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(ctx.AllTargets, ctx.Project?.DeploymentSettingsJson);

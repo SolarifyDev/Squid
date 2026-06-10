@@ -11,16 +11,19 @@ namespace Squid.UnitTests.Services.Deployments.Targets;
 
 /// <summary>
 /// Exhaustive matrix for the project "Transient Deployment Targets" evaluator.
-/// The default behaviours (SkipAndContinue + Exclude) MUST reproduce the historical
-/// unconditional exclusion of unavailable + unhealthy targets, so the wiring is
-/// non-breaking for unconfigured projects.
+/// The defaults for an unconfigured project are <see cref="UnavailableDeploymentTargetBehavior.FailDeployment"/>
+/// (fail-fast on an unreachable target rather than silently skipping it and reporting success)
+/// and <see cref="UnhealthyDeploymentTargetBehavior.Exclude"/>. Explicit SkipAndContinue /
+/// DoNotExclude opt back into the lenient behaviour.
 /// </summary>
 public class TransientDeploymentTargetEvaluatorTests
 {
     private static Machine M(string name, MachineHealthStatus status) => new() { Name = name, HealthStatus = status };
 
+    // The helper's default policy mirrors the production DTO default so `Apply(machines)`
+    // reflects what an unconfigured project gets.
     private static TransientTargetResult Apply(IReadOnlyList<Machine> candidates,
-        UnavailableDeploymentTargetBehavior unavailable = UnavailableDeploymentTargetBehavior.SkipAndContinue,
+        UnavailableDeploymentTargetBehavior unavailable = UnavailableDeploymentTargetBehavior.FailDeployment,
         UnhealthyDeploymentTargetBehavior unhealthy = UnhealthyDeploymentTargetBehavior.Exclude)
         => TransientDeploymentTargetEvaluator.Apply(candidates, unavailable, unhealthy);
 
@@ -38,11 +41,11 @@ public class TransientDeploymentTargetEvaluatorTests
     }
 
     [Fact]
-    public void Defaults_ReproduceHistoricalExclusion()
+    public void Defaults_FailUnavailable_ExcludeUnhealthy()
     {
-        // SkipAndContinue + Exclude (the defaults) reproduce the historical unconditional
-        // exclusion: unavailable + unhealthy are removed (skipped), everything else kept,
-        // nothing fails. This is the single health gate shared by deploy and preview.
+        // Fail-fast defaults: an unavailable target fails the deployment; unhealthy is excluded
+        // (skipped); healthy / unknown / warnings proceed. This is the single health gate shared
+        // by deploy and preview.
         var machines = new[]
         {
             M("healthy", MachineHealthStatus.Healthy),
@@ -55,8 +58,8 @@ public class TransientDeploymentTargetEvaluatorTests
         var result = Apply(machines);
 
         result.Kept.Select(m => m.Name).ShouldBe(new[] { "healthy", "unknown", "warnings" });
-        result.Skipped.Select(m => m.Name).ShouldBe(new[] { "unhealthy", "unavailable" });
-        result.FailedUnavailable.ShouldBeEmpty();
+        result.Skipped.Select(m => m.Name).ShouldBe(new[] { "unhealthy" });
+        result.FailedUnavailable.Select(m => m.Name).ShouldBe(new[] { "unavailable" });
     }
 
     [Fact]
@@ -137,7 +140,7 @@ public class TransientDeploymentTargetEvaluatorTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("not-json")]
-    public void ApplyProjectPolicy_NoOrInvalidSettings_UsesHistoricalDefaults(string settingsJson)
+    public void ApplyProjectPolicy_NoOrInvalidSettings_FailUnavailable_ExcludeUnhealthy(string settingsJson)
     {
         var machines = new[]
         {
@@ -149,8 +152,8 @@ public class TransientDeploymentTargetEvaluatorTests
         var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(machines, settingsJson);
 
         result.Kept.Select(m => m.Name).ShouldBe(new[] { "healthy" });
-        result.Skipped.Select(m => m.Name).ShouldBe(new[] { "unhealthy", "unavailable" });
-        result.FailedUnavailable.ShouldBeEmpty();
+        result.Skipped.Select(m => m.Name).ShouldBe(new[] { "unhealthy" });
+        result.FailedUnavailable.Select(m => m.Name).ShouldBe(new[] { "unavailable" });
     }
 
     [Fact]

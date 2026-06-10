@@ -6,8 +6,8 @@ namespace Squid.Core.Services.Deployments.Project;
 /// <summary>
 /// Shared (de)serialisation for the project's <see cref="DeploymentSettingsDto"/> JSON
 /// blob. A null / blank / malformed blob deserialises to a default-constructed DTO so
-/// every consumer (the deploy pipeline + the get/save service) sees "all defaults" =
-/// today's behaviour rather than throwing.
+/// every consumer (the deploy pipeline + the get/save service) sees the all-defaults DTO
+/// rather than throwing.
 /// </summary>
 public static class DeploymentSettingsSerializer
 {
