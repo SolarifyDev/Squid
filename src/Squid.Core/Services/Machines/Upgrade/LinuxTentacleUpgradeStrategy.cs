@@ -403,7 +403,11 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
         var ticketId = $"upgrade-{machine.Id}-{Guid.NewGuid():N}";
         var scriptBody = BuildScript(targetVersion);
 
-        return new StartScriptCommand(new ScriptTicket(ticketId), scriptBody, ScriptIsolationLevel.FullIsolation, UpgradeScriptTimeout, null, Array.Empty<string>(), ticketId, TimeSpan.Zero)
+        // IsolationMutexName (arg 5) is the SAME machine-scoped name deployments
+        // use, so an upgrade (which restarts the Tentacle) serialises with any
+        // in-flight deployment FullIsolation script on this machine instead of
+        // running concurrently. ticketId rides arg 7 (taskId) for correlation.
+        return new StartScriptCommand(new ScriptTicket(ticketId), scriptBody, ScriptIsolationLevel.FullIsolation, UpgradeScriptTimeout, ScriptIsolationMutexNames.ForMachine(machine.Id), Array.Empty<string>(), ticketId, TimeSpan.Zero)
         {
             ScriptSyntax = ScriptType.Bash
         };
