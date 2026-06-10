@@ -22,10 +22,13 @@ public sealed record TransientTargetResult(
 /// Single source of truth for the project "Transient Deployment Targets" behaviour.
 /// Pure + deterministic so it can be unit-tested exhaustively.
 ///
-/// <para>Defaults (<see cref="UnavailableDeploymentTargetBehavior.SkipAndContinue"/> +
-/// <see cref="UnhealthyDeploymentTargetBehavior.Exclude"/>) reproduce Squid's historical
-/// unconditional exclusion of unavailable + unhealthy targets, so honouring the setting
-/// is non-breaking for projects that haven't configured it.</para>
+/// <para>For an unconfigured project the defaults are
+/// <see cref="UnavailableDeploymentTargetBehavior.FailDeployment"/> (an unavailable target
+/// fails the deployment up front rather than being silently skipped while the task reports
+/// success) and <see cref="UnhealthyDeploymentTargetBehavior.Exclude"/> (unhealthy targets
+/// are dropped). Explicit <see cref="UnavailableDeploymentTargetBehavior.SkipAndContinue"/> /
+/// <see cref="UnhealthyDeploymentTargetBehavior.DoNotExclude"/> opt back into the lenient
+/// behaviour. The default is applied at the settings DTO, not by enum ordinal.</para>
 /// </summary>
 public static class TransientDeploymentTargetEvaluator
 {

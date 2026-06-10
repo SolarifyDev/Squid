@@ -4,9 +4,11 @@ namespace Squid.Message.Enums.Deployments;
 
 /// <summary>
 /// What to do when a deployment target is UNAVAILABLE at the start of, or becomes
-/// unavailable during, a deployment. Default (value 0) = <see cref="SkipAndContinue"/>,
-/// which preserves Squid's historical behaviour (unavailable targets are skipped and
-/// removed from the deployment) — so wiring this is non-breaking.
+/// unavailable during, a deployment. The project default for an unconfigured project is
+/// <see cref="FailDeployment"/> (fail fast rather than silently skip an unreachable target
+/// and report success — see <c>TransientDeploymentTargetsDto</c>). <see cref="SkipAndContinue"/>
+/// is the opt-in lenient mode. Note value 0 remains <see cref="SkipAndContinue"/> as the
+/// stable wire encoding; the default is applied at the settings DTO, not by enum ordinal.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum UnavailableDeploymentTargetBehavior
