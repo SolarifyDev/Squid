@@ -30,7 +30,9 @@ namespace Squid.Calamari.Commands;
 ///   <item>WriteBootstrappedBashScript — prepend `export VAR=` for the main script.</item>
 ///   <item>ExecuteScriptWithEngine — run the operator's main script.</item>
 ///   <item><b>PostDeploy convention (G1.5)</b> — runs <c>PostDeploy.sh</c>.
-///         Smoke tests, cache warm-up, service-mesh registration, etc.</item>
+///         Smoke tests, cache warm-up, service-mesh registration, etc.
+///         Skipped if the deploy already failed (non-zero main-script exit
+///         or a prior step exception).</item>
 ///   <item>BuildRunScriptCommandResult — collect exit code + outputs.</item>
 ///   <item>CleanupTemporaryFiles — best-effort cleanup (always-runs).</item>
 /// </list></para>
@@ -79,8 +81,10 @@ public class RunScriptCommand
             new ExecuteScriptWithEngineStep(scriptEngine),
             // G1.5 — PostDeploy convention hook. Runs only when the package
             // ships a `PostDeploy.sh` file. Smoke tests, cache warm-up,
-            // registration with a service mesh, etc.
-            new ConventionScriptStep(ConventionScriptNames.PostDeploy, scriptEngine),
+            // registration with a service mesh, etc. skipWhenDeployFailed=true:
+            // a non-zero main-script exit is a failed deploy, so PostDeploy is
+            // skipped (a smoke test against a failed deploy is worse than none).
+            new ConventionScriptStep(ConventionScriptNames.PostDeploy, scriptEngine, skipWhenDeployFailed: true),
             new BuildRunScriptCommandResultStep(),
             // DeployFailed convention — IAlwaysRun (cleanup phase). Fires only
             // when an upstream step threw OR the main script returned non-zero.

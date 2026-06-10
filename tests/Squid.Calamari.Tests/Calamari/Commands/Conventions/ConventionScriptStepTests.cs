@@ -90,6 +90,78 @@ public sealed class ConventionScriptStepTests : IDisposable
         step.IsEnabled(ctx).ShouldBeFalse();
     }
 
+    // ── skipWhenDeployFailed gating (PostDeploy) ─────────────────────────────
+
+    [Fact]
+    public void IsEnabled_SkipWhenDeployFailed_MainExitedNonZero_SkipsEvenWithScriptPresent()
+    {
+        // PostDeploy is wired with skipWhenDeployFailed=true. A non-zero main-
+        // script exit is a failed deploy → PostDeploy MUST be skipped so a smoke
+        // test / traffic switch never runs against a failed deploy.
+        File.WriteAllText(Path.Combine(_workDir, "PostDeploy.sh"), "echo hi");
+        var step = new ConventionScriptStep(ConventionScriptNames.PostDeploy, new StubScriptEngine(), skipWhenDeployFailed: true);
+        var ctx = BuildContext();
+        ctx.ScriptResult = new ScriptExecutionResult(2);
+
+        step.IsEnabled(ctx).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsEnabled_SkipWhenDeployFailed_ExecutionFailed_SkipsEvenWithScriptPresent()
+    {
+        // The other failure signal: an upstream step threw before PostDeploy.
+        File.WriteAllText(Path.Combine(_workDir, "PostDeploy.sh"), "echo hi");
+        var step = new ConventionScriptStep(ConventionScriptNames.PostDeploy, new StubScriptEngine(), skipWhenDeployFailed: true);
+        var ctx = BuildContext();
+        ctx.ExecutionFailed = true;
+
+        step.IsEnabled(ctx).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsEnabled_SkipWhenDeployFailed_MainSucceeded_RunsWhenScriptPresent()
+    {
+        // Happy path: main script exit 0 → PostDeploy still runs.
+        File.WriteAllText(Path.Combine(_workDir, "PostDeploy.sh"), "echo hi");
+        var step = new ConventionScriptStep(ConventionScriptNames.PostDeploy, new StubScriptEngine(), skipWhenDeployFailed: true);
+        var ctx = BuildContext();
+        ctx.ScriptResult = new ScriptExecutionResult(0);
+
+        step.IsEnabled(ctx).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsEnabled_DefaultFlag_IgnoresFailureState()
+    {
+        // PreDeploy passes skipWhenDeployFailed=false (the default). Even with a
+        // failure state on the context it stays gated only on file presence —
+        // proves the flag is opt-in and PreDeploy semantics are unchanged.
+        File.WriteAllText(Path.Combine(_workDir, "PreDeploy.sh"), "echo hi");
+        var step = new ConventionScriptStep(ConventionScriptNames.PreDeploy, new StubScriptEngine());
+        var ctx = BuildContext();
+        ctx.ScriptResult = new ScriptExecutionResult(9);
+        ctx.ExecutionFailed = true;
+
+        step.IsEnabled(ctx).ShouldBeTrue();
+    }
+
+    // ── DeployHasFailed predicate (single source of truth) ───────────────────
+
+    [Theory]
+    [InlineData(false, null, false)]   // no throw, main not run → not failed
+    [InlineData(false, 0, false)]      // main exit 0 → not failed
+    [InlineData(false, 1, true)]       // main exit non-zero → failed
+    [InlineData(true, null, true)]     // upstream threw → failed
+    [InlineData(true, 0, true)]        // threw wins even if a result exists
+    public void DeployHasFailed_Predicate(bool executionFailed, int? exitCode, bool expected)
+    {
+        var ctx = BuildContext();
+        ctx.ExecutionFailed = executionFailed;
+        ctx.ScriptResult = exitCode is null ? null : new ScriptExecutionResult(exitCode.Value);
+
+        ctx.DeployHasFailed.ShouldBe(expected);
+    }
+
     // ── Execute happy path ──────────────────────────────────────────────────
 
     [Fact]

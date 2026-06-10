@@ -44,6 +44,17 @@ internal sealed class RunScriptCommandContext : IPathBasedExecutionContext, IVar
     public bool ExecutionFailed { get; set; }
 
     /// <summary>
+    /// True once the deploy has failed: either an upstream step threw
+    /// (<see cref="ExecutionFailed"/>) or the main script ran but returned a
+    /// non-zero exit code. Single source of truth for the two consumers that
+    /// must agree on "did the deploy fail?": the DeployFailed cleanup hook
+    /// (fires when true) and the PostDeploy convention (skipped when true, so a
+    /// smoke test / traffic switch never runs against a failed deploy).
+    /// </summary>
+    public bool DeployHasFailed
+        => ExecutionFailed || (ScriptResult is not null && ScriptResult.ExitCode != 0);
+
+    /// <summary>
     /// PR-5 — structured per-step outcomes. Each rewriter / extract /
     /// convention / main-script step appends one entry as it finishes.
     /// Surfaced on <c>CommandExecutionResult.StepOutcomes</c> for caller-
