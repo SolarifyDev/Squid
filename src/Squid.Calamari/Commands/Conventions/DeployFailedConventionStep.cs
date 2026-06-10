@@ -52,11 +52,11 @@ internal sealed class DeployFailedConventionStep : IAlwaysRunExecutionStep<RunSc
         if (string.IsNullOrEmpty(context.WorkingDirectory)) return false;
         if (context.Variables is null) return false;
 
-        // Predicate: at least one of (a) something threw before cleanup
-        // phase, or (b) main script ran but exit code is non-zero.
-        var hadFailure = context.ExecutionFailed
-                         || (context.ScriptResult is not null && context.ScriptResult.ExitCode != 0);
-        if (!hadFailure) return false;
+        // Predicate: the deploy failed — something threw before the cleanup
+        // phase, or the main script ran but exited non-zero. Same single source
+        // of truth the PostDeploy gate consults (inverted), so the two can never
+        // disagree about whether the deploy failed.
+        if (!context.DeployHasFailed) return false;
 
         return ConventionScriptResolver.Resolve(
             context.WorkingDirectory, ConventionName, PreferredSyntax(context)) is not null;

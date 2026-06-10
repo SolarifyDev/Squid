@@ -40,6 +40,7 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
 {
     private readonly string _conventionName;
     private readonly IScriptEngine _scriptEngine;
+    private readonly bool _skipWhenDeployFailed;
 
     /// <summary>
     /// Construct a convention hook bound to a script filename (without
@@ -49,12 +50,18 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
     /// is case-sensitive by default to match Octopus's case-preserving
     /// behaviour.
     /// </summary>
-    public ConventionScriptStep(string conventionName, IScriptEngine scriptEngine)
+    /// <param name="skipWhenDeployFailed">When <c>true</c>, the hook is skipped
+    /// once the deploy has failed (<see cref="RunScriptCommandContext.DeployHasFailed"/>) —
+    /// used for PostDeploy so a smoke test / traffic switch never runs against a
+    /// failed deploy. PreDeploy passes <c>false</c> (the default): it runs before
+    /// the main script, so the failure state is never set when it is evaluated.</param>
+    public ConventionScriptStep(string conventionName, IScriptEngine scriptEngine, bool skipWhenDeployFailed = false)
     {
         if (string.IsNullOrWhiteSpace(conventionName))
             throw new ArgumentException("Convention name MUST be non-empty.", nameof(conventionName));
         _conventionName = conventionName;
         _scriptEngine = scriptEngine ?? throw new ArgumentNullException(nameof(scriptEngine));
+        _skipWhenDeployFailed = skipWhenDeployFailed;
     }
 
     /// <summary>The convention name — exposed for test pinning + log output.</summary>
@@ -67,6 +74,11 @@ internal sealed class ConventionScriptStep : ExecutionStep<RunScriptCommandConte
         // future reordering.
         if (string.IsNullOrEmpty(context.WorkingDirectory)) return false;
         if (context.Variables is null) return false;
+
+        // PostDeploy must not run once the deploy has failed (non-zero main-script
+        // exit or a prior step exception). PreDeploy passes skipWhenDeployFailed=false
+        // and runs before the main script, so this gate never trips for it.
+        if (_skipWhenDeployFailed && context.DeployHasFailed) return false;
 
         return ConventionScriptResolver.Resolve(
             context.WorkingDirectory, _conventionName, PreferredSyntax(context)) is not null;
