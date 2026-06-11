@@ -215,9 +215,10 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     /// Dispatch a script to the agent and observe it to completion — or, on a
     /// resumed deployment, re-attach to a still-running script from a prior
     /// (crashed) run instead of launching a duplicate. The in-flight ScriptTicket
-    /// is recorded right after <c>StartScript</c> and cleared once observation
-    /// completes, so a server crash mid-script leaves a durable pointer the next
-    /// run can re-attach to.
+    /// is recorded <b>before</b> <c>StartScript</c> and cleared once observation
+    /// completes, so a server crash (or a lost RPC response) anywhere from the
+    /// moment the agent launches the script leaves a durable pointer the next run
+    /// can re-attach to — never a duplicate dispatch.
     /// </summary>
     private async Task<ScriptExecutionResult> DispatchOrReattachAsync(
         ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint,
@@ -226,10 +227,20 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;
 
-        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
-
+        // Record-before-RPC: persist the ticket we are about to dispatch BEFORE
+        // firing StartScript. If the server crashes (or the response is lost) in
+        // the window where the agent has launched the script but the server has
+        // not yet recorded the ticket, a resume would otherwise find no pointer and
+        // dispatch a fresh ticket — running the (non-idempotent) script a SECOND
+        // time. With the record first, resume always knows a ticket to re-probe:
+        // TryReattachAsync re-attaches if the agent has it, and falls through to a
+        // clean fresh dispatch (via the Complete+UnknownResult sentinel) if the
+        // script never actually started. The agent is idempotent for a known
+        // ticket, so even a retried StartScript returns status, not a second run.
         if (_inFlightStore != null)
             await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, request.Machine.Id, scriptTicket.TaskId, ct).ConfigureAwait(false);
+
+        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);

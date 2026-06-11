@@ -146,6 +146,40 @@ public class HalibutResumeReattachTests : TestBase
         result.Success.ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task FreshDispatch_RecordsInFlightTicket_BeforeStartScriptRpc()
+    {
+        // The record-before-RPC guarantee (P1, server-side StartScript idempotency):
+        // the in-flight ticket MUST be durably persisted BEFORE the StartScript RPC
+        // fires. Otherwise a crash / lost response in the window between the agent
+        // launching the script and the server recording the ticket leaves no pointer,
+        // and the resumed run re-dispatches a fresh ticket → the script runs twice.
+        const int taskId = 810005, machineId = 15;
+
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        // Capture, at the instant StartScript fires, what the store has COMMITTED —
+        // read through a fresh DI scope, exactly as a resumed server would see it.
+        string recordedWhenStartScriptFired = null;
+
+        var agent = new RecordingScriptService(
+            getStatusScript: new[] { (ProcessState.Complete, 0) },
+            completeResult: (ProcessState.Complete, 0))
+        {
+            OnStartScript = async _ => recordedWhenStartScriptFired = await GetTicketAsync(taskId, machineId).ConfigureAwait(false)
+        };
+
+        var result = await ExecuteWithAgentAsync(taskId, machineId, agent).ConfigureAwait(false);
+
+        result.Success.ShouldBeTrue();
+        agent.StartScriptCalls.ShouldBe(1);
+
+        recordedWhenStartScriptFired.ShouldBe(agent.StartedTickets.Single(),
+            customMessage: "record-before-RPC violated: the in-flight ticket must be durably persisted BEFORE StartScript fires. " +
+                          "If it is only recorded after the RPC returns, a crash / lost response in that window leaves no pointer " +
+                          "and the resumed run re-dispatches a duplicate (the exact double-run this ordering prevents).");
+    }
+
     // ── Drive the real strategy with a fake agent (per-scope IHalibutClientFactory override) ──
 
     private async Task<ScriptExecutionResult> ExecuteWithAgentAsync(int taskId, int machineId, RecordingScriptService agent)
@@ -213,11 +247,20 @@ public class HalibutResumeReattachTests : TestBase
         public List<string> StartedTickets { get; } = new();
         public List<string> ProbedTickets { get; } = new();
 
-        public Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command)
+        /// <summary>Hook invoked WHILE StartScript is executing on the agent — lets a test
+        /// observe server-side state (e.g. the durably-recorded in-flight ticket) at the exact
+        /// instant the dispatch RPC is in flight.</summary>
+        public Func<StartScriptCommand, Task> OnStartScript { get; set; }
+
+        public async Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command)
         {
             StartScriptCalls++;
             StartedTickets.Add(command.ScriptTicket.TaskId);
-            return Task.FromResult(Resp(command.ScriptTicket, ProcessState.Running, 0));
+
+            if (OnStartScript != null)
+                await OnStartScript(command).ConfigureAwait(false);
+
+            return Resp(command.ScriptTicket, ProcessState.Running, 0);
         }
 
         public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request)
