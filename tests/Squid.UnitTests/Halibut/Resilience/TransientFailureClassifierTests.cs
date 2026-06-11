@@ -30,10 +30,13 @@ public sealed class TransientFailureClassifierTests
         => TransientFailureClassifier.IsTransient(new AgentUnreachableException("agent-1", 3)).ShouldBeTrue();
 
     [Fact]
-    public void CircuitOpen_IsTransient()
-        // The breaker's own contract says treat as transient + retry after the open
-        // window. A tripped breaker on resume must pause (preserve pointer), not fail.
-        => TransientFailureClassifier.IsTransient(new CircuitOpenException(7, DateTimeOffset.UtcNow.AddSeconds(60))).ShouldBeTrue();
+    public void CircuitOpen_IsNotTransient()
+        // The breaker only opens after the failure threshold (3+ consecutive
+        // failures) — a SUSTAINED agent problem, not a one-off blip — and is raised
+        // BEFORE any script is dispatched, so there is nothing to re-attach to.
+        // Pausing on it would loop on a dead agent and break the deliberate
+        // fail-fast-on-open-breaker → Failed contract.
+        => TransientFailureClassifier.IsTransient(new CircuitOpenException(7, DateTimeOffset.UtcNow.AddSeconds(60))).ShouldBeFalse();
 
     [Fact]
     public void GenericException_IsNotTransient()

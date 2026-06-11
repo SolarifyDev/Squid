@@ -10,21 +10,30 @@ namespace Squid.Core.Halibut.Resilience;
 /// per-action catch in <c>ExecuteStepsPhase</c>, and the Halibut execution
 /// strategy's re-attach probe), so the definition lives in ONE place.
 ///
-/// <para>Transient = the round-trip to the agent could not be completed, or the
-/// agent is fail-fast-rejected by an open breaker:</para>
+/// <para>Transient = a single round-trip to the agent could not be completed, so
+/// the script may still be running and a resume should re-attach to it:</para>
 /// <list type="bullet">
-///   <item><see cref="CircuitOpenException"/> — the breaker is open; its own
-///         contract says treat as transient and retry after the open window.</item>
-///   <item><see cref="AgentUnreachableException"/> — the liveness probe gave up.</item>
+///   <item><see cref="AgentUnreachableException"/> — the liveness probe gave up
+///         mid-script (the script was dispatched and may still be running).</item>
 ///   <item>A base/transport <see cref="HalibutClientException"/> — connection
 ///         reset, EOF, TLS handshake failure, timeout, etc.</item>
 /// </list>
 ///
-/// <para>NOT transient — the request reached the agent and was PERMANENTLY
-/// rejected, so retrying forever is pointless (and would pause-loop): the Halibut
-/// protocol/invocation subtypes (version mismatch → no matching service/method;
-/// the agent's service itself threw → service-invocation). These are real
-/// failures and must fail the deployment.</para>
+/// <para>NOT transient — these are sustained or permanent conditions, so pausing
+/// for resume would only pause-loop; they must fail the deployment so an operator
+/// investigates:</para>
+/// <list type="bullet">
+///   <item>The Halibut protocol/invocation subtypes — the request reached the
+///         agent and was PERMANENTLY rejected (version mismatch → no matching
+///         service/method; the agent's service itself threw).</item>
+///   <item><see cref="CircuitOpenException"/> — the per-machine breaker only opens
+///         after the failure threshold (3+ consecutive failures), so it signals a
+///         SUSTAINED agent problem, not a one-off blip. It is also raised BEFORE
+///         any script is dispatched (fail-fast), so there is no in-flight script to
+///         re-attach to. Pausing on it would loop on a genuinely dead agent and
+///         flip the deliberate fail-fast-on-open-breaker contract
+///         (<c>HalibutCircuitBreakerE2ETests.BreakerForcedOpen_*</c> → Failed).</item>
+/// </list>
 /// </summary>
 public static class TransientFailureClassifier
 {
@@ -33,7 +42,7 @@ public static class TransientFailureClassifier
         if (ex is AggregateException aggregate)
             return aggregate.InnerExceptions.Count > 0 && aggregate.InnerExceptions.All(IsTransient);
 
-        if (ex is CircuitOpenException or AgentUnreachableException)
+        if (ex is AgentUnreachableException)
             return true;
 
         // Halibut transport failures are transient EXCEPT the protocol/invocation
