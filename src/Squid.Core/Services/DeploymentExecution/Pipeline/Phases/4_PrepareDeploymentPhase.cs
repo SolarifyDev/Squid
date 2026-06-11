@@ -91,21 +91,28 @@ public sealed class PrepareDeploymentPhase(
     {
         ctx.AllTargets = await targetFinder.FindTargetsAsync(ctx.Deployment, ct).ConfigureAwait(false);
 
-        ApplyTransientTargetPolicy(ctx);
+        // Scope the transient-target policy to the targets the deployment would
+        // actually use (matching at least one step role). An unavailable target in
+        // the environment that no step targets must NOT fail the deployment — it is
+        // not a deployment target for this release. Same role set PreFilterTargetsByRoles uses.
+        var requiredRoles = DeploymentTargetFinder.CollectAllTargetRoles(ctx.Steps, actionHandlerRegistry.ResolveScope);
+
+        ApplyTransientTargetPolicy(ctx, requiredRoles);
 
         if (ctx.AllTargets.Count == 0) throw new DeploymentTargetException($"No target machines found for deployment {ctx.Deployment.Id}", ctx.Deployment.Id);
 
         Log.Information("[Deploy] Found {Count} target machines for deployment {DeploymentId}", ctx.AllTargets.Count, ctx.Deployment.Id);
     }
 
-    // Honour the project's "Transient Deployment Targets" setting. For an
-    // unconfigured project the defaults are FailDeployment (an unavailable target
-    // aborts the deployment up front rather than being silently skipped) + Exclude
-    // (unhealthy targets are dropped). Explicit SkipAndContinue is the opt-out that
-    // restores the lenient skip behaviour for unavailable targets.
-    internal static void ApplyTransientTargetPolicy(DeploymentTaskContext ctx)
+    // Honour the project's "Transient Deployment Targets" setting, scoped to the
+    // deployment's role-matched targets (see requiredRoles). For an unconfigured
+    // project the defaults are FailDeployment (an unavailable target aborts the
+    // deployment up front rather than being silently skipped) + Exclude (unhealthy
+    // targets are dropped). Explicit SkipAndContinue is the opt-out that restores the
+    // lenient skip behaviour for unavailable targets.
+    internal static void ApplyTransientTargetPolicy(DeploymentTaskContext ctx, HashSet<string> requiredRoles)
     {
-        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(ctx.AllTargets, ctx.Project?.DeploymentSettingsJson);
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(ctx.AllTargets, requiredRoles, ctx.Project?.DeploymentSettingsJson);
 
         if (result.FailedUnavailable.Count > 0)
         {
