@@ -123,6 +123,39 @@ public class InFlightScriptStoreTests : TestBase
                 customMessage: $"Concurrent record lost machine {id}'s ticket — the per-task RMW lock is not serialising writes.");
     }
 
+    [Fact]
+    public async Task ConcurrentReadsAndWrites_OnOneSharedContext_DoNotThrow()
+    {
+        // Reproduces the production race the other tests here cannot: each of them
+        // uses a FRESH Run scope per call, so concurrent ops never share a DbContext.
+        // In production a parallel batch's targets all run on the ONE scoped
+        // DbContext the Hangfire worker owns for the task — each target records its
+        // ticket AND probes for a re-attach ticket. Before TryGetTicketAsync took
+        // the per-task stripe, an ungated read raced a concurrent read/RMW on that
+        // shared context and EF threw "a second operation was started on this
+        // context instance". This resolves ONE store and fires the ops on it.
+        const int taskId = 700007;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        await Should.NotThrowAsync(() => Run<IInFlightScriptStore>(async store =>
+        {
+            var ops = new List<Task>();
+
+            foreach (var id in Enumerable.Range(1, 24))
+            {
+                ops.Add(store.RecordDispatchedAsync(taskId, id, $"ticket-{id}"));
+                ops.Add(store.TryGetTicketAsync(taskId, id));
+            }
+
+            await Task.WhenAll(ops).ConfigureAwait(false);
+        })).ConfigureAwait(false);
+
+        // Serialised RMW also means no write was lost in the contention.
+        foreach (var id in Enumerable.Range(1, 24))
+            (await GetTicketAsync(taskId, id).ConfigureAwait(false)).ShouldBe($"ticket-{id}",
+                customMessage: $"Concurrent read+write on one context lost machine {id}'s ticket.");
+    }
+
     private Task EnsureRowAsync(int taskId)
         => Run<IDeploymentCheckpointService>(svc => svc.EnsureExistsAsync(taskId, deploymentId: 1));
 
