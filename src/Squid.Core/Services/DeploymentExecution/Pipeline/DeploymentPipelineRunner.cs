@@ -132,7 +132,9 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
         }
-        catch (Exception ex) when (TransientResumable && TargetCatchClassifier.IsTransientInfraFailure(ex))
+        catch (Exception ex) when (TransientResumable
+            && !timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
+            && TargetCatchClassifier.IsTransientInfraFailure(ex))
         {
             // A transient infra failure (Halibut RPC drop after the library's
             // retries, or an unreachable agent) pauses the deployment instead of
@@ -140,6 +142,12 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // clears it only on a definitive observation), so a resume re-attaches
             // to the still-running script rather than re-dispatching a duplicate.
             // We do NOT rethrow — Paused is a clean, expected outcome.
+            //
+            // The cancel/timeout guard preserves the established precedence: a
+            // user-cancel (registryCts/ct) or a wall-clock timeout (timeoutCts)
+            // that races a transient RPC drop must NOT be reclassified as a
+            // transient pause — cancel/timeout win, so the exception falls through
+            // to their handlers (or the generic failure path).
             await SafeCompleteAsync(ctx, () => completion.OnTransientPauseAsync(ctx, ex, CancellationToken.None), new DeploymentPausedEvent(new DeploymentEventContext()));
         }
         catch (Exception ex)

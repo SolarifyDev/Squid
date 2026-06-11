@@ -304,6 +304,19 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         }
         catch (Exception ex)
         {
+            // A TRANSIENT probe failure (the agent is still unreachable on resume)
+            // must NOT clear the pointer or dispatch fresh — the recorded script may
+            // still be running, so a fresh dispatch would duplicate it. Preserve the
+            // pointer and propagate so the deployment pauses again; a later resume
+            // re-probes. Only a non-transient probe error falls back to a fresh
+            // dispatch (today's behaviour).
+            if (TransientFailureClassifier.IsTransient(ex))
+            {
+                Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
+                    request.Machine.Name, existingTicketId);
+                throw;
+            }
+
             Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
                 request.Machine.Name, existingTicketId);
             await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);

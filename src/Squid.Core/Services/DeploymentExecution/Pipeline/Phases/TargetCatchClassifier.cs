@@ -1,5 +1,3 @@
-using System.Linq;
-using Halibut;
 using Squid.Core.Halibut.Resilience;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -68,21 +66,12 @@ public static class TargetCatchClassifier
 
     /// <summary>
     /// Whether <paramref name="ex"/> is a transient infrastructure failure that
-    /// should pause (resumable) rather than fail the deployment: a
-    /// <see cref="HalibutClientException"/> (an RPC drop that outlived the Halibut
-    /// library's own retries) or an <see cref="AgentUnreachableException"/> (the
-    /// liveness probe gave up on the agent). A parallel batch's
-    /// <see cref="System.AggregateException"/> qualifies only when EVERY inner
-    /// failure is itself transient — a mix that includes a real script/RBAC failure
-    /// is a true failure, not a pausable blip. Shared by the runner's
-    /// pause-classification and this per-target classifier so the definition of
-    /// "transient" lives in one place.
+    /// should pause (resumable) rather than fail the deployment. Delegates to the
+    /// single source of truth, <see cref="TransientFailureClassifier.IsTransient"/>
+    /// (which excludes the permanent Halibut protocol/invocation subtypes and
+    /// includes <c>CircuitOpenException</c>), kept here as the name the pipeline
+    /// callers already reference.
     /// </summary>
     public static bool IsTransientInfraFailure(System.Exception ex)
-    {
-        if (ex is System.AggregateException aggregate)
-            return aggregate.InnerExceptions.Count > 0 && aggregate.InnerExceptions.All(IsTransientInfraFailure);
-
-        return ex is HalibutClientException || ex is AgentUnreachableException;
-    }
+        => TransientFailureClassifier.IsTransient(ex);
 }

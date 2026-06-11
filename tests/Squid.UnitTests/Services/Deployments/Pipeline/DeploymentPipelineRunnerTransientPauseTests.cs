@@ -109,6 +109,29 @@ public class DeploymentPipelineRunnerTransientPauseTests
         _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task TransientFailure_DuringUserCancel_DoesNotPause()
+    {
+        // A user-cancel that races a transient RPC drop (a raw HalibutClientException,
+        // NOT an OperationCanceledException) must NOT be reclassified as a transient
+        // pause — the cancel/timeout guard makes cancel win, so the transient catch is
+        // skipped and the exception falls through to the failure/cancel handling.
+        var phase = new Mock<IDeploymentPipelinePhase>();
+        phase.Setup(p => p.Order).Returns(1);
+        phase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Returns<DeploymentTaskContext, CancellationToken>((_, __) =>
+            {
+                _registry.TryCancel(1);
+                throw new HalibutClientException("connection reset while cancelling");
+            });
+        var runner = CreateRunner(phase.Object);
+
+        await Should.ThrowAsync<HalibutClientException>(() => runner.ProcessAsync(1, CancellationToken.None));
+
+        _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never,
+            failMessage: "A transient drop racing a user-cancel must NOT pause — cancel/timeout win over the transient classification.");
+    }
+
     // ── Resumable-transient flag (Rule 8 env-var escape hatch) ────────────────
 
     [Fact]

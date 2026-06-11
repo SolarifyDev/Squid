@@ -283,6 +283,35 @@ public class HalibutResumeReattachTests : TestBase
                           "definitive observation, never in a finally), or a resumed run re-dispatches a duplicate of the still-running script.");
     }
 
+    [Fact]
+    public async Task ReattachProbe_TransientFailure_PreservesPointer_DoesNotDispatchFresh()
+    {
+        // P1b (review HIGH): on resume the reattach probe (GetStatus on the recorded
+        // ticket) can itself hit a transient failure (the agent is still down). That
+        // must NOT clear the pointer or dispatch fresh — the recorded script may
+        // still be running, so a fresh dispatch would DUPLICATE it. The pointer is
+        // preserved and the failure propagates so the deployment pauses again.
+        const int taskId = 810008, machineId = 18;
+        const string ticket = "reattach-ticket-transient-probe";
+
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+        await RecordTicketAsync(taskId, machineId, ticket).ConfigureAwait(false);
+
+        var agent = new RecordingScriptService(
+            getStatusScript: new[] { (ProcessState.Complete, 0) },
+            completeResult: (ProcessState.Complete, 0))
+        {
+            GetStatusThrows = new HalibutClientException("agent still unreachable on resume")
+        };
+
+        await Should.ThrowAsync<HalibutClientException>(() => ExecuteWithAgentAsync(taskId, machineId, agent)).ConfigureAwait(false);
+
+        agent.StartScriptCalls.ShouldBe(0,
+            customMessage: "A transient reattach-probe failure must NOT dispatch fresh — the recorded script may still be running (duplicate-execution risk).");
+        (await GetTicketAsync(taskId, machineId).ConfigureAwait(false)).ShouldBe(ticket,
+            customMessage: "A transient reattach-probe failure must PRESERVE the recorded pointer for a later resume, not clear it.");
+    }
+
     // ── Drive the real strategy with a fake agent (per-scope IHalibutClientFactory override) ──
 
     private async Task<ScriptExecutionResult> ExecuteWithAgentAsync(int taskId, int machineId, RecordingScriptService agent)
