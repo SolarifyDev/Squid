@@ -180,6 +180,69 @@ public class HalibutResumeReattachTests : TestBase
                           "and the resumed run re-dispatches a duplicate (the exact double-run this ordering prevents).");
     }
 
+    [Fact]
+    public async Task ConcurrentDispatch_SameMachineDifferentSteps_EachRunsItsOwnScript_NoCrossReattach()
+    {
+        // The parallel-batch regression: two StartWithPrevious steps sharing a target
+        // role both dispatch to ONE machine at once. The in-flight slot is scoped to
+        // (machine, step, action), so step B must NOT re-attach to step A's recorded
+        // ticket — it must run its OWN script. The machine-only key this replaced made
+        // step B re-attach and silently skip its work (StartScript count 1, not 2).
+        const int taskId = 810006, machineId = 16;
+
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        // Gate: park the FIRST StartScript inside the agent — AFTER its in-flight
+        // ticket is recorded (record-before-RPC) — until step B has fully run its own
+        // dispatch. This deterministically forces the exact window the bug lived in.
+        var firstParked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var agent = new RecordingScriptService(
+            getStatusScript: new[] { (ProcessState.Complete, 0) },
+            completeResult: (ProcessState.Complete, 0));
+
+        agent.OnStartScript = async _ =>
+        {
+            // StartScriptCalls is incremented before this hook runs, so the first
+            // dispatch sees == 1 and parks; the second proceeds immediately.
+            if (agent.StartScriptCalls == 1)
+            {
+                firstParked.TrySetResult();
+                await releaseFirst.Task.ConfigureAwait(false);
+            }
+        };
+
+        await Run<IEnumerable<IExecutionStrategy>>(
+            async strategies =>
+            {
+                var strategy = strategies.OfType<HalibutMachineExecutionStrategy>().Single();
+
+                var stepA = strategy.ExecuteScriptAsync(BuildRequest(taskId, machineId, "StepA", "ActionA"), CancellationToken.None);
+
+                await firstParked.Task.ConfigureAwait(false);   // step A parked in StartScript, slot A recorded
+
+                // Step B dispatches WHILE step A is still in-flight on the same machine.
+                var stepBResult = await strategy.ExecuteScriptAsync(BuildRequest(taskId, machineId, "StepB", "ActionB"), CancellationToken.None).ConfigureAwait(false);
+
+                releaseFirst.TrySetResult();
+                var stepAResult = await stepA.ConfigureAwait(false);
+
+                stepAResult.Success.ShouldBeTrue();
+                stepBResult.Success.ShouldBeTrue();
+            },
+            extraRegistration: b => b.RegisterInstance(new FixedHalibutClientFactory(agent)).As<IHalibutClientFactory>()).ConfigureAwait(false);
+
+        agent.StartScriptCalls.ShouldBe(2,
+            customMessage: "Two parallel steps on ONE machine must EACH dispatch their own script. A count of 1 means step B " +
+                          "re-attached to step A's in-flight ticket (the machine-only key bug) and silently skipped its own work.");
+        agent.StartedTickets.Distinct().Count().ShouldBe(2,
+            customMessage: "Each parallel step must run under its OWN ScriptTicket.");
+
+        (await GetTicketAsync(taskId, machineId).ConfigureAwait(false)).ShouldBeNull(
+            customMessage: "Both dispatch slots must be cleared once observed to completion.");
+    }
+
     // ── Drive the real strategy with a fake agent (per-scope IHalibutClientFactory override) ──
 
     private async Task<ScriptExecutionResult> ExecuteWithAgentAsync(int taskId, int machineId, RecordingScriptService agent)
@@ -197,15 +260,15 @@ public class HalibutResumeReattachTests : TestBase
         return result;
     }
 
-    private static ScriptExecutionRequest BuildRequest(int taskId, int machineId) => new()
+    private static ScriptExecutionRequest BuildRequest(int taskId, int machineId, string stepName = "Step1", string actionName = "Action1") => new()
     {
         ExecutionMode = ExecutionMode.DirectScript,
         ScriptBody = "echo resume-reattach",
         Syntax = ScriptSyntax.Bash,
         Variables = new List<VariableDto>(),
         ServerTaskId = taskId,
-        StepName = "Step1",
-        ActionName = "Action1",
+        StepName = stepName,
+        ActionName = actionName,
         Machine = new Machine
         {
             Id = machineId,
@@ -221,14 +284,18 @@ public class HalibutResumeReattachTests : TestBase
 
     // ── Helpers (mirror InFlightScriptStoreTests) ──
 
+    // The default slot matches BuildRequest's Step1/Action1 so a ticket recorded
+    // here is the one the strategy's reattach probe looks up.
+    private static DispatchSlot DefaultSlot(int machineId) => new(machineId, "Step1", "Action1");
+
     private Task EnsureRowAsync(int taskId)
         => Run<IDeploymentCheckpointService>(svc => svc.EnsureExistsAsync(taskId, deploymentId: 1));
 
     private Task RecordTicketAsync(int taskId, int machineId, string ticket)
-        => Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, machineId, ticket));
+        => Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, DefaultSlot(machineId), ticket));
 
     private Task<string> GetTicketAsync(int taskId, int machineId)
-        => Run<IInFlightScriptStore, string>(s => s.TryGetTicketAsync(taskId, machineId));
+        => Run<IInFlightScriptStore, string>(s => s.TryGetTicketAsync(taskId, DefaultSlot(machineId)));
 
     // ── Recording fake agent (the Halibut RPC counterpart) ──
 
