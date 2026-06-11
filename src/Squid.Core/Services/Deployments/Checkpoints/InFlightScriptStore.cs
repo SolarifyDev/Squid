@@ -12,14 +12,17 @@ namespace Squid.Core.Services.Deployments.Checkpoints;
 /// duplicate.
 ///
 /// <para><b>Concurrency</b>: a parallel batch dispatches to several targets at
-/// once, each recording its ticket. A single Hangfire worker owns a given
-/// deployment task, so all writes for one <c>serverTaskId</c> happen in one
-/// process — a fixed set of lock stripes (keyed by <c>serverTaskId</c>)
-/// serialises the read-modify-write of the shared JSON column. Striping is
-/// bounded (no per-task growth over the server's lifetime); two tasks hashing
-/// to the same stripe serialise harmlessly, and a given task always maps to the
-/// same stripe so its own writes are always serialised. (Cross-process
-/// contention can't occur: task ownership is exclusive.)</para>
+/// once, each recording its ticket AND probing for a re-attach ticket — all on
+/// the one scoped <see cref="IRepository"/>/DbContext the Hangfire worker owns
+/// for that task. Every DbContext access (the read-only <see cref="TryGetTicketAsync"/>
+/// probe and the read-modify-write of the shared JSON column) takes a per-task
+/// lock stripe (keyed by <c>serverTaskId</c>), so two parallel targets can never
+/// drive two concurrent operations onto the shared context (EF would throw "a
+/// second operation was started on this context instance"). Striping is bounded
+/// (no per-task growth over the server's lifetime); two tasks hashing to the same
+/// stripe serialise harmlessly, and a given task always maps to the same stripe
+/// so all of its own access serialises. (Cross-process contention can't occur:
+/// task ownership is exclusive.)</para>
 ///
 /// <para><b>Fail-safe</b>: if the checkpoint row does not exist yet, recording
 /// is silently skipped — the worst case is that resume re-dispatches (today's
@@ -56,10 +59,27 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
 
     public async Task<string?> TryGetTicketAsync(int serverTaskId, int machineId, CancellationToken cancellationToken = default)
     {
-        var row = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
-            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        // The read MUST take the same per-task stripe as the writes. A parallel
+        // batch dispatches to several targets at once on one Hangfire worker, and
+        // every target's reattach probe lands here on the SAME scoped DbContext —
+        // an ungated read races a concurrent read/RMW and EF throws "a second
+        // operation was started on this context instance". The stripe serialises
+        // all of a task's DbContext access onto one writer.
+        var gate = LockFor(serverTaskId);
 
-        return row == null ? null : InFlightScriptMap.TryGet(row.InFlightScriptsJson ?? "{}", machineId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            var row = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
+                .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+
+            return row == null ? null : InFlightScriptMap.TryGet(row.InFlightScriptsJson ?? "{}", machineId);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private async Task MutateAsync(int serverTaskId, Func<string, string> mutate, CancellationToken cancellationToken)
