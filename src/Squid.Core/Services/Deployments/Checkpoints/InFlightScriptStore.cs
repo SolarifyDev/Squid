@@ -4,12 +4,33 @@ using Squid.Core.Persistence.Entities.Deployments;
 namespace Squid.Core.Services.Deployments.Checkpoints;
 
 /// <summary>
+/// Identifies a single in-flight script dispatch within a deployment task: the
+/// target <paramref name="MachineId"/> plus the <paramref name="StepId"/> /
+/// <paramref name="ActionId"/> that produced it. A parallel batch can dispatch
+/// MORE THAN ONE script to the SAME machine at once (two <c>StartWithPrevious</c>
+/// steps that share a target role), so the machine id alone is too coarse a key —
+/// the second dispatch would re-attach to the first's recorded ticket and skip
+/// its own script. Scoping the in-flight slot to the (machine, step, action)
+/// dispatch unit keeps concurrent dispatches to one machine independent, and lets
+/// a resumed run re-attach to EACH of them.
+///
+/// <para>The step/action are identified by their stable, process-unique <b>ids</b>,
+/// NOT their display names — step and action names carry no uniqueness constraint
+/// (the schema only enforces unique step_order / action_order), so two distinct
+/// identically-named steps targeting one machine would otherwise collapse to the
+/// same slot and re-open the very collision this prevents. The ids come from the
+/// frozen process snapshot, so they are identical on a resumed run.</para>
+/// </summary>
+public readonly record struct DispatchSlot(int MachineId, int StepId, int ActionId);
+
+/// <summary>
 /// Durable record of scripts dispatched to a Halibut agent but not yet observed
 /// to completion, persisted on the deployment checkpoint's
 /// <see cref="DeploymentExecutionCheckpoint.InFlightScriptsJson"/> column so a
 /// deployment resumed after a server crash can re-attach to a still-running
 /// script (probe the agent with the same ScriptTicket) instead of launching a
-/// duplicate.
+/// duplicate. Keyed by <see cref="DispatchSlot"/> so two concurrent dispatches to
+/// one machine (a parallel batch) never collide.
 ///
 /// <para><b>Concurrency</b>: a parallel batch dispatches to several targets at
 /// once, each recording its ticket AND probing for a re-attach ticket — all on
@@ -31,11 +52,11 @@ namespace Squid.Core.Services.Deployments.Checkpoints;
 /// </summary>
 public interface IInFlightScriptStore : IScopedDependency
 {
-    Task RecordDispatchedAsync(int serverTaskId, int machineId, string scriptTicket, CancellationToken cancellationToken = default);
+    Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, CancellationToken cancellationToken = default);
 
-    Task ClearAsync(int serverTaskId, int machineId, CancellationToken cancellationToken = default);
+    Task ClearAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default);
 
-    Task<string?> TryGetTicketAsync(int serverTaskId, int machineId, CancellationToken cancellationToken = default);
+    Task<string?> TryGetTicketAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default);
 }
 
 public sealed class InFlightScriptStore(IRepository repository) : IInFlightScriptStore
@@ -51,13 +72,13 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
 
     private static SemaphoreSlim LockFor(int serverTaskId) => Stripes[(uint)serverTaskId % LockStripeCount];
 
-    public Task RecordDispatchedAsync(int serverTaskId, int machineId, string scriptTicket, CancellationToken cancellationToken = default)
-        => MutateAsync(serverTaskId, current => InFlightScriptMap.Add(current, machineId, scriptTicket), cancellationToken);
+    public Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, CancellationToken cancellationToken = default)
+        => MutateAsync(serverTaskId, current => InFlightScriptMap.Add(current, slot, scriptTicket), cancellationToken);
 
-    public Task ClearAsync(int serverTaskId, int machineId, CancellationToken cancellationToken = default)
-        => MutateAsync(serverTaskId, current => InFlightScriptMap.Remove(current, machineId), cancellationToken);
+    public Task ClearAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+        => MutateAsync(serverTaskId, current => InFlightScriptMap.Remove(current, slot), cancellationToken);
 
-    public async Task<string?> TryGetTicketAsync(int serverTaskId, int machineId, CancellationToken cancellationToken = default)
+    public async Task<string?> TryGetTicketAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
     {
         // The read MUST take the same per-task stripe as the writes. A parallel
         // batch dispatches to several targets at once on one Hangfire worker, and
@@ -74,7 +95,7 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
             var row = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
                 .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
-            return row == null ? null : InFlightScriptMap.TryGet(row.InFlightScriptsJson ?? "{}", machineId);
+            return row == null ? null : InFlightScriptMap.TryGet(row.InFlightScriptsJson ?? "[]", slot);
         }
         finally
         {
@@ -99,7 +120,7 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
                 return;
             }
 
-            var updated = mutate(row.InFlightScriptsJson ?? "{}");
+            var updated = mutate(row.InFlightScriptsJson ?? "[]");
 
             await repository.ExecuteUpdateAsync<DeploymentExecutionCheckpoint>(
                 c => c.ServerTaskId == serverTaskId,

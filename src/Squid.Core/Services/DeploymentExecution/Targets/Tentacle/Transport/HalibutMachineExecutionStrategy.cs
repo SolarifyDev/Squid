@@ -224,6 +224,14 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint,
         ScriptTicket scriptTicket, StartScriptCommand command, TimeSpan scriptTimeout, CancellationToken ct)
     {
+        // Scope the in-flight slot to the (machine, step, action) dispatch unit, NOT
+        // the machine alone: a parallel batch can dispatch two scripts to one machine
+        // at once (two StartWithPrevious steps sharing a target role), and a
+        // machine-only key would make the second dispatch re-attach to the first's
+        // ticket and skip its own script. Keyed by the stable, process-unique
+        // step/action ids — display names carry no uniqueness guarantee.
+        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
+
         var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;
 
@@ -238,7 +246,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // script never actually started. The agent is idempotent for a known
         // ticket, so even a retried StartScript returns status, not a second run.
         if (_inFlightStore != null)
-            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, request.Machine.Id, scriptTicket.TaskId, ct).ConfigureAwait(false);
+            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, scriptTicket.TaskId, ct).ConfigureAwait(false);
 
         var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
 
@@ -252,7 +260,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         finally
         {
             if (_inFlightStore != null)
-                await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+                await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
         }
     }
 
@@ -270,7 +278,12 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     {
         if (_inFlightStore == null) return null;
 
-        var existingTicketId = await _inFlightStore.TryGetTicketAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+        // Same dispatch-unit scope as DispatchOrReattachAsync: only re-attach to a
+        // ticket recorded for THIS (machine, step, action), never to a sibling step
+        // concurrently dispatching to the same machine.
+        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
+
+        var existingTicketId = await _inFlightStore.TryGetTicketAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(existingTicketId)) return null;
 
         var existingTicket = new ScriptTicket(existingTicketId);
@@ -284,13 +297,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         {
             Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
                 request.Machine.Name, existingTicketId);
-            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
             return null;
         }
 
         if (!AgentHasUsableScript(probe))
         {
-            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
             return null;
         }
 
@@ -303,7 +316,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         }
         finally
         {
-            await _inFlightStore.ClearAsync(request.ServerTaskId, request.Machine.Id, ct).ConfigureAwait(false);
+            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
         }
     }
 

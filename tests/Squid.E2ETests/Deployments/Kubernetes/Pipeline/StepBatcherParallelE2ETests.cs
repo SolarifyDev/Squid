@@ -1,5 +1,6 @@
-using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
@@ -34,23 +35,26 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// overlap a slow database migration step with a slow CDN warmup step would
 /// silently see total deploy time double.</para>
 ///
-/// <para><b>Method</b>: two steps both running <c>sleep 2</c> on the same agent.
+/// <para><b>Method</b>: two steps both running <c>sleep 3</c> on the same agent.
 /// Step 1 with default StartTrigger; Step 2 with <c>StartWithPrevious</c> so the
-/// batcher groups them. With true parallelism total wall-clock should be ~2s; a
-/// sequential regression would push it to ~4s. We assert &lt; 3.5s — a generous
-/// CI margin that still catches a 2× slowdown.</para>
+/// batcher groups them. Each step echoes an epoch timestamp (<c>date +%s.%N</c>)
+/// immediately BEFORE and AFTER its sleep, so we know each step's execution
+/// interval on the agent's own clock. Parallelism is proven by the two intervals
+/// OVERLAPPING — if the orchestrator ran the batch sequentially, step 2 would only
+/// start after step 1 finished and the intervals could not overlap.</para>
+///
+/// <para><b>Why interval overlap, not total wall-clock</b>: an earlier version
+/// stop-watched the whole <c>ProcessAsync</c> and asserted &lt; 3.5s. That
+/// conflated "did the two steps overlap" with "how much Halibut-handshake /
+/// 1s-polling / DB / Kind overhead the pipeline incurred" — on a loaded CI runner
+/// the overhead alone could exceed the ceiling on a genuinely parallel run, making
+/// the test flaky. Comparing the agent-side execution intervals measures ONLY the
+/// overlap and is immune to pipeline/CI overhead.</para>
 ///
 /// <para><b>Tier</b>: 🟢 High-fidelity. Real Postgres + real Kind cluster + real
 /// Halibut polling + real <c>TentacleStub.ScriptRunner</c> bash execution. The
-/// only synthesised element is the precise sleep duration, which is a property
-/// of the test script's body, not a production seam.</para>
-///
-/// <para><b>Why 2s and not 1.5s</b>: shorter durations narrow the parallel-vs-
-/// sequential ratio. 1s sleep × 2 parallel = ~1s; sequential = ~2s; ratio 2×.
-/// 2s × 2 parallel = ~2s; sequential = ~4s; ratio 2×. The absolute margin matters
-/// more for CI noise: 1s and 1.5s thresholds can be missed by container scheduling
-/// jitter on a busy CI host. 2s leaves 1.5s of headroom for jitter on the parallel
-/// path while still flagging a sequential regression.</para>
+/// only synthesised element is the precise sleep duration, a property of the test
+/// script's body, not a production seam.</para>
 /// </summary>
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]
@@ -59,9 +63,14 @@ public class StepBatcherParallelE2ETests
 {
     private const string Step1Name = "ParallelStep1";
     private const string Step2Name = "ParallelStep2";
-    private const int SleepSecondsPerStep = 2;
-    private const double SequentialBaselineSeconds = SleepSecondsPerStep * 2;
-    private const double ParallelCeilingSeconds = 3.5;  // < sequential baseline by ≥ 500ms
+    private const int SleepSecondsPerStep = 3;
+
+    // Minimum overlap (seconds) between the two steps' agent-side execution
+    // intervals that proves parallel dispatch. With sleep=3s the parallel overlap is
+    // ~2-3s (dispatch stagger ≤ the 1s polling interval); a sequential run yields a
+    // NEGATIVE overlap (step 2 starts after step 1 ends). 1.0s cleanly separates the
+    // two with ~2s of headroom for CI scheduling jitter on the agent.
+    private const double MinOverlapSeconds = 1.0;
 
     private readonly KindClusterFixture _cluster;
     private readonly KubernetesAgentE2EFixture<StepBatcherParallelE2ETests> _fixture;
@@ -75,57 +84,84 @@ public class StepBatcherParallelE2ETests
     }
 
     [Fact]
-    public async Task TwoStepsStartWithPrevious_ExecuteInParallel_TotalWallClockProvesOverlap()
+    public async Task TwoStepsStartWithPrevious_ExecuteInParallel_IntervalsOverlap()
     {
         _fixture.LogSink.Clear();
 
-        // Both steps emit a unique marker AFTER the sleep so we can prove BOTH ran.
+        // Each step emits "STEPTIME_<id>_START_<epoch>" / "STEPTIME_<id>_END_<epoch>"
+        // around its sleep, plus a unique completion marker, so we can both prove BOTH
+        // ran and reconstruct each step's agent-side execution interval.
         var step1Marker = $"parallel-step1-{Guid.NewGuid().ToString("N")[..12]}";
         var step2Marker = $"parallel-step2-{Guid.NewGuid().ToString("N")[..12]}";
 
-        var step1Script = $"sleep {SleepSecondsPerStep}; echo '{step1Marker}'";
-        var step2Script = $"sleep {SleepSecondsPerStep}; echo '{step2Marker}'";
+        var serverTaskId = await SeedTwoStepDeploymentWithParallelTriggerAsync(
+            TimedScript("step1", step1Marker), TimedScript("step2", step2Marker)).ConfigureAwait(false);
 
-        var serverTaskId = await SeedTwoStepDeploymentWithParallelTriggerAsync(step1Script, step2Script).ConfigureAwait(false);
-
-        // ──── Stopwatch around the full pipeline dispatch ────────────────────────
-        //
-        // The whole ProcessAsync includes seeding overhead + Halibut handshake +
-        // both script executions + post-execution merge. The sleep dominates so
-        // measurement noise from the other phases is negligible compared to a 2×
-        // regression. We start the stopwatch immediately before ProcessAsync and
-        // stop AFTER it completes — same convention as the Halibut breaker test.
-        var stopwatch = Stopwatch.StartNew();
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
-        stopwatch.Stop();
 
         // ──── INVARIANT 1: Task ended Success ─────────────────────────────────────
         await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
 
         // ──── INVARIANT 2: Both steps actually executed ───────────────────────────
-        // Without this assertion, a regression that SKIPPED step 2 would pass the
-        // wall-clock check (one step at ~2s is under the ceiling).
         _fixture.LogSink.ContainsMessage(step1Marker).ShouldBeTrue(
             customMessage: $"Step 1 marker '{step1Marker}' missing — step 1 didn't actually run.");
         _fixture.LogSink.ContainsMessage(step2Marker).ShouldBeTrue(
             customMessage: $"Step 2 marker '{step2Marker}' missing — step 2 didn't actually run.");
 
-        // ──── INVARIANT 3: Wall-clock under the parallel ceiling ──────────────────
-        // The headline assertion. Sequential execution would be ~4s; parallel ~2s.
-        // Anything between ~2.5s and 3.5s is the marginal zone where CI jitter
-        // could push a true-parallel run, but a sequential regression would be
-        // well past 3.5s.
-        stopwatch.Elapsed.TotalSeconds.ShouldBeLessThan(ParallelCeilingSeconds,
+        // ──── INVARIANT 3: The two execution intervals OVERLAP ────────────────────
+        // The headline assertion, measured on the agent's clock so it is immune to
+        // pipeline/CI overhead. overlap = min(end) - max(start). Parallel dispatch ⇒
+        // the intervals overlap (positive, ~2-3s); a sequential regression ⇒ step 2
+        // starts after step 1 ends ⇒ overlap is negative.
+        var s1 = ParseStepInterval("step1");
+        var s2 = ParseStepInterval("step2");
+
+        var overlapSeconds = Math.Min(s1.End, s2.End) - Math.Max(s1.Start, s2.Start);
+
+        overlapSeconds.ShouldBeGreaterThan(MinOverlapSeconds,
             customMessage:
-                $"Pipeline took {stopwatch.Elapsed.TotalSeconds:F1}s — expected < {ParallelCeilingSeconds:F1}s with " +
-                $"StartWithPrevious parallel batching of 2 steps each sleeping {SleepSecondsPerStep}s.\n\n" +
-                $"Sequential baseline would be {SequentialBaselineSeconds:F1}s + overhead. A measurement at or above " +
-                $"{SequentialBaselineSeconds:F1}s indicates the regression: the orchestrator is running steps " +
-                $"sequentially within the batch.\n\n" +
-                "Diagnose:\n" +
-                "  - 6_ExecuteStepsPhase.cs:90-93 should branch on batch.Count == 1 vs Task.WhenAll(...)\n" +
-                $"  - StepBatcher.BatchSteps must group steps with StartTrigger='StartWithPrevious' into one batch\n" +
-                "  - Check the activity log for two simultaneous 'Starting direct script on agent' lines");
+                $"The two StartWithPrevious-batched steps did not overlap on the agent (overlap {overlapSeconds:F2}s, " +
+                $"expected > {MinOverlapSeconds:F1}s with each sleeping {SleepSecondsPerStep}s).\n" +
+                $"  step1 [{s1.Start:F3} .. {s1.End:F3}]  step2 [{s2.Start:F3} .. {s2.End:F3}]\n\n" +
+                "A non-positive overlap means the orchestrator ran the batch SEQUENTIALLY. Diagnose:\n" +
+                "  - 6_ExecuteStepsPhase.cs branch on batch.Count == 1 vs Task.WhenAll(...)\n" +
+                "  - StepBatcher.BatchSteps must group steps with StartTrigger='StartWithPrevious' into one batch");
+    }
+
+    // Builds a bash body that timestamps its own execution interval (agent clock)
+    // around the sleep, then echoes the completion marker. The marker text is baked
+    // INTO the `date` format string ("date +STEPTIME_step1_START_%s.%N") so the line is
+    // emitted with NO shell quotes and NO command substitution — a form that survives
+    // the JSON action-property round-trip verbatim (double-quote + $(...) bodies got
+    // mangled in transit and failed to parse on the agent). `date` expands %s.%N on the
+    // agent; C# interpolation only fills {id}, {marker}, {SleepSecondsPerStep}.
+    private static string TimedScript(string id, string marker) =>
+        $"date +STEPTIME_{id}_START_%s.%N; " +
+        $"sleep {SleepSecondsPerStep}; " +
+        $"date +STEPTIME_{id}_END_%s.%N; " +
+        $"echo '{marker}'";
+
+    // Reconstructs a step's [Start, End] epoch interval from the captured agent log
+    // lines. CapturingLogSink.Messages is an unordered bag, so we match by content.
+    private (double Start, double End) ParseStepInterval(string id)
+    {
+        double? start = null, end = null;
+        var pattern = new Regex($@"STEPTIME_{Regex.Escape(id)}_(START|END)_([0-9]+(?:\.[0-9]+)?)");
+
+        foreach (var message in _fixture.LogSink.Messages)
+        {
+            var match = pattern.Match(message);
+            if (!match.Success) continue;
+
+            var epoch = double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+
+            if (match.Groups[1].Value == "START") start = epoch; else end = epoch;
+        }
+
+        start.ShouldNotBeNull($"No START timestamp captured for {id} — its script body didn't run to completion.");
+        end.ShouldNotBeNull($"No END timestamp captured for {id} — its script body didn't run to completion.");
+
+        return (start.Value, end.Value);
     }
 
     /// <summary>

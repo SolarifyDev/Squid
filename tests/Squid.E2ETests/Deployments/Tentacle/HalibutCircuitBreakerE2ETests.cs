@@ -110,18 +110,26 @@ public class HalibutCircuitBreakerE2ETests
         //
         // The breaker's ThrowIfOpen at HalibutMachineExecutionStrategy.cs:66 must
         // fire BEFORE any CreateClient call, so dispatch should complete in
-        // milliseconds. We allow 5 seconds as a generous CI ceiling — anything
-        // approaching the 30-min script timeout means the breaker bypass regressed.
+        // milliseconds. The REAL proof that the breaker blocked dispatch is
+        // INVARIANT 3 below (the stub never ran the script) — that's non-temporal
+        // and never flakes. This wall-clock check is only a coarse anti-hang guard:
+        // the failure mode it catches is the breaker bypass regressing into a full
+        // 30-min script timeout, so we use a deliberately generous ceiling (20s,
+        // ~90x the real regression threshold) that the DB-bound prepare phases can
+        // never breach on even a heavily loaded CI runner.
+        const double AntiHangCeilingSeconds = 20;
+
         var stopwatch = Stopwatch.StartNew();
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
         stopwatch.Stop();
 
-        // ──── INVARIANT 1: Dispatch fails fast ───────────────────────────────────
-        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5),
+        // ──── INVARIANT 1: Dispatch did not hang on the 30-min script timeout ─────
+        stopwatch.Elapsed.TotalSeconds.ShouldBeLessThan(AntiHangCeilingSeconds,
             customMessage:
-                $"Pipeline took {stopwatch.Elapsed.TotalSeconds:F1}s — expected < 5s with breaker Open. " +
-                "Either ThrowIfOpen ran AFTER CreateClient (regressed wiring), or the breaker isn't " +
-                $"being checked at all. Machine={_fixture.TentacleMachineId}, " +
+                $"Pipeline took {stopwatch.Elapsed.TotalSeconds:F1}s — expected « {AntiHangCeilingSeconds:F0}s with breaker Open. " +
+                "Either ThrowIfOpen ran AFTER CreateClient (regressed wiring) and the dispatch hit the " +
+                "full script timeout, or the breaker isn't being checked at all. " +
+                $"Machine={_fixture.TentacleMachineId}, " +
                 $"ScriptTimeoutMinutes={(int)_fixture.LifetimeScope.Resolve<Core.Settings.Halibut.HalibutSetting>().Polling.ScriptTimeoutMinutes}.");
 
         // ──── INVARIANT 2: Task ended in Failed state ────────────────────────────
