@@ -61,7 +61,14 @@ public partial class DeploymentService
         // exactly the targets a real deployment would keep. Unavailable/unhealthy machines are
         // excluded here, never counted as "available".
         var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
-        var eligibility = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(selectedMachines, project?.DeploymentSettingsJson);
+
+        // Scope the transient-target policy to the targets the deployment's steps would
+        // actually use (matching at least one step role), exactly as the pipeline does.
+        // An unavailable target in the environment that no step targets must NOT block the
+        // deployment — it is not a deployment target for this release. (The plan built
+        // below role-matches per step; this applies the same gate up front.)
+        var requiredRoles = await GetRequiredRolesAsync(release, cancellationToken).ConfigureAwait(false);
+        var eligibility = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(selectedMachines, requiredRoles, project?.DeploymentSettingsJson);
 
         result.ExcludedTargets = eligibility.Skipped.Concat(eligibility.FailedUnavailable).Select(MapMachineTarget).ToList();
 
@@ -140,6 +147,23 @@ public partial class DeploymentService
         Roles = DeploymentTargetFinder.ParseRoles(machine.Roles).ToList(),
         HealthStatus = machine.HealthStatus.ToString()
     };
+
+    // The union of all step target-roles for the release's process — the same set the
+    // pipeline's PreFilterTargetsByRoles uses. Empty means an enabled step targets all
+    // machines (no role narrowing). Used to scope the transient-target policy to the
+    // deployment's real targets so unrelated unavailable machines can't block it.
+    private async Task<HashSet<string>> GetRequiredRolesAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken)
+    {
+        if (release.ProjectDeploymentProcessSnapshotId <= 0)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var processSnapshot = await _deploymentSnapshotService
+            .LoadProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, cancellationToken).ConfigureAwait(false);
+
+        var steps = ProcessSnapshotStepConverter.Convert(processSnapshot);
+
+        return DeploymentTargetFinder.CollectAllTargetRoles(steps, _actionHandlerRegistry.ResolveScope);
+    }
 
     private async Task<DeploymentPlan> BuildPlanAsync(
         Persistence.Entities.Deployments.Release release,

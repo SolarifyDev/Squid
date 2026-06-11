@@ -45,6 +45,24 @@ public static class TransientDeploymentTargetEvaluator
         return Apply(candidates, transient.UnavailableDeploymentTargets, transient.UnhealthyDeploymentTargets);
     }
 
+    /// <summary>
+    /// Role-scoped policy application: the candidate set is first narrowed to the
+    /// targets that match at least one of the deployment's step roles. A target that
+    /// matches NO step role is not a deployment target for this release, so it must
+    /// neither fail the deployment (under the 'Fail deployment' policy) nor be
+    /// reported as excluded — it is simply irrelevant. An empty
+    /// <paramref name="requiredRoles"/> means some enabled step targets all machines,
+    /// so every candidate is relevant (no narrowing). Both the pipeline (phase 4) and
+    /// the preview call THIS overload, so neither can apply the policy to targets the
+    /// deployment would never touch.
+    /// </summary>
+    public static TransientTargetResult ApplyProjectPolicy(IReadOnlyList<Machine> candidates, HashSet<string> requiredRoles, string deploymentSettingsJson)
+    {
+        var relevant = DeploymentTargetFinder.FilterByRoles(candidates.ToList(), requiredRoles);
+
+        return ApplyProjectPolicy(relevant, deploymentSettingsJson);
+    }
+
     public static TransientTargetResult Apply(
         IReadOnlyList<Machine> candidates,
         UnavailableDeploymentTargetBehavior unavailableBehavior,

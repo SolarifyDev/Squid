@@ -3,6 +3,7 @@ using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Message.Enums;
@@ -48,7 +49,7 @@ public class PrepareDeploymentPhaseTransientTargetTests
             M("healthy", MachineHealthStatus.Healthy),
             M("unavailable", MachineHealthStatus.Unavailable));
 
-        Should.Throw<DeploymentTargetException>(() => PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx))
+        Should.Throw<DeploymentTargetException>(() => PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, []))
             .Message.ShouldContain("unavailable");
     }
 
@@ -61,7 +62,7 @@ public class PrepareDeploymentPhaseTransientTargetTests
             M("healthy", MachineHealthStatus.Healthy),
             M("unhealthy", MachineHealthStatus.Unhealthy));
 
-        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx);
+        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, []);
 
         ctx.AllTargets.Select(m => m.Name).ShouldBe(new[] { "healthy" });
         ctx.ExcludedByHealthTargets.Select(m => m.Name).ShouldBe(new[] { "unhealthy" });
@@ -75,7 +76,7 @@ public class PrepareDeploymentPhaseTransientTargetTests
             M("healthy", MachineHealthStatus.Healthy),
             M("down", MachineHealthStatus.Unavailable));
 
-        Should.Throw<DeploymentTargetException>(() => PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx))
+        Should.Throw<DeploymentTargetException>(() => PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, []))
             .Message.ShouldContain("down");
     }
 
@@ -87,7 +88,7 @@ public class PrepareDeploymentPhaseTransientTargetTests
             M("healthy", MachineHealthStatus.Healthy),
             M("sick", MachineHealthStatus.Unhealthy));
 
-        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx);
+        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, []);
 
         ctx.AllTargets.Select(m => m.Name).ShouldBe(new[] { "healthy", "sick" });
     }
@@ -100,9 +101,49 @@ public class PrepareDeploymentPhaseTransientTargetTests
             M("healthy", MachineHealthStatus.Healthy),
             M("down", MachineHealthStatus.Unavailable));
 
-        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx);
+        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, []);
 
         ctx.AllTargets.Select(m => m.Name).ShouldBe(new[] { "healthy" });
         ctx.ExcludedByHealthTargets.Select(m => m.Name).ShouldBe(new[] { "down" });
+    }
+
+    // ── Role scoping: the policy applies only to targets the deployment would use ──
+
+    [Fact]
+    public void FailDeployment_UnavailableTargetWithUnmatchedRole_DoesNotFail()
+    {
+        // The reported bug: an unavailable target in the environment whose role NO step
+        // targets must not trigger 'Fail deployment' — it is not a deployment target for
+        // this release. The deployment below only targets the "web" role.
+        var web = M("web-01", MachineHealthStatus.Healthy);
+        web.Roles = DeploymentTargetFinder.SerializeRoles(new[] { "web" });
+
+        var unrelatedDown = M("db-down", MachineHealthStatus.Unavailable);
+        unrelatedDown.Roles = DeploymentTargetFinder.SerializeRoles(new[] { "db" });
+
+        var ctx = Context(
+            Json(UnavailableDeploymentTargetBehavior.FailDeployment, UnhealthyDeploymentTargetBehavior.Exclude),
+            web, unrelatedDown);
+
+        PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, ["web"]);
+
+        ctx.AllTargets.Select(m => m.Name).ShouldBe(new[] { "web-01" },
+            customMessage: "An unavailable target whose role no step targets must be ignored by the policy, not fail the deployment.");
+    }
+
+    [Fact]
+    public void FailDeployment_UnavailableTargetWithMatchedRole_StillFails()
+    {
+        // The policy MUST still fire when the unavailable target IS a deployment target
+        // (its role matches a step) — role scoping narrows the set, it doesn't disable the policy.
+        var webDown = M("web-down", MachineHealthStatus.Unavailable);
+        webDown.Roles = DeploymentTargetFinder.SerializeRoles(new[] { "web" });
+
+        var ctx = Context(
+            Json(UnavailableDeploymentTargetBehavior.FailDeployment, UnhealthyDeploymentTargetBehavior.Exclude),
+            webDown);
+
+        Should.Throw<DeploymentTargetException>(() => PrepareDeploymentPhase.ApplyTransientTargetPolicy(ctx, ["web"]))
+            .Message.ShouldContain("web-down");
     }
 }

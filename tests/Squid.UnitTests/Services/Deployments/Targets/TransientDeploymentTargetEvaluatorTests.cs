@@ -195,4 +195,58 @@ public class TransientDeploymentTargetEvaluatorTests
         viaProjectPolicy.Skipped.Select(m => m.Name).ShouldBe(viaApply.Skipped.Select(m => m.Name));
         viaProjectPolicy.FailedUnavailable.Select(m => m.Name).ShouldBe(viaApply.FailedUnavailable.Select(m => m.Name));
     }
+
+    // ── Role scoping: the role-aware overload narrows the candidate set to the
+    //    deployment's step roles BEFORE applying the policy, so an unavailable target
+    //    that no step targets cannot fail the deployment. Both the pipeline (phase 4)
+    //    and the preview call THIS overload, so the role scoping is shared too. ──
+
+    private static Machine Role(Machine m, params string[] roles)
+    {
+        m.Roles = DeploymentTargetFinder.SerializeRoles(roles);
+        return m;
+    }
+
+    [Fact]
+    public void ApplyProjectPolicy_RoleScoped_IgnoresUnavailableTargetWithUnmatchedRole()
+    {
+        // The reported bug: an unavailable target whose role no step targets must NOT
+        // appear in FailedUnavailable — it is not a deployment target for this release.
+        var web = Role(M("web-01", MachineHealthStatus.Healthy), "web");
+        var dbDown = Role(M("db-down", MachineHealthStatus.Unavailable), "db");
+        var defaultsJson = DeploymentSettingsSerializer.Serialize(new DeploymentSettingsDto());
+
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(new[] { web, dbDown }, ["web"], defaultsJson);
+
+        result.FailedUnavailable.ShouldBeEmpty();
+        result.Kept.Select(m => m.Name).ShouldBe(new[] { "web-01" });
+    }
+
+    [Fact]
+    public void ApplyProjectPolicy_RoleScoped_StillFailsOnUnavailableMatchedRole()
+    {
+        // Role scoping NARROWS the set; it does not disable the policy. An unavailable
+        // target that IS a deployment target (matches a step role) still fails.
+        var webDown = Role(M("web-down", MachineHealthStatus.Unavailable), "web");
+        var defaultsJson = DeploymentSettingsSerializer.Serialize(new DeploymentSettingsDto());
+
+        var result = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(new[] { webDown }, ["web"], defaultsJson);
+
+        result.FailedUnavailable.Select(m => m.Name).ShouldBe(new[] { "web-down" });
+    }
+
+    [Fact]
+    public void ApplyProjectPolicy_RoleScoped_EmptyRoles_EvaluatesAllTargets_LikeUnscoped()
+    {
+        // A step targeting all machines (no roles) → no narrowing → identical to the
+        // role-unaware overload, so existing role-less processes behave exactly as before.
+        var down = Role(M("down", MachineHealthStatus.Unavailable), "db");
+        var defaultsJson = DeploymentSettingsSerializer.Serialize(new DeploymentSettingsDto());
+
+        var scoped = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(new[] { down }, [], defaultsJson);
+        var unscoped = TransientDeploymentTargetEvaluator.ApplyProjectPolicy(new[] { down }, defaultsJson);
+
+        scoped.FailedUnavailable.Select(m => m.Name).ShouldBe(unscoped.FailedUnavailable.Select(m => m.Name));
+        scoped.FailedUnavailable.Select(m => m.Name).ShouldBe(new[] { "down" });
+    }
 }
