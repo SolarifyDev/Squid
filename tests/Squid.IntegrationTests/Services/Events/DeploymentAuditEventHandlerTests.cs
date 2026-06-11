@@ -116,7 +116,7 @@ public class DeploymentAuditEventHandlerTests : TestBase
     }
 
     [Fact]
-    public async Task TimedOutEvent_IsAuditedAsFailure()
+    public async Task TimedOutEvent_IsAuditedAsDeploymentTimedOut()
     {
         const int spaceId = 730;
         const int deploymentId = 74;
@@ -127,7 +127,8 @@ public class DeploymentAuditEventHandlerTests : TestBase
         {
             var page = await events.GetEventsAsync(new GetEventsRequest { SpaceId = spaceId, DeploymentId = deploymentId });
 
-            page.Events.Single().Category.ShouldBe((int)EventCategory.DeploymentFailed, "a timeout is a failure outcome for audit purposes");
+            page.Events.Single().Category.ShouldBe((int)EventCategory.DeploymentTimedOut,
+                "a wall-clock timeout pauses + preserves the checkpoint for resume, so it is audited as DeploymentTimedOut — distinct from a genuine DeploymentFailed");
         }).ConfigureAwait(false);
     }
 

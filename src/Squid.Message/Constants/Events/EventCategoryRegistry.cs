@@ -30,7 +30,8 @@ public static class EventCategoryRegistry
         [EventCategory.DeploymentResumed] = new("Deployment resumed", "Deploy to {Environment} resumed for {Release}"),
         [EventCategory.DeploymentSucceeded] = new("Deployment succeeded", "Deploy to {Environment} succeeded for {Release}"),
         [EventCategory.DeploymentFailed] = new("Deployment failed", "Deploy to {Environment} failed for {Release}"),
-        [EventCategory.DeploymentCanceled] = new("Deployment canceled", "Deploy to {Environment} canceled for {Release}")
+        [EventCategory.DeploymentCanceled] = new("Deployment canceled", "Deploy to {Environment} canceled for {Release}"),
+        [EventCategory.DeploymentTimedOut] = new("Deployment timed out", "Deploy to {Environment} timed out for {Release}")
     };
 
     public static Descriptor Describe(EventCategory category) =>

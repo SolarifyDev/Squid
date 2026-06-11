@@ -29,6 +29,7 @@ public class EventCategoryRegistryTests
     [InlineData(EventCategory.ManualInterventionRaised, "Manual intervention interruption raised")]
     [InlineData(EventCategory.DeploymentSucceeded, "Deployment succeeded")]
     [InlineData(EventCategory.DeploymentFailed, "Deployment failed")]
+    [InlineData(EventCategory.DeploymentTimedOut, "Deployment timed out")]
     public void Describe_ReturnsExpectedDisplayName(EventCategory category, string expectedDisplayName)
     {
         EventCategoryRegistry.Describe(category).DisplayName.ShouldBe(expectedDisplayName);
@@ -43,5 +44,6 @@ public class EventCategoryRegistryTests
         ((short)EventCategory.DeploymentSucceeded).ShouldBe((short)16);
         ((short)EventCategory.DeploymentFailed).ShouldBe((short)17);
         ((short)EventCategory.DeploymentCanceled).ShouldBe((short)18);
+        ((short)EventCategory.DeploymentTimedOut).ShouldBe((short)19);
     }
 }
