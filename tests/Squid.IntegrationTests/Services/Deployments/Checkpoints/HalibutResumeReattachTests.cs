@@ -252,6 +252,66 @@ public class HalibutResumeReattachTests : TestBase
             customMessage: "Both dispatch slots must be cleared once observed to completion.");
     }
 
+    [Fact]
+    public async Task ObserveThrowsTransient_PreservesInFlightPointer_ForResumeReattach()
+    {
+        // P1b: a transient infra failure during the observe loop (a Halibut RPC drop
+        // that outlived the library's retries) must PRESERVE the in-flight pointer —
+        // the script may still be running on the agent, so a resumed run re-attaches
+        // to it instead of dispatching a duplicate. The strategy clears the pointer
+        // ONLY on a definitive observation (return), never on a throw.
+        const int taskId = 810007, machineId = 17;
+
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        // Fresh dispatch: StartScript is accepted, then the very first GetStatus
+        // throws — simulating the transient drop after the agent launched the script.
+        var agent = new RecordingScriptService(
+            getStatusScript: new[] { (ProcessState.Complete, 0) },
+            completeResult: (ProcessState.Complete, 0))
+        {
+            GetStatusThrows = new HalibutClientException("transient connection drop")
+        };
+
+        await Should.ThrowAsync<HalibutClientException>(() => ExecuteWithAgentAsync(taskId, machineId, agent)).ConfigureAwait(false);
+
+        agent.StartScriptCalls.ShouldBe(1, customMessage: "The fresh script must have been dispatched before the transient drop.");
+
+        var preserved = await GetTicketAsync(taskId, machineId).ConfigureAwait(false);
+        preserved.ShouldBe(agent.StartedTickets.Single(),
+            customMessage: "A transient observe-loop failure must PRESERVE the in-flight pointer (the strategy clears it only on a " +
+                          "definitive observation, never in a finally), or a resumed run re-dispatches a duplicate of the still-running script.");
+    }
+
+    [Fact]
+    public async Task ReattachProbe_TransientFailure_PreservesPointer_DoesNotDispatchFresh()
+    {
+        // P1b (review HIGH): on resume the reattach probe (GetStatus on the recorded
+        // ticket) can itself hit a transient failure (the agent is still down). That
+        // must NOT clear the pointer or dispatch fresh — the recorded script may
+        // still be running, so a fresh dispatch would DUPLICATE it. The pointer is
+        // preserved and the failure propagates so the deployment pauses again.
+        const int taskId = 810008, machineId = 18;
+        const string ticket = "reattach-ticket-transient-probe";
+
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+        await RecordTicketAsync(taskId, machineId, ticket).ConfigureAwait(false);
+
+        var agent = new RecordingScriptService(
+            getStatusScript: new[] { (ProcessState.Complete, 0) },
+            completeResult: (ProcessState.Complete, 0))
+        {
+            GetStatusThrows = new HalibutClientException("agent still unreachable on resume")
+        };
+
+        await Should.ThrowAsync<HalibutClientException>(() => ExecuteWithAgentAsync(taskId, machineId, agent)).ConfigureAwait(false);
+
+        agent.StartScriptCalls.ShouldBe(0,
+            customMessage: "A transient reattach-probe failure must NOT dispatch fresh — the recorded script may still be running (duplicate-execution risk).");
+        (await GetTicketAsync(taskId, machineId).ConfigureAwait(false)).ShouldBe(ticket,
+            customMessage: "A transient reattach-probe failure must PRESERVE the recorded pointer for a later resume, not clear it.");
+    }
+
     // ── Drive the real strategy with a fake agent (per-scope IHalibutClientFactory override) ──
 
     private async Task<ScriptExecutionResult> ExecuteWithAgentAsync(int taskId, int machineId, RecordingScriptService agent)
@@ -341,9 +401,17 @@ public class HalibutResumeReattachTests : TestBase
             return Resp(command.ScriptTicket, ProcessState.Running, 0);
         }
 
+        /// <summary>When set, GetStatus throws this (simulating a transient RPC drop
+        /// that outlived Halibut's own retries) instead of returning a status.</summary>
+        public Exception GetStatusThrows { get; set; }
+
         public Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request)
         {
             ProbedTickets.Add(request.Ticket.TaskId);
+
+            if (GetStatusThrows != null)
+                throw GetStatusThrows;
+
             // Last scripted entry repeats so the observer's poll loop always terminates.
             var (state, exit) = _getStatusScript.Count > 1 ? _getStatusScript.Dequeue() : _getStatusScript.Peek();
             return Task.FromResult(Resp(request.Ticket, state, exit));

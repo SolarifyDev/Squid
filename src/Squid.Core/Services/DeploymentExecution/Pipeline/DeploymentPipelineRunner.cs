@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
 
@@ -113,6 +114,26 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
             await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+        }
+        catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
+            && TargetCatchClassifier.IsTransientInfraFailure(ex))
+        {
+            // A transient infra failure (Halibut RPC drop after the library's
+            // retries, an unreachable agent, or an open breaker) pauses the
+            // deployment instead of failing it: the in-flight script pointer is
+            // preserved (the strategy clears it only on a definitive observation),
+            // so a resume re-attaches to the still-running script rather than
+            // re-dispatching a duplicate. We do NOT rethrow — Paused is a clean,
+            // expected outcome. This is unconditional (no opt-out): failing fast on
+            // a transient blip would just discard already-completed progress and
+            // risk a duplicate run, which has no legitimate use case.
+            //
+            // The cancel/timeout guard preserves the established precedence: a
+            // user-cancel (registryCts/ct) or a wall-clock timeout (timeoutCts)
+            // that races a transient RPC drop must NOT be reclassified as a
+            // transient pause — cancel/timeout win, so the exception falls through
+            // to their handlers (or the generic failure path).
+            await SafeCompleteAsync(ctx, () => completion.OnTransientPauseAsync(ctx, ex, CancellationToken.None), new DeploymentPausedEvent(new DeploymentEventContext()));
         }
         catch (Exception ex)
         {

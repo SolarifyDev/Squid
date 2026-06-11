@@ -1,3 +1,4 @@
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Observability;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
@@ -395,6 +396,20 @@ public sealed partial class ExecuteStepsPhase
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex))
+        {
+            // A transient infra failure (Halibut RPC drop after the library's
+            // retries, an unreachable agent, or an open breaker) must PROPAGATE so
+            // the runner pauses the deployment for resume — regardless of whether
+            // the step is required. Recording it as a per-target/terminal failure
+            // (the path below) would route to OnFailureAsync, which deletes the
+            // checkpoint AND the in-flight pointer the strategy deliberately
+            // preserved — orphaning the still-running script and defeating resume.
+            // The per-target catch (TargetCatchClassifier) leaves the target
+            // in-flight; here, for a non-required step (which has no per-target
+            // catch), we still must not swallow it.
             throw;
         }
         catch (Exception ex)

@@ -1,3 +1,5 @@
+using Squid.Core.Halibut.Resilience;
+
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 
 /// <summary>
@@ -44,10 +46,32 @@ public static class TargetCatchClassifier
         if (ex is System.OperationCanceledException && failFastCancelled && !parentCtCancelled)
             return new Classification(MarkFailed: false, TriggerFailFast: false);
 
+        // The transient-infra case: a Halibut RPC drop (after the library's own
+        // retries) or an unreachable agent. The script may still be running on the
+        // agent, so we do NOT mark the target terminal — a resume re-attaches to it
+        // via its preserved in-flight pointer. We also do NOT fail-fast the peers:
+        // healthy targets finish their work, then the runner pauses the deployment
+        // (Task.WhenAll waits for all targets, so this target's exception surfaces
+        // after the peers complete). Guarded by !parentCtCancelled so a transient
+        // drop racing a real cancel/timeout still terminates the deployment.
+        if (IsTransientInfraFailure(ex) && !parentCtCancelled)
+            return new Classification(MarkFailed: false, TriggerFailFast: false);
+
         // Everything else (genuine exception, OCE from user cancel, OCE
         // unrelated to our CTs): treat as failure. Cancel the failFast
         // cascade so peers stop work; the re-throw upstream surfaces the
         // actual exception.
         return new Classification(MarkFailed: true, TriggerFailFast: true);
     }
+
+    /// <summary>
+    /// Whether <paramref name="ex"/> is a transient infrastructure failure that
+    /// should pause (resumable) rather than fail the deployment. Delegates to the
+    /// single source of truth, <see cref="TransientFailureClassifier.IsTransient"/>
+    /// (which excludes the permanent Halibut protocol/invocation subtypes and
+    /// includes <c>CircuitOpenException</c>), kept here as the name the pipeline
+    /// callers already reference.
+    /// </summary>
+    public static bool IsTransientInfraFailure(System.Exception ex)
+        => TransientFailureClassifier.IsTransient(ex);
 }

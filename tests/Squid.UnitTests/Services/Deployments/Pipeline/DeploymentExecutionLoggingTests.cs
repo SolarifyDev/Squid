@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution;
@@ -330,6 +331,37 @@ public class DeploymentExecutionLoggingTests
 
         var completedLog = logs.FirstOrDefault(l => l.Message.Contains("completed successfully", StringComparison.OrdinalIgnoreCase) && l.Message.Contains(step.Name, StringComparison.OrdinalIgnoreCase));
         completedLog.ShouldBeNull("Should NOT log step completed when step failed");
+    }
+
+    // ========== Transient infra failure PROPAGATES (P1b) ==========
+
+    [Theory]
+    [InlineData(true)]    // required step — the per-target catch leaves it in-flight + rethrows
+    [InlineData(false)]   // NON-required step — must NOT be swallowed into FailureEncountered
+    public async Task TransientStrategyFailure_PropagatesOutOfPhase_RegardlessOfRequired(bool isRequired)
+    {
+        // P1b (review HIGH): a transient infra failure (Halibut RPC drop) must
+        // PROPAGATE out of ExecuteStepsPhase so the runner pauses for resume — even
+        // on a NON-required step. Pre-fix, a non-required step's transient was
+        // swallowed by `catch (Exception) { ...; if (step.IsRequired) throw; }`,
+        // which routed the deployment to OnFailureAsync (Failed + checkpoint AND
+        // in-flight pointer deleted), orphaning the still-running script. Contrast:
+        // a non-required GENUINE failure (Success=false result) is still swallowed —
+        // pinned by StepFailed_DoesNotLogCompleted — so only TRANSIENT propagates.
+        var (phase, ctx, _, _) = CreateTestHarness();
+
+        var transport = new TestTransport(new ThrowingStrategy(new HalibutClientException("agent dropped mid-script")));
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTarget("target-1", "web", transport) };
+
+        var step = MakeStep("Deploy web", 1, "web");
+        step.IsRequired = isRequired;
+        step.Actions = new List<DeploymentActionDto> { MakeAction("RunScript") };
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await Should.ThrowAsync<HalibutClientException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
+
+        ctx.FailureEncountered.ShouldBeFalse(
+            customMessage: "A transient infra failure must NOT be recorded as a terminal step failure — it propagates so the runner pauses (resumable), not fails.");
     }
 
     // ========== No Matching Targets — Plural/Singular ==========
@@ -807,6 +839,19 @@ public class DeploymentExecutionLoggingTests
                 LogLines = new List<string> { "Error: script failed" }
             });
         }
+    }
+
+    // Throws a transient infra failure (vs FailingStrategy which returns a Failed
+    // RESULT). Used to prove the phase PROPAGATES a transient — even on a
+    // non-required step — instead of swallowing it.
+    private sealed class ThrowingStrategy : IExecutionStrategy
+    {
+        private readonly Exception _ex;
+
+        public ThrowingStrategy(Exception ex) => _ex = ex;
+
+        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+            => throw _ex;
     }
 
     private sealed class SimpleRunScriptHandler : IActionHandler

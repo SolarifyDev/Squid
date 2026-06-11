@@ -253,15 +253,24 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        try
-        {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (_inFlightStore != null)
-                await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-        }
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
+
+        // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
+        // observer RETURNED (script completed, reported a non-zero exit, or hit the
+        // per-script timeout and was cancelled). On a THROW (a transient RPC drop
+        // that outlived Halibut's retries, an unreachable agent, or cancellation)
+        // the script may still be running on the agent, so we PRESERVE the pointer:
+        // the deployment pauses and a resumed run re-attaches to the still-running
+        // script instead of dispatching a duplicate.
+        await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
+
+        return result;
+    }
+
+    private async Task ClearInFlightAsync(int serverTaskId, DispatchSlot slot)
+    {
+        if (_inFlightStore != null)
+            await _inFlightStore.ClearAsync(serverTaskId, slot, CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -295,6 +304,19 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         }
         catch (Exception ex)
         {
+            // A TRANSIENT probe failure (the agent is still unreachable on resume)
+            // must NOT clear the pointer or dispatch fresh — the recorded script may
+            // still be running, so a fresh dispatch would duplicate it. Preserve the
+            // pointer and propagate so the deployment pauses again; a later resume
+            // re-probes. Only a non-transient probe error falls back to a fresh
+            // dispatch (today's behaviour).
+            if (TransientFailureClassifier.IsTransient(ex))
+            {
+                Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
+                    request.Machine.Name, existingTicketId);
+                throw;
+            }
+
             Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
                 request.Machine.Name, existingTicketId);
             await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
@@ -310,14 +332,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
             request.Machine.Name, existingTicketId, probe.State);
 
-        try
-        {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
-        }
-        finally
-        {
-            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-        }
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
+
+        // Clear only on a definitive observation; preserve on a throw so a further
+        // resume re-attaches again (same rationale as DispatchOrReattachAsync).
+        await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
+
+        return result;
     }
 
     /// <summary>

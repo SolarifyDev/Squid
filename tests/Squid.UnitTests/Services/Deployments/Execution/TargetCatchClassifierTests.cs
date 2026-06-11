@@ -1,5 +1,7 @@
 using System;
+using Halibut;
 using Shouldly;
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Xunit;
 
@@ -105,4 +107,58 @@ public sealed class TargetCatchClassifierTests
         classification.MarkFailed.ShouldBeTrue();
         classification.TriggerFailFast.ShouldBeTrue();
     }
+
+    // ── Transient infra (P1b): the script may still be running on the agent ──
+
+    [Theory]
+    [InlineData("halibut")]   // HalibutClientException — RPC drop after library retries
+    [InlineData("agent")]     // AgentUnreachableException — liveness probe gave up
+    public void TransientInfra_DoesNotMarkFailed_AndDoesNotFailFastPeers(string kind)
+    {
+        // The transient target's script may still be running, so it must NOT be
+        // marked terminal — a resume re-attaches to it via its preserved in-flight
+        // pointer. Healthy peers are NOT aborted (no fail-fast): they finish, then
+        // the deployment pauses.
+        var classification = TargetCatchClassifier.Classify(
+            Transient(kind),
+            failFastCancelled: false,
+            parentCtCancelled: false);
+
+        classification.MarkFailed.ShouldBeFalse(
+            customMessage: "A transient infra failure must leave the target in-flight (not terminal) so resume re-attaches.");
+        classification.TriggerFailFast.ShouldBeFalse(
+            customMessage: "A transient infra failure must NOT abort healthy peer targets — they finish, then the deployment pauses.");
+    }
+
+    [Fact]
+    public void TransientInfra_DuringParentCancel_MarksFailed()
+    {
+        // A transient drop racing a real user-cancel / deploy-timeout (parent CT
+        // cancelled) is NOT a resumable pause — the deployment is terminating, so
+        // treat it as a failure (don't preserve as in-flight).
+        var classification = TargetCatchClassifier.Classify(
+            new HalibutClientException("drop"),
+            failFastCancelled: true,
+            parentCtCancelled: true);
+
+        classification.MarkFailed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void IsTransientInfraFailure_ClassifiesEachShape()
+    {
+        TargetCatchClassifier.IsTransientInfraFailure(new HalibutClientException("x")).ShouldBeTrue();
+        TargetCatchClassifier.IsTransientInfraFailure(new AgentUnreachableException("a", 2)).ShouldBeTrue();
+        TargetCatchClassifier.IsTransientInfraFailure(new InvalidOperationException("real")).ShouldBeFalse();
+
+        // Aggregate qualifies only when EVERY inner failure is transient.
+        TargetCatchClassifier.IsTransientInfraFailure(
+            new AggregateException(new HalibutClientException("a"), new AgentUnreachableException("b", 1))).ShouldBeTrue();
+        TargetCatchClassifier.IsTransientInfraFailure(
+            new AggregateException(new HalibutClientException("a"), new InvalidOperationException("real"))).ShouldBeFalse();
+        TargetCatchClassifier.IsTransientInfraFailure(new AggregateException()).ShouldBeFalse();
+    }
+
+    private static Exception Transient(string kind)
+        => kind == "agent" ? new AgentUnreachableException("agent-1", 3) : new HalibutClientException("connection reset by peer");
 }
