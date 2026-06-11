@@ -72,4 +72,56 @@ public sealed class SelfHealOptionsTests
         options.Quota.KeepLatestSucceeded.ShouldBe(options.KeepLatestSucceeded);
         options.Quota.KeepLatestFailed.ShouldBe(options.KeepLatestFailed);
     }
+
+    [Fact]
+    public void KeepCountBounds_Pinned()
+    {
+        // Mirrors LocalScriptService.Min/MaxOrphanMaxAgeHours: a widening of the cap
+        // (or dropping the bounds check) must be a visible, test-gated decision.
+        SelfHealOptions.MinKeepCount.ShouldBe(0);
+        SelfHealOptions.MaxKeepCount.ShouldBe(10_000);
+    }
+
+    [Theory]
+    [InlineData(null, 10)]      // unset → default
+    [InlineData("", 10)]        // blank → default
+    [InlineData("   ", 10)]     // whitespace → default
+    [InlineData("abc", 10)]     // unparseable → default
+    [InlineData("-1", 10)]      // below MinKeepCount → default
+    [InlineData("10001", 10)]   // above MaxKeepCount → default
+    [InlineData("0", 0)]        // valid lower bound (keep nothing under pressure)
+    [InlineData("5", 5)]        // valid
+    [InlineData("10000", 10000)] // valid upper bound
+    public void ParseKeepCount_AcceptsValid_RejectsOutOfRangeOrGarbage(string raw, int expected)
+        => SelfHealOptions.ParseKeepCount(raw, "SQUID_TENTACLE_SELFHEAL_KEEP_SUCCEEDED", defaultValue: 10).ShouldBe(expected);
+
+    [Theory]
+    [InlineData(null, 0.20)]     // unset → default
+    [InlineData("", 0.20)]       // blank → default
+    [InlineData("abc", 0.20)]    // unparseable → default
+    [InlineData("0", 0.20)]      // <= 0 → default (must be a strict fraction)
+    [InlineData("1", 0.20)]      // >= 1 → default
+    [InlineData("-0.1", 0.20)]   // negative → default
+    [InlineData("1.5", 0.20)]    // above 1 → default
+    [InlineData("0.35", 0.35)]   // valid fraction
+    [InlineData("0.99", 0.99)]   // valid near-upper
+    public void ParseFreePercentage_AcceptsValidFraction_RejectsOutOfRangeOrGarbage(string raw, double expected)
+        => SelfHealOptions.ParseFreePercentage(raw, "SQUID_TENTACLE_SELFHEAL_LOW_FREE_PCT", defaultValue: 0.20).ShouldBe(expected);
+
+    [Fact]
+    public void ParseFreePercentage_IsCultureInvariant()
+    {
+        // An operator's "0.20" must parse the same on a comma-decimal locale server —
+        // invariant culture means the dot is always the decimal separator.
+        var previous = System.Threading.Thread.CurrentThread.CurrentCulture;
+        try
+        {
+            System.Threading.Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("de-DE");
+            SelfHealOptions.ParseFreePercentage("0.30", "SQUID_TENTACLE_SELFHEAL_LOW_FREE_PCT", defaultValue: 0.20).ShouldBe(0.30);
+        }
+        finally
+        {
+            System.Threading.Thread.CurrentThread.CurrentCulture = previous;
+        }
+    }
 }

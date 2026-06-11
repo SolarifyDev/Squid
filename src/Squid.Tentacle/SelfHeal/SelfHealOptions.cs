@@ -1,3 +1,4 @@
+using System.Globalization;
 using Serilog;
 
 namespace Squid.Tentacle.SelfHeal;
@@ -37,9 +38,10 @@ public sealed record SelfHealOptions(
 
     // Bounds: keep-counts 0..10_000 (0 = keep nothing under pressure); free
     // percentages strictly inside (0, 1). Out-of-range / unparseable input
-    // falls back to the default with a Serilog warning.
-    private const int MinKeepCount = 0;
-    private const int MaxKeepCount = 10_000;
+    // falls back to the default with a Serilog warning. Public + pinned by test
+    // (mirrors LocalScriptService.Min/MaxOrphanMaxAgeHours).
+    public const int MinKeepCount = 0;
+    public const int MaxKeepCount = 10_000;
 
     /// <summary>
     /// Short safety floor: a workspace whose directory was last written within
@@ -68,13 +70,18 @@ public sealed record SelfHealOptions(
         DefaultCriticalTargetFreePercentage);
 
     private static int ResolveKeepCount(string envVar, int defaultValue)
-    {
-        var raw = Environment.GetEnvironmentVariable(envVar);
+        => ParseKeepCount(Environment.GetEnvironmentVariable(envVar), envVar, defaultValue);
 
+    private static double ResolveFreePercentage(string envVar, double defaultValue)
+        => ParseFreePercentage(Environment.GetEnvironmentVariable(envVar), envVar, defaultValue);
+
+    // Pure parse + validate (no env read) so every branch is directly unit-testable.
+    internal static int ParseKeepCount(string raw, string envVar, int defaultValue)
+    {
         if (string.IsNullOrWhiteSpace(raw))
             return defaultValue;
 
-        if (!int.TryParse(raw, out var value) || value < MinKeepCount || value > MaxKeepCount)
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) || value < MinKeepCount || value > MaxKeepCount)
         {
             Log.Warning("{EnvVar}='{RawValue}' is not a valid integer in [{Min}..{Max}]; falling back to default {Default}",
                 envVar, raw, MinKeepCount, MaxKeepCount, defaultValue);
@@ -86,14 +93,14 @@ public sealed record SelfHealOptions(
         return value;
     }
 
-    private static double ResolveFreePercentage(string envVar, double defaultValue)
+    // Invariant culture so an operator's "0.20" parses identically regardless of the
+    // server's locale (a comma-decimal locale would otherwise mis-read it).
+    internal static double ParseFreePercentage(string raw, string envVar, double defaultValue)
     {
-        var raw = Environment.GetEnvironmentVariable(envVar);
-
         if (string.IsNullOrWhiteSpace(raw))
             return defaultValue;
 
-        if (!double.TryParse(raw, out var value) || value <= 0.0 || value >= 1.0)
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || value <= 0.0 || value >= 1.0)
         {
             Log.Warning("{EnvVar}='{RawValue}' is not a valid fraction in (0, 1); falling back to default {Default}",
                 envVar, raw, defaultValue);
