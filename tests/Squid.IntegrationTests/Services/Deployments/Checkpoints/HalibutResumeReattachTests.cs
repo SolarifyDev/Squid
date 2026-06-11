@@ -181,13 +181,19 @@ public class HalibutResumeReattachTests : TestBase
     }
 
     [Fact]
-    public async Task ConcurrentDispatch_SameMachineDifferentSteps_EachRunsItsOwnScript_NoCrossReattach()
+    public async Task ConcurrentDispatch_SameMachineIdenticallyNamedSteps_EachRunsItsOwnScript_NoCrossReattach()
     {
         // The parallel-batch regression: two StartWithPrevious steps sharing a target
         // role both dispatch to ONE machine at once. The in-flight slot is scoped to
-        // (machine, step, action), so step B must NOT re-attach to step A's recorded
-        // ticket — it must run its OWN script. The machine-only key this replaced made
-        // step B re-attach and silently skip its work (StartScript count 1, not 2).
+        // (machine, stepId, actionId), so step B must NOT re-attach to step A's
+        // recorded ticket — it must run its OWN script. The machine-only key this
+        // replaced made step B re-attach and silently skip its work (StartScript count
+        // 1, not 2).
+        //
+        // The two steps deliberately share IDENTICAL display names ("deploy"/"deploy")
+        // and differ ONLY by their stable ids — proving the slot keys on the ids, not
+        // the names (step/action names have no uniqueness constraint, so a name-keyed
+        // slot would re-collapse these two dispatches into one).
         const int taskId = 810006, machineId = 16;
 
         await EnsureRowAsync(taskId).ConfigureAwait(false);
@@ -218,12 +224,15 @@ public class HalibutResumeReattachTests : TestBase
             {
                 var strategy = strategies.OfType<HalibutMachineExecutionStrategy>().Single();
 
-                var stepA = strategy.ExecuteScriptAsync(BuildRequest(taskId, machineId, "StepA", "ActionA"), CancellationToken.None);
+                var stepA = strategy.ExecuteScriptAsync(
+                    BuildRequest(taskId, machineId, stepId: 1, actionId: 101, stepName: "deploy", actionName: "deploy"), CancellationToken.None);
 
                 await firstParked.Task.ConfigureAwait(false);   // step A parked in StartScript, slot A recorded
 
-                // Step B dispatches WHILE step A is still in-flight on the same machine.
-                var stepBResult = await strategy.ExecuteScriptAsync(BuildRequest(taskId, machineId, "StepB", "ActionB"), CancellationToken.None).ConfigureAwait(false);
+                // Step B dispatches WHILE step A is still in-flight on the same machine —
+                // same names, different ids.
+                var stepBResult = await strategy.ExecuteScriptAsync(
+                    BuildRequest(taskId, machineId, stepId: 2, actionId: 102, stepName: "deploy", actionName: "deploy"), CancellationToken.None).ConfigureAwait(false);
 
                 releaseFirst.TrySetResult();
                 var stepAResult = await stepA.ConfigureAwait(false);
@@ -260,7 +269,7 @@ public class HalibutResumeReattachTests : TestBase
         return result;
     }
 
-    private static ScriptExecutionRequest BuildRequest(int taskId, int machineId, string stepName = "Step1", string actionName = "Action1") => new()
+    private static ScriptExecutionRequest BuildRequest(int taskId, int machineId, int stepId = 1, int actionId = 1, string stepName = "Step", string actionName = "Action") => new()
     {
         ExecutionMode = ExecutionMode.DirectScript,
         ScriptBody = "echo resume-reattach",
@@ -269,6 +278,8 @@ public class HalibutResumeReattachTests : TestBase
         ServerTaskId = taskId,
         StepName = stepName,
         ActionName = actionName,
+        StepId = stepId,
+        ActionId = actionId,
         Machine = new Machine
         {
             Id = machineId,
@@ -284,9 +295,9 @@ public class HalibutResumeReattachTests : TestBase
 
     // ── Helpers (mirror InFlightScriptStoreTests) ──
 
-    // The default slot matches BuildRequest's Step1/Action1 so a ticket recorded
-    // here is the one the strategy's reattach probe looks up.
-    private static DispatchSlot DefaultSlot(int machineId) => new(machineId, "Step1", "Action1");
+    // The default slot matches BuildRequest's default StepId/ActionId (1,1) so a
+    // ticket recorded here is the one the strategy's reattach probe looks up.
+    private static DispatchSlot DefaultSlot(int machineId) => new(machineId, 1, 1);
 
     private Task EnsureRowAsync(int taskId)
         => Run<IDeploymentCheckpointService>(svc => svc.EnsureExistsAsync(taskId, deploymentId: 1));

@@ -228,8 +228,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // the machine alone: a parallel batch can dispatch two scripts to one machine
         // at once (two StartWithPrevious steps sharing a target role), and a
         // machine-only key would make the second dispatch re-attach to the first's
-        // ticket and skip its own script.
-        var slot = new DispatchSlot(request.Machine.Id, request.StepName, request.ActionName);
+        // ticket and skip its own script. Keyed by the stable, process-unique
+        // step/action ids — display names carry no uniqueness guarantee.
+        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
 
         var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;
@@ -280,7 +281,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // Same dispatch-unit scope as DispatchOrReattachAsync: only re-attach to a
         // ticket recorded for THIS (machine, step, action), never to a sibling step
         // concurrently dispatching to the same machine.
-        var slot = new DispatchSlot(request.Machine.Id, request.StepName, request.ActionName);
+        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
 
         var existingTicketId = await _inFlightStore.TryGetTicketAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(existingTicketId)) return null;

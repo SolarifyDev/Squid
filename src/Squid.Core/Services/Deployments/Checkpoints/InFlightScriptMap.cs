@@ -5,7 +5,7 @@ namespace Squid.Core.Services.Deployments.Checkpoints;
 
 /// <summary>
 /// Pure read/modify helpers for the deployment checkpoint's in-flight-scripts
-/// list — the JSON array of <c>{ "m": machineId, "s": stepName, "a": actionName,
+/// list — the JSON array of <c>{ "m": machineId, "s": stepId, "a": actionId,
 /// "t": scriptTicket }</c> entries stored on
 /// <see cref="Persistence.Entities.Deployments.DeploymentExecutionCheckpoint.InFlightScriptsJson"/>.
 ///
@@ -29,8 +29,8 @@ public static class InFlightScriptMap
 {
     private sealed record Entry(
         [property: JsonPropertyName("m")] int MachineId,
-        [property: JsonPropertyName("s")] string StepName,
-        [property: JsonPropertyName("a")] string ActionName,
+        [property: JsonPropertyName("s")] int StepId,
+        [property: JsonPropertyName("a")] int ActionId,
         [property: JsonPropertyName("t")] string Ticket);
 
     /// <summary>Record (or replace) the in-flight ticket for one dispatch slot.</summary>
@@ -39,7 +39,7 @@ public static class InFlightScriptMap
         var entries = Parse(json);
 
         entries.RemoveAll(e => Matches(e, slot));
-        entries.Add(new Entry(slot.MachineId, slot.StepName, slot.ActionName, scriptTicket));
+        entries.Add(new Entry(slot.MachineId, slot.StepId, slot.ActionId, scriptTicket));
 
         return Serialize(entries);
     }
@@ -61,7 +61,7 @@ public static class InFlightScriptMap
         => Parse(json).FirstOrDefault(e => Matches(e, slot))?.Ticket;
 
     private static bool Matches(Entry entry, DispatchSlot slot)
-        => entry.MachineId == slot.MachineId && entry.StepName == slot.StepName && entry.ActionName == slot.ActionName;
+        => entry.MachineId == slot.MachineId && entry.StepId == slot.StepId && entry.ActionId == slot.ActionId;
 
     private static List<Entry> Parse(string json)
     {

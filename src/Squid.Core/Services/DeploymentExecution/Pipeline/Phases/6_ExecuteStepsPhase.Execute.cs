@@ -463,6 +463,12 @@ public sealed partial class ExecuteStepsPhase
         // which is the contract that downstream execution strategies expect.
         request.Masker = BuildSensitiveMasker(effectiveVariables);
 
+        // Attach the stable, process-unique step/action ids — the renderer only carries
+        // display names, but the in-flight reattach slot must be keyed by ids so two
+        // identically-named steps dispatched in parallel to one machine stay distinct.
+        request.StepId = step.Id;
+        request.ActionId = prepared.Context.Action.Id;
+
         return request;
     }
 

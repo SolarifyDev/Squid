@@ -38,6 +38,13 @@ public class ScriptExecutionRequest
     public string StepName { get; set; }
     public string ActionName { get; set; }
 
+    // Stable, process-unique ids of the step/action that produced this dispatch.
+    // Used to key the in-flight reattach slot (StepName/ActionName are display
+    // names with no uniqueness guarantee, so they cannot key concurrent
+    // same-machine dispatches). Set post-render in ExecuteStepsPhase.
+    public int StepId { get; set; }
+    public int ActionId { get; set; }
+
     /// <summary>
     /// Optional live-output sink. When set, an execution strategy that observes incremental output
     /// (the Halibut/Tentacle poll loop) invokes it with each new batch of lines as they arrive, so

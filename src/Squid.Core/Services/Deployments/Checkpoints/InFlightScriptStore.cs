@@ -5,16 +5,23 @@ namespace Squid.Core.Services.Deployments.Checkpoints;
 
 /// <summary>
 /// Identifies a single in-flight script dispatch within a deployment task: the
-/// target <paramref name="MachineId"/> plus the <paramref name="StepName"/> /
-/// <paramref name="ActionName"/> that produced it. A parallel batch can dispatch
+/// target <paramref name="MachineId"/> plus the <paramref name="StepId"/> /
+/// <paramref name="ActionId"/> that produced it. A parallel batch can dispatch
 /// MORE THAN ONE script to the SAME machine at once (two <c>StartWithPrevious</c>
 /// steps that share a target role), so the machine id alone is too coarse a key —
 /// the second dispatch would re-attach to the first's recorded ticket and skip
 /// its own script. Scoping the in-flight slot to the (machine, step, action)
 /// dispatch unit keeps concurrent dispatches to one machine independent, and lets
 /// a resumed run re-attach to EACH of them.
+///
+/// <para>The step/action are identified by their stable, process-unique <b>ids</b>,
+/// NOT their display names — step and action names carry no uniqueness constraint
+/// (the schema only enforces unique step_order / action_order), so two distinct
+/// identically-named steps targeting one machine would otherwise collapse to the
+/// same slot and re-open the very collision this prevents. The ids come from the
+/// frozen process snapshot, so they are identical on a resumed run.</para>
 /// </summary>
-public readonly record struct DispatchSlot(int MachineId, string StepName, string ActionName);
+public readonly record struct DispatchSlot(int MachineId, int StepId, int ActionId);
 
 /// <summary>
 /// Durable record of scripts dispatched to a Halibut agent but not yet observed

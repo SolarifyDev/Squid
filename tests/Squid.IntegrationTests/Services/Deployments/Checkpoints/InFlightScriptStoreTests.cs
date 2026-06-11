@@ -19,8 +19,8 @@ public class InFlightScriptStoreTests : TestBase
     {
     }
 
-    private static DispatchSlot Slot(int machineId, string step = "Step1", string action = "Action1")
-        => new(machineId, step, action);
+    private static DispatchSlot Slot(int machineId, int stepId = 1, int actionId = 1)
+        => new(machineId, stepId, actionId);
 
     [Fact]
     public async Task EnsureExists_ThenRecordAndClear_RoundTrips()
@@ -55,27 +55,28 @@ public class InFlightScriptStoreTests : TestBase
     public async Task Record_SameMachineDifferentDispatches_AreIndependent()
     {
         // The headline fix: two parallel StartWithPrevious steps targeting ONE machine
-        // each record their own slot. The probe for step B must NOT find step A's
-        // ticket (the machine-only key this replaced would have — making step B
-        // re-attach to step A and silently skip its own script).
+        // each record their own slot, keyed by the stable action id. The probe for
+        // action 200 must NOT find action 100's ticket (the machine-only key this
+        // replaced would have — making the second dispatch re-attach to the first and
+        // silently skip its own script).
         const int taskId = 700008;
         await EnsureRowAsync(taskId).ConfigureAwait(false);
 
-        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, "StepA", "ActionA"), "ticket-a")).ConfigureAwait(false);
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, stepId: 10, actionId: 100), "ticket-a")).ConfigureAwait(false);
 
-        (await GetTicketAsync(taskId, Slot(11, "StepB", "ActionB")).ConfigureAwait(false)).ShouldBeNull(
-            customMessage: "Step B's reattach probe must not match Step A's slot on the same machine — that cross-reattach is the bug this fixes.");
+        (await GetTicketAsync(taskId, Slot(11, stepId: 20, actionId: 200)).ConfigureAwait(false)).ShouldBeNull(
+            customMessage: "Action 200's reattach probe must not match action 100's slot on the same machine — that cross-reattach is the bug this fixes.");
 
-        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, "StepB", "ActionB"), "ticket-b")).ConfigureAwait(false);
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, stepId: 20, actionId: 200), "ticket-b")).ConfigureAwait(false);
 
-        (await GetTicketAsync(taskId, Slot(11, "StepA", "ActionA")).ConfigureAwait(false)).ShouldBe("ticket-a");
-        (await GetTicketAsync(taskId, Slot(11, "StepB", "ActionB")).ConfigureAwait(false)).ShouldBe("ticket-b");
+        (await GetTicketAsync(taskId, Slot(11, stepId: 10, actionId: 100)).ConfigureAwait(false)).ShouldBe("ticket-a");
+        (await GetTicketAsync(taskId, Slot(11, stepId: 20, actionId: 200)).ConfigureAwait(false)).ShouldBe("ticket-b");
 
         // Clearing one slot leaves the sibling slot on the same machine intact.
-        await Run<IInFlightScriptStore>(s => s.ClearAsync(taskId, Slot(11, "StepA", "ActionA"))).ConfigureAwait(false);
+        await Run<IInFlightScriptStore>(s => s.ClearAsync(taskId, Slot(11, stepId: 10, actionId: 100))).ConfigureAwait(false);
 
-        (await GetTicketAsync(taskId, Slot(11, "StepA", "ActionA")).ConfigureAwait(false)).ShouldBeNull();
-        (await GetTicketAsync(taskId, Slot(11, "StepB", "ActionB")).ConfigureAwait(false)).ShouldBe("ticket-b",
+        (await GetTicketAsync(taskId, Slot(11, stepId: 10, actionId: 100)).ConfigureAwait(false)).ShouldBeNull();
+        (await GetTicketAsync(taskId, Slot(11, stepId: 20, actionId: 200)).ConfigureAwait(false)).ShouldBe("ticket-b",
             customMessage: "Clearing one dispatch slot MUST NOT drop a sibling slot on the same machine.");
     }
 
@@ -156,7 +157,7 @@ public class InFlightScriptStoreTests : TestBase
     }
 
     [Fact]
-    public async Task ConcurrentRecord_SameMachineDistinctSteps_AllPersist()
+    public async Task ConcurrentRecord_SameMachineDistinctActions_AllPersist()
     {
         // The production parallel-batch shape: several steps in ONE batch each
         // dispatch to the SAME machine concurrently. Every (machine, step, action)
@@ -165,14 +166,14 @@ public class InFlightScriptStoreTests : TestBase
         const int taskId = 700009;
         await EnsureRowAsync(taskId).ConfigureAwait(false);
 
-        var steps = Enumerable.Range(1, 25).ToList();
+        var actions = Enumerable.Range(1, 25).ToList();
 
-        await Task.WhenAll(steps.Select(i =>
-            Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, $"Step{i}", $"Action{i}"), $"ticket-{i}")))).ConfigureAwait(false);
+        await Task.WhenAll(actions.Select(i =>
+            Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(11, stepId: i, actionId: 100 + i), $"ticket-{i}")))).ConfigureAwait(false);
 
-        foreach (var i in steps)
-            (await GetTicketAsync(taskId, Slot(11, $"Step{i}", $"Action{i}")).ConfigureAwait(false)).ShouldBe($"ticket-{i}",
-                customMessage: $"Concurrent same-machine dispatch lost step {i}'s slot — the per-task RMW lock or the slot key is not isolating sibling dispatches.");
+        foreach (var i in actions)
+            (await GetTicketAsync(taskId, Slot(11, stepId: i, actionId: 100 + i)).ConfigureAwait(false)).ShouldBe($"ticket-{i}",
+                customMessage: $"Concurrent same-machine dispatch lost action {100 + i}'s slot — the per-task RMW lock or the slot key is not isolating sibling dispatches.");
     }
 
     [Fact]
