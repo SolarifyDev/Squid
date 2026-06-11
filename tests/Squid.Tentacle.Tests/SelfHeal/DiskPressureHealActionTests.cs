@@ -119,6 +119,65 @@ public sealed class DiskPressureHealActionTests : IDisposable
         removed.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task Run_StillUnderPressureWithNothingEvictable_BacksOff_ThenResetsWhenRelieved()
+    {
+        // Disk filled by non-workspace usage (or everything protected by retention):
+        // the sweep can't help. It must back off (exponentially) instead of churning
+        // every CheckInterval, and reset the moment pressure clears.
+        var free = 50L;   // start low (5%)
+        var action = new DiskPressureHealAction(
+            workspaceRootProvider: () => _workspace,
+            candidateProbe: _ => Array.Empty<WorkspaceCandidate>(),   // nothing evictable
+            policy: new DefaultWorkspaceCleanupPolicy(),
+            removeWorkspace: _ => { },
+            checkInterval: TimeSpan.FromMilliseconds(100),
+            diskProbe: _ => new DiskPressure(free, 1000));
+
+        action.CheckInterval.ShouldBe(TimeSpan.FromMilliseconds(100), "starts at the base interval");
+
+        await action.RunAsync(CancellationToken.None);
+        var afterFirst = action.CheckInterval;
+        afterFirst.ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100), "a futile-under-pressure tick backs off");
+
+        await action.RunAsync(CancellationToken.None);
+        action.CheckInterval.ShouldBeGreaterThan(afterFirst, "consecutive futile ticks keep backing off");
+
+        // Backoff is bounded — never exceeds the cap (base x 16) no matter how many ticks.
+        for (var i = 0; i < 10; i++) await action.RunAsync(CancellationToken.None);
+        action.CheckInterval.ShouldBeLessThanOrEqualTo(TimeSpan.FromMilliseconds(100 * 16));
+
+        free = 900;   // pressure relieved (90% free)
+        await action.RunAsync(CancellationToken.None);
+        action.CheckInterval.ShouldBe(TimeSpan.FromMilliseconds(100), "the interval resets to base once pressure clears");
+    }
+
+    [Fact]
+    public async Task Run_RemovedSomeButStillUnderPressure_ReportsBackingOff()
+    {
+        var ws = Path.Combine(_workspace, "old");
+        Directory.CreateDirectory(ws);
+        var candidates = new List<WorkspaceCandidate>
+        {
+            new(ws, DateTimeOffset.UtcNow.AddHours(-50), 100, WorkspaceStatus.Succeeded)
+        };
+
+        var action = new DiskPressureHealAction(
+            workspaceRootProvider: () => _workspace,
+            candidateProbe: _ => candidates,
+            policy: new AlwaysRemovePolicy(candidates),
+            removeWorkspace: p => { },
+            checkInterval: TimeSpan.FromMilliseconds(100),
+            diskProbe: HighPressure);   // re-probe after removal still shows pressure
+
+        var outcome = await action.RunAsync(CancellationToken.None);
+
+        outcome.Healed.ShouldBeTrue();
+        outcome.Message.ShouldContain("removed 1", customMessage: "the reclaim summary is preserved");
+        outcome.Message.ShouldContain("backing off", customMessage: "and it signals it could not relieve the pressure");
+        action.CheckInterval.ShouldBeGreaterThan(TimeSpan.FromMilliseconds(100));
+    }
+
     // Injected so CI runners (which have plenty of real free disk) don't cause the
     // action to exit early before exercising the cleanup code paths.
     private static DiskPressure HighPressure(string _) => new(FreeBytes: 50, TotalBytes: 1000);

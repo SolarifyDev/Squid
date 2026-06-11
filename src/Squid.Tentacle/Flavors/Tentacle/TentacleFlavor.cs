@@ -3,6 +3,7 @@ using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Flavors.Tentacle.Configuration;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.SelfHeal;
 using Serilog;
 
 namespace Squid.Tentacle.Flavors.Tentacle;
@@ -41,7 +42,12 @@ public sealed class TentacleFlavor : ITentacleFlavor
             ScriptBackend = backend,
             CommunicationMode = communicationMode,
             ListeningPort = settings.ListeningPort,
-            BackgroundTasks = [],
+            // Disk-pressure self-heal: reclaim completed-script workspaces when the
+            // temp disk runs low, so a flood of deployments can't fill the disk and
+            // turn every subsequent deploy into a disk-full failure. The backend is
+            // the running-script reporter, so an in-flight deployment's workspace is
+            // never swept.
+            BackgroundTasks = [SelfHealBackgroundTask.ForLocalWorkspaces(backend)],
             StartupHooks = [],
             ReadinessCheck = null,
             Metadata = new Dictionary<string, string>

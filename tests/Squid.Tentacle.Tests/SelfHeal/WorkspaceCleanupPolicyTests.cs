@@ -104,6 +104,62 @@ public sealed class WorkspaceCleanupPolicyTests
     }
 
     [Fact]
+    public void RetentionFloor_NonCriticalPressure_KeepsWorkspacesWithinTtl_EvictsOlder()
+    {
+        // The new disk sweep must NOT silently override the operator's orphan-workspace
+        // TTL (post-mortem window). Under mild (non-critical) pressure, a completed
+        // workspace younger than minRetentionAge is protected even though it is beyond
+        // the keep-set; only those older than the TTL are reclaimed.
+        var now = DateTimeOffset.UtcNow;
+        var policy = new DefaultWorkspaceCleanupPolicy(minRetentionAge: TimeSpan.FromHours(24), clock: () => now);
+
+        var pressure = new DiskPressure(FreeBytes: 150, TotalBytes: 1000);   // 15% — low but NOT critical
+        pressure.IsLow.ShouldBeTrue();
+        pressure.IsCritical.ShouldBeFalse();
+
+        var candidates = new[]
+        {
+            new WorkspaceCandidate("within-ttl", now.AddHours(-5), 500, WorkspaceStatus.Succeeded),
+            new WorkspaceCandidate("beyond-ttl", now.AddHours(-48), 500, WorkspaceStatus.Succeeded)
+        };
+
+        var selected = _policy.SelectForRemoval(candidates, pressure, new RetentionQuota(0, 0));
+
+        var paths = selected.Select(s => s.Path).ToList();
+        paths.ShouldContain("beyond-ttl", "a workspace older than the operator's TTL is reclaimable under pressure");
+        paths.ShouldNotContain("within-ttl", "a workspace inside the operator's post-mortem TTL must NOT be evicted under mild pressure");
+    }
+
+    [Fact]
+    public void RetentionFloor_CriticalPressure_BypassesTtl_ButFreshGraceStillProtects()
+    {
+        // Under CRITICAL pressure the retention TTL is bypassed (reclaiming disk wins),
+        // BUT the short fresh-grace floor still protects a just-created workspace — that
+        // is the TOCTOU guard for a deployment initialising a brand-new workspace, and
+        // it must hold even in an emergency.
+        var now = DateTimeOffset.UtcNow;
+        var policy = new DefaultWorkspaceCleanupPolicy(
+            minRetentionAge: TimeSpan.FromHours(24),
+            freshGraceWindow: TimeSpan.FromSeconds(60),
+            clock: () => now);
+
+        var pressure = new DiskPressure(FreeBytes: 50, TotalBytes: 1000);   // 5% — critical
+        pressure.IsCritical.ShouldBeTrue();
+
+        var candidates = new[]
+        {
+            new WorkspaceCandidate("recent-within-ttl", now.AddHours(-1), 500, WorkspaceStatus.Succeeded),
+            new WorkspaceCandidate("just-created", now.AddSeconds(-10), 500, WorkspaceStatus.Unknown)
+        };
+
+        var selected = _policy.SelectForRemoval(candidates, pressure, new RetentionQuota(0, 0));
+
+        var paths = selected.Select(s => s.Path).ToList();
+        paths.ShouldContain("recent-within-ttl", "critical pressure bypasses the retention TTL to reclaim disk");
+        paths.ShouldNotContain("just-created", "the fresh-grace floor protects a just-created workspace even under critical pressure (TOCTOU guard)");
+    }
+
+    [Fact]
     public void CriticalPressure_RaisesTargetTo30Percent()
     {
         // 5% free — strictly critical. Need more than one workspace removed to reach 30%.
