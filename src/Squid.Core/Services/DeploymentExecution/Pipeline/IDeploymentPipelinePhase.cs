@@ -13,4 +13,11 @@ public interface IDeploymentCompletionHandler : IScopedDependency
     Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct);
     Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct);
     Task OnTimedOutAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct);
+
+    // A transient infrastructure failure (Halibut RPC drop after the library's
+    // retries, or an unreachable agent) pauses the deployment for resume rather
+    // than failing it terminally — the still-running script is re-attached to on
+    // resume. Mirrors OnTimedOutAsync (Paused + checkpoint preserved); distinct
+    // method so the audit/log reason stays honest.
+    Task OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct);
 }

@@ -94,6 +94,31 @@ public sealed class DeploymentCompletionHandler(
         }, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// A transient infrastructure failure (a Halibut RPC drop that outlived the
+    /// library's own retries, or an agent that went unreachable mid-script) pauses
+    /// the deployment rather than failing it: the task transitions to
+    /// <see cref="TaskState.Paused"/> with its checkpoint AND in-flight script
+    /// pointer preserved, so a resume re-attaches to the still-running script
+    /// instead of re-dispatching a duplicate. Like <see cref="OnTimedOutAsync"/> we
+    /// deliberately do NOT delete the checkpoint and do NOT write a
+    /// <c>DeploymentCompletion</c> record (the deployment has not completed). The
+    /// historical fail-fast behaviour remains available via the
+    /// <c>SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE</c> escape hatch, which routes
+    /// transient failures back through <see cref="OnFailureAsync"/>.
+    /// </summary>
+    public async Task OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
+    {
+        Log.Warning(ex, "[Deploy] Task {TaskId} hit a transient infrastructure failure; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
+
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+    }
+
     private async Task<string> ResolveCurrentActiveStateAsync(int serverTaskId, CancellationToken ct)
     {
         var task = await serverTaskService.GetTaskAsync(serverTaskId, ct).ConfigureAwait(false);

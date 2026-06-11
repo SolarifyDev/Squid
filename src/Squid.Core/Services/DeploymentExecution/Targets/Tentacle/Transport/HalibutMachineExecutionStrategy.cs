@@ -253,15 +253,24 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        try
-        {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
-        }
-        finally
-        {
-            if (_inFlightStore != null)
-                await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-        }
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
+
+        // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
+        // observer RETURNED (script completed, reported a non-zero exit, or hit the
+        // per-script timeout and was cancelled). On a THROW (a transient RPC drop
+        // that outlived Halibut's retries, an unreachable agent, or cancellation)
+        // the script may still be running on the agent, so we PRESERVE the pointer:
+        // the deployment pauses and a resumed run re-attaches to the still-running
+        // script instead of dispatching a duplicate.
+        await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
+
+        return result;
+    }
+
+    private async Task ClearInFlightAsync(int serverTaskId, DispatchSlot slot)
+    {
+        if (_inFlightStore != null)
+            await _inFlightStore.ClearAsync(serverTaskId, slot, CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -310,14 +319,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
             request.Machine.Name, existingTicketId, probe.State);
 
-        try
-        {
-            return await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
-        }
-        finally
-        {
-            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-        }
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
+
+        // Clear only on a definitive observation; preserve on a throw so a further
+        // resume re-attaches again (same rationale as DispatchOrReattachAsync).
+        await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
+
+        return result;
     }
 
     /// <summary>
