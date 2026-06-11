@@ -88,9 +88,9 @@ public class StepBatcherParallelE2ETests
     {
         _fixture.LogSink.Clear();
 
-        // Each step echoes "STEPTIME <id> START|END <epoch>" around its sleep, plus a
-        // unique completion marker, so we can both prove BOTH ran and reconstruct each
-        // step's agent-side execution interval.
+        // Each step emits "STEPTIME_<id>_START_<epoch>" / "STEPTIME_<id>_END_<epoch>"
+        // around its sleep, plus a unique completion marker, so we can both prove BOTH
+        // ran and reconstruct each step's agent-side execution interval.
         var step1Marker = $"parallel-step1-{Guid.NewGuid().ToString("N")[..12]}";
         var step2Marker = $"parallel-step2-{Guid.NewGuid().ToString("N")[..12]}";
 
@@ -129,12 +129,16 @@ public class StepBatcherParallelE2ETests
     }
 
     // Builds a bash body that timestamps its own execution interval (agent clock)
-    // around the sleep, then echoes the completion marker. The $(date +%s.%N) runs on
-    // the agent, not in C# — interpolation only fills {id}, {marker}, {SleepSecondsPerStep}.
+    // around the sleep, then echoes the completion marker. The marker text is baked
+    // INTO the `date` format string ("date +STEPTIME_step1_START_%s.%N") so the line is
+    // emitted with NO shell quotes and NO command substitution — a form that survives
+    // the JSON action-property round-trip verbatim (double-quote + $(...) bodies got
+    // mangled in transit and failed to parse on the agent). `date` expands %s.%N on the
+    // agent; C# interpolation only fills {id}, {marker}, {SleepSecondsPerStep}.
     private static string TimedScript(string id, string marker) =>
-        $"echo \"STEPTIME {id} START $(date +%s.%N)\"; " +
+        $"date +STEPTIME_{id}_START_%s.%N; " +
         $"sleep {SleepSecondsPerStep}; " +
-        $"echo \"STEPTIME {id} END $(date +%s.%N)\"; " +
+        $"date +STEPTIME_{id}_END_%s.%N; " +
         $"echo '{marker}'";
 
     // Reconstructs a step's [Start, End] epoch interval from the captured agent log
@@ -142,7 +146,7 @@ public class StepBatcherParallelE2ETests
     private (double Start, double End) ParseStepInterval(string id)
     {
         double? start = null, end = null;
-        var pattern = new Regex($@"STEPTIME {Regex.Escape(id)} (START|END) ([0-9]+(?:\.[0-9]+)?)");
+        var pattern = new Regex($@"STEPTIME_{Regex.Escape(id)}_(START|END)_([0-9]+(?:\.[0-9]+)?)");
 
         foreach (var message in _fixture.LogSink.Messages)
         {
