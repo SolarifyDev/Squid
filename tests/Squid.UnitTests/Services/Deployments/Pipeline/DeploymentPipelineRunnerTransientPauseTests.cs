@@ -55,25 +55,10 @@ public class DeploymentPipelineRunnerTransientPauseTests
     }
 
     [Fact]
-    public async Task TransientFailure_FailFast_CallsOnFailure_NotOnTransientPause_AndRethrows()
-    {
-        // Escape hatch (SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE=false): restore the
-        // historical fail-fast behaviour — a transient drop routes through
-        // OnFailureAsync (Failed + checkpoint deleted) and the runner rethrows.
-        var runner = CreateFailFastRunner(CreateThrowingPhase(new HalibutClientException("connection reset by peer")));
-
-        await Should.ThrowAsync<HalibutClientException>(() => runner.ProcessAsync(1, CancellationToken.None));
-
-        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<HalibutClientException>(), It.IsAny<CancellationToken>()), Times.Once);
-        _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
     public async Task GenuineFailure_RoutesThroughOnFailure_NotTransientPause_AndRethrows()
     {
         // A non-transient exception (script/RBAC/logic failure) must NOT be mistaken
-        // for a transient blip — it fails terminally and rethrows, even when
-        // transient-resumable is on (the default).
+        // for a transient blip — it fails terminally and rethrows.
         var runner = CreateRunner(CreateThrowingPhase(new InvalidOperationException("a real failure")));
 
         await Should.ThrowAsync<InvalidOperationException>(() => runner.ProcessAsync(1, CancellationToken.None));
@@ -132,58 +117,6 @@ public class DeploymentPipelineRunnerTransientPauseTests
             failMessage: "A transient drop racing a user-cancel must NOT pause — cancel/timeout win over the transient classification.");
     }
 
-    // ── Resumable-transient flag (Rule 8 env-var escape hatch) ────────────────
-
-    [Fact]
-    public void DeploymentTransientResumableEnvVar_ConstantNamePinned()
-    {
-        // Operators set this in Helm overrides / container env. Renaming it
-        // silently flips every opted-out tenant back to resumable pausing.
-        DeploymentPipelineRunner.DeploymentTransientResumableEnvVar
-            .ShouldBe("SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE");
-    }
-
-    [Fact]
-    public void DefaultDeploymentTransientResumable_IsTrue()
-    {
-        DeploymentPipelineRunner.DefaultDeploymentTransientResumable.ShouldBeTrue();
-    }
-
-    [Theory]
-    [InlineData(null,    true)]
-    [InlineData("",      true)]
-    [InlineData("   ",   true)]
-    [InlineData("false", false)]
-    [InlineData("False", false)]
-    [InlineData(" off ", false)]
-    [InlineData("0",     false)]
-    [InlineData("no",    false)]
-    [InlineData("true",  true)]
-    [InlineData("1",     true)]
-    [InlineData("garbage", true)]   // unrecognised → safe resumable default
-    public void ParseTransientResumable_HandlesAllInputs(string raw, bool expected)
-    {
-        DeploymentPipelineRunner.ParseTransientResumable(raw).ShouldBe(expected);
-    }
-
-    [Fact]
-    public void TransientResumableEnvVar_SetFalse_DrivesProperty()
-    {
-        var original = Environment.GetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTransientResumableEnvVar);
-        Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTransientResumableEnvVar, "false");
-
-        try
-        {
-            var runner = new DeploymentPipelineRunner(Array.Empty<IDeploymentPipelinePhase>(), _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object);
-
-            runner.TransientResumable.ShouldBeFalse();
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTransientResumableEnvVar, original);
-        }
-    }
-
     private static Exception TransientOf(string kind)
         => kind == "agent" ? new AgentUnreachableException("agent-1", 3) : new HalibutClientException("connection reset by peer");
 
@@ -201,14 +134,6 @@ public class DeploymentPipelineRunnerTransientPauseTests
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
         => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object)
         {
-            DeploymentTimeout = TimeSpan.FromMinutes(5),
-            TransientResumable = true
-        };
-
-    private DeploymentPipelineRunner CreateFailFastRunner(params IDeploymentPipelinePhase[] phases)
-        => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object)
-        {
-            DeploymentTimeout = TimeSpan.FromMinutes(5),
-            TransientResumable = false
+            DeploymentTimeout = TimeSpan.FromMinutes(5)
         };
 }

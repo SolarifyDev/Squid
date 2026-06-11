@@ -42,25 +42,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     internal const bool DefaultDeploymentTimeoutResumable = true;
 
-    /// <summary>
-    /// Operator escape hatch (Rule 8): controls what happens when a deployment
-    /// hits a transient infrastructure failure — a Halibut RPC drop that outlived
-    /// the library's own retries, or an agent that went unreachable mid-script.
-    /// The safe default (unset / blank / unrecognised) is <c>true</c> — the task
-    /// is paused and its checkpoint + in-flight script pointer preserved so it can
-    /// be resumed (re-attaching to the still-running script) instead of failing
-    /// and re-dispatching a duplicate. Set this to a falsey value
-    /// (<c>false</c>/<c>0</c>/<c>no</c>/<c>off</c>, case-insensitive) to restore the
-    /// historical fail-fast behaviour: a transient-failed deployment transitions to
-    /// Failed and its checkpoint is deleted.
-    /// </summary>
-    public const string DeploymentTransientResumableEnvVar = "SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE";
-
-    internal const bool DefaultDeploymentTransientResumable = true;
-
     internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
     internal bool TimeoutResumable { get; init; } = ResolveTimeoutResumable();
-    internal bool TransientResumable { get; init; } = ResolveTransientResumable();
     internal TimeSpan ConcurrencyMaxWait { get; init; } = DefaultConcurrencyMaxWait;
     internal TimeSpan ConcurrencyPollInterval { get; init; } = DefaultConcurrencyPollInterval;
 
@@ -132,16 +115,18 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
         }
-        catch (Exception ex) when (TransientResumable
-            && !timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
+        catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
             && TargetCatchClassifier.IsTransientInfraFailure(ex))
         {
             // A transient infra failure (Halibut RPC drop after the library's
-            // retries, or an unreachable agent) pauses the deployment instead of
-            // failing it: the in-flight script pointer is preserved (the strategy
-            // clears it only on a definitive observation), so a resume re-attaches
-            // to the still-running script rather than re-dispatching a duplicate.
-            // We do NOT rethrow — Paused is a clean, expected outcome.
+            // retries, an unreachable agent, or an open breaker) pauses the
+            // deployment instead of failing it: the in-flight script pointer is
+            // preserved (the strategy clears it only on a definitive observation),
+            // so a resume re-attaches to the still-running script rather than
+            // re-dispatching a duplicate. We do NOT rethrow — Paused is a clean,
+            // expected outcome. This is unconditional (no opt-out): failing fast on
+            // a transient blip would just discard already-completed progress and
+            // risk a duplicate run, which has no legitimate use case.
             //
             // The cancel/timeout guard preserves the established precedence: a
             // user-cancel (registryCts/ct) or a wall-clock timeout (timeoutCts)
@@ -264,28 +249,4 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     private static bool ResolveTimeoutResumable()
         => ParseTimeoutResumable(Environment.GetEnvironmentVariable(DeploymentTimeoutResumableEnvVar));
-
-    /// <summary>
-    /// Parses the operator-supplied transient-resumable flag. Identical contract to
-    /// <see cref="ParseTimeoutResumable"/>: safe default <c>true</c> (pause +
-    /// preserve checkpoint), only an explicit falsey token
-    /// (<c>false</c>/<c>0</c>/<c>no</c>/<c>off</c>, case-insensitive, surrounding
-    /// whitespace tolerated) opts back into fail-fast; anything unrecognised falls
-    /// back to the safe default so a typo can never silently discard progress.
-    /// </summary>
-    internal static bool ParseTransientResumable(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return DefaultDeploymentTransientResumable;
-
-        var value = raw.Trim();
-
-        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "0"
-            || value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("off", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        return DefaultDeploymentTransientResumable;
-    }
-
-    private static bool ResolveTransientResumable()
-        => ParseTransientResumable(Environment.GetEnvironmentVariable(DeploymentTransientResumableEnvVar));
 }
