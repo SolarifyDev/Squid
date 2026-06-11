@@ -69,6 +69,31 @@ public sealed class DeploymentCompletionHandler(
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// A deployment that exceeds the wall-clock timeout is treated as a pause,
+    /// not a failure: the task transitions to <see cref="TaskState.Paused"/> and
+    /// its checkpoint is left intact so an operator can resume it (POST
+    /// tasks/{id}/resume) once the cause is understood, rather than losing every
+    /// already-completed batch and restarting from scratch. We deliberately do
+    /// NOT delete the checkpoint (it is the resume point) and do NOT write a
+    /// <c>DeploymentCompletion</c> record (a paused deployment has not completed
+    /// — the completion is recorded when it later succeeds or fails). The
+    /// historical fail-fast behaviour (Failed + checkpoint deleted) remains
+    /// available via the <c>SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE</c> escape hatch,
+    /// which routes timeouts back through <see cref="OnFailureAsync"/>.
+    /// </summary>
+    public async Task OnTimedOutAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
+    {
+        Log.Warning(ex, "[Deploy] Task {TaskId} timed out; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
+
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+    }
+
     private async Task<string> ResolveCurrentActiveStateAsync(int serverTaskId, CancellationToken ct)
     {
         var task = await serverTaskService.GetTaskAsync(serverTaskId, ct).ConfigureAwait(false);

@@ -12,4 +12,5 @@ public interface IDeploymentCompletionHandler : IScopedDependency
     Task OnFailureAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct);
     Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct);
     Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct);
+    Task OnTimedOutAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct);
 }

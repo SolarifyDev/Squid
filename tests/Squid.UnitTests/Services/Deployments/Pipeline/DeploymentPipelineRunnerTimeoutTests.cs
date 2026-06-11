@@ -16,22 +16,47 @@ public class DeploymentPipelineRunnerTimeoutTests
     private readonly Mock<IServerTaskDataProvider> _taskDataProvider = new();
 
     [Fact]
-    public async Task Timeout_CallsOnFailure_WithDeploymentTimeoutException()
+    public async Task Timeout_Default_CallsOnTimedOut_WithDeploymentTimeoutException()
     {
+        // Default (resumable) behaviour: a timeout pauses + preserves the
+        // checkpoint via OnTimedOutAsync, NOT OnFailureAsync (which would delete
+        // the checkpoint and fail the task irrecoverably).
         var phase = CreateHangingPhase();
         var runner = CreateRunner(phase);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
-        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnTimedOutAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Never);
         _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task Timeout_EmitsDeploymentTimedOutEvent()
+    public async Task Timeout_FailFast_CallsOnFailure_NotOnTimedOut()
     {
+        // Escape hatch (SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE=false): restore the
+        // historical fail-fast behaviour — a timeout routes through OnFailureAsync
+        // (Failed + checkpoint deleted), never OnTimedOutAsync.
         var phase = CreateHangingPhase();
-        var runner = CreateRunner(phase);
+        var runner = CreateFailFastRunner(phase);
+
+        await runner.ProcessAsync(1, CancellationToken.None);
+
+        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnTimedOutAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Never);
+        _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]    // resumable (default)
+    [InlineData(false)]   // fail-fast (escape hatch)
+    public async Task Timeout_AlwaysEmitsDeploymentTimedOutEvent(bool resumable)
+    {
+        // The lifecycle signal "this deployment timed out" must fire regardless of
+        // how the terminal/pause state is recorded — observers keying off the
+        // event see the timeout in both modes.
+        var phase = CreateHangingPhase();
+        var runner = resumable ? CreateRunner(phase) : CreateFailFastRunner(phase);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -76,6 +101,7 @@ public class DeploymentPipelineRunnerTimeoutTests
 
         _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Once);
         _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Never);
+        _completion.Verify(c => c.OnTimedOutAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<DeploymentTimeoutException>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Configurable deployment timeout (Rule 8 env-var escape hatch) ─────────
@@ -159,6 +185,84 @@ public class DeploymentPipelineRunnerTimeoutTests
         }
     }
 
+    // ── Resumable-timeout flag (Rule 8 env-var escape hatch) ──────────────────
+    // On timeout the safe default pauses + preserves the checkpoint (resumable).
+    // Operators who alert on the terminal Failed state can opt back into the
+    // historical fail-fast behaviour via this env var. Default (unset) is
+    // resumable; only an explicit falsey token disables it.
+
+    [Fact]
+    public void DeploymentTimeoutResumableEnvVar_ConstantNamePinned()
+    {
+        // Operators set this in Helm overrides / container env. Renaming it
+        // silently flips every opted-out tenant back to resumable pausing.
+        DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar
+            .ShouldBe("SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE");
+    }
+
+    [Fact]
+    public void DefaultDeploymentTimeoutResumable_IsTrue()
+    {
+        DeploymentPipelineRunner.DefaultDeploymentTimeoutResumable.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(null,    true)]    // unset → resumable default
+    [InlineData("",      true)]    // empty → default
+    [InlineData("   ",   true)]    // whitespace → default
+    [InlineData("false", false)]   // explicit opt-out
+    [InlineData("False", false)]   // case-insensitive
+    [InlineData("FALSE", false)]   // case-insensitive
+    [InlineData(" false ", false)] // surrounding whitespace trimmed
+    [InlineData("0",     false)]   // numeric opt-out
+    [InlineData("no",    false)]   // common falsey token
+    [InlineData("off",   false)]   // common falsey token
+    [InlineData("OFF",   false)]   // case-insensitive
+    [InlineData("true",  true)]    // explicit resumable
+    [InlineData("1",     true)]    // numeric truthy
+    [InlineData("yes",   true)]    // truthy token
+    [InlineData("garbage", true)]  // unrecognised → safe resumable default
+    public void ParseTimeoutResumable_HandlesAllInputs(string raw, bool expected)
+    {
+        DeploymentPipelineRunner.ParseTimeoutResumable(raw).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ResumableEnvVar_Unset_TimeoutResumableIsTrue()
+    {
+        var original = Environment.GetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar);
+        Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar, null);
+
+        try
+        {
+            var runner = CreateRunnerWithoutTimeoutOverride();
+
+            runner.TimeoutResumable.ShouldBeTrue();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar, original);
+        }
+    }
+
+    [Fact]
+    public void ResumableEnvVar_SetFalse_DrivesTimeoutResumableProperty()
+    {
+        var original = Environment.GetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar);
+        Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar, "false");
+
+        try
+        {
+            var runner = CreateRunnerWithoutTimeoutOverride();
+
+            runner.TimeoutResumable.ShouldBeFalse();
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(DeploymentPipelineRunner.DeploymentTimeoutResumableEnvVar, original);
+        }
+    }
+
     private DeploymentPipelineRunner CreateRunnerWithoutTimeoutOverride()
     {
         return new DeploymentPipelineRunner(Array.Empty<IDeploymentPipelinePhase>(), _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object);
@@ -181,7 +285,17 @@ public class DeploymentPipelineRunnerTimeoutTests
     {
         return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object)
         {
-            DeploymentTimeout = TimeSpan.FromMilliseconds(50)
+            DeploymentTimeout = TimeSpan.FromMilliseconds(50),
+            TimeoutResumable = true
+        };
+    }
+
+    private DeploymentPipelineRunner CreateFailFastRunner(params IDeploymentPipelinePhase[] phases)
+    {
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object)
+        {
+            DeploymentTimeout = TimeSpan.FromMilliseconds(50),
+            TimeoutResumable = false
         };
     }
 }

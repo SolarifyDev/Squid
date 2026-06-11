@@ -25,7 +25,24 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
     internal const int DefaultDeploymentTimeoutMinutes = 60;
     private static readonly TimeSpan DefaultDeploymentTimeout = TimeSpan.FromMinutes(DefaultDeploymentTimeoutMinutes);
 
+    /// <summary>
+    /// Operator escape hatch (Rule 8): controls what happens when a deployment
+    /// exceeds <see cref="DeploymentTimeoutMinutesEnvVar"/>. The safe default
+    /// (unset / blank / unrecognised) is <c>true</c> — the task is paused and
+    /// its checkpoint preserved so it can be resumed (POST tasks/{id}/resume)
+    /// instead of failing irrecoverably. Set this env var to a falsey value
+    /// (<c>false</c>/<c>0</c>/<c>no</c>/<c>off</c>, case-insensitive) to restore
+    /// the historical fail-fast behaviour: a timed-out deployment transitions to
+    /// Failed and its checkpoint is deleted. Operators who key alerting off the
+    /// terminal Failed state (rather than the resumable Paused state) can opt out
+    /// here without a code change.
+    /// </summary>
+    public const string DeploymentTimeoutResumableEnvVar = "SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE";
+
+    internal const bool DefaultDeploymentTimeoutResumable = true;
+
     internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
+    internal bool TimeoutResumable { get; init; } = ResolveTimeoutResumable();
     internal TimeSpan ConcurrencyMaxWait { get; init; } = DefaultConcurrencyMaxWait;
     internal TimeSpan ConcurrencyPollInterval { get; init; } = DefaultConcurrencyPollInterval;
 
@@ -86,7 +103,12 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             var ex = new DeploymentTimeoutException(serverTaskId, DeploymentTimeout);
-            await SafeCompleteAsync(ctx, () => completion.OnFailureAsync(ctx, ex, CancellationToken.None), new DeploymentTimedOutEvent(new DeploymentEventContext { Exception = ex }));
+
+            Func<Task> onTimeout = TimeoutResumable
+                ? () => completion.OnTimedOutAsync(ctx, ex, CancellationToken.None)
+                : () => completion.OnFailureAsync(ctx, ex, CancellationToken.None);
+
+            await SafeCompleteAsync(ctx, onTimeout, new DeploymentTimedOutEvent(new DeploymentEventContext { Exception = ex }));
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
@@ -180,4 +202,30 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     private static TimeSpan ResolveDeploymentTimeout()
         => ParseDeploymentTimeout(Environment.GetEnvironmentVariable(DeploymentTimeoutMinutesEnvVar));
+
+    /// <summary>
+    /// Parses the operator-supplied resumable-timeout flag. The safe default is
+    /// <c>true</c> (pause + preserve checkpoint on timeout) — only an explicit
+    /// falsey token (<c>false</c>/<c>0</c>/<c>no</c>/<c>off</c>, case-insensitive,
+    /// surrounding whitespace tolerated) opts back into fail-fast. Anything
+    /// unrecognised falls back to the safe resumable default so a typo can never
+    /// silently throw away a deployment's progress. Pure + static (surfaced to
+    /// the unit suite via InternalsVisibleTo) so the full input matrix is
+    /// testable without the pipeline.
+    /// </summary>
+    internal static bool ParseTimeoutResumable(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return DefaultDeploymentTimeoutResumable;
+
+        var value = raw.Trim();
+
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) || value == "0"
+            || value.Equals("no", StringComparison.OrdinalIgnoreCase) || value.Equals("off", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return DefaultDeploymentTimeoutResumable;
+    }
+
+    private static bool ResolveTimeoutResumable()
+        => ParseTimeoutResumable(Environment.GetEnvironmentVariable(DeploymentTimeoutResumableEnvVar));
 }
