@@ -65,7 +65,23 @@ public static class WorkspaceProbe
         if (!store.Exists())
             return WorkspaceStatus.Unknown;
 
-        var state = store.Load();
+        ScriptState state;
+        try
+        {
+            state = store.Load();
+        }
+        catch (Exception ex)
+        {
+            // State file is present but unreadable (corrupt primary with no usable
+            // backup — e.g. a partial write when the disk filled mid-Save). Classify
+            // Unknown rather than letting the throw bubble to Probe's catch-and-skip,
+            // which would drop the workspace from the candidate list forever and make
+            // a dead-but-corrupt workspace permanently un-reclaimable — exactly when
+            // disk pressure most needs the space. A still-live script is separately
+            // protected by the running-script-reporter veto + the fresh-grace floor.
+            Log.Debug(ex, "[SelfHeal] Unreadable script state at {Path}; classifying Unknown", workDir);
+            return WorkspaceStatus.Unknown;
+        }
 
         if (!state.IsComplete())
             return state.HasStarted() ? WorkspaceStatus.Active : WorkspaceStatus.Unknown;
@@ -96,9 +112,23 @@ public static class WorkspaceProbe
         }
     }
 
+    // Recurse subdirectories but SKIP reparse points (directory symlinks /
+    // junctions): the default SearchOption.AllDirectories walk follows them, so a
+    // deployment package that extracted a symlink-to-parent (or a runtime `ln -s`)
+    // makes the walk loop until it exhausts the path-length limit — burning CPU/IO
+    // on the exact low-disk tick the heal exists to relieve, and mis-attributing a
+    // symlink target's size to the workspace. AttributesToSkip overrides the default
+    // (Hidden|System) so hidden/system files still count toward disk usage.
+    private static readonly EnumerationOptions SizeWalkOptions = new()
+    {
+        RecurseSubdirectories = true,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+        IgnoreInaccessible = true
+    };
+
     private static IEnumerable<string> SafeEnumerateFiles(string dir)
     {
-        try { return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories); }
+        try { return Directory.EnumerateFiles(dir, "*", SizeWalkOptions); }
         catch { return Array.Empty<string>(); }
     }
 }

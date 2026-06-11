@@ -30,6 +30,16 @@ public sealed class DiskPressureHealAction : ISelfHealAction
     private readonly TicketExtractor _ticketExtractor;
     private readonly RetentionQuota _quota;
 
+    // Backoff state: when a sweep reclaims everything it is allowed to but the
+    // disk is STILL under pressure (non-workspace usage, or everything protected
+    // by the retention window), re-running every CheckInterval just churns. We
+    // back off exponentially up to _maxInterval and warn once per episode, then
+    // reset the moment pressure clears.
+    private readonly TimeSpan _baseInterval;
+    private readonly TimeSpan _maxInterval;
+    private TimeSpan _currentInterval;
+    private bool _underPressureWarned;
+
     public DiskPressureHealAction(
         Func<string> workspaceRootProvider,
         Func<string, IReadOnlyList<WorkspaceCandidate>> candidateProbe,
@@ -49,7 +59,10 @@ public sealed class DiskPressureHealAction : ISelfHealAction
         _runningScriptReporters = runningScriptReporters?.ToList() ?? new List<IRunningScriptReporter>();
         _ticketExtractor = ticketExtractor ?? DefaultTicketExtractor;
         _quota = quota ?? RetentionQuota.Default;
-        CheckInterval = checkInterval ?? TimeSpan.FromSeconds(30);
+
+        _baseInterval = checkInterval ?? TimeSpan.FromSeconds(30);
+        _maxInterval = TimeSpan.FromTicks(_baseInterval.Ticks * 16);
+        _currentInterval = _baseInterval;
     }
 
     private static string? DefaultTicketExtractor(string workspacePath)
@@ -83,12 +96,13 @@ public sealed class DiskPressureHealAction : ISelfHealAction
 
     public string Name => "disk-pressure-cleanup";
 
-    public TimeSpan CheckInterval { get; }
+    public TimeSpan CheckInterval => _currentInterval;
 
     private static DiskPressure DefaultDiskProbe(string path)
     {
         var (available, total) = DiskSpaceChecker.GetDiskSpace(path);
-        return new DiskPressure(available, total);
+        return new DiskPressure(available, total,
+            SelfHealOptions.Default.LowFreePercentage, SelfHealOptions.Default.CriticalFreePercentage);
     }
 
     public Task<SelfHealOutcome> RunAsync(CancellationToken ct)
@@ -102,20 +116,46 @@ public sealed class DiskPressureHealAction : ISelfHealAction
             return Task.FromResult(SelfHealOutcome.Healthy(Name));
 
         if (!pressure.IsLow)
+        {
+            ResetBackoff();
             return Task.FromResult(SelfHealOutcome.Healthy(Name));
-
-        var candidates = _candidateProbe(workspaceRoot);
+        }
 
         // Veto candidates that a script backend still reports as live. This is the
         // race-safe cleanup guarantee: even if the workspace's Output.log looks
         // stale, we never delete a ticket that is still being tracked in memory.
-        candidates = candidates.Where(c => !IsLiveScript(c.Path)).ToList();
+        var candidates = _candidateProbe(workspaceRoot)
+            .Where(c => !IsLiveScript(c.Path))
+            .ToList();
 
         var toRemove = _policy.SelectForRemoval(candidates, pressure, _quota);
 
-        if (toRemove.Count == 0)
-            return Task.FromResult(SelfHealOutcome.Healthy(Name));
+        var (freed, removed) = RemoveWorkspaces(toRemove, ct);
 
+        // Re-measure only if we actually freed something; otherwise the pressure is unchanged.
+        var post = removed > 0 ? _diskProbe(workspaceRoot) : pressure;
+
+        if (!post.IsLow)
+        {
+            ResetBackoff();
+            return Task.FromResult(SelfHealOutcome.RepairPerformed(Name, Summary(pressure, removed, freed)));
+        }
+
+        // Reclaimed everything we were allowed to, but the disk is STILL under
+        // pressure — remaining usage is protected by the retention window or is not
+        // workspace-driven. Warn once per episode + back off so we don't churn the
+        // disk every tick (and re-delete a freshly-completed workspace the instant
+        // it ages past the keep-set).
+        WarnUnderPressureOnce(post, removed, freed);
+        BackOff();
+
+        return Task.FromResult(removed > 0
+            ? SelfHealOutcome.RepairPerformed(Name, $"{Summary(pressure, removed, freed)}; still {post.FreePercentage:P1} free — backing off to {_currentInterval}")
+            : SelfHealOutcome.Healthy(Name));
+    }
+
+    private (long Freed, int Removed) RemoveWorkspaces(IReadOnlyList<WorkspaceCandidate> toRemove, CancellationToken ct)
+    {
         var freed = 0L;
         var removed = 0;
 
@@ -134,7 +174,31 @@ public sealed class DiskPressureHealAction : ISelfHealAction
             }
         }
 
-        return Task.FromResult(SelfHealOutcome.RepairPerformed(Name,
-            $"disk pressure {pressure.FreePercentage:P1} free — removed {removed} workspace(s), reclaimed {DiskSpaceChecker.FormatBytes(freed)}"));
+        return (freed, removed);
+    }
+
+    private static string Summary(DiskPressure pressure, int removed, long freed)
+        => $"disk pressure {pressure.FreePercentage:P1} free — removed {removed} workspace(s), reclaimed {DiskSpaceChecker.FormatBytes(freed)}";
+
+    private void WarnUnderPressureOnce(DiskPressure post, int removed, long freed)
+    {
+        if (_underPressureWarned) return;
+
+        _underPressureWarned = true;
+        Log.Warning("[SelfHeal] Disk still under pressure ({Free:P1} free) after reclaiming {Removed} workspace(s) ({Freed}) — " +
+            "remaining usage is protected by the retention window or is not workspace-driven. Backing off the heal sweep.",
+            post.FreePercentage, removed, DiskSpaceChecker.FormatBytes(freed));
+    }
+
+    private void BackOff()
+    {
+        var doubled = TimeSpan.FromTicks(Math.Min(_currentInterval.Ticks * 2, _maxInterval.Ticks));
+        _currentInterval = doubled < _baseInterval ? _baseInterval : doubled;
+    }
+
+    private void ResetBackoff()
+    {
+        _currentInterval = _baseInterval;
+        _underPressureWarned = false;
     }
 }

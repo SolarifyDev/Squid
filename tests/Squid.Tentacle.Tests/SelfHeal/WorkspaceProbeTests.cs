@@ -95,6 +95,28 @@ public sealed class WorkspaceProbeTests : IDisposable
     }
 
     [Fact]
+    public void Probe_StateFileExistsButCorrupt_ClassifiedUnknown_SweepContinues()
+    {
+        // A present-but-unreadable state file (corrupt primary, no usable backup —
+        // e.g. a partial write when the disk filled mid-Save) makes ScriptStateStore
+        // Exists()==true but Load() throw. The probe must classify it Unknown
+        // (reclaimable under pressure) — NOT let the throw drop it from the candidate
+        // list forever (which would make a dead-but-corrupt workspace permanently
+        // un-reclaimable, defeating the heal precisely when disk is full) and NOT
+        // abort the whole sweep so the valid workspace beside it is still classified.
+        var corrupt = MakeWorkspace("corrupt");
+        File.WriteAllText(Path.Combine(corrupt, "scriptstate.json"), "{ this is no longer valid json");
+        MakeWorkspace("good", Complete("good", 0));
+
+        var byStatus = WorkspaceProbe.Probe(_root, _factory).ToLookup(c => c.Status);
+
+        byStatus[WorkspaceStatus.Unknown].ShouldHaveSingleItem()
+            .Path.ShouldEndWith("squid-tentacle-corrupt");
+        byStatus[WorkspaceStatus.Succeeded].ShouldHaveSingleItem()
+            .Path.ShouldEndWith("squid-tentacle-good");
+    }
+
+    [Fact]
     public void Probe_IgnoresDirectoriesNotMatchingTheWorkspacePrefix()
     {
         Directory.CreateDirectory(Path.Combine(_root, "some-other-dir"));
@@ -108,15 +130,55 @@ public sealed class WorkspaceProbeTests : IDisposable
     }
 
     [Fact]
-    public void Probe_MeasuresWorkspaceSize()
+    public void Probe_MeasuresWorkspaceSize_RecursivelyAcrossNestedDirs()
     {
-        var payload = new string('x', 4096);
-        MakeWorkspace("sized", Complete("sized", 0), content: payload);
+        // Real script workspaces nest artefacts (extracted packages, Calamari trees),
+        // so the recursive walk is the load-bearing part: the policy reclaims by
+        // SizeBytes, and a TopDirectoryOnly regression would silently halve the
+        // measured size for deep workspaces and starve the heal. Put payload at TWO
+        // depths and assert the summed size, pinning recursion AND per-file accrual.
+        var dir = MakeWorkspace("sized", Complete("sized", 0));
+        File.WriteAllBytes(Path.Combine(dir, "top.bin"), new byte[4096]);
+        var deep = Path.Combine(dir, "sub", "deeper");
+        Directory.CreateDirectory(deep);
+        File.WriteAllBytes(Path.Combine(deep, "nested.bin"), new byte[8192]);
 
         var c = WorkspaceProbe.Probe(_root, _factory).ShouldHaveSingleItem();
 
-        c.SizeBytes.ShouldBeGreaterThanOrEqualTo(4096,
-            customMessage: "Size must include the workspace's files so the policy can reclaim enough space.");
+        c.SizeBytes.ShouldBeGreaterThanOrEqualTo(4096 + 8192,
+            customMessage: "Size must recurse into nested dirs (nested.bin under sub/deeper) AND sum every file " +
+                          "(top.bin) — a TopDirectoryOnly walk would miss the 8 KB nested file.");
+    }
+
+    [Fact]
+    public void Probe_SizeWalk_DoesNotFollowDirectorySymlinks()
+    {
+        // A deployment package (or a runtime `ln -s`) can plant a directory symlink
+        // inside the workspace. The default AllDirectories walk follows it — a
+        // symlink-to-parent loops until the path-length limit (CPU/IO burn on the
+        // exact low-disk tick the heal targets) and a symlink to /var or C:\ mis-
+        // attributes unrelated disk to the workspace. The walk must skip reparse points.
+        var dir = MakeWorkspace("withsymlink", Complete("withsymlink", 0));
+        File.WriteAllBytes(Path.Combine(dir, "real.bin"), new byte[4096]);
+
+        try
+        {
+            // Self-referential loop: {dir}/loop -> {dir}. A followed walk would recurse forever.
+            Directory.CreateSymbolicLink(Path.Combine(dir, "loop"), dir);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;   // host doesn't permit symlink creation (e.g. Windows without dev mode) — skip
+        }
+
+        var c = WorkspaceProbe.Probe(_root, _factory).ShouldHaveSingleItem();
+
+        // Completes (no hang) AND counts only the real file + state json — the symlink
+        // loop contributes nothing. If reparse points were followed this would either
+        // hang the test or balloon the size.
+        c.SizeBytes.ShouldBeGreaterThanOrEqualTo(4096);
+        c.SizeBytes.ShouldBeLessThan(4096 * 4,
+            customMessage: "Size must exclude the symlink target — a followed loop would re-count files unboundedly.");
     }
 
     [Fact]

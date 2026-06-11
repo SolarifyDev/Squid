@@ -48,17 +48,38 @@ public sealed class SelfHealBackgroundTask : ITentacleBackgroundTask, IAsyncDisp
     /// <see cref="LocalScriptService"/> creates under the temp root
     /// (<c>{tempRoot}/squid-tentacle-{ticketId}</c>). The <paramref name="reporter"/>
     /// (the live script backend) vetoes deletion of any workspace still running a
-    /// script, so the sweep can never remove an in-flight deployment's directory.
+    /// script, and the policy layers two age floors on top so the sweep can never
+    /// remove an in-flight deployment's directory:
+    /// <list type="bullet">
+    ///   <item>the <see cref="SelfHealOptions.FreshWorkspaceGraceWindow"/> protects a
+    ///         just-created workspace before the reporter knows its ticket (the
+    ///         StartScript TOCTOU gap), even under critical pressure;</item>
+    ///   <item><see cref="LocalScriptService.OrphanMaxAge"/> (the operator's
+    ///         orphan-workspace TTL) is honoured as a retention floor so the new
+    ///         disk sweep does not silently override the post-mortem window the
+    ///         existing age-based orphan sweep promises — except under critical
+    ///         pressure, where reclaiming disk wins.</item>
+    /// </list>
+    /// Tunables (retention counts, low-disk trigger) come from
+    /// <see cref="SelfHealOptions.Default"/> (env-var overridable).
     /// </summary>
     public static SelfHealBackgroundTask ForLocalWorkspaces(IRunningScriptReporter reporter)
     {
         var stateStoreFactory = new ScriptStateStoreFactory();
+        var options = SelfHealOptions.Default;
+
+        var policy = new DefaultWorkspaceCleanupPolicy(
+            targetFreePercentage: options.LowFreePercentage,
+            criticalTargetFreePercentage: options.CriticalTargetFreePercentage,
+            minRetentionAge: LocalScriptService.OrphanMaxAge,
+            freshGraceWindow: SelfHealOptions.FreshWorkspaceGraceWindow);
 
         var action = new DiskPressureHealAction(
             workspaceRootProvider: Path.GetTempPath,
             candidateProbe: root => WorkspaceProbe.Probe(root, stateStoreFactory),
-            policy: new DefaultWorkspaceCleanupPolicy(),
+            policy: policy,
             removeWorkspace: path => Directory.Delete(path, recursive: true),
+            quota: options.Quota,
             runningScriptReporters: reporter == null ? null : new[] { reporter });
 
         return new SelfHealBackgroundTask(new SelfHealController(new ISelfHealAction[] { action }));
