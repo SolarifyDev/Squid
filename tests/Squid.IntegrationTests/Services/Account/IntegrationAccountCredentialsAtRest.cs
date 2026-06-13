@@ -94,6 +94,38 @@ public class IntegrationAccountCredentialsAtRest : TestBase
     }
 
     [Fact]
+    public async Task ReadThenUnrelatedSaveInSameScope_DoesNotFlushPlaintextBack()
+    {
+        // Reproduces the production scope shape: the deploy pipeline loads + decrypts the
+        // account in one phase, then a LATER phase calls SaveChanges on the SAME scoped
+        // DbContext. If the read TRACKED the entity, the in-place decrypt would be detected
+        // as a modification and flushed back as plaintext — silently un-encrypting the most
+        // sensitive column in the system on the first deployment. The read must not track.
+        var plaintextJson = DeploymentAccountCredentialsConverter.Serialize(new TokenCredentials { Token = Secret });
+
+        var id = await Run<IDeploymentAccountDataProvider, int>(async provider =>
+            (await provider.AddAccountAsync(NewAccount(plaintextJson)).ConfigureAwait(false)).Id).ConfigureAwait(false);
+
+        // One shared scope/DbContext: load+decrypt the account, then an unrelated SaveChanges.
+        await Run<IDeploymentAccountDataProvider, IUnitOfWork>(async (provider, unitOfWork) =>
+        {
+            var loaded = await provider.GetAccountByIdAsync(id).ConfigureAwait(false);
+            loaded.Credentials.ShouldBe(plaintextJson, customMessage: "decrypted in memory");
+
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);   // DetectChanges flushes the whole tracker
+        }).ConfigureAwait(false);
+
+        // Fresh scope: the persisted column must STILL be the encrypted envelope.
+        await Run<IRepository>(async repository =>
+        {
+            var raw = await repository.Query<DeploymentAccount>(a => a.Id == id).FirstOrDefaultAsync().ConfigureAwait(false);
+
+            raw.Credentials.ShouldStartWith("SQUID_ENCRYPTED_V2:",
+                customMessage: "a read+decrypt followed by an unrelated SaveChanges in the same scope must NOT flush plaintext back — reads must be AsNoTracking");
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
     public async Task Update_ReEncryptsCredentials()
     {
         const string newSecret = "rotated-secret-7b21-VALUE";

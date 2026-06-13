@@ -103,6 +103,12 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         await action(scope.Resolve<T1>(), scope.Resolve<T2>()).ConfigureAwait(false);
     }
 
+    public async Task Run<T1, T2, T3>(Func<T1, T2, T3, Task> action)
+    {
+        await using var scope = LifetimeScope.BeginLifetimeScope();
+        await action(scope.Resolve<T1>(), scope.Resolve<T2>(), scope.Resolve<T3>()).ConfigureAwait(false);
+    }
+
     public async Task<TR> Run<T, TR>(Func<T, Task<TR>> action)
     {
         await using var scope = LifetimeScope.BeginLifetimeScope();

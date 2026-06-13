@@ -39,9 +39,10 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
 
     public async Task<DeploymentAccount> GetAccountByIdAsync(int accountId, CancellationToken cancellationToken = default)
     {
-        // AsNoTracking (via Query) so the decrypt below mutates a detached entity — a
-        // tracked entity would risk a later in-scope SaveChanges flushing plaintext back.
-        var account = await repository.Query<DeploymentAccount>(a => a.Id == accountId)
+        // QueryNoTracking so the decrypt below mutates a DETACHED entity — a tracked entity
+        // would be detected as Modified and a later in-scope SaveChanges (the deploy pipeline
+        // shares one DbContext across phases) would flush the plaintext back to the column.
+        var account = await repository.QueryNoTracking<DeploymentAccount>(a => a.Id == accountId)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
         return await DecryptCredentialsAsync(account).ConfigureAwait(false);
@@ -76,7 +77,7 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
 
     public async Task<List<DeploymentAccount>> GetAccountsByIdsAsync(List<int> ids, CancellationToken cancellationToken = default)
     {
-        var accounts = await repository.Query<DeploymentAccount>()
+        var accounts = await repository.QueryNoTracking<DeploymentAccount>()
             .Where(a => ids.Contains(a.Id))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
@@ -85,7 +86,7 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
 
     public async Task<List<DeploymentAccount>> GetAccountsBySpaceIdAsync(int spaceId, CancellationToken cancellationToken = default)
     {
-        var accounts = await repository.Query<DeploymentAccount>()
+        var accounts = await repository.QueryNoTracking<DeploymentAccount>()
             .Where(a => a.SpaceId == spaceId)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
@@ -94,7 +95,7 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
 
     public async Task<(int count, List<DeploymentAccount>)> GetAccountPagingAsync(int? spaceId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        var query = repository.Query<DeploymentAccount>();
+        var query = repository.QueryNoTracking<DeploymentAccount>();
 
         if (spaceId.HasValue)
             query = query.Where(a => a.SpaceId == spaceId.Value);

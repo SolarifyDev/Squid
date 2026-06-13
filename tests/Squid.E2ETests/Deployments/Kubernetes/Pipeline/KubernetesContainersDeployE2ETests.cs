@@ -1,5 +1,6 @@
 using System.Text;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -276,9 +277,9 @@ public class KubernetesContainersDeployE2ETests
 
         var serverTaskId = 0;
 
-        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        await _fixture.Run<IRepository, IUnitOfWork, IDeploymentAccountDataProvider>(async (repository, unitOfWork, accountDataProvider) =>
         {
-            var seeder = new K8sTestDataSeeder(repository, unitOfWork);
+            var seeder = new K8sTestDataSeeder(repository, unitOfWork, accountDataProvider);
             await seeder.SeedAsync(createFeedSecrets, replicas, testNs, communicationStyle).ConfigureAwait(false);
             serverTaskId = seeder.ServerTaskId;
         }).ConfigureAwait(false);

@@ -16,16 +16,18 @@ public class K8sTestDataSeeder
 {
     private readonly IRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDeploymentAccountDataProvider _accountDataProvider;
     private readonly TestDataBuilder _builder;
 
     public int ServerTaskId { get; private set; }
     public int AccountId { get; private set; }
     public int MachineId { get; private set; }
 
-    public K8sTestDataSeeder(IRepository repository, IUnitOfWork unitOfWork)
+    public K8sTestDataSeeder(IRepository repository, IUnitOfWork unitOfWork, IDeploymentAccountDataProvider accountDataProvider)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _accountDataProvider = accountDataProvider;
         _builder = new TestDataBuilder(repository, unitOfWork);
     }
 
@@ -256,8 +258,9 @@ public class K8sTestDataSeeder
             Credentials = DeploymentAccountCredentialsConverter.Serialize(creds)
         };
 
-        await _repository.InsertAsync(account, ct).ConfigureAwait(false);
-        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        // Route through the encrypting provider so E2E exercises the at-rest-encrypted
+        // credential path (write encrypted → pipeline reads + decrypts), matching production.
+        await _accountDataProvider.AddAccountAsync(account, cancellationToken: ct).ConfigureAwait(false);
 
         return account.Id;
     }
