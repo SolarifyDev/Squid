@@ -34,9 +34,11 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
 
         await dataProvider.AddAccountAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
+        // entity.Credentials is encrypted-at-rest by the provider on write, so build the
+        // response summary from the plaintext credentials we already deserialized.
         return new CreateDeploymentAccountResponseData
         {
-            DeploymentAccount = MapToDto(entity)
+            DeploymentAccount = MapToDto(entity, credentials)
         };
     }
 
@@ -61,11 +63,16 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             ? DeploymentAccountCredentialsConverter.Serialize(incoming)
             : entity.Credentials;
 
+        // Capture the plaintext credentials for the response BEFORE the provider encrypts
+        // entity.Credentials on write (the loaded entity arrives decrypted; a null incoming
+        // means we keep — and re-report — the existing credentials).
+        var summaryCredentials = DeploymentAccountCredentialsConverter.Deserialize(entity.AccountType, entity.Credentials);
+
         await dataProvider.UpdateAccountAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return new UpdateDeploymentAccountResponseData
         {
-            DeploymentAccount = MapToDto(entity)
+            DeploymentAccount = MapToDto(entity, summaryCredentials)
         };
     }
 
@@ -91,15 +98,16 @@ public class DeploymentAccountService(IDeploymentAccountDataProvider dataProvide
             Data = new GetDeploymentAccountsResponseData
             {
                 Count = count,
-                DeploymentAccounts = data.Select(MapToDto).ToList()
+                // Provider returns decrypted entities, so entity.Credentials is plaintext here.
+                DeploymentAccounts = data
+                    .Select(e => MapToDto(e, DeploymentAccountCredentialsConverter.Deserialize(e.AccountType, e.Credentials)))
+                    .ToList()
             }
         };
     }
 
-    private static DeploymentAccountDto MapToDto(DeploymentAccount entity)
+    private static DeploymentAccountDto MapToDto(DeploymentAccount entity, object creds)
     {
-        var creds = DeploymentAccountCredentialsConverter.Deserialize(entity.AccountType, entity.Credentials);
-
         return new DeploymentAccountDto
         {
             Id = entity.Id,
