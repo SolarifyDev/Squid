@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.Deployments.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Certificates;
@@ -98,9 +99,9 @@ public class KubernetesCredentialTypeE2ETests
     {
         var serverTaskId = 0;
 
-        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        await _fixture.Run<IRepository, IUnitOfWork, IDeploymentAccountDataProvider>(async (repository, unitOfWork, accountDataProvider) =>
         {
-            var seeder = new K8sTestDataSeeder(repository, unitOfWork);
+            var seeder = new K8sTestDataSeeder(repository, unitOfWork, accountDataProvider);
 
             await seeder.SeedAsync(
                 createFeedSecrets: false,
@@ -122,9 +123,9 @@ public class KubernetesCredentialTypeE2ETests
         var accountId = 0;
         var certName = $"E2E Cluster CA {Guid.NewGuid().ToString("N")[..6]}";
 
-        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        await _fixture.Run<IRepository, IUnitOfWork, IDeploymentAccountDataProvider>(async (repository, unitOfWork, accountDataProvider) =>
         {
-            var seeder = new K8sTestDataSeeder(repository, unitOfWork);
+            var seeder = new K8sTestDataSeeder(repository, unitOfWork, accountDataProvider);
 
             await seeder.SeedAsync(
                 createFeedSecrets: false,
