@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Squid.Core.Persistence.Entities;
@@ -76,6 +77,13 @@ public class EfRepository : IRepository
         _dbContext.RemoveRange(entities);
         _dbContext.ShouldSaveChanges = true;
         return Task.CompletedTask;
+    }
+
+    public void Detach<TEntity>(TEntity entity) where TEntity : class, IEntity
+    {
+        if (entity == null) return;
+
+        _dbContext.Entry(entity).State = EntityState.Detached;
     }
 
     public Task<int> CountAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
