@@ -28,6 +28,14 @@ public interface IRepository
 
     Task DeleteAllAsync<TEntity>(IEnumerable<TEntity> entities, CancellationToken cancellationToken = default)  where TEntity : class, IEntity;
 
+    /// <summary>
+    /// Stop tracking the entity. Used when a tracking read mutates an entity in memory in a way
+    /// that must NOT be persisted (e.g. decrypting a column on read) — detaching guarantees a
+    /// later shared-scope SaveChanges cannot flush the in-memory mutation, and frees the identity
+    /// map so a subsequent Update/Remove of the same key does not conflict. No-op for null.
+    /// </summary>
+    void Detach<TEntity>(TEntity entity) where TEntity : class, IEntity;
+
     Task<int> CountAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
         CancellationToken cancellationToken = default) where TEntity : class, IEntity;
 
