@@ -209,6 +209,110 @@ public class InFlightScriptStoreTests : TestBase
                 customMessage: $"Concurrent read+write on one context lost machine {id}'s ticket.");
     }
 
+    // ── IsMachineBusyAsync — the cross-task signal the tentacle upgrade consults ──
+    //
+    // IsMachineBusyAsync scans EVERY checkpoint in the DB (it has no taskId), so these
+    // tests use high machine ids (9100+) that NO sibling test records, keeping the scan
+    // result deterministic regardless of leftover rows from other test methods.
+
+    [Fact]
+    public async Task IsMachineBusy_WithInFlightScriptForMachine_ReturnsTrue()
+    {
+        const int taskId = 700020;
+        const int machineId = 9101;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(machineId), "ticket-a")).ConfigureAwait(false);
+
+        (await IsBusyAsync(machineId).ConfigureAwait(false)).ShouldBeTrue(
+            customMessage: "A deployment with an in-flight script on the machine MUST report it busy so the upgrade defers rather than restarting the agent mid-script.");
+        (await IsBusyAsync(9199).ConfigureAwait(false)).ShouldBeFalse(
+            customMessage: "An unrelated machine MUST NOT be reported busy.");
+    }
+
+    [Fact]
+    public async Task IsMachineBusy_AfterScriptCleared_ReturnsFalse()
+    {
+        // Once the deployment's script completes the slot is cleared → the JSON
+        // collapses to "[]" (which the scan predicate excludes) → the machine is
+        // free and the upgrade may proceed.
+        const int taskId = 700021;
+        const int machineId = 9102;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(taskId, Slot(machineId), "ticket-a")).ConfigureAwait(false);
+        await Run<IInFlightScriptStore>(s => s.ClearAsync(taskId, Slot(machineId))).ConfigureAwait(false);
+
+        (await IsBusyAsync(machineId).ConfigureAwait(false)).ShouldBeFalse(
+            customMessage: "A machine whose only in-flight script was cleared MUST report free.");
+    }
+
+    [Fact]
+    public async Task IsMachineBusy_ScansAcrossTasks_NotJustOne()
+    {
+        // The upgrade does NOT know which deployment task holds the machine — it has
+        // no taskId, so it must scan every active/paused checkpoint. Two separate
+        // tasks each holding a different machine must both report busy from one scan.
+        const int machineA = 9103;
+        const int machineB = 9105;
+        await EnsureRowAsync(700022).ConfigureAwait(false);
+        await EnsureRowAsync(700023).ConfigureAwait(false);
+
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(700022, Slot(machineA, stepId: 30, actionId: 300), "ticket-x")).ConfigureAwait(false);
+        await Run<IInFlightScriptStore>(s => s.RecordDispatchedAsync(700023, Slot(machineB, stepId: 40, actionId: 400), "ticket-y")).ConfigureAwait(false);
+
+        (await IsBusyAsync(machineA).ConfigureAwait(false)).ShouldBeTrue(
+            customMessage: "A script in flight under one task MUST block an upgrade of its machine even though the upgrade never references that task.");
+        (await IsBusyAsync(machineB).ConfigureAwait(false)).ShouldBeTrue(
+            customMessage: "The scan MUST span all tasks — a second task's in-flight machine is equally blocked.");
+    }
+
+    [Fact]
+    public async Task IsMachineBusy_NoCheckpointForMachine_ReturnsFalse()
+        // A machine no deployment has ever touched in this DB → not busy → upgrade proceeds.
+        => (await IsBusyAsync(9104).ConfigureAwait(false)).ShouldBeFalse();
+
+    [Fact]
+    public async Task IsMachineBusy_CheckpointSeededButNeverDispatched_ReturnsFalse()
+    {
+        // A checkpoint that EXISTS but has not (yet) dispatched any script carries the idle
+        // seed value "{}" (EnsureExistsAsync). It must report NOT busy — and the scan predicate
+        // now excludes BOTH idle shapes ("[]" and "{}") at the DB layer, so such rows are never
+        // even materialized into the busy-check.
+        const int taskId = 700024;
+        const int machineId = 9106;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        (await IsBusyAsync(machineId).ConfigureAwait(false)).ShouldBeFalse(
+            customMessage: "A seeded-but-never-dispatched checkpoint ('{}') must not report any machine busy.");
+    }
+
+    [Fact]
+    public async Task DependencyInjection_ResolvesRealInFlightScriptStore_SoTheUpgradeDeferGuardStaysWired()
+    {
+        // The tentacle upgrade's defer-guard (MachineUpgradeService.RunStrategyWithMetadataAsync)
+        // depends on IInFlightScriptStore being injected by Autofac. That ctor param is OPTIONAL
+        // (= null) so the guard silently no-ops if the dependency ever stops being registered — and
+        // the all-mock unit suite cannot catch that (it always passes the mock explicitly). Pin the
+        // production wiring against the REAL SquidModule: it must resolve IInFlightScriptStore to the
+        // real store, otherwise every upgrade would dispatch and could kill an in-flight deploy script.
+        //
+        // This pins the REGISTRATION, not a full UpgradeAsync drive-through: the guard sits inside the
+        // per-machine Redis lock, and RedisSafeRunner eagerly connects on activation, which the
+        // integration DI config can't satisfy (RedisSafeRunner is never DI-resolved in these tests —
+        // see UpgradeDispatchLockReconcilerIntegrationTests, which connects to Redis directly). The
+        // guard's own defer/proceed logic is unit-covered.
+        await Run<IInFlightScriptStore>(store =>
+        {
+            store.ShouldNotBeNull();
+            store.ShouldBeOfType<InFlightScriptStore>();
+            return Task.CompletedTask;
+        }).ConfigureAwait(false);
+    }
+
+    private Task<bool> IsBusyAsync(int machineId)
+        => Run<IInFlightScriptStore, bool>(s => s.IsMachineBusyAsync(machineId));
+
     private Task EnsureRowAsync(int taskId)
         => Run<IDeploymentCheckpointService>(svc => svc.EnsureExistsAsync(taskId, deploymentId: 1));
 

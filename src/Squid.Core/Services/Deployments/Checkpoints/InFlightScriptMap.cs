@@ -60,6 +60,12 @@ public static class InFlightScriptMap
     public static string? TryGet(string json, DispatchSlot slot)
         => Parse(json).FirstOrDefault(e => Matches(e, slot))?.Ticket;
 
+    /// <summary>True if ANY in-flight entry targets <paramref name="machineId"/> — i.e. a script
+    /// is dispatched to that machine's agent and not yet observed to completion. Used by the
+    /// tentacle upgrade to defer restarting an agent that has a deployment script in flight.</summary>
+    public static bool ContainsMachine(string json, int machineId)
+        => Parse(json).Any(e => e.MachineId == machineId);
+
     private static bool Matches(Entry entry, DispatchSlot slot)
         => entry.MachineId == slot.MachineId && entry.StepId == slot.StepId && entry.ActionId == slot.ActionId;
 
