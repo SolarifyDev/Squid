@@ -1,6 +1,7 @@
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Caching.Redis;
+using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Machines;
@@ -1633,6 +1634,52 @@ public sealed class MachineUpgradeServiceTests
             Times.Never,
             "GetUpgradeInfo is a read — must never actually dispatch the upgrade");
     }
+
+    // ── P3: upgrade defers to an active deployment script on the same machine ──
+
+    [Fact]
+    public async Task UpgradeAsync_DeploymentScriptInFlightOnMachine_DefersWithoutDispatching()
+    {
+        // A deployment currently has a script in flight on this agent. Restarting the
+        // agent to upgrade it would kill that script, so the upgrade must NOT dispatch.
+        ArrangeMachine(id: 70, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(70, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.0");
+
+        var inFlight = new Mock<IInFlightScriptStore>();
+        inFlight.Setup(s => s.IsMachineBusyAsync(70, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var resp = await NewServiceWithInFlight(inFlight.Object).UpgradeAsync(new UpgradeMachineCommand { MachineId = 70 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Failed);
+        resp.Detail.ShouldContain("active deployment",
+            customMessage: "the operator must be told WHY the upgrade was withheld — a deployment is running a script on the agent.");
+        resp.Detail.ShouldContain("NOT dispatched",
+            customMessage: "the message must make clear nothing was restarted, so the operator knows the deployment is intact.");
+        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            failMessage: "the upgrade MUST NOT restart an agent that has a deployment script in flight — doing so kills the running deployment.");
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_NoDeploymentScriptInFlight_ProceedsToDispatch()
+    {
+        // Contrast: no deployment in flight on this machine → the upgrade dispatches normally.
+        ArrangeMachine(id: 71, style: nameof(CommunicationStyle.TentaclePolling));
+        _runtimeCache.Store(71, new Dictionary<string, string> { ["os"] = "Linux" }, agentVersion: "1.3.0");
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "done", AgentVersionMayHaveChanged = true });
+
+        var inFlight = new Mock<IInFlightScriptStore>();
+        inFlight.Setup(s => s.IsMachineBusyAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var resp = await NewServiceWithInFlight(inFlight.Object).UpgradeAsync(new UpgradeMachineCommand { MachineId = 71 }, CancellationToken.None);
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        _linuxStrategy.Verify(s => s.UpgradeAsync(It.IsAny<Machine>(), "1.4.0", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private MachineUpgradeService NewServiceWithInFlight(IInFlightScriptStore inFlight) =>
+        new(_machineDataProvider.Object, _runtimeCache, _versionRegistry.Object, new[] { _linuxStrategy.Object, _k8sStrategy.Object }, _redisLock.Object, _backgroundJobClient.Object, inFlightScriptStore: inFlight);
 
     private void ArrangeMachine(int id, string style)
     {

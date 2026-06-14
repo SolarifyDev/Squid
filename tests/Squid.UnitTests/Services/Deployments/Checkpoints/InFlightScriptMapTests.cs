@@ -101,6 +101,50 @@ public class InFlightScriptMapTests
     public void TryGet_AbsentSlot_ReturnsNull()
         => InFlightScriptMap.TryGet("[]", Slot(7)).ShouldBeNull();
 
+    // ── ContainsMachine — the machine-coarse predicate the upgrade consults ──
+
+    [Fact]
+    public void ContainsMachine_MatchesAnyEntryForThatMachine_IgnoringStepAndAction()
+    {
+        // The upgrade asks the machine-level question "is ANY script in flight on
+        // this agent?" — it must match regardless of which step/action dispatched it.
+        var json = InFlightScriptMap.Add("[]", Slot(7, stepId: 10, actionId: 100), "ticket-a");
+
+        InFlightScriptMap.ContainsMachine(json, 7).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ContainsMachine_OtherMachineOnly_ReturnsFalse()
+    {
+        // A deployment in flight on machine 9 must NOT block an upgrade of machine 7.
+        var json = InFlightScriptMap.Add("[]", Slot(9), "ticket-b");
+
+        InFlightScriptMap.ContainsMachine(json, 7).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ContainsMachine_MatchesWhenAnySiblingSlotTargetsMachine()
+    {
+        var json = InFlightScriptMap.Add("[]", Slot(7, stepId: 10, actionId: 100), "ticket-a");
+        json = InFlightScriptMap.Add(json, Slot(9), "ticket-b");
+
+        InFlightScriptMap.ContainsMachine(json, 7).ShouldBeTrue();
+        InFlightScriptMap.ContainsMachine(json, 9).ShouldBeTrue();
+        InFlightScriptMap.ContainsMachine(json, 5).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("[]")]
+    [InlineData("not json at all")]
+    [InlineData("{\"11\":\"legacy-machine-keyed-ticket\"}")]
+    public void ContainsMachine_EmptyMalformedOrLegacyJson_ReturnsFalse(string json)
+        // A blank/corrupt/legacy column must never falsely block an upgrade — fall
+        // back to "no script in flight" (let the upgrade proceed), matching the
+        // re-dispatch-fresh behaviour the resume path relies on.
+        => InFlightScriptMap.ContainsMachine(json, 7).ShouldBeFalse();
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

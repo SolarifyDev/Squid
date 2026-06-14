@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
+using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Machines.Exceptions;
@@ -96,8 +97,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private readonly IRedisSafeRunner _redisLock;
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
     private readonly IUpgradeDispatchMetadataStore _dispatchMetadata;
+    private readonly IInFlightScriptStore _inFlightScriptStore;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null, IUpgradeDispatchMetadataStore dispatchMetadata = null)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null, IUpgradeDispatchMetadataStore dispatchMetadata = null, IInFlightScriptStore inFlightScriptStore = null)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
@@ -107,6 +109,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         _redisLock = redisLock;
         _backgroundJobClient = backgroundJobClient;
         _dispatchMetadata = dispatchMetadata;
+        _inFlightScriptStore = inFlightScriptStore;
     }
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
@@ -547,6 +550,17 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// </summary>
     private async Task<UpgradeMachineResponseData> RunStrategyWithMetadataAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
     {
+        // Defer (do NOT restart the agent) if a deployment currently has a script in flight on this
+        // machine — restarting now would kill the running deployment script. Checked here, inside the
+        // per-machine dispatch lock and immediately before dispatch, so the window between the check
+        // and the restart is as small as possible. The deployment side is unchanged; it records its
+        // in-flight scripts (record-before-RPC) which this read consults.
+        if (_inFlightScriptStore != null && await _inFlightScriptStore.IsMachineBusyAsync(machine.Id, ct).ConfigureAwait(false))
+            return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
+                $"Machine '{machine.Name}' has an active deployment running a script on its agent. The upgrade " +
+                "was NOT dispatched — restarting the agent now would kill the in-flight deployment script. " +
+                "Retry the upgrade once the deployment completes.");
+
         if (_dispatchMetadata != null)
         {
             try
