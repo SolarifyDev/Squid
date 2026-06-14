@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Jobs;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -25,7 +26,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object);
+        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -41,7 +42,7 @@ public class DeploymentPipelineRunnerTests
             .Returns<DeploymentTaskContext, CancellationToken>(async (_, token) => await Task.Delay(TimeSpan.FromSeconds(60), token));
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object);
+        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
 
         var sw = Stopwatch.StartNew();
         await Should.ThrowAsync<OperationCanceledException>(() => runner.ProcessAsync(1, CancellationToken.None));
@@ -65,7 +66,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(new[] { failurePhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object);
+        var runner = new DeploymentPipelineRunner(new[] { failurePhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -87,7 +88,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object);
+        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
 
         await runner.ProcessAsync(1, CancellationToken.None);
 

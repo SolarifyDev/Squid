@@ -24,7 +24,9 @@ public interface IServerTaskDataProvider : IScopedDependency
 
     Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default);
 
-    Task<bool> HasExecutingTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
+    Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default);
+
+    Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
 
     Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default);
 }
@@ -114,10 +116,44 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         var now = DateTimeOffset.UtcNow;
         var dataVersion = Guid.NewGuid().ToByteArray();
 
-        var rowsAffected = await ExecuteStateUpdateAsync(taskId, expectedCurrentState, newState, now, dataVersion, cancellationToken).ConfigureAwait(false);
+        int rowsAffected;
+
+        try
+        {
+            rowsAffected = await ExecuteStateUpdateAsync(taskId, expectedCurrentState, newState, now, dataVersion, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsActiveSlotConflict(ex, newState))
+        {
+            throw new ConcurrencySlotOccupiedException(await ReadConcurrencyTagAsync(taskId, cancellationToken).ConfigureAwait(false));
+        }
 
         if (rowsAffected == 0)
             await ThrowTransitionErrorAsync(taskId, newState, cancellationToken).ConfigureAwait(false);
+    }
+
+    // A second pod's →Executing transition for a ConcurrencyTag that already has an active task
+    // violates the ux_server_task_active_per_tag unique partial index (Postgres 23505). Only
+    // →Executing adds a row to the active set, so scope the mapping to that newState and to that
+    // specific index (by name) — any other unique violation propagates unchanged.
+    private static bool IsActiveSlotConflict(Exception ex, string newState)
+        => string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)
+           && FindPostgresException(ex) is { SqlState: "23505" } pg
+           && string.Equals(pg.ConstraintName, Persistence.EntityConfigurations.ServerTaskConfiguration.OneActivePerTagIndexName, StringComparison.Ordinal);
+
+    private static Npgsql.PostgresException FindPostgresException(Exception ex)
+    {
+        for (var current = ex; current != null; current = current.InnerException)
+            if (current is Npgsql.PostgresException pg) return pg;
+
+        return null;
+    }
+
+    private async Task<string> ReadConcurrencyTagAsync(int taskId, CancellationToken ct)
+    {
+        var task = await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId)
+            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        return task?.ConcurrencyTag ?? string.Empty;
     }
 
     private Task<int> ExecuteStateUpdateAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
@@ -180,10 +216,21 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<bool> HasExecutingTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default)
+    public async Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default)
     {
+        // "Active" mirrors the ux_server_task_active_per_tag index filter: a Paused/Cancelling
+        // task still holds the slot because its in-flight agent script may be running.
         return await _repository.AnyAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.ConcurrencyTag == tag && t.Id != excludeId && t.State == TaskState.Executing,
+            t => t.ConcurrencyTag == tag && t.Id != excludeId
+                 && (t.State == TaskState.Executing || t.State == TaskState.Paused || t.State == TaskState.Cancelling),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default)
+    {
+        await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.Id == taskId,
+            s => s.SetProperty(t => t.JobId, jobId),
             cancellationToken).ConfigureAwait(false);
     }
 
