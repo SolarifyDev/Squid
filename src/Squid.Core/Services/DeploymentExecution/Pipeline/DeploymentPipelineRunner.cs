@@ -3,14 +3,24 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Jobs;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider) : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
-    private static readonly TimeSpan DefaultConcurrencyMaxWait = TimeSpan.FromSeconds(300);
-    private static readonly TimeSpan DefaultConcurrencyPollInterval = TimeSpan.FromMilliseconds(3000);
+
+    /// <summary>
+    /// How long to defer a re-enqueued deployment that could not get its environment
+    /// concurrency slot. Cross-process serialization is now DB-enforced (the
+    /// <c>ux_server_task_active_per_tag</c> unique index), so a blocked deployment is not
+    /// run-anyway and is not held in-process — it stays Pending and is re-dispatched after this
+    /// delay (by any pod) until the slot frees. Sibling of the per-machine poll cadence; kept a
+    /// plain const matching the prior concurrency-poll settings (no env var).
+    /// </summary>
+    internal static readonly TimeSpan ConcurrencyRequeueDelay = TimeSpan.FromSeconds(15);
 
     /// <summary>
     /// Operator escape hatch (Rule 8): maximum wall-clock minutes a single
@@ -44,8 +54,6 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
     internal bool TimeoutResumable { get; init; } = ResolveTimeoutResumable();
-    internal TimeSpan ConcurrencyMaxWait { get; init; } = DefaultConcurrencyMaxWait;
-    internal TimeSpan ConcurrencyPollInterval { get; init; } = DefaultConcurrencyPollInterval;
 
     public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
     {
@@ -57,7 +65,19 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         try
         {
-            await WaitForConcurrencySlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
+            var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
+
+            if (slot == SlotDecision.AlreadyResolved)
+            {
+                Log.Information("[Deploy] Task {TaskId} is already in a terminal state; skipping re-dispatched run", serverTaskId);
+                return;
+            }
+
+            if (slot == SlotDecision.SlotBusy)
+            {
+                await RequeueForConcurrencySlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
+                return;
+            }
 
             lifecycle.Initialize(ctx);
 
@@ -115,6 +135,17 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
         }
+        catch (ConcurrencySlotOccupiedException ex)
+        {
+            // Lost the environment slot in the TOCTOU window between the free-slot check above
+            // and LoadTaskPhase's atomic →Executing claim — a peer pod's active task held it and
+            // the ux_server_task_active_per_tag unique index rejected this claim. Re-enqueue (the
+            // task stays Pending, or Paused if this was a resume) instead of failing: never
+            // overlapped, never lost. No completion record is written — the deployment has not
+            // started.
+            Log.Information("[Deploy] Task {TaskId} lost concurrency slot at claim (tag: {Tag}); re-enqueuing", serverTaskId, ex.ConcurrencyTag);
+            await RequeueForConcurrencySlotAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }
         catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
             && TargetCatchClassifier.IsTransientInfraFailure(ex))
         {
@@ -169,33 +200,43 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
     }
 
-    private async Task WaitForConcurrencySlotAsync(int serverTaskId, CancellationToken ct)
+    private enum SlotDecision { Proceed, SlotBusy, AlreadyResolved }
+
+    // One read decides the cold-path outcome: (a) AlreadyResolved if the task is terminal —
+    // covers a re-dispatched job whose task was cancelled while it sat re-enqueued, so it
+    // short-circuits instead of trying an illegal Cancelled→Executing claim; (b) SlotBusy if
+    // another ACTIVE task (Executing/Paused/Cancelling) holds the same tag's slot; (c) Proceed
+    // otherwise. A false negative on (b) under a race is harmless — LoadTaskPhase's atomic claim
+    // (the unique index) still rejects an overlapping →Executing and re-enqueues. An untagged
+    // task is never slot-blocked.
+    private async Task<SlotDecision> EvaluateSlotAsync(int serverTaskId, CancellationToken ct)
     {
         var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, ct).ConfigureAwait(false);
 
-        if (task == null || string.IsNullOrEmpty(task.ConcurrencyTag)) return;
+        if (task == null) return SlotDecision.Proceed;
 
-        var deadline = DateTime.UtcNow.Add(ConcurrencyMaxWait);
-        var logged = false;
+        if (TaskState.IsTerminal(task.State)) return SlotDecision.AlreadyResolved;
 
-        while (DateTime.UtcNow < deadline)
-        {
-            ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrEmpty(task.ConcurrencyTag)) return SlotDecision.Proceed;
 
-            var hasBlocker = await serverTaskDataProvider.HasExecutingTaskWithTagAsync(task.ConcurrencyTag, serverTaskId, ct).ConfigureAwait(false);
+        return await serverTaskDataProvider.HasActiveTaskWithTagAsync(task.ConcurrencyTag, serverTaskId, ct).ConfigureAwait(false)
+            ? SlotDecision.SlotBusy
+            : SlotDecision.Proceed;
+    }
 
-            if (!hasBlocker) return;
+    // Re-dispatch the still-Pending (or Paused, on resume) task after a short delay so any pod
+    // can retry the slot once the occupant finishes. Replaces the legacy in-process "wait up to
+    // 300s then proceed anyway" poll: the worker is freed immediately and the deployment is never
+    // run while the slot is held. The new job id is persisted to task.JobId so a subsequent
+    // cancel targets THIS scheduled job rather than the already-finished original.
+    private async Task RequeueForConcurrencySlotAsync(int serverTaskId, CancellationToken ct)
+    {
+        Log.Information("[Deploy] Task {TaskId} waiting for concurrency slot; re-enqueuing in {Delay}s", serverTaskId, ConcurrencyRequeueDelay.TotalSeconds);
 
-            if (!logged)
-            {
-                Log.Information("[Deploy] Task {TaskId} waiting for concurrency slot (tag: {Tag})", serverTaskId, task.ConcurrencyTag);
-                logged = true;
-            }
+        var jobId = backgroundJobClient.Schedule<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTaskId, CancellationToken.None), ConcurrencyRequeueDelay);
 
-            await Task.Delay(ConcurrencyPollInterval, ct).ConfigureAwait(false);
-        }
-
-        Log.Warning("[Deploy] Task {TaskId} exceeded concurrency wait timeout ({Timeout}), proceeding anyway", serverTaskId, ConcurrencyMaxWait);
+        if (!string.IsNullOrEmpty(jobId))
+            await serverTaskDataProvider.SetJobIdAsync(serverTaskId, jobId, ct).ConfigureAwait(false);
     }
 
     /// <summary>
