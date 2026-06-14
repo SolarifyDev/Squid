@@ -555,6 +555,10 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // per-machine dispatch lock and immediately before dispatch, so the window between the check
         // and the restart is as small as possible. The deployment side is unchanged; it records its
         // in-flight scripts (record-before-RPC) which this read consults.
+        // Status is Failed (no new enum — matches the H4 contention convention), so the Detail text is
+        // the only signal distinguishing "deferred, deployment intact, retry later" from a genuine
+        // upgrade failure. The phrases below are a load-bearing contract pinned by
+        // UpgradeAsync_DeploymentScriptInFlightOnMachine_DefersWithoutDispatching — reword in lockstep.
         if (_inFlightScriptStore != null && await _inFlightScriptStore.IsMachineBusyAsync(machine.Id, ct).ConfigureAwait(false))
             return BuildResponse(machine, currentVersion, targetVersion, MachineUpgradeStatus.Failed,
                 $"Machine '{machine.Name}' has an active deployment running a script on its agent. The upgrade " +

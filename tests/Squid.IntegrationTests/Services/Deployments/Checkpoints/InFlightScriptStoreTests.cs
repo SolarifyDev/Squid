@@ -272,6 +272,44 @@ public class InFlightScriptStoreTests : TestBase
         // A machine no deployment has ever touched in this DB → not busy → upgrade proceeds.
         => (await IsBusyAsync(9104).ConfigureAwait(false)).ShouldBeFalse();
 
+    [Fact]
+    public async Task IsMachineBusy_CheckpointSeededButNeverDispatched_ReturnsFalse()
+    {
+        // A checkpoint that EXISTS but has not (yet) dispatched any script carries the idle
+        // seed value "{}" (EnsureExistsAsync). It must report NOT busy — and the scan predicate
+        // now excludes BOTH idle shapes ("[]" and "{}") at the DB layer, so such rows are never
+        // even materialized into the busy-check.
+        const int taskId = 700024;
+        const int machineId = 9106;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        (await IsBusyAsync(machineId).ConfigureAwait(false)).ShouldBeFalse(
+            customMessage: "A seeded-but-never-dispatched checkpoint ('{}') must not report any machine busy.");
+    }
+
+    [Fact]
+    public async Task DependencyInjection_ResolvesRealInFlightScriptStore_SoTheUpgradeDeferGuardStaysWired()
+    {
+        // The tentacle upgrade's defer-guard (MachineUpgradeService.RunStrategyWithMetadataAsync)
+        // depends on IInFlightScriptStore being injected by Autofac. That ctor param is OPTIONAL
+        // (= null) so the guard silently no-ops if the dependency ever stops being registered — and
+        // the all-mock unit suite cannot catch that (it always passes the mock explicitly). Pin the
+        // production wiring against the REAL SquidModule: it must resolve IInFlightScriptStore to the
+        // real store, otherwise every upgrade would dispatch and could kill an in-flight deploy script.
+        //
+        // This pins the REGISTRATION, not a full UpgradeAsync drive-through: the guard sits inside the
+        // per-machine Redis lock, and RedisSafeRunner eagerly connects on activation, which the
+        // integration DI config can't satisfy (RedisSafeRunner is never DI-resolved in these tests —
+        // see UpgradeDispatchLockReconcilerIntegrationTests, which connects to Redis directly). The
+        // guard's own defer/proceed logic is unit-covered.
+        await Run<IInFlightScriptStore>(store =>
+        {
+            store.ShouldNotBeNull();
+            store.ShouldBeOfType<InFlightScriptStore>();
+            return Task.CompletedTask;
+        }).ConfigureAwait(false);
+    }
+
     private Task<bool> IsBusyAsync(int machineId)
         => Run<IInFlightScriptStore, bool>(s => s.IsMachineBusyAsync(machineId));
 
