@@ -12,10 +12,10 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 /// <summary>
 /// Pins how the runner classifies a TRANSIENT INFRASTRUCTURE failure (a Halibut
 /// RPC drop that outlived the library's own retries, or an unreachable agent):
-/// by default it pauses the deployment for resume (OnTransientPauseAsync —
+/// it unconditionally pauses the deployment for resume (OnTransientPauseAsync —
 /// Paused + checkpoint preserved) rather than failing it terminally, so the
-/// still-running script can be re-attached to. The historical fail-fast
-/// behaviour remains behind the SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE escape hatch.
+/// still-running script can be re-attached to. There is no opt-out — failing fast
+/// on a transient blip would discard progress and risk a duplicate run.
 ///
 /// <para>Sibling to <c>DeploymentPipelineRunnerTimeoutTests</c>, which pins the
 /// analogous wall-clock-timeout classification. A genuine (non-transient)

@@ -68,9 +68,9 @@ public static class TargetCatchClassifier
     /// Whether <paramref name="ex"/> is a transient infrastructure failure that
     /// should pause (resumable) rather than fail the deployment. Delegates to the
     /// single source of truth, <see cref="TransientFailureClassifier.IsTransient"/>
-    /// (which excludes the permanent Halibut protocol/invocation subtypes and
-    /// includes <c>CircuitOpenException</c>), kept here as the name the pipeline
-    /// callers already reference.
+    /// (which excludes the permanent Halibut protocol/invocation subtypes AND
+    /// <c>CircuitOpenException</c> — a sustained, fail-fast breaker-open state, not a
+    /// one-off blip), kept here as the name the pipeline callers already reference.
     /// </summary>
     public static bool IsTransientInfraFailure(System.Exception ex)
         => TransientFailureClassifier.IsTransient(ex);

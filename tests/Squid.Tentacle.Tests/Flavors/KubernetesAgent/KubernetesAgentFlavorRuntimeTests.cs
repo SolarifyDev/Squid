@@ -3,6 +3,7 @@ using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Flavors.KubernetesAgent;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.SelfHeal;
 using Squid.Tentacle.Tests.Support;
 using Squid.Tentacle.Tests.Support.Scenarios;
 
@@ -22,7 +23,10 @@ public class KubernetesAgentFlavorRuntimeTests
         flavor.Id.ShouldBe("KubernetesAgent");
         runtime.Registrar.ShouldBeOfType<KubernetesAgentRegistrar>();
         runtime.ScriptBackend.ShouldBeOfType<LocalScriptService>();
-        runtime.BackgroundTasks.ShouldBeEmpty();
+        // Local-exec mode creates real {tempRoot}/squid-tentacle-* workspaces, so it must schedule
+        // the disk-pressure self-heal — same as the standalone Tentacle flavor.
+        runtime.BackgroundTasks.OfType<SelfHealBackgroundTask>().ShouldHaveSingleItem()
+            .Name.ShouldBe("SelfHeal");
         runtime.StartupHooks.ShouldNotBeEmpty();
         runtime.StartupHooks.Select(h => h.Name).ShouldContain("InitializationFlag");
     }
