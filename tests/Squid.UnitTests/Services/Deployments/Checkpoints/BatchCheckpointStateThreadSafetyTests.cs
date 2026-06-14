@@ -170,6 +170,7 @@ public sealed class BatchCheckpointStateThreadSafetyTests
             packageAcquisitionService: null!,
             serviceMessageParser: null!,
             intentRendererRegistry: null!,
-            variableEncryptionService: null!);
+            variableEncryptionService: null!,
+            machineDispatchLock: null!);
     }
 }

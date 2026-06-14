@@ -212,7 +212,8 @@ public sealed class CheckpointSensitiveVarEncryptionTests
             packageAcquisitionService: new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object,
             serviceMessageParser: new ServiceMessageParser(),
             intentRendererRegistry: Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(),
-            variableEncryptionService: encryption);
+            variableEncryptionService: encryption,
+            machineDispatchLock: Squid.UnitTests.TestDoubles.PassThroughMachineDispatchLock.Instance);
 
         var ctx = new DeploymentTaskContext
         {

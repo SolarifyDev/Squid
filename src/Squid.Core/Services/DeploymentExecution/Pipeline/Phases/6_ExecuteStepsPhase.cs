@@ -13,6 +13,7 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Script.ServiceMessages;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.Locking;
 using Squid.Core.Services.Security;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -28,7 +29,8 @@ public sealed partial class ExecuteStepsPhase(
     IPackageAcquisitionService packageAcquisitionService,
     IServiceMessageParser serviceMessageParser,
     IIntentRendererRegistry intentRendererRegistry,
-    IVariableEncryptionService variableEncryptionService) : IDeploymentPipelinePhase
+    IVariableEncryptionService variableEncryptionService,
+    IMachineDispatchLock machineDispatchLock) : IDeploymentPipelinePhase
 {
     public int Order => 500;
 

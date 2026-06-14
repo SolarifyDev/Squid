@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Jobs;
+using Squid.Core.Services.Machines.Locking;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
@@ -145,6 +146,16 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // started.
             Log.Information("[Deploy] Task {TaskId} lost concurrency slot at claim (tag: {Tag}); re-enqueuing", serverTaskId, ex.ConcurrencyTag);
             await RequeueForConcurrencySlotAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (MachineLockUnavailableException ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            // A target machine's dispatch lock is held by an upgrade (or another deployment), or
+            // Redis is unreachable. We must not run a script on a machine an upgrade may restart,
+            // and must not proceed unguarded when Redis is down — so PAUSE (resumable, checkpoint
+            // preserved) rather than fail. On resume the lock is re-attempted. Cancel/timeout win
+            // via the guard, matching the transient-pause precedence.
+            Log.Warning(ex, "[Deploy] Task {TaskId} could not acquire machine {MachineId} dispatch lock ({Kind}); pausing for resume", serverTaskId, ex.MachineId, ex.IsInfrastructureFailure ? "Redis unreachable" : "contention");
+            await SafeCompleteAsync(ctx, () => completion.OnTransientPauseAsync(ctx, ex, CancellationToken.None), new DeploymentPausedEvent(new DeploymentEventContext()));
         }
         catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
             && TargetCatchClassifier.IsTransientInfraFailure(ex))

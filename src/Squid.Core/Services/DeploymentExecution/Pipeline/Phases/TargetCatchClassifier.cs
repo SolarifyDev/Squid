@@ -46,6 +46,14 @@ public static class TargetCatchClassifier
         if (ex is System.OperationCanceledException && failFastCancelled && !parentCtCancelled)
             return new Classification(MarkFailed: false, TriggerFailFast: false);
 
+        // The machine-lock case: the per-machine dispatch lock is held by an upgrade (or another
+        // deployment) or Redis is down — no script ran on this target. Treat like transient: do
+        // NOT mark terminal (resume re-attempts the lock) and do NOT fail-fast peers (healthy
+        // targets finish, then the runner pauses the deployment for resume). Guarded by
+        // !parentCtCancelled so a real cancel/timeout racing the lock failure still terminates.
+        if (ex is Machines.Locking.MachineLockUnavailableException && !parentCtCancelled)
+            return new Classification(MarkFailed: false, TriggerFailFast: false);
+
         // The transient-infra case: a Halibut RPC drop (after the library's own
         // retries) or an unreachable agent. The script may still be running on the
         // agent, so we do NOT mark the target terminal — a resume re-attaches to it

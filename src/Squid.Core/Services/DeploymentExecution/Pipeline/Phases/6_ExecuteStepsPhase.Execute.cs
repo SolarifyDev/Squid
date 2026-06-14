@@ -7,6 +7,7 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.Locking;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -373,7 +374,13 @@ public sealed partial class ExecuteStepsPhase
             request.OutputSink = (lines, sinkCt) => lifecycle.EmitAsync(
                 new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptOutputChunk = lines }), sinkCt);
 
-            var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
+            // Run under the per-machine dispatch lock so an upgrade (which restarts the agent)
+            // can never run against this machine while the deployment's script is executing on
+            // it. The lock is held for the whole script duration (auto-extended); on contention
+            // or a Redis outage it throws MachineLockUnavailableException, which propagates to a
+            // resumable pause below.
+            var execResult = await machineDispatchLock.RunUnderMachineLockAsync(
+                tc.Machine.Id, () => strategy.ExecuteScriptAsync(request, ct)).ConfigureAwait(false);
 
             // P1-B.7: cross-reference output-variable values against the
             // sensitive values that flowed INTO this script, so an agent that
@@ -396,6 +403,14 @@ public sealed partial class ExecuteStepsPhase
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            throw;
+        }
+        catch (MachineLockUnavailableException)
+        {
+            // The machine's dispatch lock is held by an upgrade (or another deployment), or Redis
+            // is down. No script ran on this target. PROPAGATE so the runner pauses the deployment
+            // for resume rather than recording a per-target failure (which would route to
+            // OnFailureAsync and discard the checkpoint). On resume the lock is re-attempted.
             throw;
         }
         catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex))

@@ -90,7 +90,7 @@ public class ExecuteStepsPhaseCapabilityFilterTests : IDisposable
             _acquisitionMock.Object,
             new ServiceMessageParser(),
             rendererRegistry,
-            new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
+            new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object, Squid.UnitTests.TestDoubles.PassThroughMachineDispatchLock.Instance);
 
         _ctx = new DeploymentTaskContext
         {

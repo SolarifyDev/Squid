@@ -3,6 +3,7 @@ using Halibut;
 using Shouldly;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
+using Squid.Core.Services.Machines.Locking;
 using Xunit;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
@@ -157,6 +158,34 @@ public sealed class TargetCatchClassifierTests
         TargetCatchClassifier.IsTransientInfraFailure(
             new AggregateException(new HalibutClientException("a"), new InvalidOperationException("real"))).ShouldBeFalse();
         TargetCatchClassifier.IsTransientInfraFailure(new AggregateException()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MachineLockUnavailable_NotMarkedTerminal_NotFailFast()
+    {
+        // The machine's dispatch lock is held by an upgrade (or Redis is down) — no script ran.
+        // Like transient: leave the target non-terminal (resume re-attempts the lock) and don't
+        // fail-fast peers (they finish, then the runner pauses the deployment).
+        var classification = TargetCatchClassifier.Classify(
+            new MachineLockUnavailableException(7, isInfrastructureFailure: false, "contention"),
+            failFastCancelled: false,
+            parentCtCancelled: false);
+
+        classification.MarkFailed.ShouldBeFalse();
+        classification.TriggerFailFast.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MachineLockUnavailable_WhenParentCancelled_IsTreatedAsFailure()
+    {
+        // A lock failure racing a real user-cancel / deploy-timeout must not preserve the target
+        // as resumable — the deployment is terminating.
+        var classification = TargetCatchClassifier.Classify(
+            new MachineLockUnavailableException(7, isInfrastructureFailure: true, "redis down"),
+            failFastCancelled: false,
+            parentCtCancelled: true);
+
+        classification.MarkFailed.ShouldBeTrue();
     }
 
     private static Exception Transient(string kind)

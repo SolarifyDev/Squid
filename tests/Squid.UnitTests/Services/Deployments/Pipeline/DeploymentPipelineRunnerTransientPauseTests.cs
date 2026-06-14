@@ -7,6 +7,7 @@ using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Jobs;
+using Squid.Core.Services.Machines.Locking;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -116,6 +117,22 @@ public class DeploymentPipelineRunnerTransientPauseTests
 
         _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never,
             failMessage: "A transient drop racing a user-cancel must NOT pause — cancel/timeout win over the transient classification.");
+    }
+
+    [Theory]
+    [InlineData(false)]  // contention — an upgrade (or another deploy) holds the machine's lock
+    [InlineData(true)]   // Redis unreachable
+    public async Task MachineLockUnavailable_PausesForResume_NotFails(bool isInfrastructureFailure)
+    {
+        // The deployment must pause (resumable), never fail or proceed unguarded — an upgrade can
+        // restart the agent mid-deploy, so the script must not run while the lock is unavailable.
+        var runner = CreateRunner(CreateThrowingPhase(new MachineLockUnavailableException(7, isInfrastructureFailure, "machine busy")));
+
+        await Should.NotThrowAsync(() => runner.ProcessAsync(1, CancellationToken.None));
+
+        _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+        _lifecycle.Verify(l => l.EmitAsync(It.IsAny<DeploymentPausedEvent>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static Exception TransientOf(string kind)
