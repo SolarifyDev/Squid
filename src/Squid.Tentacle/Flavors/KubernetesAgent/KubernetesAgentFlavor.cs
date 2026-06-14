@@ -5,6 +5,7 @@ using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Health;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.SelfHeal;
 using Serilog;
 
 namespace Squid.Tentacle.Flavors.KubernetesAgent;
@@ -56,7 +57,15 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
         if (!kubernetesSettings.UseScriptPods)
         {
             Log.Information("Using local script execution mode");
-            backend = new LocalScriptService();
+
+            var localBackend = new LocalScriptService();
+            backend = localBackend;
+
+            // Local-exec mode (the default K8s-agent mode) creates the identical
+            // {tempRoot}/squid-tentacle-{ticketId} workspaces the standalone Tentacle does, so a
+            // disk-full agent must auto-reclaim here too — schedule the same disk-pressure
+            // self-heal TentacleFlavor uses (the backend is its own live-script veto reporter).
+            backgroundTasks.Add(SelfHealBackgroundTask.ForLocalWorkspaces(localBackend));
         }
         else
         {

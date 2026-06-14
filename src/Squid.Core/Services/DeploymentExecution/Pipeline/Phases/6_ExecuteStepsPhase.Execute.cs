@@ -401,7 +401,7 @@ public sealed partial class ExecuteStepsPhase
         catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex))
         {
             // A transient infra failure (Halibut RPC drop after the library's
-            // retries, an unreachable agent, or an open breaker) must PROPAGATE so
+            // retries, or an unreachable agent) must PROPAGATE so
             // the runner pauses the deployment for resume — regardless of whether
             // the step is required. Recording it as a per-target/terminal failure
             // (the path below) would route to OnFailureAsync, which deletes the

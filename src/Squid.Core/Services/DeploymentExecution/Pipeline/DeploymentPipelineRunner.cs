@@ -119,7 +119,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             && TargetCatchClassifier.IsTransientInfraFailure(ex))
         {
             // A transient infra failure (Halibut RPC drop after the library's
-            // retries, an unreachable agent, or an open breaker) pauses the
+            // retries, or an unreachable agent) pauses the
             // deployment instead of failing it: the in-flight script pointer is
             // preserved (the strategy clears it only on a definitive observation),
             // so a resume re-attaches to the still-running script rather than

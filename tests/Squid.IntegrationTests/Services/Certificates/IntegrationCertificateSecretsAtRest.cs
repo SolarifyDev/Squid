@@ -98,7 +98,7 @@ public class IntegrationCertificateSecretsAtRest : TestBase
         {
             var raw = await repository.Query<Certificate>(c => c.Id == id).FirstOrDefaultAsync().ConfigureAwait(false);
             raw.Password.ShouldStartWith("SQUID_ENCRYPTED_V2:",
-                customMessage: "a read+decrypt then unrelated same-scope SaveChanges must NOT un-encrypt — reads must be AsNoTracking");
+                customMessage: "a read+decrypt then unrelated same-scope SaveChanges must NOT un-encrypt — the provider detaches the entity after decrypting so EF cannot flush the in-memory plaintext");
             raw.CertificateData.ShouldStartWith("SQUID_ENCRYPTED_V2:");
         }).ConfigureAwait(false);
     }

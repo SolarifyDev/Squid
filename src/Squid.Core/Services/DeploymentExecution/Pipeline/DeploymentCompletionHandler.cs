@@ -102,10 +102,9 @@ public sealed class DeploymentCompletionHandler(
     /// pointer preserved, so a resume re-attaches to the still-running script
     /// instead of re-dispatching a duplicate. Like <see cref="OnTimedOutAsync"/> we
     /// deliberately do NOT delete the checkpoint and do NOT write a
-    /// <c>DeploymentCompletion</c> record (the deployment has not completed). The
-    /// historical fail-fast behaviour remains available via the
-    /// <c>SQUID_DEPLOYMENT_TRANSIENT_RESUMABLE</c> escape hatch, which routes
-    /// transient failures back through <see cref="OnFailureAsync"/>.
+    /// <c>DeploymentCompletion</c> record (the deployment has not completed). This is
+    /// unconditional — there is no opt-out, because failing fast on a transient blip
+    /// would discard already-completed progress and risk a duplicate run.
     /// </summary>
     public async Task OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
