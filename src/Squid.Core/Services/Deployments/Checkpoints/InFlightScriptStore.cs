@@ -118,12 +118,12 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
         // checkpoint is deleted, so the scanned set is just the active/paused deployments. No per-task
         // stripe: this is a stand-alone read on the caller's own (upgrade) scope, not the deploy worker's.
         //
-        // Both IDLE shapes are excluded at the DB layer: "[]" (an array emptied after add-then-remove)
-        // AND "{}" (the value EnsureExistsAsync seeds + the column default) — a checkpoint that exists
-        // but has never dispatched, or is between batches, carries "{}". Filtering both keeps the scan
-        // tight to checkpoints that genuinely hold an in-flight entry. (ContainsMachine would return
-        // false for either idle shape anyway via its parse-fallback, so this is a narrowing, not a
-        // correctness fix.)
+        // Both IDLE shapes are excluded at the DB layer: "[]" (the current seed + column default, and an
+        // array emptied after add-then-remove) AND "{}" (the LEGACY object default, kept defensively for
+        // rows written by older servers / not yet normalized by 20260615_align_inflight_scripts_default_
+        // to_array.sql). Filtering both keeps the scan tight to checkpoints that genuinely hold an
+        // in-flight entry. (ContainsMachine would return false for either idle shape anyway via its
+        // parse-fallback, so this is a narrowing, not a correctness fix.)
         var jsons = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(
                 c => c.InFlightScriptsJson != null && c.InFlightScriptsJson != "[]" && c.InFlightScriptsJson != "{}")
             .Select(c => c.InFlightScriptsJson)

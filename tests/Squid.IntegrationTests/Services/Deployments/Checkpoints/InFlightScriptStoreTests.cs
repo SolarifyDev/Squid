@@ -1,4 +1,6 @@
 using System.Linq;
+using Microsoft.EntityFrameworkCore;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.IntegrationTests.Base;
@@ -302,6 +304,49 @@ public class InFlightScriptStoreTests : TestBase
         row.InFlightScriptsJson.ShouldBe("[]",
             customMessage: "the seed must be the empty array shape '[]' matching InFlightScriptMap, not the legacy object '{}'.");
     }
+
+    [Fact]
+    public async Task Migration_NormalizesEmptyLegacyObject_ButLeavesNonEmptyLegacyObjectUntouched()
+    {
+        // Pins the 20260615 migration's UPDATE clause: rewrite the empty legacy object '{}' to the
+        // array '[]', but NEVER clobber a NON-EMPTY legacy object (a pre-#433 {machineId:ticket} row that
+        // still carries data). The integration harness migrates a FRESH (empty) DB so the UPDATE is a
+        // no-op there — exercise it explicitly by seeding both legacy shapes, then running the same UPDATE.
+        const int emptyTaskId = 700040;
+        const int nonEmptyTaskId = 700041;
+
+        await Run<IRepository, IUnitOfWork>(async (repo, uow) =>
+        {
+            await repo.InsertAsync(NewCheckpoint(emptyTaskId, "{}")).ConfigureAwait(false);
+            await repo.InsertAsync(NewCheckpoint(nonEmptyTaskId, "{\"11\":\"legacy-ticket\"}")).ConfigureAwait(false);
+            await uow.SaveChangesAsync().ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        // Mirrors the UPDATE in 20260615_align_inflight_scripts_default_to_array.sql. Parameterized
+        // ({0}/{1} are bound params, the [] / {} values pass as text cast to jsonb) — semantically the
+        // same as the migration's literal '[]'::jsonb / '{}'::jsonb, but avoids ExecuteSqlRaw treating
+        // the literal braces as String.Format placeholders.
+        await Run<DbContext>(ctx => ctx.Database.ExecuteSqlRawAsync(
+            "UPDATE deployment_execution_checkpoint SET in_flight_scripts_json = {0}::jsonb WHERE in_flight_scripts_json = {1}::jsonb",
+            "[]", "{}")).ConfigureAwait(false);
+
+        (await LoadAsync(emptyTaskId).ConfigureAwait(false)).InFlightScriptsJson.ShouldBe("[]",
+            customMessage: "the migration must normalize an empty legacy '{}' to the array '[]'.");
+
+        (await LoadAsync(nonEmptyTaskId).ConfigureAwait(false)).InFlightScriptsJson.ShouldContain("legacy-ticket",
+            customMessage: "the migration's WHERE = '{}' must NOT clobber a non-empty legacy object row.");
+    }
+
+    private static DeploymentExecutionCheckpoint NewCheckpoint(int serverTaskId, string inFlightScriptsJson) => new()
+    {
+        ServerTaskId = serverTaskId,
+        DeploymentId = 1,
+        LastCompletedBatchIndex = -1,
+        FailureEncountered = false,
+        OutputVariablesJson = "[]",
+        BatchStatesJson = "{}",
+        InFlightScriptsJson = inFlightScriptsJson
+    };
 
     [Fact]
     public async Task DependencyInjection_ResolvesRealInFlightScriptStore_SoTheUpgradeDeferGuardStaysWired()
