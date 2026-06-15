@@ -246,6 +246,17 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             customMessage: $"the PFX password (which protects the agent's PRIVATE KEY) MUST be encrypted at rest. " +
                           $"Got on-disk value '{certPasswordOnDisk}'. Inspect: sudo cat {certPasswordPath}");
 
+        // ── Reopen proof: the encrypted password must actually DECRYPT and open the PFX ──
+        // show-thumbprint loads the cert via the same production factory, so a green exit +
+        // a 40-char thumbprint proves the encrypted .pwd round-trips (not just that it looks
+        // encrypted). This is the writer/reader-agreement the single-factory wiring guarantees.
+        var (showExit, showOutput) = ctx.Binary.SudoRun("show-thumbprint");
+        showExit.ShouldBe(0,
+            customMessage: $"`show-thumbprint` MUST exit 0 — it loads the cert with the DECRYPTED password. " +
+                          $"A non-zero exit means the encrypted .pwd could not be decrypted/opened (writer/reader wiring mismatch).\noutput:\n{showOutput}");
+        Regex.IsMatch(showOutput, @"\b[0-9A-Fa-f]{40}\b").ShouldBeTrue(
+            customMessage: $"show-thumbprint MUST print a 40-char thumbprint after opening the encrypted-password PFX. Got:\n{showOutput}");
+
         ctx.MarkClean();
     }
 

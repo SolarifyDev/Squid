@@ -94,20 +94,51 @@ public sealed class TentacleCertificateManagerEncryptorTests : IDisposable
     }
 
     [Fact]
-    public void WrongMachineId_CannotDecryptPreviouslyEncryptedId()
+    public void WrongMachineId_RegeneratesSubscriptionId_InsteadOfReturningCipher()
     {
         var encryptor1 = new MachineIdKeyEncryptor("machine-A");
         var mgr1 = new TentacleCertificateManager(_certsPath, encryptor1);
-        mgr1.LoadOrCreateSubscriptionId();
+        var originalId = mgr1.LoadOrCreateSubscriptionId();
 
-        // Agent moved to a different host with different machine id.
+        // Agent moved to a different host with a different machine id.
         var encryptor2 = new MachineIdKeyEncryptor("machine-B");
         var mgr2 = new TentacleCertificateManager(_certsPath, encryptor2);
 
         var recovered = mgr2.LoadOrCreateSubscriptionId();
 
-        // Graceful fallback: decryption fails, returns the raw cipher text rather
-        // than blowing up. Operator sees warning + must re-register the agent.
-        recovered.ShouldStartWith("v1:");
+        // The old id can't be decrypted under machine-B, so a FRESH identity is minted —
+        // never the raw ciphertext (which would corrupt the polling identity). The operator
+        // must re-register; subsequent loads on machine-B decrypt the new id cleanly.
+        recovered.ShouldNotStartWith("v1:");
+        recovered.ShouldNotBe(originalId);
+        recovered.Length.ShouldBe(32); // Guid "N" format
+
+        File.ReadAllText(Path.Combine(_certsPath, "subscription-id")).ShouldStartWith("v1:");
+
+        var mgr2Again = new TentacleCertificateManager(_certsPath, encryptor2);
+        mgr2Again.LoadOrCreateSubscriptionId().ShouldBe(recovered);
+    }
+
+    [Fact]
+    public void WrongMachineId_RegeneratesCertificate_InsteadOfThrowing()
+    {
+        var encryptor1 = new MachineIdKeyEncryptor("machine-A");
+        var cert1 = new TentacleCertificateManager(_certsPath, encryptor1).LoadOrCreateCertificate();
+
+        // Agent moved to a different host: the random PFX password was encrypted under
+        // machine-A and can no longer be derived under machine-B.
+        var encryptor2 = new MachineIdKeyEncryptor("machine-B");
+        var mgr2 = new TentacleCertificateManager(_certsPath, encryptor2);
+
+        // Must NOT throw CryptographicException (which would crash agent boot) — instead
+        // regenerate a fresh cert identity. New thumbprint => operator re-registers.
+        var cert2 = Should.NotThrow(() => mgr2.LoadOrCreateCertificate());
+
+        cert2.ShouldNotBeNull();
+        cert2.Thumbprint.ShouldNotBe(cert1.Thumbprint);
+
+        // The regenerated cert + password are stored under machine-B and reopen cleanly.
+        var mgr2Again = new TentacleCertificateManager(_certsPath, encryptor2);
+        mgr2Again.LoadOrCreateCertificate().Thumbprint.ShouldBe(cert2.Thumbprint);
     }
 }

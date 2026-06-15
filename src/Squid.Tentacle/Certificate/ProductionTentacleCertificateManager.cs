@@ -24,6 +24,12 @@ namespace Squid.Tentacle.Certificate;
 /// encryptor cannot be initialised (key derivation throws on an unusual host), this degrades to
 /// the legacy plaintext manager rather than preventing the Tentacle from starting — at-rest
 /// encryption is best-effort hardening, never a startup gate.</para>
+///
+/// <para>Threat boundary: the machine-key scheme defends secrets in artefacts that leave the
+/// host — backups, disk images, exported logs — where the machine-id is not present. It does NOT
+/// defend against an attacker with live read access to this host's filesystem, who can re-derive
+/// the key from the (world-readable) machine-id. That is the same trust model as the on-disk PFX
+/// itself, so it is the intended scope, not a gap.</para>
 /// </summary>
 public static class ProductionTentacleCertificateManager
 {
@@ -38,6 +44,10 @@ public static class ProductionTentacleCertificateManager
         }
         catch (Exception ex)
         {
+            // Defensive: MachineIdProvider.Read() never returns empty (it has a hostname
+            // fallback), so MachineIdKeyEncryptor's ctor does not throw under the current
+            // contract — this catch is belt-and-suspenders against a future provider/KDF
+            // change, ensuring at-rest encryption can never become a Tentacle startup gate.
             Log.Warning(ex, "Could not initialise the machine-key encryptor; Tentacle secrets (certificate password, subscription id) will be stored UNENCRYPTED at rest. Investigate machine-id availability on this host.");
             return null;
         }
