@@ -30,6 +30,12 @@ namespace Squid.UnitTests.Services.Security;
 /// migration needed; ciphertexts upgrade naturally as variables are
 /// rewritten.</para>
 /// </summary>
+// Serialised with the other VariableEncryptionService tests: those mutate the
+// process-global SQUID_MASTER_KEY_ENFORCEMENT env var (read by the ctor via
+// ReadEnforcementMode), so any class that CONSTRUCTS the service must not run in
+// parallel with them — else a future empty/weak-key construction here could read a
+// transiently-set mode and flake.
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class VariableEncryptionServiceB10Tests
 {
     [Fact]

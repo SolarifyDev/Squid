@@ -23,10 +23,13 @@ namespace Squid.UnitTests.Services.Security;
 /// runs at construction. Behaviour depends on the
 /// <see cref="EnforcementMode"/> resolved from
 /// <see cref="VariableEncryptionService.EnforcementEnvVar"/>:
-/// Off (silent allow), Warn (default — allow + structured warning),
-/// Strict (reject + throw). Backward-compat is preserved by Warn-as-default;
-/// operators opt into Strict for production.</para>
+/// Off (silent allow), Warn (allow + structured warning),
+/// Strict (default — reject + throw). An empty / weak key refuses startup by
+/// default so secrets are never silently encrypted under a recoverable key;
+/// operators who deliberately run without at-rest protection opt out with
+/// <c>warn</c> / <c>off</c>.</para>
 /// </summary>
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class VariableEncryptionServiceMasterKeyTests
 {
     [Fact]
@@ -87,7 +90,7 @@ public sealed class VariableEncryptionServiceMasterKeyTests
         thrown.Message.ShouldContain(VariableEncryptionService.EnforcementEnvVar);
     }
 
-    // ── Warn mode (default): backward compat — accept but warn ───────────────
+    // ── Warn mode (explicit opt-out): accept but warn ───────────────────────
 
     [Theory]
     [InlineData(null)]
@@ -95,9 +98,9 @@ public sealed class VariableEncryptionServiceMasterKeyTests
     [InlineData("   ")]
     public void Warn_EmptyOrMissingMasterKey_AcceptsWithEmptyBytes(string rawMasterKey)
     {
-        // P0-B.1 fix MUST NOT break existing deploys. Warn mode (the default)
-        // continues to accept the insecure value — but emits a structured
-        // warning so operators see the tech debt in their logs.
+        // Warn is the documented opt-out (the default is now Strict). When an operator
+        // explicitly sets it, an insecure value is accepted — but emits a structured
+        // warning so the tech debt is visible in their logs.
         var bytes = VariableEncryptionService.ValidateMasterKey(rawMasterKey, EnforcementMode.Warn);
 
         bytes.ShouldNotBeNull(customMessage: "Warn mode must NOT throw on empty master key");
@@ -108,8 +111,8 @@ public sealed class VariableEncryptionServiceMasterKeyTests
     [Fact]
     public void Warn_AllZeroMasterKey_AcceptsRawBytes()
     {
-        // The committed default value pre-fix. Must continue to start (Warn mode);
-        // operators see warning in logs and can fix at their own pace.
+        // The committed appsettings value pre-fix. Under explicit Warn it must still
+        // start; operators see the warning in logs and can fix at their own pace.
         var allZeros = new byte[32];
         var input = Convert.ToBase64String(allZeros);
 
@@ -186,24 +189,78 @@ public sealed class VariableEncryptionServiceMasterKeyTests
         bytes.ShouldBe(random);
     }
 
-    // ── End-to-end via constructor (Warn-default = no break on existing deploys) ──
+    // ── End-to-end via constructor (Strict-default = empty key refuses startup) ──
+    // These exercise the DEFAULT resolved from the (unset) env var, so they control
+    // SQUID_MASTER_KEY_ENFORCEMENT hermetically; the class is in the serialised
+    // collection so the process-wide env mutation can't race a parallel test.
 
     [Fact]
-    public void Constructor_EmptyMasterKey_DoesNotThrow_BackwardCompatPreserved()
+    public void Constructor_EmptyMasterKey_Throws_StrictByDefault()
     {
-        // The whole point of the refactor: existing deploys that have
-        // an empty MasterKey (because they never set one) must continue to
-        // start. Warning lands in logs.
-        var setting = BuildSetting(string.Empty);
+        // The security posture: with the enforcement env var UNSET, the default is
+        // Strict, so an empty MasterKey refuses startup instead of silently encrypting
+        // under a 0-byte key. A regression here restores the "theater by default" hole.
+        var restore = SetEnforcementEnvVar(null);
 
-        Should.NotThrow(
-            () => new VariableEncryptionService(setting),
-            customMessage:
-                "constructor must succeed with empty MasterKey under Warn-default. " +
-                "Pre-fix this would silently break startup of existing deploys.");
+        try
+        {
+            var setting = BuildSetting(string.Empty);
+
+            Should.Throw<InvalidOperationException>(
+                () => new VariableEncryptionService(setting),
+                customMessage:
+                    "with the enforcement env var unset the default is Strict — an empty MasterKey " +
+                    "MUST refuse startup. A regression here silently restores the 0-byte-key theater.");
+        }
+        finally { restore(); }
     }
 
-    // ── Helper ──────────────────────────────────────────────────────────────
+    [Fact]
+    public void Constructor_ValidMasterKey_DoesNotThrow_StrictByDefault()
+    {
+        // The happy path the flip must NOT break: a correctly-configured deploy
+        // (real 32-byte random key) boots cleanly under the Strict default.
+        var restore = SetEnforcementEnvVar(null);
+
+        try
+        {
+            var random = new byte[32];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(random);
+
+            var setting = BuildSetting(Convert.ToBase64String(random));
+
+            Should.NotThrow(() => new VariableEncryptionService(setting),
+                customMessage: "a real 32-byte key must boot under the Strict default — proves the flip keeps the happy path working.");
+        }
+        finally { restore(); }
+    }
+
+    [Fact]
+    public void Constructor_EmptyMasterKey_WarnOptOut_DoesNotThrow()
+    {
+        // The documented opt-out: a deploy that deliberately runs without at-rest
+        // protection sets the env var to warn → empty key boots (with a logged warning).
+        var restore = SetEnforcementEnvVar("warn");
+
+        try
+        {
+            var setting = BuildSetting(string.Empty);
+
+            Should.NotThrow(() => new VariableEncryptionService(setting),
+                customMessage: "SQUID_MASTER_KEY_ENFORCEMENT=warn must still allow an empty key — the documented opt-out path.");
+        }
+        finally { restore(); }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static Action SetEnforcementEnvVar(string? value)
+    {
+        var name = VariableEncryptionService.EnforcementEnvVar;
+        var prior = Environment.GetEnvironmentVariable(name);
+        Environment.SetEnvironmentVariable(name, value);
+        return () => Environment.SetEnvironmentVariable(name, prior);
+    }
 
     private static SecuritySetting BuildSetting(string masterKey)
     {

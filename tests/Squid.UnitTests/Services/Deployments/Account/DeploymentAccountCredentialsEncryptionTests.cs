@@ -23,6 +23,12 @@ namespace Squid.UnitTests.Services.Deployments.Account;
 /// <para>The provider wraps the WHOLE serialized blob, so this exercises the realistic
 /// payloads — large GCP JSON keys, multi-line SSH private keys, cloud secrets.</para>
 /// </summary>
+// Serialised with the other VariableEncryptionService tests: those mutate the
+// process-global SQUID_MASTER_KEY_ENFORCEMENT env var (read by the ctor via
+// ReadEnforcementMode); this class also constructs the service, so it must not run in
+// parallel with them — else a future empty/weak-key construction here could read a
+// transiently-set mode and flake.
+[Collection(Squid.UnitTests.Support.GlobalStateSerialisedCollection.Name)]
 public sealed class DeploymentAccountCredentialsEncryptionTests
 {
     [Theory]
