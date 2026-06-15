@@ -30,7 +30,7 @@ public interface IDeploymentAccountDataProvider : IScopedDependency
 /// upgrade naturally on the next save. Reads use the repository's AsNoTracking query so
 /// decrypting the in-memory entity can never be flushed back to the DB as plaintext.</para>
 /// </summary>
-public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork unitOfWork, IVariableEncryptionService encryption) : IDeploymentAccountDataProvider
+public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork unitOfWork, IAtRestSecretProtector protector) : IDeploymentAccountDataProvider
 {
     // The V2 envelope derives its key from a random per-payload salt, so the legacy
     // KDF-scope argument (a V1-only deterministic-salt input) is irrelevant for accounts,
@@ -110,22 +110,20 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
         return (count, await DecryptCredentialsAsync(accounts).ConfigureAwait(false));
     }
 
-    // Encrypt only if not already an envelope — idempotent, so a re-save (or a value that
-    // somehow arrives pre-encrypted) never double-wraps.
+    // Protect is idempotent (null/empty/already-encrypted passes through), so a re-save never double-wraps.
     private void EncryptCredentials(DeploymentAccount account)
     {
-        if (account == null || string.IsNullOrEmpty(account.Credentials)) return;
-        if (encryption.IsValidEncryptedValue(account.Credentials)) return;
+        if (account == null) return;
 
-        account.Credentials = encryption.EncryptAsync(account.Credentials, CredentialsKdfScope);
+        account.Credentials = protector.Protect(account.Credentials, CredentialsKdfScope);
     }
 
     private async Task<DeploymentAccount> DecryptCredentialsAsync(DeploymentAccount account)
     {
         if (account == null || string.IsNullOrEmpty(account.Credentials)) return account;
 
-        // Read-both: a plaintext (unprefixed) value is returned verbatim by DecryptAsync.
-        account.Credentials = await encryption.DecryptAsync(account.Credentials, CredentialsKdfScope).ConfigureAwait(false);
+        // Read-both: a plaintext (unprefixed) value is returned verbatim by Unprotect.
+        account.Credentials = await protector.UnprotectAsync(account.Credentials, CredentialsKdfScope).ConfigureAwait(false);
 
         return account;
     }
