@@ -246,16 +246,27 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
             customMessage: $"the PFX password (which protects the agent's PRIVATE KEY) MUST be encrypted at rest. " +
                           $"Got on-disk value '{certPasswordOnDisk}'. Inspect: sudo cat {certPasswordPath}");
 
-        // ── Reopen proof: the encrypted password must actually DECRYPT and open the PFX ──
-        // show-thumbprint loads the cert via the same production factory, so a green exit +
-        // a 40-char thumbprint proves the encrypted .pwd round-trips (not just that it looks
-        // encrypted). This is the writer/reader-agreement the single-factory wiring guarantees.
+        // ── Reopen proof: the encrypted password must DECRYPT and open the SAME cert ──
+        // show-thumbprint loads the cert with the decrypted password and must return the
+        // EXACT thumbprint register persisted. Equality (not merely "any 40-char hex") is
+        // essential: LoadOrCreateCertificate regenerates a fresh cert on a decrypt failure,
+        // so a writer/reader password mismatch would still exit 0 and print a NEW thumbprint —
+        // only matching the registered value proves the encrypted .pwd actually round-tripped.
+        var registeredThumbprint = ExtractThumbprintFromRegisterBody(ctx.Stub.ReceivedRegistrations[0].Body);
+
         var (showExit, showOutput) = ctx.Binary.SudoRun("show-thumbprint");
         showExit.ShouldBe(0,
-            customMessage: $"`show-thumbprint` MUST exit 0 — it loads the cert with the DECRYPTED password. " +
-                          $"A non-zero exit means the encrypted .pwd could not be decrypted/opened (writer/reader wiring mismatch).\noutput:\n{showOutput}");
-        Regex.IsMatch(showOutput, @"\b[0-9A-Fa-f]{40}\b").ShouldBeTrue(
+            customMessage: $"`show-thumbprint` MUST exit 0 — it loads the cert with the decrypted password.\noutput:\n{showOutput}");
+
+        var shownThumbprints = Regex.Matches(showOutput, @"\b[0-9A-Fa-f]{40}\b");
+        shownThumbprints.Count.ShouldBeGreaterThan(0,
             customMessage: $"show-thumbprint MUST print a 40-char thumbprint after opening the encrypted-password PFX. Got:\n{showOutput}");
+
+        shownThumbprints[^1].Value.ShouldBe(registeredThumbprint,
+            customMessage: $"show-thumbprint MUST return the SAME thumbprint register persisted — proving the encrypted .pwd " +
+                          $"decrypted and reopened the ORIGINAL cert. A different value means the cert was regenerated (decrypt " +
+                          $"failed / writer-reader wiring mismatch), which this equality assertion exists to catch.\n" +
+                          $"registered: '{registeredThumbprint}'  shown: '{shownThumbprints[^1].Value}'");
 
         ctx.MarkClean();
     }

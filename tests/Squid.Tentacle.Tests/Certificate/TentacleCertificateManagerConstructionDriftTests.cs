@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using Shouldly;
 using Xunit;
 
@@ -18,7 +19,14 @@ namespace Squid.Tentacle.Tests.Certificate;
 /// </summary>
 public sealed class TentacleCertificateManagerConstructionDriftTests
 {
-    private const string BareConstructor = "new TentacleCertificateManager(";
+    // Matches a constructor CALL — `new TentacleCertificateManager(` — tolerant of extra
+    // whitespace and a namespace qualifier (e.g. `new Squid.Tentacle.Certificate.TentacleCertificateManager(`),
+    // so a reformatted or fully-qualified revert can't slip past the guard. Requires the `new`
+    // keyword so the ctor DECLARATION (`public TentacleCertificateManager(`) is never flagged,
+    // and anchors on the exact type name so a sibling like `…ManagerFactory(` is not matched.
+    private static readonly Regex BareConstructor =
+        new(@"new\s+([A-Za-z_]\w*\.)*TentacleCertificateManager\s*\(", RegexOptions.Compiled);
+
     private const string FactoryFileName = "ProductionTentacleCertificateManager.cs";
 
     [Fact]
@@ -30,7 +38,7 @@ public sealed class TentacleCertificateManagerConstructionDriftTests
         var offenders = Directory
             .EnumerateFiles(srcRoot, "*.cs", SearchOption.AllDirectories)
             .Where(path => Path.GetFileName(path) != FactoryFileName)
-            .Where(path => File.ReadAllText(path).Contains(BareConstructor, StringComparison.Ordinal))
+            .Where(path => BareConstructor.IsMatch(File.ReadAllText(path)))
             .Select(path => Path.GetRelativePath(srcRoot, path))
             .ToList();
 
