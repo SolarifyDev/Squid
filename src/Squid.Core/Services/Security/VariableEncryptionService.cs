@@ -14,10 +14,11 @@ public class VariableEncryptionService : IVariableEncryptionService
     /// §"Hardening Three-Mode Enforcement").
     ///
     /// <para>Recognised values: <c>off</c> / <c>warn</c> / <c>strict</c>.
-    /// Default (unset / blank) is <see cref="EnforcementMode.Warn"/> — preserves
-    /// backward compat for deploys that haven't set a real master key yet,
-    /// while logging structured warnings at startup so the insecure config is
-    /// visible in Seq.</para>
+    /// Default (unset / blank) is <see cref="EnforcementMode.Strict"/> — an empty /
+    /// too-short / all-zero MasterKey refuses startup instead of silently encrypting
+    /// under a recoverable key. Released deployments always configure a real key, so
+    /// this never fires for them. Operators who deliberately run without at-rest
+    /// protection opt out with <c>warn</c> (allow + log) or <c>off</c> (silent).</para>
     ///
     /// <para>Pinned literal — renaming breaks every operator who set the env
     /// var by its documented name. See
@@ -209,7 +210,13 @@ public class VariableEncryptionService : IVariableEncryptionService
     }
 
     private static EnforcementMode ReadEnforcementMode()
-        => EnforcementModeReader.Read(EnforcementEnvVar);
+        // Default STRICT: an empty / too-short / all-zero MasterKey refuses startup rather than silently
+        // encrypting under a recoverable key. Released deployments always configure a real key, so this
+        // never fires for them; it only catches a genuine misconfiguration (key never set). Operators who
+        // deliberately run without at-rest protection opt out with SQUID_MASTER_KEY_ENFORCEMENT=warn|off.
+        // Scoped to MasterKey only — the shared EnforcementModeReader.Read default stays Warn, so other
+        // hardening consumers (cert validation, sensitive-variable decrypt) are unaffected.
+        => EnforcementModeReader.Read(EnforcementEnvVar, EnforcementMode.Strict);
 
     public string EncryptAsync(string plainText, int variableSetId)
     {
