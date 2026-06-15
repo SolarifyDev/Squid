@@ -144,7 +144,11 @@ exit 0
             .ShouldBeTrue(
                 customMessage: $"marker {markerPath} did NOT appear within 60s — Task Scheduler did not launch the inner script (likely schtasks /Run silently failed, or /RU SYSTEM was rejected by the runner's security policy)");
 
-        var content = File.ReadAllText(markerPath).Trim();
+        // The detached writer (Set-Content) runs ASYNCHRONOUSLY, so the marker can exist while its
+        // handle is still open — a plain File.ReadAllText (FileShare.Read) then throws IOException
+        // "being used by another process", and an early read can see an empty/partial file mid-write.
+        // ReadMarkerWhenReady opens with FileShare.ReadWrite and polls until the content is non-empty.
+        var content = ReadMarkerWhenReady(markerPath, TimeSpan.FromSeconds(30));
 
         content.ShouldStartWith("nt authority",
             Case.Insensitive,
@@ -400,6 +404,47 @@ exit 0
             Thread.Sleep(200);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Reads a marker the DETACHED task wrote, tolerating the writer still holding the handle.
+    /// The inner Set-Content runs asynchronously, so the file can exist (WaitForFileExists passed)
+    /// while its handle is still open: a plain File.ReadAllText opens with FileShare.Read and throws
+    /// IOException ("being used by another process") against the writer's handle, and an early read can
+    /// also catch a partial/empty file mid-write. So open with FileShare.ReadWrite (don't contend on the
+    /// writer's handle) and poll until the content is non-empty — within a bounded timeout, with an
+    /// actionable failure naming the marker path. This is a test-fixture race only; production reads
+    /// upgrade traces from the agent over Halibut RPC, not via a concurrent local file read.
+    /// </summary>
+    private static string ReadMarkerWhenReady(string path, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        Exception last = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+
+                var content = reader.ReadToEnd().Trim();
+
+                if (content.Length > 0) return content;
+            }
+            catch (IOException ex)
+            {
+                // File not yet present, or the writer holds an exclusive handle this instant — retry.
+                last = ex;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        throw new TimeoutException(
+            $"marker {path} existed but its content was not readable / non-empty within {timeout.TotalSeconds:N0}s — " +
+            $"the detached writer likely still holds the handle. Inspect manually: type \"{path}\". " +
+            (last != null ? $"Last read error: {last.Message}" : "Last read returned empty content."));
     }
 
     /// <summary>
