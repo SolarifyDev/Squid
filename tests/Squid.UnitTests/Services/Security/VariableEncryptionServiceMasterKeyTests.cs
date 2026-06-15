@@ -90,7 +90,7 @@ public sealed class VariableEncryptionServiceMasterKeyTests
         thrown.Message.ShouldContain(VariableEncryptionService.EnforcementEnvVar);
     }
 
-    // ── Warn mode (default): backward compat — accept but warn ───────────────
+    // ── Warn mode (explicit opt-out): accept but warn ───────────────────────
 
     [Theory]
     [InlineData(null)]
@@ -98,9 +98,9 @@ public sealed class VariableEncryptionServiceMasterKeyTests
     [InlineData("   ")]
     public void Warn_EmptyOrMissingMasterKey_AcceptsWithEmptyBytes(string rawMasterKey)
     {
-        // P0-B.1 fix MUST NOT break existing deploys. Warn mode (the default)
-        // continues to accept the insecure value — but emits a structured
-        // warning so operators see the tech debt in their logs.
+        // Warn is the documented opt-out (the default is now Strict). When an operator
+        // explicitly sets it, an insecure value is accepted — but emits a structured
+        // warning so the tech debt is visible in their logs.
         var bytes = VariableEncryptionService.ValidateMasterKey(rawMasterKey, EnforcementMode.Warn);
 
         bytes.ShouldNotBeNull(customMessage: "Warn mode must NOT throw on empty master key");
@@ -111,8 +111,8 @@ public sealed class VariableEncryptionServiceMasterKeyTests
     [Fact]
     public void Warn_AllZeroMasterKey_AcceptsRawBytes()
     {
-        // The committed default value pre-fix. Must continue to start (Warn mode);
-        // operators see warning in logs and can fix at their own pace.
+        // The committed appsettings value pre-fix. Under explicit Warn it must still
+        // start; operators see the warning in logs and can fix at their own pace.
         var allZeros = new byte[32];
         var input = Convert.ToBase64String(allZeros);
 
