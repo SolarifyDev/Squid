@@ -31,19 +31,24 @@ public partial class MachineRegistrationService : IMachineRegistrationService
     private readonly IEnvironmentDataProvider _environmentDataProvider;
     private readonly IPollingTrustDistributor _trustDistributor;
     private readonly SelfCertSetting _selfCertSetting;
+    private readonly Security.IAtRestSecretProtector _protector;
 
+    // Protector optional: DI supplies the real one so an SSH proxy password is encrypted at rest before
+    // the endpoint JSON is persisted. Without one (tests), it is stored as-is (pre-feature behaviour).
     public MachineRegistrationService(
         IMachineDataProvider dataProvider,
         IMachinePolicyDataProvider policyDataProvider,
         IEnvironmentDataProvider environmentDataProvider,
         IPollingTrustDistributor trustDistributor,
-        SelfCertSetting selfCertSetting)
+        SelfCertSetting selfCertSetting,
+        Security.IAtRestSecretProtector protector = null)
     {
         _dataProvider = dataProvider;
         _policyDataProvider = policyDataProvider;
         _environmentDataProvider = environmentDataProvider;
         _trustDistributor = trustDistributor;
         _selfCertSetting = selfCertSetting;
+        _protector = protector;
     }
 
     private async Task EnsureUniqueNameAsync(string name, int spaceId, CancellationToken ct)

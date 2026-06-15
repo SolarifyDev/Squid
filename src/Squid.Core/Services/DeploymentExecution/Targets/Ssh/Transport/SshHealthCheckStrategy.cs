@@ -2,6 +2,7 @@ using Serilog;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Core.Services.Security;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Account;
@@ -16,11 +17,16 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
 
     private readonly IEndpointContextBuilder _endpointContextBuilder;
     private readonly ISshConnectionFactory _connectionFactory;
+    private readonly IAtRestSecretProtector _protector;
 
-    public SshHealthCheckStrategy(IEndpointContextBuilder endpointContextBuilder, ISshConnectionFactory connectionFactory)
+    // Protector optional: DI supplies the real one so the at-rest proxy password is decrypted before the
+    // health probe builds its connection. Without one (tests), the read-both Unprotect passes a legacy
+    // plaintext through unchanged.
+    public SshHealthCheckStrategy(IEndpointContextBuilder endpointContextBuilder, ISshConnectionFactory connectionFactory, IAtRestSecretProtector protector = null)
     {
         _endpointContextBuilder = endpointContextBuilder;
         _connectionFactory = connectionFactory;
+        _protector = protector;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct, MachineHealthCheckPolicyDto healthCheckPolicy = null)
@@ -62,7 +68,13 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
 
         var timeout = TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds);
 
-        return new SshConnectionInfo(endpoint.Host, endpoint.Port, username, privateKey, passphrase, password, endpoint.Fingerprint, timeout, endpoint.ProxyType, endpoint.ProxyHost, endpoint.ProxyPort, endpoint.ProxyUsername, endpoint.ProxyPassword);
+        // Decrypt the at-rest proxy password before building the probe connection. Read-both: a legacy
+        // plaintext passes through; no protector (tests) = passthrough.
+        var proxyPassword = _protector != null
+            ? _protector.Unprotect(endpoint.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)
+            : endpoint.ProxyPassword;
+
+        return new SshConnectionInfo(endpoint.Host, endpoint.Port, username, privateKey, passphrase, password, endpoint.Fingerprint, timeout, endpoint.ProxyType, endpoint.ProxyHost, endpoint.ProxyPort, endpoint.ProxyUsername, proxyPassword);
     }
 
     private HealthCheckResult ProbeConnectivity(SshConnectionInfo connectionInfo, string customScript)

@@ -23,8 +23,14 @@ public partial class MachineRegistrationService
         };
     }
 
-    private static string BuildSshEndpointJson(RegisterSshCommand command)
+    private string BuildSshEndpointJson(RegisterSshCommand command)
     {
+        // Encrypt the proxy password at rest before it lands in the endpoint JSON column. Idempotent +
+        // read-both via the shared protector; without a protector (tests) it is stored as-is.
+        var proxyPassword = _protector != null
+            ? _protector.Protect(command.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)
+            : command.ProxyPassword;
+
         return JsonSerializer.Serialize(new SshEndpointDto
         {
             CommunicationStyle = nameof(CommunicationStyleEnum.Ssh),
@@ -36,7 +42,7 @@ public partial class MachineRegistrationService
             ProxyHost = command.ProxyHost,
             ProxyPort = command.ProxyPort,
             ProxyUsername = command.ProxyUsername,
-            ProxyPassword = command.ProxyPassword,
+            ProxyPassword = proxyPassword,
             ResourceReferences = command.ResourceReferences
         });
     }
