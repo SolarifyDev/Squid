@@ -20,10 +20,12 @@ public class DeploymentExecutionCheckpoint : IEntity<int>, IAuditable
     /// <summary>
     /// Tickets of scripts that were dispatched to agents but whose completion was
     /// not yet observed. On resume, the server can probe the agent with the same
-    /// ticket rather than launching a duplicate script. JSON shape:
-    /// <c>{ "&lt;machineId&gt;": "&lt;scriptTicket&gt;" }</c>
+    /// ticket rather than launching a duplicate script. JSON shape is the array
+    /// <c>InFlightScriptMap</c> emits, keyed by dispatch slot (machine + step + action):
+    /// <c>[{ "m": machineId, "s": stepId, "a": actionId, "t": scriptTicket }]</c>.
+    /// Empty is the array form <c>[]</c>.
     /// </summary>
-    public string InFlightScriptsJson { get; set; } = "{}";
+    public string InFlightScriptsJson { get; set; } = "[]";
 
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }
