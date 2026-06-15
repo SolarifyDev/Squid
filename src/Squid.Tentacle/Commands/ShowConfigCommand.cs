@@ -34,7 +34,7 @@ public sealed class ShowConfigCommand : ITentacleCommand
 
         try
         {
-            var certManager = new TentacleCertificateManager(settings.CertsPath);
+            var certManager = ProductionTentacleCertificateManager.Create(settings.CertsPath);
             var cert = certManager.LoadOrCreateCertificate();
             var subscriptionId = certManager.LoadOrCreateSubscriptionId(settings.SubscriptionId);
 

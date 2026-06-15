@@ -172,6 +172,106 @@ public sealed class TentacleLinuxDiagnosticCommandE2ETests
     }
 
     // ========================================================================
+    // D5.h-Linux — `register` writes the agent's at-rest secrets ENCRYPTED
+    //
+    // Production scenario this pins: after register, the agent persists its
+    // polling subscription id and the password protecting its certificate
+    // PFX (which holds the agent's PRIVATE KEY) to disk under
+    // /etc/squid-tentacle/instances/Default/certs. Those files must be
+    // encrypted at rest (machine-key AES-256-GCM, "v1:" envelope), NOT
+    // plaintext — the whole point of the ProductionTentacleCertificateManager
+    // wiring. The encrypt/migrate logic is unit-tested; THIS pins that the
+    // real binary actually goes through the encryptor-aware construction.
+    //
+    // Without this pin, a regression that reverts any production site back to
+    // `new TentacleCertificateManager(certsPath)` (no encryptor) ships
+    // silently: every unit test still passes (they build the manager
+    // directly) but the deployed agent writes plaintext secrets again.
+    //
+    // Tier: 🟢 H. Real binary register + real /etc filesystem read via sudo.
+    //
+    // Expected runtime: ~2-3s (register ~1s + two file reads).
+    // ========================================================================
+
+    [Fact]
+    public void D5h_RegisterWritesEncryptedSecretsAtRest()
+    {
+        if (!LinuxTentacleBinaryFixture.IsAvailable) return;
+
+        using var ctx = new DiagnosticTestContext();
+
+        var (regExit, regOutput) = ctx.Binary.SudoRun(
+            "register",
+            "--server", ctx.Stub.BaseUrl.ToString().TrimEnd('/'),
+            "--api-key", "API-D5-ENCRYPT-AT-REST",
+            "--name", ctx.MachineName,
+            "--role", "diagnostic-role",
+            "--environment", "Production",
+            "--flavor", "Tentacle",
+            "--listening-port", ctx.ListeningPort.ToString(CultureInfo.InvariantCulture));
+
+        regExit.ShouldBe(0,
+            customMessage: $"D5h precondition: register MUST succeed before its on-disk secrets can be inspected. " +
+                          $"Got exit {regExit}.\noutput:\n{regOutput}");
+
+        // register with no --instance persists the Default instance under
+        // {systemConfigDir}/instances/Default/certs (PlatformPaths.GetInstanceCertsDir).
+        const string certsDir = "/etc/squid-tentacle/instances/Default/certs";
+        var subscriptionIdPath = $"{certsDir}/subscription-id";
+        var certPasswordPath = $"{certsDir}/tentacle-cert.pfx.pwd";
+
+        // ── Subscription id: present and encrypted ────────────────────────
+        LinuxInstallScriptContext.SudoFileExists(subscriptionIdPath).ShouldBeTrue(
+            customMessage: $"register MUST persist the subscription id at {subscriptionIdPath}. " +
+                          $"If absent, the agent has no stable polling identity. Inspect: sudo ls -la {certsDir}");
+
+        var subscriptionOnDisk = LinuxInstallScriptContext.SudoReadAllText(subscriptionIdPath).Trim();
+        subscriptionOnDisk.ShouldStartWith("v1:",
+            customMessage: $"subscription id MUST be encrypted at rest (machine-key 'v1:' envelope), not plaintext. " +
+                          $"Got on-disk value '{subscriptionOnDisk}'. This means a production construction site reverted to the " +
+                          $"encryptor-less `new TentacleCertificateManager(certsPath)` — route it through ProductionTentacleCertificateManager.Create. " +
+                          $"Inspect: sudo cat {subscriptionIdPath}");
+
+        LinuxInstallScriptContext.SudoFileExists(subscriptionIdPath + ".encrypted").ShouldBeTrue(
+            customMessage: $"the .encrypted marker MUST accompany an encrypted subscription id so the next load uses the encryptor path. " +
+                          $"Inspect: sudo ls -la {certsDir}");
+
+        // ── Certificate PFX password (guards the private key): encrypted ──
+        LinuxInstallScriptContext.SudoFileExists(certPasswordPath).ShouldBeTrue(
+            customMessage: $"an encryptor-aware register MUST write the random PFX password side file at {certPasswordPath}. " +
+                          $"Its absence means the cert was created with the legacy fixed password (no encryptor wired). Inspect: sudo ls -la {certsDir}");
+
+        var certPasswordOnDisk = LinuxInstallScriptContext.SudoReadAllText(certPasswordPath).Trim();
+        certPasswordOnDisk.ShouldStartWith("v1:",
+            customMessage: $"the PFX password (which protects the agent's PRIVATE KEY) MUST be encrypted at rest. " +
+                          $"Got on-disk value '{certPasswordOnDisk}'. Inspect: sudo cat {certPasswordPath}");
+
+        // ── Reopen proof: the encrypted password must DECRYPT and open the SAME cert ──
+        // show-thumbprint loads the cert with the decrypted password and must return the
+        // EXACT thumbprint register persisted. Equality (not merely "any 40-char hex") is
+        // essential: LoadOrCreateCertificate regenerates a fresh cert on a decrypt failure,
+        // so a writer/reader password mismatch would still exit 0 and print a NEW thumbprint —
+        // only matching the registered value proves the encrypted .pwd actually round-tripped.
+        var registeredThumbprint = ExtractThumbprintFromRegisterBody(ctx.Stub.ReceivedRegistrations[0].Body);
+
+        var (showExit, showOutput) = ctx.Binary.SudoRun("show-thumbprint");
+        showExit.ShouldBe(0,
+            customMessage: $"`show-thumbprint` MUST exit 0 — it loads the cert with the decrypted password.\noutput:\n{showOutput}");
+
+        var shownThumbprints = Regex.Matches(showOutput, @"\b[0-9A-Fa-f]{40}\b");
+        shownThumbprints.Count.ShouldBeGreaterThan(0,
+            customMessage: $"show-thumbprint MUST print a 40-char thumbprint after opening the encrypted-password PFX. Got:\n{showOutput}");
+
+        shownThumbprints[^1].Value.ShouldBe(registeredThumbprint,
+            customMessage: $"show-thumbprint MUST return the SAME thumbprint register persisted — proving the encrypted .pwd " +
+                          $"decrypted and reopened the ORIGINAL cert. A different value means the cert was regenerated (decrypt " +
+                          $"failed / writer-reader wiring mismatch), which this equality assertion exists to catch.\n" +
+                          $"registered: '{registeredThumbprint}'  shown: '{shownThumbprints[^1].Value}'");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // D2.h-Linux — `list-instances` after creating Alpha + Beta shows BOTH
     //
     // Production scenario this pins: operator on a multi-instance host runs

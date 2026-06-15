@@ -12,7 +12,7 @@ public sealed class ShowThumbprintCommand : ITentacleCommand
     public Task<int> ExecuteAsync(string[] args, IConfiguration config, CancellationToken ct)
     {
         var settings = TentacleApp.LoadTentacleSettings(config);
-        var certManager = new TentacleCertificateManager(settings.CertsPath);
+        var certManager = ProductionTentacleCertificateManager.Create(settings.CertsPath);
         var cert = certManager.LoadOrCreateCertificate();
 
         Console.WriteLine(cert.Thumbprint);

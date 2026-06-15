@@ -107,7 +107,7 @@ public sealed class CheckServicesCommand : ITentacleCommand
     {
         try
         {
-            var certManager = new TentacleCertificateManager(settings.CertsPath);
+            var certManager = ProductionTentacleCertificateManager.Create(settings.CertsPath);
             var cert = certManager.LoadOrCreateCertificate();
             var daysToExpiry = (int)(cert.NotAfter - DateTime.UtcNow).TotalDays;
 

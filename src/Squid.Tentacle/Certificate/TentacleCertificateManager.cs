@@ -34,13 +34,38 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         var certPath = Path.Combine(_certsPath, CertFileName);
         var passwordFilePath = certPath + ".pwd";
 
-        if (File.Exists(certPath))
+        var existing = TryLoadExistingCertificate(certPath, passwordFilePath);
+        if (existing != null) return existing;
+
+        return GenerateAndPersistCertificate(certPath, passwordFilePath);
+    }
+
+    private X509Certificate2 TryLoadExistingCertificate(string certPath, string passwordFilePath)
+    {
+        if (!File.Exists(certPath)) return null;
+
+        var password = ResolveCertPassword(passwordFilePath);
+
+        try
         {
-            var password = ResolveCertPassword(passwordFilePath);
             Log.Information("Loading existing tentacle certificate from {Path}", certPath);
             return X509CertificateLoader.LoadPkcs12FromFile(certPath, password);
         }
+        catch (CryptographicException ex)
+        {
+            // The stored password no longer opens the PFX. Under an encryptor this almost
+            // always means the host machine-id changed (VM clone, container rebuild,
+            // /etc/machine-id reset), so the random PFX password can no longer be derived —
+            // the cert is unrecoverable. Regenerate a fresh identity rather than crash the
+            // agent on boot: it comes up with a NEW thumbprint and MUST be re-registered
+            // (the same recovery the subscription id takes on the matching failure).
+            Log.Warning(ex, "Existing tentacle certificate at {Path} could not be opened with the stored password — the host machine-id has most likely changed. Regenerating a fresh certificate; the agent will have a NEW thumbprint and MUST be re-registered with the server.", certPath);
+            return null;
+        }
+    }
 
+    private X509Certificate2 GenerateAndPersistCertificate(string certPath, string passwordFilePath)
+    {
         Log.Information("Generating new self-signed tentacle certificate");
 
         // Without an encryptor: keep legacy password so back-compat tests and
@@ -48,8 +73,10 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         // With an encryptor: random per-cert password, stored encrypted.
         var newPassword = _encryptor != null ? GenerateCertPassword() : LegacyCertPassword;
         var cert = CreateSelfSignedCert(newPassword);
+
         EnsureDirectoryExists(_certsPath);
         File.WriteAllBytes(certPath, cert.Export(X509ContentType.Pfx, newPassword));
+
         if (_encryptor != null)
             WriteCertPassword(passwordFilePath, newPassword);
 
@@ -131,11 +158,18 @@ public class TentacleCertificateManager : ITentacleCertificateManager
             if (!string.IsNullOrEmpty(raw))
             {
                 var existingId = _encryptor != null && File.Exists(encryptedMarker)
-                    ? DecryptOrReturnRaw(raw, idPath)
+                    ? TryDecryptSubscriptionId(raw, idPath)
                     : MigrateToEncryptedIfNeeded(raw, idPath, encryptedMarker);
 
-                Log.Information("Loaded existing subscription ID: {SubscriptionId}", existingId);
-                return existingId;
+                if (!string.IsNullOrEmpty(existingId))
+                {
+                    Log.Information("Loaded existing subscription ID: {SubscriptionId}", existingId);
+                    return existingId;
+                }
+
+                // existingId == null: the stored id was encrypted but no longer decrypts
+                // (host machine-id changed). Fall through to mint a fresh identity, matching
+                // the certificate regeneration above — the operator must re-register.
             }
         }
 
@@ -148,13 +182,17 @@ public class TentacleCertificateManager : ITentacleCertificateManager
         return newId;
     }
 
-    private string DecryptOrReturnRaw(string raw, string idPath)
+    private string TryDecryptSubscriptionId(string raw, string idPath)
     {
         try { return _encryptor!.Unprotect(raw); }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to decrypt subscription id at {Path}; treating as plaintext", idPath);
-            return raw;
+            // The stored id carries the encrypted envelope but no longer decrypts — the host
+            // machine-id has most likely changed. Returning the raw ciphertext as the
+            // subscription id would corrupt the agent's polling identity, so signal
+            // "unrecoverable" (null) and let the caller mint a fresh id + re-register.
+            Log.Warning(ex, "Subscription id at {Path} could not be decrypted — the host machine-id has most likely changed. Regenerating a fresh subscription id; the agent MUST be re-registered with the server.", idPath);
+            return null;
         }
     }
 
