@@ -1,9 +1,13 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Machines;
+using Squid.Core.Services.Security;
+using Squid.Core.Settings.Security;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
@@ -489,6 +493,89 @@ public class MachineServiceTests
         updated.Port.ShouldBe(2222);
         updated.ProxyUsername.ShouldBe("bob");
         updated.Fingerprint.ShouldBe("SHA256:xyz", "existing Fingerprint must survive partial update");
+    }
+
+    // ── SSH proxy password at-rest WRITE seam (update / MergeSsh) ──────────────
+
+    [Fact]
+    public async Task UpdateMachine_Ssh_NewProxyPassword_StoredEncryptedAtRest()
+    {
+        var protector = RealProtector();
+        var service = NewServiceWithProtector(protector);
+
+        var machine = MakeMachine(31, SshEndpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(31, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 31, ProxyPassword = "proxy-pw" }, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<SshEndpointDto>(machine.Endpoint);
+        updated.ProxyPassword.ShouldStartWith("SQUID_ENCRYPTED_V2:",
+            customMessage: "a proxy password supplied on update must be encrypted at rest, not stored plaintext.");
+        updated.ProxyPassword.ShouldNotContain("proxy-pw");
+        (await protector.UnprotectAsync(updated.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)).ShouldBe("proxy-pw");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_Ssh_UnrelatedEdit_DoesNotReWrapAlreadyEncryptedProxyPassword()
+    {
+        // The idempotency invariant: an update that does NOT touch the proxy password (e.g. a Host edit)
+        // flows the already-encrypted stored value back through Protect, which MUST pass it through
+        // unchanged. A double-wrap would make the single read-side Unprotect yield the inner envelope
+        // instead of the password — silently breaking proxied SSH after any unrelated machine edit.
+        var protector = RealProtector();
+        var service = NewServiceWithProtector(protector);
+
+        var envelope = protector.Protect("proxy-pw", SshEndpointDto.ProxyPasswordKdfScope);
+        var endpoint = JsonSerializer.Serialize(new SshEndpointDto { CommunicationStyle = "Ssh", Host = "h", Port = 22, ProxyPassword = envelope });
+        var machine = MakeMachine(32, endpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(32, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 32, Host = "new-host" }, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<SshEndpointDto>(machine.Endpoint);
+        updated.Host.ShouldBe("new-host");
+        updated.ProxyPassword.ShouldBe(envelope,
+            customMessage: "an already-encrypted proxy password must be byte-identical after an unrelated update (no double-wrap).");
+        (await protector.UnprotectAsync(updated.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)).ShouldBe("proxy-pw",
+            customMessage: "the password must still decrypt with a SINGLE Unprotect — proves no double-wrap occurred.");
+    }
+
+    [Fact]
+    public async Task UpdateMachine_Ssh_LegacyPlaintext_UnrelatedEdit_MigratesToEncrypted()
+    {
+        // Lazy migration: an existing machine with a PLAINTEXT proxy password, edited on an unrelated
+        // field, gets its proxy password opportunistically encrypted on write.
+        var protector = RealProtector();
+        var service = NewServiceWithProtector(protector);
+
+        var endpoint = JsonSerializer.Serialize(new SshEndpointDto { CommunicationStyle = "Ssh", Host = "h", Port = 22, ProxyPassword = "legacy-plaintext" });
+        var machine = MakeMachine(33, endpoint);
+        _machineDataProvider.Setup(p => p.GetMachinesByIdAsync(33, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
+
+        await service.UpdateMachineAsync(new UpdateMachineCommand { MachineId = 33, Host = "new-host" }, CancellationToken.None);
+
+        var updated = JsonSerializer.Deserialize<SshEndpointDto>(machine.Endpoint);
+        updated.ProxyPassword.ShouldStartWith("SQUID_ENCRYPTED_V2:",
+            customMessage: "an unrelated edit must opportunistically encrypt a legacy plaintext proxy password.");
+        (await protector.UnprotectAsync(updated.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)).ShouldBe("legacy-plaintext");
+    }
+
+    private MachineService NewServiceWithProtector(IAtRestSecretProtector protector) =>
+        new(_mapper.Object, _machineDataProvider.Object, _trustDistributor.Object, _runtimeCache, protector);
+
+    private static IAtRestSecretProtector RealProtector()
+    {
+        var key = new byte[32];
+        for (var i = 0; i < key.Length; i++) key[i] = (byte)(i + 1);
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string>
+            {
+                ["Security:VariableEncryption:MasterKey"] = System.Convert.ToBase64String(key)
+            })
+            .Build();
+
+        return new AtRestSecretProtector(new VariableEncryptionService(new SecuritySetting(config)));
     }
 
     [Fact]

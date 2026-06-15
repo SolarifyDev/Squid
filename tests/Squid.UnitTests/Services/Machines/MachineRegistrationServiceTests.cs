@@ -1,12 +1,16 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Environments;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.Exceptions;
+using Squid.Core.Services.Security;
+using Squid.Core.Settings.Security;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Models.Deployments.Machine;
@@ -545,6 +549,49 @@ public class MachineRegistrationServiceTests
         endpoint.ResourceReferences.ShouldHaveSingleItem();
         endpoint.ResourceReferences[0].ResourceId.ShouldBe(42);
         endpoint.ResourceReferences[0].Type.ShouldBe(Squid.Message.Enums.EndpointResourceType.AuthenticationAccount);
+    }
+
+    [Fact]
+    public async Task RegisterSsh_ProxyPassword_StoredEncryptedAtRest()
+    {
+        // WRITE seam: a plaintext proxy password supplied at registration must be encrypted before it
+        // lands in the persisted endpoint JSON. Build the service WITH the real protector (DI injects it
+        // in production); the default-ctor _service has no protector so it never exercises this branch.
+        var protector = RealProtector();
+        var service = new MachineRegistrationService(
+            _machineDataProvider.Object, _policyDataProvider.Object, _environmentDataProvider.Object, _trustDistributor.Object, _selfCertSetting, protector);
+
+        Machine captured = null;
+        _machineDataProvider
+            .Setup(x => x.AddMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<Machine, bool, CancellationToken>((m, _, _) => captured = m)
+            .Returns(Task.CompletedTask);
+
+        await service.RegisterSshAsync(new RegisterSshCommand
+        {
+            MachineName = "ssh-proxy", SpaceId = 1, Host = "h", Port = 22, ProxyPassword = "proxy-pw"
+        }, CancellationToken.None);
+
+        var endpoint = JsonSerializer.Deserialize<SshEndpointDto>(captured.Endpoint);
+        endpoint.ProxyPassword.ShouldStartWith("SQUID_ENCRYPTED_V2:",
+            customMessage: "the registered proxy password must be encrypted at rest, not persisted plaintext.");
+        endpoint.ProxyPassword.ShouldNotContain("proxy-pw");
+        (await protector.UnprotectAsync(endpoint.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope)).ShouldBe("proxy-pw");
+    }
+
+    private static IAtRestSecretProtector RealProtector()
+    {
+        var key = new byte[32];
+        for (var i = 0; i < key.Length; i++) key[i] = (byte)(i + 1);
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string>
+            {
+                ["Security:VariableEncryption:MasterKey"] = Convert.ToBase64String(key)
+            })
+            .Build();
+
+        return new AtRestSecretProtector(new VariableEncryptionService(new SecuritySetting(config)));
     }
 
     [Fact]

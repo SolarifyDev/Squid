@@ -27,13 +27,17 @@ public class MachineService : IMachineService
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IPollingTrustDistributor _trustDistributor;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
+    private readonly Security.IAtRestSecretProtector _protector;
 
-    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor, IMachineRuntimeCapabilitiesCache runtimeCache)
+    // Protector optional: DI supplies the real one so an updated SSH proxy password is re-encrypted at
+    // rest. Without one (tests), the value is stored as-is (pre-feature behaviour).
+    public MachineService(IMapper mapper, IMachineDataProvider machineDataProvider, IPollingTrustDistributor trustDistributor, IMachineRuntimeCapabilitiesCache runtimeCache, Security.IAtRestSecretProtector protector = null)
     {
         _mapper = mapper;
         _machineDataProvider = machineDataProvider;
         _trustDistributor = trustDistributor;
         _runtimeCache = runtimeCache;
+        _protector = protector;
     }
 
     public async Task<GetMachinesResponse> GetMachinesAsync(GetMachinesRequest request, CancellationToken cancellationToken)
@@ -233,7 +237,7 @@ public class MachineService : IMachineService
     /// <c>endpoint.X = command.X ?? endpoint.X</c> ladder — any field the
     /// command doesn't set is preserved from the existing endpoint JSON.
     /// </summary>
-    private static void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, CommunicationStyle style, UpdateMachineCommand c)
+    private void ApplyEndpointUpdate(Persistence.Entities.Deployments.Machine machine, CommunicationStyle style, UpdateMachineCommand c)
     {
         machine.Endpoint = style switch
         {
@@ -281,7 +285,7 @@ public class MachineService : IMachineService
         return JsonSerializer.Serialize(e);
     }
 
-    private static string MergeSsh(string json, UpdateMachineCommand c)
+    private string MergeSsh(string json, UpdateMachineCommand c)
     {
         var e = Deserialise<SshEndpointDto>(json);
         e.Host = c.Host ?? e.Host;
@@ -294,6 +298,12 @@ public class MachineService : IMachineService
         e.ProxyUsername = c.ProxyUsername ?? e.ProxyUsername;
         e.ProxyPassword = c.ProxyPassword ?? e.ProxyPassword;
         e.ResourceReferences = c.ResourceReferences ?? e.ResourceReferences;
+
+        // Encrypt the merged proxy password at rest. Protect is idempotent: a plaintext from the command
+        // is encrypted; an unchanged value carried from the existing (already-encrypted) endpoint passes
+        // through untouched. Without a protector (tests), the value is stored as-is.
+        if (_protector != null) e.ProxyPassword = _protector.Protect(e.ProxyPassword, SshEndpointDto.ProxyPasswordKdfScope);
+
         return JsonSerializer.Serialize(e);
     }
 

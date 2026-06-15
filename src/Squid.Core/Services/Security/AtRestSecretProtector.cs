@@ -37,6 +37,11 @@ public interface IAtRestSecretProtector : IScopedDependency
     /// <summary>Decrypt an at-rest <paramref name="value"/>, read-both: a legacy unprefixed plaintext
     /// is returned verbatim. <paramref name="kdfScope"/> must match the scope used to Protect it.</summary>
     Task<string> UnprotectAsync(string value, int kdfScope);
+
+    /// <summary>Synchronous <see cref="UnprotectAsync"/> — decrypt is pure CPU work (no I/O), so a caller
+    /// on a synchronous path (e.g. an endpoint variable contributor) can decrypt without an async
+    /// signature. Same read-both contract: legacy unprefixed plaintext passes through verbatim.</summary>
+    string Unprotect(string value, int kdfScope);
 }
 
 public sealed class AtRestSecretProtector(IVariableEncryptionService encryption) : IAtRestSecretProtector
@@ -54,4 +59,8 @@ public sealed class AtRestSecretProtector(IVariableEncryptionService encryption)
     public Task<string> UnprotectAsync(string value, int kdfScope)
         // DecryptAsync is read-both: an unprefixed plaintext value passes through verbatim.
         => encryption.DecryptAsync(value, kdfScope);
+
+    public string Unprotect(string value, int kdfScope)
+        // Decrypt is the synchronous core of DecryptAsync (pure CPU); same read-both passthrough.
+        => encryption.Decrypt(value, kdfScope);
 }

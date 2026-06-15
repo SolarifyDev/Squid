@@ -255,7 +255,13 @@ public class VariableEncryptionService : IVariableEncryptionService
         }
     }
 
-    public async Task<string> DecryptAsync(string encryptedText, int variableSetId)
+    // DecryptAsync's work is entirely synchronous CPU (AES-GCM + PBKDF2 — no I/O), so it delegates to
+    // this sync core. Callers on a synchronous path (e.g. IEndpointVariableContributor.ContributeVariables)
+    // can decrypt without forcing their signatures async. The "Async" name is kept for the existing API.
+    public Task<string> DecryptAsync(string encryptedText, int variableSetId)
+        => Task.FromResult(Decrypt(encryptedText, variableSetId));
+
+    public string Decrypt(string encryptedText, int variableSetId)
     {
         if (string.IsNullOrEmpty(encryptedText) || !IsValidEncryptedValue(encryptedText))
             return encryptedText;

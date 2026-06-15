@@ -4,6 +4,12 @@ namespace Squid.Message.Models.Deployments.Machine;
 
 public class SshEndpointDto
 {
+    /// <summary>KDF scope used when encrypting/decrypting <see cref="ProxyPassword"/> at rest. The V2
+    /// envelope uses a random per-payload salt so this value is not security-relevant — it is a shared
+    /// constant so the write seam (machine register/update) and the read seams (deploy variable
+    /// contributor, SSH health check) agree. Mirrors the KdfScope=0 the column-based providers use.</summary>
+    public const int ProxyPasswordKdfScope = 0;
+
     public string CommunicationStyle { get; set; }
     public string Host { get; set; }
     public int Port { get; set; } = 22;
