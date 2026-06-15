@@ -65,7 +65,7 @@ public sealed class NewCertificateCommand : ITentacleCommand
             }
         }
 
-        var certManager = new TentacleCertificateManager(certsPath);
+        var certManager = ProductionTentacleCertificateManager.Create(certsPath);
 
         // --force: delete the existing cert file BEFORE LoadOrCreateCertificate
         // so the load-or-create call generates a fresh one. The cert dir

@@ -202,7 +202,7 @@ public sealed class TentacleApp
 public sealed class TentacleAppDependencies
 {
     public Func<string, ITentacleCertificateManager> CertificateManagerFactory { get; init; } =
-        certsPath => new TentacleCertificateManager(certsPath);
+        certsPath => ProductionTentacleCertificateManager.Create(certsPath);
 
     public Func<IEnumerable<ITentacleFlavor>> BuiltInFlavorsProvider { get; init; } =
         TentacleFlavorCatalog.DiscoverBuiltInFlavors;
