@@ -38,7 +38,7 @@ public interface ICertificateDataProvider : IScopedDependency
 /// create-then-update/delete (as the CRUD tests exercise) does not hit a duplicate-tracking
 /// conflict.</para>
 /// </summary>
-public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository repository, IVariableEncryptionService encryption) : ICertificateDataProvider
+public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector) : ICertificateDataProvider
 {
     // The V2 envelope derives its key from a random per-payload salt, so the legacy KDF-scope
     // argument (a V1-only deterministic-salt input) is irrelevant for certificates (write V2 only).
@@ -102,21 +102,14 @@ public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository reposit
         return await DecryptSecretsAsync(certificate).ConfigureAwait(false);
     }
 
-    // Encrypt the password + the cert blob; each guarded by IsValidEncryptedValue so a re-save
-    // (or an already-encrypted value) never double-wraps.
+    // Encrypt the password + the cert blob; Protect is idempotent (null/empty/already-encrypted
+    // passes through) so a re-save never double-wraps.
     private void EncryptSecrets(Persistence.Entities.Deployments.Certificate certificate)
     {
         if (certificate == null) return;
 
-        certificate.Password = Protect(certificate.Password);
-        certificate.CertificateData = Protect(certificate.CertificateData);
-    }
-
-    private string Protect(string value)
-    {
-        if (string.IsNullOrEmpty(value) || encryption.IsValidEncryptedValue(value)) return value;
-
-        return encryption.EncryptAsync(value, SecretKdfScope);
+        certificate.Password = protector.Protect(certificate.Password, SecretKdfScope);
+        certificate.CertificateData = protector.Protect(certificate.CertificateData, SecretKdfScope);
     }
 
     private async Task<Persistence.Entities.Deployments.Certificate> DecryptSecretsAsync(Persistence.Entities.Deployments.Certificate certificate)
@@ -127,9 +120,9 @@ public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository reposit
         // map is freed (no duplicate-tracking conflict on a same-scope update/delete).
         repository.Detach(certificate);
 
-        // Read-both: a plaintext (unprefixed) value is returned verbatim by DecryptAsync.
-        certificate.Password = await encryption.DecryptAsync(certificate.Password, SecretKdfScope).ConfigureAwait(false);
-        certificate.CertificateData = await encryption.DecryptAsync(certificate.CertificateData, SecretKdfScope).ConfigureAwait(false);
+        // Read-both: a plaintext (unprefixed) value is returned verbatim by Unprotect.
+        certificate.Password = await protector.UnprotectAsync(certificate.Password, SecretKdfScope).ConfigureAwait(false);
+        certificate.CertificateData = await protector.UnprotectAsync(certificate.CertificateData, SecretKdfScope).ConfigureAwait(false);
 
         return certificate;
     }

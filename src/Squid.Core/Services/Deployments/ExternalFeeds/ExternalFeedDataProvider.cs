@@ -33,7 +33,7 @@ public interface IExternalFeedDataProvider : IScopedDependency
 /// in-memory entity can never be flushed back to the DB as plaintext by a later shared-scope
 /// SaveChanges.</para>
 /// </summary>
-public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository repository, IVariableEncryptionService encryption) : IExternalFeedDataProvider
+public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector) : IExternalFeedDataProvider
 {
     // The V2 envelope derives its key from a random per-payload salt, so the legacy KDF-scope
     // argument (a V1-only deterministic-salt input) is irrelevant for feeds, which only write V2.
@@ -100,21 +100,20 @@ public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository reposi
         return await DecryptPasswordAsync(feed).ConfigureAwait(false);
     }
 
-    // Encrypt only if not already an envelope — idempotent, so a re-save never double-wraps.
+    // Protect is idempotent (null/empty/already-encrypted passes through), so a re-save never double-wraps.
     private void EncryptPassword(Persistence.Entities.Deployments.ExternalFeed feed)
     {
-        if (feed == null || string.IsNullOrEmpty(feed.Password)) return;
-        if (encryption.IsValidEncryptedValue(feed.Password)) return;
+        if (feed == null) return;
 
-        feed.Password = encryption.EncryptAsync(feed.Password, PasswordKdfScope);
+        feed.Password = protector.Protect(feed.Password, PasswordKdfScope);
     }
 
     private async Task<Persistence.Entities.Deployments.ExternalFeed> DecryptPasswordAsync(Persistence.Entities.Deployments.ExternalFeed feed)
     {
         if (feed == null || string.IsNullOrEmpty(feed.Password)) return feed;
 
-        // Read-both: a plaintext (unprefixed) value is returned verbatim by DecryptAsync.
-        feed.Password = await encryption.DecryptAsync(feed.Password, PasswordKdfScope).ConfigureAwait(false);
+        // Read-both: a plaintext (unprefixed) value is returned verbatim by Unprotect.
+        feed.Password = await protector.UnprotectAsync(feed.Password, PasswordKdfScope).ConfigureAwait(false);
 
         return feed;
     }
