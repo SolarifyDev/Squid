@@ -144,7 +144,12 @@ exit 0
             .ShouldBeTrue(
                 customMessage: $"marker {markerPath} did NOT appear within 60s — Task Scheduler did not launch the inner script (likely schtasks /Run silently failed, or /RU SYSTEM was rejected by the runner's security policy)");
 
-        var content = File.ReadAllText(markerPath).Trim();
+        // The detached writer (Set-Content) runs ASYNCHRONOUSLY, so the marker can exist while its
+        // handle is still open — a plain File.ReadAllText (FileShare.Read) then throws IOException
+        // "being used by another process", and an early read can see an empty/partial file mid-write.
+        // ReadMarkerWhenReady retries the read until the content is the WELL-FORMED identity (contains
+        // "system"), so a torn/partial read is retried rather than returned to fail the assertions below.
+        var content = ReadMarkerWhenReady(markerPath, TimeSpan.FromSeconds(30), c => c.Contains("system", StringComparison.OrdinalIgnoreCase));
 
         content.ShouldStartWith("nt authority",
             Case.Insensitive,
@@ -400,6 +405,55 @@ exit 0
             Thread.Sleep(200);
         }
         return false;
+    }
+
+    /// <summary>
+    /// Reads a marker the DETACHED task wrote, tolerating the writer still holding the handle.
+    /// The inner Set-Content runs asynchronously, so the file can exist (WaitForFileExists passed)
+    /// while its handle is still open, AND its content can be empty/partial mid-write. Two defences,
+    /// the second load-bearing: (1) open with FileShare.ReadWrite so we don't contend on the writer's
+    /// handle — but this does NOT override an exclusive writer, so it only helps once the writer has
+    /// opened sharably or closed; (2) the RETRY LOOP — re-open and re-read until <paramref name="isReady"/>
+    /// accepts the content, within a bounded timeout, with an actionable failure naming the marker path.
+    /// The loop is what actually closes both the exclusive-handle window and the partial-content window:
+    /// a read that throws IOException OR returns content the predicate rejects is simply retried.
+    /// <paramref name="isReady"/> defaults to "non-empty"; a caller that knows the marker's well-formed
+    /// shape can pass a stricter predicate so a torn read is retried rather than returned. This is a
+    /// test-fixture race only; production reads upgrade traces from the agent over Halibut RPC, not via
+    /// a concurrent local file read.
+    /// </summary>
+    private static string ReadMarkerWhenReady(string path, TimeSpan timeout, Func<string, bool> isReady = null)
+    {
+        isReady ??= content => content.Length > 0;
+
+        var deadline = DateTime.UtcNow + timeout;
+        Exception last = null;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+
+                var content = reader.ReadToEnd().Trim();
+
+                if (isReady(content)) return content;
+            }
+            catch (IOException ex)
+            {
+                // File not yet present, or the writer holds an exclusive handle this instant — retry.
+                last = ex;
+            }
+
+            Thread.Sleep(200);
+        }
+
+        throw new TimeoutException(
+            $"marker {path} existed but its content was not readable / ready within {timeout.TotalSeconds:N0}s — " +
+            $"the detached writer likely still holds the handle, or the content never reached its expected shape. " +
+            $"Inspect manually: type \"{path}\". " +
+            (last != null ? $"Last read error: {last.Message}" : "Last read returned content the readiness predicate rejected."));
     }
 
     /// <summary>
