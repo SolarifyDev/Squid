@@ -147,8 +147,9 @@ exit 0
         // The detached writer (Set-Content) runs ASYNCHRONOUSLY, so the marker can exist while its
         // handle is still open — a plain File.ReadAllText (FileShare.Read) then throws IOException
         // "being used by another process", and an early read can see an empty/partial file mid-write.
-        // ReadMarkerWhenReady opens with FileShare.ReadWrite and polls until the content is non-empty.
-        var content = ReadMarkerWhenReady(markerPath, TimeSpan.FromSeconds(30));
+        // ReadMarkerWhenReady retries the read until the content is the WELL-FORMED identity (contains
+        // "system"), so a torn/partial read is retried rather than returned to fail the assertions below.
+        var content = ReadMarkerWhenReady(markerPath, TimeSpan.FromSeconds(30), c => c.Contains("system", StringComparison.OrdinalIgnoreCase));
 
         content.ShouldStartWith("nt authority",
             Case.Insensitive,
@@ -409,15 +410,22 @@ exit 0
     /// <summary>
     /// Reads a marker the DETACHED task wrote, tolerating the writer still holding the handle.
     /// The inner Set-Content runs asynchronously, so the file can exist (WaitForFileExists passed)
-    /// while its handle is still open: a plain File.ReadAllText opens with FileShare.Read and throws
-    /// IOException ("being used by another process") against the writer's handle, and an early read can
-    /// also catch a partial/empty file mid-write. So open with FileShare.ReadWrite (don't contend on the
-    /// writer's handle) and poll until the content is non-empty — within a bounded timeout, with an
-    /// actionable failure naming the marker path. This is a test-fixture race only; production reads
-    /// upgrade traces from the agent over Halibut RPC, not via a concurrent local file read.
+    /// while its handle is still open, AND its content can be empty/partial mid-write. Two defences,
+    /// the second load-bearing: (1) open with FileShare.ReadWrite so we don't contend on the writer's
+    /// handle — but this does NOT override an exclusive writer, so it only helps once the writer has
+    /// opened sharably or closed; (2) the RETRY LOOP — re-open and re-read until <paramref name="isReady"/>
+    /// accepts the content, within a bounded timeout, with an actionable failure naming the marker path.
+    /// The loop is what actually closes both the exclusive-handle window and the partial-content window:
+    /// a read that throws IOException OR returns content the predicate rejects is simply retried.
+    /// <paramref name="isReady"/> defaults to "non-empty"; a caller that knows the marker's well-formed
+    /// shape can pass a stricter predicate so a torn read is retried rather than returned. This is a
+    /// test-fixture race only; production reads upgrade traces from the agent over Halibut RPC, not via
+    /// a concurrent local file read.
     /// </summary>
-    private static string ReadMarkerWhenReady(string path, TimeSpan timeout)
+    private static string ReadMarkerWhenReady(string path, TimeSpan timeout, Func<string, bool> isReady = null)
     {
+        isReady ??= content => content.Length > 0;
+
         var deadline = DateTime.UtcNow + timeout;
         Exception last = null;
 
@@ -430,7 +438,7 @@ exit 0
 
                 var content = reader.ReadToEnd().Trim();
 
-                if (content.Length > 0) return content;
+                if (isReady(content)) return content;
             }
             catch (IOException ex)
             {
@@ -442,9 +450,10 @@ exit 0
         }
 
         throw new TimeoutException(
-            $"marker {path} existed but its content was not readable / non-empty within {timeout.TotalSeconds:N0}s — " +
-            $"the detached writer likely still holds the handle. Inspect manually: type \"{path}\". " +
-            (last != null ? $"Last read error: {last.Message}" : "Last read returned empty content."));
+            $"marker {path} existed but its content was not readable / ready within {timeout.TotalSeconds:N0}s — " +
+            $"the detached writer likely still holds the handle, or the content never reached its expected shape. " +
+            $"Inspect manually: type \"{path}\". " +
+            (last != null ? $"Last read error: {last.Message}" : "Last read returned content the readiness predicate rejected."));
     }
 
     /// <summary>
