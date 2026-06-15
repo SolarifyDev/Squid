@@ -65,7 +65,7 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
             FailureEncountered = false,
             OutputVariablesJson = "[]",
             BatchStatesJson = "{}",
-            InFlightScriptsJson = "{}"
+            InFlightScriptsJson = "[]"   // array shape — matches what InFlightScriptMap emits
         }, ct).ConfigureAwait(false);
 
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);

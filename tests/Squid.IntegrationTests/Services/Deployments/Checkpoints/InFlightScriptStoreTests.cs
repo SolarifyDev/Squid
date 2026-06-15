@@ -275,16 +275,32 @@ public class InFlightScriptStoreTests : TestBase
     [Fact]
     public async Task IsMachineBusy_CheckpointSeededButNeverDispatched_ReturnsFalse()
     {
-        // A checkpoint that EXISTS but has not (yet) dispatched any script carries the idle
-        // seed value "{}" (EnsureExistsAsync). It must report NOT busy — and the scan predicate
-        // now excludes BOTH idle shapes ("[]" and "{}") at the DB layer, so such rows are never
-        // even materialized into the busy-check.
+        // A checkpoint that EXISTS but has not (yet) dispatched any script carries the empty-array
+        // seed "[]" (EnsureExistsAsync). It must report NOT busy — the scan predicate excludes the
+        // empty array at the DB layer (and still excludes the legacy "{}" defensively), so such rows
+        // are never even materialized into the busy-check.
         const int taskId = 700024;
         const int machineId = 9106;
         await EnsureRowAsync(taskId).ConfigureAwait(false);
 
         (await IsBusyAsync(machineId).ConfigureAwait(false)).ShouldBeFalse(
-            customMessage: "A seeded-but-never-dispatched checkpoint ('{}') must not report any machine busy.");
+            customMessage: "A seeded-but-never-dispatched checkpoint ('[]') must not report any machine busy.");
+    }
+
+    [Fact]
+    public async Task EnsureExists_SeedsInFlightScriptsJson_AsEmptyArray()
+    {
+        // Discriminating pin for the data-shape alignment: EnsureExistsAsync must seed the in-flight
+        // column as the empty ARRAY "[]" that InFlightScriptMap emits — NOT the legacy object "{}".
+        // This makes the IsMachineBusyAsync pre-filter ("!= []") exact for fresh checkpoints rather
+        // than relying on the parse-fallback for "{}".
+        const int taskId = 700031;
+        await EnsureRowAsync(taskId).ConfigureAwait(false);
+
+        var row = await LoadAsync(taskId).ConfigureAwait(false);
+
+        row.InFlightScriptsJson.ShouldBe("[]",
+            customMessage: "the seed must be the empty array shape '[]' matching InFlightScriptMap, not the legacy object '{}'.");
     }
 
     [Fact]
