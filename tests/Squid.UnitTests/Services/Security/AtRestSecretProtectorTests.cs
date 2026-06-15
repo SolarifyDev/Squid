@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.Security;
+using Squid.Core.Settings.Security;
 
 namespace Squid.UnitTests.Services.Security;
 
@@ -71,5 +73,48 @@ public sealed class AtRestSecretProtectorTests
         _encryption.Setup(e => e.DecryptAsync("legacy-plaintext", 0)).ReturnsAsync("legacy-plaintext");
 
         (await _sut.UnprotectAsync("legacy-plaintext", 0)).ShouldBe("legacy-plaintext");
+    }
+
+    // ── Real-service round-trip (no mock) — pins the idempotency + envelope contract at the seam ──
+
+    [Fact]
+    public void Protect_RealService_Plaintext_YieldsV2Envelope_AndIsIdempotent()
+    {
+        var sut = new AtRestSecretProtector(RealEncryption());
+
+        var envelope = sut.Protect("plaintext-secret", kdfScope: 0);
+
+        envelope.ShouldStartWith("SQUID_ENCRYPTED_V2:",
+            customMessage: "Protect over the real service must emit the V2 envelope, not the plaintext.");
+        envelope.ShouldNotContain("plaintext-secret");
+        sut.Protect(envelope, kdfScope: 0).ShouldBe(envelope,
+            customMessage: "re-Protecting an already-encrypted envelope must return it unchanged (no double-wrap).");
+    }
+
+    [Fact]
+    public async Task ProtectThenUnprotect_RealService_RoundTrips()
+    {
+        var sut = new AtRestSecretProtector(RealEncryption());
+
+        var envelope = sut.Protect("plaintext-secret", kdfScope: 0);
+
+        (await sut.UnprotectAsync(envelope, kdfScope: 0)).ShouldBe("plaintext-secret");
+    }
+
+    // Real VariableEncryptionService with a real 32-byte key — passes Strict enforcement (a real key
+    // is mode-invariant, so no env control is needed here).
+    private static IVariableEncryptionService RealEncryption()
+    {
+        var key = new byte[32];
+        for (var i = 0; i < key.Length; i++) key[i] = (byte)(i + 1);
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string>
+            {
+                ["Security:VariableEncryption:MasterKey"] = Convert.ToBase64String(key)
+            })
+            .Build();
+
+        return new VariableEncryptionService(new SecuritySetting(config));
     }
 }

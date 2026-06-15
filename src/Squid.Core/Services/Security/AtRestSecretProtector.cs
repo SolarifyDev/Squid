@@ -13,6 +13,13 @@ namespace Squid.Core.Services.Security;
 ///         verbatim, so reads work before AND after migration with no DB migration.</item>
 /// </list>
 ///
+/// <para>The sync/async split is intentional and mirrors the wrapped service: <c>Protect</c> is
+/// synchronous because <see cref="IVariableEncryptionService.EncryptAsync"/> is synchronous despite
+/// its name (a pre-existing misnomer — it returns <c>string</c>, not a Task), while
+/// <c>UnprotectAsync</c> is genuinely async because <see cref="IVariableEncryptionService.DecryptAsync"/>
+/// is. Do NOT "normalize" the two halves — making <c>Protect</c> async adds a needless Task allocation
+/// and making <c>UnprotectAsync</c> sync would block on a real async decrypt.</para>
+///
 /// <para>This wraps <see cref="IVariableEncryptionService"/> (the AES-256-GCM V2 envelope + KDF) so
 /// the providers depend on this narrow contract rather than re-implementing the
 /// <c>IsValidEncryptedValue</c>-guarded encrypt + passthrough-decrypt in each one (previously four
