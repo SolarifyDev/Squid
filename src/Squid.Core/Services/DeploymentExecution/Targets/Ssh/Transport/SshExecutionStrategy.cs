@@ -183,7 +183,7 @@ public class SshExecutionStrategy : IExecutionStrategy
 
         UploadScriptFiles(sftp, workDir, request.DeploymentFiles);
 
-        await StageAndExtractPackagesAsync(scope, baseDir, request.PackageReferences, ct).ConfigureAwait(false);
+        await StageAndExtractPackagesAsync(scope, baseDir, request, ct).ConfigureAwait(false);
     }
 
     private static void UploadScriptFiles(SftpClient sftp, string workDir, DeploymentFileCollection files)
@@ -198,19 +198,25 @@ public class SshExecutionStrategy : IExecutionStrategy
         }
     }
 
-    private async Task StageAndExtractPackagesAsync(ISshConnectionScope scope, string baseDir, List<PackageAcquisitionResult> packages, CancellationToken ct)
+    private async Task StageAndExtractPackagesAsync(ISshConnectionScope scope, string baseDir, ScriptExecutionRequest request, CancellationToken ct)
     {
+        var packages = request.PackageReferences;
         if (packages == null || packages.Count == 0) return;
 
         var stagingContext = new SshPackageStagingContext(scope, baseDir);
         var sftp = scope.GetSftpClient();
         var ssh = scope.GetSshClient();
+        var isDeployPackage = string.Equals(request.ActionType, SpecialVariables.ActionTypes.TentaclePackage, StringComparison.OrdinalIgnoreCase);
 
         foreach (var pkg in packages)
         {
             var requirement = new PackageRequirement(pkg.PackageId, pkg.Version, pkg.LocalPath, pkg.SizeBytes, pkg.Hash);
 
             var plan = await _stagingPlanner.PlanAsync(requirement, stagingContext, ct).ConfigureAwait(false);
+
+            // Deploy a Package keeps the archive in cache only; durable install happens in the deployment script.
+            if (isDeployPackage)
+                continue;
 
             var extractDir = SshPaths.PackageExtractDir(baseDir, pkg.PackageId, pkg.Version);
             SshPackageTransfer.ExtractPackage(sftp, ssh, plan.RemotePath, extractDir);

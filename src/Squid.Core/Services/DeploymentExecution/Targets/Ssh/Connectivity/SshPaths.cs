@@ -50,8 +50,6 @@ public static class SshPaths
         return string.Empty;
     }
 
-    // ========== Package Paths ==========
-
     private const string PackagesDirectoryName = "Packages";
 
     public static string PackageCacheDirectory(string baseDir) => $"{baseDir}/{PackagesDirectoryName}";
@@ -61,4 +59,10 @@ public static class SshPaths
 
     public static string PackageExtractDir(string baseDir, string packageId, string version)
         => $"{PackageCacheDirectory(baseDir)}/{packageId}.{version}";
+
+    public static string ApplicationsRoot(string homeDir)
+        => $"{homeDir.TrimEnd('/')}/.squid/Applications";
+
+    public static string VersionedInstallationDirectory(string homeDir, string environment, string project, string packageId, string version)
+        => $"{ApplicationsRoot(homeDir)}/{environment}/{project}/{packageId}/{version}";
 }
