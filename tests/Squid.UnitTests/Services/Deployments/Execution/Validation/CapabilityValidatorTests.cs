@@ -1,5 +1,6 @@
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Validation;
@@ -129,6 +130,7 @@ public class CapabilityValidatorTests
         {
             Name = "deploy-package",
             Package = new IntentPackageReference { PackageId = "Acme.Web", Version = "1.0.0", FeedId = "feeds-builtin" },
+            PathSegments = new PackageInstallationPathSegments("Production", "WebApp", "Acme.Web", "1.0.0"),
             ScriptSyntax = ScriptSyntax.Python
         };
 
@@ -272,6 +274,7 @@ public class CapabilityValidatorTests
         {
             Name = "deploy-package",
             Package = new IntentPackageReference { PackageId = "Acme.Web", Version = "1.0.0", FeedId = "feeds-builtin" },
+            PathSegments = new PackageInstallationPathSegments("Production", "WebApp", "Acme.Web", "1.0.0"),
             ScriptSyntax = ScriptSyntax.Bash
         };
 

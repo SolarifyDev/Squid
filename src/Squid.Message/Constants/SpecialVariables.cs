@@ -96,6 +96,8 @@ public static class SpecialVariables
         public const string PackageId = "Squid.Action.Package.PackageId";
         public const string PackageVersion = "Squid.Action.Package.PackageVersion";
         public const string CustomInstallationDirectory = "Squid.Action.Package.CustomInstallationDirectory";
+        public const string InstallationDirectoryMode = "Squid.Action.Package.InstallationDirectoryMode";
+        public const string InstallationDirectoryPath = "Squid.Action.Package.InstallationDirectoryPath";
         public const string AdditionalInstallationDirectory = "Squid.Action.Package.AdditionalInstallationDirectory";
         public const string KubernetesYaml = "Squid.Action.KubernetesContainers.CustomResourceYaml";
         public const string KubernetesNamespace = "Squid.Action.KubernetesContainers.Namespace";
