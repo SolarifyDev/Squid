@@ -3,6 +3,7 @@ using Moq;
 using Shouldly;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Packages;
@@ -104,15 +105,16 @@ public class AcquirePackagesPhaseTests : IDisposable
     // === P0: FeedId validation ===
 
     [Fact]
-    public async Task AcquirePackages_FeedIdZero_EmitsPackageDownloadFailedEvent()
+    public async Task AcquirePackages_FeedIdZero_EmitsPackageDownloadFailedEvent_AndAborts()
     {
         _ctx.SelectedPackages = MakePackages((0, "nginx", "1.21.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Invalid FeedId");
 
-        // 3 events: Acquiring + Failed + Acquired
-        _capturedEvents.Count.ShouldBe(3);
+        // Acquiring + Failed; deployment aborts before PackagesAcquired
+        _capturedEvents.Count.ShouldBe(2);
         var failedEvent = _capturedEvents[1] as PackageDownloadFailedEvent;
         failedEvent.ShouldNotBeNull();
         failedEvent.Context.PackageError.ShouldContain("Invalid FeedId");
@@ -123,15 +125,15 @@ public class AcquirePackagesPhaseTests : IDisposable
     }
 
     [Fact]
-    public async Task AcquirePackages_FeedIdNegative_EmitsPackageDownloadFailedEvent()
+    public async Task AcquirePackages_FeedIdNegative_EmitsPackageDownloadFailedEvent_AndAborts()
     {
         _ctx.SelectedPackages = MakePackages((-5, "redis", "7.0.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Invalid FeedId");
 
-        // 3 events: Acquiring + Failed + Acquired
-        _capturedEvents.Count.ShouldBe(3);
+        _capturedEvents.Count.ShouldBe(2);
         var failedEvent = _capturedEvents[1] as PackageDownloadFailedEvent;
         failedEvent.ShouldNotBeNull();
         failedEvent.Context.PackageError.ShouldContain("Invalid FeedId");
@@ -145,7 +147,7 @@ public class AcquirePackagesPhaseTests : IDisposable
         _ctx.SelectedPackages = MakePackages((0, "nginx", "1.21.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
 
         _feedProviderMock.Verify(f => f.GetExternalFeedsByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -156,13 +158,13 @@ public class AcquirePackagesPhaseTests : IDisposable
         _ctx.SelectedPackages = MakePackages((0, "nginx", "1.21.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
 
         _acquisitionMock.Verify(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task AcquirePackages_MixedValidAndInvalidFeedIds_EmitsFailedForInvalid_SkipsValid()
+    public async Task AcquirePackages_MixedValidAndInvalidFeedIds_AbortsOnFirstInvalid()
     {
         _ctx.SelectedPackages = MakePackages(
             (0, "nginx", "1.21.0"),
@@ -174,29 +176,16 @@ public class AcquirePackagesPhaseTests : IDisposable
         _acquisitionMock.Setup(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), "redis", "7.0.0", 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(MakeResult("redis", "7.0.0"));
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Invalid FeedId");
 
-        // 5 events: Acquiring + Downloading(failed for idx 0) + Downloading + Downloaded + Acquired
-        _capturedEvents.Count.ShouldBe(5);
-
-        // Index 0: failed
+        // Acquiring + Failed for first package; second package must not run.
+        _capturedEvents.Count.ShouldBe(2);
         var failed = _capturedEvents[1] as PackageDownloadFailedEvent;
         failed.ShouldNotBeNull();
         failed.Context.PackageIndex.ShouldBe(0);
         failed.Context.PackageError.ShouldContain("Invalid FeedId");
-
-        // Index 2: downloading for idx 1
-        var downloading = _capturedEvents[2] as PackageDownloadingEvent;
-        downloading.ShouldNotBeNull();
-        downloading.Context.PackageIndex.ShouldBe(1);
-        downloading.Context.PackageId.ShouldBe("redis");
-
-        // Index 3: downloaded
-        var downloaded = _capturedEvents[3] as PackageDownloadedEvent;
-        downloaded.ShouldNotBeNull();
-        downloaded.Context.PackageIndex.ShouldBe(1);
-        downloaded.Context.PackageId.ShouldBe("redis");
-        downloaded.Context.PackageSizeBytes.ShouldBe(1024);
+        _acquisitionMock.Verify(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // === P1: DeploymentPackageContext population ===
@@ -354,7 +343,7 @@ public class AcquirePackagesPhaseTests : IDisposable
     }
 
     [Fact]
-    public async Task AcquirePackages_FeedNotFound_EmitsFailedWithCorrectError()
+    public async Task AcquirePackages_FeedNotFound_EmitsFailedWithCorrectError_AndAborts()
     {
         _ctx.SelectedPackages = MakePackages((999, "nonexistent", "1.0.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
@@ -362,7 +351,8 @@ public class AcquirePackagesPhaseTests : IDisposable
         _feedProviderMock.Setup(f => f.GetExternalFeedsByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ExternalFeed>());
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Feed 999 not found");
 
         var failed = _capturedEvents.OfType<PackageDownloadFailedEvent>().ShouldHaveSingleItem();
         failed.Context.PackageError.ShouldContain("Feed 999 not found");
@@ -371,7 +361,7 @@ public class AcquirePackagesPhaseTests : IDisposable
     }
 
     [Fact]
-    public async Task AcquirePackages_AcquisitionThrows_EmitsFailedEvent()
+    public async Task AcquirePackages_AcquisitionThrows_EmitsFailedEvent_AndAborts()
     {
         _ctx.SelectedPackages = MakePackages((10, "nginx", "1.21.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
@@ -381,7 +371,8 @@ public class AcquirePackagesPhaseTests : IDisposable
         _acquisitionMock.Setup(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), "nginx", "1.21.0", 1, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Network unreachable"));
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Network unreachable");
 
         var failed = _capturedEvents.OfType<PackageDownloadFailedEvent>().ShouldHaveSingleItem();
         failed.Context.PackageError.ShouldBe("Network unreachable");
@@ -401,7 +392,7 @@ public class AcquirePackagesPhaseTests : IDisposable
     }
 
     [Fact]
-    public async Task AcquirePackages_AllFailed_StillEmitsPackagesAcquiredEvent()
+    public async Task AcquirePackages_AllFailed_AbortsWithoutPackagesAcquiredEvent()
     {
         _ctx.SelectedPackages = MakePackages((0, "pkg1", "1.0.0"), (999, "pkg2", "2.0.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
@@ -409,11 +400,10 @@ public class AcquirePackagesPhaseTests : IDisposable
         _feedProviderMock.Setup(f => f.GetExternalFeedsByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ExternalFeed>());
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
 
-        var acquired = _capturedEvents.OfType<PackagesAcquiredEvent>().ShouldHaveSingleItem();
-        acquired.Context.PackageTotalSizeBytes.ShouldBe(0);
-        acquired.Context.Packages.PackageTotalSizeBytes.ShouldBe(0);
+        _capturedEvents.OfType<PackagesAcquiredEvent>().ShouldBeEmpty();
+        _capturedEvents.OfType<PackageDownloadFailedEvent>().Count().ShouldBe(1);
     }
 
     [Fact]
@@ -439,7 +429,7 @@ public class AcquirePackagesPhaseTests : IDisposable
         _ctx.SelectedPackages = MakePackages((0, "nginx", "1.21.0"));
         _ctx.Steps = [MakeAcquirePackagesStep()];
 
-        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+        await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
 
         _ctx.AcquiredPackages.ShouldBeEmpty();
     }
