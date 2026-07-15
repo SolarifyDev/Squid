@@ -246,15 +246,25 @@ public partial class ReleaseService : IReleaseService
     {
         if (selectedPackages == null || selectedPackages.Count == 0) return;
 
-        var entities = selectedPackages
+        var validPackages = selectedPackages
             .Where(sp => !string.IsNullOrWhiteSpace(sp.ActionName))
+            .ToList();
+
+        foreach (var sp in validPackages)
+        {
+            if (string.IsNullOrWhiteSpace(sp.Version))
+                throw new InvalidOperationException(
+                    $"Package version is required for action '{sp.ActionName}' package '{sp.PackageReferenceName}'.");
+        }
+
+        var entities = validPackages
             .Select(sp => new ReleaseSelectedPackage
             {
                 ReleaseId = releaseId,
                 ActionName = sp.ActionName,
                 FeedId = sp.FeedId,
                 PackageReferenceName = sp.PackageReferenceName ?? string.Empty,
-                Version = sp.Version ?? string.Empty
+                Version = sp.Version
             });
 
         await _releaseSelectedPackageDataProvider.InsertAllAsync(entities, ct).ConfigureAwait(false);

@@ -690,7 +690,8 @@ public sealed partial class ExecuteStepsPhase
                         PackageTotalSizeBytes: totalSize,
                         PackageError: $"Invalid FeedId: {pkg.FeedId}. FeedId must be a positive integer.")
                 }), ct).ConfigureAwait(false);
-                continue;
+                throw new DeploymentAbortedException(
+                    $"Package acquisition failed for '{pkg.PackageReferenceName}' v{pkg.Version} (feed {pkg.FeedId}): Invalid FeedId: {pkg.FeedId}. FeedId must be a positive integer.");
             }
 
             if (!feedById.TryGetValue(pkg.FeedId, out var feed))
@@ -718,7 +719,8 @@ public sealed partial class ExecuteStepsPhase
                         PackageTotalSizeBytes: totalSize,
                         PackageError: $"Feed {pkg.FeedId} not found")
                 }), ct).ConfigureAwait(false);
-                continue;
+                throw new DeploymentAbortedException(
+                    $"Package acquisition failed for '{pkg.PackageReferenceName}' v{pkg.Version} (feed {pkg.FeedId}): Feed {pkg.FeedId} not found");
             }
 
             var baseCtx = new DeploymentEventContext
@@ -804,6 +806,8 @@ public sealed partial class ExecuteStepsPhase
                         PackageError: ex.Message)
                 };
                 await lifecycle.EmitAsync(new PackageDownloadFailedEvent(failedCtx), ct).ConfigureAwait(false);
+                throw new DeploymentAbortedException(
+                    $"Package acquisition failed for '{pkg.PackageReferenceName}' v{pkg.Version} (feed {pkg.FeedId}): {ex.Message}");
             }
         }
 

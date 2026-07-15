@@ -4,7 +4,7 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
 /// <summary>
 /// Uploads the full bytes of a package to an SSH target at the prospective
-/// remote path. Implementations also verify the post-upload MD5 matches the
+/// remote path. Implementations also verify the post-upload SHA-256 matches the
 /// local one.
 /// </summary>
 public interface IFullPackageUploader : IScopedDependency
