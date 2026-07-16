@@ -1,6 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using Squid.Calamari.Commands.Configuration;
 using Squid.Calamari.Commands.Conventions;
+using Squid.Calamari.Commands.StructuredConfig;
+using Squid.Calamari.Commands.Substitution;
+using Squid.Calamari.Pipeline;
 using Squid.Calamari.Scripting;
 using Squid.Calamari.Variables;
 
@@ -66,6 +70,8 @@ internal static class PackageInstallationCoordinator
             filesExtracted = extractResult.FilesExtracted;
             totalBytes = extractResult.TotalBytesWritten;
 
+            await RunConfigRewritePipelineAsync(stagingDir, request.Variables, ct).ConfigureAwait(false);
+
             CommitDirectory(finalDir, stagingDir, backupDir);
             committed = true;
 
@@ -103,6 +109,37 @@ internal static class PackageInstallationCoordinator
         var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
         if (!string.Equals(actual, expectedSha256.Trim().ToLowerInvariant(), StringComparison.Ordinal))
             throw new InvalidOperationException($"[hash verification] SHA-256 mismatch for '{archivePath}': expected {expectedSha256}, got {actual}.");
+    }
+
+    private static async Task RunConfigRewritePipelineAsync(string stagingDir, VariableSet? variables, CancellationToken ct)
+    {
+        // Minimal adapter: existing rewriter steps are typed against RunScriptCommandContext.
+        // For package installs we only need WorkingDirectory + Variables; ScriptPath/VariablesPath
+        // are required members but unused by these steps.
+        var context = new RunScriptCommandContext
+        {
+            ScriptPath = string.Empty,
+            VariablesPath = string.Empty,
+            WorkingDirectory = stagingDir,
+            Variables = variables ?? new VariableSet()
+        };
+
+        ExecutionStep<RunScriptCommandContext>[] steps =
+        [
+            new SubstituteInFilesStep(),
+            new ConfigurationTransformsStep(),
+            new ConfigurationVariablesStep(),
+            new StructuredConfigVariablesStep()
+        ];
+
+        foreach (var step in steps)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!step.IsEnabled(context))
+                continue;
+
+            await step.ExecuteAsync(context, ct).ConfigureAwait(false);
+        }
     }
 
     private static void CommitDirectory(string finalDir, string stagingDir, string backupDir)

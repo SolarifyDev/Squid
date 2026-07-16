@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
 using Squid.Calamari.Commands.Package;
+using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Scripting;
 using Squid.Calamari.Tests.TestSupport;
+using Squid.Calamari.Variables;
 
 namespace Squid.Calamari.Tests.Calamari.Package;
 
@@ -125,4 +127,35 @@ exit 9
 
         File.Exists(Path.Combine(finalDir, "app.txt")).ShouldBeTrue();
     }
-}
+
+    [Fact]
+    public async Task Install_WithSubstituteEnabled_RewritesFileInFinalDirectory()
+    {
+        var archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
+        {
+            ["appsettings.json"] = """{"Greeting":"#{Greeting}"}"""
+        });
+        var finalDir = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web", "2.0.0");
+
+        var variables = new VariableSet();
+        variables.Set(SubstituteInFilesVariableNames.Enabled, "True");
+        variables.Set(SubstituteInFilesVariableNames.TargetFiles, "appsettings.json");
+        variables.Set("Greeting", "Hi");
+
+        await PackageInstallationCoordinator.InstallAsync(new PackageInstallRequest
+        {
+            ArchivePath = archive,
+            ExpectedSha256 = Sha256(archive),
+            Mode = "Versioned",
+            FinalInstallationDirectory = finalDir,
+            PreferredSyntax = ScriptSyntax.Bash,
+            Variables = variables,
+            PackageId = "Acme.Web",
+            PackageVersion = "2.0.0"
+        }, CancellationToken.None);
+
+        var rewritten = File.ReadAllText(Path.Combine(finalDir, "appsettings.json"));
+        rewritten.ShouldContain("Hi");
+        rewritten.ShouldNotContain("#{Greeting}");
+    }
+    }
