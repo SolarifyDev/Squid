@@ -253,4 +253,18 @@ public class PackageAcquisitionServiceTests : IDisposable
         path.ShouldEndWith(expectedSuffix);
         path.StartsWith(Path.GetTempPath()).ShouldBeTrue();
     }
+
+    [Fact]
+    public async Task AcquireAsync_MavenPackageIdWithColon_SanitizesLocalFileName()
+    {
+        var feed = new ExternalFeed { Id = 12, FeedType = "Maven", FeedUri = "https://repo.example.com/maven" };
+        _fetcherMock.Setup(f => f.FetchAsync(feed, "com.acme:app", "1.0.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PackageFetchResult(new Dictionary<string, byte[]>(), new List<string>(), SampleBytes));
+
+        var result = await _sut.AcquireAsync(feed, "com.acme:app", "1.0.0", 910, CancellationToken.None);
+
+        Path.GetFileName(result.LocalPath).ShouldBe("com.acme_app.1.0.0.zip");
+        result.LocalPath.ShouldNotContain(":");
+    }
+
 }

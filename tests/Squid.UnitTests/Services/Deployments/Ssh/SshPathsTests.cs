@@ -138,4 +138,23 @@ public class SshPathsTests
 
         extractDir.ShouldStartWith(cacheDir);
     }
+
+    [Fact]
+    public void PackageArchivePathFromLocalFile_PreservesAcquiredFileNameWithColon()
+    {
+        var localPath = "/tmp/com.acme_app.1.0.0.zip"; // already sanitized on acquire
+        var remote = SshPaths.PackageArchivePathFromLocalFile("/opt/squid", "com.acme:app", "1.0.0", localPath);
+        remote.ShouldBe("/opt/squid/Packages/com.acme_app.1.0.0.zip");
+    }
+
+    [Fact]
+    public void PackageArchivePathFromLocalFile_MatchesScriptArchiveFileName()
+    {
+        var localPath = "/var/folders/tmp/owner_repo.v1.tar.gz";
+        var remote = SshPaths.PackageArchivePathFromLocalFile("/home/deploy/.squid", "owner/repo", "v1", localPath);
+        var archiveName = System.IO.Path.GetFileName(localPath);
+        remote.ShouldBe($"/home/deploy/.squid/Packages/{archiveName}");
+    }
+
 }
+

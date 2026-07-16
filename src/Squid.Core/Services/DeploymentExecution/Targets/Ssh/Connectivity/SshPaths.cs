@@ -72,12 +72,13 @@ public static class SshPaths
             var fileName = Path.GetFileName(localPath);
             if (!string.IsNullOrWhiteSpace(fileName) && fileName.Contains('.'))
             {
-                // Prefer the real acquired archive file name (already sanitized on acquire).
-                return $"{PackageCacheDirectory(baseDir)}/{SanitizePathSegment(fileName)}";
+                // Use the acquired archive file name as-is so staging remote path matches
+                // the script ARCHIVE_NAME (Path.GetFileName(localPath)). Do not re-sanitize.
+                return $"{PackageCacheDirectory(baseDir)}/{fileName}";
             }
         }
 
-        return PackageArchivePath(baseDir, packageId, version, Path.GetExtension(localPath ?? string.Empty));
+        return PackageArchivePath(baseDir, packageId, version, localPath);
     }
 
     public static string PackageExtractDir(string baseDir, string packageId, string version)
