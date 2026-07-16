@@ -1,7 +1,9 @@
 using System.Security.Cryptography;
+using Squid.Calamari.Commands.Conventions;
 using Squid.Calamari.Commands.Package;
 using Squid.Calamari.Commands.Substitution;
 using Squid.Calamari.Scripting;
+using Squid.Calamari.Tests.Calamari.Commands.Conventions;
 using Squid.Calamari.Tests.TestSupport;
 using Squid.Calamari.Variables;
 
@@ -94,11 +96,17 @@ echo post > post.txt
             ExpectedSha256 = Sha256(archive),
             Mode = "Custom",
             FinalInstallationDirectory = finalDir,
-            PreferredSyntax = ScriptSyntax.Bash
+            PreferredSyntax = ScriptSyntax.Bash,
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0"
         }, CancellationToken.None);
 
         File.ReadAllText(Path.Combine(finalDir, "local-only.txt")).ShouldBe("keep-me");
         File.ReadAllText(Path.Combine(finalDir, "app.txt")).ShouldBe("new");
+
+        var marker = File.ReadAllText(Path.Combine(finalDir, PackageInstallationCoordinator.InstalledMarkerFileName));
+        marker.ShouldContain("\"packageId\":\"Acme.Web\"");
+        marker.ShouldContain("\"version\":\"1.0.0\"");
     }
 
     [Fact]
@@ -276,9 +284,6 @@ exit 9
     [Fact]
     public async Task CurrentPointer_UpdatesOnSuccess_AndRollbackRestoresPrevious()
     {
-        if (OperatingSystem.IsWindows())
-            return;
-
         var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web");
         var v1Dir = Path.Combine(packageRoot, "1.0.0");
         var v2Dir = Path.Combine(packageRoot, "2.0.0");
@@ -304,12 +309,11 @@ exit 9
 
         ResolveCurrentTarget(packageRoot).ShouldBe(Path.GetFullPath(v1Dir));
 
+        // Use a stub engine so PreDeploy failure is portable (symlink or pointer-file path).
         var failingV2Archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
         {
             ["app.txt"] = "v2-fail",
-            ["PreDeploy.sh"] = @"#!/bin/bash
-exit 9
-"
+            ["PreDeploy.sh"] = "echo fail"
         });
         var rollbackVariables = new VariableSet();
         rollbackVariables.Set("Squid.Action.Package.UseCurrentPointer", "True");
@@ -323,6 +327,7 @@ exit 9
             FinalInstallationDirectory = v2Dir,
             PreferredSyntax = ScriptSyntax.Bash,
             Variables = rollbackVariables,
+            ScriptEngine = new StubScriptEngine(exitCode: 9),
             PackageId = "Acme.Web",
             PackageVersion = "2.0.0"
         }, CancellationToken.None));
@@ -349,6 +354,46 @@ exit 9
 
         ResolveCurrentTarget(packageRoot).ShouldBe(Path.GetFullPath(v2Dir));
         File.ReadAllText(Path.Combine(v2Dir, "app.txt")).ShouldBe("v2-ok");
+    }
+
+    [Fact]
+    public async Task Install_CustomMode_RollbackOnFailure_RestoresPreviousFinalContent()
+    {
+        var finalDir = Path.Combine(_root, "custom-app-rollback");
+        Directory.CreateDirectory(finalDir);
+        File.WriteAllText(Path.Combine(finalDir, "keep.txt"), "old-content");
+        File.WriteAllText(Path.Combine(finalDir, "local-only.txt"), "local-old");
+
+        var failingArchive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
+        {
+            ["app.txt"] = "new-content",
+            ["PreDeploy.sh"] = "echo fail"
+        });
+        var variables = new VariableSet();
+        variables.Set("Squid.Action.Package.RollbackOnFailure", "True");
+
+        await Should.ThrowAsync<InvalidOperationException>(() => PackageInstallationCoordinator.InstallAsync(new PackageInstallRequest
+        {
+            ArchivePath = failingArchive,
+            ExpectedSha256 = Sha256(failingArchive),
+            Mode = "Custom",
+            FinalInstallationDirectory = finalDir,
+            PreferredSyntax = ScriptSyntax.Bash,
+            Variables = variables,
+            ScriptEngine = new StubScriptEngine(exitCode: 9),
+            PackageId = "Acme.Web",
+            PackageVersion = "2.0.0"
+        }, CancellationToken.None));
+
+        Directory.Exists(finalDir).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(finalDir, "keep.txt")).ShouldBe("old-content");
+        File.ReadAllText(Path.Combine(finalDir, "local-only.txt")).ShouldBe("local-old");
+        File.Exists(Path.Combine(finalDir, "app.txt")).ShouldBeFalse();
+        File.Exists(Path.Combine(finalDir, PackageInstallationCoordinator.InstalledMarkerFileName)).ShouldBeFalse();
+
+        // No leftover backup directories after a successful restore.
+        Directory.GetDirectories(Path.GetDirectoryName(finalDir)!, ".squid-backup-*")
+            .Length.ShouldBe(0);
     }
 
     private static string ResolveCurrentTarget(string packageRoot)

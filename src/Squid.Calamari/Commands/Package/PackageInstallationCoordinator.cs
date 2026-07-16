@@ -84,6 +84,7 @@ internal static class PackageInstallationCoordinator
         var filesExtracted = 0;
         long totalBytes = 0;
         var committed = false;
+        var shouldDeleteBackup = true;
         var finalExistedBefore = Directory.Exists(finalDir);
         string? previousCurrentTarget = null;
         var currentUpdated = false;
@@ -136,16 +137,21 @@ internal static class PackageInstallationCoordinator
         {
             if (rollbackOnFailure)
             {
-                TryRollbackCommittedInstall(finalDir, backupDir, committed, finalExistedBefore);
+                shouldDeleteBackup = TryRollbackCommittedInstall(finalDir, backupDir, committed, finalExistedBefore);
                 if (useCurrentPointer && currentUpdated)
                     RestoreCurrentPointer(parent, previousCurrentTarget);
             }
             else if (!committed && Directory.Exists(backupDir) && !Directory.Exists(finalDir))
             {
-                try { Directory.Move(backupDir, finalDir); }
+                try
+                {
+                    Directory.Move(backupDir, finalDir);
+                }
                 catch (Exception restoreEx)
                 {
                     Console.Error.WriteLine($"[final-directory commit] Failed to restore backup after error: {restoreEx.Message}");
+                    if (Directory.Exists(backupDir))
+                        shouldDeleteBackup = false;
                 }
             }
 
@@ -154,8 +160,10 @@ internal static class PackageInstallationCoordinator
         finally
         {
             TryDeleteDirectory(stagingDir);
-            // Backup may have been restored (moved) during rollback; best-effort cleanup.
-            TryDeleteDirectory(backupDir);
+            // Only discard backup after a successful install or successful restore.
+            // A failed restore must keep backup for manual recovery.
+            if (shouldDeleteBackup)
+                TryDeleteDirectory(backupDir);
         }
     }
 
@@ -265,19 +273,28 @@ internal static class PackageInstallationCoordinator
         }
     }
 
-    private static void TryRollbackCommittedInstall(string finalDir, string backupDir, bool committed, bool finalExistedBefore)
+    /// <returns>True when backup is safe to delete; false when backup must be preserved.</returns>
+    private static bool TryRollbackCommittedInstall(string finalDir, string backupDir, bool committed, bool finalExistedBefore)
     {
         if (!committed)
         {
             if (Directory.Exists(backupDir) && !Directory.Exists(finalDir))
             {
-                try { Directory.Move(backupDir, finalDir); }
+                try
+                {
+                    Directory.Move(backupDir, finalDir);
+                }
                 catch (Exception restoreEx)
                 {
                     Console.Error.WriteLine($"[rollback] Failed to restore backup after error: {restoreEx.Message}");
+                    if (Directory.Exists(backupDir))
+                    {
+                        Console.Error.WriteLine($"[rollback] Preserving backup at '{backupDir}' for manual recovery.");
+                        return false;
+                    }
                 }
             }
-            return;
+            return true;
         }
 
         try
@@ -287,11 +304,20 @@ internal static class PackageInstallationCoordinator
 
             if (finalExistedBefore && Directory.Exists(backupDir))
                 Directory.Move(backupDir, finalDir);
+
+            return true;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine(
                 $"[rollback] Failed to restore previous installation. Backup path: '{backupDir}'. Error: {ex.Message}");
+            if (Directory.Exists(backupDir))
+            {
+                Console.Error.WriteLine($"[rollback] Preserving backup at '{backupDir}' for manual recovery.");
+                return false;
+            }
+
+            return true;
         }
     }
 
