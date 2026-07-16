@@ -48,7 +48,7 @@ public class PackageAcquisitionServiceTests : IDisposable
 
         result.PackageId.ShouldBe("nginx");
         result.Version.ShouldBe("1.21.0");
-        result.LocalPath.ShouldContain("nginx.1.21.0.nupkg");
+        result.LocalPath.ShouldContain("nginx.1.21.0.zip");
         result.SizeBytes.ShouldBe(SampleBytes.Length);
         result.Hash.ShouldBe(ExpectedSha256);
     }
@@ -168,6 +168,61 @@ public class PackageAcquisitionServiceTests : IDisposable
             () => _sut.AcquireAsync(_feed, "missing", "1.0.0", 444, CancellationToken.None));
 
         ex.Message.ShouldContain("empty content");
+    }
+
+    // === Unsupported / supported feed types ===
+
+    [Theory]
+    [InlineData("Docker")]
+    [InlineData("Docker Container Registry")]
+    [InlineData("Helm")]
+    [InlineData("Helm Chart Repository")]
+    [InlineData("AWS Elastic Container Registry")]
+    public async Task AcquireAsync_UnsupportedFeedType_Throws(string feedType)
+    {
+        var feed = new ExternalFeed { Id = 7, FeedType = feedType, FeedUri = "https://registry.example.com" };
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => _sut.AcquireAsync(feed, "pkg", "1.0.0", 1, CancellationToken.None));
+
+        ex.Message.ShouldContain("cannot be installed by Deploy a Package");
+        ex.Message.ShouldContain(feedType);
+        _fetcherMock.Verify(
+            f => f.FetchAsync(It.IsAny<ExternalFeed>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task AcquireAsync_GitHubFeed_DoesNotThrowNuGetOnlyGuard()
+    {
+        var feed = new ExternalFeed { Id = 8, FeedType = "GitHub", FeedUri = "https://api.github.com" };
+        _fetcherMock.Setup(f => f.FetchAsync(feed, "owner/repo", "v1.0.0", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PackageFetchResult(new Dictionary<string, byte[]>(), new List<string>(), SampleBytes));
+
+        var result = await _sut.AcquireAsync(feed, "owner/repo", "v1.0.0", 900, CancellationToken.None);
+
+        result.PackageId.ShouldBe("owner/repo");
+        result.LocalPath.ShouldNotBeNullOrEmpty();
+        File.Exists(result.LocalPath).ShouldBeTrue();
+        _fetcherMock.Verify(f => f.FetchAsync(feed, "owner/repo", "v1.0.0", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("NuGet", ".nupkg")]
+    [InlineData("NuGet Feed", ".nupkg")]
+    [InlineData("GitHub", ".tar.gz")]
+    [InlineData("GitHub Repository Feed", ".tar.gz")]
+    [InlineData("Maven", ".zip")]
+    [InlineData("Generic", ".zip")]
+    public async Task AcquireAsync_UsesArchiveExtensionForFeedType(string feedType, string expectedExtension)
+    {
+        var feed = new ExternalFeed { Id = 9, FeedType = feedType, FeedUri = "https://packages.example.com" };
+        _fetcherMock.Setup(f => f.FetchAsync(feed, "Acme.App", "1.2.3", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PackageFetchResult(new Dictionary<string, byte[]>(), new List<string>(), SampleBytes));
+
+        var result = await _sut.AcquireAsync(feed, "Acme.App", "1.2.3", 901, CancellationToken.None);
+
+        result.LocalPath.ShouldEndWith($"Acme.App.1.2.3{expectedExtension}");
     }
 
     // === BuildPackageStoragePath ===

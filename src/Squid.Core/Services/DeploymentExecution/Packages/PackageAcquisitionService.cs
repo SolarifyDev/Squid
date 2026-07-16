@@ -17,12 +17,10 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
             throw new InvalidOperationException($"Feed is required for package '{packageId}' v{version}.");
 
         var feedType = feed.FeedType ?? string.Empty;
-        if (feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase)
-            || feedType.Contains("GitHub", StringComparison.OrdinalIgnoreCase)
-            || feedType.Contains("Docker", StringComparison.OrdinalIgnoreCase))
+        if (IsUnsupportedPackageFeed(feedType))
         {
             throw new InvalidOperationException(
-                $"Feed {feed.Id} type '{feed.FeedType}' is not a NuGet feed. Deploy a Package V1 only supports external NuGet feeds.");
+                $"Feed type '{feed.FeedType}' cannot be installed by Deploy a Package. Use an archive-capable feed (NuGet/GitHub/HTTP).");
         }
 
         var fetchResult = await packageContentFetcher.FetchAsync(feed, packageId, version, ct).ConfigureAwait(false);
@@ -36,7 +34,10 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         var storageDir = PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId);
         Directory.CreateDirectory(storageDir);
 
-        var localPath = Path.Combine(storageDir, $"{packageId}.{version}.nupkg");
+        var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
+        var safePackageId = SanitizeFileSegment(packageId);
+        var safeVersion = SanitizeFileSegment(version);
+        var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");
         await File.WriteAllBytesAsync(localPath, fetchResult.RawBytes, ct).ConfigureAwait(false);
 
         var hash = Convert.ToHexString(SHA256.HashData(fetchResult.RawBytes)).ToLowerInvariant();
@@ -44,5 +45,70 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         Log.Information("[Deploy] Package acquired: {PackageId} v{Version} -> {LocalPath} ({SizeBytes} bytes, hash {Hash})", packageId, version, localPath, fetchResult.RawBytes.Length, hash);
 
         return new PackageAcquisitionResult(localPath, packageId, version, fetchResult.RawBytes.Length, hash);
+    }
+
+    internal static bool IsUnsupportedPackageFeed(string feedType)
+    {
+        if (string.IsNullOrWhiteSpace(feedType))
+            return false;
+
+        return feedType.Contains("Docker", StringComparison.OrdinalIgnoreCase)
+            || feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase)
+            || feedType.Contains("Container", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string ResolveArchiveExtension(string feedType, string packageId, string feedUri)
+    {
+        var fromPackageId = InferExtensionFromPath(packageId);
+        if (fromPackageId != null)
+            return fromPackageId;
+
+        var fromUri = InferExtensionFromPath(feedUri);
+        if (fromUri != null)
+            return fromUri;
+
+        if (feedType.Contains("NuGet", StringComparison.OrdinalIgnoreCase))
+            return ".nupkg";
+
+        if (feedType.Contains("GitHub", StringComparison.OrdinalIgnoreCase))
+            return ".tar.gz";
+
+        if (feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase))
+            return ".tgz";
+
+        return ".zip";
+    }
+
+    private static string InferExtensionFromPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var path = value;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            path = uri.AbsolutePath;
+
+        if (path.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase))
+            return path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase) ? ".tgz" : ".tar.gz";
+
+        if (path.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+            return ".nupkg";
+
+        if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return ".zip";
+
+        if (path.EndsWith(".tar", StringComparison.OrdinalIgnoreCase))
+            return ".tar";
+
+        return null;
+    }
+
+    private static string SanitizeFileSegment(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var chars = value.Select(c => invalid.Contains(c) || c is '/' or '\\' ? '_' : c).ToArray();
+        var sanitized = new string(chars).Trim();
+        return string.IsNullOrEmpty(sanitized) ? "package" : sanitized;
     }
 }
