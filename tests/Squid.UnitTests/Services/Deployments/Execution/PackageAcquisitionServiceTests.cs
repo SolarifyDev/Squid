@@ -225,6 +225,21 @@ public class PackageAcquisitionServiceTests : IDisposable
         result.LocalPath.ShouldEndWith($"Acme.App.1.2.3{expectedExtension}");
     }
 
+    [Theory]
+    [InlineData("Acme.App.zip", "Generic", "https://packages.example.com/repo", ".zip")]
+    [InlineData("owner/repo.tar.gz", "GitHub", "https://api.github.com", ".tar.gz")]
+    [InlineData("Acme.App", "NuGet", "https://packages.example.com/artifacts.zip", ".nupkg")]
+    [InlineData("Acme.App", "Generic", "https://packages.example.com/artifacts.zip", ".zip")]
+    [InlineData("Acme.App", "Generic", "https://packages.example.com/download/app.nupkg", ".nupkg")]
+    [InlineData("Acme.App", "Generic", "https://packages.example.com/repo", ".zip")]
+    [InlineData("Acme.App", "GitHub", "https://api.github.com", ".tar.gz")]
+    public void ResolveArchiveExtension_PrefersPackageIdThenFeedType_NotGenericFeedUri(
+        string packageId, string feedType, string feedUri, string expected)
+    {
+        PackageAcquisitionService.ResolveArchiveExtension(feedType, packageId, feedUri)
+            .ShouldBe(expected);
+    }
+
     // === BuildPackageStoragePath ===
 
     [Theory]

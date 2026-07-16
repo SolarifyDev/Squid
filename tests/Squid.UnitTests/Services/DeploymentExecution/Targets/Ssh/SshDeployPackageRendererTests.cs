@@ -40,6 +40,28 @@ public class SshDeployPackageRendererTests
         request.ScriptBody.ShouldContain("PreDeploy.sh");
         request.ScriptBody.ShouldContain("PostDeploy.sh");
         request.ScriptBody.ShouldContain(".squid/Applications");
+        request.ScriptBody.ShouldContain("a.nupkg");
+    }
+
+    [Fact]
+    public async Task Render_DeployPackageIntent_UsesLocalArchiveNameAndTarExtract()
+    {
+        var renderer = new SshIntentRenderer();
+        var intent = new DeployPackageIntent
+        {
+            Name = "deploy-package",
+            StepName = "Install",
+            ActionName = "Deploy Web",
+            Package = new IntentPackageReference { PackageId = "owner/repo", Version = "v1", FeedId = "3" },
+            InstallationDirectoryMode = "Versioned",
+            PathSegments = new PackageInstallationPathSegments("Production", "WebApp", "owner/repo", "v1")
+        };
+        var acquired = new PackageAcquisitionResult("/tmp/owner_repo.v1.tar.gz", "owner/repo", "v1", 10, "ab");
+        var request = await renderer.RenderAsync(intent, CreateContext(acquired), CancellationToken.None);
+
+        request.ScriptBody.ShouldContain("owner_repo.v1.tar.gz");
+        request.ScriptBody.ShouldContain("tar ");
+        request.ScriptBody.ShouldNotContain(".nupkg");
     }
 
     private static IntentRenderContext CreateContext(PackageAcquisitionResult acquired)

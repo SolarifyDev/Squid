@@ -11,6 +11,8 @@ public sealed class SshPackageDeployScriptModel
     public string CustomInstallationDirectory { get; init; } = string.Empty;
     public required string PackageId { get; init; }
     public required string PackageVersion { get; init; }
+    /// <summary>Remote archive file name under $HOME/.squid/Packages (e.g. Acme.Web.1.0.0.tar.gz).</summary>
+    public string ArchiveFileName { get; init; } = string.Empty;
 }
 
 public static class SshPackageDeploymentScriptBuilder
@@ -28,16 +30,15 @@ public static class SshPackageDeploymentScriptBuilder
         var package = Q(model.PackageSegment);
         var version = Q(model.VersionSegment);
         var custom = Q(model.CustomInstallationDirectory ?? string.Empty);
+        var archiveFileName = ResolveArchiveFileName(model);
+        var archive = Q(archiveFileName);
+        var extractCommand = BuildExtractCommand(archiveFileName);
 
         return
             "#!/usr/bin/env bash\n" +
             "set -euo pipefail\n\n" +
             "if ! command -v sha256sum >/dev/null 2>&1; then\n" +
             "  echo \"[hash verification] sha256sum is required on the SSH target.\" >&2\n" +
-            "  exit 1\n" +
-            "fi\n" +
-            "if ! command -v unzip >/dev/null 2>&1; then\n" +
-            "  echo \"[extraction] unzip is required on the SSH target.\" >&2\n" +
             "  exit 1\n" +
             "fi\n" +
             "if [ -z \"${HOME:-}\" ]; then\n" +
@@ -53,7 +54,8 @@ public static class SshPackageDeploymentScriptBuilder
             $"PACKAGE_SEG={package}\n" +
             $"VERSION_SEG={version}\n" +
             $"CUSTOM_DIR={custom}\n" +
-            "ARCHIVE=\"$HOME/.squid/Packages/${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg\"\n\n" +
+            $"ARCHIVE_NAME={archive}\n" +
+            "ARCHIVE=\"$HOME/.squid/Packages/$ARCHIVE_NAME\"\n\n" +
             "if [ ! -f \"$ARCHIVE\" ]; then\n" +
             "  echo \"[transfer] Package archive not found: $ARCHIVE\" >&2\n" +
             "  exit 1\n" +
@@ -84,10 +86,7 @@ public static class SshPackageDeploymentScriptBuilder
             "if [ \"$MODE\" = \"Custom\" ] && [ -d \"$FINAL_DIR\" ]; then\n" +
             "  cp -a \"$FINAL_DIR\"/. \"$STAGING_DIR\"/\n" +
             "fi\n\n" +
-            "if ! unzip -q -o \"$ARCHIVE\" -d \"$STAGING_DIR\"; then\n" +
-            "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
-            "  exit 1\n" +
-            "fi\n\n" +
+            extractCommand + "\n\n" +
             "if [ -d \"$FINAL_DIR\" ]; then\n" +
             "  mv \"$FINAL_DIR\" \"$BACKUP_DIR\"\n" +
             "fi\n\n" +
@@ -113,6 +112,58 @@ public static class SshPackageDeploymentScriptBuilder
             "printf \"##squid[setVariable name='%s' value='%s']\\n\" \"Squid.Action.Package.PackageId\" \"$PACKAGE_ID\"\n" +
             "printf \"##squid[setVariable name='%s' value='%s']\\n\" \"Squid.Action.Package.PackageVersion\" \"$PACKAGE_VERSION\"\n" +
             "echo \"DeployPackage: installed to $FINAL_DIR\"\n";
+    }
+
+    internal static string ResolveArchiveFileName(SshPackageDeployScriptModel model)
+    {
+        if (!string.IsNullOrWhiteSpace(model.ArchiveFileName))
+        {
+            var name = model.ArchiveFileName.Trim().Replace('\\', '/');
+            var slash = name.LastIndexOf('/');
+            return slash >= 0 ? name[(slash + 1)..] : name;
+        }
+
+        var safeId = SanitizeSegment(model.PackageId);
+        var safeVersion = SanitizeSegment(model.PackageVersion);
+        return $"{safeId}.{safeVersion}.nupkg";
+    }
+
+    internal static string BuildExtractCommand(string archiveFileName)
+    {
+        var lower = (archiveFileName ?? string.Empty).ToLowerInvariant();
+        if (lower.EndsWith(".tar.gz") || lower.EndsWith(".tgz") || lower.EndsWith(".tar"))
+        {
+            var flags = lower.EndsWith(".tar") ? "-xf" : "-xzf";
+            return
+                "if ! command -v tar >/dev/null 2>&1; then\n" +
+                "  echo \"[extraction] tar is required on the SSH target.\" >&2\n" +
+                "  exit 1\n" +
+                "fi\n" +
+                "if ! tar " + flags + " \"$ARCHIVE\" -C \"$STAGING_DIR\"; then\n" +
+                "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
+                "  exit 1\n" +
+                "fi";
+        }
+
+        return
+            "if ! command -v unzip >/dev/null 2>&1; then\n" +
+            "  echo \"[extraction] unzip is required on the SSH target.\" >&2\n" +
+            "  exit 1\n" +
+            "fi\n" +
+            "if ! unzip -q -o \"$ARCHIVE\" -d \"$STAGING_DIR\"; then\n" +
+            "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
+            "  exit 1\n" +
+            "fi";
+    }
+
+    internal static string SanitizeSegment(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "package";
+
+        var chars = value.Select(c => c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' ? '_' : c).ToArray();
+        var sanitized = new string(chars).Trim();
+        return string.IsNullOrEmpty(sanitized) ? "package" : sanitized;
     }
 
     internal static string Q(string value)

@@ -63,18 +63,17 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         if (fromPackageId != null)
             return fromPackageId;
 
-        var fromUri = InferExtensionFromPath(feedUri);
-        if (fromUri != null)
-            return fromUri;
-
-        if (feedType.Contains("NuGet", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(feedType) && feedType.Contains("NuGet", StringComparison.OrdinalIgnoreCase))
             return ".nupkg";
 
-        if (feedType.Contains("GitHub", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(feedType) && feedType.Contains("GitHub", StringComparison.OrdinalIgnoreCase))
             return ".tar.gz";
 
-        if (feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase))
-            return ".tgz";
+        // Only honor feedUri when the last path segment looks like a package file
+        // (e.g. .../download/app.nupkg). Generic feed base URIs must not override.
+        var fromUri = InferExtensionFromPackageFilePath(feedUri);
+        if (fromUri != null)
+            return fromUri;
 
         return ".zip";
     }
@@ -102,6 +101,24 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
             return ".tar";
 
         return null;
+    }
+
+    private static string InferExtensionFromPackageFilePath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var path = value;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            path = uri.AbsolutePath;
+
+        path = path.TrimEnd('/');
+        var lastSlash = path.LastIndexOf('/');
+        var fileName = lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
+        if (string.IsNullOrWhiteSpace(fileName) || fileName.IndexOf('.') < 0)
+            return null;
+
+        return InferExtensionFromPath(fileName);
     }
 
     private static string SanitizeFileSegment(string value)
