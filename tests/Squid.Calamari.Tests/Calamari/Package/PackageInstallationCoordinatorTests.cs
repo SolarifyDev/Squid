@@ -357,6 +357,85 @@ exit 9
     }
 
     [Fact]
+    public async Task Retention_DoesNotRunBeforeConventions_WhenRollbackOnFailure()
+    {
+        var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web");
+        var v1Dir = Path.Combine(packageRoot, "1.0.0");
+        var v2Dir = Path.Combine(packageRoot, "2.0.0");
+
+        var v1Archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
+        {
+            ["app.txt"] = "v1"
+        });
+        var v1Variables = new VariableSet();
+        v1Variables.Set("Squid.Action.Package.UseCurrentPointer", "True");
+
+        await PackageInstallationCoordinator.InstallAsync(new PackageInstallRequest
+        {
+            ArchivePath = v1Archive,
+            ExpectedSha256 = Sha256(v1Archive),
+            Mode = "Versioned",
+            FinalInstallationDirectory = v1Dir,
+            PreferredSyntax = ScriptSyntax.Bash,
+            Variables = v1Variables,
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0"
+        }, CancellationToken.None);
+
+        var failingV2Archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
+        {
+            ["app.txt"] = "v2-fail",
+            ["PreDeploy.sh"] = "echo fail"
+        });
+        var failingVariables = new VariableSet();
+        failingVariables.Set("Squid.Action.Package.UseCurrentPointer", "True");
+        failingVariables.Set("Squid.Action.Package.RollbackOnFailure", "True");
+        failingVariables.Set("Squid.Action.Package.RetentionCount", "1");
+
+        await Should.ThrowAsync<InvalidOperationException>(() => PackageInstallationCoordinator.InstallAsync(new PackageInstallRequest
+        {
+            ArchivePath = failingV2Archive,
+            ExpectedSha256 = Sha256(failingV2Archive),
+            Mode = "Versioned",
+            FinalInstallationDirectory = v2Dir,
+            PreferredSyntax = ScriptSyntax.Bash,
+            Variables = failingVariables,
+            ScriptEngine = new StubScriptEngine(exitCode: 9),
+            PackageId = "Acme.Web",
+            PackageVersion = "2.0.0"
+        }, CancellationToken.None));
+
+        Directory.Exists(v1Dir).ShouldBeTrue();
+        Directory.Exists(v2Dir).ShouldBeFalse();
+        ResolveCurrentTarget(packageRoot).ShouldBe(Path.GetFullPath(v1Dir));
+
+        var successV2Archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
+        {
+            ["app.txt"] = "v2-ok"
+        });
+        var successVariables = new VariableSet();
+        successVariables.Set("Squid.Action.Package.UseCurrentPointer", "True");
+        successVariables.Set("Squid.Action.Package.RetentionCount", "1");
+
+        await PackageInstallationCoordinator.InstallAsync(new PackageInstallRequest
+        {
+            ArchivePath = successV2Archive,
+            ExpectedSha256 = Sha256(successV2Archive),
+            Mode = "Versioned",
+            FinalInstallationDirectory = v2Dir,
+            PreferredSyntax = ScriptSyntax.Bash,
+            Variables = successVariables,
+            PackageId = "Acme.Web",
+            PackageVersion = "2.0.0"
+        }, CancellationToken.None);
+
+        Directory.Exists(v1Dir).ShouldBeFalse();
+        Directory.Exists(v2Dir).ShouldBeTrue();
+        ResolveCurrentTarget(packageRoot).ShouldBe(Path.GetFullPath(v2Dir));
+        File.ReadAllText(Path.Combine(v2Dir, "app.txt")).ShouldBe("v2-ok");
+    }
+
+    [Fact]
     public async Task Install_CustomMode_RollbackOnFailure_RestoresPreviousFinalContent()
     {
         var finalDir = Path.Combine(_root, "custom-app-rollback");

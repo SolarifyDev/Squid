@@ -124,12 +124,15 @@ internal static class PackageInstallationCoordinator
                 currentUpdated = true;
             }
 
-            if (isVersioned && retentionCount > 0)
-                ApplyRetention(parent, retentionCount, finalDir);
-
             await RunConventionsAsync(request, finalDir, ct).ConfigureAwait(false);
 
             WriteInstalledMarker(finalDir, request.PackageId, request.PackageVersion);
+
+            // Retention must run only after a fully successful install so failed
+            // installs can still roll back to previous version directories.
+            if (isVersioned && retentionCount > 0)
+                ApplyRetention(parent, retentionCount, finalDir);
+
             EmitOutputVariables(request, finalDir);
             return new PackageInstallResult(finalDir, filesExtracted, totalBytes);
         }
