@@ -391,6 +391,12 @@ V2 实施计划与验收通过后，必须执行以下任务，不得省略：
 - V3 实施计划路径已确定
 - V2 文档中本任务标记完成
 
+### 结果（V2 完成后填写）
+
+- V3 设计文档：`docs/superpowers/specs/2026-07-15-deploy-a-package-v3-design.md`
+- V3 计划入口：`docs/superpowers/plans/2026-07-15-deploy-a-package-v3.md`
+- 状态：started
+
 ---
 
 ## 13. 共识摘要
