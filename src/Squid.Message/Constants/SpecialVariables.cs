@@ -110,6 +110,8 @@ public static class SpecialVariables
         public const string DeployReleaseProjectId = "Squid.Action.DeployRelease.ProjectId";
         public const string DeployReleaseVersion = "Squid.Action.DeployRelease.Version";
         public const string DeployReleaseChannelId = "Squid.Action.DeployRelease.ChannelId";
+        public const string ConfigurationVariablesEnabled = "Squid.Action.ConfigurationVariables.Enabled";
+        public const string IgnoreVariableReplacementErrors = "Squid.Action.Package.IgnoreVariableReplacementErrors";
         public const string StructuredConfigurationVariablesEnabled = "Squid.Action.StructuredConfigurationVariables.Enabled";
     }
 
