@@ -21,7 +21,8 @@ public readonly record struct StepRetryPolicy(bool Enabled, int MaxAttempts)
 
     public static bool IsRetryable(Exception ex, CancellationToken ct)
     {
-        if (ex is OperationCanceledException && ct.IsCancellationRequested) return false;
+        // Any cancellation is non-retryable, whether user-cancel or peer fail-fast.
+        if (ex is OperationCanceledException) return false;
         if (ex is DeploymentAbortedException) return false;
         // Do not retry transient infra failures that must propagate for resume
         if (TransientFailureClassifier.IsTransient(ex)) return false;

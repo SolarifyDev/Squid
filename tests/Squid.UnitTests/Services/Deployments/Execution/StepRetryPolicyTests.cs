@@ -1,3 +1,5 @@
+using Halibut;
+using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Message.Constants;
@@ -130,6 +132,27 @@ public class StepRetryPolicyTests
         cts.Cancel();
 
         StepRetryPolicy.IsRetryable(new OperationCanceledException(cts.Token), cts.Token)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsRetryable_OperationCanceledWhenTokenNotCancelled_ReturnsFalse()
+    {
+        StepRetryPolicy.IsRetryable(new OperationCanceledException(), CancellationToken.None)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsRetryable_TransientAgentUnreachable_ReturnsFalse()
+    {
+        StepRetryPolicy.IsRetryable(new AgentUnreachableException("agent-1", 3), CancellationToken.None)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void IsRetryable_TransientHalibutClientException_ReturnsFalse()
+    {
+        StepRetryPolicy.IsRetryable(new HalibutClientException("connection reset by peer"), CancellationToken.None)
             .ShouldBeFalse();
     }
 

@@ -419,8 +419,8 @@ public sealed partial class ExecuteStepsPhase
             }
             catch (Exception ex) when (attempt < retryPolicy.MaxAttempts && StepRetryPolicy.IsRetryable(ex, ct))
             {
-                Log.Warning(ex, "[Deploy] Action failed in step {StepName} (attempt {Attempt}/{MaxAttempts}); retrying",
-                    step.Name, attempt, retryPolicy.MaxAttempts);
+                Log.Warning(ex, "[Deploy] Step {StepName} action {ActionName} failed attempt {Attempt}/{MaxAttempts}; retrying",
+                    step.Name, actionName, attempt, retryPolicy.MaxAttempts);
             }
             catch (Exception ex)
             {
