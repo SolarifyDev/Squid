@@ -1,5 +1,7 @@
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Squid.Calamari.Commands.Configuration;
 using Squid.Calamari.Commands.Conventions;
 using Squid.Calamari.Commands.StructuredConfig;
@@ -25,8 +27,21 @@ internal sealed record PackageInstallRequest
 
 internal sealed record PackageInstallResult(string InstallationDirectory, int FilesExtracted, long TotalBytesWritten);
 
+internal static class PackageInstallOptionProperties
+{
+    public const string SkipIfAlreadyInstalled = "Squid.Action.Package.SkipIfAlreadyInstalled";
+    public const string PurgeBeforeInstall = "Squid.Action.Package.PurgeBeforeInstall";
+    public const string PreservePaths = "Squid.Action.Package.PreservePaths";
+    public const string RetentionCount = "Squid.Action.Package.RetentionCount";
+    public const string UseCurrentPointer = "Squid.Action.Package.UseCurrentPointer";
+    public const string RollbackOnFailure = "Squid.Action.Package.RollbackOnFailure";
+}
+
 internal static class PackageInstallationCoordinator
 {
+    internal const string InstalledMarkerFileName = ".squid-installed.json";
+    internal const string CurrentPointerName = "current";
+
     public static async Task<PackageInstallResult> InstallAsync(PackageInstallRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -40,9 +55,25 @@ internal static class PackageInstallationCoordinator
 
         VerifySha256(request.ArchivePath, request.ExpectedSha256);
 
+        var variables = request.Variables ?? new VariableSet();
         var finalDir = Path.GetFullPath(request.FinalInstallationDirectory);
         var parent = Directory.GetParent(finalDir)?.FullName
             ?? throw new InvalidOperationException($"[target path validation] Cannot resolve parent for '{finalDir}'.");
+        var isVersioned = string.Equals(request.Mode, "Versioned", StringComparison.OrdinalIgnoreCase);
+        var skipIfInstalled = variables.GetFlag(PackageInstallOptionProperties.SkipIfAlreadyInstalled);
+        var purgeBeforeInstall = variables.GetFlag(PackageInstallOptionProperties.PurgeBeforeInstall);
+        var useCurrentPointer = isVersioned && variables.GetFlag(PackageInstallOptionProperties.UseCurrentPointer);
+        var rollbackOnFailure = variables.GetFlag(PackageInstallOptionProperties.RollbackOnFailure);
+        var retentionCount = variables.GetInt32(PackageInstallOptionProperties.RetentionCount) ?? 0;
+        var preserveGlobs = SplitMultiLine(variables.Get(PackageInstallOptionProperties.PreservePaths));
+
+        if (skipIfInstalled && IsSameVersionInstalled(finalDir, request.PackageId, request.PackageVersion))
+        {
+            Console.WriteLine(
+                $"SkipIfAlreadyInstalled: package '{request.PackageId}' version '{request.PackageVersion}' already installed at '{finalDir}'.");
+            EmitOutputVariables(request, finalDir);
+            return new PackageInstallResult(finalDir, FilesExtracted: 0, TotalBytesWritten: 0);
+        }
 
         Directory.CreateDirectory(parent);
 
@@ -53,6 +84,12 @@ internal static class PackageInstallationCoordinator
         var filesExtracted = 0;
         long totalBytes = 0;
         var committed = false;
+        var finalExistedBefore = Directory.Exists(finalDir);
+        string? previousCurrentTarget = null;
+        var currentUpdated = false;
+
+        if (useCurrentPointer)
+            previousCurrentTarget = TryReadCurrentPointer(parent);
 
         try
         {
@@ -70,19 +107,40 @@ internal static class PackageInstallationCoordinator
             filesExtracted = extractResult.FilesExtracted;
             totalBytes = extractResult.TotalBytesWritten;
 
-            await RunConfigRewritePipelineAsync(stagingDir, request.Variables, ct).ConfigureAwait(false);
+            var packageRelativeFiles = GetArchiveRelativeFilePaths(request.ArchivePath, stagingDir);
+
+            await RunConfigRewritePipelineAsync(stagingDir, variables, ct).ConfigureAwait(false);
 
             CommitDirectory(finalDir, stagingDir, backupDir);
             committed = true;
 
+            if (purgeBeforeInstall)
+                PurgeNonPackageFiles(finalDir, packageRelativeFiles, preserveGlobs);
+
+            if (useCurrentPointer)
+            {
+                UpdateCurrentPointer(parent, finalDir);
+                currentUpdated = true;
+            }
+
+            if (isVersioned && retentionCount > 0)
+                ApplyRetention(parent, retentionCount, finalDir);
+
             await RunConventionsAsync(request, finalDir, ct).ConfigureAwait(false);
 
+            WriteInstalledMarker(finalDir, request.PackageId, request.PackageVersion);
             EmitOutputVariables(request, finalDir);
             return new PackageInstallResult(finalDir, filesExtracted, totalBytes);
         }
         catch
         {
-            if (!committed && Directory.Exists(backupDir) && !Directory.Exists(finalDir))
+            if (rollbackOnFailure)
+            {
+                TryRollbackCommittedInstall(finalDir, backupDir, committed, finalExistedBefore);
+                if (useCurrentPointer && currentUpdated)
+                    RestoreCurrentPointer(parent, previousCurrentTarget);
+            }
+            else if (!committed && Directory.Exists(backupDir) && !Directory.Exists(finalDir))
             {
                 try { Directory.Move(backupDir, finalDir); }
                 catch (Exception restoreEx)
@@ -96,8 +154,8 @@ internal static class PackageInstallationCoordinator
         finally
         {
             TryDeleteDirectory(stagingDir);
-            if (committed)
-                TryDeleteDirectory(backupDir);
+            // Backup may have been restored (moved) during rollback; best-effort cleanup.
+            TryDeleteDirectory(backupDir);
         }
     }
 
@@ -111,7 +169,47 @@ internal static class PackageInstallationCoordinator
             throw new InvalidOperationException($"[hash verification] SHA-256 mismatch for '{archivePath}': expected {expectedSha256}, got {actual}.");
     }
 
-    private static async Task RunConfigRewritePipelineAsync(string stagingDir, VariableSet? variables, CancellationToken ct)
+    internal static bool IsSameVersionInstalled(string finalDir, string packageId, string packageVersion)
+    {
+        if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(packageVersion))
+            return false;
+        if (!Directory.Exists(finalDir))
+            return false;
+
+        var markerPath = Path.Combine(finalDir, InstalledMarkerFileName);
+        if (!File.Exists(markerPath))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(markerPath));
+            var root = doc.RootElement;
+            var installedId = root.TryGetProperty("packageId", out var idEl) ? idEl.GetString() : null;
+            var installedVersion = root.TryGetProperty("version", out var verEl) ? verEl.GetString() : null;
+            return string.Equals(installedId, packageId, StringComparison.OrdinalIgnoreCase)
+                   && string.Equals(installedVersion, packageVersion, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[skip-if-installed] Failed to read marker '{markerPath}': {ex.Message}");
+            return false;
+        }
+    }
+
+    internal static void WriteInstalledMarker(string finalDir, string packageId, string packageVersion)
+    {
+        Directory.CreateDirectory(finalDir);
+        var payload = new
+        {
+            packageId = packageId ?? string.Empty,
+            version = packageVersion ?? string.Empty,
+            installedAtUtc = DateTime.UtcNow.ToString("O")
+        };
+        var json = JsonSerializer.Serialize(payload);
+        File.WriteAllText(Path.Combine(finalDir, InstalledMarkerFileName), json, Encoding.UTF8);
+    }
+
+    private static async Task RunConfigRewritePipelineAsync(string stagingDir, VariableSet variables, CancellationToken ct)
     {
         // Minimal adapter: existing rewriter steps are typed against RunScriptCommandContext.
         // For package installs we only need WorkingDirectory + Variables; ScriptPath/VariablesPath
@@ -121,7 +219,7 @@ internal static class PackageInstallationCoordinator
             ScriptPath = string.Empty,
             VariablesPath = string.Empty,
             WorkingDirectory = stagingDir,
-            Variables = variables ?? new VariableSet()
+            Variables = variables
         };
 
         ExecutionStep<RunScriptCommandContext>[] steps =
@@ -164,6 +262,276 @@ internal static class PackageInstallationCoordinator
             }
 
             throw new InvalidOperationException($"[final-directory commit] {ex.Message}", ex);
+        }
+    }
+
+    private static void TryRollbackCommittedInstall(string finalDir, string backupDir, bool committed, bool finalExistedBefore)
+    {
+        if (!committed)
+        {
+            if (Directory.Exists(backupDir) && !Directory.Exists(finalDir))
+            {
+                try { Directory.Move(backupDir, finalDir); }
+                catch (Exception restoreEx)
+                {
+                    Console.Error.WriteLine($"[rollback] Failed to restore backup after error: {restoreEx.Message}");
+                }
+            }
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(finalDir))
+                TryDeleteDirectory(finalDir);
+
+            if (finalExistedBefore && Directory.Exists(backupDir))
+                Directory.Move(backupDir, finalDir);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[rollback] Failed to restore previous installation. Backup path: '{backupDir}'. Error: {ex.Message}");
+        }
+    }
+
+    private static void PurgeNonPackageFiles(
+        string finalDir,
+        IReadOnlySet<string> packageRelativeFiles,
+        IReadOnlyList<string> preserveGlobs)
+    {
+        foreach (var file in Directory.GetFiles(finalDir, "*", SearchOption.AllDirectories))
+        {
+            var rel = NormalizeRelativePath(finalDir, file);
+            if (string.Equals(rel, InstalledMarkerFileName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (packageRelativeFiles.Contains(rel) || IsPreservedByGlob(rel, preserveGlobs))
+                continue;
+
+            TryDeleteFile(file);
+        }
+
+        // Remove empty directories left behind (deepest first), never the root.
+        foreach (var dir in Directory.GetDirectories(finalDir, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(d => d.Length))
+        {
+            try
+            {
+                if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir);
+            }
+            catch
+            {
+                // best effort
+            }
+        }
+    }
+
+    private static bool IsPreservedByGlob(string relativePath, IReadOnlyList<string> preserveGlobs)
+    {
+        var normalised = relativePath.Replace('\\', '/');
+        foreach (var glob in preserveGlobs)
+        {
+            if (string.IsNullOrWhiteSpace(glob))
+                continue;
+
+            // Prefer existing GlobMatcher expand semantics when possible by testing
+            // the pattern regex directly against the relative path.
+            var regex = GlobMatcher.GlobToRegex(glob.Replace('\\', '/'));
+            if (regex.IsMatch(normalised))
+                return true;
+        }
+        return false;
+    }
+
+    private static IReadOnlySet<string> GetArchiveRelativeFilePaths(string archivePath, string stagingDir)
+    {
+        var fromArchive = TryListZipRelativePaths(archivePath);
+        if (fromArchive is not null)
+            return fromArchive;
+
+        // Fallback for non-zip formats: treat every extracted staging file as package content.
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (Directory.Exists(stagingDir))
+        {
+            foreach (var file in Directory.GetFiles(stagingDir, "*", SearchOption.AllDirectories))
+                set.Add(NormalizeRelativePath(stagingDir, file));
+        }
+        return set;
+    }
+
+    private static HashSet<string>? TryListZipRelativePaths(string archivePath)
+    {
+        var lower = archivePath.ToLowerInvariant();
+        if (!(lower.EndsWith(".zip", StringComparison.Ordinal) || lower.EndsWith(".nupkg", StringComparison.Ordinal)))
+            return null;
+
+        try
+        {
+            using var zip = ZipFile.OpenRead(archivePath);
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in zip.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                    continue;
+                var rel = entry.FullName.Replace('\\', '/').TrimStart('/');
+                if (rel.EndsWith('/'))
+                    continue;
+                set.Add(rel);
+            }
+            return set;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void ApplyRetention(string packageRoot, int keepCount, string currentFinalDir)
+    {
+        try
+        {
+            if (!Directory.Exists(packageRoot) || keepCount <= 0)
+                return;
+
+            var currentFull = Path.GetFullPath(currentFinalDir);
+            var versionDirs = Directory.GetDirectories(packageRoot)
+                .Where(dir =>
+                {
+                    var name = Path.GetFileName(dir);
+                    if (string.Equals(name, CurrentPointerName, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                    if (name.StartsWith(".squid-", StringComparison.OrdinalIgnoreCase))
+                        return false;
+                    return true;
+                })
+                .Select(dir => new DirectoryInfo(dir))
+                .OrderByDescending(d => d.LastWriteTimeUtc)
+                .ThenByDescending(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { currentFull };
+            foreach (var dir in versionDirs)
+            {
+                if (keep.Count >= keepCount)
+                    break;
+                keep.Add(dir.FullName);
+            }
+
+            foreach (var dir in versionDirs)
+            {
+                if (keep.Contains(dir.FullName))
+                    continue;
+                TryDeleteDirectory(dir.FullName);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[retention] Failed to apply retention under '{packageRoot}': {ex.Message}");
+        }
+    }
+
+    internal static void UpdateCurrentPointer(string packageRoot, string finalDir)
+    {
+        Directory.CreateDirectory(packageRoot);
+        var currentPath = Path.Combine(packageRoot, CurrentPointerName);
+        var targetFull = Path.GetFullPath(finalDir);
+        var targetRelative = Path.GetFileName(targetFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        RemoveCurrentPointer(currentPath);
+
+        try
+        {
+            // Prefer relative symlink for portability across machines sharing the package root.
+            Directory.CreateSymbolicLink(currentPath, targetRelative);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[current-pointer] Symlink unavailable ({ex.GetType().Name}); writing pointer file.");
+        }
+
+        File.WriteAllText(currentPath, targetRelative + Environment.NewLine, Encoding.UTF8);
+    }
+
+    private static void RestoreCurrentPointer(string packageRoot, string? previousTarget)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(previousTarget))
+            {
+                RemoveCurrentPointer(Path.Combine(packageRoot, CurrentPointerName));
+                return;
+            }
+
+            UpdateCurrentPointer(packageRoot, previousTarget);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[rollback] Failed to restore current pointer under '{packageRoot}': {ex.Message}");
+        }
+    }
+
+    internal static string? TryReadCurrentPointer(string packageRoot)
+    {
+        var currentPath = Path.Combine(packageRoot, CurrentPointerName);
+        if (!Directory.Exists(currentPath) && !File.Exists(currentPath))
+            return null;
+
+        try
+        {
+            var linkInfo = new FileInfo(currentPath);
+            if (!string.IsNullOrEmpty(linkInfo.LinkTarget))
+            {
+                var target = linkInfo.LinkTarget;
+                return Path.IsPathRooted(target)
+                    ? Path.GetFullPath(target)
+                    : Path.GetFullPath(Path.Combine(packageRoot, target));
+            }
+
+            if (Directory.Exists(currentPath))
+            {
+                var resolved = Directory.ResolveLinkTarget(currentPath, returnFinalTarget: true);
+                if (resolved is not null)
+                    return Path.GetFullPath(resolved.FullName);
+            }
+
+            if (File.Exists(currentPath) && !Directory.Exists(currentPath))
+            {
+                var pointer = File.ReadAllText(currentPath).Trim();
+                if (string.IsNullOrWhiteSpace(pointer))
+                    return null;
+                return Path.IsPathRooted(pointer)
+                    ? Path.GetFullPath(pointer)
+                    : Path.GetFullPath(Path.Combine(packageRoot, pointer));
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[current-pointer] Failed to read '{currentPath}': {ex.Message}");
+        }
+
+        return null;
+    }
+
+    private static void RemoveCurrentPointer(string currentPath)
+    {
+        try
+        {
+            if (Directory.Exists(currentPath))
+            {
+                // Symlink directories must be deleted without recursing into the target.
+                Directory.Delete(currentPath, recursive: false);
+                return;
+            }
+
+            if (File.Exists(currentPath))
+                File.Delete(currentPath);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[current-pointer] Failed to remove '{currentPath}': {ex.Message}");
+            TryDeleteDirectory(currentPath);
         }
     }
 
@@ -252,6 +620,23 @@ internal static class PackageInstallationCoordinator
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, overwrite: true);
         }
+    }
+
+    private static IReadOnlyList<string> SplitMultiLine(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return Array.Empty<string>();
+
+        return raw
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => line.Length > 0)
+            .ToArray();
+    }
+
+    private static string NormalizeRelativePath(string rootDir, string absolutePath)
+    {
+        var rel = Path.GetRelativePath(rootDir, absolutePath);
+        return rel.Replace('\\', '/');
     }
 
     private static void TryDeleteDirectory(string path)
