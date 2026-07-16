@@ -365,6 +365,5 @@ Deploy Package 只写入 handler-agnostic 属性名。若运行时同变量集�
 
 ## 13. 状态
 
-- design：approved
-- plan：executable draft ready at `docs/superpowers/plans/2026-07-15-deploy-a-package-v3.md`
-- next：选择执行方式并开始 W1
+- design：implemented
+- plan：completed
