@@ -395,7 +395,7 @@ V2 实施计划与验收通过后，必须执行以下任务，不得省略：
 
 - V3 设计文档：`docs/superpowers/specs/2026-07-15-deploy-a-package-v3-design.md`
 - V3 计划入口：`docs/superpowers/plans/2026-07-15-deploy-a-package-v3.md`
-- 状态：started
+- 状态：design-approved（待 writing-plans 重写可执行计划）
 
 ---
 
