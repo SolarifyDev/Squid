@@ -356,78 +356,89 @@ public sealed partial class ExecuteStepsPhase
     {
         var actionName = prepared.Context.Action.Name;
         var effectiveVariables = prepared.EffectiveVariables;
+        var retryPolicy = StepRetryPolicy.FromStep(step);
 
         await lifecycle.EmitAsync(new ActionExecutingEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName }), ct).ConfigureAwait(false);
 
-        try
+        for (var attempt = 1; attempt <= retryPolicy.MaxAttempts; attempt++)
         {
-            var strategy = tc.Transport?.Strategy;
-
-            if (strategy == null)
-                throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
-
-            var request = await DescribeExpandAndRenderAsync(prepared, tc, step, effectiveVariables, stepTimeout, stepDisplayOrder, ct).ConfigureAwait(false);
-
-            // Live log tail: stream each incremental output batch to the task log as it arrives, so a
-            // long-running action shows progress instead of sitting on an empty node until completion.
-            request.OutputSink = (lines, sinkCt) => lifecycle.EmitAsync(
-                new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptOutputChunk = lines }), sinkCt);
-
-            var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
-
-            // P1-B.7: cross-reference output-variable values against the
-            // sensitive values that flowed INTO this script, so an agent that
-            // wrongly emits sensitive='False' (compromised script or bug) can
-            // be caught by the three-mode guard.
-            var knownSensitiveValues = ExtractSensitiveValues(effectiveVariables);
-            var outputCapture = CaptureOutputVariables(execResult.LogLines, knownSensitiveValues);
-
-            await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
-
-            if (!execResult.Success)
-                throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
-
-            await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
-
-            var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, outputCapture);
-
-            if (collectedNames.Count > 0)
-                await lifecycle.EmitAsync(new OutputVariablesCapturedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine?.Name, ActionSortOrder = actionSortOrder, OutputVariableNames = collectedNames }), ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex))
-        {
-            // A transient infra failure (Halibut RPC drop after the library's
-            // retries, or an unreachable agent) must PROPAGATE so
-            // the runner pauses the deployment for resume — regardless of whether
-            // the step is required. Recording it as a per-target/terminal failure
-            // (the path below) would route to OnFailureAsync, which deletes the
-            // checkpoint AND the in-flight pointer the strategy deliberately
-            // preserved — orphaning the still-running script and defeating resume.
-            // The per-target catch (TargetCatchClassifier) leaves the target
-            // in-flight; here, for a non-required step (which has no per-target
-            // catch), we still must not swallow it.
-            throw;
-        }
-        catch (Exception ex)
-        {
-            result.Failed = true;
-
-            Log.Error(ex, "[Deploy] Action failed in step {StepName}", step.Name);
-
-            await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
-
-            if (step.IsRequired && _ctx.UseGuidedFailure)
+            try
             {
-                await HandleGuidedFailureAsync(step, actionName, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
-                // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
-            }
+                var strategy = tc.Transport?.Strategy;
 
-            if (step.IsRequired)
+                if (strategy == null)
+                    throw new DeploymentTargetException($"No execution strategy for {tc.CommunicationStyle}");
+
+                var request = await DescribeExpandAndRenderAsync(prepared, tc, step, effectiveVariables, stepTimeout, stepDisplayOrder, ct).ConfigureAwait(false);
+
+                // Live log tail: stream each incremental output batch to the task log as it arrives, so a
+                // long-running action shows progress instead of sitting on an empty node until completion.
+                request.OutputSink = (lines, sinkCt) => lifecycle.EmitAsync(
+                    new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptOutputChunk = lines }), sinkCt);
+
+                var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
+
+                // P1-B.7: cross-reference output-variable values against the
+                // sensitive values that flowed INTO this script, so an agent that
+                // wrongly emits sensitive='False' (compromised script or bug) can
+                // be caught by the three-mode guard.
+                var knownSensitiveValues = ExtractSensitiveValues(effectiveVariables);
+                var outputCapture = CaptureOutputVariables(execResult.LogLines, knownSensitiveValues);
+
+                await lifecycle.EmitAsync(new ScriptOutputReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptResult = execResult }), ct).ConfigureAwait(false);
+
+                if (!execResult.Success)
+                    throw new DeploymentScriptException(execResult.BuildErrorSummary(), _ctx.Deployment.Id);
+
+                await lifecycle.EmitAsync(new ActionSucceededEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ActionName = actionName, ExitCode = execResult.ExitCode }), ct).ConfigureAwait(false);
+
+                var collectedNames = CollectOutputVariables(result, step.Name, tc.Machine?.Name, outputCapture);
+
+                if (collectedNames.Count > 0)
+                    await lifecycle.EmitAsync(new OutputVariablesCapturedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine?.Name, ActionSortOrder = actionSortOrder, OutputVariableNames = collectedNames }), ct).ConfigureAwait(false);
+
+                break;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
                 throw;
+            }
+            catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex))
+            {
+                // A transient infra failure (Halibut RPC drop after the library's
+                // retries, or an unreachable agent) must PROPAGATE so
+                // the runner pauses the deployment for resume — regardless of whether
+                // the step is required. Recording it as a per-target/terminal failure
+                // (the path below) would route to OnFailureAsync, which deletes the
+                // checkpoint AND the in-flight pointer the strategy deliberately
+                // preserved — orphaning the still-running script and defeating resume.
+                // The per-target catch (TargetCatchClassifier) leaves the target
+                // in-flight; here, for a non-required step (which has no per-target
+                // catch), we still must not swallow it.
+                throw;
+            }
+            catch (Exception ex) when (attempt < retryPolicy.MaxAttempts && StepRetryPolicy.IsRetryable(ex, ct))
+            {
+                Log.Warning(ex, "[Deploy] Action failed in step {StepName} (attempt {Attempt}/{MaxAttempts}); retrying",
+                    step.Name, attempt, retryPolicy.MaxAttempts);
+            }
+            catch (Exception ex)
+            {
+                result.Failed = true;
+
+                Log.Error(ex, "[Deploy] Action failed in step {StepName}", step.Name);
+
+                await lifecycle.EmitAsync(new ActionFailedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, Error = ex.Message }), ct).ConfigureAwait(false);
+
+                if (step.IsRequired && _ctx.UseGuidedFailure)
+                {
+                    await HandleGuidedFailureAsync(step, actionName, tc, ex, stepDisplayOrder, actionSortOrder, ct).ConfigureAwait(false);
+                    // unreachable — HandleGuidedFailureAsync always throws DeploymentSuspendedException
+                }
+
+                if (step.IsRequired)
+                    throw;
+            }
         }
     }
 

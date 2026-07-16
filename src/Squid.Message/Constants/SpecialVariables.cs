@@ -123,6 +123,8 @@ public static class SpecialVariables
         public const string RequiredToSucceed = "Squid.Step.RequiredToSucceed";
         public const string MaxParallelism = "Squid.Step.MaxParallelism";
         public const string Timeout = "Squid.Step.Timeout";
+        public const string RetriesEnabled = "Squid.Step.RetriesEnabled";
+        public const string RetriesCount = "Squid.Step.RetriesCount";
     }
 
     public static class ScriptSyntax
