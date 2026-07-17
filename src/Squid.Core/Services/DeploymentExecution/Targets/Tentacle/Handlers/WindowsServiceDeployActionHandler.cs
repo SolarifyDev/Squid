@@ -24,12 +24,14 @@ public class WindowsServiceDeployActionHandler : IActionHandler
 
         EnsureWindowsTentacleTarget(ctx);
 
+        var scriptBody = WindowsServiceDeployScriptBuilder.Build(ctx.Action, ctx.Variables, ctx.SelectedPackages);
+
         var intent = new RunScriptIntent
         {
             Name = "deploy-windows-service",
             StepName = ctx.Step?.Name ?? string.Empty,
             ActionName = ctx.Action?.Name ?? string.Empty,
-            ScriptBody = BuildScriptBuilderPendingBody(),
+            ScriptBody = scriptBody,
             Syntax = ScriptSyntax.PowerShell,
             InjectRuntimeBundle = false
         };
@@ -57,10 +59,6 @@ public class WindowsServiceDeployActionHandler : IActionHandler
             $"To deploy a Windows service, configure a Windows Tentacle (Polling or Listening) and assign it the role this step targets. " +
             $"If you believe the target IS Windows, run a health check against it so the runtime-capabilities cache refreshes.");
     }
-
-    private static string BuildScriptBuilderPendingBody() =>
-        "throw 'Squid.DeployWindowsService script generation is not implemented yet. " +
-        "Complete WindowsServiceDeployScriptBuilder and the embedded PowerShell resource before executing this action.'";
 
     internal static bool LooksLikeWindowsOsString(string osValue)
         => WindowsOsStringHelper.IsWindows(osValue);

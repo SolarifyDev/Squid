@@ -50,7 +50,9 @@ public class WindowsServiceDeployActionHandlerTests
         runScript.ActionName.ShouldBe("Windows Service");
         runScript.Syntax.ShouldBe(ScriptSyntax.PowerShell);
         runScript.InjectRuntimeBundle.ShouldBeFalse();
-        runScript.ScriptBody.ShouldContain("script generation is not implemented yet");
+        runScript.ScriptBody.ShouldContain("$SquidParameters['Squid.Action.WindowsService.ServiceName'] = 'OrderWorker'");
+        runScript.ScriptBody.ShouldContain("function Resolve-PackageRoot");
+        runScript.ScriptBody.ShouldContain("Invoke-Sc create $serviceName");
     }
 
     [Theory]

@@ -1,0 +1,241 @@
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+function Get-SquidParameter {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [string]$Default = ''
+    )
+
+    if ($SquidParameters.ContainsKey($Name) -and -not [string]::IsNullOrWhiteSpace($SquidParameters[$Name])) {
+        return [string]$SquidParameters[$Name]
+    }
+
+    return $Default
+}
+
+function Test-True {
+    param([string]$Value)
+    return [string]::Equals($Value, 'true', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Invoke-Sc {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+
+    & sc.exe @Arguments | Write-Host
+    if ($LASTEXITCODE -ne 0) {
+        throw "sc.exe $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Wait-ServiceStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][System.ServiceProcess.ServiceControllerStatus]$Status,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $service = Get-Service -Name $Name -ErrorAction Stop
+    $service.WaitForStatus($Status, [TimeSpan]::FromSeconds($TimeoutSeconds))
+    $service.Refresh()
+
+    if ($service.Status -ne $Status) {
+        throw "Service '$Name' did not reach state '$Status' within $TimeoutSeconds seconds. Current state: '$($service.Status)'."
+    }
+}
+
+function Stop-ServiceIfRunning {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $service = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if ($null -eq $service) {
+        return
+    }
+
+    if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+        Write-Host "Stopping Windows service '$Name' before reconfiguration."
+        Stop-Service -Name $Name -Force -ErrorAction Stop
+        Wait-ServiceStatus -Name $Name -Status ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
+    }
+}
+
+function Convert-StartModeForSc {
+    param([string]$StartMode)
+
+    switch ($StartMode.ToLowerInvariant()) {
+        'automatic' { return 'auto' }
+        'manual' { return 'demand' }
+        'disabled' { return 'disabled' }
+        default { throw "Unsupported Windows service start mode '$StartMode'. Expected Automatic, Manual, or Disabled." }
+    }
+}
+
+function Split-Dependencies {
+    param([string]$Dependencies)
+
+    if ([string]::IsNullOrWhiteSpace($Dependencies)) {
+        return @()
+    }
+
+    return $Dependencies -split "[,;`r`n]+" |
+        ForEach-Object { $_.Trim() } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+}
+
+function Resolve-PackageRoot {
+    $sourcePath = Get-SquidParameter 'Squid.Action.WindowsService.Package.SourcePath'
+    $extractTo = Get-SquidParameter 'Squid.Action.WindowsService.Package.ExtractTo'
+    $purgeBeforeExtract = Test-True (Get-SquidParameter 'Squid.Action.WindowsService.Package.PurgeBeforeExtract' 'False')
+
+    if (-not [string]::IsNullOrWhiteSpace($sourcePath) -and (Test-Path -LiteralPath $sourcePath)) {
+        $sourceItem = Get-Item -LiteralPath $sourcePath
+
+        if ($sourceItem.PSIsContainer) {
+            if ([string]::IsNullOrWhiteSpace($extractTo)) {
+                return $sourceItem.FullName
+            }
+
+            if ($purgeBeforeExtract -and (Test-Path -LiteralPath $extractTo)) {
+                Remove-Item -LiteralPath $extractTo -Recurse -Force
+            }
+
+            New-Item -ItemType Directory -Path $extractTo -Force | Out-Null
+            Copy-Item -Path (Join-Path $sourceItem.FullName '*') -Destination $extractTo -Recurse -Force
+            return (Resolve-Path -LiteralPath $extractTo).Path
+        }
+
+        if ([string]::IsNullOrWhiteSpace($extractTo)) {
+            $extractTo = Join-Path $sourceItem.DirectoryName ([System.IO.Path]::GetFileNameWithoutExtension($sourceItem.Name))
+        }
+
+        if ($purgeBeforeExtract -and (Test-Path -LiteralPath $extractTo)) {
+            Remove-Item -LiteralPath $extractTo -Recurse -Force
+        }
+
+        New-Item -ItemType Directory -Path $extractTo -Force | Out-Null
+        Expand-Archive -LiteralPath $sourceItem.FullName -DestinationPath $extractTo -Force
+        return (Resolve-Path -LiteralPath $extractTo).Path
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($extractTo) -and (Test-Path -LiteralPath $extractTo)) {
+        return (Resolve-Path -LiteralPath $extractTo).Path
+    }
+
+    return (Get-Location).Path
+}
+
+function Resolve-ExecutablePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageRoot,
+        [Parameter(Mandatory = $true)][string]$ExecutablePath
+    )
+
+    if ([System.IO.Path]::IsPathRooted($ExecutablePath)) {
+        return $ExecutablePath
+    }
+
+    return Join-Path $PackageRoot $ExecutablePath
+}
+
+function Build-BinaryPathName {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExecutablePath,
+        [string]$Arguments
+    )
+
+    $binary = '"' + $ExecutablePath + '"'
+    if (-not [string]::IsNullOrWhiteSpace($Arguments)) {
+        $binary += ' ' + $Arguments
+    }
+
+    return $binary
+}
+
+function Get-ServiceAccountArgs {
+    $serviceAccount = Get-SquidParameter 'Squid.Action.WindowsService.ServiceAccount' 'LocalSystem'
+    $customAccountName = Get-SquidParameter 'Squid.Action.WindowsService.CustomAccountName'
+    $customAccountPassword = Get-SquidParameter 'Squid.Action.WindowsService.CustomAccountPassword'
+
+    switch ($serviceAccount.ToLowerInvariant()) {
+        'localsystem' { return @('obj=', 'LocalSystem') }
+        'networkservice' { return @('obj=', 'NT AUTHORITY\NetworkService') }
+        'localservice' { return @('obj=', 'NT AUTHORITY\LocalService') }
+        'specificuser' {
+            if ([string]::IsNullOrWhiteSpace($customAccountName)) {
+                throw "Windows service account 'SpecificUser' requires Squid.Action.WindowsService.CustomAccountName."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($customAccountPassword)) {
+                throw "Windows service account 'SpecificUser' requires Squid.Action.WindowsService.CustomAccountPassword."
+            }
+
+            return @('obj=', $customAccountName, 'password=', $customAccountPassword)
+        }
+        default { throw "Unsupported Windows service account '$serviceAccount'. Expected LocalSystem, NetworkService, LocalService, or SpecificUser." }
+    }
+}
+
+$createOrUpdate = Get-SquidParameter 'Squid.Action.WindowsService.CreateOrUpdateService' 'True'
+if (-not (Test-True $createOrUpdate)) {
+    Write-Host "Windows service create/update is disabled for this action."
+    return
+}
+
+$serviceName = Get-SquidParameter 'Squid.Action.WindowsService.ServiceName'
+if ([string]::IsNullOrWhiteSpace($serviceName)) {
+    throw "Squid.Action.WindowsService.ServiceName is required."
+}
+
+$displayName = Get-SquidParameter 'Squid.Action.WindowsService.DisplayName' $serviceName
+$description = Get-SquidParameter 'Squid.Action.WindowsService.Description'
+$relativeExecutablePath = Get-SquidParameter 'Squid.Action.WindowsService.ExecutablePath'
+if ([string]::IsNullOrWhiteSpace($relativeExecutablePath)) {
+    throw "Squid.Action.WindowsService.ExecutablePath is required."
+}
+
+$arguments = Get-SquidParameter 'Squid.Action.WindowsService.Arguments'
+$startMode = Get-SquidParameter 'Squid.Action.WindowsService.StartMode' 'Automatic'
+$desiredStatus = Get-SquidParameter 'Squid.Action.WindowsService.DesiredStatus' 'Started'
+$dependencies = Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies')
+
+$packageRoot = Resolve-PackageRoot
+$executablePath = Resolve-ExecutablePath -PackageRoot $packageRoot -ExecutablePath $relativeExecutablePath
+if (-not (Test-Path -LiteralPath $executablePath)) {
+    throw "Windows service executable '$executablePath' was not found. Package root: '$packageRoot'."
+}
+
+$binaryPathName = Build-BinaryPathName -ExecutablePath $executablePath -Arguments $arguments
+$scStartMode = Convert-StartModeForSc $startMode
+$accountArgs = Get-ServiceAccountArgs
+$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+if ($null -eq $existingService) {
+    Write-Host "Creating Windows service '$serviceName'."
+    Invoke-Sc create $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
+} else {
+    Stop-ServiceIfRunning -Name $serviceName
+    Write-Host "Reconfiguring Windows service '$serviceName'."
+    Invoke-Sc config $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
+}
+
+if (-not [string]::IsNullOrWhiteSpace($description)) {
+    Invoke-Sc description $serviceName $description
+}
+
+if ($dependencies.Count -gt 0) {
+    Invoke-Sc config $serviceName depend= ($dependencies -join '/')
+}
+
+switch ($desiredStatus.ToLowerInvariant()) {
+    'started' {
+        Write-Host "Starting Windows service '$serviceName'."
+        Start-Service -Name $serviceName -ErrorAction Stop
+        Wait-ServiceStatus -Name $serviceName -Status ([System.ServiceProcess.ServiceControllerStatus]::Running)
+    }
+    'stopped' {
+        Stop-ServiceIfRunning -Name $serviceName
+    }
+    default {
+        throw "Unsupported Windows service desired status '$desiredStatus'. Expected Started or Stopped."
+    }
+}
