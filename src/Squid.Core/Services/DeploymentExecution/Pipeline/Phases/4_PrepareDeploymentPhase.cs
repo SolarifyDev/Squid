@@ -59,6 +59,25 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
+        // Built-in deployment context variables required by package install path planning
+        // and variable substitution. These are not stored in project variable sets.
+        if (ctx.Project != null)
+        {
+            ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Project.Id, Value = ctx.Project.Id.ToString() });
+            ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Project.Name, Value = ctx.Project.Name ?? string.Empty });
+        }
+
+        if (ctx.Environment != null)
+        {
+            ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Environment.Id, Value = ctx.Environment.Id.ToString() });
+            ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Environment.Name, Value = ctx.Environment.Name ?? string.Empty });
+        }
+
+        if (ctx.Release != null)
+        {
+            ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Release.Number, Value = ctx.Release.Version ?? string.Empty });
+        }
+
         if (ctx.RestoredOutputVariables.Count > 0)
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
     }
