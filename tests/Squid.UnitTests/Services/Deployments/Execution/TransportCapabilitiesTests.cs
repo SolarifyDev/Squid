@@ -2,6 +2,7 @@ using System.Linq;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Core.Services.DeploymentExecution.OpenClaw;
 using Squid.Core.Services.DeploymentExecution.Ssh;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
@@ -86,6 +87,18 @@ public class TransportCapabilitiesTests
         capability.ExecutionBackend.ShouldBe(ExecutionBackend.LocalProcess);
         capability.RequiresContextPreparationForPackagedPayload.ShouldBeFalse();
         capability.SupportedActionTypes.ShouldContain(SpecialVariables.ActionTypes.Script);
+    }
+
+    [Theory]
+    [InlineData("polling")]
+    [InlineData("listening")]
+    public void TentacleTransport_Capability_DeclaresWindowsServiceActionType(string transport)
+    {
+        var capability = transport == "polling"
+            ? TentaclePollingTransport.Capability
+            : TentacleListeningTransport.Capability;
+
+        capability.SupportedActionTypes.ShouldContain(SpecialVariables.ActionTypes.DeployWindowsService);
     }
 
     [Fact]
