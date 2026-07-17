@@ -162,8 +162,24 @@ public sealed class FakeMachineRegistrationServer : IAsyncDisposable
         }
         finally
         {
-            _listener.Close();
+            CloseListener();
             _cts.Dispose();
+        }
+    }
+
+    private void CloseListener()
+    {
+        try
+        {
+            _listener.Close();
+        }
+        catch (HttpListenerException)
+        {
+            // The listener is already shutting down; cleanup must not fail the test.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The listener is already disposed.
         }
     }
 }
