@@ -24,6 +24,7 @@ public static class EffectiveVariableBuilder
         // Promote action properties into the variable set so Calamari / agent-side
         // steps can read install options and feature flags by the same names that
         // operators configure on the step editor.
+        // Caller MUST pass already-expanded action properties (see ExecuteStepsPhase.Prepare).
         if (action?.Properties != null)
         {
             foreach (var property in action.Properties)

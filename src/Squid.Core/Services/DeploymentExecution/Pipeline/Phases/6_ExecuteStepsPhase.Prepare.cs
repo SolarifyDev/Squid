@@ -62,9 +62,18 @@ public sealed partial class ExecuteStepsPhase
 
             var actionScopeContext = baseScopeContext with { ActionId = action.Id, ActionName = action.Name };
             var actionEffective = EffectiveVariableBuilder.BuildEffectiveVariables(_ctx.Variables, tc, actionScopeContext);
-            var actionVariables = EffectiveVariableBuilder.BuildActionVariables(actionEffective, action, _ctx.SelectedPackages);
+
+            // Expand action property templates against deployment/endpoint variables FIRST.
+            // Do NOT promote raw action properties into the dictionary before expansion —
+            // IIS (and other) builders also ship ctx.Variables into the agent script
+            // ($SquidVariables). If those values still contain #{tokens}, whole-script
+            // assertions and agent-side rewriters see unresolved templates.
+            var expansionDictionary = VariableDictionaryFactory.Create(actionEffective);
+            var expandedAction = VariableExpander.ExpandActionProperties(action, expansionDictionary);
+
+            // Now promote expanded properties + package version for Calamari / agent consumers.
+            var actionVariables = EffectiveVariableBuilder.BuildActionVariables(actionEffective, expandedAction, _ctx.SelectedPackages);
             var variableDictionary = VariableDictionaryFactory.Create(actionVariables);
-            var expandedAction = VariableExpander.ExpandActionProperties(action, variableDictionary);
 
             var context = new ActionExecutionContext
             {
