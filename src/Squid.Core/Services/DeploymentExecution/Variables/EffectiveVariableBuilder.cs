@@ -19,19 +19,38 @@ public static class EffectiveVariableBuilder
 
     public static List<VariableDto> BuildActionVariables(List<VariableDto> effectiveVariables, DeploymentActionDto action, IEnumerable<Persistence.Entities.Deployments.ReleaseSelectedPackage> selectedPackages)
     {
-        var selectedPackage = FindPrimaryPackage(selectedPackages, action.Name);
+        var variables = new List<VariableDto>(effectiveVariables ?? new List<VariableDto>());
 
-        if (selectedPackage == null)
-            return effectiveVariables;
-
-        var variables = new List<VariableDto>(effectiveVariables)
+        // Promote action properties into the variable set so Calamari / agent-side
+        // steps can read install options and feature flags by the same names that
+        // operators configure on the step editor.
+        if (action?.Properties != null)
         {
-            new()
+            foreach (var property in action.Properties)
+            {
+                if (string.IsNullOrWhiteSpace(property?.PropertyName))
+                    continue;
+
+                variables.RemoveAll(v => string.Equals(v.Name, property.PropertyName, StringComparison.OrdinalIgnoreCase));
+                variables.Add(new VariableDto
+                {
+                    Name = property.PropertyName,
+                    Value = property.PropertyValue ?? string.Empty
+                });
+            }
+        }
+
+        var selectedPackage = FindPrimaryPackage(selectedPackages, action?.Name);
+
+        if (selectedPackage != null)
+        {
+            variables.RemoveAll(v => string.Equals(v.Name, SpecialVariables.Action.PackageVersion, StringComparison.OrdinalIgnoreCase));
+            variables.Add(new VariableDto
             {
                 Name = SpecialVariables.Action.PackageVersion,
                 Value = selectedPackage.Version
-            }
-        };
+            });
+        }
 
         return variables;
     }

@@ -81,7 +81,7 @@ public sealed partial class ExecuteStepsPhase
                     }).ToList() ?? new()
             };
 
-            stepResults.Add(new PreparedAction(actionEffective, handler, context, variableDictionary));
+            stepResults.Add(new PreparedAction(actionVariables, handler, context, variableDictionary));
         }
 
         return stepResults;
