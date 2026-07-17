@@ -133,10 +133,17 @@ public class K8sTestDataSeeder
 
         var release = await _builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
 
+        // Container image tag resolution uses PackageVersionResolver against
+        // ReleaseSelectedPackage, keyed by action name + container name
+        // (PackageReferenceName). FeedId must match the seeded ExternalFeed so
+        // archive acquisition (when injected) can resolve a real feed instead of
+        // aborting on FeedId=0 after deploy-package acquisition hardening.
         var selectedPackage = new ReleaseSelectedPackage
         {
             ReleaseId = release.Id,
+            FeedId = feed.Id,
             ActionName = "Deploy demo",
+            PackageReferenceName = "demo-nginx",
             Version = "1.0.0"
         };
 
