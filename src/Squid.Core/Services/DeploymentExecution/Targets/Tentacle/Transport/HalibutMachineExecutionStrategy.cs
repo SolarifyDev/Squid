@@ -2,6 +2,7 @@ using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Core.Services.DeploymentExecution.Transport;
@@ -185,7 +186,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var (variableBytes, sensitiveBytes, password) =
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
-        var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, variableBytes, sensitiveBytes, password);
+        var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, request.PackageReferences, variableBytes, sensitiveBytes, password);
         var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
         // See ExecuteCalamariViaHalibutAsync above for the ticket-vs-mutex-name
         // rationale: ticket is Guid-per-attempt; IsolationMutexName (arg 5) is the
@@ -361,6 +362,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
     private static ScriptFile[] BuildDirectScriptFiles(
         DeploymentFileCollection deploymentFiles,
+        IReadOnlyList<PackageAcquisitionResult> packageReferences,
         byte[] variableBytes,
         byte[] sensitiveBytes,
         string password)
@@ -368,6 +370,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         var files = deploymentFiles
             .Select(file => new ScriptFile(file.RelativePath, DataStream.FromBytes(file.Content), null))
             .ToList();
+
+        files.AddRange(PackageReferenceScriptFileBridge.BuildScriptFiles(packageReferences));
 
         files.Add(new ScriptFile("variables.json", DataStream.FromBytes(variableBytes), null));
 

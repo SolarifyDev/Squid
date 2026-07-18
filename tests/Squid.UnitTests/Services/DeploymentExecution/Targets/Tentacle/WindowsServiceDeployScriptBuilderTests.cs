@@ -37,6 +37,8 @@ public class WindowsServiceDeployScriptBuilderTests
         preambleIndex.ShouldBeGreaterThanOrEqualTo(0);
         bodyIndex.ShouldBeGreaterThanOrEqualTo(0);
         preambleIndex.ShouldBeLessThan(bodyIndex);
+        script.ShouldContain("function Resolve-AcquiredPackageSourcePath");
+        script.ShouldContain("package-references.json");
         script.ShouldContain("Invoke-Sc create $serviceName");
         script.ShouldContain("Invoke-Sc config $serviceName");
     }

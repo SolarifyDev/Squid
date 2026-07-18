@@ -82,10 +82,50 @@ function Split-Dependencies {
         Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 }
 
+function Resolve-AcquiredPackageSourcePath {
+    $manifestPath = Join-Path (Get-Location) 'package-references.json'
+
+    if (Test-Path -LiteralPath $manifestPath) {
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            $entry = @($manifest) | Select-Object -First 1
+
+            if ($null -ne $entry -and -not [string]::IsNullOrWhiteSpace([string]$entry.PackagePath)) {
+                $candidate = [string]$entry.PackagePath
+
+                if (-not [System.IO.Path]::IsPathRooted($candidate)) {
+                    $candidate = Join-Path (Get-Location) $candidate
+                }
+
+                if (Test-Path -LiteralPath $candidate) {
+                    return (Resolve-Path -LiteralPath $candidate).Path
+                }
+            }
+        }
+        catch {
+            Write-Host "Unable to read package-references.json; falling back to package-references directory. $($_.Exception.Message)"
+        }
+    }
+
+    $packageReferencesDir = Join-Path (Get-Location) 'package-references'
+    if (Test-Path -LiteralPath $packageReferencesDir) {
+        $candidate = Get-ChildItem -LiteralPath $packageReferencesDir | Sort-Object Name | Select-Object -First 1
+        if ($null -ne $candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    return ''
+}
+
 function Resolve-PackageRoot {
     $sourcePath = Get-SquidParameter 'Squid.Action.WindowsService.Package.SourcePath'
     $extractTo = Get-SquidParameter 'Squid.Action.WindowsService.Package.ExtractTo'
     $purgeBeforeExtract = Test-True (Get-SquidParameter 'Squid.Action.WindowsService.Package.PurgeBeforeExtract' 'False')
+
+    if ([string]::IsNullOrWhiteSpace($sourcePath)) {
+        $sourcePath = Resolve-AcquiredPackageSourcePath
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($sourcePath) -and (Test-Path -LiteralPath $sourcePath)) {
         $sourceItem = Get-Item -LiteralPath $sourcePath
