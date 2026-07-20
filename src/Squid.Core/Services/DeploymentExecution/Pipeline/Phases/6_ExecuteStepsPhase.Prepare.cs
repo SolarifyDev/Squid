@@ -92,15 +92,24 @@ public sealed partial class ExecuteStepsPhase
         if (string.IsNullOrEmpty(actionName) || _ctx.SelectedPackages.Count == 0)
             return new List<PackageAcquisitionResult>();
 
-        var names = _ctx.SelectedPackages
+        return _ctx.SelectedPackages
             .Where(p => string.Equals(p.ActionName, actionName, StringComparison.OrdinalIgnoreCase))
             .Select(p => p.PackageReferenceName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Where(packageReferenceName => !string.IsNullOrWhiteSpace(packageReferenceName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(FindAcquiredPackage)
+            .Where(package => package != null)
+            .ToList();
+    }
+
+    private PackageAcquisitionResult? FindAcquiredPackage(string packageReferenceName)
+    {
+        if (_ctx.AcquiredPackages.TryGetValue(packageReferenceName, out var package))
+            return package;
 
         return _ctx.AcquiredPackages
-            .Where(kv => names.Contains(kv.Key))
-            .Select(kv => kv.Value)
-            .ToList();
+            .FirstOrDefault(kv => string.Equals(kv.Key, packageReferenceName, StringComparison.OrdinalIgnoreCase))
+            .Value;
     }
 
     private static SensitiveValueMasker BuildSensitiveMasker(List<VariableDto> variables)
