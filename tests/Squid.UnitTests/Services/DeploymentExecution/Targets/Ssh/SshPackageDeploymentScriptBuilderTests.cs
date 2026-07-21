@@ -75,4 +75,28 @@ public class SshPackageDeploymentScriptBuilderTests
         script.ShouldContain("owner_repo.v1.tar.gz");
         script.ShouldNotContain("${PACKAGE_ID}.${PACKAGE_VERSION}.nupkg");
     }
+
+    [Fact]
+    public void Build_UsesPackageBaseDirectoryWhenProvided()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            EnvironmentSegment = "Dev",
+            ProjectSegment = "Web",
+            PackageSegment = "Acme.Web",
+            VersionSegment = "1.0.0",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.zip",
+            PackageBaseDirectory = "/tmp/squid-ssh/Packages"
+        });
+
+        script.ShouldContain("PACKAGE_BASE_DIR='/tmp/squid-ssh/Packages'");
+        script.ShouldContain("ARCHIVE=\"$PACKAGE_BASE_DIR/$ARCHIVE_NAME\"");
+        script.ShouldContain("Acme.Web.1.0.0.zip");
+    }
 }
+

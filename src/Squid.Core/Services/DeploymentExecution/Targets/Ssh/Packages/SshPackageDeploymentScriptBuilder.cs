@@ -11,8 +11,10 @@ public sealed class SshPackageDeployScriptModel
     public string CustomInstallationDirectory { get; init; } = string.Empty;
     public required string PackageId { get; init; }
     public required string PackageVersion { get; init; }
-    /// <summary>Remote archive file name under $HOME/.squid/Packages (e.g. Acme.Web.1.0.0.tar.gz).</summary>
+    /// <summary>Remote archive file name under the package base directory (e.g. Acme.Web.1.0.0.tar.gz).</summary>
     public string ArchiveFileName { get; init; } = string.Empty;
+    /// <summary>Remote package cache directory. Empty means default $HOME/.squid/Packages.</summary>
+    public string PackageBaseDirectory { get; init; } = string.Empty;
 }
 
 public static class SshPackageDeploymentScriptBuilder
@@ -32,6 +34,7 @@ public static class SshPackageDeploymentScriptBuilder
         var custom = Q(model.CustomInstallationDirectory ?? string.Empty);
         var archiveFileName = ResolveArchiveFileName(model);
         var archive = Q(archiveFileName);
+        var packageBaseDir = Q(model.PackageBaseDirectory ?? string.Empty);
         var extractCommand = BuildExtractCommand(archiveFileName);
 
         return
@@ -55,7 +58,12 @@ public static class SshPackageDeploymentScriptBuilder
             $"VERSION_SEG={version}\n" +
             $"CUSTOM_DIR={custom}\n" +
             $"ARCHIVE_NAME={archive}\n" +
-            "ARCHIVE=\"$HOME/.squid/Packages/$ARCHIVE_NAME\"\n\n" +
+            $"PACKAGE_BASE_DIR={packageBaseDir}\n" +
+            "if [ -n \"$PACKAGE_BASE_DIR\" ]; then\n" +
+            "  ARCHIVE=\"$PACKAGE_BASE_DIR/$ARCHIVE_NAME\"\n" +
+            "else\n" +
+            "  ARCHIVE=\"$HOME/.squid/Packages/$ARCHIVE_NAME\"\n" +
+            "fi\n\n" +
             "if [ ! -f \"$ARCHIVE\" ]; then\n" +
             "  echo \"[transfer] Package archive not found: $ARCHIVE\" >&2\n" +
             "  exit 1\n" +

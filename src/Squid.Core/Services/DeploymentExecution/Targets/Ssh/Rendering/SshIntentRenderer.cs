@@ -65,6 +65,10 @@ public sealed class SshIntentRenderer : IIntentRenderer
         var archiveFileName = !string.IsNullOrWhiteSpace(acquired.LocalPath)
             ? Path.GetFileName(acquired.LocalPath)
             : string.Empty;
+        var packageBaseDirectory = context.EffectiveVariables
+            .FirstOrDefault(v => string.Equals(v.Name, SpecialVariables.Ssh.PackageBaseDirectory, StringComparison.OrdinalIgnoreCase))
+            ?.Value
+            ?? string.Empty;
         var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
         {
             ExpectedSha256 = acquired.Hash,
@@ -76,7 +80,8 @@ public sealed class SshIntentRenderer : IIntentRenderer
             CustomInstallationDirectory = intent.CustomInstallationDirectory ?? string.Empty,
             PackageId = intent.Package.PackageId,
             PackageVersion = intent.Package.Version,
-            ArchiveFileName = archiveFileName
+            ArchiveFileName = archiveFileName,
+            PackageBaseDirectory = packageBaseDirectory
         });
 
         var variables = context.EffectiveVariables.ToList();
