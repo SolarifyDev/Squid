@@ -25,27 +25,10 @@ public sealed class WindowsServiceDeployRealHostE2ETests
 
         using var ctx = new DeployServiceTestContext("1.0.0");
 
-        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction(
-            (WindowsServiceDeployProperties.CreateOrUpdateService, "True"),
-            (WindowsServiceDeployProperties.ServiceName, ctx.Fixture.ServiceName),
-            (WindowsServiceDeployProperties.DisplayName, $"Squid Deploy E2E {ctx.Suffix}"),
-            (WindowsServiceDeployProperties.Description, "Installed by Squid.DeployWindowsService real-host E2E"),
-            (WindowsServiceDeployProperties.ExecutablePath, "SquidUpgradeE2ETestService.exe"),
-            (WindowsServiceDeployProperties.ServiceAccount, "LocalSystem"),
-            (WindowsServiceDeployProperties.StartMode, "Manual"),
-            (WindowsServiceDeployProperties.DesiredStatus, "Started"),
-            (WindowsServiceDeployProperties.PackageSourcePath, ctx.PackageDir),
-            (WindowsServiceDeployProperties.PackageExtractTo, ctx.Fixture.InstallDir),
-            (WindowsServiceDeployProperties.PackagePurgeBeforeExtract, "True")));
+        var result = DeployPackage(ctx, ctx.PackageDir, $"Squid Deploy E2E {ctx.Suffix}",
+            "Installed by Squid.DeployWindowsService real-host E2E");
 
-        var result = RunPowerShell(script);
-
-        result.ExitCode.ShouldBe(0,
-            customMessage:
-                $"Squid Windows service deploy script failed on real Windows host. " +
-                $"Service: {ctx.Fixture.ServiceName}\n" +
-                $"InstallDir: {ctx.Fixture.InstallDir}\n\n" +
-                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+        AssertDeploySucceeded(result, ctx);
 
         File.Exists(ctx.Fixture.ServiceExePath).ShouldBeTrue(
             customMessage: "The deploy script must copy the package service binary into the configured install directory.");
@@ -59,6 +42,74 @@ public sealed class WindowsServiceDeployRealHostE2ETests
             customMessage:
                 $"marker file at {ctx.Fixture.MarkerFilePath} did not contain '1.0.0' within 30s. " +
                 "This marker proves SCM started the service process and the test service read version.txt from deployed package content.");
+    }
+
+    [Fact]
+    public void RealWindowsHost_UpdateDeployment_ReconfiguresRestartsExistingServiceWithoutDuplicate()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new DeployServiceTestContext("1.0.0");
+
+        var firstResult = DeployPackage(ctx, ctx.PackageDir, $"Squid Deploy E2E {ctx.Suffix} v1",
+            "Initial Windows service deployment from package v1.");
+
+        AssertDeploySucceeded(firstResult, ctx);
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage: $"initial marker at {ctx.Fixture.MarkerFilePath} did not contain '1.0.0' within 30s.");
+
+        PowerShellSingleLine($"(Get-Service | Where-Object {{ $_.Name -eq '{EscapePowerShellSingleQuoted(ctx.Fixture.ServiceName)}' }} | Measure-Object).Count")
+            .ShouldBe("1", customMessage: "First deploy should create exactly one service with the generated E2E service name.");
+
+        var v2PackageDir = ctx.StagePackage("package-v2", "2.0.0");
+        var secondDisplayName = $"Squid Deploy E2E {ctx.Suffix} v2";
+
+        var secondResult = DeployPackage(ctx, v2PackageDir, secondDisplayName,
+            "Updated Windows service deployment from package v2.");
+
+        AssertDeploySucceeded(secondResult, ctx);
+
+        PowerShellSingleLine($"(Get-Service | Where-Object {{ $_.Name -eq '{EscapePowerShellSingleQuoted(ctx.Fixture.ServiceName)}' }} | Measure-Object).Count")
+            .ShouldBe("1", customMessage: "Second deploy must update the existing service, not create a duplicate.");
+        PowerShellSingleLine($"(Get-Service -Name '{EscapePowerShellSingleQuoted(ctx.Fixture.ServiceName)}').DisplayName")
+            .ShouldBe(secondDisplayName, customMessage: "Second deploy should reconfigure service metadata via sc.exe config.");
+        PowerShellSingleLine($"(Get-Service -Name '{EscapePowerShellSingleQuoted(ctx.Fixture.ServiceName)}').Status")
+            .ShouldBe("Running", customMessage: "The updated service must be running after DesiredStatus=Started.");
+
+        File.ReadAllText(ctx.Fixture.VersionFilePath).Trim().ShouldBe("2.0.0",
+            customMessage: "The v2 package version.txt must replace the v1 package content in the install directory.");
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "2.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            customMessage:
+                $"marker file at {ctx.Fixture.MarkerFilePath} did not change to '2.0.0' within 30s. " +
+                "This proves the existing service was stopped, package content was replaced, and SCM restarted the service process.");
+    }
+
+    private static PsResult DeployPackage(DeployServiceTestContext ctx, string packageDir, string displayName, string description)
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction(
+            (WindowsServiceDeployProperties.CreateOrUpdateService, "True"),
+            (WindowsServiceDeployProperties.ServiceName, ctx.Fixture.ServiceName),
+            (WindowsServiceDeployProperties.DisplayName, displayName),
+            (WindowsServiceDeployProperties.Description, description),
+            (WindowsServiceDeployProperties.ExecutablePath, "SquidUpgradeE2ETestService.exe"),
+            (WindowsServiceDeployProperties.ServiceAccount, "LocalSystem"),
+            (WindowsServiceDeployProperties.StartMode, "Manual"),
+            (WindowsServiceDeployProperties.DesiredStatus, "Started"),
+            (WindowsServiceDeployProperties.PackageSourcePath, packageDir),
+            (WindowsServiceDeployProperties.PackageExtractTo, ctx.Fixture.InstallDir),
+            (WindowsServiceDeployProperties.PackagePurgeBeforeExtract, "True")));
+
+        return RunPowerShell(script);
+    }
+
+    private static void AssertDeploySucceeded(PsResult result, DeployServiceTestContext ctx)
+    {
+        result.ExitCode.ShouldBe(0,
+            customMessage:
+                $"Squid Windows service deploy script failed on real Windows host. " +
+                $"Service: {ctx.Fixture.ServiceName}\n" +
+                $"InstallDir: {ctx.Fixture.InstallDir}\n\n" +
+                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
     }
 
     private static DeploymentActionDto BuildAction(params (string Name, string Value)[] properties)
@@ -189,17 +240,23 @@ public sealed class WindowsServiceDeployRealHostE2ETests
             Suffix = Guid.NewGuid().ToString("N")[..8];
             _rootDir = Path.Combine(Path.GetTempPath(), "SquidWindowsServiceDeployE2E", Suffix);
 
-            PackageDir = Path.Combine(_rootDir, "package-v1");
             Fixture = new WindowsServiceFixture(
                 serviceName: $"SquidDeploySvcE2E_{Suffix}",
                 installDir: Path.Combine(_rootDir, "install"));
 
-            StagePackageContent(LocateTestServiceExe(), PackageDir, version);
+            PackageDir = StagePackage("package-v1", version);
         }
 
         public string Suffix { get; }
         public string PackageDir { get; }
         public WindowsServiceFixture Fixture { get; }
+
+        public string StagePackage(string packageDirectoryName, string version)
+        {
+            var packageDir = Path.Combine(_rootDir, packageDirectoryName);
+            StagePackageContent(LocateTestServiceExe(), packageDir, version);
+            return packageDir;
+        }
 
         public void Dispose()
         {
