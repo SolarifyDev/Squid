@@ -15,6 +15,8 @@ public class CreateReleaseCommandValidator : FluentMessageValidator<CreateReleas
         {
             pkg.RuleFor(x => x.ActionName).NotEmpty();
             pkg.RuleFor(x => x.Version).NotEmpty();
+            pkg.RuleFor(x => x.PackageReferenceName).NotEmpty();
+            pkg.RuleFor(x => x.FeedId).GreaterThan(0);
         });
     }
 }
