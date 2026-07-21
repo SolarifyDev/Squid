@@ -163,6 +163,9 @@ public partial class TentacleStub
             var homeBin = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin");
 
+            // Keep the host process PATH so fixtures can inject tools required by
+            // packaged payloads (e.g. squid-calamari for Deploy a Package).
+            var inheritedPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
             var pathValue = string.Join(":",
                 homeBin,
                 "/usr/local/bin",
@@ -170,7 +173,8 @@ public partial class TentacleStub
                 "/usr/bin",
                 "/bin",
                 "/usr/sbin",
-                "/sbin");
+                "/sbin",
+                inheritedPath);
 
             var process = new Process
             {
