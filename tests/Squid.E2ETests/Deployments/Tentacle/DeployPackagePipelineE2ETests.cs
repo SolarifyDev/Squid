@@ -685,21 +685,7 @@ public class DeployPackagePipelineE2ETests
     private void EnsureCalamariOnPath()
     {
         var testAssemblyDir = Path.GetDirectoryName(typeof(DeployPackagePipelineE2ETests).Assembly.Location)!;
-        var calamariDir = Path.GetFullPath(Path.Combine(
-            testAssemblyDir, "..", "..", "..", "..", "..",
-            "src", "Squid.Calamari", "bin", "Debug", "net9.0"));
-        var calamariPath = Path.Combine(calamariDir, "squid-calamari");
-
-        if (!File.Exists(calamariPath))
-            throw new FileNotFoundException(
-                $"squid-calamari not found at '{calamariPath}'. Build Squid.Calamari before running Deploy Package e2e.",
-                calamariPath);
-
         _previousPath = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        if (!_previousPath.Split(':', StringSplitOptions.RemoveEmptyEntries)
-                .Any(p => string.Equals(p, calamariDir, StringComparison.Ordinal)))
-        {
-            System.Environment.SetEnvironmentVariable("PATH", $"{calamariDir}:{_previousPath}");
-        }
+        CalamariPathHelper.EnsureCalamariOnPath(testAssemblyDir, required: true);
     }
 }

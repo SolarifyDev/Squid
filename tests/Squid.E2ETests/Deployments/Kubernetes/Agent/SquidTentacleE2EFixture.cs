@@ -11,6 +11,7 @@ using Squid.Tentacle.ScriptExecution;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Machines;
 using Squid.Core.Settings.Halibut;
+using Squid.E2ETests.Helpers;
 using Squid.E2ETests.Infrastructure;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Machine;
@@ -80,22 +81,12 @@ public class SquidTentacleE2EFixture<TTestClass> : E2EFixtureBase<TTestClass>
     private static void AddCalamariToPath()
     {
         var testAssemblyDir = Path.GetDirectoryName(typeof(SquidTentacleE2EFixture<>).Assembly.Location)!;
-
-        // Navigate from tests/Squid.E2ETests/bin/Debug/net9.0/ to src/Squid.Calamari/bin/Debug/net9.0/
-        var calamariDir = Path.GetFullPath(Path.Combine(
-            testAssemblyDir, "..", "..", "..", "..", "..",
-            "src", "Squid.Calamari", "bin", "Debug", "net9.0"));
-
-        var calamariPath = Path.Combine(calamariDir, "squid-calamari");
-
-        if (!File.Exists(calamariPath))
+        var calamariDir = CalamariPathHelper.EnsureCalamariOnPath(testAssemblyDir, required: false);
+        if (string.IsNullOrWhiteSpace(calamariDir))
         {
-            Log.Warning("squid-calamari not found at {Path}, tentacle tests requiring calamari may fail", calamariPath);
+            Log.Warning("squid-calamari not found near {Dir}, tentacle tests requiring calamari may fail", testAssemblyDir);
             return;
         }
-
-        var currentPath = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        System.Environment.SetEnvironmentVariable("PATH", $"{calamariDir}:{currentPath}");
 
         Log.Information("Added squid-calamari to PATH from {Dir}", calamariDir);
     }
