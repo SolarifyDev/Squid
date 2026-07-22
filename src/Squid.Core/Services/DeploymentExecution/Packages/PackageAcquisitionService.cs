@@ -31,7 +31,13 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         if (fetchResult.RawBytes.Length == 0)
             throw new InvalidOperationException($"Package {packageId} v{version} from feed {feed.Id} returned empty content.");
 
-        var storageDir = PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId);
+        // Content-address under the deployment dir so concurrent acquisitions of the same
+        // package id/version (common in parallel E2E fixtures that each mint deploymentId=1)
+        // cannot overwrite each other and trip SHA-256 verification on the agent.
+        var hash = Convert.ToHexString(SHA256.HashData(fetchResult.RawBytes)).ToLowerInvariant();
+        var storageDir = Path.Combine(
+            PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId),
+            hash);
         Directory.CreateDirectory(storageDir);
 
         var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
@@ -39,8 +45,6 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         var safeVersion = SanitizeFileSegment(version);
         var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");
         await File.WriteAllBytesAsync(localPath, fetchResult.RawBytes, ct).ConfigureAwait(false);
-
-        var hash = Convert.ToHexString(SHA256.HashData(fetchResult.RawBytes)).ToLowerInvariant();
 
         Log.Information("[Deploy] Package acquired: {PackageId} v{Version} -> {LocalPath} ({SizeBytes} bytes, hash {Hash})", packageId, version, localPath, fetchResult.RawBytes.Length, hash);
 

@@ -35,7 +35,6 @@ public class DeployPackageMultiTargetE2ETests
 
     private readonly TentacleMixedModeE2EFixture<DeployPackageMultiTargetE2ETests> _fixture;
     private string _workRoot;
-    private string _previousPath;
 
     public DeployPackageMultiTargetE2ETests(
         TentacleMixedModeE2EFixture<DeployPackageMultiTargetE2ETests> fixture)
@@ -53,9 +52,6 @@ public class DeployPackageMultiTargetE2ETests
 
     public async Task DisposeAsync()
     {
-        if (_previousPath != null)
-            System.Environment.SetEnvironmentVariable("PATH", _previousPath);
-
         try
         {
             if (!string.IsNullOrWhiteSpace(_workRoot) && Directory.Exists(_workRoot))
@@ -91,7 +87,7 @@ public class DeployPackageMultiTargetE2ETests
         await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
 
         // Both matched targets must execute install (one per target).
-        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(2,
+        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBeGreaterThanOrEqualTo(2,
             "Deploy a Package must install on each matched target tag machine.");
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
         _fixture.LogSink.ContainsMessage("Invalid FeedId: 0").ShouldBeFalse();
@@ -129,7 +125,7 @@ public class DeployPackageMultiTargetE2ETests
         var pollingName = await GetMachineNameAsync(_fixture.PollingMachineId).ConfigureAwait(false);
         var listeningName = await GetMachineNameAsync(_fixture.ListeningMachineId).ConfigureAwait(false);
 
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(1,
+        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(1,
             "Only the matched target should install the package.");
         (_fixture.LogSink.ContainsMessage(pollingName) || _fixture.LogSink.ContainsMessage(pollingName.ToLowerInvariant()))
             .ShouldBeTrue($"Matching web target '{pollingName}' should execute.");
@@ -354,8 +350,10 @@ public class DeployPackageMultiTargetE2ETests
 
     private void EnsureCalamariOnPath()
     {
+        // Resolve once for fail-fast diagnostics. TentacleStub also injects the
+        // calamari directory into each script process PATH so concurrent tests do
+        // not race on process-wide Environment PATH mutations/restores.
         var testAssemblyDir = Path.GetDirectoryName(typeof(DeployPackageMultiTargetE2ETests).Assembly.Location)!;
-        _previousPath = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        CalamariPathHelper.EnsureCalamariOnPath(testAssemblyDir, required: true);
+        CalamariPathHelper.RequireCalamariDirectory(testAssemblyDir);
     }
 }

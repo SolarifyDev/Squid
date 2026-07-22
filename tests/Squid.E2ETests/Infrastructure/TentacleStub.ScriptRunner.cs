@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
+using Squid.E2ETests.Helpers;
 
 namespace Squid.E2ETests.Infrastructure;
 
@@ -163,18 +164,24 @@ public partial class TentacleStub
             var homeBin = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "bin");
 
-            // Keep the host process PATH so fixtures can inject tools required by
-            // packaged payloads (e.g. squid-calamari for Deploy a Package).
+            // Prefer an absolute calamari directory resolution so Deploy Package scripts
+            // can find squid-calamari even when concurrent tests mutate process PATH.
+            var anchorDir = Path.GetDirectoryName(typeof(TentacleStub).Assembly.Location)!;
+            var calamariDir = CalamariPathHelper.FindCalamariDirectory(anchorDir);
             var inheritedPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-            var pathValue = string.Join(":",
-                homeBin,
-                "/usr/local/bin",
-                "/opt/homebrew/bin",
-                "/usr/bin",
-                "/bin",
-                "/usr/sbin",
-                "/sbin",
-                inheritedPath);
+            var pathParts = new List<string>();
+            if (!string.IsNullOrWhiteSpace(calamariDir))
+                pathParts.Add(calamariDir);
+            pathParts.Add(homeBin);
+            pathParts.Add("/usr/local/bin");
+            pathParts.Add("/opt/homebrew/bin");
+            pathParts.Add("/usr/bin");
+            pathParts.Add("/bin");
+            pathParts.Add("/usr/sbin");
+            pathParts.Add("/sbin");
+            if (!string.IsNullOrEmpty(inheritedPath))
+                pathParts.Add(inheritedPath);
+            var pathValue = string.Join(":", pathParts);
 
             var process = new Process
             {

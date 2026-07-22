@@ -38,7 +38,6 @@ public class DeployPackagePipelineE2ETests
 
     private readonly TentaclePollingE2EFixture<DeployPackagePipelineE2ETests> _fixture;
     private string _workRoot;
-    private string _previousPath;
 
     public DeployPackagePipelineE2ETests(TentaclePollingE2EFixture<DeployPackagePipelineE2ETests> fixture)
     {
@@ -55,9 +54,6 @@ public class DeployPackagePipelineE2ETests
 
     public async Task DisposeAsync()
     {
-        if (_previousPath != null)
-            System.Environment.SetEnvironmentVariable("PATH", _previousPath);
-
         try
         {
             if (!string.IsNullOrWhiteSpace(_workRoot) && Directory.Exists(_workRoot))
@@ -684,8 +680,10 @@ public class DeployPackagePipelineE2ETests
 
     private void EnsureCalamariOnPath()
     {
+        // Resolve once for fail-fast diagnostics. TentacleStub also injects the
+        // calamari directory into each script process PATH so concurrent tests do
+        // not race on process-wide Environment PATH mutations/restores.
         var testAssemblyDir = Path.GetDirectoryName(typeof(DeployPackagePipelineE2ETests).Assembly.Location)!;
-        _previousPath = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        CalamariPathHelper.EnsureCalamariOnPath(testAssemblyDir, required: true);
+        CalamariPathHelper.RequireCalamariDirectory(testAssemblyDir);
     }
 }
