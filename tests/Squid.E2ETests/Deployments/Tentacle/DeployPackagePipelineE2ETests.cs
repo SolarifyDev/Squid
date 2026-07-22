@@ -260,6 +260,82 @@ public class DeployPackagePipelineE2ETests
     }
 
     [Fact]
+    public async Task DeployPackage_WhenPreDeployFails_DoesNotOverwritePreviousSuccessfulInstall()
+    {
+        _fixture.LogSink.Clear();
+
+        const string goodMarker = "good-v1-content";
+        const string badMarker = "bad-v2-content";
+        var installDir = NewInstallDir("rollback-preserve");
+
+        // 1) Successful install seeds the final directory.
+        await using (var goodFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "1.0.0",
+                         CreatePackageArchive((MarkerFileName, goodMarker))))
+        {
+            var goodTaskId = await SeedDeployPackageDeploymentAsync(
+                goodFeed,
+                installDir,
+                packageFiles: null,
+                packageVersionProperty: null,
+                selectedVersion: "1.0.0",
+                stepTimeoutSeconds: 120,
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RollbackOnFailure", "True")
+                ],
+                projectVariables: null).ConfigureAwait(false);
+
+            await ExecutePipelineAsync(goodTaskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(goodTaskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        var installedMarker = Path.Combine(installDir, MarkerFileName);
+        File.Exists(installedMarker).ShouldBeTrue($"Expected successful install marker at {installedMarker}");
+        (await File.ReadAllTextAsync(installedMarker).ConfigureAwait(false)).ShouldBe(goodMarker);
+
+        // 2) Failing PreDeploy must not leave the bad package content in place.
+        _fixture.LogSink.Clear();
+        await using (var badFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "2.0.0",
+                         CreatePackageArchive(
+                             (MarkerFileName, badMarker),
+                             ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-predeploy-failure\nexit 1\n"))))
+        {
+            var badTaskId = await SeedDeployPackageDeploymentAsync(
+                badFeed,
+                installDir,
+                packageFiles: null,
+                packageVersionProperty: null,
+                selectedVersion: "2.0.0",
+                stepTimeoutSeconds: 120,
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RollbackOnFailure", "True")
+                ],
+                projectVariables: null).ConfigureAwait(false);
+
+            await ExecutePipelineAsync(badTaskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(badTaskId, TaskState.Failed).ConfigureAwait(false);
+        }
+
+        File.Exists(installedMarker).ShouldBeTrue(
+            "Previous successful install directory must still exist after a failed redeploy.");
+        (await File.ReadAllTextAsync(installedMarker).ConfigureAwait(false)).ShouldBe(goodMarker,
+            "Failed PreDeploy package must not overwrite the previously installed content.");
+        (await File.ReadAllTextAsync(installedMarker).ConfigureAwait(false)).ShouldNotBe(badMarker);
+
+        (_fixture.LogSink.ContainsMessage("intentional-predeploy-failure")
+            || _fixture.LogSink.ContainsMessage("PreDeploy")
+            || _fixture.LogSink.ContainsMessage("exited with code 1")).ShouldBeTrue(
+            "Expected failure logs to mention the intentional PreDeploy failure.");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+            "Failed install must not report a successful DeployPackage install.");
+    }
+
+    [Fact]
     public async Task DeployPackage_WithSubstituteInFilesEnabled_ReplacesTokens()
     {
         _fixture.LogSink.Clear();
