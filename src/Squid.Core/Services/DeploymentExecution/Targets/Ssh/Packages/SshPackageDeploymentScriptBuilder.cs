@@ -189,14 +189,21 @@ public static class SshPackageDeploymentScriptBuilder
             "  esac\n" +
             "  [ \"$keep\" -gt 0 ] || return 0\n" +
             "  current_name=$(basename \"$FINAL_DIR\")\n" +
-            "  count=0\n" +
-            "  # Portable newest-first listing for Alpine busybox and bash.\n" +
-            "  for dir in $(ls -1dt \"$PACKAGE_ROOT\"/*/ 2>/dev/null); do\n" +
-            "    name=$(basename \"$dir\")\n" +
+            "  RETENTION_LIST=\"$PARENT_DIR/.squid-retention-list-$$-$RANDOM\"\n" +
+            "  : > \"$RETENTION_LIST\"\n" +
+            "  # Newest-first, newline-safe names (supports spaces).\n" +
+            "  ls -1t \"$PACKAGE_ROOT\" 2>/dev/null | while IFS= read -r name; do\n" +
+            "    [ -z \"$name\" ] && continue\n" +
             "    [ \"$name\" = \"$CURRENT_NAME\" ] && continue\n" +
             "    case \"$name\" in\n" +
             "      .squid-*) continue ;;\n" +
             "    esac\n" +
+            "    [ -d \"$PACKAGE_ROOT/$name\" ] || continue\n" +
+            "    printf '%s\\n' \"$name\" >> \"$RETENTION_LIST\"\n" +
+            "  done\n" +
+            "  count=0\n" +
+            "  while IFS= read -r name; do\n" +
+            "    [ -z \"$name\" ] && continue\n" +
             "    if [ \"$name\" = \"$current_name\" ]; then\n" +
             "      count=$((count + 1))\n" +
             "      continue\n" +
@@ -205,8 +212,9 @@ public static class SshPackageDeploymentScriptBuilder
             "      count=$((count + 1))\n" +
             "      continue\n" +
             "    fi\n" +
-            "    rm -rf -- \"$dir\" 2>/dev/null || true\n" +
-            "  done\n" +
+            "    rm -rf -- \"$PACKAGE_ROOT/$name\" 2>/dev/null || true\n" +
+            "  done < \"$RETENTION_LIST\"\n" +
+            "  rm -f \"$RETENTION_LIST\" 2>/dev/null || true\n" +
             "}\n\n" +
             "if [ \"$SKIP_IF_INSTALLED\" = \"True\" ] && is_same_version_installed; then\n" +
             "  echo \"SkipIfAlreadyInstalled: package '$PACKAGE_ID' version '$PACKAGE_VERSION' already installed at '$FINAL_DIR'.\"\n" +
@@ -218,12 +226,22 @@ public static class SshPackageDeploymentScriptBuilder
             "  rm -f \"$PACKAGE_FILE_LIST\" \"$PURGE_LIST\" 2>/dev/null || true\n" +
             "}\n" +
             "trap cleanup EXIT\n\n" +
-            "if [ \"$MODE\" = \"Custom\" ] && [ -d \"$FINAL_DIR\" ]; then\n" +
-            "  cp -a \"$FINAL_DIR\"/. \"$STAGING_DIR\"/\n" +
-            "fi\n\n" +
+            "# Extract into a clean staging directory so package-file inventory excludes pre-existing target files.\n" +
             extractCommand + "\n\n" +
-            "# Capture package-relative paths before commit for purge support.\n" +
+            "# Capture package-relative paths from the extracted archive only.\n" +
             "find \"$STAGING_DIR\" -type f 2>/dev/null | sed \"s|^$STAGING_DIR/||\" > \"$PACKAGE_FILE_LIST\" || : > \"$PACKAGE_FILE_LIST\"\n\n" +
+            "if [ \"$MODE\" = \"Custom\" ] && [ -d \"$FINAL_DIR\" ]; then\n" +
+            "  # Overlay previous custom install content under extracted package files.\n" +
+            "  # Package files already in staging take precedence.\n" +
+            "  find \"$FINAL_DIR\" -type f 2>/dev/null | while IFS= read -r old; do\n" +
+            "    [ -z \"$old\" ] && continue\n" +
+            "    rel=\"${old#\"$FINAL_DIR\"/}\"\n" +
+            "    if [ ! -e \"$STAGING_DIR/$rel\" ]; then\n" +
+            "      mkdir -p \"$(dirname \"$STAGING_DIR/$rel\")\"\n" +
+            "      cp -a -- \"$old\" \"$STAGING_DIR/$rel\" 2>/dev/null || true\n" +
+            "    fi\n" +
+            "  done\n" +
+            "fi\n\n" +
             "if [ -d \"$FINAL_DIR\" ]; then\n" +
             "  mv \"$FINAL_DIR\" \"$BACKUP_DIR\"\n" +
             "fi\n\n" +

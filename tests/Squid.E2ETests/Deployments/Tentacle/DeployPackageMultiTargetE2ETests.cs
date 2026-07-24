@@ -341,6 +341,11 @@ public class DeployPackageMultiTargetE2ETests
             catch (DeploymentAbortedException)
             {
             }
+            catch (AggregateException)
+            {
+                // Multi-target failures are collected into AggregateException by
+                // TargetParallelExecutor; task state is the durable assertion.
+            }
         }).ConfigureAwait(false);
     }
 
