@@ -431,6 +431,56 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
 
 
     [Fact]
+    public async Task DeployPackage_WhenZipSlipArchive_FailsBeforeInstall()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/zip-slip";
+        var escapeProbe = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/zip-slip-escape.txt";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "9.9.9",
+            CreatePackageArchive(
+                (MarkerFileName, "should-not-install"),
+                ("../zip-slip-escape.txt", "escaped")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "9.9.9").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBeFalse("Zip-slip package must not install into the target directory.");
+            RemoteFileExists(client, escapeProbe)
+                .ShouldBeFalse("Zip-slip package must not write outside the staging/install directory.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        var logs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        (CountTaskLogOccurrences(logs, "zip-slip") >= 1 ||
+         CountTaskLogOccurrences(logs, "would escape") >= 1 ||
+         CountTaskLogOccurrences(logs, "Failed to extract") >= 1)
+            .ShouldBeTrue(
+                "Zip-slip rejection should surface in task logs. Logs: " +
+                string.Join(" | ", logs.TakeLast(30)));
+        CountTaskLogOccurrences(logs, "DeployPackage: installed to").ShouldBe(0,
+            "Zip-slip rejection must not report successful install.");
+    }
+
+    [Fact]
     public async Task DeployPackage_WithTarGzArchive_InstallsSuccessfully()
     {
         if (!EnsureDocker())

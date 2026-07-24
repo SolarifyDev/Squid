@@ -313,6 +313,30 @@ public static class SshPackageDeploymentScriptBuilder
                 "  echo \"[extraction] tar is required on the SSH target.\" >&2\n" +
                 "  exit 1\n" +
                 "fi\n" +
+                "TAR_LIST_FILE=\"$PARENT_DIR/.squid-tar-list-$$-$RANDOM\"\n" +
+                "if ! tar -tf \"$ARCHIVE\" > \"$TAR_LIST_FILE\"; then\n" +
+                "  rm -f \"$TAR_LIST_FILE\" 2>/dev/null || true\n" +
+                "  echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
+                "  exit 1\n" +
+                "fi\n" +
+                "while IFS= read -r entry; do\n" +
+                "  [ -z \"$entry\" ] && continue\n" +
+                "  case \"$entry\" in\n" +
+                "    /*|../*|*/../*|*/..|..) \n" +
+                "      rm -f \"$TAR_LIST_FILE\" 2>/dev/null || true\n" +
+                "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
+                "      exit 1\n" +
+                "      ;;\n" +
+                "  esac\n" +
+                "  case \"$entry\" in\n" +
+                "    *\\\\..\\\\*|*\\\\..|..\\\\*) \n" +
+                "      rm -f \"$TAR_LIST_FILE\" 2>/dev/null || true\n" +
+                "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
+                "      exit 1\n" +
+                "      ;;\n" +
+                "  esac\n" +
+                "done < \"$TAR_LIST_FILE\"\n" +
+                "rm -f \"$TAR_LIST_FILE\" 2>/dev/null || true\n" +
                 "if ! tar " + flags + " \"$ARCHIVE\" -C \"$STAGING_DIR\"; then\n" +
                 "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
                 "  exit 1\n" +
@@ -324,6 +348,30 @@ public static class SshPackageDeploymentScriptBuilder
             "  echo \"[extraction] unzip is required on the SSH target.\" >&2\n" +
             "  exit 1\n" +
             "fi\n" +
+            "ZIP_LIST_FILE=\"$PARENT_DIR/.squid-zip-list-$$-$RANDOM\"\n" +
+            "if ! unzip -Z1 \"$ARCHIVE\" > \"$ZIP_LIST_FILE\"; then\n" +
+            "  rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "  echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
+            "  exit 1\n" +
+            "fi\n" +
+            "while IFS= read -r entry; do\n" +
+            "  [ -z \"$entry\" ] && continue\n" +
+            "  case \"$entry\" in\n" +
+            "    /*|../*|*/../*|*/..|..) \n" +
+            "      rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
+            "      exit 1\n" +
+            "      ;;\n" +
+            "  esac\n" +
+            "  case \"$entry\" in\n" +
+            "    *\\\\..\\\\*|*\\\\..|..\\\\*) \n" +
+            "      rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
+            "      exit 1\n" +
+            "      ;;\n" +
+            "  esac\n" +
+            "done < \"$ZIP_LIST_FILE\"\n" +
+            "rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
             "if ! unzip -q -o \"$ARCHIVE\" -d \"$STAGING_DIR\"; then\n" +
             "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
             "  exit 1\n" +

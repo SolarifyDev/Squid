@@ -179,4 +179,40 @@ public class SshPackageDeploymentScriptBuilderTests
             "retention must run only after current pointer promotion on success.");
     }
 
+    [Theory]
+    [InlineData("evil.nupkg")]
+    [InlineData("evil.zip")]
+    [InlineData("evil.tar")]
+    [InlineData("evil.tar.gz")]
+    [InlineData("evil.tgz")]
+    public void Build_ExtractCommand_RejectsZipSlipEntries(string archiveName)
+    {
+        var extract = SshPackageDeploymentScriptBuilder.BuildExtractCommand(archiveName);
+
+        extract.ShouldContain("zip-slip", Case.Insensitive,
+            "SSH extraction must fail closed on archive path traversal before writing files.");
+        extract.ShouldContain("would escape", Case.Insensitive);
+        extract.ShouldContain("while IFS= read");
+    }
+
+    [Fact]
+    public void Build_IncludesZipSlipGuardBeforeExtraction()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg"
+        });
+
+        var guardIdx = script.IndexOf("would escape", StringComparison.OrdinalIgnoreCase);
+        var extractIdx = script.IndexOf("unzip -q -o", StringComparison.Ordinal);
+        guardIdx.ShouldBeGreaterThan(0);
+        extractIdx.ShouldBeGreaterThan(guardIdx,
+            "Zip-slip entry validation must run before unzip writes any files.");
+    }
+
 }
