@@ -229,6 +229,83 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
     }
 
     [Fact]
+    public async Task DeployPackage_WhenSelectedVersionBlank_FailsBeforeInstall()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/blank-version";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion,
+            selectedVersionOverride: "   ").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBeFalse("Blank package version must not install on SSH.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPackageContentEmpty_FailsBeforeInstall()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/empty-package";
+
+        await using var feed = LocalHttpPackageFeed.Start(PackageId, PackageVersion, Array.Empty<byte>());
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBeFalse("Empty package content must not install on SSH.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
+            || _fixture.LogSink.ContainsMessage("returned empty content")
+            || _fixture.LogSink.ContainsMessage("empty"))
+            .ShouldBeTrue("Empty package must produce acquisition failure diagnostics.");
+        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+    }
+
+    [Fact]
     public async Task DeployPackage_WhenPackageAcquisitionFails_AbortsBeforeInstall()
     {
         if (!EnsureDocker())

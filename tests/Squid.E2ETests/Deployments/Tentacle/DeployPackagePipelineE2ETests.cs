@@ -539,6 +539,62 @@ public class DeployPackagePipelineE2ETests
     }
 
     [Fact]
+    public async Task DeployPackage_WhenSelectedVersionBlank_FailsBeforeInstall()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("blank-version");
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: "   ",
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+            "Blank package version must fail before install.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPackageContentEmpty_FailsBeforeInstall()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("empty-package");
+
+        await using var feed = LocalHttpPackageFeed.Start(PackageId, PackageVersion, Array.Empty<byte>());
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
+        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
+            || _fixture.LogSink.ContainsMessage("returned empty content")
+            || _fixture.LogSink.ContainsMessage("empty"))
+            .ShouldBeTrue("Empty package bytes must fail acquisition with diagnostics.");
+    }
+
+    [Fact]
     public async Task DeployPackage_WhenPackageAcquisitionFails_AbortsBeforeInstall()
     {
         _fixture.LogSink.Clear();
