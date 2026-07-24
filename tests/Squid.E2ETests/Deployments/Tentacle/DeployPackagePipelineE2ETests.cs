@@ -147,11 +147,13 @@ public class DeployPackagePipelineE2ETests
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
 
-        (_fixture.LogSink.ContainsMessage("invalid FeedId 0")
-            || _fixture.LogSink.ContainsMessage("Invalid FeedId: 0")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
-        _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
+        var logs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        (CountTaskLogOccurrences(logs, "invalid FeedId 0") >= 1
+            || CountTaskLogOccurrences(logs, "Invalid FeedId: 0") >= 1
+            || CountTaskLogOccurrences(logs, "Package acquisition failed") >= 1).ShouldBeTrue(
+            "FeedId 0 failure diagnostics must appear in task logs. Logs: " + string.Join(" | ", logs.TakeLast(30)));
+        CountTaskLogOccurrences(logs, "Package acquired:").ShouldBe(0);
+        CountTaskLogOccurrences(logs, "DeployPackage: installed to").ShouldBe(0);
     }
 
     [Fact]
@@ -323,11 +325,15 @@ public class DeployPackagePipelineE2ETests
             "Failed PreDeploy package must not overwrite the previously installed content.");
         (await File.ReadAllTextAsync(installedMarker).ConfigureAwait(false)).ShouldNotBe(badMarker);
 
-        (_fixture.LogSink.ContainsMessage("intentional-predeploy-failure")
+        var badLogs = await GetTaskLogMessagesAsync(badTaskId).ConfigureAwait(false);
+        (CountTaskLogOccurrences(badLogs, "intentional-predeploy-failure") >= 1
+            || CountTaskLogOccurrences(badLogs, "PreDeploy") >= 1
+            || CountTaskLogOccurrences(badLogs, "exited with code 1") >= 1
+            || _fixture.LogSink.ContainsMessage("intentional-predeploy-failure")
             || _fixture.LogSink.ContainsMessage("PreDeploy")
             || _fixture.LogSink.ContainsMessage("exited with code 1")).ShouldBeTrue(
-            "Expected failure logs to mention the intentional PreDeploy failure.");
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+            "Expected failure logs to mention the intentional PreDeploy failure. Logs: " + string.Join(" | ", badLogs.TakeLast(30)));
+        CountTaskLogOccurrences(badLogs, "DeployPackage: installed to").ShouldBe(0,
             "Failed install must not report a successful DeployPackage install.");
     }
 
@@ -532,10 +538,12 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
-        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
-            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+        var rejectLogs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(rejectLogs, "DeployPackage: installed to").ShouldBe(0);
+        (CountTaskLogOccurrences(rejectLogs, "cannot be installed by Deploy a Package") >= 1
+            || CountTaskLogOccurrences(rejectLogs, "Failed to acquire package") >= 1
+            || CountTaskLogOccurrences(rejectLogs, "Package acquisition failed") >= 1).ShouldBeTrue(
+            "Unsupported feed rejection must surface in task logs. Logs: " + string.Join(" | ", rejectLogs.TakeLast(30)));
     }
 
     [Fact]
@@ -560,7 +568,8 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+        var blankLogs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(blankLogs, "DeployPackage: installed to").ShouldBe(0,
             "Blank package version must fail before install.");
     }
 
@@ -590,7 +599,8 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+        var corruptLogs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(corruptLogs, "DeployPackage: installed to").ShouldBe(0,
             "Corrupt package payload must never report successful install.");
     }
 
@@ -616,12 +626,13 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
-        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
-            || _fixture.LogSink.ContainsMessage("returned empty content")
-            || _fixture.LogSink.ContainsMessage("empty"))
-            .ShouldBeTrue("Empty package bytes must fail acquisition with diagnostics.");
+        var emptyLogs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(emptyLogs, "DeployPackage: installed to").ShouldBe(0);
+        (CountTaskLogOccurrences(emptyLogs, "Failed to acquire package") >= 1
+            || CountTaskLogOccurrences(emptyLogs, "Package acquisition failed") >= 1
+            || CountTaskLogOccurrences(emptyLogs, "returned empty content") >= 1
+            || CountTaskLogOccurrences(emptyLogs, "empty") >= 1)
+            .ShouldBeTrue("Empty package bytes must fail acquisition with diagnostics. Logs: " + string.Join(" | ", emptyLogs.TakeLast(30)));
     }
 
     [Fact]
@@ -650,10 +661,13 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
-        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
-            || _fixture.LogSink.ContainsMessage("returned empty content")).ShouldBeTrue();
+        var logs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(logs, "DeployPackage: installed to").ShouldBe(0,
+            "Acquisition failure must not report install success in this task's logs.");
+        (CountTaskLogOccurrences(logs, "Failed to acquire package") >= 1
+            || CountTaskLogOccurrences(logs, "Package acquisition failed") >= 1
+            || CountTaskLogOccurrences(logs, "returned empty content") >= 1).ShouldBeTrue(
+            "Acquisition failure diagnostics must appear in task logs. Logs: " + string.Join(" | ", logs.TakeLast(30)));
     }
 
     [Fact]
@@ -863,10 +877,12 @@ public class DeployPackagePipelineE2ETests
         await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
 
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
-        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
-            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+        var rejectLogs = await GetTaskLogMessagesAsync(taskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(rejectLogs, "DeployPackage: installed to").ShouldBe(0);
+        (CountTaskLogOccurrences(rejectLogs, "cannot be installed by Deploy a Package") >= 1
+            || CountTaskLogOccurrences(rejectLogs, "Failed to acquire package") >= 1
+            || CountTaskLogOccurrences(rejectLogs, "Package acquisition failed") >= 1).ShouldBeTrue(
+            "Unsupported feed rejection must surface in task logs. Logs: " + string.Join(" | ", rejectLogs.TakeLast(30)));
     }
 
     [Fact]
@@ -1402,6 +1418,19 @@ public class DeployPackagePipelineE2ETests
             catch (DeploymentAbortedException)
             {
             }
+        }).ConfigureAwait(false);
+    }
+
+
+    private static int CountTaskLogOccurrences(IReadOnlyList<string> messages, string substring)
+        => messages.Count(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<List<string>> GetTaskLogMessagesAsync(int serverTaskId)
+    {
+        return await _fixture.Run<IServerTaskLogDataProvider, List<string>>(async provider =>
+        {
+            var logs = await provider.GetLogsByTaskIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            return logs.Select(l => l.MessageText ?? string.Empty).ToList();
         }).ConfigureAwait(false);
     }
 
