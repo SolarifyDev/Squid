@@ -436,6 +436,148 @@ public sealed class DeployPackageWindowsE2ETests
         }
     }
 
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_PurgeBeforeInstall_RemovesNonPackageFiles()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-purge-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "purge");
+            Directory.CreateDirectory(installDir);
+            await File.WriteAllTextAsync(Path.Combine(installDir, "local-only.txt"), "delete-me");
+            var logsDir = Path.Combine(installDir, "logs");
+            Directory.CreateDirectory(logsDir);
+            await File.WriteAllTextAsync(Path.Combine(logsDir, "app.log"), "keep-me");
+
+            var packageBytes = CreatePackageArchive((MarkerFileName, "from-package"));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            var packagePath = Path.Combine(workRoot, packageFileName);
+            await File.WriteAllBytesAsync(packagePath, packageBytes);
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.Package.PurgeBeforeInstall"] = "True",
+                ["Squid.Action.Package.PreservePaths"] = "logs/**"
+            };
+            var variables = JsonSerializer.Serialize(map);
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-purge-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.PowerShell
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            File.Exists(Path.Combine(installDir, "local-only.txt")).ShouldBeFalse();
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("from-package");
+            (await File.ReadAllTextAsync(Path.Combine(logsDir, "app.log"))).ShouldBe("keep-me");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WithStructuredConfig_ReplacesJsonLeaves()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-json-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "structured");
+            var packageBytes = CreatePackageArchive(
+                (MarkerFileName, MarkerContent),
+                ("appsettings.json", """{"Greeting":"old","Api":{"BaseUrl":"https://placeholder.local"}}"""));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            var packagePath = Path.Combine(workRoot, packageFileName);
+            await File.WriteAllBytesAsync(packagePath, packageBytes);
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.JsonConfigVariables.Enabled"] = "True",
+                ["Squid.Action.JsonConfigVariables.Targets"] = "appsettings.json",
+                ["Greeting"] = "hello-windows-agent-json",
+                ["Api.BaseUrl"] = "https://api.windows-agent.local"
+            };
+            var variables = JsonSerializer.Serialize(map);
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-json-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.PowerShell
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json"));
+            content.ShouldContain("hello-windows-agent-json");
+            content.ShouldContain("https://api.windows-agent.local");
+            content.ShouldNotContain("https://placeholder.local");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
     private static string BuildBootstrapScript(string packageFileName, string variablesJson)
     {
         _ = variablesJson;

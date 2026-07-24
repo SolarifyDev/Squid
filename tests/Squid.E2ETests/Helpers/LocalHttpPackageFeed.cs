@@ -77,9 +77,17 @@ public sealed class LocalHttpPackageFeed : IAsyncDisposable
         try
         {
             var path = ctx.Request.Url?.AbsolutePath?.Trim('/') ?? string.Empty;
-            var expected = $"api/v2/package/{_packageId}/{_version}";
+            // Support the download shapes used by Deploy Package acquisition:
+            // - NuGet V2: api/v2/package/{id}/{version}
+            // - generic HTTP: {id}/{version}
+            // - GitHub-style tarball: repos/{id}/tarball/{version}
+            var expectedNuGet = $"api/v2/package/{_packageId}/{_version}";
+            var expectedGeneric = $"{_packageId}/{_version}";
+            var expectedGitHub = $"repos/{_packageId}/tarball/{_version}";
 
-            if (!string.Equals(path, expected, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(path, expectedNuGet, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(path, expectedGeneric, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(path, expectedGitHub, StringComparison.OrdinalIgnoreCase))
             {
                 ctx.Response.StatusCode = 404;
                 var msg = Encoding.UTF8.GetBytes($"Not found: /{path}");

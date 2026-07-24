@@ -663,6 +663,189 @@ public class DeployPackagePipelineE2ETests
         Path.GetFullPath(resolved).ShouldBe(Path.GetFullPath(Path.Combine(packageRoot, "2.0.0")));
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WithConfigurationTransformsEnabled_AppliesXdt()
+    {
+        _fixture.LogSink.Clear();
+
+        var webConfig = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+              <appSettings>
+                <add key="EnvName" value="Development" />
+              </appSettings>
+            </configuration>
+            """;
+        var transform = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration xmlns:xdt="http://schemas.microsoft.com/XML-Document-Transform">
+              <appSettings>
+                <add key="EnvName" value="Production" xdt:Transform="SetAttributes" xdt:Locator="Match(key)" />
+              </appSettings>
+            </configuration>
+            """;
+
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, MarkerContent),
+            ("web.config", webConfig),
+            ("web.Production.config", transform)));
+        var installDir = NewInstallDir("xdt");
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties:
+            [
+                ("Squid.Action.ConfigurationTransforms.Enabled", "True"),
+                ("Squid.Action.ConfigurationTransforms.EnvironmentName", "Production")
+            ],
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "web.config")).ConfigureAwait(false);
+        content.ShouldContain("Production");
+        content.ShouldNotContain("Development");
+        _fixture.LogSink.ContainsMessage("ConfigurationTransforms:").ShouldBeTrue();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithStructuredConfigEnabled_ReplacesJsonLeaves()
+    {
+        _fixture.LogSink.Clear();
+
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, MarkerContent),
+            ("appsettings.json", """{"Api":{"BaseUrl":"https://placeholder.local"},"Greeting":"old"}""")));
+        var installDir = NewInstallDir("structured");
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties:
+            [
+                ("Squid.Action.JsonConfigVariables.Enabled", "True"),
+                ("Squid.Action.JsonConfigVariables.Targets", "appsettings.json")
+            ],
+            projectVariables:
+            [
+                ("Api.BaseUrl", "https://api.structured.local"),
+                ("Greeting", "hello-structured")
+            ]).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json")).ConfigureAwait(false);
+        content.ShouldContain("https://api.structured.local");
+        content.ShouldContain("hello-structured");
+        content.ShouldNotContain("https://placeholder.local");
+        content.ShouldNotContain("\"old\"");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenHelmFeed_RejectsAcquisition()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("helm-reject");
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "should-not-install")));
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null,
+            feedTypeOverride: "Helm").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
+        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
+            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPostDeployFails_KeepsInstalledContent()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("post-fail");
+
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, "post-fail-content"),
+            ("PostDeploy.sh", "#!/usr/bin/env bash\necho intentional-postdeploy-failure\nexit 1\n")));
+
+        // Default (no RollbackOnFailure): PostDeploy runs after commit, so the
+        // installed content remains and the task fails. This matches SSH PostDeploy
+        // "keep installed content" semantics used by operators debugging hooks.
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("post-fail-content", "PostDeploy failure should keep committed install content.");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+            "Failed package install must not emit success install log.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithTarGzArchive_InstallsSuccessfully()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("targz");
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreateTarGzArchive((MarkerFileName, "from-tar-gz")));
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null,
+            feedTypeOverride: "GitHub").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("from-tar-gz");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
+    }
+
     // ========================================================================
     // Seeders
     // ========================================================================
@@ -966,6 +1149,27 @@ public class DeployPackagePipelineE2ETests
         var dir = Path.Combine(_workRoot, $"{suffix}-{Guid.NewGuid().ToString("N")[..8]}");
         Directory.CreateDirectory(dir);
         return dir;
+    }
+
+
+    private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        using (var writer = new System.Formats.Tar.TarWriter(gz, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
     }
 
     private static byte[] CreatePackageArchive(params (string FileName, string Content)[] files)

@@ -428,6 +428,82 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WithTarGzArchive_InstallsSuccessfully()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/targz";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "6.0.0",
+            CreateTarGzArchive((MarkerFileName, "from-tar-gz")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "6.0.0",
+            feedTypeOverride: "GitHub").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("from-tar-gz");
+            RemoteFileExists(client, $"{SshDeployPackageE2EFixture.RemoteWorkDir}/Packages/{PackageId}.6.0.0.tar.gz")
+                .ShouldBeTrue("GitHub feed acquisition should stage .tar.gz under package cache.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenHelmFeed_RejectsAcquisition()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/helm-reject";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion,
+            feedTypeOverride: "Helm").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}").ShouldBeFalse();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
+            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
     private bool EnsureDocker()
     {
         if (_fixture.DockerAvailable)
@@ -665,6 +741,27 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             task.ShouldNotBeNull($"ServerTask {serverTaskId} not found");
             task.State.ShouldBe(expectedState, $"Expected '{expectedState}' but got '{task.State}'");
         }).ConfigureAwait(false);
+    }
+
+
+    private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        using (var writer = new System.Formats.Tar.TarWriter(gz, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
     }
 
     private static byte[] CreatePackageArchive(params (string FileName, string Content)[] files)

@@ -430,6 +430,72 @@ public sealed class DeployPackageWindowsHostE2ETests : IDisposable
         File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("from-tar-gz");
     }
 
+
+    [Fact]
+    public async Task DeployPackage_ConfigurationTransforms_AppliesXdt()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "xdt");
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = MarkerContent,
+            ["web.config"] = """<?xml version="1.0"?><configuration><appSettings><add key="EnvName" value="Development" /></appSettings></configuration>""",
+            ["web.Production.config"] = """<?xml version="1.0"?><configuration xmlns:xdt="http://schemas.microsoft.com/XML-Document-Transform"><appSettings><add key="EnvName" value="Production" xdt:Transform="SetAttributes" xdt:Locator="Match(key)" /></appSettings></configuration>"""
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+            ["Squid.Action.ConfigurationTransforms.Enabled"] = "True",
+            ["Squid.Action.ConfigurationTransforms.EnvironmentName"] = "Production"
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        result.Stdout.ShouldContain("ConfigurationTransforms:");
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "web.config"));
+        content.ShouldContain("Production");
+        content.ShouldNotContain("Development");
+    }
+
+    [Fact]
+    public async Task DeployPackage_StructuredConfig_ReplacesJsonLeaves()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "structured");
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = MarkerContent,
+            ["appsettings.json"] = """{"Api":{"BaseUrl":"https://placeholder.local"},"Greeting":"old"}"""
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+            ["Squid.Action.JsonConfigVariables.Enabled"] = "True",
+            ["Squid.Action.JsonConfigVariables.Targets"] = "appsettings.json",
+            ["Api.BaseUrl"] = "https://api.windows-host.local",
+            ["Greeting"] = "hello-windows-host"
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json"));
+        content.ShouldContain("https://api.windows-host.local");
+        content.ShouldContain("hello-windows-host");
+        content.ShouldNotContain("https://placeholder.local");
+    }
+
     private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
         => CalamariTestHost.InvokeInProcessAsync(
             "deploy-package",

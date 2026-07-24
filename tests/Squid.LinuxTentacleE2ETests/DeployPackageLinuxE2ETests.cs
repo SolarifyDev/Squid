@@ -257,6 +257,233 @@ public sealed class DeployPackageLinuxE2ETests
         }
     }
 
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WithSubstituteInFiles_ReplacesTokens()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-sub-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "substitute");
+            var packageBytes = CreatePackageArchive(
+                (MarkerFileName, MarkerContent),
+                ("appsettings.json", """{"Greeting":"#{Greeting}"}"""));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            var packagePath = Path.Combine(workRoot, packageFileName);
+            await File.WriteAllBytesAsync(packagePath, packageBytes);
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.SubstituteInFiles.Enabled"] = "True",
+                ["Squid.Action.SubstituteInFiles.TargetFiles"] = "appsettings.json",
+                ["Greeting"] = "hello-from-linux-agent"
+            };
+            var variables = JsonSerializer.Serialize(map);
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-sub-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            result.AllText.ShouldContain("SubstituteInFiles:");
+            var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json"));
+            content.ShouldContain("hello-from-linux-agent");
+            content.ShouldNotContain("#{Greeting}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_SkipIfAlreadyInstalled_DoesNotOverwrite()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-skip-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "skip");
+
+            var firstBytes = CreatePackageArchive((MarkerFileName, "v1-original"));
+            var firstName = "Acme.Web.1.0.0.nupkg";
+            var firstPath = Path.Combine(workRoot, firstName);
+            await File.WriteAllBytesAsync(firstPath, firstBytes);
+            var firstVars = BuildVariables(installDir, firstPath, "1.0.0");
+            var firstScript = BuildBootstrapScript(firstName, firstVars);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var firstCommand = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-skip1-{Guid.NewGuid():N}"),
+                firstScript,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(firstName, DataStream.FromBytes(firstBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(firstVars))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+            var firstResult = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, firstCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
+            firstResult.ExitCode.ShouldBe(0, firstResult.AllText);
+
+            await File.WriteAllTextAsync(Path.Combine(installDir, MarkerFileName), "operator-edited");
+
+            var secondBytes = CreatePackageArchive((MarkerFileName, "v1-repackaged"));
+            var secondName = "Acme.Web.1.0.0-re.nupkg";
+            var secondPath = Path.Combine(workRoot, secondName);
+            await File.WriteAllBytesAsync(secondPath, secondBytes);
+            var secondMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(secondBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.Package.SkipIfAlreadyInstalled"] = "True"
+            };
+            var secondVars = JsonSerializer.Serialize(secondMap);
+            var secondScript = BuildBootstrapScript(secondName, secondVars);
+            var secondCommand = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-skip2-{Guid.NewGuid():N}"),
+                secondScript,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(secondName, DataStream.FromBytes(secondBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(secondVars))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+            var secondResult = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, secondCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
+            secondResult.ExitCode.ShouldBe(0, secondResult.AllText);
+            secondResult.AllText.ShouldContain("SkipIfAlreadyInstalled:");
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("operator-edited");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WithStructuredConfig_ReplacesJsonLeaves()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-json-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "structured");
+            var packageBytes = CreatePackageArchive(
+                (MarkerFileName, MarkerContent),
+                ("appsettings.json", """{"Greeting":"old","Api":{"BaseUrl":"https://placeholder.local"}}"""));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            await File.WriteAllBytesAsync(Path.Combine(workRoot, packageFileName), packageBytes);
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.JsonConfigVariables.Enabled"] = "True",
+                ["Squid.Action.JsonConfigVariables.Targets"] = "appsettings.json",
+                ["Greeting"] = "hello-linux-agent-json",
+                ["Api.BaseUrl"] = "https://api.linux-agent.local"
+            };
+            var variables = JsonSerializer.Serialize(map);
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-json-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json"));
+            content.ShouldContain("hello-linux-agent-json");
+            content.ShouldContain("https://api.linux-agent.local");
+            content.ShouldNotContain("https://placeholder.local");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
     private static string BuildBootstrapScript(string packageFileName, string variablesJson)
     {
         _ = variablesJson;
