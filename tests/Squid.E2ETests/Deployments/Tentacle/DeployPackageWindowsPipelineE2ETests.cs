@@ -206,6 +206,73 @@ public class DeployPackageWindowsPipelineE2ETests
     }
 
     [Fact]
+    public async Task DeployPackage_WindowsTarget_WhenSelectedVersionBlank_FailsBeforeCapture()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.4.0",
+            CreatePackageArchive(("marker.txt", "should-not-capture")));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\blank-version",
+            mode: "Custom",
+            packageVersion: "1.4.0",
+            selectedVersionOverride: "   ").ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+        ExecutionCapture.CapturedRequests.ShouldBeEmpty(
+            "Blank selected version must fail before Windows target payload capture.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WindowsTarget_WhenPackageContentEmpty_FailsBeforeCapture()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(PackageId, "1.5.0", Array.Empty<byte>());
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\empty-package",
+            mode: "Custom",
+            packageVersion: "1.5.0").ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+        ExecutionCapture.CapturedRequests.ShouldBeEmpty(
+            "Empty package payload must fail before Windows target payload capture.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WindowsTarget_WhenPackageContentCorrupt_FailsBeforeCapture()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.6.0",
+            Encoding.UTF8.GetBytes("this-is-not-a-package-archive"));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\corrupt-package",
+            mode: "Custom",
+            packageVersion: "1.6.0").ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+        ExecutionCapture.CapturedRequests.ShouldBeEmpty(
+            "Corrupt package payload must fail before Windows target payload capture.");
+    }
+
+    [Fact]
     public async Task DeployPackage_WindowsTarget_WithMismatchedRole_DoesNotCapture()
     {
         ExecutionCapture.Clear();
