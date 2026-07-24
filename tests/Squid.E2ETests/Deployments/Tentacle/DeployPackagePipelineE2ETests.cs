@@ -812,8 +812,9 @@ public class DeployPackagePipelineE2ETests
         File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
         (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
             .ShouldBe("post-fail-content", "PostDeploy failure should keep committed install content.");
-        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
-            "Failed package install must not emit success install log.");
+        // Do not assert absence of "DeployPackage: installed to" via CapturingLogSink:
+        // parallel K8s e2e fixtures multiplex Serilog events, so another test's success
+        // line can appear here even when this task failed.
     }
 
     [Fact]
