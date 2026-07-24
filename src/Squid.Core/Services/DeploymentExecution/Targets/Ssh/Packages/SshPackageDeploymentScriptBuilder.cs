@@ -105,17 +105,31 @@ public static class SshPackageDeploymentScriptBuilder
             "  fi\n" +
             "  exit 1\n" +
             "fi\n\n" +
-            "rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
-            "trap - EXIT\n\n" +
             "cd \"$FINAL_DIR\"\n" +
             "if [ -f \"PreDeploy.sh\" ]; then\n" +
             "  echo \"PreDeploy: running PreDeploy.sh\"\n" +
-            "  bash \"PreDeploy.sh\"\n" +
+            "  if ! bash \"PreDeploy.sh\"; then\n" +
+            "    echo \"[rollback] PreDeploy failed; restoring previous installation if available.\" >&2\n" +
+            "    if [ -d \"$BACKUP_DIR\" ]; then\n" +
+            "      rm -rf \"$FINAL_DIR\"\n" +
+            "      if ! mv \"$BACKUP_DIR\" \"$FINAL_DIR\"; then\n" +
+            "        echo \"[rollback] Failed to restore backup after PreDeploy failure. Backup path: $BACKUP_DIR\" >&2\n" +
+            "        exit 1\n" +
+            "      fi\n" +
+            "    fi\n" +
+            "    exit 1\n" +
+            "  fi\n" +
             "fi\n" +
             "if [ -f \"PostDeploy.sh\" ]; then\n" +
             "  echo \"PostDeploy: running PostDeploy.sh\"\n" +
-            "  bash \"PostDeploy.sh\"\n" +
+            "  if ! bash \"PostDeploy.sh\"; then\n" +
+            "    echo \"[rollback] PostDeploy failed; keeping installed content and discarding backup.\" >&2\n" +
+            "    rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
+            "    exit 1\n" +
+            "  fi\n" +
             "fi\n\n" +
+            "rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
+            "trap - EXIT\n\n" +
             "printf \"##squid[setVariable name='%s' value='%s']\\n\" \"Squid.Action.Package.InstallationDirectoryPath\" \"$FINAL_DIR\"\n" +
             "printf \"##squid[setVariable name='%s' value='%s']\\n\" \"Squid.Action.Package.PackageId\" \"$PACKAGE_ID\"\n" +
             "printf \"##squid[setVariable name='%s' value='%s']\\n\" \"Squid.Action.Package.PackageVersion\" \"$PACKAGE_VERSION\"\n" +

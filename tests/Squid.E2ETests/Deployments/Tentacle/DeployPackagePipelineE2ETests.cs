@@ -375,6 +375,107 @@ public class DeployPackagePipelineE2ETests
         _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
     }
 
+
+    [Fact]
+    public async Task DeployPackage_SkipIfAlreadyInstalled_DoesNotOverwriteOperatorEdits()
+    {
+        _fixture.LogSink.Clear();
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "v1-original")));
+        var installDir = NewInstallDir("skip");
+
+        var firstTaskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+        await ExecutePipelineAsync(firstTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(firstTaskId, TaskState.Success).ConfigureAwait(false);
+
+        var markerPath = Path.Combine(installDir, MarkerFileName);
+        await File.WriteAllTextAsync(markerPath, "operator-edited").ConfigureAwait(false);
+
+        await using var feed2 = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, "v1-repackaged")));
+        var secondTaskId = await SeedDeployPackageDeploymentAsync(
+            feed2,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
+            ],
+            projectVariables: null).ConfigureAwait(false);
+        await ExecutePipelineAsync(secondTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(secondTaskId, TaskState.Success).ConfigureAwait(false);
+
+        (await File.ReadAllTextAsync(markerPath).ConfigureAwait(false)).ShouldBe("operator-edited");
+        _fixture.LogSink.ContainsMessage("SkipIfAlreadyInstalled:").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_VersionedRetentionCount_KeepsOnlyConfiguredVersions()
+    {
+        _fixture.LogSink.Clear();
+
+        string latestInstallDir = null;
+        foreach (var version in new[] { "1.0.0", "2.0.0", "3.0.0" })
+        {
+            _fixture.LogSink.Clear();
+            await using var feed = LocalHttpPackageFeed.Start(
+                PackageId,
+                version,
+                CreatePackageArchive((MarkerFileName, version)));
+
+            var taskId = await SeedDeployPackageDeploymentAsync(
+                feed,
+                installDir: Path.Combine(_workRoot, "ignored-custom"),
+                packageFiles: null,
+                packageVersionProperty: null,
+                selectedVersion: version,
+                stepTimeoutSeconds: 120,
+                extraActionProperties:
+                [
+                    (SpecialVariables.Action.InstallationDirectoryMode, "Versioned"),
+                    ("Squid.Action.Package.RetentionCount", "2")
+                ],
+                projectVariables: null).ConfigureAwait(false);
+
+            await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+            // Capture install path from calamari success log: DeployPackage: installed to '...'
+            var installedLine = _fixture.LogSink.Messages
+                .FirstOrDefault(m => m.Contains("DeployPackage: installed to", StringComparison.Ordinal));
+            installedLine.ShouldNotBeNull($"Missing install log for version {version}");
+            var quoteStart = installedLine.IndexOf('\'');
+            var quoteEnd = installedLine.LastIndexOf('\'');
+            quoteStart.ShouldBeGreaterThanOrEqualTo(0);
+            quoteEnd.ShouldBeGreaterThan(quoteStart);
+            latestInstallDir = installedLine.Substring(quoteStart + 1, quoteEnd - quoteStart - 1);
+            Directory.Exists(latestInstallDir).ShouldBeTrue(latestInstallDir);
+            await Task.Delay(30).ConfigureAwait(false);
+        }
+
+        latestInstallDir.ShouldNotBeNull();
+        var packageRoot = Directory.GetParent(latestInstallDir)?.FullName;
+        packageRoot.ShouldNotBeNull();
+
+        Directory.Exists(Path.Combine(packageRoot, "1.0.0")).ShouldBeFalse("Oldest version should be removed by retention");
+        Directory.Exists(Path.Combine(packageRoot, "2.0.0")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(packageRoot, "3.0.0")).ShouldBeTrue();
+    }
+
+
     // ========================================================================
     // Seeders
     // ========================================================================
@@ -604,19 +705,36 @@ public class DeployPackagePipelineE2ETests
         string packageVersionProperty,
         (string Name, string Value)[] extraActionProperties)
     {
+        var extras = extraActionProperties ?? Array.Empty<(string Name, string Value)>();
+        var hasModeOverride = extras.Any(p =>
+            string.Equals(p.Name, SpecialVariables.Action.InstallationDirectoryMode, StringComparison.OrdinalIgnoreCase));
+
         var actionProps = new List<(string Name, string Value)>
         {
             (SpecialVariables.Action.PackageFeedId, feedId.ToString()),
-            (SpecialVariables.Action.PackageId, PackageId),
-            (SpecialVariables.Action.InstallationDirectoryMode, "Custom"),
-            (SpecialVariables.Action.CustomInstallationDirectory, installDir)
+            (SpecialVariables.Action.PackageId, PackageId)
         };
+
+        if (!hasModeOverride)
+        {
+            actionProps.Add((SpecialVariables.Action.InstallationDirectoryMode, "Custom"));
+            actionProps.Add((SpecialVariables.Action.CustomInstallationDirectory, installDir));
+        }
+        else if (!string.IsNullOrWhiteSpace(installDir))
+        {
+            // Callers using Versioned may still pass a diagnostic path; only set Custom dir when provided
+            // and mode remains Custom via extras.
+            var mode = extras.First(p =>
+                string.Equals(p.Name, SpecialVariables.Action.InstallationDirectoryMode, StringComparison.OrdinalIgnoreCase)).Value;
+            if (string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase))
+                actionProps.Add((SpecialVariables.Action.CustomInstallationDirectory, installDir));
+        }
 
         if (!string.IsNullOrWhiteSpace(packageVersionProperty))
             actionProps.Add((SpecialVariables.Action.PackageVersion, packageVersionProperty));
 
-        if (extraActionProperties is { Length: > 0 })
-            actionProps.AddRange(extraActionProperties);
+        if (extras.Length > 0)
+            actionProps.AddRange(extras);
 
         return actionProps;
     }

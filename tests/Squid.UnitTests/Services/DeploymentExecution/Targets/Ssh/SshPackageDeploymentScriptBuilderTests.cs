@@ -98,5 +98,26 @@ public class SshPackageDeploymentScriptBuilderTests
         script.ShouldContain("ARCHIVE=\"$PACKAGE_BASE_DIR/$ARCHIVE_NAME\"");
         script.ShouldContain("Acme.Web.1.0.0.zip");
     }
-}
 
+    [Fact]
+    public void Build_KeepsBackupUntilAfterPreDeploy()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg"
+        });
+
+        var preDeployIdx = script.IndexOf("PreDeploy: running PreDeploy.sh", StringComparison.Ordinal);
+        var backupDeleteIdx = script.IndexOf("rm -rf \"$BACKUP_DIR\"", StringComparison.Ordinal);
+        preDeployIdx.ShouldBeGreaterThan(0);
+        backupDeleteIdx.ShouldBeGreaterThan(preDeployIdx,
+            "Backup must remain available until after PreDeploy so failed conventions can restore previous content.");
+        script.ShouldContain("[rollback] PreDeploy failed; restoring previous installation if available.");
+        script.ShouldContain("if ! bash \"PreDeploy.sh\"");
+    }
+}

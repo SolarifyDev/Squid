@@ -261,7 +261,83 @@ public sealed class DeployPackageWindowsHostE2ETests : IDisposable
         File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("operator-edited");
     }
 
-    private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
+
+    [Fact]
+    public async Task DeployPackage_RetentionCount_KeepsOnlyConfiguredVersions()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", PackageId);
+        foreach (var version in new[] { "1.0.0", "2.0.0", "3.0.0" })
+        {
+            var archive = CreateZip(new Dictionary<string, string>
+            {
+                [MarkerFileName] = version
+            });
+            var installDir = Path.Combine(packageRoot, version);
+            var variablesPath = WriteVariables(new Dictionary<string, string>
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = version,
+                ["Squid.Action.Package.Hash"] = Sha256(archive),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Versioned",
+                ["Squid.Action.Package.InstallationDirectoryPath"] = installDir,
+                ["Squid.Action.Package.Path.Environment"] = "Production",
+                ["Squid.Action.Package.Path.Project"] = "WebApp",
+                ["Squid.Action.Package.Path.Package"] = PackageId,
+                ["Squid.Action.Package.Path.Version"] = version,
+                [PackageInstallOptionProperties.RetentionCount] = "2"
+            });
+
+            var result = await InvokeDeployPackageAsync(archive, variablesPath);
+            result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+            await Task.Delay(20);
+        }
+
+        Directory.Exists(Path.Combine(packageRoot, "1.0.0")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(packageRoot, "2.0.0")).ShouldBeTrue();
+        Directory.Exists(Path.Combine(packageRoot, "3.0.0")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_PurgeBeforeInstall_RemovesNonPackageFilesButKeepsPreserved()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "purge");
+        Directory.CreateDirectory(installDir);
+        await File.WriteAllTextAsync(Path.Combine(installDir, "local-only.txt"), "delete-me");
+        var logsDir = Path.Combine(installDir, "logs");
+        Directory.CreateDirectory(logsDir);
+        await File.WriteAllTextAsync(Path.Combine(logsDir, "app.log"), "keep-me");
+
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "from-package"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+            [PackageInstallOptionProperties.PurgeBeforeInstall] = "True",
+            [PackageInstallOptionProperties.PreservePaths] = "logs/**"
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+
+        File.Exists(Path.Combine(installDir, "local-only.txt")).ShouldBeFalse();
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("from-package");
+        File.ReadAllText(Path.Combine(logsDir, "app.log")).ShouldBe("keep-me");
+    }
+
+
+        private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
         => CalamariTestHost.InvokeInProcessAsync(
             "deploy-package",
             $"--archive={archivePath}",
