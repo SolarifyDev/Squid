@@ -237,6 +237,11 @@ $arguments = Get-SquidParameter 'Squid.Action.WindowsService.Arguments'
 $startMode = Get-SquidParameter 'Squid.Action.WindowsService.StartMode' 'Automatic'
 $desiredStatus = Get-SquidParameter 'Squid.Action.WindowsService.DesiredStatus' 'Started'
 $dependencies = Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies')
+$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+if ($null -ne $existingService) {
+    Stop-ServiceIfRunning -Name $serviceName
+}
 
 $packageRoot = Resolve-PackageRoot
 $executablePath = Resolve-ExecutablePath -PackageRoot $packageRoot -ExecutablePath $relativeExecutablePath
@@ -247,13 +252,11 @@ if (-not (Test-Path -LiteralPath $executablePath)) {
 $binaryPathName = Build-BinaryPathName -ExecutablePath $executablePath -Arguments $arguments
 $scStartMode = Convert-StartModeForSc $startMode
 $accountArgs = Get-ServiceAccountArgs
-$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 
 if ($null -eq $existingService) {
     Write-Host "Creating Windows service '$serviceName'."
     Invoke-Sc create $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
 } else {
-    Stop-ServiceIfRunning -Name $serviceName
     Write-Host "Reconfiguring Windows service '$serviceName'."
     Invoke-Sc config $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
 }

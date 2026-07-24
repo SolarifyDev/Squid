@@ -44,6 +44,22 @@ public class WindowsServiceDeployScriptBuilderTests
     }
 
     [Fact]
+    public void Build_EmbeddedScriptStopsExistingService_BeforePackageExtraction()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        var existingServiceIndex = script.IndexOf("$existingService = Get-Service", StringComparison.Ordinal);
+        var stopExistingServiceIndex = script.IndexOf("Stop-ServiceIfRunning -Name $serviceName", existingServiceIndex, StringComparison.Ordinal);
+        var packageRootIndex = script.IndexOf("$packageRoot = Resolve-PackageRoot", StringComparison.Ordinal);
+
+        existingServiceIndex.ShouldBeGreaterThanOrEqualTo(0);
+        stopExistingServiceIndex.ShouldBeGreaterThanOrEqualTo(0);
+        packageRootIndex.ShouldBeGreaterThanOrEqualTo(0);
+        stopExistingServiceIndex.ShouldBeLessThan(packageRootIndex,
+            customMessage: "Existing services must be stopped before package purge/extract touches the install directory.");
+    }
+
+    [Fact]
     public void Build_AllRecognisedProperties_HaveExplicitEntryInHashtable_EvenWhenUnset()
     {
         var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
