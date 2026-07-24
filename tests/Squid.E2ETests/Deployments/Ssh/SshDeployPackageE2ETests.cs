@@ -263,7 +263,9 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+        var blankLogs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(blankLogs, "DeployPackage: installed to").ShouldBe(0,
+            "Blank package version must not report install success in this task's logs.");
     }
 
     [Fact]
@@ -300,7 +302,9 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+        var corruptLogs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        CountTaskLogOccurrences(corruptLogs, "DeployPackage: installed to").ShouldBe(0,
+            "Corrupt package must not report install success in this task's logs.");
     }
 
     [Fact]
