@@ -295,6 +295,7 @@ public class DeployPackagePipelineE2ETests
 
         // 2) Failing PreDeploy must not leave the bad package content in place.
         _fixture.LogSink.Clear();
+        var badTaskId = 0;
         await using (var badFeed = LocalHttpPackageFeed.Start(
                          PackageId,
                          "2.0.0",
@@ -302,7 +303,7 @@ public class DeployPackagePipelineE2ETests
                              (MarkerFileName, badMarker),
                              ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-predeploy-failure\nexit 1\n"))))
         {
-            var badTaskId = await SeedDeployPackageDeploymentAsync(
+            badTaskId = await SeedDeployPackageDeploymentAsync(
                 badFeed,
                 installDir,
                 packageFiles: null,
