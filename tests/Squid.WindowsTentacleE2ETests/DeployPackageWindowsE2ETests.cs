@@ -858,7 +858,15 @@ public sealed class DeployPackageWindowsE2ETests
 
         try
         {
-            Environment.SetEnvironmentVariable("PATH", @"C:\Windows\System32");
+            // Keep PowerShell/pwsh resolvable, but strip any calamari directories so bootstrap fails readably.
+            var cleanedPath = string.Join(Path.PathSeparator,
+                (previousPath ?? string.Empty)
+                    .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                    .Where(p =>
+                        !File.Exists(Path.Combine(p, "squid-calamari.exe")) &&
+                        !File.Exists(Path.Combine(p, "squid-calamari")) &&
+                        !File.Exists(Path.Combine(p, "squid-calamari.dll"))));
+            Environment.SetEnvironmentVariable("PATH", cleanedPath);
 
             var installDir = Path.Combine(workRoot, "apps", "no-calamari");
             var packageBytes = CreatePackageArchive((MarkerFileName, "no-calamari"));
@@ -873,7 +881,7 @@ public sealed class DeployPackageWindowsE2ETests
             server.TrustAgent(agent.Thumbprint);
 
             var command = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-win-nocal-{Guid.NewGuid():N}"),
+                new ScriptTicket($"wnocal-{Guid.NewGuid():N}"),
                 scriptBody,
                 ScriptIsolationLevel.NoIsolation,
                 TimeSpan.FromMinutes(2),
@@ -926,8 +934,10 @@ public sealed class DeployPackageWindowsE2ETests
                 await File.WriteAllBytesAsync(packagePath, packageBytes);
                 var variables = BuildVariables(installDir, packagePath, version);
                 var scriptBody = BuildBootstrapScript(packageFileName, variables);
+                var ticket = $"wconc{version.Replace(".", string.Empty)}-{Guid.NewGuid():N}";
+                if (ticket.Length > 64) ticket = ticket[..64];
                 var command = new StartScriptCommand(
-                    new ScriptTicket($"deploy-pkg-win-conc-{version}-{Guid.NewGuid():N}"),
+                    new ScriptTicket(ticket),
                     scriptBody,
                     ScriptIsolationLevel.NoIsolation,
                     TimeSpan.FromMinutes(2),
