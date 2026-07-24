@@ -159,6 +159,61 @@ public class DeployPackageMultiTargetE2ETests
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
+        // PreDeploy runs after commit; without RollbackOnFailure the package content remains.
+        // Durable contract for this scenario is overall task failure + no success install log.
+        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(0,
+            "PreDeploy failure on all matched targets must not emit successful install logs.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenOneTargetSucceedsAndOtherFails_OverallTaskFailsWithSuccessfulTargetContent()
+    {
+        _fixture.LogSink.Clear();
+
+        var pollingName = await GetMachineNameAsync(_fixture.PollingMachineId).ConfigureAwait(false);
+        var listeningName = await GetMachineNameAsync(_fixture.ListeningMachineId).ConfigureAwait(false);
+
+        // Both targets share one host FS and the same CustomInstallationDirectory.
+        // PreDeploy lets the first target commit, then fails the second target.
+        var preDeploy =
+            "#!/usr/bin/env bash\n" +
+            "set -euo pipefail\n" +
+            "LOCK=\"$PWD/../.multi-target-first-success\"\n" +
+            "if [ -f \"$LOCK\" ]; then\n" +
+            "  echo intentional-second-target-predeploy-failure\n" +
+            "  exit 1\n" +
+            "fi\n" +
+            "mkdir -p \"$(dirname \"$LOCK\")\"\n" +
+            "echo ok > \"$LOCK\"\n" +
+            "echo pre-ok > pre.txt\n";
+
+        var packageBytes = CreatePackageArchive(
+            ("deploy-package-multi-marker.txt", "partial-success"),
+            ("PreDeploy.sh", preDeploy));
+        await using var feed = LocalHttpPackageFeed.Start(PackageId, "2.0.0", packageBytes);
+
+        var installDir = Path.Combine(_workRoot, "install-partial-success");
+        Directory.CreateDirectory(installDir);
+
+        var serverTaskId = await SeedMultiTargetDeployPackageAsync(
+            feed,
+            installDir,
+            targetRoles: $"{WebRole},{ApiRole}",
+            packageVersion: "2.0.0").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
+        // Exactly one target commits install (the first success), the second fails PreDeploy.
+        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(1,
+            "Partial multi-target failure should keep the successful target install and fail overall.");
+        File.Exists(Path.Combine(installDir, "deploy-package-multi-marker.txt"))
+            .ShouldBeTrue("Successful target must leave installed package content.");
+        (await File.ReadAllTextAsync(Path.Combine(installDir, "deploy-package-multi-marker.txt")).ConfigureAwait(false))
+            .ShouldBe("partial-success");
+        (_fixture.LogSink.ContainsMessage(pollingName) || _fixture.LogSink.ContainsMessage(listeningName))
+            .ShouldBeTrue("Both targets should still appear in execution logs for partial failure.");
     }
 
     // ========================================================================
@@ -204,7 +259,8 @@ public class DeployPackageMultiTargetE2ETests
     private async Task<int> SeedMultiTargetDeployPackageAsync(
         LocalHttpPackageFeed feed,
         string installDir,
-        string targetRoles)
+        string targetRoles,
+        string packageVersion = PackageVersion)
     {
         var serverTaskId = 0;
 
@@ -268,7 +324,7 @@ public class DeployPackageMultiTargetE2ETests
                         ActionName = ActionName,
                         PackageReferenceName = PackageId,
                         FeedId = externalFeed.Id,
-                        Version = PackageVersion
+                        Version = packageVersion
                     }
                 ]
             }).ConfigureAwait(false);

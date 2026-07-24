@@ -955,6 +955,136 @@ public sealed class DeployPackageLinuxE2ETests
         }
     }
 
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WithConfigurationTransforms_AppliesXdt()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-xdt-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "xdt");
+            var transform = """
+                <?xml version="1.0"?>
+                <configuration xmlns:xdt="http://schemas.microsoft.com/XML-Document-Transform">
+                  <appSettings>
+                    <add key="EnvName" value="Production" xdt:Transform="SetAttributes" xdt:Locator="Match(key)" />
+                  </appSettings>
+                </configuration>
+                """;
+            var packageBytes = CreatePackageArchive(
+                (MarkerFileName, MarkerContent),
+                ("Web.config", """<?xml version="1.0" encoding="utf-8"?><configuration><appSettings><add key="EnvName" value="Dev" /></appSettings></configuration>"""),
+                ("web.Production.config", transform));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            await File.WriteAllBytesAsync(Path.Combine(workRoot, packageFileName), packageBytes);
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
+                ["Squid.Action.ConfigurationTransforms.Enabled"] = "True",
+                ["Squid.Action.ConfigurationTransforms.EnvironmentName"] = "Production"
+            };
+            var variables = JsonSerializer.Serialize(map);
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-xdt-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            result.AllText.ShouldContain("ConfigurationTransforms:");
+            var content = await File.ReadAllTextAsync(Path.Combine(installDir, "Web.config"));
+            content.ShouldContain("Production");
+            content.ShouldNotContain("Dev");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WithTarGzArchive_ExtractsSuccessfully()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-targz-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+            var installDir = Path.Combine(workRoot, "apps", "tar-gz");
+            var packageBytes = CreateTarGzArchive((MarkerFileName, "from-tar-gz-linux-agent"));
+            var packageFileName = "Acme.Web.1.0.0.tar.gz";
+            var packagePath = Path.Combine(workRoot, packageFileName);
+            await File.WriteAllBytesAsync(packagePath, packageBytes);
+
+            var variables = BuildVariables(installDir, packagePath, "1.0.0");
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-linux-targz-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.Bash
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldBe(0, result.AllText);
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("from-tar-gz-linux-agent");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
     private static string BuildBootstrapScript(string packageFileName, string variablesJson)
     {
         _ = variablesJson;
@@ -985,6 +1115,26 @@ public sealed class DeployPackageLinuxE2ETests
         if (rollbackOnFailure)
             map["Squid.Action.Package.RollbackOnFailure"] = "True";
         return JsonSerializer.Serialize(map);
+    }
+
+    private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        using (var writer = new System.Formats.Tar.TarWriter(gz, leaveOpen: false))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
     }
 
     private static byte[] CreatePackageArchive(params (string FileName, string Content)[] files)

@@ -273,6 +273,137 @@ public class DeployPackageWindowsPipelineE2ETests
     }
 
     [Fact]
+    public async Task DeployPackage_WindowsTarget_SkipIfAlreadyInstalled_IsPresentInPayloadVariables()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.7.0",
+            CreatePackageArchive(("marker.txt", "skip")));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\skip-if-installed",
+            mode: "Custom",
+            packageVersion: "1.7.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
+            ]).ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(1);
+        Var(ExecutionCapture.CapturedRequests[0], "Squid.Action.Package.SkipIfAlreadyInstalled")
+            .ShouldBe("True");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WindowsTarget_VersionedMode_CapturesProgramDataApplicationsPathDefaults()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.8.0",
+            CreatePackageArchive(("marker.txt", "versioned")));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: string.Empty,
+            mode: "Versioned",
+            packageVersion: "1.8.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.UseCurrentPointer", "True"),
+                ("Squid.Action.Package.RetentionCount", "2")
+            ]).ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(1);
+        var captured = ExecutionCapture.CapturedRequests[0];
+        Var(captured, SpecialVariables.Action.InstallationDirectoryMode).ShouldBe("Versioned");
+        Var(captured, "Squid.Action.Package.UseCurrentPointer").ShouldBe("True");
+        Var(captured, "Squid.Action.Package.RetentionCount").ShouldBe("2");
+        Var(captured, SpecialVariables.Action.PackageId).ShouldBe(PackageId);
+        Var(captured, SpecialVariables.Action.PackageVersion).ShouldBe("1.8.0");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WindowsTarget_WithTarGzArchive_CapturesPackagePayload()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.9.0",
+            CreateTarGzArchive(("marker.txt", "tar-gz-windows")));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\tar-gz",
+            mode: "Custom",
+            packageVersion: "1.9.0",
+            feedTypeOverride: "GitHub").ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(1);
+        var captured = ExecutionCapture.CapturedRequests[0];
+        captured.PackageReferences.ShouldNotBeNull();
+        captured.PackageReferences.Count.ShouldBe(1);
+        File.Exists(captured.PackageReferences[0].LocalPath).ShouldBeTrue();
+        (captured.PackageReferences[0].LocalPath.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
+            || Path.GetExtension(captured.PackageReferences[0].LocalPath).Equals(".gz", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeTrue("Windows pipeline should preserve GitHub-style .tar.gz acquisition extension. Path=" +
+                          captured.PackageReferences[0].LocalPath);
+    }
+
+    [Fact]
+    public async Task DeployPackage_WindowsTarget_WithSubstituteInFiles_IsPresentInPayloadVariables()
+    {
+        ExecutionCapture.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.10.0",
+            CreatePackageArchive(("appsettings.json", """{"Greeting":"#{Greeting}"}""")));
+
+        var serverTaskId = await SeedAsync(
+            feed,
+            "TentaclePolling",
+            installDir: @"C:\apps\substitute",
+            mode: "Custom",
+            packageVersion: "1.10.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.SubstituteInFiles.Enabled", "True"),
+                ("Squid.Action.SubstituteInFiles.Targets", "appsettings.json")
+            ],
+            projectVariables:
+            [
+                ("Greeting", "hello-windows-pipeline", false)
+            ]).ConfigureAwait(false);
+
+        await ExecuteAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        ExecutionCapture.CapturedRequests.Count.ShouldBe(1);
+        var captured = ExecutionCapture.CapturedRequests[0];
+        Var(captured, "Squid.Action.SubstituteInFiles.Enabled").ShouldBe("True");
+        Var(captured, "Squid.Action.SubstituteInFiles.Targets").ShouldBe("appsettings.json");
+        Var(captured, "Greeting").ShouldBe("hello-windows-pipeline");
+    }
+
+    [Fact]
     public async Task DeployPackage_WindowsTarget_WithMismatchedRole_DoesNotCapture()
     {
         ExecutionCapture.Clear();
@@ -337,7 +468,8 @@ public class DeployPackageWindowsPipelineE2ETests
         (string Name, string Value, bool IsSensitive)[] projectVariables = null,
         string targetRoles = TargetRole,
         bool skipExternalFeed = false,
-        int? feedIdOverride = null)
+        int? feedIdOverride = null,
+        string feedTypeOverride = null)
     {
         var serverTaskId = 0;
         var selectedVersion = selectedVersionOverride ?? packageVersion;
@@ -386,7 +518,7 @@ public class DeployPackageWindowsPipelineE2ETests
                     {
                         Name = $"Local NuGet Win {suffix}",
                         Slug = $"local-nuget-win-{suffix}",
-                        FeedType = "NuGet",
+                        FeedType = string.IsNullOrWhiteSpace(feedTypeOverride) ? "NuGet" : feedTypeOverride,
                         FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
                         Username = string.Empty,
                         Password = string.Empty,
@@ -544,6 +676,27 @@ public class DeployPackageWindowsPipelineE2ETests
 
     private static string Var(ScriptExecutionRequest request, string name)
         => request.Variables.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase))?.Value;
+
+
+    private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+        using (var writer = new System.Formats.Tar.TarWriter(gz, leaveOpen: false))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
+    }
 
     private static byte[] CreatePackageArchive(params (string FileName, string Content)[] files)
     {

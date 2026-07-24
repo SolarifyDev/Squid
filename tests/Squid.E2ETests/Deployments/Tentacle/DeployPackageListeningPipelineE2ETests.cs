@@ -88,7 +88,180 @@ public class DeployPackageListeningPipelineE2ETests
             .ShouldBe(MarkerContent);
     }
 
-    private async Task<int> SeedDeploymentAsync(LocalHttpPackageFeed feed, string installDir)
+    [Fact]
+    public async Task DeployPackage_Listening_WithConfigurationVariables_ReplacesConfigEntries()
+    {
+        _fixture.LogSink.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.1.0",
+            CreatePackageArchive(
+                (MarkerFileName, "cfg"),
+                ("Web.config", """
+                    <?xml version="1.0" encoding="utf-8"?>
+                    <configuration>
+                      <appSettings>
+                        <add key="ApiKey" value="placeholder" />
+                      </appSettings>
+                    </configuration>
+                    """)));
+        var installDir = Path.Combine(_workRoot, "config-vars");
+        Directory.CreateDirectory(installDir);
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageVersion: "1.1.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.ConfigurationVariables.Enabled", "True")
+            ],
+            projectVariables:
+            [
+                ("ApiKey", "listening-secret")
+            ]).ConfigureAwait(false);
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "Web.config")).ConfigureAwait(false);
+        content.ShouldContain("listening-secret");
+        content.ShouldNotContain("placeholder");
+        _fixture.LogSink.ContainsMessage("ConfigurationVariables:").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_Listening_WhenPreDeployFails_DoesNotOverwritePreviousInstall()
+    {
+        _fixture.LogSink.Clear();
+
+        var installDir = Path.Combine(_workRoot, "rollback");
+        Directory.CreateDirectory(installDir);
+
+        await using (var goodFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "1.0.0",
+                         CreatePackageArchive((MarkerFileName, "good-content"))))
+        {
+            var goodTask = await SeedDeploymentAsync(
+                goodFeed,
+                installDir,
+                packageVersion: "1.0.0",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RollbackOnFailure", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(goodTask).ConfigureAwait(false);
+            await AssertTaskStateAsync(goodTask, TaskState.Success).ConfigureAwait(false);
+        }
+
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("good-content");
+
+        await using var badFeed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "2.0.0",
+            CreatePackageArchive(
+                (MarkerFileName, "bad-content"),
+                ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-listening-predeploy-failure\nexit 1\n")));
+        var badTask = await SeedDeploymentAsync(
+            badFeed,
+            installDir,
+            packageVersion: "2.0.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.RollbackOnFailure", "True")
+            ]).ConfigureAwait(false);
+        await ExecutePipelineAsync(badTask).ConfigureAwait(false);
+        await AssertTaskStateAsync(badTask, TaskState.Failed).ConfigureAwait(false);
+
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("good-content");
+        // Good deploy already logged install success; assert bad package content never lands.
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldNotBe("bad-content");
+    }
+
+    [Fact]
+    public async Task DeployPackage_Listening_SkipIfAlreadyInstalled_DoesNotOverwriteOperatorEdits()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = Path.Combine(_workRoot, "skip");
+        Directory.CreateDirectory(installDir);
+
+        await using (var firstFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "1.0.0",
+                         CreatePackageArchive((MarkerFileName, "first"))))
+        {
+            var firstTask = await SeedDeploymentAsync(
+                firstFeed,
+                installDir,
+                packageVersion: "1.0.0",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(firstTask).ConfigureAwait(false);
+            await AssertTaskStateAsync(firstTask, TaskState.Success).ConfigureAwait(false);
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(installDir, MarkerFileName), "operator-edited");
+
+        await using var secondFeed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "1.0.0",
+            CreatePackageArchive((MarkerFileName, "second")));
+        var secondTask = await SeedDeploymentAsync(
+            secondFeed,
+            installDir,
+            packageVersion: "1.0.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
+            ]).ConfigureAwait(false);
+        await ExecutePipelineAsync(secondTask).ConfigureAwait(false);
+        await AssertTaskStateAsync(secondTask, TaskState.Success).ConfigureAwait(false);
+
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("operator-edited");
+        _fixture.LogSink.ContainsMessage("SkipIfAlreadyInstalled:").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_Listening_WhenFeedIdZero_FailsBeforeInstall()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = Path.Combine(_workRoot, "feed0");
+        Directory.CreateDirectory(installDir);
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, MarkerContent)));
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            skipExternalFeed: true,
+            feedIdOverride: 0).ConfigureAwait(false);
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        (_fixture.LogSink.ContainsMessage("Invalid FeedId: 0")
+            || _fixture.LogSink.ContainsMessage("invalid FeedId 0")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
+    private async Task<int> SeedDeploymentAsync(
+        LocalHttpPackageFeed feed,
+        string installDir,
+        string packageVersion = PackageVersion,
+        (string Name, string Value)[] extraActionProperties = null,
+        (string Name, string Value)[] projectVariables = null,
+        bool skipExternalFeed = false,
+        int? feedIdOverride = null)
     {
         var serverTaskId = 0;
         await _fixture.Run<IRepository, IUnitOfWork, IReleaseService>(async (repository, unitOfWork, releaseService) =>
@@ -97,6 +270,15 @@ public class DeployPackageListeningPipelineE2ETests
             var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
             var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
             await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            if (projectVariables is { Length: > 0 })
+            {
+                foreach (var variable in projectVariables)
+                {
+                    await builder.CreateVariableAsync(variableSet.Id, variable.Name, variable.Value)
+                        .ConfigureAwait(false);
+                }
+            }
 
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
@@ -112,52 +294,84 @@ public class DeployPackageListeningPipelineE2ETests
                 .ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action.Id, TargetRole).ConfigureAwait(false);
 
-            var feedSuffix = Guid.NewGuid().ToString("N")[..6];
-            var externalFeed = new ExternalFeed
+            int feedId;
+            if (skipExternalFeed)
             {
-                Name = $"Local NuGet Listening {feedSuffix}",
-                Slug = $"local-nuget-listening-{feedSuffix}",
-                FeedType = "NuGet",
-                FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
-                Username = string.Empty,
-                Password = string.Empty,
-                SpaceId = 1,
-                PackageAcquisitionLocationOptions = string.Empty,
-                Properties = string.Empty
-            };
-            await repository.InsertAsync(externalFeed).ConfigureAwait(false);
-            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+                feedId = feedIdOverride ?? 0;
+            }
+            else
+            {
+                var feedSuffix = Guid.NewGuid().ToString("N")[..6];
+                var externalFeed = new ExternalFeed
+                {
+                    Name = $"Local NuGet Listening {feedSuffix}",
+                    Slug = $"local-nuget-listening-{feedSuffix}",
+                    FeedType = "NuGet",
+                    FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
+                    Username = string.Empty,
+                    Password = string.Empty,
+                    SpaceId = 1,
+                    PackageAcquisitionLocationOptions = string.Empty,
+                    Properties = string.Empty
+                };
+                await repository.InsertAsync(externalFeed).ConfigureAwait(false);
+                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+                feedId = feedIdOverride ?? externalFeed.Id;
+            }
 
-            await builder.CreateActionPropertiesAsync(action.Id,
-                (SpecialVariables.Action.PackageFeedId, externalFeed.Id.ToString()),
+            var actionProps = new List<(string Name, string Value)>
+            {
+                (SpecialVariables.Action.PackageFeedId, feedId.ToString()),
                 (SpecialVariables.Action.PackageId, PackageId),
                 (SpecialVariables.Action.InstallationDirectoryMode, "Custom"),
-                (SpecialVariables.Action.CustomInstallationDirectory, installDir)).ConfigureAwait(false);
+                (SpecialVariables.Action.CustomInstallationDirectory, installDir),
+                (SpecialVariables.Action.PackageVersion, packageVersion)
+            };
+            if (extraActionProperties is { Length: > 0 })
+                actionProps.AddRange(extraActionProperties);
+            await builder.CreateActionPropertiesAsync(action.Id, actionProps.ToArray()).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
-            var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
+            Release releaseEntity;
+            if (feedId > 0)
             {
-                Version = $"1.0.{Guid.NewGuid().ToString("N")[..6]}",
-                ProjectId = project.Id,
-                ChannelId = channel.Id,
-                SpaceId = 1,
-                SelectedPackages =
-                [
-                    new CreateReleaseSelectedPackageDto
-                    {
-                        ActionName = ActionName,
-                        PackageReferenceName = PackageId,
-                        FeedId = externalFeed.Id,
-                        Version = PackageVersion
-                    }
-                ]
-            }).ConfigureAwait(false);
+                var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
+                {
+                    Version = $"1.0.{Guid.NewGuid().ToString("N")[..6]}",
+                    ProjectId = project.Id,
+                    ChannelId = channel.Id,
+                    SpaceId = 1,
+                    SelectedPackages =
+                    [
+                        new CreateReleaseSelectedPackageDto
+                        {
+                            ActionName = ActionName,
+                            PackageReferenceName = PackageId,
+                            FeedId = feedId,
+                            Version = packageVersion
+                        }
+                    ]
+                }).ConfigureAwait(false);
 
-            var releaseEntity = await repository.Query<Release>(r => r.Id == created.Release.Id)
-                .FirstOrDefaultAsync()
-                .ConfigureAwait(false);
-            releaseEntity.ShouldNotBeNull();
-
+                releaseEntity = await repository.Query<Release>(r => r.Id == created.Release.Id)
+                    .FirstOrDefaultAsync()
+                    .ConfigureAwait(false);
+                releaseEntity.ShouldNotBeNull();
+            }
+            else
+            {
+                releaseEntity = await builder.CreateReleaseAsync(project.Id, channel.Id, $"0.0.{Guid.NewGuid().ToString("N")[..6]}")
+                    .ConfigureAwait(false);
+                await repository.InsertAsync(new ReleaseSelectedPackage
+                {
+                    ReleaseId = releaseEntity.Id,
+                    FeedId = 0,
+                    ActionName = ActionName,
+                    PackageReferenceName = PackageId,
+                    Version = packageVersion
+                }).ConfigureAwait(false);
+                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+            }
             var deployment = new Deployment
             {
                 Name = $"Deploy Package Listening E2E {Guid.NewGuid().ToString("N")[..6]}",
