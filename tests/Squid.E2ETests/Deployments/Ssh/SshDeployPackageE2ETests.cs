@@ -504,6 +504,154 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
     }
 
+
+    [Fact]
+    public async Task DeployPackage_SecondDeploySameVersion_UsesCacheHitPlan()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/cache-hit";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "7.0.0",
+            CreatePackageArchive((MarkerFileName, "cache-hit-content")));
+
+        var firstTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "7.0.0").ConfigureAwait(false);
+        await ExecutePipelineAsync(firstTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(firstTaskId, TaskState.Success).ConfigureAwait(false);
+
+        _fixture.LogSink.Clear();
+        var secondTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "7.0.0").ConfigureAwait(false);
+        await ExecutePipelineAsync(secondTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(secondTaskId, TaskState.Success).ConfigureAwait(false);
+
+        _fixture.LogSink.ContainsMessage("CacheHit").ShouldBeTrue(
+            "Second deploy of the same package/version should stage via CacheHit and skip full upload.");
+        _fixture.LogSink.ContainsMessage("FullUpload").ShouldBeFalse(
+            "Cache-hit second deploy must not fall back to FullUpload.");
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("cache-hit-content");
+            RemoteFileExists(client, $"{SshDeployPackageE2EFixture.RemoteWorkDir}/Packages/{PackageId}.7.0.0.nupkg")
+                .ShouldBeTrue();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithNoConventionScripts_InstallsSuccessfully()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/no-conventions";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "8.0.0",
+            CreatePackageArchive((MarkerFileName, "no-conventions")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "8.0.0").ConfigureAwait(false);
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("no-conventions");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithTarArchive_InstallsSuccessfully()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/tar-only";
+        const string tarPackageId = "Acme.SshWeb.tar";
+        await using var feed = LocalHttpPackageFeed.Start(
+            tarPackageId,
+            "9.0.0",
+            CreateTarArchive((MarkerFileName, "from-tar")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: tarPackageId,
+            packageVersion: "9.0.0",
+            feedTypeOverride: "HTTP").ConfigureAwait(false);
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("from-tar");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenCustomDirectoryNotWritable_FailsWithPathDiagnostics()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        // /root is not writable for the non-root ssh user in the e2e container.
+        var installDir = "/root/squid-deploy-package-denied";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "10.0.0",
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "10.0.0").ConfigureAwait(false);
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}").ShouldBeFalse();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
     private bool EnsureDocker()
     {
         if (_fixture.DockerAvailable)
@@ -743,6 +891,25 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         }).ConfigureAwait(false);
     }
 
+
+    private static byte[] CreateTarArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new System.Formats.Tar.TarWriter(ms, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
+    }
 
     private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
     {

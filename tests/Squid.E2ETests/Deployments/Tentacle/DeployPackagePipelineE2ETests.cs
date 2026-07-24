@@ -847,6 +847,184 @@ public class DeployPackagePipelineE2ETests
         _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task DeployPackage_WithNoConventionScripts_InstallsSuccessfully()
+    {
+        _fixture.LogSink.Clear();
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "no-conventions")));
+        var installDir = NewInstallDir("no-conventions");
+
+        var serverTaskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        var installedMarker = Path.Combine(installDir, MarkerFileName);
+        File.Exists(installedMarker).ShouldBeTrue();
+        (await File.ReadAllTextAsync(installedMarker).ConfigureAwait(false)).ShouldBe("no-conventions");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenStepTimeoutExceeded_FailsDeployment()
+    {
+        _fixture.LogSink.Clear();
+
+        // Keep sleep longer than the step timeout so the script is cancelled mid-flight.
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, "timeout-content"),
+            ("PreDeploy.sh", "#!/usr/bin/env bash\nsleep 30\n")));
+        var installDir = NewInstallDir("timeout");
+
+        var serverTaskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 5,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenRetriesEnabled_RetriesTransientPreDeployFailureThenSucceeds()
+    {
+        _fixture.LogSink.Clear();
+
+        var retryToken = Guid.NewGuid().ToString("N");
+        var retryMarker = Path.Combine(Path.GetTempPath(), $"squid-deploy-pkg-retry-{retryToken}");
+        try
+        {
+            if (File.Exists(retryMarker))
+                File.Delete(retryMarker);
+
+            // First attempt fails intentionally; second attempt sees the marker and succeeds.
+            var preDeploy = "#!/usr/bin/env bash\n" +
+                            $"MARKER='{retryMarker}'\n" +
+                            "if [ ! -f \"$MARKER\" ]; then\n" +
+                            "  touch \"$MARKER\"\n" +
+                            "  echo intentional-transient-predeploy-failure\n" +
+                            "  exit 1\n" +
+                            "fi\n" +
+                            "echo predeploy-retry-ok > pre.txt\n";
+
+            await using var feed = StartFeed(CreatePackageArchive(
+                (MarkerFileName, "retry-success"),
+                ("PreDeploy.sh", preDeploy)));
+            var installDir = NewInstallDir("retry");
+
+            var serverTaskId = await SeedDeployPackageDeploymentAsync(
+                feed,
+                installDir,
+                packageFiles: null,
+                packageVersionProperty: null,
+                selectedVersion: PackageVersion,
+                stepTimeoutSeconds: 120,
+                extraActionProperties: null,
+                projectVariables: null,
+                extraStepProperties:
+                [
+                    (SpecialVariables.Step.RetriesEnabled, "true"),
+                    (SpecialVariables.Step.RetriesCount, "1")
+                ]).ConfigureAwait(false);
+
+            await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+                .ShouldBe("retry-success");
+            File.Exists(Path.Combine(installDir, "pre.txt")).ShouldBeTrue();
+            (_fixture.LogSink.ContainsMessage("retrying")
+                || _fixture.LogSink.ContainsMessage("failed attempt")).ShouldBeTrue(
+                "RetriesEnabled should surface a retry diagnostic in the task logs.");
+        }
+        finally
+        {
+            try { if (File.Exists(retryMarker)) File.Delete(retryMarker); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithTarArchive_InstallsSuccessfully()
+    {
+        _fixture.LogSink.Clear();
+
+        // PackageId ends with .tar so acquisition keeps a real .tar extension (not GitHub .tar.gz).
+        const string tarPackageId = "Acme.Web.tar";
+        await using var feed = LocalHttpPackageFeed.Start(
+            tarPackageId,
+            "1.0.0",
+            CreateTarArchive((MarkerFileName, "from-tar")));
+        var installDir = NewInstallDir("tar");
+
+        var serverTaskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: "1.0.0",
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null,
+            feedTypeOverride: "HTTP",
+            packageIdOverride: tarPackageId).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("from-tar");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithActionPropertyTokens_ExpandsBeforeTargetExecution()
+    {
+        _fixture.LogSink.Clear();
+
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, MarkerContent),
+            ("appsettings.json", """{"Greeting":"#{Greeting}"}""")));
+        var installDir = NewInstallDir("expand");
+
+        var serverTaskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties:
+            [
+                ("Squid.Action.SubstituteInFiles.Enabled", "True"),
+                ("Squid.Action.SubstituteInFiles.TargetFiles", "appsettings.json")
+            ],
+            projectVariables:
+            [
+                ("Greeting", "hello-from-expanded-variable")
+            ]).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json")).ConfigureAwait(false);
+        content.ShouldContain("hello-from-expanded-variable");
+        content.ShouldNotContain("#{Greeting}");
+        _fixture.LogSink.ContainsMessage("#{Greeting}").ShouldBeFalse(
+            "Unresolved action/variable tokens must not leak into deployment logs after expansion.");
+    }
+
     // ========================================================================
     // Seeders
     // ========================================================================
@@ -908,10 +1086,13 @@ public class DeployPackagePipelineE2ETests
         (string Name, string Value)[] projectVariables,
         int? feedIdOverride = null,
         bool skipExternalFeed = false,
-        string feedTypeOverride = null)
+        string feedTypeOverride = null,
+        (string Name, string Value)[] extraStepProperties = null,
+        string packageIdOverride = null)
     {
         _ = packageFiles; // package content is owned by the feed instance
         var serverTaskId = 0;
+        var effectivePackageId = string.IsNullOrWhiteSpace(packageIdOverride) ? PackageId : packageIdOverride;
 
         await _fixture.Run<IRepository, IUnitOfWork, IReleaseService>(async (repository, unitOfWork, releaseService) =>
         {
@@ -940,6 +1121,8 @@ public class DeployPackagePipelineE2ETests
             };
             if (stepTimeoutSeconds.HasValue)
                 stepProps.Add((SpecialVariables.Step.Timeout, stepTimeoutSeconds.Value.ToString()));
+            if (extraStepProperties is { Length: > 0 })
+                stepProps.AddRange(extraStepProperties);
 
             await builder.CreateStepPropertiesAsync(step.Id, stepProps.ToArray()).ConfigureAwait(false);
 
@@ -972,7 +1155,7 @@ public class DeployPackagePipelineE2ETests
                 feedId = feedIdOverride ?? externalFeed.Id;
             }
 
-            var actionProps = BuildActionProperties(feedId, installDir, packageVersionProperty, extraActionProperties);
+            var actionProps = BuildActionProperties(feedId, installDir, packageVersionProperty, extraActionProperties, effectivePackageId);
             await builder.CreateActionPropertiesAsync(action.Id, actionProps.ToArray()).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
@@ -991,7 +1174,7 @@ public class DeployPackagePipelineE2ETests
                         new CreateReleaseSelectedPackageDto
                         {
                             ActionName = ActionName,
-                            PackageReferenceName = PackageId,
+                            PackageReferenceName = effectivePackageId,
                             FeedId = feedId,
                             Version = selectedVersion
                         }
@@ -1014,7 +1197,7 @@ public class DeployPackagePipelineE2ETests
                     ReleaseId = releaseEntity.Id,
                     FeedId = 0,
                     ActionName = ActionName,
-                    PackageReferenceName = PackageId,
+                    PackageReferenceName = effectivePackageId,
                     Version = selectedVersion
                 }).ConfigureAwait(false);
                 await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
@@ -1075,16 +1258,18 @@ public class DeployPackagePipelineE2ETests
         int feedId,
         string installDir,
         string packageVersionProperty,
-        (string Name, string Value)[] extraActionProperties)
+        (string Name, string Value)[] extraActionProperties,
+        string packageId = null)
     {
         var extras = extraActionProperties ?? Array.Empty<(string Name, string Value)>();
         var hasModeOverride = extras.Any(p =>
             string.Equals(p.Name, SpecialVariables.Action.InstallationDirectoryMode, StringComparison.OrdinalIgnoreCase));
+        var resolvedPackageId = string.IsNullOrWhiteSpace(packageId) ? PackageId : packageId;
 
         var actionProps = new List<(string Name, string Value)>
         {
             (SpecialVariables.Action.PackageFeedId, feedId.ToString()),
-            (SpecialVariables.Action.PackageId, PackageId)
+            (SpecialVariables.Action.PackageId, resolvedPackageId)
         };
 
         if (!hasModeOverride)
@@ -1152,6 +1337,25 @@ public class DeployPackagePipelineE2ETests
         return dir;
     }
 
+
+    private static byte[] CreateTarArchive(params (string FileName, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new System.Formats.Tar.TarWriter(ms, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var bytes = Encoding.UTF8.GetBytes(file.Content);
+                var stream = new MemoryStream(bytes);
+                var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.FileName)
+                {
+                    DataStream = stream
+                };
+                writer.WriteEntry(entry);
+            }
+        }
+        return ms.ToArray();
+    }
 
     private static byte[] CreateTarGzArchive(params (string FileName, string Content)[] files)
     {

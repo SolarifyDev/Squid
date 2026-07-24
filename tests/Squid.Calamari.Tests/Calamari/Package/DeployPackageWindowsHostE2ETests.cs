@@ -496,6 +496,85 @@ public sealed class DeployPackageWindowsHostE2ETests : IDisposable
         content.ShouldNotContain("https://placeholder.local");
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WithNoConventionScripts_InstallsSuccessfully()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "no-conventions");
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "no-conventions"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("no-conventions");
+    }
+
+    [Fact]
+    public async Task DeployPackage_CustomInstallDirectoryWithSpaces_InstallsSuccessfully()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "dir with spaces");
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "spaces-ok"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("spaces-ok");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenHashMismatch_DoesNotTouchExistingInstall()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "hash-mismatch");
+        Directory.CreateDirectory(installDir);
+        await File.WriteAllTextAsync(Path.Combine(installDir, MarkerFileName), "existing-content");
+
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "new-content"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = new string('a', 64),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldNotBe(0);
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("existing-content");
+    }
+
     private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
         => CalamariTestHost.InvokeInProcessAsync(
             "deploy-package",
