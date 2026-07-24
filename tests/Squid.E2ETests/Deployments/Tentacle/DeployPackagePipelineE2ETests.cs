@@ -427,7 +427,14 @@ public class DeployPackagePipelineE2ETests
     {
         _fixture.LogSink.Clear();
 
-        string latestInstallDir = null;
+        // Versioned installs normally land under the Tentacle Applications root
+        // (/var/lib/squid-tentacle/Applications on Linux). Pipeline e2e runs the
+        // agent in-process without that privileged path, so pin the final install
+        // directory explicitly (same approach as Windows host retention e2e) while
+        // still exercising Versioned mode + RetentionCount cleanup.
+        var packageRoot = Path.Combine(_workRoot, "Applications", "Production", "WebApp", PackageId);
+        Directory.CreateDirectory(packageRoot);
+
         foreach (var version in new[] { "1.0.0", "2.0.0", "3.0.0" })
         {
             _fixture.LogSink.Clear();
@@ -436,9 +443,10 @@ public class DeployPackagePipelineE2ETests
                 version,
                 CreatePackageArchive((MarkerFileName, version)));
 
+            var installDir = Path.Combine(packageRoot, version);
             var taskId = await SeedDeployPackageDeploymentAsync(
                 feed,
-                installDir: Path.Combine(_workRoot, "ignored-custom"),
+                installDir: installDir,
                 packageFiles: null,
                 packageVersionProperty: null,
                 selectedVersion: version,
@@ -446,6 +454,7 @@ public class DeployPackagePipelineE2ETests
                 extraActionProperties:
                 [
                     (SpecialVariables.Action.InstallationDirectoryMode, "Versioned"),
+                    (SpecialVariables.Action.InstallationDirectoryPath, installDir),
                     ("Squid.Action.Package.RetentionCount", "2")
                 ],
                 projectVariables: null).ConfigureAwait(false);
@@ -453,22 +462,11 @@ public class DeployPackagePipelineE2ETests
             await ExecutePipelineAsync(taskId).ConfigureAwait(false);
             await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
 
-            // Capture install path from calamari success log: DeployPackage: installed to '...'
-            var installedLine = _fixture.LogSink.Messages
-                .FirstOrDefault(m => m.Contains("DeployPackage: installed to", StringComparison.Ordinal));
-            installedLine.ShouldNotBeNull($"Missing install log for version {version}");
-            var quoteStart = installedLine.IndexOf('\'');
-            var quoteEnd = installedLine.LastIndexOf('\'');
-            quoteStart.ShouldBeGreaterThanOrEqualTo(0);
-            quoteEnd.ShouldBeGreaterThan(quoteStart);
-            latestInstallDir = installedLine.Substring(quoteStart + 1, quoteEnd - quoteStart - 1);
-            Directory.Exists(latestInstallDir).ShouldBeTrue(latestInstallDir);
+            Directory.Exists(installDir).ShouldBeTrue(installDir);
+            File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue(installDir);
+            _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
             await Task.Delay(30).ConfigureAwait(false);
         }
-
-        latestInstallDir.ShouldNotBeNull();
-        var packageRoot = Directory.GetParent(latestInstallDir)?.FullName;
-        packageRoot.ShouldNotBeNull();
 
         Directory.Exists(Path.Combine(packageRoot, "1.0.0")).ShouldBeFalse("Oldest version should be removed by retention");
         Directory.Exists(Path.Combine(packageRoot, "2.0.0")).ShouldBeTrue();

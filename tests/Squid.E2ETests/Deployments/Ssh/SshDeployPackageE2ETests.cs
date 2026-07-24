@@ -265,10 +265,12 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        (_fixture.LogSink.ContainsMessage("Package acquisition failed")
-            || _fixture.LogSink.ContainsMessage("acquisition")
-            || _fixture.LogSink.ContainsMessage("empty content")
-            || _fixture.LogSink.ContainsMessage("Not found")).ShouldBeTrue(
+        // Serilog CapturingLogSink only sees RenderMessage() text. The failure is logged as
+        // "[Deploy] Failed to acquire package ..." and the abort exception carries
+        // "Package acquisition failed ... empty content". Match either signal.
+        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
+            || _fixture.LogSink.ContainsMessage("returned empty content")).ShouldBeTrue(
             "Expected acquisition failure diagnostics in logs.");
     }
 
