@@ -343,16 +343,29 @@ public static class SshPackageDeploymentScriptBuilder
                 "fi";
         }
 
+        // Info-ZIP supports `unzip -Z1`; BusyBox unzip (common in Alpine SSH images)
+        // does not. Fall back to parsing `unzip -l` so zip-slip checks still run.
         return
             "if ! command -v unzip >/dev/null 2>&1; then\n" +
             "  echo \"[extraction] unzip is required on the SSH target.\" >&2\n" +
             "  exit 1\n" +
             "fi\n" +
             "ZIP_LIST_FILE=\"$PARENT_DIR/.squid-zip-list-$$-$RANDOM\"\n" +
-            "if ! unzip -Z1 \"$ARCHIVE\" > \"$ZIP_LIST_FILE\"; then\n" +
-            "  rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
-            "  echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
-            "  exit 1\n" +
+            "if ! unzip -Z1 \"$ARCHIVE\" > \"$ZIP_LIST_FILE\" 2>/dev/null; then\n" +
+            "  if ! unzip -l \"$ARCHIVE\" 2>/dev/null | awk '\n" +
+            "    BEGIN { sep=0 }\n" +
+            "    /^[- ]{5,}/ { sep++; if (sep==1) next; if (sep>=2) exit }\n" +
+            "    sep==1 {\n" +
+            "      if (NF < 4) next\n" +
+            "      $1=\"\"; $2=\"\"; $3=\"\";\n" +
+            "      sub(/^ +/, \"\");\n" +
+            "      if (length($0)) print\n" +
+            "    }\n" +
+            "  ' > \"$ZIP_LIST_FILE\"; then\n" +
+            "    rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "    echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
+            "    exit 1\n" +
+            "  fi\n" +
             "fi\n" +
             "while IFS= read -r entry; do\n" +
             "  [ -z \"$entry\" ] && continue\n" +

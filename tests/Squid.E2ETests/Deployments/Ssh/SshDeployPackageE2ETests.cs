@@ -1574,7 +1574,9 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
             Release releaseEntity;
-            if (feedId > 0)
+            // Blank/whitespace selected versions must bypass CreateRelease validation so the
+            // acquisition pipeline can fail closed at deploy time.
+            if (feedId > 0 && !string.IsNullOrWhiteSpace(selectedVersion))
             {
                 var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
                 {
@@ -1607,7 +1609,7 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
                 await repository.InsertAsync(new ReleaseSelectedPackage
                 {
                     ReleaseId = releaseEntity.Id,
-                    FeedId = 0,
+                    FeedId = feedId,
                     ActionName = ActionName,
                     PackageReferenceName = selectedPackageId,
                     Version = selectedVersion
@@ -1677,6 +1679,10 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             }
             catch (DeploymentAbortedException)
             {
+            }
+            catch (Squid.Core.Services.DeploymentExecution.Rendering.Exceptions.IntentRenderingException)
+            {
+                // Fail-closed unsupported SSH features throw at render time.
             }
             catch (AggregateException)
             {

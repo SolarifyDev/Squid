@@ -386,6 +386,9 @@ public class DeployPackageMixedTentacleSshE2ETests
             catch (DeploymentAbortedException)
             {
             }
+            catch (Squid.Core.Services.DeploymentExecution.Rendering.Exceptions.IntentRenderingException)
+            {
+            }
             catch (AggregateException)
             {
             }

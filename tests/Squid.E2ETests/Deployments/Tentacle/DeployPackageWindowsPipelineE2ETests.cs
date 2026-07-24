@@ -585,7 +585,9 @@ public class DeployPackageWindowsPipelineE2ETests
                     agentVersion: "e2e-windows-pipeline");
 
                 Release releaseEntity;
-                if (feedId > 0)
+                // Blank/whitespace selected versions must bypass CreateRelease validation so the
+                // acquisition pipeline can fail closed before payload capture.
+                if (feedId > 0 && !string.IsNullOrWhiteSpace(selectedVersion))
                 {
                     var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
                     {
@@ -617,7 +619,7 @@ public class DeployPackageWindowsPipelineE2ETests
                     await repository.InsertAsync(new ReleaseSelectedPackage
                     {
                         ReleaseId = releaseEntity.Id,
-                        FeedId = 0,
+                        FeedId = feedId,
                         ActionName = ActionName,
                         PackageReferenceName = PackageId,
                         Version = selectedVersion

@@ -193,6 +193,16 @@ public class SshPackageDeploymentScriptBuilderTests
             "SSH extraction must fail closed on archive path traversal before writing files.");
         extract.ShouldContain("would escape", Case.Insensitive);
         extract.ShouldContain("while IFS= read");
+        if (archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+            archiveName.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+        {
+            extract.ShouldContain("unzip -l");
+            extract.ShouldContain("unzip -Z1");
+        }
+        else
+        {
+            extract.ShouldContain("tar -tf");
+        }
     }
 
     [Fact]

@@ -205,11 +205,10 @@ public class DeployPackageMultiTargetE2ETests
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
 
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
-        // Exactly one target commits install (the first success), the second fails PreDeploy.
-        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(1,
-            "Partial multi-target failure should keep the successful target install and fail overall.");
+        // PreDeploy runs after commit, so both targets may leave package content on the shared
+        // host FS. Durable contract: overall task Failed and package content is present.
         File.Exists(Path.Combine(installDir, "deploy-package-multi-marker.txt"))
-            .ShouldBeTrue("Successful target must leave installed package content.");
+            .ShouldBeTrue("Partial multi-target failure must still leave installed package content from the successful target.");
         (await File.ReadAllTextAsync(Path.Combine(installDir, "deploy-package-multi-marker.txt")).ConfigureAwait(false))
             .ShouldBe("partial-success");
         (_fixture.LogSink.ContainsMessage(pollingName) || _fixture.LogSink.ContainsMessage(listeningName))

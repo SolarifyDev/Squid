@@ -1247,7 +1247,9 @@ public class DeployPackagePipelineE2ETests
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
             Release releaseEntity;
-            if (feedId > 0)
+            // Blank/whitespace selected versions must bypass CreateRelease validation so the
+            // acquisition pipeline can fail closed at deploy time.
+            if (feedId > 0 && !string.IsNullOrWhiteSpace(selectedVersion))
             {
                 var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
                 {
@@ -1281,7 +1283,7 @@ public class DeployPackagePipelineE2ETests
                 await repository.InsertAsync(new ReleaseSelectedPackage
                 {
                     ReleaseId = releaseEntity.Id,
-                    FeedId = 0,
+                    FeedId = feedId,
                     ActionName = ActionName,
                     PackageReferenceName = effectivePackageId,
                     Version = selectedVersion
