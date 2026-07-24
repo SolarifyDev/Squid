@@ -28,9 +28,11 @@ name: Tentacle Windows Smoke E2E
 # (download + SHA256 verify + extract + swap + health-check + rollback + GC +
 # last-upgrade.json) -> Task Scheduler detach. Deliberately EXCLUDED and left to
 # the nightly suite: IISDeployE2E (66 tests; needs a ~1m IIS feature install +
-# XDT engine), the real-binary publish path, and deploy/register/capabilities/
+# XDT engine), the real-binary publish path, and register/capabilities/
 # diagnostic (cross-platform logic already exercised by unit + Linux E2E).
-# Skipping IIS lets the tests job skip the slow IIS+XDT setup.
+# Deploy Package Windows agent bootstrap (DeployPackageWindowsE2E) IS included
+# here so PR gates prove the PowerShell install path. Skipping IIS lets the
+# tests job skip the slow IIS+XDT setup.
 
 on:
   pull_request:
@@ -39,7 +41,7 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E"
+        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsE2E"
 
 permissions:
   contents: read
@@ -76,7 +78,7 @@ jobs:
           # Same path set the gate cares about (Tentacle source, the Windows
           # upgrade script, the server-side upgrade strategy, the Windows E2E
           # project, and this workflow itself).
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.WindowsTentacleE2ETests/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/DeployPackageByCalamari\.ps1|src/Squid\.Calamari/Commands/Package/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.Calamari\.Tests/Calamari/Package/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (Tentacle paths changed)"
           else
@@ -119,10 +121,25 @@ jobs:
       - name: Run Windows lifecycle smoke subset
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E" }
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsE2E" }
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
+            --logger "console;verbosity=normal"
+
+      - name: Restore Squid.Calamari.Tests
+        shell: pwsh
+        run: dotnet restore tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Deploy Package Windows host install subset
+        shell: pwsh
+        run: |
+          # Real Windows-host proof for squid-calamari deploy-package conventions /
+          # config rewrite / rollback. These tests no-op on non-Windows, so the
+          # ubuntu Calamari job cannot provide this evidence.
+          dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj `
+            --configuration Release `
+            --filter "Category=DeployPackageWindowsHostE2E" `
             --logger "console;verbosity=normal"
 
       - name: Capture leaked test services on failure
