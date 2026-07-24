@@ -334,12 +334,17 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
-            || _fixture.LogSink.ContainsMessage("returned empty content")
-            || _fixture.LogSink.ContainsMessage("empty"))
-            .ShouldBeTrue("Empty package must produce acquisition failure diagnostics.");
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+        var logs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        (CountTaskLogOccurrences(logs, "Failed to acquire package") >= 1
+            || CountTaskLogOccurrences(logs, "Package acquisition failed") >= 1
+            || CountTaskLogOccurrences(logs, "returned empty content") >= 1
+            || CountTaskLogOccurrences(logs, "empty") >= 1
+            || _fixture.LogSink.ContainsMessage("returned empty content"))
+            .ShouldBeTrue(
+                "Empty package must produce acquisition failure diagnostics. Logs: " +
+                string.Join(" | ", logs.TakeLast(30)));
+        CountTaskLogOccurrences(logs, "DeployPackage: installed to").ShouldBe(0,
+            "Empty package must not install. Logs: " + string.Join(" | ", logs.TakeLast(30)));
     }
 
     [Fact]

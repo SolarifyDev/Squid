@@ -76,14 +76,13 @@ public class DeployPackageMixedTentacleSshE2ETests
             PackageVersion,
             CreatePackageArchive((MarkerFileName, "mixed-ok")));
 
-        var tentacleInstallDir = Path.Combine(_workRoot, "tentacle-install");
-        Directory.CreateDirectory(tentacleInstallDir);
-        // SSH custom path is remote; Tentacle uses host path. Same action uses one custom dir
-        // property, so for mixed styles we use Versioned mode and assert via logs + remote marker.
+        // One CustomInstallationDirectory string is used for both targets:
+        // Tentacle writes it on the host FS, SSH writes the same path on the remote container FS.
+        var installDir = $"/tmp/squid-mixed-install-{Guid.NewGuid():N}";
         var serverTaskId = await SeedMixedDeployPackageAsync(
             feed,
-            mode: "Versioned",
-            customInstallDir: string.Empty,
+            mode: "Custom",
+            customInstallDir: installDir,
             targetRoles: $"{DeployPackageMixedTentacleSshE2EFixture.TentacleRole},{DeployPackageMixedTentacleSshE2EFixture.SshRole}")
             .ConfigureAwait(false);
 
@@ -97,27 +96,22 @@ public class DeployPackageMixedTentacleSshE2ETests
         var evidenceDump = "Task logs: " + string.Join(" | ", taskLogs.TakeLast(40)) +
                            " || Activity nodes: " + string.Join(" | ", activityNames.TakeLast(40));
 
-        // Process-wide Serilog is polluted by concurrent fixtures; DeploymentActivityLogger
-        // writes task-scoped ServerTaskLog + ActivityLog instead.
         activityNames.Count(n => n.Equals($"Executing on {tentacleName}", StringComparison.OrdinalIgnoreCase))
             .ShouldBeGreaterThanOrEqualTo(1, "Tentacle target must execute. " + evidenceDump);
         activityNames.Count(n => n.Equals($"Executing on {sshName}", StringComparison.OrdinalIgnoreCase))
             .ShouldBeGreaterThanOrEqualTo(1, "SSH target must execute. " + evidenceDump);
         CountTaskLogOccurrences(taskLogs, "DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(2,
             "Both Tentacle and SSH matched targets must install successfully. " + evidenceDump);
-        (CountTaskLogOccurrences(taskLogs, $"Successfully finished \"{ActionName}\" on {tentacleName}") >= 1 ||
-         CountTaskLogOccurrences(taskLogs, $"Running action \"{ActionName}\" on {tentacleName}") >= 1)
-            .ShouldBeTrue("Tentacle machine should appear in action logs. " + evidenceDump);
-        (CountTaskLogOccurrences(taskLogs, $"Successfully finished \"{ActionName}\" on {sshName}") >= 1 ||
-         CountTaskLogOccurrences(taskLogs, $"Running action \"{ActionName}\" on {sshName}") >= 1)
-            .ShouldBeTrue("SSH machine should appear in action logs. " + evidenceDump);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName))
+            .ShouldBeTrue("Tentacle host install should write marker under the shared custom path.");
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
+            .ShouldBe("mixed-ok");
 
         using var client = ConnectSsh();
         try
         {
-            // Versioned SSH install lands under $HOME/.squid/Applications/...
-            using var cmd = client.CreateCommand(
-                "find \"$HOME/.squid/Applications\" -type f -name '" + MarkerFileName + "' 2>/dev/null | head -n 1 | xargs -I{} cat {}");
+            using var cmd = client.CreateCommand($"cat '{installDir}/{MarkerFileName}' 2>/dev/null || true");
             cmd.Execute();
             cmd.Result.Trim().ShouldBe("mixed-ok", "SSH target should install package marker content.");
         }
@@ -140,10 +134,11 @@ public class DeployPackageMixedTentacleSshE2ETests
             "1.1.0",
             CreatePackageArchive((MarkerFileName, "ssh-only")));
 
+        var installDir = $"/tmp/squid-mixed-ssh-only-{Guid.NewGuid():N}";
         var serverTaskId = await SeedMixedDeployPackageAsync(
             feed,
-            mode: "Versioned",
-            customInstallDir: string.Empty,
+            mode: "Custom",
+            customInstallDir: installDir,
             targetRoles: DeployPackageMixedTentacleSshE2EFixture.SshRole,
             packageVersion: "1.1.0").ConfigureAwait(false);
 
@@ -172,8 +167,7 @@ public class DeployPackageMixedTentacleSshE2ETests
         using var client = ConnectSsh();
         try
         {
-            using var cmd = client.CreateCommand(
-                "find \"$HOME/.squid/Applications\" -type f -name '" + MarkerFileName + "' 2>/dev/null | head -n 1 | xargs -I{} cat {}");
+            using var cmd = client.CreateCommand($"cat '{installDir}/{MarkerFileName}' 2>/dev/null || true");
             cmd.Execute();
             cmd.Result.Trim().ShouldBe("ssh-only", "SSH-only role should install package marker content.");
         }
