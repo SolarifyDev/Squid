@@ -870,6 +870,240 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         }
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WithMultipleSshTargets_InstallsOnEachMatchedTarget()
+    {
+        if (!EnsureDocker())
+            return;
+
+        await _fixture.EnsureSecondarySshTargetAsync().ConfigureAwait(false);
+        _fixture.LogSink.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "8.0.0",
+            CreatePackageArchive((MarkerFileName, "multi-ssh")));
+
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/multi-ssh";
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "8.0.0",
+            targetRoles: $"{SshDeployPackageE2EFixture.TargetRole},{SshDeployPackageE2EFixture.SecondaryTargetRole}")
+            .ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("multi-ssh");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        // Shared host filesystem means install content is one directory, but both targets must execute.
+        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(2,
+            "Deploy a Package must execute on each matched SSH target.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithMismatchedSshRole_SkipsNonMatchingMachine()
+    {
+        if (!EnsureDocker())
+            return;
+
+        await _fixture.EnsureSecondarySshTargetAsync().ConfigureAwait(false);
+        _fixture.LogSink.Clear();
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "8.1.0",
+            CreatePackageArchive((MarkerFileName, "role-skip")));
+
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/role-skip";
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "8.1.0",
+            targetRoles: SshDeployPackageE2EFixture.SecondaryTargetRole)
+            .ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        CountLogOccurrences("DeployPackage: installed to").ShouldBe(1,
+            "Only the matched SSH role should execute install.");
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenUseCurrentPointerPreDeployFails_KeepsPreviousCurrent()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+
+        // First successful version with current pointer.
+        await using (var goodFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "8.2.0",
+                         CreatePackageArchive((MarkerFileName, "current-good"))))
+        {
+            var goodTask = await SeedDeploymentAsync(
+                goodFeed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-current-fail",
+                packageId: PackageId,
+                packageVersion: "8.2.0",
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.UseCurrentPointer", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(goodTask).ConfigureAwait(false);
+            await AssertTaskStateAsync(goodTask, TaskState.Success).ConfigureAwait(false);
+        }
+
+        string previousCurrent;
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                previousCurrent = RemoteReadCurrentPointer(client);
+                previousCurrent.ShouldNotBeNullOrWhiteSpace();
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+
+        // Failing version must not leave current pointed at the broken version.
+        await using (var badFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "8.3.0",
+                         CreatePackageArchive(
+                             (MarkerFileName, "current-bad"),
+                             ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-current-predeploy-failure\nexit 1\n"))))
+        {
+            var badTask = await SeedDeploymentAsync(
+                badFeed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-current-fail",
+                packageId: PackageId,
+                packageVersion: "8.3.0",
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.UseCurrentPointer", "True"),
+                    ("Squid.Action.Package.RollbackOnFailure", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(badTask).ConfigureAwait(false);
+            await AssertTaskStateAsync(badTask, TaskState.Failed).ConfigureAwait(false);
+        }
+
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                var after = RemoteReadCurrentPointer(client);
+                after.ShouldBe(previousCurrent,
+                    "Failed PreDeploy must not promote current pointer to the broken version.");
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenRetentionConfiguredAndPreDeployFails_DoesNotDeletePreviousVersions()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+
+        foreach (var version in new[] { "8.4.0", "8.5.0" })
+        {
+            await using var feed = LocalHttpPackageFeed.Start(
+                PackageId,
+                version,
+                CreatePackageArchive((MarkerFileName, version)));
+            var taskId = await SeedDeploymentAsync(
+                feed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-retention-fail",
+                packageId: PackageId,
+                packageVersion: version,
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RetentionCount", "1")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        // A failing third install with RetentionCount=1 must not prune the previous successful version early.
+        await using (var badFeed = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "8.6.0",
+                         CreatePackageArchive(
+                             (MarkerFileName, "retention-bad"),
+                             ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-retention-predeploy-failure\nexit 1\n"))))
+        {
+            var badTask = await SeedDeploymentAsync(
+                badFeed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-retention-fail",
+                packageId: PackageId,
+                packageVersion: "8.6.0",
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RetentionCount", "1"),
+                    ("Squid.Action.Package.RollbackOnFailure", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(badTask).ConfigureAwait(false);
+            await AssertTaskStateAsync(badTask, TaskState.Failed).ConfigureAwait(false);
+        }
+
+        using var client = ConnectSsh();
+        try
+        {
+            // At least the last successful version must still exist after failed install.
+            var countCmd = client.CreateCommand(
+                "find \"$HOME/.squid/Applications\" -type d -name '8.5.0' 2>/dev/null | head -n 1");
+            countCmd.Execute();
+            countCmd.Result.Trim().ShouldNotBeNullOrWhiteSpace(
+                "Failed install with retention must not prune previous successful versions.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+
+    private int CountLogOccurrences(string substring)
+        => _fixture.LogSink.Messages.Count(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
+
+    private static string RemoteReadCurrentPointer(Renci.SshNet.SshClient client)
+    {
+        using var cmd = client.CreateCommand(
+            "ptr=$(find \"$HOME/.squid/Applications\" -type l -name 'current' 2>/dev/null | head -n 1); " +
+            "if [ -n \"$ptr\" ]; then readlink \"$ptr\"; " +
+            "else f=$(find \"$HOME/.squid/Applications\" -type f -name 'current' 2>/dev/null | head -n 1); " +
+            "if [ -n \"$f\" ]; then cat \"$f\"; fi; fi");
+        cmd.Execute();
+        return cmd.Result.Trim();
+    }
+
     private bool EnsureDocker()
     {
         if (_fixture.DockerAvailable)
@@ -924,7 +1158,8 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         (string Name, string Value)[] extraActionProperties = null,
         string feedTypeOverride = null,
         bool skipExternalFeed = false,
-        int? feedIdOverride = null)
+        int? feedIdOverride = null,
+        string targetRoles = null)
     {
         var serverTaskId = 0;
         var selectedPackageId = selectedPackageIdOverride ?? packageId;
@@ -941,14 +1176,19 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
 
+            var rolesCsv = string.IsNullOrWhiteSpace(targetRoles)
+                ? SshDeployPackageE2EFixture.TargetRole
+                : targetRoles;
+            var roles = rolesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
             var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Deploy Package Step").ConfigureAwait(false);
             await builder.CreateStepPropertiesAsync(step.Id,
-                (SpecialVariables.Step.TargetRoles, SshDeployPackageE2EFixture.TargetRole)
+                (SpecialVariables.Step.TargetRoles, rolesCsv)
             ).ConfigureAwait(false);
 
             var action = await builder.CreateDeploymentActionAsync(
                 step.Id, 1, ActionName, actionType: SpecialVariables.ActionTypes.TentaclePackage).ConfigureAwait(false);
-            await builder.CreateActionMachineRolesAsync(action.Id, SshDeployPackageE2EFixture.TargetRole).ConfigureAwait(false);
+            await builder.CreateActionMachineRolesAsync(action.Id, roles).ConfigureAwait(false);
 
             int feedId;
             if (skipExternalFeed)
@@ -1094,6 +1334,9 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             {
             }
             catch (DeploymentAbortedException)
+            {
+            }
+            catch (AggregateException)
             {
             }
         }).ConfigureAwait(false);

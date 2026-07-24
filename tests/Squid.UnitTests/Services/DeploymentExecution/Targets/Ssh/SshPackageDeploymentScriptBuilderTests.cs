@@ -149,4 +149,34 @@ public class SshPackageDeploymentScriptBuilderTests
         script.ShouldContain("update_current_pointer");
         script.ShouldContain("apply_retention");
     }
+    [Fact]
+    public void Build_UpdatesCurrentPointerOnlyAfterSuccessfulConventions()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Versioned",
+            EnvironmentSegment = "Production",
+            ProjectSegment = "Web",
+            PackageSegment = "Acme.Web",
+            VersionSegment = "2.0.0",
+            PackageId = "Acme.Web",
+            PackageVersion = "2.0.0",
+            ArchiveFileName = "Acme.Web.2.0.0.nupkg",
+            UseCurrentPointer = true,
+            RetentionCount = 1,
+            RollbackOnFailure = true
+        });
+
+        var postDeployIdx = script.IndexOf("PostDeploy: running PostDeploy.sh", StringComparison.Ordinal);
+        var currentCallIdx = script.LastIndexOf("update_current_pointer", StringComparison.Ordinal);
+        var retentionCallIdx = script.LastIndexOf("apply_retention", StringComparison.Ordinal);
+
+        postDeployIdx.ShouldBeGreaterThan(0);
+        currentCallIdx.ShouldBeGreaterThan(postDeployIdx,
+            "current pointer must be updated only after Pre/PostDeploy succeed.");
+        retentionCallIdx.ShouldBeGreaterThan(currentCallIdx,
+            "retention must run only after current pointer promotion on success.");
+    }
+
 }

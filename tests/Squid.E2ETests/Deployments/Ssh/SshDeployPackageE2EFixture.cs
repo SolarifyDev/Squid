@@ -39,6 +39,8 @@ public sealed class SshDeployPackageE2EFixture : E2EFixtureBase<SshDeployPackage
     public int EnvironmentId { get; private set; }
     public string EnvironmentName { get; private set; }
     public int MachineId { get; private set; }
+    public int SecondaryMachineId { get; private set; }
+    public const string SecondaryTargetRole = "ssh-e2e-secondary";
     public int HostPort { get; private set; }
     public string Fingerprint { get; private set; }
     public bool DockerAvailable { get; private set; }
@@ -187,6 +189,62 @@ public sealed class SshDeployPackageE2EFixture : E2EFixtureBase<SshDeployPackage
 
         Log.Information("SSH e2e target registered. MachineId={MachineId}, Port={Port}, Fingerprint={Fingerprint}",
             MachineId, HostPort, Fingerprint);
+    }
+
+
+    public async Task EnsureSecondarySshTargetAsync()
+    {
+        if (SecondaryMachineId > 0)
+            return;
+        if (!DockerAvailable)
+            throw new InvalidOperationException(SkipReason ?? "Docker SSH fixture is unavailable.");
+
+        var accountId = await Run<IDeploymentAccountService, int>(async accountService =>
+        {
+            var credentials = JsonSerializer.SerializeToElement(new
+            {
+                username = SshUser,
+                password = SshPassword
+            });
+
+            var created = await accountService.CreateAsync(new CreateDeploymentAccountCommand
+            {
+                SpaceId = 1,
+                Name = $"ssh-e2e-secondary-{Guid.NewGuid().ToString("N")[..6]}",
+                AccountType = AccountType.UsernamePassword,
+                Credentials = credentials,
+                EnvironmentIds = [EnvironmentId]
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            return created.DeploymentAccount.Id;
+        }).ConfigureAwait(false);
+
+        SecondaryMachineId = await Run<IMachineRegistrationService, int>(async registration =>
+        {
+            var result = await registration.RegisterSshAsync(new RegisterSshCommand
+            {
+                MachineName = $"ssh-e2e-secondary-{Guid.NewGuid().ToString("N")[..6]}",
+                SpaceId = 1,
+                Roles = [SecondaryTargetRole],
+                EnvironmentIds = [EnvironmentId],
+                Host = "127.0.0.1",
+                Port = HostPort,
+                Fingerprint = Fingerprint,
+                RemoteWorkingDirectory = RemoteWorkDir,
+                ResourceReferences =
+                [
+                    new EndpointResourceReference
+                    {
+                        Type = EndpointResourceType.AuthenticationAccount,
+                        ResourceId = accountId
+                    }
+                ]
+            }).ConfigureAwait(false);
+
+            return result.MachineId;
+        }).ConfigureAwait(false);
+
+        Log.Information("SSH e2e secondary target registered. MachineId={MachineId}", SecondaryMachineId);
     }
 
     private async Task<string> ProbeFingerprintAsync()

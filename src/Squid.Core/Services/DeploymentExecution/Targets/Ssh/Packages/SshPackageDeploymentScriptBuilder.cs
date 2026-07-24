@@ -252,8 +252,7 @@ public static class SshPackageDeploymentScriptBuilder
             "  fi\n" +
             "  exit 1\n" +
             "fi\n\n" +
-            "purge_non_package_files\n" +
-            "update_current_pointer\n\n" +
+            "purge_non_package_files\n\n" +
             "cd \"$FINAL_DIR\"\n" +
             "if [ -f \"PreDeploy.sh\" ]; then\n" +
             "  echo \"PreDeploy: running PreDeploy.sh\"\n" +
@@ -278,6 +277,9 @@ public static class SshPackageDeploymentScriptBuilder
             "  fi\n" +
             "fi\n\n" +
             "write_installed_marker\n" +
+            "# Only promote current/retention after conventions succeed so failed installs\n" +
+            "# cannot leave operators pointed at a broken version directory.\n" +
+            "update_current_pointer\n" +
             "apply_retention\n" +
             "rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
             "trap - EXIT\n" +

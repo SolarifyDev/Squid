@@ -845,6 +845,124 @@ public sealed class DeployPackageWindowsE2ETests
         }
     }
 
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_WhenCalamariMissingFromPath_FailsWithReadableError()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-nocal-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", @"C:\Windows\System32");
+
+            var installDir = Path.Combine(workRoot, "apps", "no-calamari");
+            var packageBytes = CreatePackageArchive((MarkerFileName, "no-calamari"));
+            var packageFileName = "Acme.Web.1.0.0.nupkg";
+            var packagePath = Path.Combine(workRoot, packageFileName);
+            await File.WriteAllBytesAsync(packagePath, packageBytes);
+            var variables = BuildVariables(installDir, packagePath, "1.0.0");
+            var scriptBody = BuildBootstrapScript(packageFileName, variables);
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            var command = new StartScriptCommand(
+                new ScriptTicket($"deploy-pkg-win-nocal-{Guid.NewGuid():N}"),
+                scriptBody,
+                ScriptIsolationLevel.NoIsolation,
+                TimeSpan.FromMinutes(2),
+                null,
+                Array.Empty<string>(),
+                null,
+                TimeSpan.Zero,
+                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+            {
+                ScriptSyntax = ScriptType.PowerShell
+            };
+
+            var result = await server.DispatchAndObserveListeningAsync(
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+            result.ExitCode.ShouldNotBe(0, result.AllText);
+            result.AllText.ShouldContain("squid-calamari not found in PATH");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
+    [Fact]
+    public async Task Listening_DeployPackageBootstrap_ConcurrentTickets_DoNotCrossContaminateInstalls()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-conc-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workRoot);
+        var previousPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            EnsureCalamariOnPath();
+
+            await using var server = await StubSquidServer.StartAsync();
+            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
+            server.TrustAgent(agent.Thumbprint);
+
+            async Task<(int ExitCode, string InstallDir)> DeployOneAsync(string version, string marker)
+            {
+                var installDir = Path.Combine(workRoot, "apps", version);
+                var packageBytes = CreatePackageArchive((MarkerFileName, marker));
+                var packageFileName = $"Acme.Web.{version}.nupkg";
+                var packagePath = Path.Combine(workRoot, packageFileName);
+                await File.WriteAllBytesAsync(packagePath, packageBytes);
+                var variables = BuildVariables(installDir, packagePath, version);
+                var scriptBody = BuildBootstrapScript(packageFileName, variables);
+                var command = new StartScriptCommand(
+                    new ScriptTicket($"deploy-pkg-win-conc-{version}-{Guid.NewGuid():N}"),
+                    scriptBody,
+                    ScriptIsolationLevel.NoIsolation,
+                    TimeSpan.FromMinutes(2),
+                    null,
+                    Array.Empty<string>(),
+                    null,
+                    TimeSpan.Zero,
+                    new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
+                    new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
+                {
+                    ScriptSyntax = ScriptType.PowerShell
+                };
+                var result = await server.DispatchAndObserveListeningAsync(
+                    agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
+                return (result.ExitCode, installDir);
+            }
+
+            var t1 = DeployOneAsync("1.0.0", "ticket-a");
+            var t2 = DeployOneAsync("2.0.0", "ticket-b");
+            await Task.WhenAll(t1, t2);
+
+            var r1 = await t1;
+            var r2 = await t2;
+            r1.ExitCode.ShouldBe(0);
+            r2.ExitCode.ShouldBe(0);
+            (await File.ReadAllTextAsync(Path.Combine(r1.InstallDir, MarkerFileName))).ShouldBe("ticket-a");
+            (await File.ReadAllTextAsync(Path.Combine(r2.InstallDir, MarkerFileName))).ShouldBe("ticket-b");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", previousPath);
+            TryDelete(workRoot);
+        }
+    }
+
     private static string BuildBootstrapScript(string packageFileName, string variablesJson)
     {
         _ = variablesJson;
