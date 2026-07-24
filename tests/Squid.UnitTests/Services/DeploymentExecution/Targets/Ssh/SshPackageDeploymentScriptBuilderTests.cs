@@ -120,4 +120,33 @@ public class SshPackageDeploymentScriptBuilderTests
         script.ShouldContain("[rollback] PreDeploy failed; restoring previous installation if available.");
         script.ShouldContain("if ! bash \"PreDeploy.sh\"");
     }
+
+    [Fact]
+    public void Build_IncludesInstallPolicyFlags()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg",
+            SkipIfAlreadyInstalled = true,
+            PurgeBeforeInstall = true,
+            PreservePaths = "logs/**",
+            RetentionCount = 2,
+            UseCurrentPointer = true
+        });
+
+        script.ShouldContain("SKIP_IF_INSTALLED='True'");
+        script.ShouldContain("PURGE_BEFORE_INSTALL='True'");
+        script.ShouldContain("PRESERVE_PATHS='logs/**'");
+        script.ShouldContain("RETENTION_COUNT='2'");
+        script.ShouldContain("USE_CURRENT_POINTER='True'");
+        script.ShouldContain("SkipIfAlreadyInstalled:");
+        script.ShouldContain(".squid-installed.json");
+        script.ShouldContain("update_current_pointer");
+        script.ShouldContain("apply_retention");
+    }
 }

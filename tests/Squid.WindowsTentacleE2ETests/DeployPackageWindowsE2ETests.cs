@@ -686,7 +686,7 @@ public sealed class DeployPackageWindowsE2ETests
                 var variables = JsonSerializer.Serialize(map);
                 var scriptBody = BuildBootstrapScript(packageFileName, variables);
                 var command = new StartScriptCommand(
-                    new ScriptTicket($"deploy-pkg-win-ret-{version}-{Guid.NewGuid():N}"),
+                    new ScriptTicket($"deploy-pkg-win-ret-{version.Replace(".", "-")}-{Guid.NewGuid():N}"[..64]),
                     scriptBody,
                     ScriptIsolationLevel.NoIsolation,
                     TimeSpan.FromMinutes(2),
@@ -761,7 +761,7 @@ public sealed class DeployPackageWindowsE2ETests
                 var variables = JsonSerializer.Serialize(map);
                 var scriptBody = BuildBootstrapScript(packageFileName, variables);
                 var command = new StartScriptCommand(
-                    new ScriptTicket($"deploy-pkg-win-cur-{version}-{Guid.NewGuid():N}"),
+                    new ScriptTicket($"deploy-pkg-win-cur-{version.Replace(".", "-")}-{Guid.NewGuid():N}"[..64]),
                     scriptBody,
                     ScriptIsolationLevel.NoIsolation,
                     TimeSpan.FromMinutes(2),

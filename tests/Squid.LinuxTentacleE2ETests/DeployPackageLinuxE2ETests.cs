@@ -663,7 +663,7 @@ public sealed class DeployPackageLinuxE2ETests
                 var variables = JsonSerializer.Serialize(map);
                 var scriptBody = BuildBootstrapScript(packageFileName, variables);
                 var command = new StartScriptCommand(
-                    new ScriptTicket($"deploy-pkg-linux-ret-{version}-{Guid.NewGuid():N}"),
+                    new ScriptTicket($"deploy-pkg-linux-ret-{version.Replace(".", "-")}-{Guid.NewGuid():N}"[..64]),
                     scriptBody,
                     ScriptIsolationLevel.NoIsolation,
                     TimeSpan.FromMinutes(2),
@@ -738,7 +738,7 @@ public sealed class DeployPackageLinuxE2ETests
                 var variables = JsonSerializer.Serialize(map);
                 var scriptBody = BuildBootstrapScript(packageFileName, variables);
                 var command = new StartScriptCommand(
-                    new ScriptTicket($"deploy-pkg-linux-cur-{version}-{Guid.NewGuid():N}"),
+                    new ScriptTicket($"deploy-pkg-linux-cur-{version.Replace(".", "-")}-{Guid.NewGuid():N}"[..64]),
                     scriptBody,
                     ScriptIsolationLevel.NoIsolation,
                     TimeSpan.FromMinutes(2),

@@ -69,6 +69,19 @@ public sealed class SshIntentRenderer : IIntentRenderer
             .FirstOrDefault(v => string.Equals(v.Name, SpecialVariables.Ssh.PackageBaseDirectory, StringComparison.OrdinalIgnoreCase))
             ?.Value
             ?? string.Empty;
+
+        static string Var(List<VariableDto> vars, string name)
+            => vars.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase))?.Value
+               ?? string.Empty;
+
+        static bool Flag(List<VariableDto> vars, string name)
+            => string.Equals(Var(vars, name), "True", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(Var(vars, name), "true", StringComparison.OrdinalIgnoreCase);
+
+        static int IntVar(List<VariableDto> vars, string name)
+            => int.TryParse(Var(vars, name), out var n) ? n : 0;
+
+        var variablesList = context.EffectiveVariables.ToList();
         var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
         {
             ExpectedSha256 = acquired.Hash,
@@ -81,10 +94,17 @@ public sealed class SshIntentRenderer : IIntentRenderer
             PackageId = intent.Package.PackageId,
             PackageVersion = intent.Package.Version,
             ArchiveFileName = archiveFileName,
-            PackageBaseDirectory = packageBaseDirectory
+            PackageBaseDirectory = packageBaseDirectory,
+            SkipIfAlreadyInstalled = Flag(variablesList, "Squid.Action.Package.SkipIfAlreadyInstalled"),
+            PurgeBeforeInstall = Flag(variablesList, "Squid.Action.Package.PurgeBeforeInstall"),
+            PreservePaths = Var(variablesList, "Squid.Action.Package.PreservePaths"),
+            RetentionCount = IntVar(variablesList, "Squid.Action.Package.RetentionCount"),
+            UseCurrentPointer = Flag(variablesList, "Squid.Action.Package.UseCurrentPointer"),
+            // Keep historical SSH behaviour: PreDeploy failure restores previous install.
+            RollbackOnFailure = !string.Equals(Var(variablesList, "Squid.Action.Package.RollbackOnFailure"), "False", StringComparison.OrdinalIgnoreCase)
         });
 
-        var variables = context.EffectiveVariables.ToList();
+        var variables = variablesList;
         void Set(string name, string value)
         {
             variables.RemoveAll(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase));

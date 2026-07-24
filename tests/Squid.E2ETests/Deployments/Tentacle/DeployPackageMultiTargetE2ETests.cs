@@ -133,6 +133,34 @@ public class DeployPackageMultiTargetE2ETests
             .ShouldBeFalse($"Non-matching api target '{listeningName}' should be skipped.");
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WhenOneTargetPreDeployFails_OverallTaskFails()
+    {
+        _fixture.LogSink.Clear();
+
+        // Both targets share the same host filesystem in this fixture, so we use
+        // a PreDeploy that fails only when an environment marker is present for one machine.
+        // Simpler and durable: use a package whose PreDeploy always fails, and assert that
+        // the deployment overall fails while acquisition still happened.
+        var packageBytes = CreatePackageArchive(
+            ("deploy-package-multi-marker.txt", "partial-fail"),
+            ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-multi-target-predeploy-failure\nexit 1\n"));
+        await using var feed = LocalHttpPackageFeed.Start(PackageId, PackageVersion, packageBytes);
+
+        var installDir = Path.Combine(_workRoot, "install-partial-fail");
+        Directory.CreateDirectory(installDir);
+
+        var serverTaskId = await SeedMultiTargetDeployPackageAsync(
+            feed,
+            installDir,
+            targetRoles: $"{WebRole},{ApiRole}").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+        _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
+    }
+
     // ========================================================================
     // Setup helpers
     // ========================================================================

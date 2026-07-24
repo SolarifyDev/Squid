@@ -652,6 +652,224 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         }
     }
 
+
+    [Fact]
+    public async Task DeployPackage_SkipIfAlreadyInstalled_DoesNotOverwriteOperatorEdits()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/skip";
+
+        await using (var feed1 = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "11.0.0",
+                         CreatePackageArchive((MarkerFileName, "v1-original"))))
+        {
+            var firstTaskId = await SeedDeploymentAsync(
+                feed1,
+                installDir,
+                packageId: PackageId,
+                packageVersion: "11.0.0").ConfigureAwait(false);
+            await ExecutePipelineAsync(firstTaskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(firstTaskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                using var cmd = client.CreateCommand($"printf 'operator-edited' > {QuoteForShell(installDir + "/" + MarkerFileName)}");
+                cmd.Execute();
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+
+        await using (var feed2 = LocalHttpPackageFeed.Start(
+                         PackageId,
+                         "11.0.0",
+                         CreatePackageArchive((MarkerFileName, "v1-repackaged"))))
+        {
+            var secondTaskId = await SeedDeploymentAsync(
+                feed2,
+                installDir,
+                packageId: PackageId,
+                packageVersion: "11.0.0",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(secondTaskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(secondTaskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("operator-edited");
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_PurgeBeforeInstall_RemovesNonPackageFilesButKeepsPreserved()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/purge";
+
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                using var prep = client.CreateCommand(
+                    $"mkdir -p {QuoteForShell(installDir + "/logs")} && " +
+                    $"printf 'delete-me' > {QuoteForShell(installDir + "/local-only.txt")} && " +
+                    $"printf 'keep-me' > {QuoteForShell(installDir + "/logs/app.log")}");
+                prep.Execute();
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "12.0.0",
+            CreatePackageArchive((MarkerFileName, "from-package")));
+        var taskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "12.0.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.PurgeBeforeInstall", "True"),
+                ("Squid.Action.Package.PreservePaths", "logs/**")
+            ]).ConfigureAwait(false);
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        using (var client = ConnectSsh())
+        {
+            try
+            {
+                RemoteFileExists(client, $"{installDir}/local-only.txt").ShouldBeFalse();
+                RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("from-package");
+                RemoteReadFile(client, $"{installDir}/logs/app.log").ShouldBe("keep-me");
+            }
+            finally
+            {
+                if (client.IsConnected) client.Disconnect();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_VersionedRetentionCount_KeepsOnlyConfiguredVersions()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        foreach (var version in new[] { "13.0.0", "14.0.0", "15.0.0" })
+        {
+            await using var feed = LocalHttpPackageFeed.Start(
+                PackageId,
+                version,
+                CreatePackageArchive((MarkerFileName, version)));
+            var taskId = await SeedDeploymentAsync(
+                feed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-retention",
+                packageId: PackageId,
+                packageVersion: version,
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.RetentionCount", "2")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        using var client = ConnectSsh();
+        try
+        {
+            using var cmd = client.CreateCommand(
+                "find \"$HOME/.squid/Applications\" -type d -name '13.0.0' 2>/dev/null | head -n 1");
+            cmd.Execute();
+            cmd.Result.Trim().ShouldBeNullOrWhiteSpace("RetentionCount=2 should delete oldest version 13.0.0");
+
+            using var keep14 = client.CreateCommand(
+                "find \"$HOME/.squid/Applications\" -type d -name '14.0.0' 2>/dev/null | head -n 1");
+            keep14.Execute();
+            keep14.Result.Trim().ShouldNotBeNullOrWhiteSpace();
+
+            using var keep15 = client.CreateCommand(
+                "find \"$HOME/.squid/Applications\" -type d -name '15.0.0' 2>/dev/null | head -n 1");
+            keep15.Execute();
+            keep15.Result.Trim().ShouldNotBeNullOrWhiteSpace();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_UseCurrentPointer_UpdatesCurrentLink()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        foreach (var version in new[] { "16.0.0", "17.0.0" })
+        {
+            await using var feed = LocalHttpPackageFeed.Start(
+                PackageId,
+                version,
+                CreatePackageArchive((MarkerFileName, version)));
+            var taskId = await SeedDeploymentAsync(
+                feed,
+                installDir: $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ignored-current",
+                packageId: PackageId,
+                packageVersion: version,
+                mode: "Versioned",
+                extraActionProperties:
+                [
+                    ("Squid.Action.Package.UseCurrentPointer", "True")
+                ]).ConfigureAwait(false);
+            await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        using var client = ConnectSsh();
+        try
+        {
+            using var cmd = client.CreateCommand(
+                "find \"$HOME/.squid/Applications\" -type l -name 'current' 2>/dev/null | head -n 1; " +
+                "find \"$HOME/.squid/Applications\" -type f -name 'current' 2>/dev/null | head -n 1");
+            cmd.Execute();
+            cmd.Result.Trim().ShouldNotBeNullOrWhiteSpace("UseCurrentPointer should create current symlink/file");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
     private bool EnsureDocker()
     {
         if (_fixture.DockerAvailable)
