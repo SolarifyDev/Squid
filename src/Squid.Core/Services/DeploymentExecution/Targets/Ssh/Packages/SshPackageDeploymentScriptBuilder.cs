@@ -108,13 +108,14 @@ public static class SshPackageDeploymentScriptBuilder
             "STAGING_DIR=\"$PARENT_DIR/.squid-staging-$$-$RANDOM\"\n" +
             "BACKUP_DIR=\"$PARENT_DIR/.squid-backup-$$-$RANDOM\"\n" +
             "PACKAGE_FILE_LIST=\"$PARENT_DIR/.squid-package-files-$$-$RANDOM\"\n" +
+            "PURGE_LIST=\"$PARENT_DIR/.squid-purge-list-$$-$RANDOM\"\n" +
             "mkdir -p \"$PARENT_DIR\"\n" +
             "mkdir -p \"$STAGING_DIR\"\n\n" +
             "is_same_version_installed() {\n" +
-            "  local marker=\"$FINAL_DIR/$MARKER_NAME\"\n" +
+            "  marker=\"$FINAL_DIR/$MARKER_NAME\"\n" +
             "  [ -f \"$marker\" ] || return 1\n" +
-            "  grep -q \"\\\"packageId\\\":\\\"$PACKAGE_ID\\\"\" \"$marker\" 2>/dev/null || return 1\n" +
-            "  grep -q \"\\\"version\\\":\\\"$PACKAGE_VERSION\\\"\" \"$marker\" 2>/dev/null || return 1\n" +
+            "  grep -F \"\\\"packageId\\\":\\\"$PACKAGE_ID\\\"\" \"$marker\" >/dev/null 2>&1 || return 1\n" +
+            "  grep -F \"\\\"version\\\":\\\"$PACKAGE_VERSION\\\"\" \"$marker\" >/dev/null 2>&1 || return 1\n" +
             "  return 0\n" +
             "}\n\n" +
             "emit_output_vars() {\n" +
@@ -127,38 +128,52 @@ public static class SshPackageDeploymentScriptBuilder
             "    \"$PACKAGE_ID\" \"$PACKAGE_VERSION\" \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" > \"$FINAL_DIR/$MARKER_NAME\"\n" +
             "}\n\n" +
             "is_preserved() {\n" +
-            "  local rel=\"$1\"\n" +
+            "  rel=\"$1\"\n" +
             "  [ -z \"$PRESERVE_PATHS\" ] && return 1\n" +
-            "  while IFS= read -r pattern; do\n" +
+            "  old_ifs=$IFS\n" +
+            "  IFS=\"$(printf '\\n\\t')\"\n" +
+            "  for pattern in $PRESERVE_PATHS; do\n" +
             "    [ -z \"$pattern\" ] && continue\n" +
-            "    case \"$rel\" in\n" +
-            "      $pattern) return 0 ;;\n" +
+            "    case \"$pattern\" in\n" +
+            "      *'**'*)\n" +
+            "        prefix=${pattern%%\\*\\*}\n" +
+            "        prefix=${prefix%/}\n" +
+            "        case \"$rel\" in\n" +
+            "          \"$prefix\"|\"$prefix\"/*) IFS=$old_ifs; return 0 ;;\n" +
+            "        esac\n" +
+            "        ;;\n" +
+            "      *)\n" +
+            "        case \"$rel\" in\n" +
+            "          $pattern) IFS=$old_ifs; return 0 ;;\n" +
+            "        esac\n" +
+            "        ;;\n" +
             "    esac\n" +
-            "  done <<EOF\n" +
-            "$PRESERVE_PATHS\n" +
-            "EOF\n" +
+            "  done\n" +
+            "  IFS=$old_ifs\n" +
             "  return 1\n" +
             "}\n\n" +
             "purge_non_package_files() {\n" +
             "  [ \"$PURGE_BEFORE_INSTALL\" = \"True\" ] || return 0\n" +
-            "  while IFS= read -r -d '' file; do\n" +
-            "    local rel=\"${file#\"$FINAL_DIR\"/}\"\n" +
+            "  find \"$FINAL_DIR\" -type f 2>/dev/null > \"$PURGE_LIST\" || true\n" +
+            "  while IFS= read -r file; do\n" +
+            "    [ -z \"$file\" ] && continue\n" +
+            "    rel=\"${file#\"$FINAL_DIR\"/}\"\n" +
             "    [ \"$rel\" = \"$MARKER_NAME\" ] && continue\n" +
-            "    if grep -Fxq -- \"$rel\" \"$PACKAGE_FILE_LIST\" 2>/dev/null; then\n" +
+            "    if grep -Fx -- \"$rel\" \"$PACKAGE_FILE_LIST\" >/dev/null 2>&1; then\n" +
             "      continue\n" +
             "    fi\n" +
             "    if is_preserved \"$rel\"; then\n" +
             "      continue\n" +
             "    fi\n" +
             "    rm -f -- \"$file\" 2>/dev/null || true\n" +
-            "  done < <(find \"$FINAL_DIR\" -type f -print0 2>/dev/null)\n" +
-            "  find \"$FINAL_DIR\" -depth -type d -empty ! -path \"$FINAL_DIR\" -delete 2>/dev/null || true\n" +
+            "  done < \"$PURGE_LIST\"\n" +
+            "  rm -f \"$PURGE_LIST\" 2>/dev/null || true\n" +
+            "  find \"$FINAL_DIR\" -depth -type d -empty ! -path \"$FINAL_DIR\" -exec rmdir {} + 2>/dev/null || true\n" +
             "}\n\n" +
             "update_current_pointer() {\n" +
             "  [ \"$MODE\" = \"Versioned\" ] || return 0\n" +
             "  [ \"$USE_CURRENT_POINTER\" = \"True\" ] || return 0\n" +
-            "  local current_path=\"$PACKAGE_ROOT/$CURRENT_NAME\"\n" +
-            "  local target_name\n" +
+            "  current_path=\"$PACKAGE_ROOT/$CURRENT_NAME\"\n" +
             "  target_name=$(basename \"$FINAL_DIR\")\n" +
             "  rm -rf -- \"$current_path\" 2>/dev/null || true\n" +
             "  if ln -s \"$target_name\" \"$current_path\" 2>/dev/null; then\n" +
@@ -168,37 +183,29 @@ public static class SshPackageDeploymentScriptBuilder
             "}\n\n" +
             "apply_retention() {\n" +
             "  [ \"$MODE\" = \"Versioned\" ] || return 0\n" +
-            "  local keep=\"$RETENTION_COUNT\"\n" +
+            "  keep=\"$RETENTION_COUNT\"\n" +
             "  case \"$keep\" in\n" +
             "    ''|*[!0-9]*) return 0 ;;\n" +
             "  esac\n" +
             "  [ \"$keep\" -gt 0 ] || return 0\n" +
-            "  local current_full\n" +
-            "  current_full=$(cd \"$FINAL_DIR\" && pwd -P)\n" +
-            "  # Keep newest directories by mtime, always include current install.\n" +
-            "  mapfile -t version_dirs < <(find \"$PACKAGE_ROOT\" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -name \"$CURRENT_NAME\" -printf '%T@ %p\\n' 2>/dev/null | sort -nr | awk '{print $2}')\n" +
-            "  declare -A keep_set=()\n" +
-            "  keep_set[\"$current_full\"]=1\n" +
-            "  local count=1\n" +
-            "  local dir full\n" +
-            "  for dir in \"${version_dirs[@]:-}\"; do\n" +
-            "    [ -z \"$dir\" ] && continue\n" +
-            "    full=$(cd \"$dir\" && pwd -P)\n" +
-            "    if [ -n \"${keep_set[$full]:-}\" ]; then\n" +
+            "  current_name=$(basename \"$FINAL_DIR\")\n" +
+            "  count=0\n" +
+            "  # Portable newest-first listing for Alpine busybox and bash.\n" +
+            "  for dir in $(ls -1dt \"$PACKAGE_ROOT\"/*/ 2>/dev/null); do\n" +
+            "    name=$(basename \"$dir\")\n" +
+            "    [ \"$name\" = \"$CURRENT_NAME\" ] && continue\n" +
+            "    case \"$name\" in\n" +
+            "      .squid-*) continue ;;\n" +
+            "    esac\n" +
+            "    if [ \"$name\" = \"$current_name\" ]; then\n" +
+            "      count=$((count + 1))\n" +
             "      continue\n" +
             "    fi\n" +
-            "    if [ \"$count\" -ge \"$keep\" ]; then\n" +
-            "      break\n" +
+            "    if [ \"$count\" -lt \"$keep\" ]; then\n" +
+            "      count=$((count + 1))\n" +
+            "      continue\n" +
             "    fi\n" +
-            "    keep_set[\"$full\"]=1\n" +
-            "    count=$((count + 1))\n" +
-            "  done\n" +
-            "  for dir in \"${version_dirs[@]:-}\"; do\n" +
-            "    [ -z \"$dir\" ] && continue\n" +
-            "    full=$(cd \"$dir\" && pwd -P)\n" +
-            "    if [ -z \"${keep_set[$full]:-}\" ]; then\n" +
-            "      rm -rf -- \"$dir\" 2>/dev/null || true\n" +
-            "    fi\n" +
+            "    rm -rf -- \"$dir\" 2>/dev/null || true\n" +
             "  done\n" +
             "}\n\n" +
             "if [ \"$SKIP_IF_INSTALLED\" = \"True\" ] && is_same_version_installed; then\n" +
@@ -208,7 +215,7 @@ public static class SshPackageDeploymentScriptBuilder
             "fi\n\n" +
             "cleanup() {\n" +
             "  rm -rf \"$STAGING_DIR\" 2>/dev/null || true\n" +
-            "  rm -f \"$PACKAGE_FILE_LIST\" 2>/dev/null || true\n" +
+            "  rm -f \"$PACKAGE_FILE_LIST\" \"$PURGE_LIST\" 2>/dev/null || true\n" +
             "}\n" +
             "trap cleanup EXIT\n\n" +
             "if [ \"$MODE\" = \"Custom\" ] && [ -d \"$FINAL_DIR\" ]; then\n" +
@@ -216,10 +223,7 @@ public static class SshPackageDeploymentScriptBuilder
             "fi\n\n" +
             extractCommand + "\n\n" +
             "# Capture package-relative paths before commit for purge support.\n" +
-            ": > \"$PACKAGE_FILE_LIST\"\n" +
-            "while IFS= read -r -d '' file; do\n" +
-            "  printf '%s\\n' \"${file#\"$STAGING_DIR\"/}\" >> \"$PACKAGE_FILE_LIST\"\n" +
-            "done < <(find \"$STAGING_DIR\" -type f -print0 2>/dev/null)\n\n" +
+            "find \"$STAGING_DIR\" -type f 2>/dev/null | sed \"s|^$STAGING_DIR/||\" > \"$PACKAGE_FILE_LIST\" || : > \"$PACKAGE_FILE_LIST\"\n\n" +
             "if [ -d \"$FINAL_DIR\" ]; then\n" +
             "  mv \"$FINAL_DIR\" \"$BACKUP_DIR\"\n" +
             "fi\n\n" +
@@ -259,7 +263,7 @@ public static class SshPackageDeploymentScriptBuilder
             "apply_retention\n" +
             "rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
             "trap - EXIT\n" +
-            "rm -f \"$PACKAGE_FILE_LIST\" 2>/dev/null || true\n\n" +
+            "rm -f \"$PACKAGE_FILE_LIST\" \"$PURGE_LIST\" 2>/dev/null || true\n\n" +
             "emit_output_vars\n" +
             "echo \"DeployPackage: installed to $FINAL_DIR\"\n";
     }
