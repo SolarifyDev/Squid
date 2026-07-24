@@ -907,9 +907,15 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        // Shared host filesystem means install content is one directory, but both targets must execute.
-        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(2,
-            "Deploy a Package must execute on each matched SSH target.");
+        // Shared host filesystem means content is one directory; prove fan-out via target names.
+        var primaryName = await GetMachineNameAsync(_fixture.MachineId).ConfigureAwait(false);
+        var secondaryName = await GetMachineNameAsync(_fixture.SecondaryMachineId).ConfigureAwait(false);
+        (_fixture.LogSink.ContainsMessage(primaryName) || _fixture.LogSink.ContainsMessage(primaryName.ToLowerInvariant()))
+            .ShouldBeTrue($"Primary SSH target '{primaryName}' should execute.");
+        (_fixture.LogSink.ContainsMessage(secondaryName) || _fixture.LogSink.ContainsMessage(secondaryName.ToLowerInvariant()))
+            .ShouldBeTrue($"Secondary SSH target '{secondaryName}' should execute.");
+        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
+            "At least one SSH install success log is expected for multi-target deploy.");
     }
 
     [Fact]
@@ -938,8 +944,24 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
         await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
 
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(1,
-            "Only the matched SSH role should execute install.");
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("role-skip");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        var primaryName = await GetMachineNameAsync(_fixture.MachineId).ConfigureAwait(false);
+        var secondaryName = await GetMachineNameAsync(_fixture.SecondaryMachineId).ConfigureAwait(false);
+        (_fixture.LogSink.ContainsMessage(secondaryName) || _fixture.LogSink.ContainsMessage(secondaryName.ToLowerInvariant()))
+            .ShouldBeTrue($"Matching secondary SSH target '{secondaryName}' should execute.");
+        (_fixture.LogSink.ContainsMessage(primaryName) || _fixture.LogSink.ContainsMessage(primaryName.ToLowerInvariant()))
+            .ShouldBeFalse($"Non-matching primary SSH target '{primaryName}' should be skipped.");
+        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
+            "Matched SSH role should install once.");
     }
 
     [Fact]
@@ -1089,6 +1111,19 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         }
     }
 
+
+
+    private async Task<string> GetMachineNameAsync(int machineId)
+    {
+        return await _fixture.Run<IRepository, string>(async repository =>
+        {
+            var machine = await repository.QueryNoTracking<Machine>(m => m.Id == machineId)
+                .FirstOrDefaultAsync()
+                .ConfigureAwait(false);
+            machine.ShouldNotBeNull();
+            return machine.Name;
+        }).ConfigureAwait(false);
+    }
 
     private int CountLogOccurrences(string substring)
         => _fixture.LogSink.Messages.Count(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
