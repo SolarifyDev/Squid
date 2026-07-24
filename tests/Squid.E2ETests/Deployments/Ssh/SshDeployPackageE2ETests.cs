@@ -6,6 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Release;
+using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Helpers;
 using Squid.IntegrationTests.Helpers;
@@ -907,17 +908,29 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        // Shared host filesystem means content is one directory. Prove multi-target selection
-        // via target-count / execution fan-out logs rather than machine-name text (SSH path
-        // does not always surface names in the captured sink).
-        (_fixture.LogSink.ContainsMessage("Found 2 targets") ||
-         CountLogOccurrences("Preparing target:") >= 2 ||
-         CountLogOccurrences("Executing on") >= 2)
-            .ShouldBeTrue(
-                "Multi-role deploy must select and prepare both SSH targets. Logs: " +
-                string.Join(" | ", _fixture.LogSink.Messages.TakeLast(30)));
-        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
-            "At least one SSH install success log is expected for multi-target deploy.");
+        // Shared Docker host FS means both targets write the same install dir. Prove fan-out
+        // from task-scoped activity logs / action nodes (process-wide Serilog sink is polluted
+        // by concurrent fixtures and does not receive DeploymentActivityLogger text).
+        var primaryName = await GetMachineNameAsync(_fixture.MachineId).ConfigureAwait(false);
+        var secondaryName = await GetMachineNameAsync(_fixture.SecondaryMachineId).ConfigureAwait(false);
+        var taskLogs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        var activityNames = await GetTaskActivityNodeNamesAsync(serverTaskId).ConfigureAwait(false);
+        var evidenceDump = "Task logs: " + string.Join(" | ", taskLogs.TakeLast(40)) +
+                           " || Activity nodes: " + string.Join(" | ", activityNames.TakeLast(40));
+
+        // "Executing on {machine}" is the Action activity node name, not a ServerTaskLog line.
+        activityNames.Count(n => n.Equals($"Executing on {primaryName}", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeGreaterThanOrEqualTo(1, "Primary SSH target must execute. " + evidenceDump);
+        activityNames.Count(n => n.Equals($"Executing on {secondaryName}", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeGreaterThanOrEqualTo(1, "Secondary SSH target must execute. " + evidenceDump);
+        (CountTaskLogOccurrences(taskLogs, $"Successfully finished \"{ActionName}\" on {primaryName}") >= 1 ||
+         CountTaskLogOccurrences(taskLogs, $"Running action \"{ActionName}\" on {primaryName}") >= 1)
+            .ShouldBeTrue("Primary machine should appear in action logs. " + evidenceDump);
+        (CountTaskLogOccurrences(taskLogs, $"Successfully finished \"{ActionName}\" on {secondaryName}") >= 1 ||
+         CountTaskLogOccurrences(taskLogs, $"Running action \"{ActionName}\" on {secondaryName}") >= 1)
+            .ShouldBeTrue("Secondary machine should appear in action logs. " + evidenceDump);
+        CountTaskLogOccurrences(taskLogs, "DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
+            "At least one SSH install success log is expected for multi-target deploy. " + evidenceDump);
     }
 
     [Fact]
@@ -956,18 +969,30 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             if (client.IsConnected) client.Disconnect();
         }
 
-        // Secondary-only role must still install content. Also prove role filtering by
-        // selecting a zero-match role and ensuring no install success is reported.
-        (_fixture.LogSink.ContainsMessage("Found 1 targets") ||
-         CountLogOccurrences("Preparing target:") == 1 ||
-         CountLogOccurrences("Executing on") == 1)
-            .ShouldBeTrue(
-                "Secondary-only role should select exactly one SSH target. Logs: " +
-                string.Join(" | ", _fixture.LogSink.Messages.TakeLast(30)));
-        CountLogOccurrences("DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
-            "Matched SSH role should install once.");
+        // Secondary-only role still installs content. Acquire Packages has no roles, so
+        // prepare-time target count can include both machines; execution must still be
+        // filtered to the secondary role only.
+        var secondaryName = await GetMachineNameAsync(_fixture.SecondaryMachineId).ConfigureAwait(false);
+        var primaryName = await GetMachineNameAsync(_fixture.MachineId).ConfigureAwait(false);
+        var matchedLogs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        var matchedActivities = await GetTaskActivityNodeNamesAsync(serverTaskId).ConfigureAwait(false);
+        var matchedDump = "Task logs: " + string.Join(" | ", matchedLogs.TakeLast(40)) +
+                          " || Activity nodes: " + string.Join(" | ", matchedActivities.TakeLast(40));
 
-        _fixture.LogSink.Clear();
+        matchedActivities.Count(n => n.Equals($"Executing on {secondaryName}", StringComparison.OrdinalIgnoreCase))
+            .ShouldBeGreaterThanOrEqualTo(1,
+                "Secondary-only role should execute on the secondary machine. " + matchedDump);
+        matchedActivities.Count(n => n.Equals($"Executing on {primaryName}", StringComparison.OrdinalIgnoreCase))
+            .ShouldBe(0,
+                "Primary SSH role machine must be skipped for secondary-only deploy. " + matchedDump);
+        (CountTaskLogOccurrences(matchedLogs, $"Successfully finished \"{ActionName}\" on {secondaryName}") >= 1 ||
+         CountTaskLogOccurrences(matchedLogs, $"Running action \"{ActionName}\" on {secondaryName}") >= 1)
+            .ShouldBeTrue("Secondary machine action logs are expected. " + matchedDump);
+        CountTaskLogOccurrences(matchedLogs, $"Successfully finished \"{ActionName}\" on {primaryName}")
+            .ShouldBe(0, "Primary machine must not finish Deploy a Package. " + matchedDump);
+        CountTaskLogOccurrences(matchedLogs, "DeployPackage: installed to").ShouldBeGreaterThanOrEqualTo(1,
+            "Matched SSH role should install once. " + matchedDump);
+
         await using (var noMatchFeed = LocalHttpPackageFeed.Start(
                          PackageId,
                          "8.1.1",
@@ -982,10 +1007,20 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
                 .ConfigureAwait(false);
             await ExecutePipelineAsync(noMatchTask).ConfigureAwait(false);
             await AssertTaskStateAsync(noMatchTask, TaskState.Success).ConfigureAwait(false);
+
+            var noMatchLogs = await GetTaskLogMessagesAsync(noMatchTask).ConfigureAwait(false);
+            var noMatchActivities = await GetTaskActivityNodeNamesAsync(noMatchTask).ConfigureAwait(false);
+            var noMatchDump = "Task logs: " + string.Join(" | ", noMatchLogs.TakeLast(40)) +
+                              " || Activity nodes: " + string.Join(" | ", noMatchActivities.TakeLast(40));
+            CountTaskLogOccurrences(noMatchLogs, "DeployPackage: installed to").ShouldBe(0,
+                "Role mismatch should not execute Deploy Package install on any SSH target. " + noMatchDump);
+            noMatchActivities.Count(n => n.StartsWith("Executing on ", StringComparison.OrdinalIgnoreCase))
+                .ShouldBe(0, "Zero-match role must not create target action nodes. " + noMatchDump);
+            (CountTaskLogOccurrences(noMatchLogs, "no machines were found in the role") >= 1 ||
+             CountTaskLogOccurrences(noMatchLogs, "Skipping this step") >= 1)
+                .ShouldBeTrue("Zero-match role should log step skip semantics. " + noMatchDump);
         }
 
-        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0,
-            "Role mismatch should not execute Deploy Package install on any SSH target.");
         using (var client2 = ConnectSsh())
         {
             try
@@ -1163,6 +1198,27 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
 
     private int CountLogOccurrences(string substring)
         => _fixture.LogSink.Messages.Count(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
+
+    private static int CountTaskLogOccurrences(IReadOnlyList<string> messages, string substring)
+        => messages.Count(m => m.Contains(substring, StringComparison.OrdinalIgnoreCase));
+
+    private async Task<List<string>> GetTaskLogMessagesAsync(int serverTaskId)
+    {
+        return await _fixture.Run<IServerTaskLogDataProvider, List<string>>(async provider =>
+        {
+            var logs = await provider.GetLogsByTaskIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            return logs.Select(l => l.MessageText ?? string.Empty).ToList();
+        }).ConfigureAwait(false);
+    }
+
+    private async Task<List<string>> GetTaskActivityNodeNamesAsync(int serverTaskId)
+    {
+        return await _fixture.Run<IActivityLogDataProvider, List<string>>(async provider =>
+        {
+            var tree = await provider.GetTreeByTaskIdAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            return tree.Select(n => n.Name ?? string.Empty).ToList();
+        }).ConfigureAwait(false);
+    }
 
     private static string RemoteReadCurrentPointer(Renci.SshNet.SshClient client)
     {
