@@ -82,6 +82,7 @@ public sealed class SshIntentRenderer : IIntentRenderer
             => int.TryParse(Var(vars, name), out var n) ? n : 0;
 
         var variablesList = context.EffectiveVariables.ToList();
+        EnsureUnsupportedConfigRewriteFlagsAreOff(variablesList, intent);
         var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
         {
             ExpectedSha256 = acquired.Hash,
@@ -135,4 +136,44 @@ public sealed class SshIntentRenderer : IIntentRenderer
             PackageReferences = new List<PackageAcquisitionResult> { acquired }
         };
     }
+    private static void EnsureUnsupportedConfigRewriteFlagsAreOff(
+        IReadOnlyList<VariableDto> variables,
+        DeployPackageIntent intent)
+    {
+        static bool Enabled(IReadOnlyList<VariableDto> vars, string name)
+        {
+            var value = vars.FirstOrDefault(v => string.Equals(v.Name, name, StringComparison.OrdinalIgnoreCase))?.Value;
+            return string.Equals(value, "True", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // SSH durable-install script currently stages/extracts/runs conventions only.
+        // Config rewriters exist on the Calamari/Tentacle path; enabling them on SSH
+        // must fail closed so operators never get a silent no-op rewrite.
+        string[] unsupported =
+        [
+            SpecialVariables.Action.ConfigurationVariablesEnabled,
+            "Squid.Action.SubstituteInFiles.Enabled",
+            SpecialVariables.Action.StructuredConfigurationVariablesEnabled,
+            "Squid.Action.ConfigurationTransforms.Enabled",
+            // IIS-legacy aliases that may still be set on shared action property bags.
+            "Squid.Action.IISWebSite.ConfigurationVariables.Enabled",
+            "Squid.Action.IISWebSite.SubstituteInFiles.Enabled",
+            "Squid.Action.IISWebSite.StructuredConfigurationVariables.Enabled",
+            "Squid.Action.IISWebSite.ConfigurationTransforms.Enabled"
+        ];
+
+        foreach (var flag in unsupported)
+        {
+            if (!Enabled(variables, flag))
+                continue;
+
+            throw new IntentRenderingException(
+                CommunicationStyle.Ssh,
+                intent,
+                $"Deploy a Package feature '{flag}' is not supported on SSH targets. " +
+                "Disable the flag or deploy via Tentacle/Calamari until SSH config rewrite is implemented.");
+        }
+    }
 }
+

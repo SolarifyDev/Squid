@@ -431,6 +431,57 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
 
 
     [Fact]
+    public async Task DeployPackage_WhenConfigurationVariablesEnabledOnSsh_FailsClosed()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/ssh-config-vars";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "9.8.0",
+            CreatePackageArchive(
+                (MarkerFileName, "should-not-install"),
+                ("Web.config", "<configuration><appSettings><add key=\"Greeting\" value=\"old\" /></appSettings></configuration>")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "9.8.0",
+            extraActionProperties:
+            [
+                ("Squid.Action.ConfigurationVariables.Enabled", "True")
+            ]).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBeFalse("SSH must fail closed before install when ConfigurationVariables is enabled.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        var logs = await GetTaskLogMessagesAsync(serverTaskId).ConfigureAwait(false);
+        (CountTaskLogOccurrences(logs, "not supported on SSH") >= 1 ||
+         CountTaskLogOccurrences(logs, "ConfigurationVariables") >= 1 ||
+         CountTaskLogOccurrences(logs, "IntentRendering") >= 1 ||
+         _fixture.LogSink.ContainsMessage("not supported on SSH"))
+            .ShouldBeTrue(
+                "SSH config-rewrite enablement must surface an explicit failure. Logs: " +
+                string.Join(" | ", logs.TakeLast(30)));
+        CountTaskLogOccurrences(logs, "DeployPackage: installed to").ShouldBe(0);
+    }
+
+    [Fact]
     public async Task DeployPackage_WhenZipSlipArchive_FailsBeforeInstall()
     {
         if (!EnsureDocker())

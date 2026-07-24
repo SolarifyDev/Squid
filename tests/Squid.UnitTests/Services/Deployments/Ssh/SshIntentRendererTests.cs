@@ -9,6 +9,7 @@ using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Ssh.Rendering;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -233,6 +234,53 @@ public class SshIntentRendererTests
         rendered.DeploymentFiles.Count.ShouldBe(0);
     }
 
+
+    [Theory]
+    [InlineData("Squid.Action.ConfigurationVariables.Enabled")]
+    [InlineData("Squid.Action.SubstituteInFiles.Enabled")]
+    [InlineData("Squid.Action.StructuredConfigurationVariables.Enabled")]
+    [InlineData("Squid.Action.ConfigurationTransforms.Enabled")]
+    public async Task RenderAsync_DeployPackage_WhenConfigRewriteEnabled_Throws(string flagName)
+    {
+        var intent = NewDeployPackageIntent();
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/Acme.Web.1.0.0.nupkg", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 10, Hash: "abc")
+        };
+        var ctx = NewContext(
+            variables:
+            [
+                new VariableDto { Name = flagName, Value = "True" }
+            ],
+            packageReferences: packages);
+
+        var ex = await Should.ThrowAsync<IntentRenderingException>(
+            async () => await _renderer.RenderAsync(intent, ctx, CancellationToken.None));
+
+        ex.Message.ShouldContain("not supported on SSH", Case.Insensitive);
+        ex.Message.ShouldContain(flagName, Case.Insensitive);
+    }
+
+    [Fact]
+    public async Task RenderAsync_DeployPackage_WhenConfigRewriteDisabled_Succeeds()
+    {
+        var intent = NewDeployPackageIntent();
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/Acme.Web.1.0.0.nupkg", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 10, Hash: "abc")
+        };
+        var ctx = NewContext(
+            variables:
+            [
+                new VariableDto { Name = "Squid.Action.ConfigurationVariables.Enabled", Value = "False" },
+                new VariableDto { Name = "Squid.Action.SubstituteInFiles.Enabled", Value = "False" }
+            ],
+            packageReferences: packages);
+
+        var rendered = await _renderer.RenderAsync(intent, ctx, CancellationToken.None);
+        rendered.ScriptBody.ShouldContain("DeployPackage: installed to");
+    }
+
     // ========== Unsupported intents throw ==========
 
     [Fact]
@@ -248,6 +296,35 @@ public class SshIntentRendererTests
     }
 
     // ========== Helpers ==========
+
+
+    private static DeployPackageIntent NewDeployPackageIntent(
+        string packageId = "Acme.Web",
+        string version = "1.0.0",
+        string feedId = "7",
+        string mode = "Custom",
+        string customDir = "/tmp/app")
+    {
+        return new DeployPackageIntent
+        {
+            Name = "deploy-package",
+            StepName = "Deploy Package Step",
+            ActionName = "Deploy a Package",
+            Package = new IntentPackageReference
+            {
+                PackageId = packageId,
+                Version = version,
+                FeedId = feedId
+            },
+            InstallationDirectoryMode = mode,
+            CustomInstallationDirectory = customDir,
+            PathSegments = new PackageInstallationPathSegments(
+                EnvironmentName: "Production",
+                ProjectName: "WebApp",
+                PackageId: packageId,
+                Version: version)
+        };
+    }
 
     private static RunScriptIntent NewRunScriptIntent(string scriptBody = "echo default", ScriptSyntax syntax = ScriptSyntax.Bash)
     {
