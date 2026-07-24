@@ -33,7 +33,7 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E"
+        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E|Category=DeployPackageLinuxE2E"
 
 permissions:
   contents: read
@@ -65,7 +65,7 @@ jobs:
           files=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json files --jq '.files[].path')
           echo "Changed files:"; printf '%s\n' "$files"
 
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-linux-tentacle\.sh|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.LinuxTentacleE2ETests/|\.github/workflows/tentacle-linux-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-linux-tentacle\.sh|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/DeployPackageByCalamari\.sh|src/Squid\.Calamari/Commands/Package/|tests/Squid\.LinuxTentacleE2ETests/|\.github/workflows/tentacle-linux-smoke-e2e\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (versioned-upgrade paths changed)"
           else

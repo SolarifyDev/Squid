@@ -5,43 +5,42 @@ using System.Text.Json;
 using Halibut;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.LinuxTentacleE2ETests.Infrastructure;
 using Squid.Message.Contracts.Tentacle;
-using Squid.WindowsTentacleE2ETests.Infrastructure;
 
-namespace Squid.WindowsTentacleE2ETests;
+namespace Squid.LinuxTentacleE2ETests;
 
 /// <summary>
-/// Windows deploy-package agent dispatch E2E.
-/// Server attaches package + variables files over Halibut, agent runs the
-/// production <c>DeployPackageByCalamari.ps1</c> bootstrap, and
-/// <c>squid-calamari deploy-package</c> installs into a durable directory.
-/// Non-Windows hosts no-op so local macOS/Linux runs stay green.
+/// Linux deploy-package agent dispatch E2E.
+/// Server attaches package + variables over Halibut, agent runs production
+/// <c>DeployPackageByCalamari.sh</c>, and squid-calamari installs into a durable directory.
+/// Non-Linux hosts no-op so local macOS/Windows runs stay green.
 /// </summary>
-[Trait("Category", WindowsUpgradeE2ECategories.DeployPackage)]
-public sealed class DeployPackageWindowsE2ETests
+[Trait("Category", LinuxTentacleE2ECategories.DeployPackage)]
+public sealed class DeployPackageLinuxE2ETests
 {
-    private const string MarkerFileName = "deploy-package-windows-agent-marker.txt";
-    private const string MarkerContent = "deploy-package-windows-agent-content";
+    private const string MarkerFileName = "deploy-package-linux-agent-marker.txt";
+    private const string MarkerContent = "deploy-package-linux-agent-content";
     private const string PackageId = "Acme.Web";
 
     [Fact]
     public async Task Listening_DeployPackageBootstrap_InstallsArchiveToCustomDirectory()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsLinux())
             return;
 
-        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-{Guid.NewGuid():N}");
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workRoot);
         var previousPath = Environment.GetEnvironmentVariable("PATH");
 
         try
         {
-            var calamariDir = EnsureCalamariOnPath();
+            EnsureCalamariOnPath();
             var installDir = Path.Combine(workRoot, "apps", "success");
             var packageBytes = CreatePackageArchive(
                 (MarkerFileName, MarkerContent),
-                ("PreDeploy.ps1", "Set-Content -Path 'pre.txt' -Value 'pre-ran' -NoNewline"),
-                ("PostDeploy.ps1", "Set-Content -Path 'post.txt' -Value 'post-ran' -NoNewline"));
+                ("PreDeploy.sh", "#!/usr/bin/env bash\necho pre-ran > pre.txt\n"),
+                ("PostDeploy.sh", "#!/usr/bin/env bash\necho post-ran > post.txt\n"));
             var packageFileName = "Acme.Web.1.0.0.nupkg";
             var packagePath = Path.Combine(workRoot, packageFileName);
             await File.WriteAllBytesAsync(packagePath, packageBytes);
@@ -54,7 +53,7 @@ public sealed class DeployPackageWindowsE2ETests
             server.TrustAgent(agent.Thumbprint);
 
             var command = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-{Guid.NewGuid():N}"),
+                new ScriptTicket($"deploy-pkg-linux-{Guid.NewGuid():N}"),
                 scriptBody,
                 ScriptIsolationLevel.NoIsolation,
                 TimeSpan.FromMinutes(2),
@@ -65,7 +64,7 @@ public sealed class DeployPackageWindowsE2ETests
                 new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
                 new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
             {
-                ScriptSyntax = ScriptType.PowerShell
+                ScriptSyntax = ScriptType.Bash
             };
 
             var result = await server.DispatchAndObserveListeningAsync(
@@ -78,14 +77,11 @@ public sealed class DeployPackageWindowsE2ETests
             result.ExitCode.ShouldBe(0,
                 customMessage:
                     $"Deploy package bootstrap failed.\n" +
-                    $"calamariDir={calamariDir}\n" +
                     $"stdout/logs:\n{result.AllText}");
             result.AllText.ShouldContain("DeployPackage: installed to");
 
-            File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue(
-                $"Expected installed marker at {Path.Combine(installDir, MarkerFileName)}");
-            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)))
-                .ShouldBe(MarkerContent);
+            File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe(MarkerContent);
             File.Exists(Path.Combine(installDir, "pre.txt")).ShouldBeTrue();
             File.Exists(Path.Combine(installDir, "post.txt")).ShouldBeTrue();
         }
@@ -99,10 +95,10 @@ public sealed class DeployPackageWindowsE2ETests
     [Fact]
     public async Task Listening_DeployPackageBootstrap_WhenPreDeployFails_DoesNotOverwritePreviousInstall()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsLinux())
             return;
 
-        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-rb-{Guid.NewGuid():N}");
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-rb-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workRoot);
         var previousPath = Environment.GetEnvironmentVariable("PATH");
 
@@ -111,7 +107,6 @@ public sealed class DeployPackageWindowsE2ETests
             EnsureCalamariOnPath();
             var installDir = Path.Combine(workRoot, "apps", "rollback");
 
-            // 1) successful good install
             var goodBytes = CreatePackageArchive((MarkerFileName, "good-v1-content"));
             var goodFileName = "Acme.Web.1.0.0.nupkg";
             var goodPath = Path.Combine(workRoot, goodFileName);
@@ -124,7 +119,7 @@ public sealed class DeployPackageWindowsE2ETests
             server.TrustAgent(agent.Thumbprint);
 
             var goodCommand = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-good-{Guid.NewGuid():N}"),
+                new ScriptTicket($"deploy-pkg-linux-good-{Guid.NewGuid():N}"),
                 goodScript,
                 ScriptIsolationLevel.NoIsolation,
                 TimeSpan.FromMinutes(2),
@@ -135,28 +130,23 @@ public sealed class DeployPackageWindowsE2ETests
                 new ScriptFile(goodFileName, DataStream.FromBytes(goodBytes)),
                 new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(goodVariables))))
             {
-                ScriptSyntax = ScriptType.PowerShell
+                ScriptSyntax = ScriptType.Bash
             };
-
             var goodResult = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, goodCommand, TimeSpan.FromSeconds(90), CancellationToken.None)
-                ;
-            goodResult.ExitCode.ShouldBe(0, $"good install failed:\n{goodResult.AllText}");
-            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)))
-                .ShouldBe("good-v1-content");
+                agent.ListeningUri, agent.Thumbprint, goodCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
+            goodResult.ExitCode.ShouldBe(0, goodResult.AllText);
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("good-v1-content");
 
-            // 2) failing PreDeploy must restore previous content
             var badBytes = CreatePackageArchive(
                 (MarkerFileName, "bad-v2-content"),
-                ("PreDeploy.ps1", "Write-Error 'intentional-predeploy-failure'; exit 1"));
+                ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-predeploy-failure\nexit 1\n"));
             var badFileName = "Acme.Web.2.0.0.nupkg";
             var badPath = Path.Combine(workRoot, badFileName);
             await File.WriteAllBytesAsync(badPath, badBytes);
             var badVariables = BuildVariables(installDir, badPath, "2.0.0", rollbackOnFailure: true);
             var badScript = BuildBootstrapScript(badFileName, badVariables);
-
             var badCommand = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-bad-{Guid.NewGuid():N}"),
+                new ScriptTicket($"deploy-pkg-linux-bad-{Guid.NewGuid():N}"),
                 badScript,
                 ScriptIsolationLevel.NoIsolation,
                 TimeSpan.FromMinutes(2),
@@ -167,19 +157,13 @@ public sealed class DeployPackageWindowsE2ETests
                 new ScriptFile(badFileName, DataStream.FromBytes(badBytes)),
                 new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(badVariables))))
             {
-                ScriptSyntax = ScriptType.PowerShell
+                ScriptSyntax = ScriptType.Bash
             };
-
             var badResult = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, badCommand, TimeSpan.FromSeconds(90), CancellationToken.None)
-                ;
-
-            badResult.ExitCode.ShouldNotBe(0, "Failed PreDeploy must fail the bootstrap process.");
-            badResult.AllText.ShouldContain("intentional-predeploy-failure");
+                agent.ListeningUri, agent.Thumbprint, badCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
+            badResult.ExitCode.ShouldNotBe(0, badResult.AllText);
             badResult.AllText.ShouldNotContain("DeployPackage: installed to");
-
-            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)))
-                .ShouldBe("good-v1-content");
+            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("good-v1-content");
         }
         finally
         {
@@ -191,20 +175,19 @@ public sealed class DeployPackageWindowsE2ETests
     [Fact]
     public async Task Listening_DeployPackageBootstrap_WithConfigurationVariables_RewritesWebConfig()
     {
-        if (!OperatingSystem.IsWindows())
+        if (!OperatingSystem.IsLinux())
             return;
 
-        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-cfg-{Guid.NewGuid():N}");
+        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-linux-deploy-pkg-cfg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workRoot);
         var previousPath = Environment.GetEnvironmentVariable("PATH");
 
         try
         {
             EnsureCalamariOnPath();
-            var installDir = Path.Combine(workRoot, "apps", "config-vars");
-            const string appSettingValue = "https://api.windows-agent-e2e.local";
-            const string connectionValue = "Server=windows-agent-db;Database=Acme;";
-
+            var installDir = Path.Combine(workRoot, "apps", "config");
+            const string appSettingValue = "https://api.linux-e2e.local";
+            const string connectionValue = "Server=linux-e2e-db;Database=Acme;";
             var webConfig = """
                 <?xml version="1.0" encoding="utf-8"?>
                 <configuration>
@@ -224,7 +207,7 @@ public sealed class DeployPackageWindowsE2ETests
             var packagePath = Path.Combine(workRoot, packageFileName);
             await File.WriteAllBytesAsync(packagePath, packageBytes);
 
-            var variablesMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["Squid.Action.Package.PackageId"] = PackageId,
                 ["Squid.Action.Package.PackageVersion"] = "1.0.0",
@@ -235,7 +218,7 @@ public sealed class DeployPackageWindowsE2ETests
                 ["ApiBaseUrl"] = appSettingValue,
                 ["DefaultConnection"] = connectionValue
             };
-            var variables = JsonSerializer.Serialize(variablesMap);
+            var variables = JsonSerializer.Serialize(map);
             var scriptBody = BuildBootstrapScript(packageFileName, variables);
 
             await using var server = await StubSquidServer.StartAsync();
@@ -243,7 +226,7 @@ public sealed class DeployPackageWindowsE2ETests
             server.TrustAgent(agent.Thumbprint);
 
             var command = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-cfg-{Guid.NewGuid():N}"),
+                new ScriptTicket($"deploy-pkg-linux-cfg-{Guid.NewGuid():N}"),
                 scriptBody,
                 ScriptIsolationLevel.NoIsolation,
                 TimeSpan.FromMinutes(2),
@@ -254,16 +237,14 @@ public sealed class DeployPackageWindowsE2ETests
                 new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
                 new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
             {
-                ScriptSyntax = ScriptType.PowerShell
+                ScriptSyntax = ScriptType.Bash
             };
 
             var result = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None)
-                ;
+                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
 
             result.ExitCode.ShouldBe(0, $"config rewrite deploy failed:\n{result.AllText}");
             result.AllText.ShouldContain("ConfigurationVariables:");
-
             var installed = await File.ReadAllTextAsync(Path.Combine(installDir, "web.config"));
             installed.ShouldContain(appSettingValue);
             installed.ShouldContain(connectionValue);
@@ -276,170 +257,10 @@ public sealed class DeployPackageWindowsE2ETests
         }
     }
 
-
-    [Fact]
-    public async Task Listening_DeployPackageBootstrap_WithSubstituteInFiles_ReplacesTokens()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-sub-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(workRoot);
-        var previousPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            EnsureCalamariOnPath();
-            var installDir = Path.Combine(workRoot, "apps", "substitute");
-            var packageBytes = CreatePackageArchive(
-                (MarkerFileName, MarkerContent),
-                ("appsettings.json", """{"Greeting":"#{Greeting}"}"""));
-            var packageFileName = "Acme.Web.1.0.0.nupkg";
-            var packagePath = Path.Combine(workRoot, packageFileName);
-            await File.WriteAllBytesAsync(packagePath, packageBytes);
-
-            var variablesMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Squid.Action.Package.PackageId"] = PackageId,
-                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
-                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(packageBytes)).ToLowerInvariant(),
-                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
-                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
-                ["Squid.Action.SubstituteInFiles.Enabled"] = "True",
-                ["Squid.Action.SubstituteInFiles.TargetFiles"] = "appsettings.json",
-                ["Greeting"] = "hello-from-windows-agent"
-            };
-            var variables = JsonSerializer.Serialize(variablesMap);
-            var scriptBody = BuildBootstrapScript(packageFileName, variables);
-
-            await using var server = await StubSquidServer.StartAsync();
-            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
-            server.TrustAgent(agent.Thumbprint);
-
-            var command = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-sub-{Guid.NewGuid():N}"),
-                scriptBody,
-                ScriptIsolationLevel.NoIsolation,
-                TimeSpan.FromMinutes(2),
-                null,
-                Array.Empty<string>(),
-                null,
-                TimeSpan.Zero,
-                new ScriptFile(packageFileName, DataStream.FromBytes(packageBytes)),
-                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(variables))))
-            {
-                ScriptSyntax = ScriptType.PowerShell
-            };
-
-            var result = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, command, TimeSpan.FromSeconds(90), CancellationToken.None);
-
-            result.ExitCode.ShouldBe(0, $"substitute deploy failed:\n{result.AllText}");
-            result.AllText.ShouldContain("SubstituteInFiles:");
-            var content = await File.ReadAllTextAsync(Path.Combine(installDir, "appsettings.json"));
-            content.ShouldContain("hello-from-windows-agent");
-            content.ShouldNotContain("#{Greeting}");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", previousPath);
-            TryDelete(workRoot);
-        }
-    }
-
-    [Fact]
-    public async Task Listening_DeployPackageBootstrap_SkipIfAlreadyInstalled_DoesNotOverwrite()
-    {
-        if (!OperatingSystem.IsWindows())
-            return;
-
-        var workRoot = Path.Combine(Path.GetTempPath(), $"squid-win-deploy-pkg-skip-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(workRoot);
-        var previousPath = Environment.GetEnvironmentVariable("PATH");
-
-        try
-        {
-            EnsureCalamariOnPath();
-            var installDir = Path.Combine(workRoot, "apps", "skip");
-            Directory.CreateDirectory(installDir);
-
-            var firstBytes = CreatePackageArchive((MarkerFileName, "v1-original"));
-            var firstName = "Acme.Web.1.0.0.nupkg";
-            var firstPath = Path.Combine(workRoot, firstName);
-            await File.WriteAllBytesAsync(firstPath, firstBytes);
-            var firstVars = BuildVariables(installDir, firstPath, "1.0.0");
-            var firstScript = BuildBootstrapScript(firstName, firstVars);
-
-            await using var server = await StubSquidServer.StartAsync();
-            await using var agent = await StubAgent.StartListeningAsync(server.ServerThumbprint);
-            server.TrustAgent(agent.Thumbprint);
-
-            var firstCommand = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-skip1-{Guid.NewGuid():N}"),
-                firstScript,
-                ScriptIsolationLevel.NoIsolation,
-                TimeSpan.FromMinutes(2),
-                null,
-                Array.Empty<string>(),
-                null,
-                TimeSpan.Zero,
-                new ScriptFile(firstName, DataStream.FromBytes(firstBytes)),
-                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(firstVars))))
-            {
-                ScriptSyntax = ScriptType.PowerShell
-            };
-            var firstResult = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, firstCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
-            firstResult.ExitCode.ShouldBe(0, firstResult.AllText);
-
-            await File.WriteAllTextAsync(Path.Combine(installDir, MarkerFileName), "operator-edited");
-
-            var secondBytes = CreatePackageArchive((MarkerFileName, "v1-repackaged"));
-            var secondName = "Acme.Web.1.0.0-re.nupkg";
-            var secondPath = Path.Combine(workRoot, secondName);
-            await File.WriteAllBytesAsync(secondPath, secondBytes);
-            var secondMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["Squid.Action.Package.PackageId"] = PackageId,
-                ["Squid.Action.Package.PackageVersion"] = "1.0.0",
-                ["Squid.Action.Package.Hash"] = Convert.ToHexString(SHA256.HashData(secondBytes)).ToLowerInvariant(),
-                ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
-                ["Squid.Action.Package.CustomInstallationDirectory"] = installDir,
-                ["Squid.Action.Package.SkipIfAlreadyInstalled"] = "True"
-            };
-            var secondVars = JsonSerializer.Serialize(secondMap);
-            var secondScript = BuildBootstrapScript(secondName, secondVars);
-            var secondCommand = new StartScriptCommand(
-                new ScriptTicket($"deploy-pkg-skip2-{Guid.NewGuid():N}"),
-                secondScript,
-                ScriptIsolationLevel.NoIsolation,
-                TimeSpan.FromMinutes(2),
-                null,
-                Array.Empty<string>(),
-                null,
-                TimeSpan.Zero,
-                new ScriptFile(secondName, DataStream.FromBytes(secondBytes)),
-                new ScriptFile("variables.json", DataStream.FromBytes(Encoding.UTF8.GetBytes(secondVars))))
-            {
-                ScriptSyntax = ScriptType.PowerShell
-            };
-            var secondResult = await server.DispatchAndObserveListeningAsync(
-                agent.ListeningUri, agent.Thumbprint, secondCommand, TimeSpan.FromSeconds(90), CancellationToken.None);
-            secondResult.ExitCode.ShouldBe(0, secondResult.AllText);
-            secondResult.AllText.ShouldContain("SkipIfAlreadyInstalled:");
-            (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName))).ShouldBe("operator-edited");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", previousPath);
-            TryDelete(workRoot);
-        }
-    }
-
     private static string BuildBootstrapScript(string packageFileName, string variablesJson)
     {
         _ = variablesJson;
-        var template = UtilService.GetEmbeddedScriptContent("DeployPackageByCalamari.ps1");
+        var template = UtilService.GetEmbeddedScriptContent("DeployPackageByCalamari.sh");
         var payload = new CalamariPayload
         {
             PackageFileName = packageFileName,
@@ -449,8 +270,6 @@ public sealed class DeployPackageWindowsE2ETests
             SensitivePassword = string.Empty,
             TemplateBody = template
         };
-
-        // Files land in the agent workDir under these relative names.
         return payload.FillTemplate(packageFileName, "variables.json", "sensitiveVariables.json");
     }
 
@@ -467,7 +286,6 @@ public sealed class DeployPackageWindowsE2ETests
         };
         if (rollbackOnFailure)
             map["Squid.Action.Package.RollbackOnFailure"] = "True";
-
         return JsonSerializer.Serialize(map);
     }
 
@@ -483,13 +301,12 @@ public sealed class DeployPackageWindowsE2ETests
                 writer.Write(file.Content);
             }
         }
-
         return ms.ToArray();
     }
 
     private static string EnsureCalamariOnPath()
     {
-        var anchor = Path.GetDirectoryName(typeof(DeployPackageWindowsE2ETests).Assembly.Location)
+        var anchor = Path.GetDirectoryName(typeof(DeployPackageLinuxE2ETests).Assembly.Location)
             ?? throw new InvalidOperationException("Unable to resolve test assembly directory.");
 
         var candidates = new[]
@@ -503,8 +320,7 @@ public sealed class DeployPackageWindowsE2ETests
         foreach (var dir in candidates)
         {
             if (Directory.Exists(dir) &&
-                (File.Exists(Path.Combine(dir, "squid-calamari.exe")) ||
-                 File.Exists(Path.Combine(dir, "squid-calamari")) ||
+                (File.Exists(Path.Combine(dir, "squid-calamari")) ||
                  File.Exists(Path.Combine(dir, "squid-calamari.dll"))))
             {
                 calamariDir = dir;
@@ -515,13 +331,13 @@ public sealed class DeployPackageWindowsE2ETests
         if (calamariDir is null)
         {
             throw new FileNotFoundException(
-                "squid-calamari not found. Build Squid.Calamari before running Deploy Package Windows e2e. " +
+                "squid-calamari not found. Build Squid.Calamari before running Deploy Package Linux e2e. " +
                 "Tried:\n" + string.Join("\n", candidates));
         }
 
         var currentPath = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         if (!currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
-                .Any(p => string.Equals(p, calamariDir, StringComparison.OrdinalIgnoreCase)))
+                .Any(p => string.Equals(p, calamariDir, StringComparison.Ordinal)))
         {
             Environment.SetEnvironmentVariable("PATH", calamariDir + Path.PathSeparator + currentPath);
         }

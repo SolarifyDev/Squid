@@ -474,6 +474,195 @@ public class DeployPackagePipelineE2ETests
     }
 
 
+
+    [Fact]
+    public async Task DeployPackage_PurgeBeforeInstall_RemovesNonPackageFilesButKeepsPreserved()
+    {
+        _fixture.LogSink.Clear();
+
+        var installDir = NewInstallDir("purge");
+        await File.WriteAllTextAsync(Path.Combine(installDir, "local-only.txt"), "delete-me").ConfigureAwait(false);
+        var logsDir = Path.Combine(installDir, "logs");
+        Directory.CreateDirectory(logsDir);
+        await File.WriteAllTextAsync(Path.Combine(logsDir, "app.log"), "keep-me").ConfigureAwait(false);
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "from-package")));
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties:
+            [
+                ("Squid.Action.Package.PurgeBeforeInstall", "True"),
+                ("Squid.Action.Package.PreservePaths", "logs/**")
+            ],
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, "local-only.txt")).ShouldBeFalse();
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false)).ShouldBe("from-package");
+        (await File.ReadAllTextAsync(Path.Combine(logsDir, "app.log")).ConfigureAwait(false)).ShouldBe("keep-me");
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenDockerFeed_RejectsAcquisition()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("docker-reject");
+
+        await using var feed = StartFeed(CreatePackageArchive((MarkerFileName, "should-not-install")));
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null,
+            feedTypeOverride: "Docker").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
+        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
+            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPackageAcquisitionFails_AbortsBeforeInstall()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("acquire-fail");
+
+        // Feed serves a different package id, so the requested package returns empty/404 content.
+        await using var feed = LocalHttpPackageFeed.Start(
+            "Other.Package",
+            "9.9.9",
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse();
+        (_fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")
+            || _fixture.LogSink.ContainsMessage("returned empty content")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WithOnlyPostDeployScript_InstallsSuccessfully()
+    {
+        _fixture.LogSink.Clear();
+        await using var feed = StartFeed(CreatePackageArchive(
+            (MarkerFileName, "post-only"),
+            ("PostDeploy.sh", "#!/usr/bin/env bash\necho post-only > post.txt\n")));
+        var installDir = NewInstallDir("post-only");
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 120,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+
+        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false)).ShouldBe("post-only");
+        (await File.ReadAllTextAsync(Path.Combine(installDir, "post.txt")).ConfigureAwait(false)).Trim().ShouldBe("post-only");
+    }
+
+    [Fact]
+    public async Task DeployPackage_UseCurrentPointer_UpdatesCurrentLink()
+    {
+        _fixture.LogSink.Clear();
+        var packageRoot = Path.Combine(_workRoot, "Applications", "Production", "WebApp", PackageId);
+        Directory.CreateDirectory(packageRoot);
+
+        foreach (var version in new[] { "1.0.0", "2.0.0" })
+        {
+            _fixture.LogSink.Clear();
+            await using var feed = LocalHttpPackageFeed.Start(
+                PackageId,
+                version,
+                CreatePackageArchive((MarkerFileName, version)));
+            var installDir = Path.Combine(packageRoot, version);
+            var taskId = await SeedDeployPackageDeploymentAsync(
+                feed,
+                installDir,
+                packageFiles: null,
+                packageVersionProperty: null,
+                selectedVersion: version,
+                stepTimeoutSeconds: 120,
+                extraActionProperties:
+                [
+                    (SpecialVariables.Action.InstallationDirectoryMode, "Versioned"),
+                    (SpecialVariables.Action.InstallationDirectoryPath, installDir),
+                    ("Squid.Action.Package.UseCurrentPointer", "True")
+                ],
+                projectVariables: null).ConfigureAwait(false);
+
+            await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+            await AssertTaskStateAsync(taskId, TaskState.Success).ConfigureAwait(false);
+        }
+
+        File.Exists(Path.Combine(packageRoot, "1.0.0", MarkerFileName)).ShouldBeTrue();
+        File.Exists(Path.Combine(packageRoot, "2.0.0", MarkerFileName)).ShouldBeTrue();
+
+        var currentPath = Path.Combine(packageRoot, "current");
+        (Directory.Exists(currentPath) || File.Exists(currentPath)).ShouldBeTrue(
+            "UseCurrentPointer should create a current symlink or pointer file under the package root.");
+
+        string resolved = null;
+        var linkInfo = new FileInfo(currentPath);
+        if (!string.IsNullOrEmpty(linkInfo.LinkTarget))
+        {
+            resolved = Path.IsPathRooted(linkInfo.LinkTarget)
+                ? Path.GetFullPath(linkInfo.LinkTarget)
+                : Path.GetFullPath(Path.Combine(packageRoot, linkInfo.LinkTarget));
+        }
+        else if (File.Exists(currentPath) && !Directory.Exists(currentPath))
+        {
+            var pointer = (await File.ReadAllTextAsync(currentPath).ConfigureAwait(false)).Trim();
+            resolved = Path.IsPathRooted(pointer)
+                ? Path.GetFullPath(pointer)
+                : Path.GetFullPath(Path.Combine(packageRoot, pointer));
+        }
+        else
+        {
+            var linkTarget = Directory.ResolveLinkTarget(currentPath, returnFinalTarget: true);
+            if (linkTarget != null)
+                resolved = Path.GetFullPath(linkTarget.FullName);
+        }
+
+        resolved.ShouldNotBeNull();
+        Path.GetFullPath(resolved).ShouldBe(Path.GetFullPath(Path.Combine(packageRoot, "2.0.0")));
+    }
+
     // ========================================================================
     // Seeders
     // ========================================================================
@@ -534,7 +723,8 @@ public class DeployPackagePipelineE2ETests
         (string Name, string Value)[] extraActionProperties,
         (string Name, string Value)[] projectVariables,
         int? feedIdOverride = null,
-        bool skipExternalFeed = false)
+        bool skipExternalFeed = false,
+        string feedTypeOverride = null)
     {
         _ = packageFiles; // package content is owned by the feed instance
         var serverTaskId = 0;
@@ -585,7 +775,7 @@ public class DeployPackagePipelineE2ETests
                 {
                     Name = $"Local NuGet {feedSuffix}",
                     Slug = $"local-nuget-{feedSuffix}",
-                    FeedType = "NuGet",
+                    FeedType = string.IsNullOrWhiteSpace(feedTypeOverride) ? "NuGet" : feedTypeOverride,
                     FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
                     Username = string.Empty,
                     Password = string.Empty,

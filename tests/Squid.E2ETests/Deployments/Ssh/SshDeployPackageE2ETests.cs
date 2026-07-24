@@ -274,6 +274,160 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
             "Expected acquisition failure diagnostics in logs.");
     }
 
+
+    [Fact]
+    public async Task DeployPackage_WithDefaultPackageBaseDirectory_StagesUnderHomePackages()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "4.0.0",
+            CreatePackageArchive((MarkerFileName, "default-base")));
+
+        // Custom install dir outside RemoteWorkingDirectory; package cache should fall back to $HOME/.squid/Packages
+        // only when RemoteWorkingDirectory is empty. Our fixture always sets RemoteWorkDir, so instead verify
+        // the configured package base under RemoteWorkingDirectory remains the staging root for a second deploy
+        // of the same version (cache hit path: archive remains present after install).
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/default-base";
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "4.0.0").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{SshDeployPackageE2EFixture.RemoteWorkDir}/Packages/{PackageId}.4.0.0.nupkg")
+                .ShouldBeTrue("Package cache should retain the staged archive under RemoteWorkingDirectory/Packages.");
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}").ShouldBe("default-base");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPostDeployFails_KeepsInstalledContent()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/post-fail";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            "5.0.0",
+            CreatePackageArchive(
+                (MarkerFileName, "post-fail-content"),
+                ("PostDeploy.sh", "#!/usr/bin/env bash\necho intentional-postdeploy-failure\nexit 1\n")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: "5.0.0").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteReadFile(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBe("post-fail-content", "PostDeploy failure should keep committed install content.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenFeedIdZero_AbortsBeforeInstall()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/feed0";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion,
+            skipExternalFeed: true,
+            feedIdOverride: 0).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}").ShouldBeFalse();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        (_fixture.LogSink.ContainsMessage("Invalid FeedId: 0")
+            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenDockerFeed_RejectsAcquisition()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/docker-reject";
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            CreatePackageArchive((MarkerFileName, "should-not-install")));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion,
+            feedTypeOverride: "Docker").ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}").ShouldBeFalse();
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        (_fixture.LogSink.ContainsMessage("cannot be installed by Deploy a Package")
+            || _fixture.LogSink.ContainsMessage("Failed to acquire package")
+            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
+    }
+
     private bool EnsureDocker()
     {
         if (_fixture.DockerAvailable)
@@ -324,7 +478,11 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
         string packageVersion,
         string mode = "Custom",
         string selectedPackageIdOverride = null,
-        string selectedVersionOverride = null)
+        string selectedVersionOverride = null,
+        (string Name, string Value)[] extraActionProperties = null,
+        string feedTypeOverride = null,
+        bool skipExternalFeed = false,
+        int? feedIdOverride = null)
     {
         var serverTaskId = 0;
         var selectedPackageId = selectedPackageIdOverride ?? packageId;
@@ -350,58 +508,88 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
                 step.Id, 1, ActionName, actionType: SpecialVariables.ActionTypes.TentaclePackage).ConfigureAwait(false);
             await builder.CreateActionMachineRolesAsync(action.Id, SshDeployPackageE2EFixture.TargetRole).ConfigureAwait(false);
 
-            var feedSuffix = Guid.NewGuid().ToString("N")[..6];
-            var externalFeed = new ExternalFeed
+            int feedId;
+            if (skipExternalFeed)
             {
-                Name = $"Local NuGet SSH {feedSuffix}",
-                Slug = $"local-nuget-ssh-{feedSuffix}",
-                FeedType = "NuGet",
-                FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
-                Username = string.Empty,
-                Password = string.Empty,
-                SpaceId = 1,
-                PackageAcquisitionLocationOptions = string.Empty,
-                Properties = string.Empty
-            };
-            await repository.InsertAsync(externalFeed).ConfigureAwait(false);
-            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+                feedId = feedIdOverride ?? 0;
+            }
+            else
+            {
+                var feedSuffix = Guid.NewGuid().ToString("N")[..6];
+                var externalFeed = new ExternalFeed
+                {
+                    Name = $"Local NuGet SSH {feedSuffix}",
+                    Slug = $"local-nuget-ssh-{feedSuffix}",
+                    FeedType = string.IsNullOrWhiteSpace(feedTypeOverride) ? "NuGet" : feedTypeOverride,
+                    FeedUri = feed.BaseUri.ToString().TrimEnd('/'),
+                    Username = string.Empty,
+                    Password = string.Empty,
+                    SpaceId = 1,
+                    PackageAcquisitionLocationOptions = string.Empty,
+                    Properties = string.Empty
+                };
+                await repository.InsertAsync(externalFeed).ConfigureAwait(false);
+                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+                feedId = feedIdOverride ?? externalFeed.Id;
+            }
 
             var actionProps = new List<(string Name, string Value)>
             {
-                (SpecialVariables.Action.PackageFeedId, externalFeed.Id.ToString()),
+                (SpecialVariables.Action.PackageFeedId, feedId.ToString()),
                 (SpecialVariables.Action.PackageId, packageId),
                 (SpecialVariables.Action.InstallationDirectoryMode, mode),
                 (SpecialVariables.Action.PackageVersion, packageVersion)
             };
             if (string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase))
                 actionProps.Add((SpecialVariables.Action.CustomInstallationDirectory, installDir));
+            if (extraActionProperties is { Length: > 0 })
+                actionProps.AddRange(extraActionProperties);
 
             await builder.CreateActionPropertiesAsync(action.Id, actionProps.ToArray()).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
 
-            var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
+            Release releaseEntity;
+            if (feedId > 0)
             {
-                Version = $"1.0.{Guid.NewGuid().ToString("N")[..6]}",
-                ProjectId = project.Id,
-                ChannelId = channel.Id,
-                SpaceId = 1,
-                SelectedPackages =
-                [
-                    new CreateReleaseSelectedPackageDto
-                    {
-                        ActionName = ActionName,
-                        PackageReferenceName = selectedPackageId,
-                        FeedId = externalFeed.Id,
-                        Version = selectedVersion
-                    }
-                ]
-            }).ConfigureAwait(false);
+                var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
+                {
+                    Version = $"1.0.{Guid.NewGuid().ToString("N")[..6]}",
+                    ProjectId = project.Id,
+                    ChannelId = channel.Id,
+                    SpaceId = 1,
+                    SelectedPackages =
+                    [
+                        new CreateReleaseSelectedPackageDto
+                        {
+                            ActionName = ActionName,
+                            PackageReferenceName = selectedPackageId,
+                            FeedId = feedId,
+                            Version = selectedVersion
+                        }
+                    ]
+                }).ConfigureAwait(false);
 
-            var releaseEntity = await repository.Query<Release>(r => r.Id == created.Release.Id)
-                .FirstOrDefaultAsync()
-                .ConfigureAwait(false);
-            releaseEntity.ShouldNotBeNull();
+                releaseEntity = await repository.Query<Release>(r => r.Id == created.Release.Id)
+                    .FirstOrDefaultAsync()
+                    .ConfigureAwait(false);
+                releaseEntity.ShouldNotBeNull();
+            }
+            else
+            {
+                releaseEntity = await builder.CreateReleaseAsync(
+                        project.Id, channel.Id, $"0.0.{Guid.NewGuid().ToString("N")[..6]}")
+                    .ConfigureAwait(false);
+                await repository.InsertAsync(new ReleaseSelectedPackage
+                {
+                    ReleaseId = releaseEntity.Id,
+                    FeedId = 0,
+                    ActionName = ActionName,
+                    PackageReferenceName = selectedPackageId,
+                    Version = selectedVersion
+                }).ConfigureAwait(false);
+                await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+            }
 
             var deployment = new Deployment
             {

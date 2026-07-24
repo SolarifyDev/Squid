@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Squid.Calamari.Commands.Configuration;
 using Squid.Calamari.Commands.Package;
@@ -337,11 +338,123 @@ public sealed class DeployPackageWindowsHostE2ETests : IDisposable
     }
 
 
-        private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
+    
+    [Fact]
+    public async Task DeployPackage_UseCurrentPointer_UpdatesCurrentLink()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", PackageId);
+        Directory.CreateDirectory(packageRoot);
+
+        foreach (var version in new[] { "1.0.0", "2.0.0" })
+        {
+            var archive = CreateZip(new Dictionary<string, string>
+            {
+                [MarkerFileName] = version
+            });
+            var installDir = Path.Combine(packageRoot, version);
+            var variablesPath = WriteVariables(new Dictionary<string, string>
+            {
+                ["Squid.Action.Package.PackageId"] = PackageId,
+                ["Squid.Action.Package.PackageVersion"] = version,
+                ["Squid.Action.Package.Hash"] = Sha256(archive),
+                ["Squid.Action.Package.InstallationDirectoryMode"] = "Versioned",
+                ["Squid.Action.Package.InstallationDirectoryPath"] = installDir,
+                ["Squid.Action.Package.Path.Environment"] = "Production",
+                ["Squid.Action.Package.Path.Project"] = "WebApp",
+                ["Squid.Action.Package.Path.Package"] = PackageId,
+                ["Squid.Action.Package.Path.Version"] = version,
+                [PackageInstallOptionProperties.UseCurrentPointer] = "True"
+            });
+
+            var result = await InvokeDeployPackageAsync(archive, variablesPath);
+            result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        }
+
+        var currentPath = Path.Combine(packageRoot, "current");
+        (Directory.Exists(currentPath) || File.Exists(currentPath)).ShouldBeTrue();
+        File.Exists(Path.Combine(packageRoot, "2.0.0", MarkerFileName)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task DeployPackage_WhenPostDeployFails_KeepsInstalledContent()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "post-fail");
+        var archive = CreateZip(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "post-fail-content",
+            ["PostDeploy.ps1"] = "Write-Error 'intentional-postdeploy-failure'; exit 1"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldNotBe(0);
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("post-fail-content");
+    }
+
+    [Fact]
+    public async Task DeployPackage_TarGzArchive_ExtractsSuccessfully()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        var installDir = Path.Combine(_root, "apps", "targz");
+        var archive = CreateTarGz(new Dictionary<string, string>
+        {
+            [MarkerFileName] = "from-tar-gz"
+        });
+        var variablesPath = WriteVariables(new Dictionary<string, string>
+        {
+            ["Squid.Action.Package.PackageId"] = PackageId,
+            ["Squid.Action.Package.PackageVersion"] = "1.0.0",
+            ["Squid.Action.Package.Hash"] = Sha256(archive),
+            ["Squid.Action.Package.InstallationDirectoryMode"] = "Custom",
+            ["Squid.Action.Package.CustomInstallationDirectory"] = installDir
+        });
+
+        var result = await InvokeDeployPackageAsync(archive, variablesPath);
+        result.ExitCode.ShouldBe(0, $"stdout:\n{result.Stdout}\nstderr:\n{result.Stderr}");
+        File.ReadAllText(Path.Combine(installDir, MarkerFileName)).ShouldBe("from-tar-gz");
+    }
+
+    private static Task<CalamariTestHost.InvocationResult> InvokeDeployPackageAsync(string archivePath, string variablesPath)
         => CalamariTestHost.InvokeInProcessAsync(
             "deploy-package",
             $"--archive={archivePath}",
             $"--variables={variablesPath}");
+
+
+    private string CreateTarGz(IReadOnlyDictionary<string, string> files)
+    {
+        var path = Path.Combine(_root, $"pkg-{Guid.NewGuid():N}.tar.gz");
+        using var fs = File.Create(path);
+        using var gz = new System.IO.Compression.GZipStream(fs, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: false);
+        using var writer = new System.Formats.Tar.TarWriter(gz, leaveOpen: false);
+        foreach (var file in files)
+        {
+            var bytes = Encoding.UTF8.GetBytes(file.Value);
+            var stream = new MemoryStream(bytes);
+            var entry = new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, file.Key)
+            {
+                DataStream = stream
+            };
+            writer.WriteEntry(entry);
+        }
+        return path;
+    }
 
     private string CreateZip(IReadOnlyDictionary<string, string> files)
         => TestPackageBuilder.CreateZip(_root, files);
