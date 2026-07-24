@@ -565,6 +565,36 @@ public class DeployPackagePipelineE2ETests
     }
 
     [Fact]
+    public async Task DeployPackage_WhenPackageContentCorrupt_FailsBeforeInstall()
+    {
+        _fixture.LogSink.Clear();
+        var installDir = NewInstallDir("corrupt-package");
+
+        // Not a valid zip/nupkg/tar payload.
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            System.Text.Encoding.UTF8.GetBytes("this-is-not-a-package-archive"));
+
+        var taskId = await SeedDeployPackageDeploymentAsync(
+            feed,
+            installDir,
+            packageFiles: null,
+            packageVersionProperty: null,
+            selectedVersion: PackageVersion,
+            stepTimeoutSeconds: 60,
+            extraActionProperties: null,
+            projectVariables: null).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(taskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(taskId, TaskState.Failed).ConfigureAwait(false);
+
+        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
+        _fixture.LogSink.ContainsMessage("DeployPackage: installed to").ShouldBeFalse(
+            "Corrupt package payload must never report successful install.");
+    }
+
+    [Fact]
     public async Task DeployPackage_WhenPackageContentEmpty_FailsBeforeInstall()
     {
         _fixture.LogSink.Clear();

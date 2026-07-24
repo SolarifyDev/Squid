@@ -267,6 +267,43 @@ public class SshDeployPackageE2ETests : IClassFixture<SshDeployPackageE2EFixture
     }
 
     [Fact]
+    public async Task DeployPackage_WhenPackageContentCorrupt_FailsBeforeInstall()
+    {
+        if (!EnsureDocker())
+            return;
+
+        _fixture.LogSink.Clear();
+        var installDir = $"{SshDeployPackageE2EFixture.RemoteWorkDir}/apps/corrupt-package";
+
+        await using var feed = LocalHttpPackageFeed.Start(
+            PackageId,
+            PackageVersion,
+            System.Text.Encoding.UTF8.GetBytes("this-is-not-a-package-archive"));
+
+        var serverTaskId = await SeedDeploymentAsync(
+            feed,
+            installDir,
+            packageId: PackageId,
+            packageVersion: PackageVersion).ConfigureAwait(false);
+
+        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
+        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
+
+        using var client = ConnectSsh();
+        try
+        {
+            RemoteFileExists(client, $"{installDir}/{MarkerFileName}")
+                .ShouldBeFalse("Corrupt package must not install on SSH.");
+        }
+        finally
+        {
+            if (client.IsConnected) client.Disconnect();
+        }
+
+        CountLogOccurrences("DeployPackage: installed to").ShouldBe(0);
+    }
+
+    [Fact]
     public async Task DeployPackage_WhenPackageContentEmpty_FailsBeforeInstall()
     {
         if (!EnsureDocker())
