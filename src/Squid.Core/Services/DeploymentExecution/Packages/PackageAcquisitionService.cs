@@ -31,6 +31,10 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         if (fetchResult.RawBytes.Length == 0)
             throw new InvalidOperationException($"Package {packageId} v{version} from feed {feed.Id} returned empty content.");
 
+        // Reject hostile archive entries before caching/uploading. BusyBox unzip rewrites
+        // traversal names during listing, so remote shell guards alone are not sufficient.
+        PackageArchiveSafety.EnsureArchiveEntriesAreSafe(fetchResult.RawBytes, packageId, version);
+
         // Content-address under the deployment dir so concurrent acquisitions of the same
         // package id/version (common in parallel E2E fixtures that each mint deploymentId=1)
         // cannot overwrite each other and trip SHA-256 verification on the agent.

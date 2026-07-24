@@ -344,49 +344,66 @@ public static class SshPackageDeploymentScriptBuilder
         }
 
         // Info-ZIP supports `unzip -Z1`; BusyBox unzip (common in Alpine SSH images)
-        // does not. Fall back to parsing `unzip -l` so zip-slip checks still run.
+        // does not. BusyBox also rewrites traversal names while listing, so we:
+        // 1) capture raw listing stderr (look for "removing leading")
+        // 2) parse names from stdout
+        // 3) reject absolute / parent-segment paths
         return
             "if ! command -v unzip >/dev/null 2>&1; then\n" +
             "  echo \"[extraction] unzip is required on the SSH target.\" >&2\n" +
             "  exit 1\n" +
             "fi\n" +
             "ZIP_LIST_FILE=\"$PARENT_DIR/.squid-zip-list-$$-$RANDOM\"\n" +
-            "if ! unzip -Z1 \"$ARCHIVE\" > \"$ZIP_LIST_FILE\" 2>/dev/null; then\n" +
-            "  if ! unzip -l \"$ARCHIVE\" 2>/dev/null | awk '\n" +
+            "ZIP_LIST_ERR=\"$PARENT_DIR/.squid-zip-list-err-$$-$RANDOM\"\n" +
+            "if unzip -Z1 \"$ARCHIVE\" > \"$ZIP_LIST_FILE\" 2>\"$ZIP_LIST_ERR\"; then\n" +
+            "  :\n" +
+            "else\n" +
+            "  if ! unzip -l \"$ARCHIVE\" > \"$ZIP_LIST_FILE.raw\" 2>\"$ZIP_LIST_ERR\"; then\n" +
+            "    rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_FILE.raw\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
+            "    echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
+            "    exit 1\n" +
+            "  fi\n" +
+            "  if ! awk '\n" +
             "    NF >= 4 && $1 ~ /^[0-9]+$/ {\n" +
             "      $1=\"\"; $2=\"\"; $3=\"\";\n" +
             "      sub(/^ +/, \"\");\n" +
             "      if (length($0)) print\n" +
             "    }\n" +
-            "  ' > \"$ZIP_LIST_FILE\"; then\n" +
-            "    rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "  ' \"$ZIP_LIST_FILE.raw\" > \"$ZIP_LIST_FILE\"; then\n" +
+            "    rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_FILE.raw\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
             "    echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
             "    exit 1\n" +
             "  fi\n" +
+            "  rm -f \"$ZIP_LIST_FILE.raw\" 2>/dev/null || true\n" +
+            "fi\n" +
+            "if grep -Eiq 'removing leading|zip-slip|would escape|absolute path' \"$ZIP_LIST_ERR\" 2>/dev/null; then\n" +
+            "  rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
+            "  echo \"[extraction] Archive entry would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
+            "  exit 1\n" +
             "fi\n" +
             "if [ ! -s \"$ZIP_LIST_FILE\" ]; then\n" +
-            "  rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "  rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
             "  echo \"[extraction] Failed to list entries in $ARCHIVE\" >&2\n" +
             "  exit 1\n" +
             "fi\n" +
             "while IFS= read -r entry; do\n" +
             "  [ -z \"$entry\" ] && continue\n" +
             "  case \"$entry\" in\n" +
-            "    /*|../*|*/../*|*/..|..) \n" +
-            "      rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "    /*|~/*|../*|*/../*|*/..|..|..\\\\*|*/..\\\\*|..\\\\*)\n" +
+            "      rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
             "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
             "      exit 1\n" +
             "      ;;\n" +
             "  esac\n" +
             "  case \"$entry\" in\n" +
-            "    *\\\\..\\\\*|*\\\\..|..\\\\*) \n" +
-            "      rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "    *\\\\..\\\\*|*\\\\..|..\\\\*)\n" +
+            "      rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
             "      echo \"[extraction] Entry '$entry' would escape the destination directory (zip-slip). Aborted.\" >&2\n" +
             "      exit 1\n" +
             "      ;;\n" +
             "  esac\n" +
             "done < \"$ZIP_LIST_FILE\"\n" +
-            "rm -f \"$ZIP_LIST_FILE\" 2>/dev/null || true\n" +
+            "rm -f \"$ZIP_LIST_FILE\" \"$ZIP_LIST_ERR\" 2>/dev/null || true\n" +
             "if ! unzip -q -o \"$ARCHIVE\" -d \"$STAGING_DIR\"; then\n" +
             "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
             "  exit 1\n" +

@@ -198,6 +198,9 @@ public class SshPackageDeploymentScriptBuilderTests
         {
             extract.ShouldContain("unzip -l");
             extract.ShouldContain("unzip -Z1");
+            extract.ShouldContain("removing leading", Case.Insensitive,
+                customMessage: "BusyBox unzip rewrites traversal names while listing; guard must catch that stderr.");
+            extract.ShouldContain("ZIP_LIST_ERR");
         }
         else
         {
