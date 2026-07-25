@@ -60,6 +60,49 @@ public class WindowsServiceDeployScriptBuilderTests
     }
 
     [Fact]
+    public void Build_EmbeddedScriptWaitsForStoppedServiceProcess_BeforePackageExtraction()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        var waitProcessDefinitionIndex = script.IndexOf("function Wait-ServiceProcessExit", StringComparison.Ordinal);
+        var waitProcessCallIndex = script.IndexOf("Wait-ServiceProcessExit -ProcessId $processId", StringComparison.Ordinal);
+        var packageRootIndex = script.IndexOf("$packageRoot = Resolve-PackageRoot", StringComparison.Ordinal);
+
+        waitProcessDefinitionIndex.ShouldBeGreaterThanOrEqualTo(0);
+        waitProcessCallIndex.ShouldBeGreaterThanOrEqualTo(0);
+        packageRootIndex.ShouldBeGreaterThanOrEqualTo(0);
+        waitProcessCallIndex.ShouldBeLessThan(packageRootIndex,
+            customMessage: "Existing service processes must exit before package purge/extract can safely replace locked binaries.");
+    }
+
+    [Fact]
+    public void Build_EmbeddedScriptRetriesPackageFileOperations()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        script.ShouldContain("function Invoke-WithRetry");
+        script.ShouldContain("Invoke-WithRetry -Description \"Removing existing package extract directory '$extractTo'\"");
+        script.ShouldContain("Invoke-WithRetry -Description \"Copying package content from '$($sourceItem.FullName)' to '$extractTo'\"");
+        script.ShouldContain("Invoke-WithRetry -Description \"Expanding package '$($sourceItem.FullName)' to '$extractTo'\"");
+    }
+
+    [Fact]
+    public void Build_EmbeddedScriptWaitsForCreatedService_BeforeStart()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        var createIndex = script.IndexOf("Invoke-Sc create $serviceName", StringComparison.Ordinal);
+        var waitExistsIndex = script.IndexOf("Wait-ServiceExists -Name $serviceName", createIndex, StringComparison.Ordinal);
+        var startIndex = script.IndexOf("Start-Service -Name $serviceName", StringComparison.Ordinal);
+
+        createIndex.ShouldBeGreaterThanOrEqualTo(0);
+        waitExistsIndex.ShouldBeGreaterThanOrEqualTo(0);
+        startIndex.ShouldBeGreaterThanOrEqualTo(0);
+        waitExistsIndex.ShouldBeLessThan(startIndex,
+            customMessage: "Newly-created services should be visible to Get-Service before Start-Service runs.");
+    }
+
+    [Fact]
     public void Build_AllRecognisedProperties_HaveExplicitEntryInHashtable_EvenWhenUnset()
     {
         var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());

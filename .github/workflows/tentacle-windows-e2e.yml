@@ -131,10 +131,13 @@ jobs:
         shell: pwsh
         run: |
           $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E|Category=WindowsServiceDeployE2E" }
+          $resultsDir = Join-Path $env:RUNNER_TEMP "windows-e2e-results"
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
-            --logger "console;verbosity=normal"
+            --logger "console;verbosity=normal" `
+            --logger "trx;LogFileName=windows-e2e.trx" `
+            --results-directory $resultsDir
 
       - name: Capture IIS metabase state on failure
         if: failure()
@@ -147,3 +150,11 @@ jobs:
           Get-WebAppPool | Format-Table -Property Name, State | Out-String
           Write-Host "=== Bindings ==="
           Get-WebBinding | Format-Table -Property protocol, bindingInformation, sslFlags | Out-String
+
+      - name: Upload Windows E2E test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-e2e-test-results
+          path: ${{ runner.temp }}/windows-e2e-results
+          if-no-files-found: warn

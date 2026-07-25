@@ -123,10 +123,13 @@ jobs:
         shell: pwsh
         run: |
           $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E" }
+          $resultsDir = Join-Path $env:RUNNER_TEMP "windows-lifecycle-smoke-results"
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
-            --logger "console;verbosity=normal"
+            --logger "console;verbosity=normal" `
+            --logger "trx;LogFileName=windows-lifecycle-smoke.trx" `
+            --results-directory $resultsDir
 
       - name: Capture leaked test services on failure
         if: failure()
@@ -136,6 +139,14 @@ jobs:
           Get-Service -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -match 'squid' -or $_.Name -match 'SquidUpgradeE2E' } |
             Format-Table -Property Name, Status, StartType | Out-String
+
+      - name: Upload Windows smoke test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-lifecycle-smoke-test-results
+          path: ${{ runner.temp }}/windows-lifecycle-smoke-results
+          if-no-files-found: warn
 
   gate:
     name: Windows Lifecycle Smoke (PR gate)
