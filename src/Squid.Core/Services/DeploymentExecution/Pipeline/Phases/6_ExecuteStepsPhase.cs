@@ -345,10 +345,13 @@ public sealed partial class ExecuteStepsPhase(
                     _ctx.Variables, result.OutputVariables, collisionMode);
                 _ctx.Variables = mergedVariables;
 
-                // Record the captured set verbatim for the checkpoint. Persisting from this
+                // Record what the merge ACCEPTED for the checkpoint. Persisting from this
                 // accumulator rather than re-selecting out of _ctx.Variables by name is what
-                // keeps resume correct — see CheckpointOutputVariableSerializer.
-                _ctx.CapturedOutputVariables.AddRange(result.OutputVariables);
+                // keeps resume correct (see CheckpointOutputVariableSerializer); filtering to
+                // the accepted set keeps Strict collision mode honest, since a dropped write
+                // must not be resurrected by a later resume.
+                _ctx.CapturedOutputVariables.AddRange(
+                    Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.SelectAccepted(mergedVariables, result.OutputVariables));
 
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 

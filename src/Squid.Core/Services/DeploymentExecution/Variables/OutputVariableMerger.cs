@@ -125,4 +125,29 @@ public static class OutputVariableMerger
 
         return (merged, collisions);
     }
+
+    /// <summary>
+    /// Of the <paramref name="incoming"/> output variables, returns those the merge actually
+    /// ACCEPTED into <paramref name="merged"/> — i.e. the set that is now live.
+    ///
+    /// <para><b>Why the checkpoint needs this</b>: under <see cref="EnforcementMode.Strict"/> a
+    /// colliding incoming write is dropped (first-writer-wins) and never reaches the live
+    /// variable set. Checkpointing the raw incoming list would persist that rejected value and
+    /// resume would resurrect it, silently defeating the mode the operator opted into. Under
+    /// <c>Warn</c> / <c>Off</c> nothing is dropped and this returns the incoming set unchanged,
+    /// so the caller needs no mode awareness.</para>
+    ///
+    /// <para>Matching is by (name, value) because that is exactly what "accepted" means here:
+    /// a dropped collision leaves the PREVIOUS value under that name, so the incoming pair is
+    /// absent from the merged set.</para>
+    /// </summary>
+    public static List<VariableDto> SelectAccepted(List<VariableDto> merged, List<VariableDto> incoming)
+    {
+        if (incoming == null || incoming.Count == 0) return new List<VariableDto>();
+        if (merged == null || merged.Count == 0) return new List<VariableDto>();
+
+        var live = new HashSet<(string Name, string Value)>(merged.Select(v => (v.Name, v.Value)));
+
+        return incoming.Where(v => live.Contains((v.Name, v.Value))).ToList();
+    }
 }
