@@ -47,6 +47,14 @@ public sealed partial class ExecuteStepsPhase(
         foreach (var (batch, state) in ctx.ResumeBatchStates)
             _batchStates[batch] = state;
 
+        // Re-seed the captured set from the restored checkpoint so the NEXT checkpoint still
+        // carries the previous run's outputs. Without this a deployment that pauses twice
+        // would checkpoint only what it captured since the most recent resume, silently
+        // dropping everything the earlier run produced. Seeded here rather than in
+        // PrepareDeploymentPhase because protection needs the encryption service and the
+        // same KDF scope as every other write to this set.
+        _ctx.CapturedOutputVariables.Add(_ctx.RestoredOutputVariables, ProtectForCheckpoint);
+
         // Root span for the entire deployment execution. Child spans (batch,
         // step, target) attach automatically via System.Diagnostics.Activity's
         // async-local parenting. If no OTel listener is registered, this is a
@@ -325,7 +333,15 @@ public sealed partial class ExecuteStepsPhase(
     /// <see cref="Variables.CheckpointOutputVariableSerializer"/>.</para>
     /// </summary>
     private string SerializeOutputVariables()
-        => Variables.CheckpointOutputVariableSerializer.Serialize(_ctx.CapturedOutputVariables, variableEncryptionService, _ctx.ServerTaskId);
+        => Variables.CheckpointOutputVariableSerializer.Serialize(_ctx.CapturedOutputVariables.CheckpointReady, variableEncryptionService, _ctx.ServerTaskId);
+
+    /// <summary>
+    /// Protects a captured output variable for at-rest storage. Held as a method rather than
+    /// inlined so both capture sites (batch completion here, restored-set re-seed in
+    /// <c>PrepareDeploymentPhase</c>) provably apply the same transform with the same KDF scope.
+    /// </summary>
+    private VariableDto ProtectForCheckpoint(VariableDto variable)
+        => Variables.CheckpointOutputVariableSerializer.EncryptIfSensitive(variable, variableEncryptionService, _ctx.ServerTaskId);
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)
     {
@@ -349,9 +365,12 @@ public sealed partial class ExecuteStepsPhase(
                 // accumulator rather than re-selecting out of _ctx.Variables by name is what
                 // keeps resume correct (see CheckpointOutputVariableSerializer); filtering to
                 // the accepted set keeps Strict collision mode honest, since a dropped write
-                // must not be resurrected by a later resume.
-                _ctx.CapturedOutputVariables.AddRange(
-                    Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.SelectAccepted(mergedVariables, result.OutputVariables));
+                // must not be resurrected by a later resume. The set de-duplicates and
+                // protects on the way in — a step running across N targets re-emits the same
+                // value N times, and every one of those is "accepted".
+                _ctx.CapturedOutputVariables.Add(
+                    Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.SelectAccepted(mergedVariables, result.OutputVariables),
+                    ProtectForCheckpoint);
 
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 

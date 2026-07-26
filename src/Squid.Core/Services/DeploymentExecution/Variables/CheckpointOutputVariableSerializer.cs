@@ -23,11 +23,14 @@ namespace Squid.Core.Services.DeploymentExecution.Variables;
 /// by name alone) is preserved too.</para>
 ///
 /// <para><b>Sensitive values</b> are encrypted with the deployment's task id as the KDF
-/// scope, so ciphertext from one task cannot be decrypted under another's scope even
-/// under the same master key. Non-sensitive values stay plaintext deliberately —
-/// operators inspect checkpoints to debug stuck deployments, and encrypting everything
-/// would block that workflow for no security gain. Already-encrypted values are passed
-/// through unchanged so a resumed-and-rewritten checkpoint never double-wraps.</para>
+/// scope. That scope is a domain-separation input, NOT an access-control boundary: anyone
+/// holding the master key can derive any task's key by supplying that task's id, so the
+/// scope limits accidental cross-task reuse rather than preventing deliberate cross-task
+/// decryption. Confidentiality rests entirely on the master key. Non-sensitive values stay
+/// plaintext deliberately — operators inspect checkpoints to debug stuck deployments, and
+/// encrypting everything would block that workflow for no security gain. Already-encrypted
+/// values are passed through unchanged so a resumed-and-rewritten checkpoint never
+/// double-wraps.</para>
 ///
 /// <para>The read counterpart is <c>ResumeCheckpointPhase.RestoreOutputVariablesAsync</c>,
 /// which decrypts using the same scope and tolerates legacy plaintext checkpoints.</para>

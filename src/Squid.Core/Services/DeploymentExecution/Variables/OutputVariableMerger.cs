@@ -127,8 +127,8 @@ public static class OutputVariableMerger
     }
 
     /// <summary>
-    /// Of the <paramref name="incoming"/> output variables, returns those the merge actually
-    /// ACCEPTED into <paramref name="merged"/> — i.e. the set that is now live.
+    /// Of the <paramref name="incoming"/> output variables, returns those whose (name, value)
+    /// pair is present in <paramref name="merged"/> — i.e. those NOT rejected by the merge.
     ///
     /// <para><b>Why the checkpoint needs this</b>: under <see cref="EnforcementMode.Strict"/> a
     /// colliding incoming write is dropped (first-writer-wins) and never reaches the live
@@ -137,17 +137,43 @@ public static class OutputVariableMerger
     /// <c>Warn</c> / <c>Off</c> nothing is dropped and this returns the incoming set unchanged,
     /// so the caller needs no mode awareness.</para>
     ///
-    /// <para>Matching is by (name, value) because that is exactly what "accepted" means here:
-    /// a dropped collision leaves the PREVIOUS value under that name, so the incoming pair is
-    /// absent from the merged set.</para>
+    /// <para><b>This is a membership test, not a set difference</b> — a same-value re-emit from
+    /// another target is reported here even though <see cref="Merge"/> deliberately skipped
+    /// appending it, because its pair IS in the merged set. Callers accumulating across targets
+    /// or resume cycles must therefore de-duplicate; <see cref="CapturedOutputVariableSet"/>
+    /// does, on the same (name, value, sensitivity) identity used below. Reporting the re-emit
+    /// is the correct answer to "was this write rejected?", which is what Strict mode needs.</para>
+    ///
+    /// <para>Comparison mirrors <see cref="Merge"/> exactly: names case-insensitively (Merge
+    /// indexes with <see cref="StringComparer.OrdinalIgnoreCase"/>), values ordinally (Merge's
+    /// same-value test uses <see cref="StringComparison.Ordinal"/>). A plain tuple set would
+    /// compare names ordinally and disagree with the merge it is describing.</para>
     /// </summary>
     public static List<VariableDto> SelectAccepted(List<VariableDto> merged, List<VariableDto> incoming)
     {
         if (incoming == null || incoming.Count == 0) return new List<VariableDto>();
         if (merged == null || merged.Count == 0) return new List<VariableDto>();
 
-        var live = new HashSet<(string Name, string Value)>(merged.Select(v => (v.Name, v.Value)));
+        var live = new HashSet<(string Name, string Value)>(
+            merged.Select(v => (v.Name ?? string.Empty, v.Value ?? string.Empty)),
+            NameInsensitiveValueOrdinalComparer.Instance);
 
-        return incoming.Where(v => live.Contains((v.Name, v.Value))).ToList();
+        return incoming.Where(v => live.Contains((v.Name ?? string.Empty, v.Value ?? string.Empty))).ToList();
+    }
+
+    /// <summary>
+    /// Compares (name, value) pairs the way <see cref="Merge"/> does: name case-insensitive,
+    /// value ordinal.
+    /// </summary>
+    private sealed class NameInsensitiveValueOrdinalComparer : IEqualityComparer<(string Name, string Value)>
+    {
+        public static readonly NameInsensitiveValueOrdinalComparer Instance = new();
+
+        public bool Equals((string Name, string Value) x, (string Name, string Value) y)
+            => string.Equals(x.Name, y.Name, StringComparison.OrdinalIgnoreCase)
+               && string.Equals(x.Value, y.Value, StringComparison.Ordinal);
+
+        public int GetHashCode((string Name, string Value) obj)
+            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name), obj.Value);
     }
 }

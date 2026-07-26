@@ -60,8 +60,12 @@ public class DeploymentTaskContext
     /// and a bare alias), and the bare alias is indistinguishable from an ordinary variable
     /// by name, so no name predicate can select them correctly. On resume this is re-seeded
     /// from the restored set so a SECOND pause still checkpoints the first run's outputs.</para>
+    ///
+    /// <para>De-duplication and at-rest protection are owned by
+    /// <see cref="Variables.CapturedOutputVariableSet"/> — see its remarks for why both
+    /// belong at the capture site rather than at serialize time.</para>
     /// </summary>
-    public List<VariableDto> CapturedOutputVariables { get; set; } = new();
+    public Variables.CapturedOutputVariableSet CapturedOutputVariables { get; } = new();
 
     /// <summary>
     /// Per-batch per-target completion state restored from checkpoint. The executor

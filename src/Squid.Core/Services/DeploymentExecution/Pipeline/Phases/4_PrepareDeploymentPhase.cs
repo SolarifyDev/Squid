@@ -59,16 +59,10 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
+        // The captured-set re-seed for these restored variables happens in ExecuteStepsPhase,
+        // which owns that accumulator and has the encryption service needed to protect them.
         if (ctx.RestoredOutputVariables.Count > 0)
-        {
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
-
-            // Re-seed the captured set so the NEXT checkpoint still carries the previous
-            // run's outputs. Without this a deployment that pauses twice would checkpoint
-            // only the outputs captured since the most recent resume, silently dropping
-            // everything the earlier run produced.
-            ctx.CapturedOutputVariables.AddRange(ctx.RestoredOutputVariables);
-        }
     }
 
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)

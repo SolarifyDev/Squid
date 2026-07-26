@@ -46,25 +46,54 @@ public sealed class ResumeCheckpointPhase(
     /// </summary>
     private async Task RestoreOutputVariablesAsync(DeploymentTaskContext ctx, string json)
     {
-        var restored = System.Text.Json.JsonSerializer.Deserialize<List<VariableDto>>(json);
+        List<VariableDto> restored;
+
+        try
+        {
+            restored = System.Text.Json.JsonSerializer.Deserialize<List<VariableDto>>(json);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            // A malformed column must not destroy the resume. Throwing here fails the whole
+            // deployment AND (via the failure path) deletes the checkpoint, discarding the
+            // per-batch progress that is still perfectly readable. Degrade to "no restored
+            // output variables" and let the run continue from its batch index instead.
+            Log.Error(ex, "[Deploy] Checkpoint output-variable JSON for task {ServerTaskId} is unreadable — resuming WITHOUT restored output variables. Steps referencing them will see empty values.", ctx.ServerTaskId);
+            return;
+        }
 
         if (restored == null || restored.Count == 0) return;
 
         var decryptedCount = 0;
+        var undecryptable = 0;
 
         foreach (var v in restored)
         {
             if (!v.IsSensitive || string.IsNullOrEmpty(v.Value)) continue;
             if (!variableEncryptionService.IsValidEncryptedValue(v.Value)) continue;
 
-            v.Value = await variableEncryptionService.DecryptAsync(v.Value, ctx.ServerTaskId).ConfigureAwait(false);
-            decryptedCount++;
+            try
+            {
+                v.Value = await variableEncryptionService.DecryptAsync(v.Value, ctx.ServerTaskId).ConfigureAwait(false);
+                decryptedCount++;
+            }
+            catch (Exception ex)
+            {
+                // Typically a master key rotated between pause and resume. Dropping ONE
+                // variable is strictly better than failing the deployment and deleting the
+                // checkpoint with it — the operator can re-run the step that produced it,
+                // but cannot recover discarded batch progress. Blank the value rather than
+                // leaving ciphertext, so a consumer never substitutes an encrypted blob.
+                Log.Error(ex, "[Deploy] Could not decrypt checkpointed output variable {VariableName} for task {ServerTaskId} (master key rotated since the checkpoint was written?) — continuing with an empty value.", v.Name, ctx.ServerTaskId);
+                v.Value = string.Empty;
+                undecryptable++;
+            }
         }
 
         ctx.RestoredOutputVariables.AddRange(restored);
 
-        Log.Information("[Deploy] Restored {Count} output variables from checkpoint ({DecryptedCount} sensitive decrypted)",
-            restored.Count, decryptedCount);
+        Log.Information("[Deploy] Restored {Count} output variables from checkpoint ({DecryptedCount} sensitive decrypted, {UndecryptableCount} undecryptable)",
+            restored.Count, decryptedCount, undecryptable);
     }
 
     private static void RestoreBatchStates(DeploymentTaskContext ctx, string json)

@@ -1,112 +1,95 @@
 using System.Collections.Generic;
 using System.Linq;
 using Shouldly;
-using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.DeploymentExecution.Filtering;
-using Squid.Core.Services.DeploymentExecution.Handlers;
-using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
-using Squid.Core.Services.DeploymentExecution.Variables;
-using Squid.Core.Services.Deployments.Deployments;
-using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Constants;
-using Squid.Message.Models.Deployments.Process;
-using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Variable;
 using Xunit;
-using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
-using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.Checkpoints;
 
 /// <summary>
-/// Pins the RESUME half of the checkpoint output-variable contract: variables restored from a
-/// checkpoint must be re-seeded into
-/// <see cref="DeploymentTaskContext.CapturedOutputVariables"/>, not merely into
-/// <c>ctx.Variables</c>.
+/// Pins the RESUME half of the checkpoint output-variable contract: outputs restored from a
+/// checkpoint must be carried into the NEXT checkpoint this run writes.
 ///
 /// <para><b>Why this is load-bearing</b>: the checkpoint is written from the captured set. A
-/// deployment that pauses TWICE (e.g. a transient agent blip, resume, then a second blip)
-/// would otherwise checkpoint only the outputs captured since the most recent resume, silently
+/// deployment that pauses TWICE (transient agent blip, resume, then a second blip) would
+/// otherwise checkpoint only the outputs captured since the most recent resume, silently
 /// discarding everything the earlier run produced — the same class of silent loss the
-/// bracket/dot prefix bug caused, just one resume later. Only a multi-pause test catches it;
-/// a single pause→resume passes either way.</para>
+/// bracket/dot prefix bug caused, just one resume later. Only a multi-pause scenario catches
+/// it; a single pause→resume passes either way.</para>
+///
+/// <para>Asserted against the persisted checkpoint rather than the in-memory accumulator, so
+/// the test survives refactors of where the re-seed lives and keeps testing the property that
+/// actually matters to an operator.</para>
 /// </summary>
 public sealed class CheckpointOutputVariableAccumulationTests
 {
-    [Fact]
-    public async Task Resume_RestoredOutputVariables_AreReSeededIntoTheCapturedSet()
+    private static readonly string FirstRunOutputName = SpecialVariables.Output.Variable("Deploy", "Url");
+
+    private static VariableDto FirstRunOutput() => new()
     {
-        var restored = new VariableDto { Name = SpecialVariables.Output.Variable("Deploy", "Url"), Value = "https://first-run.test" };
+        Name = FirstRunOutputName,
+        Value = "https://first-run.test"
+    };
 
-        var ctx = await RunPrepareAsync(restored);
+    [Fact]
+    public async Task SecondPause_StillCheckpointsTheFirstRunsOutputs()
+    {
+        // Resume carrying one restored output, then capture a new one and pause again.
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync(
+            emittedOutputs: new[] { ("SecondRunKey", "second-run-value") },
+            restoredOutputVariables: new[] { FirstRunOutput() });
 
-        ctx.CapturedOutputVariables.ShouldContain(v => v.Name == restored.Name,
-            "a restored output variable MUST re-enter the captured set, otherwise the NEXT checkpoint " +
-            "written by this run silently drops everything the previous run produced");
+        var checkpointed = CheckpointPhaseHarness.ReadCheckpoint(saved);
+
+        checkpointed.ShouldContain(v => v.Name == FirstRunOutputName,
+            customMessage: "A restored output variable MUST be carried into the next checkpoint, otherwise the " +
+                           "second pause silently drops everything the previous run produced.");
+        checkpointed.ShouldContain(v => v.Value == "second-run-value",
+            customMessage: "The output captured after the resume must be checkpointed alongside the restored one.");
     }
 
     [Fact]
-    public async Task Resume_RestoredOutputVariables_AreAlsoAvailableToSubsequentSteps()
+    public async Task RestoredOutputs_AreNotDuplicatedWhenReEmittedAfterResume()
     {
-        // Pre-existing behaviour that must not regress: restored outputs are resolvable by
-        // later steps via ctx.Variables.
-        var restored = new VariableDto { Name = SpecialVariables.Output.Variable("Deploy", "Url"), Value = "https://first-run.test" };
+        // The resumed run re-runs a step that emits the SAME value the restored checkpoint
+        // already holds. Without de-duplication every resume cycle would add another copy.
+        var restored = FirstRunOutput();
 
-        var ctx = await RunPrepareAsync(restored);
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync(
+            emittedOutputs: new[] { ("Url", restored.Value) },
+            restoredOutputVariables: new[] { restored });
 
-        ctx.Variables.ShouldContain(v => v.Name == restored.Name && v.Value == "https://first-run.test");
+        var checkpointed = CheckpointPhaseHarness.ReadCheckpoint(saved);
+        var occurrences = checkpointed.Count(v => v.Name == FirstRunOutputName);
+
+        occurrences.ShouldBe(1,
+            customMessage: $"The restored variable was re-emitted with the same value; the checkpoint must still " +
+                           $"hold ONE entry for it, not {occurrences}. Growth here compounds every resume cycle.");
     }
 
     [Fact]
-    public async Task FreshDeployment_NothingRestored_LeavesCapturedSetEmpty()
+    public async Task FreshDeployment_NothingRestored_CheckpointsOnlyWhatItCaptured()
     {
-        var ctx = await RunPrepareAsync();
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync(
+            emittedOutputs: new[] { ("Key", "value") });
 
-        ctx.CapturedOutputVariables.ShouldBeEmpty(
-            "a fresh deployment has captured nothing yet — seeding anything here would checkpoint phantom values");
+        var checkpointed = CheckpointPhaseHarness.ReadCheckpoint(saved);
+
+        checkpointed.ShouldNotBeEmpty("the batch captured an output variable");
+        checkpointed.ShouldAllBe(v => v.Value == "value",
+            "a fresh deployment has no restored state — checkpointing anything else would persist phantom values");
     }
 
-    /// <summary>
-    /// Drives the real <see cref="PrepareDeploymentPhase"/> (the phase that consumes
-    /// <c>RestoredOutputVariables</c>) with an empty process so the target-finding branch is
-    /// skipped and the variable-merge path is what is under test.
-    /// </summary>
-    private static async Task<DeploymentTaskContext> RunPrepareAsync(params VariableDto[] restoredOutputVariables)
+    [Fact]
+    public async Task NoOutputVariablesAtAll_LeavesTheColumnNull()
     {
-        var snapshot = new DeploymentProcessSnapshotDto
-        {
-            Id = 1,
-            Data = new DeploymentProcessSnapshotDataDto()
-        };
+        // Pre-existing contract: the column stays null rather than holding an empty array.
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync();
 
-        var snapshotService = new Mock<IDeploymentSnapshotService>();
-        snapshotService.Setup(s => s.LoadProcessSnapshotAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
-
-        var variableResolver = new Mock<IDeploymentVariableResolver>();
-        variableResolver.Setup(r => r.ResolveVariablesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<VariableDto>());
-
-        var phase = new PrepareDeploymentPhase(
-            snapshotService.Object,
-            variableResolver.Object,
-            new Mock<IDeploymentTargetFinder>().Object,
-            new Mock<IDeploymentDataProvider>().Object,
-            new Mock<IActionHandlerRegistry>().Object);
-
-        var ctx = new DeploymentTaskContext
-        {
-            ServerTaskId = 7,
-            Task = new ServerTaskEntity { Id = 7 },
-            Deployment = new Deployment { Id = 1, EnvironmentId = 1, ChannelId = 1, ProcessSnapshotId = 1 },
-            Release = new ReleaseEntity { Id = 1, Version = "1.0.0" },
-            Variables = new List<VariableDto>(),
-            SelectedPackages = new List<ReleaseSelectedPackage>(),
-            RestoredOutputVariables = restoredOutputVariables.ToList()
-        };
-
-        await phase.ExecuteAsync(ctx, CancellationToken.None);
-
-        return ctx;
+        saved.ShouldNotBeNull();
+        saved.OutputVariablesJson.ShouldBeNull(
+            customMessage: "A deployment that captured nothing must leave OutputVariablesJson null, matching the " +
+                           "pre-existing contract that resume checks before deserializing.");
     }
 }
