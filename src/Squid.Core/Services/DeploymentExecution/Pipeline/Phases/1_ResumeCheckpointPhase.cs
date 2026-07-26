@@ -99,7 +99,8 @@ public sealed class ResumeCheckpointPhase(
                 // claimed as Executing, so it has no from-state of its own to transition.
                 Log.Error(ex, "[Deploy] Could not decrypt checkpointed output variable {VariableName} for task {ServerTaskId} — the master key has most likely rotated since the checkpoint was written. Pausing (checkpoint preserved): restore the key and resume, or cancel the task.", v.Name, ctx.ServerTaskId);
 
-                throw new DeploymentSuspendedException(ctx.ServerTaskId);
+                throw new DeploymentSuspendedException(ctx.ServerTaskId,
+                    $"a checkpointed output variable ({v.Name}) could not be decrypted, most likely because the master key rotated since the deployment was paused. The checkpoint is preserved: restore the previous key and resume, or cancel this task.");
             }
         }
 

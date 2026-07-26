@@ -115,10 +115,10 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 await completion.OnSuccessAsync(ctx, timeout.Token);
             }
         }
-        catch (DeploymentSuspendedException)
+        catch (DeploymentSuspendedException suspended)
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
-            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext()), timeout.Token);
+            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }), timeout.Token);
             await completion.OnPausedAsync(ctx, timeout.Token);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)

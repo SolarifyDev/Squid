@@ -75,6 +75,24 @@ public sealed class ResumeCheckpointResilienceTests
     }
 
     [Fact]
+    public async Task UndecryptableSensitiveValue_CarriesAnOperatorFacingReason()
+    {
+        // The pause's only operator-visible artifact is the activity log line, which defaults to
+        // "waiting for interruption to be resolved" — meaningless here, since no interruption
+        // exists or ever will. The reason must name the cause AND the remedy.
+        var suspended = await Should.ThrowAsync<DeploymentSuspendedException>(() => RunResumeAsync(
+            Serialize(new VariableDto { Name = "ApiKey", Value = "SQUID_ENCRYPTED:v2:whatever", IsSensitive = true }),
+            decryptThrows: true));
+
+        suspended.OperatorReason.ShouldNotBeNullOrWhiteSpace(
+            customMessage: "Without a reason the operator is told to resolve an interruption that does not exist.");
+        suspended.OperatorReason.ShouldContain("ApiKey",
+            customMessage: "The reason must name the variable that could not be read.");
+        suspended.OperatorReason.ShouldContain("resume",
+            customMessage: "The reason must state the remedy, not just the cause.");
+    }
+
+    [Fact]
     public async Task Cancellation_IsNotSwallowedByTheDecryptGuard()
     {
         // The guard must not turn an in-flight cancellation into a pause.

@@ -439,7 +439,13 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
 
     protected override async Task OnDeploymentPausedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
-        await LogInfoAsync("Deployment paused — waiting for interruption to be resolved", SystemSource, ct).ConfigureAwait(false);
+        // A pause with no interruption behind it must say what actually happened; otherwise the
+        // operator is told to resolve an interruption that will never appear.
+        var message = string.IsNullOrWhiteSpace(ctx.PauseReason)
+            ? "Deployment paused — waiting for interruption to be resolved"
+            : $"Deployment paused — {ctx.PauseReason}";
+
+        await LogInfoAsync(message, SystemSource, ct).ConfigureAwait(false);
     }
 
     // === Node Lookup ===
