@@ -75,9 +75,13 @@ public sealed class DeploymentCompletionHandler(
     /// row keeps occupying the environment's concurrency slot and blocks every other deployment
     /// to that environment. So the outcome is written here, once, for every suspend site.</para>
     ///
-    /// <para>The transition is skipped when the task is ALREADY Paused — the sites that
-    /// self-transition are the common case, and <c>Paused → Paused</c> is not a legal edge, so an
-    /// unconditional write would throw for them.</para>
+    /// <para>The transition fires ONLY from <see cref="TaskState.Executing"/>, the sole legal
+    /// source of a <c>→ Paused</c> edge other than Paused itself. Every other state is left
+    /// alone deliberately: <c>Paused</c> is the self-transitioning sites' common case and
+    /// <c>Paused → Paused</c> is not legal; <c>Cancelling</c> means an operator cancelled while
+    /// the pipeline was unwinding and that cancel must win rather than be overwritten by a pause;
+    /// and a terminal task has already recorded its outcome. Transitioning blindly would throw
+    /// <see cref="ServerTaskStateTransitionException"/> in each of those cases.</para>
     /// </summary>
     public async Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
@@ -85,7 +89,11 @@ public sealed class DeploymentCompletionHandler(
 
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
-        if (string.Equals(fromState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return;
+        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is for the pause", ctx.ServerTaskId, fromState);
+            return;
+        }
 
         await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
         {

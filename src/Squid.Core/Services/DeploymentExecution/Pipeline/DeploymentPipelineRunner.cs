@@ -117,9 +117,14 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (DeploymentSuspendedException suspended)
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
-            await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }), timeout.Token);
-            await completion.OnPausedAsync(ctx, timeout.Token);
+            // Routed through SafeCompleteAsync like every other completion path: OnPausedAsync
+            // now writes state, so it can fail (a racing cancel, a DB blip), and an escaping
+            // exception here would surface as a hard job failure that contradicts the pause the
+            // pipeline already decided on. It was safe to call directly only while it just logged.
+            await SafeCompleteAsync(
+                ctx,
+                () => completion.OnPausedAsync(ctx, CancellationToken.None),
+                new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }));
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {

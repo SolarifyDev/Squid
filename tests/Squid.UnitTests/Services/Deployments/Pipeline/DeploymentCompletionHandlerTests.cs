@@ -122,6 +122,25 @@ public class DeploymentCompletionHandlerTests
         _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(TaskState.Cancelling)]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Success)]
+    public async Task OnPaused_NotExecuting_LeavesTheStateAlone(string currentState)
+    {
+        // Executing is the only legal source of a -> Paused edge besides Paused itself. A racing
+        // cancel (Cancelling) must win rather than be overwritten by a pause, and a terminal task
+        // has already recorded its outcome. Transitioning blindly would throw.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await Should.NotThrowAsync(() => _sut.OnPausedAsync(ctx, CancellationToken.None));
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task OnPaused_StillExecuting_TransitionsToPaused()
     {
