@@ -12,7 +12,7 @@ public class VariableDto
     /// <summary>
     /// Copy-constructor — preserves every field of <paramref name="other"/>.
     /// Used by paths that need to mutate exactly one field on a clone without
-    /// aliasing the source instance (e.g. <c>ExecuteStepsPhase.EncryptIfSensitive</c>
+    /// aliasing the source instance (e.g. <c>CheckpointOutputVariableSerializer.EncryptIfSensitive</c>
     /// produces an encrypted-Value clone for the checkpoint JSON without
     /// rewriting the live <c>_ctx.Variables</c> entry).
     ///

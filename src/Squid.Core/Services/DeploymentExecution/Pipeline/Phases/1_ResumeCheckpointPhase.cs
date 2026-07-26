@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Security;
 using Squid.Message.Models.Deployments.Variable;
@@ -39,10 +40,10 @@ public sealed class ResumeCheckpointPhase(
     /// cleanly without operator intervention. Only NEW checkpoints written
     /// by a 1.6.6+ server carry the encrypted prefix.</para>
     ///
-    /// <para>Same scope salt as on encrypt (<c>ServerTaskId</c>) — the salt
-    /// is implicit per-checkpoint, never written to disk; ciphertext from
-    /// task-A cannot be decrypted under task-B's salt even with the same
-    /// master key.</para>
+    /// <para>Decrypts under the same KDF scope used on encrypt (<c>ServerTaskId</c>).
+    /// See <see cref="Variables.CheckpointOutputVariableSerializer"/> for what that
+    /// scope does and does not guarantee — it is domain separation, not an
+    /// access-control boundary.</para>
     /// </summary>
     private async Task RestoreOutputVariablesAsync(DeploymentTaskContext ctx, string json)
     {
@@ -54,10 +55,11 @@ public sealed class ResumeCheckpointPhase(
         }
         catch (System.Text.Json.JsonException ex)
         {
-            // A malformed column must not destroy the resume. Throwing here fails the whole
-            // deployment AND (via the failure path) deletes the checkpoint, discarding the
-            // per-batch progress that is still perfectly readable. Degrade to "no restored
-            // output variables" and let the run continue from its batch index instead.
+            // Unlike an undecryptable value (below), malformed JSON is NOT recoverable — no
+            // amount of operator action makes this column parse, so pausing would wedge the
+            // deployment permanently. Failing would delete the checkpoint and discard the
+            // per-batch progress stored beside it, which is still perfectly readable. Degrade
+            // to "no restored output variables", log loudly, and let the run continue.
             Log.Error(ex, "[Deploy] Checkpoint output-variable JSON for task {ServerTaskId} is unreadable — resuming WITHOUT restored output variables. Steps referencing them will see empty values.", ctx.ServerTaskId);
             return;
         }
@@ -65,7 +67,6 @@ public sealed class ResumeCheckpointPhase(
         if (restored == null || restored.Count == 0) return;
 
         var decryptedCount = 0;
-        var undecryptable = 0;
 
         foreach (var v in restored)
         {
@@ -77,23 +78,32 @@ public sealed class ResumeCheckpointPhase(
                 v.Value = await variableEncryptionService.DecryptAsync(v.Value, ctx.ServerTaskId).ConfigureAwait(false);
                 decryptedCount++;
             }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                // Typically a master key rotated between pause and resume. Dropping ONE
-                // variable is strictly better than failing the deployment and deleting the
-                // checkpoint with it — the operator can re-run the step that produced it,
-                // but cannot recover discarded batch progress. Blank the value rather than
-                // leaving ciphertext, so a consumer never substitutes an encrypted blob.
-                Log.Error(ex, "[Deploy] Could not decrypt checkpointed output variable {VariableName} for task {ServerTaskId} (master key rotated since the checkpoint was written?) — continuing with an empty value.", v.Name, ctx.ServerTaskId);
-                v.Value = string.Empty;
-                undecryptable++;
+                // Typically the master key rotated between pause and resume. The CIPHERTEXT is
+                // intact — only the key to read it is missing — so this is recoverable: restore
+                // the key and resume. Pause rather than continue or fail:
+                //   - continuing would substitute an EMPTY secret into later steps and let the
+                //     deployment report Success, which is the worst outcome (an empty password
+                //     can silently "work" somewhere);
+                //   - failing would delete the checkpoint, discarding both the still-readable
+                //     batch progress and the recoverable ciphertext itself.
+                // Pausing preserves the checkpoint verbatim and leaves an explicit, resumable
+                // state; an operator who genuinely discarded the old key can cancel the task.
+                Log.Error(ex, "[Deploy] Could not decrypt checkpointed output variable {VariableName} for task {ServerTaskId} — the master key has most likely rotated since the checkpoint was written. Pausing (checkpoint preserved): restore the key and resume, or cancel the task.", v.Name, ctx.ServerTaskId);
+
+                throw new DeploymentSuspendedException(ctx.ServerTaskId);
             }
         }
 
         ctx.RestoredOutputVariables.AddRange(restored);
 
-        Log.Information("[Deploy] Restored {Count} output variables from checkpoint ({DecryptedCount} sensitive decrypted, {UndecryptableCount} undecryptable)",
-            restored.Count, decryptedCount, undecryptable);
+        Log.Information("[Deploy] Restored {Count} output variables from checkpoint ({DecryptedCount} sensitive decrypted)",
+            restored.Count, decryptedCount);
     }
 
     private static void RestoreBatchStates(DeploymentTaskContext ctx, string json)

@@ -24,7 +24,14 @@ namespace Squid.UnitTests.Services.Deployments.Checkpoints;
 /// </summary>
 public sealed class CheckpointOutputVariableAccumulationTests
 {
-    private static readonly string FirstRunOutputName = SpecialVariables.Output.Variable("Deploy", "Url");
+    /// <summary>
+    /// The step name <see cref="CheckpointPhaseHarness"/> runs. The re-emit test below counts
+    /// occurrences of a step-qualified name, so it MUST match — qualified under any other step
+    /// the emitted name differs from the restored one and the assertion passes vacuously.
+    /// </summary>
+    private const string HarnessStepName = "OneStep";
+
+    private static readonly string FirstRunOutputName = SpecialVariables.Output.Variable(HarnessStepName, "Url");
 
     private static VariableDto FirstRunOutput() => new()
     {

@@ -337,8 +337,9 @@ public sealed partial class ExecuteStepsPhase(
 
     /// <summary>
     /// Protects a captured output variable for at-rest storage. Held as a method rather than
-    /// inlined so both capture sites (batch completion here, restored-set re-seed in
-    /// <c>PrepareDeploymentPhase</c>) provably apply the same transform with the same KDF scope.
+    /// inlined so both capture sites in this phase — batch completion in <c>ApplyBatchResults</c>
+    /// and the restored-set re-seed at the top of <c>ExecuteAsync</c> — apply the same transform
+    /// under the same KDF scope.
     /// </summary>
     private VariableDto ProtectForCheckpoint(VariableDto variable)
         => Variables.CheckpointOutputVariableSerializer.EncryptIfSensitive(variable, variableEncryptionService, _ctx.ServerTaskId);
