@@ -62,11 +62,35 @@ public sealed class DeploymentCompletionHandler(
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
 
-    public Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Terminal handling for <see cref="Exceptions.DeploymentSuspendedException"/>: leave the task
+    /// in <see cref="TaskState.Paused"/> with its checkpoint intact so an operator can resume it.
+    ///
+    /// <para><b>Why this transitions rather than only logging</b>: most suspend sites set Paused
+    /// themselves immediately before throwing (manual intervention, guided failure), so this used
+    /// to be a pure log. That made the resulting state an accident of WHICH site threw — a site
+    /// that throws without transitioning first would leave the task in whatever state it happened
+    /// to be in. An <c>Executing</c> task left that way is worse than any pause: <c>resume</c>
+    /// rejects a non-Paused task and <c>cancel</c> only moves it to <c>Cancelling</c>, while the
+    /// row keeps occupying the environment's concurrency slot and blocks every other deployment
+    /// to that environment. So the outcome is written here, once, for every suspend site.</para>
+    ///
+    /// <para>The transition is skipped when the task is ALREADY Paused — the sites that
+    /// self-transition are the common case, and <c>Paused → Paused</c> is not a legal edge, so an
+    /// unconditional write would throw for them.</para>
+    /// </summary>
+    public async Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
-        return Task.CompletedTask;
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+        if (string.Equals(fromState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return;
+
+        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>

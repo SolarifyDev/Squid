@@ -31,7 +31,8 @@ public sealed class CheckpointProtectionAndMultiBatchTests
         saved.OutputVariablesJson.ShouldNotBeNull();
         saved.OutputVariablesJson.ShouldNotContain("super-secret",
             customMessage: "A sensitive output variable must never reach the checkpoint column in plaintext. " +
-                           "Seeing it here means protection is not applied at the capture site.");
+                           "Protection is applied at the capture site and again at serialize time, so this failing " +
+                           "means neither ran for this entry.");
         saved.OutputVariablesJson.ShouldContain(CheckpointPhaseHarness.EncryptedPrefix,
             customMessage: "The stored value must carry the encryption envelope.");
     }

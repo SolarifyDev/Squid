@@ -94,6 +94,9 @@ public sealed class ResumeCheckpointPhase(
                 //     batch progress and the recoverable ciphertext itself.
                 // Pausing preserves the checkpoint verbatim and leaves an explicit, resumable
                 // state; an operator who genuinely discarded the old key can cancel the task.
+                // DeploymentCompletionHandler.OnPausedAsync writes the Paused state for this
+                // site — unlike the other suspend sites, this phase runs before the task is
+                // claimed as Executing, so it has no from-state of its own to transition.
                 Log.Error(ex, "[Deploy] Could not decrypt checkpointed output variable {VariableName} for task {ServerTaskId} — the master key has most likely rotated since the checkpoint was written. Pausing (checkpoint preserved): restore the key and resume, or cancel the task.", v.Name, ctx.ServerTaskId);
 
                 throw new DeploymentSuspendedException(ctx.ServerTaskId);

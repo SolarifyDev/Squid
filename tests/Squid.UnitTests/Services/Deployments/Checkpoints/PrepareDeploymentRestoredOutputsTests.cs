@@ -48,25 +48,39 @@ public sealed class PrepareDeploymentRestoredOutputsTests
     [Fact]
     public async Task RestoredOutputVariables_AreAppendedAfterResolvedVariables_SoTheyWin()
     {
-        // Last-wins resolution: the restored output must take precedence over a project variable
-        // of the same name, mirroring what the live run resolved before it paused.
-        var ctx = await RunPrepareAsync(new VariableDto { Name = RestoredName, Value = "restored" });
+        // Precedence only means something when something competes: seed a PROJECT variable of the
+        // same name through the resolver, so the assertion fails if the restored entry is
+        // prepended (or the merge is dropped) rather than appended.
+        var ctx = await RunPrepareAsync(
+            resolvedVariables: new[] { new VariableDto { Name = RestoredName, Value = "project-default" } },
+            restoredOutputVariables: new VariableDto { Name = RestoredName, Value = "restored" });
 
         var lastIndex = ctx.Variables.FindLastIndex(v => v.Name == RestoredName);
 
         ctx.Variables[lastIndex].Value.ShouldBe("restored",
-            customMessage: "The restored entry must be the last one for its name.");
+            customMessage: "Under last-wins resolution the restored output must come AFTER the project variable " +
+                           "of the same name, mirroring what the live run resolved before it paused.");
     }
 
     [Fact]
-    public async Task NothingRestored_LeavesTheVariableListUnchanged()
+    public async Task NothingRestored_LeavesTheResolvedVariablesUntouched()
     {
-        var ctx = await RunPrepareAsync();
+        // Vacuous unless the resolver actually returns something: assert the project variable
+        // survives unchanged rather than that an absent name is absent.
+        var ctx = await RunPrepareAsync(
+            resolvedVariables: new[] { new VariableDto { Name = RestoredName, Value = "project-default" } });
 
-        ctx.Variables.ShouldNotContain(v => v.Name == RestoredName);
+        ctx.Variables.Count(v => v.Name == RestoredName).ShouldBe(1,
+            customMessage: "With nothing restored the list must hold exactly the resolved variable — no phantom " +
+                           "entry appended, none dropped.");
+        ctx.Variables.Single(v => v.Name == RestoredName).Value.ShouldBe("project-default");
     }
 
-    private static async Task<DeploymentTaskContext> RunPrepareAsync(params VariableDto[] restoredOutputVariables)
+    private static Task<DeploymentTaskContext> RunPrepareAsync(params VariableDto[] restoredOutputVariables)
+        => RunPrepareAsync(null, restoredOutputVariables);
+
+    private static async Task<DeploymentTaskContext> RunPrepareAsync(
+        IReadOnlyList<VariableDto> resolvedVariables, params VariableDto[] restoredOutputVariables)
     {
         var snapshot = new DeploymentProcessSnapshotDto { Id = 1, Data = new DeploymentProcessSnapshotDataDto() };
 
@@ -75,7 +89,7 @@ public sealed class PrepareDeploymentRestoredOutputsTests
 
         var variableResolver = new Mock<IDeploymentVariableResolver>();
         variableResolver.Setup(r => r.ResolveVariablesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<VariableDto>());
+            .ReturnsAsync(resolvedVariables?.ToList() ?? new List<VariableDto>());
 
         var phase = new PrepareDeploymentPhase(
             snapshotService.Object,
