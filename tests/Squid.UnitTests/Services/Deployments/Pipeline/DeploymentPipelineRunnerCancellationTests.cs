@@ -46,6 +46,25 @@ public class DeploymentPipelineRunnerCancellationTests
     }
 
     [Fact]
+    public async Task Suspended_PropagatesTheOperatorReasonOntoThePausedEvent()
+    {
+        // The reason exists to reach the operator's activity log, and the runner is the only link
+        // between the throw site and that log. Verifying merely that SOME DeploymentPausedEvent
+        // was emitted leaves this link free to drop the reason silently.
+        const string reason = "because the master key rotated";
+
+        var phase = new Mock<IDeploymentPipelinePhase>();
+        phase.Setup(p => p.Order).Returns(1);
+        phase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DeploymentSuspendedException(1, reason));
+        var runner = CreateRunner(phase.Object);
+
+        await runner.ProcessAsync(1, CancellationToken.None);
+
+        _lifecycle.Verify(l => l.EmitAsync(It.Is<DeploymentPausedEvent>(e => e.Context.PauseReason == reason), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CancellationViaRegistry_CallsOnCancelledAndDoesNotRethrow()
     {
         var phase = new Mock<IDeploymentPipelinePhase>();
