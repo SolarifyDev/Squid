@@ -4,60 +4,60 @@ namespace Squid.Core.Services.DeploymentExecution.Variables;
 
 /// <summary>
 /// Accumulates the output variables a deployment has captured, in the exact shape the
-/// checkpoint column stores them: de-duplicated, in first-appearance order, and already
-/// protected (sensitive values encrypted) so a checkpoint write never re-encrypts.
+/// checkpoint column stores them: in append order and already protected (sensitive values
+/// encrypted) so a checkpoint write never re-encrypts what it wrote before.
 ///
-/// <para><b>Why de-duplication is required for correctness, not just size</b>: a step that
-/// runs across N targets emits the same output variable once per target, and
-/// <see cref="OutputVariableMerger.SelectAccepted"/> reports every one of those emits as
-/// accepted (a same-value re-emit IS present in the merged set). Appending them verbatim
-/// grows the checkpoint by one duplicate per target per pause/resume cycle, without bound.
-/// <see cref="OutputVariableMerger.Merge"/> itself skips a same-value re-emit
-/// (<c>prior.Value == v.Value</c> → <c>continue</c>) and never appends it, so de-duplicating
-/// on the full (name, value, sensitivity) triple reproduces the live merged list EXACTLY —
-/// including the deliberate Warn/Off behaviour of keeping two entries for one name when the
-/// values genuinely differ. Restoring this set therefore resolves to the same value the live
-/// run resolved, under any precedence rule the variable dictionary applies.</para>
+/// <para><b>What goes in</b>: exactly the entries <see cref="OutputVariableMerger.MergeDetailed"/>
+/// reports as APPENDED to the live variable list, verbatim and in order. Nothing is filtered or
+/// collapsed here, because the merge's append list already IS the set that went live — and
+/// last-wins resolution over a faithful copy of it therefore returns the same value a resumed
+/// run would have resolved before the pause. Two earlier attempts got this wrong by trying to
+/// re-derive the append set: a membership test over the merged list reports same-value re-emits
+/// the merge deliberately skipped, and de-duplicating that result drops a trailing repeat the
+/// merge genuinely appended (the merge compares against the FIRST value indexed for a name and
+/// never re-indexes, so incoming A,B,C,B appends all four). Both diverged from the live list.</para>
 ///
-/// <para><b>Why entries are stored pre-protected</b>: the checkpoint is rewritten at every
-/// batch boundary. Protecting at serialize time re-encrypted the whole accumulated set on
-/// every write — at 600k PBKDF2 iterations per value that is hundreds of milliseconds each,
-/// and the total work grows quadratically with batch count. Protecting once, at capture,
-/// makes each write O(entries added since the last write); the serializer's
-/// already-encrypted short-circuit then passes stored entries straight through.</para>
+/// <para><b>Why entries are stored pre-protected</b>: the checkpoint is rewritten at every batch
+/// boundary. Protecting at serialize time re-encrypted the whole accumulated set on every write
+/// — at 600k PBKDF2 iterations per value that is hundreds of milliseconds each, and the total
+/// work grew quadratically with batch count. Protecting once, on the way in, means each entry is
+/// encrypted exactly once for the whole deployment and the serializer passes stored entries
+/// straight through via its already-encrypted short-circuit.</para>
 ///
-/// <para>Protection is supplied by the caller as a delegate rather than by taking a
-/// dependency on the encryption service, so this type stays free of crypto concerns and can
-/// be unit-tested against a trivial protector.</para>
+/// <para>Protection is supplied by the caller as a delegate rather than by taking a dependency on
+/// the encryption service, so this type stays free of crypto concerns and is unit-testable
+/// against a trivial protector.</para>
 ///
-/// <para>Not thread-safe: it is written only from the batch-completion path, which is
-/// serialized by the executor.</para>
+/// <para>Growth is bounded by the growth of the live variable list itself, which the run already
+/// carries — this set never holds an entry the live list does not.</para>
+///
+/// <para>Not thread-safe: written only from the batch-completion path, which the executor
+/// serializes.</para>
 /// </summary>
 public sealed class CapturedOutputVariableSet
 {
     private readonly List<VariableDto> _checkpointReady = new();
-    private readonly HashSet<Identity> _seen = new();
 
     /// <summary>
-    /// The captured variables in first-appearance order, sensitive values already encrypted.
-    /// This is exactly what gets serialized into the checkpoint column.
+    /// The captured variables in append order, sensitive values already encrypted. This is
+    /// exactly what gets serialized into the checkpoint column.
     /// </summary>
     public IReadOnlyList<VariableDto> CheckpointReady => _checkpointReady;
 
     public int Count => _checkpointReady.Count;
 
     /// <summary>
-    /// Adds each variable in <paramref name="plaintextVariables"/> that is not already held,
-    /// storing the result of <paramref name="protect"/> for the ones it keeps.
+    /// Appends each variable in <paramref name="plaintextVariables"/>, storing the result of
+    /// <paramref name="protect"/>.
     ///
-    /// <para><paramref name="plaintextVariables"/> must hold PLAINTEXT values — identity is
-    /// computed before protection because ciphertext is non-deterministic (a fresh random
-    /// salt per payload), so two encryptions of one value would never compare equal.</para>
+    /// <para><paramref name="plaintextVariables"/> must hold PLAINTEXT values —
+    /// <paramref name="protect"/> is what turns them into their at-rest form, and applying it to
+    /// an already-protected value would double-wrap.</para>
     ///
-    /// <para><paramref name="protect"/> is invoked only for variables actually added, which is
-    /// what keeps checkpoint cost proportional to new entries rather than to total entries.</para>
+    /// <para><paramref name="protect"/> runs exactly once per variable appended, which is what
+    /// keeps a checkpoint write proportional to entries added since the last write.</para>
     /// </summary>
-    /// <returns>The number of variables added.</returns>
+    /// <returns>The number of variables appended.</returns>
     public int Add(IEnumerable<VariableDto> plaintextVariables, Func<VariableDto, VariableDto> protect)
     {
         ArgumentNullException.ThrowIfNull(protect);
@@ -70,33 +70,10 @@ public sealed class CapturedOutputVariableSet
         {
             if (variable == null) continue;
 
-            if (!_seen.Add(Identity.For(variable))) continue;
-
             _checkpointReady.Add(protect(variable));
             added++;
         }
 
         return added;
-    }
-
-    /// <summary>
-    /// Identity of a captured output variable, matching <see cref="OutputVariableMerger.Merge"/>'s
-    /// comparison rules exactly: names compare case-insensitively (Merge indexes them with
-    /// <see cref="StringComparer.OrdinalIgnoreCase"/>) while values compare ordinally (Merge's
-    /// same-value test uses <see cref="StringComparison.Ordinal"/>). Sensitivity participates so
-    /// a value that changed classification is never silently collapsed into the earlier entry.
-    /// </summary>
-    private readonly record struct Identity(string Name, string Value, bool IsSensitive)
-    {
-        public static Identity For(VariableDto variable)
-            => new(variable.Name ?? string.Empty, variable.Value ?? string.Empty, variable.IsSensitive);
-
-        public bool Equals(Identity other)
-            => IsSensitive == other.IsSensitive
-               && string.Equals(Name, other.Name, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(Value, other.Value, StringComparison.Ordinal);
-
-        public override int GetHashCode()
-            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(Name), Value, IsSensitive);
     }
 }

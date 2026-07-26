@@ -55,8 +55,42 @@ public static class OutputVariableMerger
     /// Caller assigns the returned list back into the deployment context's
     /// <c>Variables</c> property; the collision list is informational
     /// (already logged inside this method).
+    ///
+    /// <para>Callers that need to know exactly WHICH entries were appended (the
+    /// deployment checkpoint does) should use <see cref="MergeDetailed"/> rather than
+    /// re-deriving it — see that method's remarks for why re-derivation cannot work.</para>
     /// </summary>
     public static (List<VariableDto> Merged, List<string> Collisions) Merge(
+        IReadOnlyList<VariableDto> existing,
+        IReadOnlyList<VariableDto> incoming,
+        EnforcementMode mode)
+    {
+        var result = MergeDetailed(existing, incoming, mode);
+
+        return (result.Merged, result.Collisions);
+    }
+
+    /// <summary>
+    /// The outcome of a merge: the combined list, the colliding names, and the entries
+    /// actually APPENDED to the combined list, in append order.
+    /// </summary>
+    public sealed record MergeOutcome(List<VariableDto> Merged, List<string> Collisions, List<VariableDto> Appended);
+
+    /// <summary>
+    /// As <see cref="Merge"/>, but also reports the entries it appended.
+    ///
+    /// <para><b>Why appended-set reporting exists</b>: the deployment checkpoint must persist
+    /// exactly what went live, and that cannot be re-derived after the fact. This method
+    /// compares each incoming write against the FIRST value indexed for its name and never
+    /// re-indexes, so the combined list can legitimately end with a repeat of an earlier
+    /// (name, value) pair — e.g. incoming A,B,C,B appends all four, and incoming U1,U2,U1
+    /// appends all three when a prior variable already shadows that name. A membership test
+    /// ("is this pair present in the merged list?") cannot distinguish those genuine appends
+    /// from a same-value re-emit that was skipped, and de-duplicating the result drops the
+    /// trailing entry that last-wins resolution actually returns. Only the merge itself knows,
+    /// so it reports it.</para>
+    /// </summary>
+    public static MergeOutcome MergeDetailed(
         IReadOnlyList<VariableDto> existing,
         IReadOnlyList<VariableDto> incoming,
         EnforcementMode mode)
@@ -70,6 +104,7 @@ public static class OutputVariableMerger
 
         var merged = new List<VariableDto>(existing);
         var collisions = new List<string>();
+        var appended = new List<VariableDto>();
 
         foreach (var v in incoming)
         {
@@ -78,6 +113,7 @@ public static class OutputVariableMerger
             if (!byName.TryGetValue(name, out var prior))
             {
                 merged.Add(v);
+                appended.Add(v);
                 byName[name] = v;
                 continue;
             }
@@ -94,11 +130,13 @@ public static class OutputVariableMerger
                     // collision to the caller — operator opted out of the
                     // detection entirely.
                     merged.Add(v);
+                    appended.Add(v);
                     break;
 
                 case EnforcementMode.Warn:
                     collisions.Add(name);
                     merged.Add(v);   // backward compat: keep both entries
+                    appended.Add(v);
                     Log.Warning(
                         "[Deploy] Output variable {VariableName} written by multiple targets with " +
                         "different values. Downstream consumers may pick either value depending on " +
@@ -123,57 +161,6 @@ public static class OutputVariableMerger
             }
         }
 
-        return (merged, collisions);
-    }
-
-    /// <summary>
-    /// Of the <paramref name="incoming"/> output variables, returns those whose (name, value)
-    /// pair is present in <paramref name="merged"/> — i.e. those NOT rejected by the merge.
-    ///
-    /// <para><b>Why the checkpoint needs this</b>: under <see cref="EnforcementMode.Strict"/> a
-    /// colliding incoming write is dropped (first-writer-wins) and never reaches the live
-    /// variable set. Checkpointing the raw incoming list would persist that rejected value and
-    /// resume would resurrect it, silently defeating the mode the operator opted into. Under
-    /// <c>Warn</c> / <c>Off</c> nothing is dropped and this returns the incoming set unchanged,
-    /// so the caller needs no mode awareness.</para>
-    ///
-    /// <para><b>This is a membership test, not a set difference</b> — a same-value re-emit from
-    /// another target is reported here even though <see cref="Merge"/> deliberately skipped
-    /// appending it, because its pair IS in the merged set. Callers accumulating across targets
-    /// or resume cycles must therefore de-duplicate; <see cref="CapturedOutputVariableSet"/>
-    /// does, on the same (name, value, sensitivity) identity used below. Reporting the re-emit
-    /// is the correct answer to "was this write rejected?", which is what Strict mode needs.</para>
-    ///
-    /// <para>Comparison mirrors <see cref="Merge"/> exactly: names case-insensitively (Merge
-    /// indexes with <see cref="StringComparer.OrdinalIgnoreCase"/>), values ordinally (Merge's
-    /// same-value test uses <see cref="StringComparison.Ordinal"/>). A plain tuple set would
-    /// compare names ordinally and disagree with the merge it is describing.</para>
-    /// </summary>
-    public static List<VariableDto> SelectAccepted(List<VariableDto> merged, List<VariableDto> incoming)
-    {
-        if (incoming == null || incoming.Count == 0) return new List<VariableDto>();
-        if (merged == null || merged.Count == 0) return new List<VariableDto>();
-
-        var live = new HashSet<(string Name, string Value)>(
-            merged.Select(v => (v.Name ?? string.Empty, v.Value ?? string.Empty)),
-            NameInsensitiveValueOrdinalComparer.Instance);
-
-        return incoming.Where(v => live.Contains((v.Name ?? string.Empty, v.Value ?? string.Empty))).ToList();
-    }
-
-    /// <summary>
-    /// Compares (name, value) pairs the way <see cref="Merge"/> does: name case-insensitive,
-    /// value ordinal.
-    /// </summary>
-    private sealed class NameInsensitiveValueOrdinalComparer : IEqualityComparer<(string Name, string Value)>
-    {
-        public static readonly NameInsensitiveValueOrdinalComparer Instance = new();
-
-        public bool Equals((string Name, string Value) x, (string Name, string Value) y)
-            => string.Equals(x.Name, y.Name, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(x.Value, y.Value, StringComparison.Ordinal);
-
-        public int GetHashCode((string Name, string Value) obj)
-            => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name), obj.Value);
+        return new MergeOutcome(merged, collisions, appended);
     }
 }

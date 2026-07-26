@@ -36,6 +36,9 @@ internal static class CheckpointPhaseHarness
     internal const int ServerTaskId = 8801;
 
     /// <param name="emittedOutputs">(name, value) pairs each target emits via a service message.</param>
+    /// <param name="perTargetOutputs">Per-target emits, outer index = target. Overrides
+    /// <paramref name="emittedOutputs"/> and sets <c>targetCount</c> to its length, so a test can
+    /// make different targets emit DIFFERENT values for one name (the collision case).</param>
     /// <param name="seedVariables">Variables already in <c>ctx.Variables</c> before the batch runs.</param>
     /// <param name="restoredOutputVariables">Simulates a resume: outputs recovered from a prior checkpoint.</param>
     /// <param name="targetCount">Number of targets the step runs across (each emits the same outputs).</param>
@@ -43,8 +46,10 @@ internal static class CheckpointPhaseHarness
         IReadOnlyList<(string Name, string Value)> emittedOutputs = null,
         IReadOnlyList<VariableDto> seedVariables = null,
         IReadOnlyList<VariableDto> restoredOutputVariables = null,
-        int targetCount = 1)
+        int targetCount = 1,
+        IReadOnlyList<IReadOnlyList<(string Name, string Value)>> perTargetOutputs = null)
     {
+        if (perTargetOutputs != null) targetCount = perTargetOutputs.Count;
         DeploymentExecutionCheckpoint saved = null;
 
         var checkpointService = new Mock<IDeploymentCheckpointService>();
@@ -59,7 +64,7 @@ internal static class CheckpointPhaseHarness
         var lifecycle = new DeploymentLifecyclePublisher(System.Array.Empty<IDeploymentLifecycleHandler>());
         var registry = Mock.Of<IActionHandlerRegistry>(r => r.Resolve(It.IsAny<DeploymentActionDto>()) == new TrivialHandler());
 
-        var transport = new TestTransport(emittedOutputs ?? System.Array.Empty<(string, string)>());
+        var transport = new TestTransport(emittedOutputs ?? System.Array.Empty<(string, string)>(), perTargetOutputs);
         var transportRegistry = new Mock<ITransportRegistry>();
         transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(transport);
 
@@ -146,25 +151,37 @@ internal static class CheckpointPhaseHarness
             ? new List<VariableDto>()
             : JsonSerializer.Deserialize<List<VariableDto>>(checkpoint.OutputVariablesJson) ?? new List<VariableDto>();
 
-    private sealed class TestTransport(IReadOnlyList<(string Name, string Value)> emitted) : IDeploymentTransport
+    private sealed class TestTransport(IReadOnlyList<(string Name, string Value)> emitted, IReadOnlyList<IReadOnlyList<(string Name, string Value)>> perTarget) : IDeploymentTransport
     {
         public CommunicationStyle CommunicationStyle => CommunicationStyle.KubernetesAgent;
         public IEndpointVariableContributor Variables => null;
-        public IExecutionStrategy Strategy { get; } = new EmittingStrategy(emitted);
+        public IExecutionStrategy Strategy { get; } = new EmittingStrategy(emitted, perTarget);
         public IHealthCheckStrategy HealthChecker => null;
         public ITransportCapabilities Capabilities { get; } = new TransportCapabilities();
     }
 
-    /// <summary>Succeeds while emitting the requested output variables via service messages.</summary>
-    private sealed class EmittingStrategy(IReadOnlyList<(string Name, string Value)> emitted) : IExecutionStrategy
+    /// <summary>
+    /// Succeeds while emitting the requested output variables via service messages. When
+    /// per-target lists are supplied, dispenses them in dispatch order so different targets can
+    /// emit DIFFERENT values for one name — the collision shape that exposes append-set bugs.
+    /// </summary>
+    private sealed class EmittingStrategy(IReadOnlyList<(string Name, string Value)> emitted, IReadOnlyList<IReadOnlyList<(string Name, string Value)>> perTarget) : IExecutionStrategy
     {
-        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct) =>
-            Task.FromResult(new ScriptExecutionResult
+        private int _dispatched = -1;
+
+        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+        {
+            var lines = perTarget == null
+                ? emitted
+                : perTarget[Math.Min(Interlocked.Increment(ref _dispatched), perTarget.Count - 1)];
+
+            return Task.FromResult(new ScriptExecutionResult
             {
                 Success = true,
                 ExitCode = 0,
-                LogLines = emitted.Select(e => $"##squid[setVariable name='{e.Name}' value='{e.Value}']").ToList()
+                LogLines = lines.Select(e => $"##squid[setVariable name='{e.Name}' value='{e.Value}']").ToList()
             });
+        }
     }
 
     private sealed class TrivialHandler : IActionHandler

@@ -80,18 +80,72 @@ public sealed class CheckpointOutputVariableSeamTests
     }
 
     [Fact]
-    public async Task PersistCheckpoint_DoesNotDuplicateAcrossTargetsEmittingTheSameValue()
+    public async Task PersistCheckpoint_SameValueFromEveryTarget_IsNotDuplicated()
     {
-        // A step across N targets re-emits the same output variable N times and SelectAccepted
-        // reports every one as accepted. Without de-duplication the column grows by one copy
-        // per target per checkpoint, unbounded across pause/resume cycles.
+        // The merge skips a same-value re-emit (it never appends it), so the checkpoint inherits
+        // that de-duplication for free — no copy per target, nothing to grow across resumes.
         var saved = await CheckpointPhaseHarness.RunOneBatchAsync(OneOutput, targetCount: 3);
 
         var restored = CheckpointPhaseHarness.ReadCheckpoint(saved);
         var bareAliasCount = restored.Count(v => v.Name == EmittedOutputName);
 
         bareAliasCount.ShouldBe(1,
-            customMessage: $"Three targets emitted the same (name, value); the checkpoint must hold ONE entry for " +
-                           $"the bare alias, not {bareAliasCount}. Duplicates grow without bound across resume cycles.");
+            customMessage: $"Three targets emitted the SAME (name, value); the merge appends it once, so the " +
+                           $"checkpoint must hold one entry for the bare alias, not {bareAliasCount}.");
+    }
+
+    [Fact]
+    public async Task PersistCheckpoint_TargetsEmittingDifferentValues_ResolveAsTheLiveRunDid()
+    {
+        // ReSharper disable once RedundantExplicitArrayCreation
+        // The load-bearing end-to-end case. Three targets emit A, B, A for one name. The merge
+        // compares each write against the FIRST indexed value and never re-indexes, so it appends
+        // A and B and skips the trailing A — live resolves B under last-wins. The checkpoint must
+        // resolve B too. A checkpoint built by de-duplicating, or by appending the raw incoming
+        // list, resolves a different value here.
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync(perTargetOutputs: new[]
+        {
+            new[] { ("Digest", "A") },
+            new[] { ("Digest", "B") },
+            new[] { ("Digest", "A") }
+        });
+
+        var checkpointed = CheckpointPhaseHarness.ReadCheckpoint(saved);
+
+        // Last-wins, matching VariableDictionary's dictionary assignment.
+        var resolved = checkpointed.Where(v => v.Name == "Digest").Select(v => v.Value).LastOrDefault();
+
+        resolved.ShouldBe("B",
+            customMessage: "Targets emitted A,B,A for one name. The live merge appends A then B and skips the " +
+                           $"trailing A, so last-wins resolves 'B'. The checkpoint resolved '{resolved}' — a resumed " +
+                           "deployment would reconfigure itself with a different target's value.");
+    }
+
+    [Fact]
+    public async Task PersistCheckpoint_ShadowedName_KeepsTheTrailingRepeatTheMergeAppended()
+    {
+        // The case that de-duplication gets WRONG, driven through the real phase.
+        //
+        // A project variable already holds this name, so the merge's first-indexed value is that
+        // prior one and EVERY emit differs from it — U1, U2 and the trailing U1 are ALL appended,
+        // and last-wins resolves U1. Collapsing the append list to distinct (name, value) pairs
+        // yields [U1, U2] and resolves U2 instead. The A,B,A test above cannot catch that,
+        // because without shadowing the merge already skips the trailing repeat.
+        var saved = await CheckpointPhaseHarness.RunOneBatchAsync(
+            seedVariables: new VariableDto[] { new() { Name = "Digest", Value = "project-default" } },
+            perTargetOutputs: new[]
+            {
+                new[] { ("Digest", "U1") },
+                new[] { ("Digest", "U2") },
+                new[] { ("Digest", "U1") }
+            });
+
+        var checkpointed = CheckpointPhaseHarness.ReadCheckpoint(saved);
+        var resolved = checkpointed.Where(v => v.Name == "Digest").Select(v => v.Value).LastOrDefault();
+
+        resolved.ShouldBe("U1",
+            customMessage: "With a prior variable shadowing the name, the merge appends U1, U2 AND the trailing U1, " +
+                           $"so last-wins resolves 'U1'. The checkpoint resolved '{resolved}' — the append list is " +
+                           "being de-duplicated or otherwise re-derived instead of stored verbatim.");
     }
 }

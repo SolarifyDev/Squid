@@ -357,20 +357,18 @@ public sealed partial class ExecuteStepsPhase(
         {
             if (result.OutputVariables.Count > 0)
             {
-                var (mergedVariables, _) = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.Merge(
+                var mergeOutcome = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.MergeDetailed(
                     _ctx.Variables, result.OutputVariables, collisionMode);
-                _ctx.Variables = mergedVariables;
+                _ctx.Variables = mergeOutcome.Merged;
 
-                // Record what the merge ACCEPTED for the checkpoint. Persisting from this
-                // accumulator rather than re-selecting out of _ctx.Variables by name is what
-                // keeps resume correct (see CheckpointOutputVariableSerializer); filtering to
-                // the accepted set keeps Strict collision mode honest, since a dropped write
-                // must not be resurrected by a later resume. The set de-duplicates and
-                // protects on the way in — a step running across N targets re-emits the same
-                // value N times, and every one of those is "accepted".
-                _ctx.CapturedOutputVariables.Add(
-                    Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.SelectAccepted(mergedVariables, result.OutputVariables),
-                    ProtectForCheckpoint);
+                // Checkpoint exactly what the merge APPENDED to the live list, verbatim and in
+                // order. Persisting from this accumulator rather than re-selecting out of
+                // _ctx.Variables by name is what keeps resume correct (see
+                // CheckpointOutputVariableSerializer), and taking the merge's own append list
+                // rather than re-deriving it is what keeps the restored set resolving to the
+                // same value the live run resolved. Writes the merge dropped (Strict
+                // first-writer-wins) never appear here, so a resume cannot resurrect them.
+                _ctx.CapturedOutputVariables.Add(mergeOutcome.Appended, ProtectForCheckpoint);
 
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 
