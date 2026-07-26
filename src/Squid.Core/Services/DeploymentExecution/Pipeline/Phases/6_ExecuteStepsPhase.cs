@@ -179,7 +179,7 @@ public sealed partial class ExecuteStepsPhase(
     /// </summary>
     private async Task PersistCheckpointAsync(int batchIndex, CancellationToken ct)
     {
-        var outputVariablesJson = SerializeOutputVariables(_ctx.Variables);
+        var outputVariablesJson = SerializeOutputVariables();
         var batchStatesJson = SerializeBatchStates();
 
         var checkpoint = new DeploymentExecutionCheckpoint
@@ -315,34 +315,17 @@ public sealed partial class ExecuteStepsPhase(
     /// inspecting checkpoints to debug stuck deployments need to read
     /// non-secret variables; encrypting them all would block that workflow.
     /// </para>
+    ///
+    /// <para><b>Which variables</b>: the set the executor actually captured
+    /// (<see cref="DeploymentTaskContext.CapturedOutputVariables"/>), NOT a
+    /// name-filtered slice of <c>_ctx.Variables</c>. The former predicate
+    /// (<c>StartsWith("Squid.Action.")</c>) matched no real output variable —
+    /// they are minted as <c>Squid.Action[{step}].Output.{name}</c> with a
+    /// bracket — so every resume silently lost them. See
+    /// <see cref="Variables.CheckpointOutputVariableSerializer"/>.</para>
     /// </summary>
-    private string SerializeOutputVariables(List<VariableDto> variables)
-    {
-        if (variables == null || variables.Count == 0) return null;
-
-        var outputVars = variables.Where(v => v.Name.StartsWith("Squid.Action.", StringComparison.OrdinalIgnoreCase)).ToList();
-
-        if (outputVars.Count == 0) return null;
-
-        var encrypted = outputVars.Select(EncryptIfSensitive).ToList();
-
-        return System.Text.Json.JsonSerializer.Serialize(encrypted);
-    }
-
-    private VariableDto EncryptIfSensitive(VariableDto v)
-    {
-        if (!v.IsSensitive || string.IsNullOrEmpty(v.Value)) return v;
-
-        // Already encrypted (e.g. resumed-and-rewritten path) — don't re-wrap.
-        if (variableEncryptionService.IsValidEncryptedValue(v.Value)) return v;
-
-        // Clone via the copy-constructor — pre-existing manual field-by-field
-        // copy was fragile against future VariableDto field additions (silent
-        // loss with no compiler warning). The copy-ctor is pinned by
-        // VariableDtoCopyConstructorTests so a missing field assignment fails
-        // unit tests at PR review, not in production checkpoint round-trips.
-        return new VariableDto(v) { Value = variableEncryptionService.EncryptAsync(v.Value, _ctx.ServerTaskId) };
-    }
+    private string SerializeOutputVariables()
+        => Variables.CheckpointOutputVariableSerializer.Serialize(_ctx.CapturedOutputVariables, variableEncryptionService, _ctx.ServerTaskId);
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)
     {
@@ -361,6 +344,11 @@ public sealed partial class ExecuteStepsPhase(
                 var (mergedVariables, _) = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.Merge(
                     _ctx.Variables, result.OutputVariables, collisionMode);
                 _ctx.Variables = mergedVariables;
+
+                // Record the captured set verbatim for the checkpoint. Persisting from this
+                // accumulator rather than re-selecting out of _ctx.Variables by name is what
+                // keeps resume correct — see CheckpointOutputVariableSerializer.
+                _ctx.CapturedOutputVariables.AddRange(result.OutputVariables);
 
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 

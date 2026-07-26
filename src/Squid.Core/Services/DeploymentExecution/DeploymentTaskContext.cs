@@ -52,6 +52,18 @@ public class DeploymentTaskContext
     public List<VariableDto> RestoredOutputVariables { get; set; } = new();
 
     /// <summary>
+    /// Every output variable captured so far in this deployment — the exact set written to
+    /// the checkpoint by <see cref="Variables.CheckpointOutputVariableSerializer"/>.
+    ///
+    /// <para>Accumulated at the capture site instead of being re-derived by name at persist
+    /// time: output variables are minted in three forms (step-qualified, machine-qualified
+    /// and a bare alias), and the bare alias is indistinguishable from an ordinary variable
+    /// by name, so no name predicate can select them correctly. On resume this is re-seeded
+    /// from the restored set so a SECOND pause still checkpoints the first run's outputs.</para>
+    /// </summary>
+    public List<VariableDto> CapturedOutputVariables { get; set; } = new();
+
+    /// <summary>
     /// Per-batch per-target completion state restored from checkpoint. The executor
     /// skips any (batch, machineId) pair that is already marked terminal here.
     /// </summary>
