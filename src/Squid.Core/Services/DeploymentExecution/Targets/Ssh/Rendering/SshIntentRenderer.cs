@@ -152,10 +152,13 @@ public sealed class SshIntentRenderer : IIntentRenderer
         // must fail closed so operators never get a silent no-op rewrite.
         string[] unsupported =
         [
+            // Four canonical rewrite enabled keys.
             SpecialVariables.Action.ConfigurationVariablesEnabled,
             "Squid.Action.SubstituteInFiles.Enabled",
-            SpecialVariables.Action.StructuredConfigurationVariablesEnabled,
+            SpecialVariables.Action.JsonConfigVariablesEnabled,
             "Squid.Action.ConfigurationTransforms.Enabled",
+            // Non-canonical Structured key still emitted by older deployments.
+            SpecialVariables.Action.StructuredConfigurationVariablesEnabled,
             // IIS-legacy aliases that may still be set on shared action property bags.
             "Squid.Action.IISWebSite.ConfigurationVariables.Enabled",
             "Squid.Action.IISWebSite.SubstituteInFiles.Enabled",

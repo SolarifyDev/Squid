@@ -240,6 +240,7 @@ public class SshIntentRendererTests
     [InlineData("Squid.Action.SubstituteInFiles.Enabled")]
     [InlineData("Squid.Action.StructuredConfigurationVariables.Enabled")]
     [InlineData("Squid.Action.ConfigurationTransforms.Enabled")]
+    [InlineData("Squid.Action.JsonConfigVariables.Enabled")]
     public async Task RenderAsync_DeployPackage_WhenConfigRewriteEnabled_Throws(string flagName)
     {
         var intent = NewDeployPackageIntent();

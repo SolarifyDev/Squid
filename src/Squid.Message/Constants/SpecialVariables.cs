@@ -113,6 +113,8 @@ public static class SpecialVariables
         public const string ConfigurationVariablesEnabled = "Squid.Action.ConfigurationVariables.Enabled";
         public const string IgnoreVariableReplacementErrors = "Squid.Action.Package.IgnoreVariableReplacementErrors";
         public const string StructuredConfigurationVariablesEnabled = "Squid.Action.StructuredConfigurationVariables.Enabled";
+        public const string JsonConfigVariablesEnabled = "Squid.Action.JsonConfigVariables.Enabled";
+        public const string JsonConfigVariablesTargets = "Squid.Action.JsonConfigVariables.Targets";
     }
 
     public static class Step
