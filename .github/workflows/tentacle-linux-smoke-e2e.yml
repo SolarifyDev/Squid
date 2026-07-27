@@ -102,6 +102,12 @@ jobs:
       - name: Restore Squid.LinuxTentacleE2ETests
         run: dotnet restore tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj --configfile "$NUGET_CONFIG"
 
+      # DeployPackageLinuxSmoke bootstrap needs the squid-calamari apphost on PATH.
+      # Building the test project alone does not guarantee Calamari output exists unless
+      # the project references it; keep an explicit Release build for CI clarity.
+      - name: Build Squid.Calamari (Release)
+        run: dotnet build src/Squid.Calamari/Squid.Calamari.csproj --configuration Release --configfile "$NUGET_CONFIG"
+
       - name: Run Linux versioned-upgrade smoke subset
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
