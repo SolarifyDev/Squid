@@ -56,6 +56,9 @@ jobs:
       - name: Restore Squid.LinuxTentacleE2ETests
         run: dotnet restore tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj --configfile "$NUGET_CONFIG"
 
+      - name: Build Squid.Calamari (Release)
+        run: dotnet build src/Squid.Calamari/Squid.Calamari.csproj --configuration Release --configfile "$NUGET_CONFIG"
+
       - name: Run Squid.LinuxTentacleE2ETests
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
