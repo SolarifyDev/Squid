@@ -101,8 +101,8 @@ public sealed class SshIntentRenderer : IIntentRenderer
             PreservePaths = Var(variablesList, "Squid.Action.Package.PreservePaths"),
             RetentionCount = IntVar(variablesList, "Squid.Action.Package.RetentionCount"),
             UseCurrentPointer = Flag(variablesList, "Squid.Action.Package.UseCurrentPointer"),
-            // Keep historical SSH behaviour: PreDeploy failure restores previous install.
-            RollbackOnFailure = !string.Equals(Var(variablesList, "Squid.Action.Package.RollbackOnFailure"), "False", StringComparison.OrdinalIgnoreCase)
+            // Default false when property is missing; only explicit True enables restore.
+            RollbackOnFailure = string.Equals(Var(variablesList, "Squid.Action.Package.RollbackOnFailure"), "True", StringComparison.OrdinalIgnoreCase)
         });
 
         var variables = variablesList;

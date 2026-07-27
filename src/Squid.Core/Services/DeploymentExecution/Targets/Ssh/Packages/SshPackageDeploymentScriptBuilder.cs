@@ -23,7 +23,7 @@ public sealed class SshPackageDeployScriptModel
     public string PreservePaths { get; init; } = string.Empty;
     public int RetentionCount { get; init; }
     public bool UseCurrentPointer { get; init; }
-    public bool RollbackOnFailure { get; init; } = true;
+    public bool RollbackOnFailure { get; init; } = false;
 }
 
 public static class SshPackageDeploymentScriptBuilder
@@ -260,12 +260,17 @@ public static class SshPackageDeploymentScriptBuilder
             "  echo \"PreDeploy: running PreDeploy.sh\"\n" +
             "  if ! bash \"PreDeploy.sh\"; then\n" +
             "    echo \"[rollback] PreDeploy failed; restoring previous installation if available.\" >&2\n" +
-            "    if [ \"$ROLLBACK_ON_FAILURE\" = \"True\" ] && [ -d \"$BACKUP_DIR\" ]; then\n" +
+            "    if [ \"$ROLLBACK_ON_FAILURE\" = \"True\" ]; then\n" +
             "      rm -rf \"$FINAL_DIR\"\n" +
-            "      if ! mv \"$BACKUP_DIR\" \"$FINAL_DIR\"; then\n" +
-            "        echo \"[rollback] Failed to restore backup after PreDeploy failure. Backup path: $BACKUP_DIR\" >&2\n" +
-            "        exit 1\n" +
+            "      if [ -d \"$BACKUP_DIR\" ]; then\n" +
+            "        if ! mv \"$BACKUP_DIR\" \"$FINAL_DIR\"; then\n" +
+            "          echo \"[rollback] Failed to restore backup after PreDeploy failure. Backup path: $BACKUP_DIR\" >&2\n" +
+            "          exit 1\n" +
+            "        fi\n" +
             "      fi\n" +
+            "    else\n" +
+            "      echo \"[rollback] PreDeploy failed; keeping installed content and discarding backup.\" >&2\n" +
+            "      rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
             "    fi\n" +
             "    exit 1\n" +
             "  fi\n" +
@@ -273,8 +278,19 @@ public static class SshPackageDeploymentScriptBuilder
             "if [ -f \"PostDeploy.sh\" ]; then\n" +
             "  echo \"PostDeploy: running PostDeploy.sh\"\n" +
             "  if ! bash \"PostDeploy.sh\"; then\n" +
-            "    echo \"[rollback] PostDeploy failed; keeping installed content and discarding backup.\" >&2\n" +
-            "    rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
+            "    echo \"[rollback] PostDeploy failed; restoring previous installation if available.\" >&2\n" +
+            "    if [ \"$ROLLBACK_ON_FAILURE\" = \"True\" ]; then\n" +
+            "      rm -rf \"$FINAL_DIR\"\n" +
+            "      if [ -d \"$BACKUP_DIR\" ]; then\n" +
+            "        if ! mv \"$BACKUP_DIR\" \"$FINAL_DIR\"; then\n" +
+            "          echo \"[rollback] Failed to restore backup after PostDeploy failure. Backup path: $BACKUP_DIR\" >&2\n" +
+            "          exit 1\n" +
+            "        fi\n" +
+            "      fi\n" +
+            "    else\n" +
+            "      echo \"[rollback] PostDeploy failed; keeping installed content and discarding backup.\" >&2\n" +
+            "      rm -rf \"$BACKUP_DIR\" 2>/dev/null || true\n" +
+            "    fi\n" +
             "    exit 1\n" +
             "  fi\n" +
             "fi\n\n" +

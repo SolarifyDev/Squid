@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Formats.Tar;
 using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.UnitTests.Services.DeploymentExecution.Packages;
@@ -36,6 +37,28 @@ public class PackageArchiveSafetyTests
     }
 
     [Theory]
+    [InlineData("../escape.txt")]
+    [InlineData("/etc/passwd")]
+    [InlineData(@"C:\Windows\system32\x.txt")]
+    public void EnsureArchiveEntriesAreSafe_RejectsHostilePlainTar(string hostileEntry)
+    {
+        var bytes = CreatePlainTar((hostileEntry, "x"));
+
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            PackageArchiveSafety.EnsureArchiveEntriesAreSafe(bytes, "Acme.Web", "1.0.0"));
+
+        ex.Message.ShouldContain("zip-slip", Case.Insensitive);
+    }
+
+    [Fact]
+    public void EnsureArchiveEntriesAreSafe_NonTarGenericPayload_DoesNotThrowHere()
+    {
+        // random non-zip/non-tar.gz/non-tar bytes should not be misclassified as hostile tar
+        Should.NotThrow(() =>
+            PackageArchiveSafety.EnsureArchiveEntriesAreSafe(new byte[] { 1, 2, 3, 4 }, "Acme.Web", "1.0.0"));
+    }
+
+    [Theory]
     [InlineData("../escape.txt", true)]
     [InlineData("foo/../../etc/passwd", true)]
     [InlineData("/etc/passwd", true)]
@@ -56,6 +79,26 @@ public class PackageArchiveSafetyTests
                 var entry = zip.CreateEntry(file.Name, CompressionLevel.Optimal);
                 using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
                 writer.Write(file.Content);
+            }
+        }
+
+        return ms.ToArray();
+    }
+
+    private static byte[] CreatePlainTar(params (string Name, string Content)[] files)
+    {
+        using var ms = new MemoryStream();
+        using (var writer = new TarWriter(ms, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                var contentBytes = Encoding.UTF8.GetBytes(file.Content);
+                using var content = new MemoryStream(contentBytes);
+                var entry = new PaxTarEntry(TarEntryType.RegularFile, file.Name)
+                {
+                    DataStream = content
+                };
+                writer.WriteEntry(entry);
             }
         }
 

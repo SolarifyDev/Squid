@@ -149,6 +149,77 @@ public class SshPackageDeploymentScriptBuilderTests
         script.ShouldContain("update_current_pointer");
         script.ShouldContain("apply_retention");
     }
+
+    [Fact]
+    public void Build_DefaultRollback_IsFalse()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg"
+        });
+
+        script.ShouldContain("ROLLBACK_ON_FAILURE='False'");
+    }
+
+    [Fact]
+    public void Build_RollbackTrue_PostDeployUsesRestoreBranch()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg",
+            RollbackOnFailure = true
+        });
+
+        script.ShouldContain("ROLLBACK_ON_FAILURE='True'");
+        script.ShouldContain("[rollback] PostDeploy failed");
+        script.ShouldContain("restoring previous installation if available.");
+
+        var preFailIdx = script.IndexOf("PreDeploy failed", StringComparison.Ordinal);
+        var postFailIdx = script.IndexOf("PostDeploy failed", StringComparison.Ordinal);
+        preFailIdx.ShouldBeGreaterThan(0);
+        postFailIdx.ShouldBeGreaterThan(preFailIdx);
+
+        // Unenabled path still discards backup; enabled path keeps restore messaging.
+        script.ShouldContain("keeping installed content and discarding backup.");
+    }
+
+    [Fact]
+    public void Build_RollbackBranches_CoverPreAndPostDeploy()
+    {
+        var script = SshPackageDeploymentScriptBuilder.Build(new SshPackageDeployScriptModel
+        {
+            ExpectedSha256 = "abc",
+            Mode = "Custom",
+            CustomInstallationDirectory = "/tmp/app",
+            PackageId = "Acme.Web",
+            PackageVersion = "1.0.0",
+            ArchiveFileName = "Acme.Web.1.0.0.nupkg",
+            RollbackOnFailure = true
+        });
+
+        // Enabled: restore when backup exists; delete final when no old install.
+        script.ShouldContain("if [ \"$ROLLBACK_ON_FAILURE\" = \"True\" ]; then");
+        script.ShouldContain("rm -rf \"$FINAL_DIR\"");
+        script.ShouldContain("if [ -d \"$BACKUP_DIR\" ]; then");
+        script.ShouldContain("mv \"$BACKUP_DIR\" \"$FINAL_DIR\"");
+        script.ShouldContain("Failed to restore backup");
+        script.ShouldContain("Backup path:");
+
+        // Unenabled: keep new content, discard backup, still fail the task.
+        script.ShouldContain("keeping installed content and discarding backup.");
+        script.ShouldContain("rm -rf \"$BACKUP_DIR\"");
+    }
+
     [Fact]
     public void Build_UpdatesCurrentPointerOnlyAfterSuccessfulConventions()
     {

@@ -111,9 +111,10 @@ internal static class PackageArchiveSafety
             // If TarReader accepted zero entries, treat as non-tar and leave validation to extractors.
             _ = sawEntry;
         }
-        catch
+        catch (Exception ex) when (ex is not InvalidOperationException)
         {
-            // Not a plain tar (or unreadable as tar). Defer to later extractors.
+            // Not a readable plain tar. Defer to later extractors.
+            // Do not swallow InvalidOperationException from RejectIfUnsafe (zip-slip).
         }
     }
 

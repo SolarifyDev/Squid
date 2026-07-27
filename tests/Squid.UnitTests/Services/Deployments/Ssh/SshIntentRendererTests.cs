@@ -282,6 +282,41 @@ public class SshIntentRendererTests
         rendered.ScriptBody.ShouldContain("DeployPackage: installed to");
     }
 
+    [Fact]
+    public async Task RenderAsync_DeployPackage_MissingRollbackOnFailure_DefaultsToFalse()
+    {
+        var intent = NewDeployPackageIntent();
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/Acme.Web.1.0.0.nupkg", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 10, Hash: "abc")
+        };
+        var ctx = NewContext(packageReferences: packages);
+
+        var rendered = await _renderer.RenderAsync(intent, ctx, CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("ROLLBACK_ON_FAILURE='False'");
+    }
+
+    [Fact]
+    public async Task RenderAsync_DeployPackage_ExplicitRollbackOnFailureTrue_IsHonored()
+    {
+        var intent = NewDeployPackageIntent();
+        var packages = new List<PackageAcquisitionResult>
+        {
+            new(LocalPath: "/tmp/Acme.Web.1.0.0.nupkg", PackageId: "Acme.Web", Version: "1.0.0", SizeBytes: 10, Hash: "abc")
+        };
+        var ctx = NewContext(
+            variables:
+            [
+                new VariableDto { Name = "Squid.Action.Package.RollbackOnFailure", Value = "True" }
+            ],
+            packageReferences: packages);
+
+        var rendered = await _renderer.RenderAsync(intent, ctx, CancellationToken.None);
+
+        rendered.ScriptBody.ShouldContain("ROLLBACK_ON_FAILURE='True'");
+    }
+
     // ========== Unsupported intents throw ==========
 
     [Fact]
