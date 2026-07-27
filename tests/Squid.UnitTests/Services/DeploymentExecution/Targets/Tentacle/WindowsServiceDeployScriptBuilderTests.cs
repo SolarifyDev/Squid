@@ -149,6 +149,15 @@ public class WindowsServiceDeployScriptBuilderTests
     }
 
     [Fact]
+    public void Build_EmbeddedScriptTreatsEmptyDependenciesAsArrayUnderStrictMode()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        script.ShouldContain("$dependencies = @(Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies'))");
+        script.ShouldContain("if ($dependencies.Count -gt 0)");
+    }
+
+    [Fact]
     public void Build_EmitsSquidVariablesHashtable()
     {
         var variables = new[]

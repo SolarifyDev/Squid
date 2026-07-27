@@ -328,7 +328,7 @@ if ([string]::IsNullOrWhiteSpace($relativeExecutablePath)) {
 $arguments = Get-SquidParameter 'Squid.Action.WindowsService.Arguments'
 $startMode = Get-SquidParameter 'Squid.Action.WindowsService.StartMode' 'Automatic'
 $desiredStatus = Get-SquidParameter 'Squid.Action.WindowsService.DesiredStatus' 'Started'
-$dependencies = Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies')
+$dependencies = @(Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies'))
 $existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 
 if ($null -ne $existingService) {
