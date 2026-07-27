@@ -23,6 +23,7 @@ namespace Squid.E2ETests.Deployments.Mixed;
 /// and an SSH target matched by distinct roles.
 /// </summary>
 [Trait("Category", "E2E")]
+[Trait("Category", DeployPackageE2ECategories.Full)]
 public class DeployPackageMixedTentacleSshE2ETests
     : IClassFixture<DeployPackageMixedTentacleSshE2EFixture>, IAsyncLifetime
 {

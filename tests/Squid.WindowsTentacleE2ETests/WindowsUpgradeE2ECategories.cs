@@ -262,5 +262,6 @@ public static class WindowsUpgradeE2ECategories
     /// <c>squid-calamari deploy-package</c> durable install. Proves the
     /// Windows PowerShell install path that Linux/SSH pipeline e2e does not cover.
     /// </summary>
-    public const string DeployPackage = "DeployPackageWindowsE2E";
+    public const string DeployPackageSmoke = "DeployPackageWindowsSmoke";
+    public const string DeployPackageFull = "DeployPackageWindowsFull";
 }

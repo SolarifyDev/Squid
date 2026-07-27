@@ -28,6 +28,7 @@ public class PackageInstallationCoordinatorTests : IDisposable
         => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(filePath))).ToLowerInvariant();
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Smoke)]
     public async Task Install_VersionedFirstDeploy_ExtractsAndCommits()
     {
         if (OperatingSystem.IsWindows())
@@ -63,6 +64,7 @@ echo post > post.txt
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Install_HashMismatch_DoesNotTouchFinalDirectory()
     {
         var archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string> { ["app.txt"] = "x" });
@@ -83,6 +85,7 @@ echo post > post.txt
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Install_CustomMode_PreservesFilesNotInPackage()
     {
         var finalDir = Path.Combine(_root, "custom-app");
@@ -110,6 +113,7 @@ echo post > post.txt
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Install_PreDeployFailure_KeepsCommittedDirectory_AndFails()
     {
         if (OperatingSystem.IsWindows())
@@ -137,6 +141,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Smoke)]
     public async Task Install_WithSubstituteEnabled_RewritesFileInFinalDirectory()
     {
         var archive = TestPackageBuilder.CreateZip(_root, new Dictionary<string, string>
@@ -168,6 +173,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Skip_WhenSameVersionInstalled_DoesNotReextract()
     {
         var finalDir = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web", "1.0.0");
@@ -213,6 +219,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Smoke)]
     public async Task Purge_RemovesFilesNotInPackage_ButKeepsPreserved()
     {
         var finalDir = Path.Combine(_root, "custom-app-purge");
@@ -248,6 +255,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Retention_KeepsOnlyNVersions()
     {
         var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web");
@@ -282,6 +290,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task CurrentPointer_UpdatesOnSuccess_AndRollbackRestoresPrevious()
     {
         var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web");
@@ -357,6 +366,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Full)]
     public async Task Retention_DoesNotRunBeforeConventions_WhenRollbackOnFailure()
     {
         var packageRoot = Path.Combine(_root, "Applications", "Production", "WebApp", "Acme.Web");
@@ -436,6 +446,7 @@ exit 9
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Smoke)]
     public async Task Install_CustomMode_RollbackOnFailure_RestoresPreviousFinalContent()
     {
         var finalDir = Path.Combine(_root, "custom-app-rollback");

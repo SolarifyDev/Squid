@@ -31,7 +31,11 @@ on:
       upgrade_test_filter:
         description: "xUnit --filter for the Squid.WindowsTentacleE2ETests step (defaults to wrapper + service categories)"
         required: false
-        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E|Category=DeployPackageWindowsE2E"
+        default: "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E|Category=DeployPackageWindowsSmoke|Category=DeployPackageWindowsFull"
+      host_test_filter:
+        description: "xUnit --filter for the Windows-host Calamari Deploy Package tests"
+        required: false
+        default: "Category=DeployPackageWindowsHostSmoke|Category=DeployPackageWindowsHostFull"
 
 permissions:
   contents: read
@@ -130,9 +134,22 @@ jobs:
       - name: Run Squid.WindowsTentacleE2ETests
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E|Category=DeployPackageWindowsE2E" }
+          $filter = if ("${{ github.event.inputs.upgrade_test_filter }}") { "${{ github.event.inputs.upgrade_test_filter }}" } else { "Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsServiceHostE2E|Category=StubSquidServerE2E|Category=TentacleRegisterE2E|Category=TentacleDeployE2E|Category=TentacleUpgradeE2E|Category=TentacleInstallScriptE2E|Category=TentacleMultiInstanceE2E|Category=TentacleCapabilitiesE2E|Category=TentacleUpgradeLifecycleE2E|Category=TentacleDiagnosticE2E|Category=WindowsTentacleBinaryE2E|Category=IISDeployE2E|Category=DeployPackageWindowsSmoke|Category=DeployPackageWindowsFull" }
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
+            --filter $filter `
+            --logger "console;verbosity=normal"
+
+      - name: Restore Squid.Calamari.Tests
+        shell: pwsh
+        run: dotnet restore tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Deploy Package Windows host full matrix
+        shell: pwsh
+        run: |
+          $filter = if ("${{ github.event.inputs.host_test_filter }}") { "${{ github.event.inputs.host_test_filter }}" } else { "Category=DeployPackageWindowsHostSmoke|Category=DeployPackageWindowsHostFull" }
+          dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj `
+            --configuration Release `
             --filter $filter `
             --logger "console;verbosity=normal"
 

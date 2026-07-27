@@ -30,7 +30,7 @@ name: Tentacle Windows Smoke E2E
 # the nightly suite: IISDeployE2E (66 tests; needs a ~1m IIS feature install +
 # XDT engine), the real-binary publish path, and register/capabilities/
 # diagnostic (cross-platform logic already exercised by unit + Linux E2E).
-# Deploy Package Windows agent bootstrap (DeployPackageWindowsE2E) IS included
+# Deploy Package Windows agent bootstrap smoke is included
 # here so PR gates prove the PowerShell install path. Skipping IIS lets the
 # tests job skip the slow IIS+XDT setup.
 
@@ -41,7 +41,11 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsE2E"
+        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsSmoke"
+      host_test_filter:
+        description: "xUnit --filter override for the Windows-host Calamari smoke subset"
+        required: false
+        default: "Category=DeployPackageWindowsHostSmoke"
 
 permissions:
   contents: read
@@ -78,7 +82,7 @@ jobs:
           # Same path set the gate cares about (Tentacle source, the Windows
           # upgrade script, the server-side upgrade strategy, the Windows E2E
           # project, and this workflow itself).
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/DeployPackageByCalamari\.ps1|src/Squid\.Calamari/Commands/Package/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.Calamari\.Tests/Calamari/Package/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Calamari/Commands/Package/|src/Squid\.Calamari/Commands/Configuration/ConfigurationVariablesStep\.cs|src/Squid\.Core/TentaclesScripts/DeployPackageByCalamari\.(sh|ps1)|src/Squid\.Core/Services/DeploymentExecution/Handlers/DeployPackageActionHandler\.cs|src/Squid\.Core/Services/DeploymentExecution/Intents/DeployPackageIntent\.cs|src/Squid\.Core/Services/DeploymentExecution/Packages/|src/Squid\.Core/Services/DeploymentExecution/Targets/Ssh/|src/Squid\.Core/Services/DeploymentExecution/Targets/Tentacle/Rendering/|src/Squid\.Core/Services/DeploymentExecution/Infrastructure/CalamariPayloadBuilder\.cs|src/Squid\.Core/Services/DeploymentExecution/Pipeline/Phases/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.E2ETests/Deployments/|tests/Squid\.Calamari\.Tests/Calamari/Package/|\.github/workflows/(tentacle-windows-smoke-e2e|e2e-k8s-pipeline)\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (Tentacle paths changed)"
           else
@@ -121,7 +125,7 @@ jobs:
       - name: Run Windows lifecycle smoke subset
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsE2E" }
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=DeployPackageWindowsSmoke" }
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
@@ -134,12 +138,10 @@ jobs:
       - name: Run Deploy Package Windows host install subset
         shell: pwsh
         run: |
-          # Real Windows-host proof for squid-calamari deploy-package conventions /
-          # config rewrite / rollback. These tests no-op on non-Windows, so the
-          # ubuntu Calamari job cannot provide this evidence.
+          $filter = if ("${{ github.event.inputs.host_test_filter }}") { "${{ github.event.inputs.host_test_filter }}" } else { "Category=DeployPackageWindowsHostSmoke" }
           dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj `
             --configuration Release `
-            --filter "Category=DeployPackageWindowsHostE2E" `
+            --filter $filter `
             --logger "console;verbosity=normal"
 
       - name: Capture leaked test services on failure

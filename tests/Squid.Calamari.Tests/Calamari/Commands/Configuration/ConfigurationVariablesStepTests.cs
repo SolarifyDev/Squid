@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Shouldly;
 using Squid.Calamari.Commands;
 using Squid.Calamari.Commands.Configuration;
+using Squid.Calamari.Tests.Calamari.Package;
 using Squid.Calamari.Variables;
 using Xunit;
 
@@ -15,6 +16,7 @@ namespace Squid.Calamari.Tests.Calamari.Commands.Configuration;
 /// replace matching appSettings / connectionStrings / applicationSettings
 /// entries from the deployment VariableSet when the feature is enabled.
 /// </summary>
+[Trait("Category", DeployPackageE2ECategories.Full)]
 public sealed class ConfigurationVariablesStepTests : IDisposable
 {
     private readonly string _workDir;

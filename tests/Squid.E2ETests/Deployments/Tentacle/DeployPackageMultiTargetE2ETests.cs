@@ -23,6 +23,7 @@ namespace Squid.E2ETests.Deployments.Tentacle;
 /// Uses mixed-mode fixture (polling + listening stubs) as two real targets with distinct roles.
 /// </summary>
 [Trait("Category", "E2E")]
+[Trait("Category", DeployPackageE2ECategories.Full)]
 public class DeployPackageMultiTargetE2ETests
     : IClassFixture<TentacleMixedModeE2EFixture<DeployPackageMultiTargetE2ETests>>, IAsyncLifetime
 {

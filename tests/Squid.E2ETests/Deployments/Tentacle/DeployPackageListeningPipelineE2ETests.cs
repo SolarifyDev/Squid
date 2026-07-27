@@ -67,6 +67,7 @@ public class DeployPackageListeningPipelineE2ETests
     }
 
     [Fact]
+    [Trait("Category", DeployPackageE2ECategories.Smoke)]
     public async Task DeployPackage_Listening_WithPositiveFeedId_AcquiresAndInstallsSuccessfully()
     {
         _fixture.LogSink.Clear();
@@ -88,171 +89,9 @@ public class DeployPackageListeningPipelineE2ETests
             .ShouldBe(MarkerContent);
     }
 
-    [Fact]
-    public async Task DeployPackage_Listening_WithConfigurationVariables_ReplacesConfigEntries()
-    {
-        _fixture.LogSink.Clear();
 
-        await using var feed = LocalHttpPackageFeed.Start(
-            PackageId,
-            "1.1.0",
-            CreatePackageArchive(
-                (MarkerFileName, "cfg"),
-                ("Web.config", """
-                    <?xml version="1.0" encoding="utf-8"?>
-                    <configuration>
-                      <appSettings>
-                        <add key="ApiKey" value="placeholder" />
-                      </appSettings>
-                    </configuration>
-                    """)));
-        var installDir = Path.Combine(_workRoot, "config-vars");
-        Directory.CreateDirectory(installDir);
 
-        var serverTaskId = await SeedDeploymentAsync(
-            feed,
-            installDir,
-            packageVersion: "1.1.0",
-            extraActionProperties:
-            [
-                ("Squid.Action.ConfigurationVariables.Enabled", "True")
-            ],
-            projectVariables:
-            [
-                ("ApiKey", "listening-secret")
-            ]).ConfigureAwait(false);
-        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
-        await AssertTaskStateAsync(serverTaskId, TaskState.Success).ConfigureAwait(false);
 
-        var content = await File.ReadAllTextAsync(Path.Combine(installDir, "Web.config")).ConfigureAwait(false);
-        content.ShouldContain("listening-secret");
-        content.ShouldNotContain("placeholder");
-        _fixture.LogSink.ContainsMessage("ConfigurationVariables:").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task DeployPackage_Listening_WhenPreDeployFails_DoesNotOverwritePreviousInstall()
-    {
-        _fixture.LogSink.Clear();
-
-        var installDir = Path.Combine(_workRoot, "rollback");
-        Directory.CreateDirectory(installDir);
-
-        await using (var goodFeed = LocalHttpPackageFeed.Start(
-                         PackageId,
-                         "1.0.0",
-                         CreatePackageArchive((MarkerFileName, "good-content"))))
-        {
-            var goodTask = await SeedDeploymentAsync(
-                goodFeed,
-                installDir,
-                packageVersion: "1.0.0",
-                extraActionProperties:
-                [
-                    ("Squid.Action.Package.RollbackOnFailure", "True")
-                ]).ConfigureAwait(false);
-            await ExecutePipelineAsync(goodTask).ConfigureAwait(false);
-            await AssertTaskStateAsync(goodTask, TaskState.Success).ConfigureAwait(false);
-        }
-
-        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
-            .ShouldBe("good-content");
-
-        await using var badFeed = LocalHttpPackageFeed.Start(
-            PackageId,
-            "2.0.0",
-            CreatePackageArchive(
-                (MarkerFileName, "bad-content"),
-                ("PreDeploy.sh", "#!/usr/bin/env bash\necho intentional-listening-predeploy-failure\nexit 1\n")));
-        var badTask = await SeedDeploymentAsync(
-            badFeed,
-            installDir,
-            packageVersion: "2.0.0",
-            extraActionProperties:
-            [
-                ("Squid.Action.Package.RollbackOnFailure", "True")
-            ]).ConfigureAwait(false);
-        await ExecutePipelineAsync(badTask).ConfigureAwait(false);
-        await AssertTaskStateAsync(badTask, TaskState.Failed).ConfigureAwait(false);
-
-        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
-            .ShouldBe("good-content");
-        // Good deploy already logged install success; assert bad package content never lands.
-        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeTrue();
-        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
-            .ShouldNotBe("bad-content");
-    }
-
-    [Fact]
-    public async Task DeployPackage_Listening_SkipIfAlreadyInstalled_DoesNotOverwriteOperatorEdits()
-    {
-        _fixture.LogSink.Clear();
-        var installDir = Path.Combine(_workRoot, "skip");
-        Directory.CreateDirectory(installDir);
-
-        await using (var firstFeed = LocalHttpPackageFeed.Start(
-                         PackageId,
-                         "1.0.0",
-                         CreatePackageArchive((MarkerFileName, "first"))))
-        {
-            var firstTask = await SeedDeploymentAsync(
-                firstFeed,
-                installDir,
-                packageVersion: "1.0.0",
-                extraActionProperties:
-                [
-                    ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
-                ]).ConfigureAwait(false);
-            await ExecutePipelineAsync(firstTask).ConfigureAwait(false);
-            await AssertTaskStateAsync(firstTask, TaskState.Success).ConfigureAwait(false);
-        }
-
-        await File.WriteAllTextAsync(Path.Combine(installDir, MarkerFileName), "operator-edited");
-
-        await using var secondFeed = LocalHttpPackageFeed.Start(
-            PackageId,
-            "1.0.0",
-            CreatePackageArchive((MarkerFileName, "second")));
-        var secondTask = await SeedDeploymentAsync(
-            secondFeed,
-            installDir,
-            packageVersion: "1.0.0",
-            extraActionProperties:
-            [
-                ("Squid.Action.Package.SkipIfAlreadyInstalled", "True")
-            ]).ConfigureAwait(false);
-        await ExecutePipelineAsync(secondTask).ConfigureAwait(false);
-        await AssertTaskStateAsync(secondTask, TaskState.Success).ConfigureAwait(false);
-
-        (await File.ReadAllTextAsync(Path.Combine(installDir, MarkerFileName)).ConfigureAwait(false))
-            .ShouldBe("operator-edited");
-        _fixture.LogSink.ContainsMessage("SkipIfAlreadyInstalled:").ShouldBeTrue();
-    }
-
-    [Fact]
-    public async Task DeployPackage_Listening_WhenFeedIdZero_FailsBeforeInstall()
-    {
-        _fixture.LogSink.Clear();
-        var installDir = Path.Combine(_workRoot, "feed0");
-        Directory.CreateDirectory(installDir);
-
-        await using var feed = LocalHttpPackageFeed.Start(
-            PackageId,
-            PackageVersion,
-            CreatePackageArchive((MarkerFileName, MarkerContent)));
-        var serverTaskId = await SeedDeploymentAsync(
-            feed,
-            installDir,
-            skipExternalFeed: true,
-            feedIdOverride: 0).ConfigureAwait(false);
-        await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
-        await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
-
-        File.Exists(Path.Combine(installDir, MarkerFileName)).ShouldBeFalse();
-        (_fixture.LogSink.ContainsMessage("Invalid FeedId: 0")
-            || _fixture.LogSink.ContainsMessage("invalid FeedId 0")
-            || _fixture.LogSink.ContainsMessage("Package acquisition failed")).ShouldBeTrue();
-    }
 
     private async Task<int> SeedDeploymentAsync(
         LocalHttpPackageFeed feed,

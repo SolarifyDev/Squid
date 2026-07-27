@@ -83,5 +83,6 @@ public static class LinuxTentacleE2ECategories
     /// Deploy a Package Linux agent bootstrap E2E using production
     /// <c>DeployPackageByCalamari.sh</c> + real Halibut dispatch.
     /// </summary>
-    public const string DeployPackage = "DeployPackageLinuxE2E";
+    public const string DeployPackageSmoke = "DeployPackageLinuxSmoke";
+    public const string DeployPackageFull = "DeployPackageLinuxFull";
 }
