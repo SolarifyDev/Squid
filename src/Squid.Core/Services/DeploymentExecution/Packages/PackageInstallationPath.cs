@@ -79,15 +79,15 @@ public static class PackageInstallationPath
         if (path.Contains("#{") || path.Contains('\0') || path.Any(char.IsControl))
             throw new InvalidOperationException("Custom installation directory contains unresolved variables or illegal characters.");
 
-        var normalized = path.Replace('\', '/');
+        var normalized = path.Replace('\\', '/');
         if (normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).Any(s => s == ".."))
             throw new InvalidOperationException("Custom installation directory must not contain '..' segments.");
 
         if (windowsRules)
         {
-            if (path.Length < 3 || !char.IsLetter(path[0]) || path[1] != ':' || (path[2] != '\' && path[2] != '/'))
+            if (path.Length < 3 || !char.IsLetter(path[0]) || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))
                 throw new InvalidOperationException("Custom installation directory must be a Windows absolute path.");
-            if (path.TrimEnd('\', '/').Length == 2)
+            if (path.TrimEnd('\\', '/').Length == 2)
                 throw new InvalidOperationException("Custom installation directory must not be a drive root.");
             return;
         }
