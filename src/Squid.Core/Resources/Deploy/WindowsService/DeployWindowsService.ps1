@@ -28,6 +28,30 @@ function Invoke-Sc {
     }
 }
 
+function Invoke-WithRetry {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [Parameter(Mandatory = $true)][string]$Description,
+        [int]$Attempts = 10,
+        [int]$DelayMilliseconds = 500
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            & $ScriptBlock
+            return
+        }
+        catch {
+            if ($attempt -eq $Attempts) {
+                throw
+            }
+
+            Write-Host "$Description failed on attempt $attempt/$Attempts; retrying in $DelayMilliseconds ms. $($_.Exception.Message)"
+            Start-Sleep -Milliseconds $DelayMilliseconds
+        }
+    }
+}
+
 function Wait-ServiceStatus {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -44,6 +68,63 @@ function Wait-ServiceStatus {
     }
 }
 
+function Wait-ServiceExists {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [int]$TimeoutSeconds = 30
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $service = Get-Service -Name $Name -ErrorAction SilentlyContinue
+        if ($null -ne $service) {
+            return
+        }
+
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Service '$Name' was not visible to Get-Service within $TimeoutSeconds seconds after SCM create."
+}
+
+function Get-ServiceProcessId {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $escapedName = $Name.Replace("'", "''")
+    $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$escapedName'" -ErrorAction SilentlyContinue
+    if ($null -eq $service) {
+        return 0
+    }
+
+    return [int]$service.ProcessId
+}
+
+function Wait-ServiceProcessExit {
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [int]$TimeoutSeconds = 30
+    )
+
+    if ($ProcessId -le 0) {
+        return
+    }
+
+    try {
+        $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if ($null -eq $process) {
+            return
+        }
+
+        Wait-Process -Id $ProcessId -Timeout $TimeoutSeconds -ErrorAction Stop
+    }
+    catch {
+        $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        if ($null -ne $process) {
+            throw "Service process '$ProcessId' did not exit within $TimeoutSeconds seconds after service stop."
+        }
+    }
+}
+
 function Stop-ServiceIfRunning {
     param([Parameter(Mandatory = $true)][string]$Name)
 
@@ -52,10 +133,13 @@ function Stop-ServiceIfRunning {
         return
     }
 
+    $processId = Get-ServiceProcessId -Name $Name
+
     if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
         Write-Host "Stopping Windows service '$Name' before reconfiguration."
         Stop-Service -Name $Name -Force -ErrorAction Stop
         Wait-ServiceStatus -Name $Name -Status ([System.ServiceProcess.ServiceControllerStatus]::Stopped)
+        Wait-ServiceProcessExit -ProcessId $processId
     }
 }
 
@@ -136,11 +220,15 @@ function Resolve-PackageRoot {
             }
 
             if ($purgeBeforeExtract -and (Test-Path -LiteralPath $extractTo)) {
-                Remove-Item -LiteralPath $extractTo -Recurse -Force
+                Invoke-WithRetry -Description "Removing existing package extract directory '$extractTo'" -ScriptBlock {
+                    Remove-Item -LiteralPath $extractTo -Recurse -Force
+                }
             }
 
             New-Item -ItemType Directory -Path $extractTo -Force | Out-Null
-            Copy-Item -Path (Join-Path $sourceItem.FullName '*') -Destination $extractTo -Recurse -Force
+            Invoke-WithRetry -Description "Copying package content from '$($sourceItem.FullName)' to '$extractTo'" -ScriptBlock {
+                Copy-Item -Path (Join-Path $sourceItem.FullName '*') -Destination $extractTo -Recurse -Force
+            }
             return (Resolve-Path -LiteralPath $extractTo).Path
         }
 
@@ -149,11 +237,15 @@ function Resolve-PackageRoot {
         }
 
         if ($purgeBeforeExtract -and (Test-Path -LiteralPath $extractTo)) {
-            Remove-Item -LiteralPath $extractTo -Recurse -Force
+            Invoke-WithRetry -Description "Removing existing package extract directory '$extractTo'" -ScriptBlock {
+                Remove-Item -LiteralPath $extractTo -Recurse -Force
+            }
         }
 
         New-Item -ItemType Directory -Path $extractTo -Force | Out-Null
-        Expand-Archive -LiteralPath $sourceItem.FullName -DestinationPath $extractTo -Force
+        Invoke-WithRetry -Description "Expanding package '$($sourceItem.FullName)' to '$extractTo'" -ScriptBlock {
+            Expand-Archive -LiteralPath $sourceItem.FullName -DestinationPath $extractTo -Force
+        }
         return (Resolve-Path -LiteralPath $extractTo).Path
     }
 
@@ -236,7 +328,12 @@ if ([string]::IsNullOrWhiteSpace($relativeExecutablePath)) {
 $arguments = Get-SquidParameter 'Squid.Action.WindowsService.Arguments'
 $startMode = Get-SquidParameter 'Squid.Action.WindowsService.StartMode' 'Automatic'
 $desiredStatus = Get-SquidParameter 'Squid.Action.WindowsService.DesiredStatus' 'Started'
-$dependencies = Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies')
+$dependencies = @(Split-Dependencies (Get-SquidParameter 'Squid.Action.WindowsService.Dependencies'))
+$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
+if ($null -ne $existingService) {
+    Stop-ServiceIfRunning -Name $serviceName
+}
 
 $packageRoot = Resolve-PackageRoot
 $executablePath = Resolve-ExecutablePath -PackageRoot $packageRoot -ExecutablePath $relativeExecutablePath
@@ -247,13 +344,12 @@ if (-not (Test-Path -LiteralPath $executablePath)) {
 $binaryPathName = Build-BinaryPathName -ExecutablePath $executablePath -Arguments $arguments
 $scStartMode = Convert-StartModeForSc $startMode
 $accountArgs = Get-ServiceAccountArgs
-$existingService = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
 
 if ($null -eq $existingService) {
     Write-Host "Creating Windows service '$serviceName'."
     Invoke-Sc create $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
+    Wait-ServiceExists -Name $serviceName
 } else {
-    Stop-ServiceIfRunning -Name $serviceName
     Write-Host "Reconfiguring Windows service '$serviceName'."
     Invoke-Sc config $serviceName binPath= $binaryPathName DisplayName= $displayName start= $scStartMode @accountArgs
 }
