@@ -363,20 +363,63 @@ public class AcquirePackagesPhaseTests : IDisposable
     [Fact]
     public async Task AcquirePackages_AcquisitionThrows_EmitsFailedEvent_AndAborts()
     {
-        _ctx.SelectedPackages = MakePackages((10, "nginx", "1.21.0"));
-        _ctx.Steps = [MakeAcquirePackagesStep()];
+        _ctx.SelectedPackages = MakePackages((10, "nginx", "1.21.0"), (10, "redis", "7.0.0"));
+        _ctx.Steps =
+        [
+            MakeAcquirePackagesStep(),
+            new DeploymentStepDto
+            {
+                Id = 1000,
+                StepOrder = 2,
+                Name = "Deploy After Acquire",
+                StepType = "DeployPackage",
+                Condition = "Success",
+                StartTrigger = "StartAfterPrevious",
+                PackageRequirement = "AfterPackageAcquisition",
+                Actions =
+                [
+                    new DeploymentActionDto
+                    {
+                        Id = 1,
+                        ActionOrder = 1,
+                        Name = "Deploy Web",
+                        ActionType = "Squid.Script",
+                        IsDisabled = false
+                    }
+                ]
+            }
+        ];
 
         _feedProviderMock.Setup(f => f.GetExternalFeedsByIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ExternalFeed> { MakeFeed(10) });
         _acquisitionMock.Setup(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), "nginx", "1.21.0", 1, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Network unreachable"));
+        _acquisitionMock.Setup(a => a.AcquireAsync(It.IsAny<ExternalFeed>(), "redis", "7.0.0", 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(MakeResult("redis", "7.0.0"));
 
         var ex = await Should.ThrowAsync<DeploymentAbortedException>(() => _phase.ExecuteAsync(_ctx, CancellationToken.None));
+        ex.Message.ShouldContain("Package acquisition failed");
         ex.Message.ShouldContain("Network unreachable");
+        ex.Message.ShouldContain("nginx");
 
         var failed = _capturedEvents.OfType<PackageDownloadFailedEvent>().ShouldHaveSingleItem();
         failed.Context.PackageError.ShouldBe("Network unreachable");
         failed.Context.Packages.PackageError.ShouldBe("Network unreachable");
+        failed.Context.PackageId.ShouldBe("nginx");
+        failed.Context.PackageVersion.ShouldBe("1.21.0");
+        failed.Context.PackageFeedId.ShouldBe(10);
+
+        _capturedEvents.OfType<PackagesAcquiredEvent>().ShouldBeEmpty();
+        _capturedEvents.OfType<PackageDownloadedEvent>().ShouldBeEmpty();
+        _ctx.AcquiredPackages.ShouldBeEmpty();
+
+        // Subsequent packages and non-acquire steps must not run after abort.
+        _acquisitionMock.Verify(
+            a => a.AcquireAsync(It.IsAny<ExternalFeed>(), "redis", "7.0.0", 1, It.IsAny<CancellationToken>()),
+            Times.Never);
+        _handlerRegistryMock.Verify(r => r.Resolve(It.IsAny<DeploymentActionDto>()), Times.Never);
+        _handlerRegistryMock.Verify(r => r.ResolveScope(It.IsAny<DeploymentActionDto>()), Times.Never);
+        _capturedEvents.OfType<StepStartingEvent>().ShouldBeEmpty();
     }
 
     [Fact]

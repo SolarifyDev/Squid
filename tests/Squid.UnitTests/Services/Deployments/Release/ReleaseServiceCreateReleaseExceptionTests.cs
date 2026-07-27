@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
@@ -180,6 +181,76 @@ public class ReleaseServiceCreateReleaseExceptionTests
             () => sut.CreateReleaseAsync(command, CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateReleaseAsync_SelectedPackageBlankVersion_Throws(string version)
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.SelectedPackages =
+        [
+            new CreateReleaseSelectedPackageDto
+            {
+                ActionName = "Deploy a Package",
+                PackageReferenceName = "Newtonsoft.Json",
+                Version = version,
+                FeedId = 7
+            }
+        ];
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1 });
+        SetupSuccessfulCreatePipeline();
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(
+            () => sut.CreateReleaseAsync(command, CancellationToken.None));
+
+        ex.Message.ShouldContain("Package version is required");
+        ex.Message.ShouldContain("Deploy a Package");
+        ex.Message.ShouldContain("Newtonsoft.Json");
+
+        _releaseSelectedPackageDataProvider.Verify(
+            x => x.InsertAllAsync(It.IsAny<IEnumerable<ReleaseSelectedPackage>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_SelectedPackage_PersistsFeedIdPackageReferenceNameAndVersion()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.SelectedPackages =
+        [
+            new CreateReleaseSelectedPackageDto
+            {
+                ActionName = "Deploy a Package",
+                PackageReferenceName = "Newtonsoft.Json",
+                Version = "13.0.3",
+                FeedId = 42
+            }
+        ];
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1 });
+        SetupSuccessfulCreatePipeline(releaseId: 1001);
+
+        IEnumerable<ReleaseSelectedPackage> inserted = null;
+        _releaseSelectedPackageDataProvider
+            .Setup(x => x.InsertAllAsync(It.IsAny<IEnumerable<ReleaseSelectedPackage>>(), It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ReleaseSelectedPackage>, CancellationToken>((packages, _) => inserted = packages.ToList())
+            .Returns(Task.CompletedTask);
+
+        await sut.CreateReleaseAsync(command, CancellationToken.None);
+
+        inserted.ShouldNotBeNull();
+        var package = inserted.ShouldHaveSingleItem();
+        package.ReleaseId.ShouldBe(1001);
+        package.ActionName.ShouldBe("Deploy a Package");
+        package.PackageReferenceName.ShouldBe("Newtonsoft.Json");
+        package.Version.ShouldBe("13.0.3");
+        package.FeedId.ShouldBe(42);
+    }
+
     private void SetupValidProjectAndChannel(Project project)
     {
         _projectDataProvider.Setup(x => x.GetProjectByIdAsync(project.Id, It.IsAny<CancellationToken>()))
@@ -187,6 +258,33 @@ public class ReleaseServiceCreateReleaseExceptionTests
 
         _channelDataProvider.Setup(x => x.GetChannelByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Channel { Id = 2, ProjectId = project.Id, SpaceId = project.SpaceId });
+    }
+
+    private void SetupSuccessfulCreatePipeline(int releaseId = 1)
+    {
+        _channelVersionRuleDataProvider
+            .Setup(x => x.GetRulesByChannelIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ChannelVersionRule>());
+
+        _releaseDataProvider
+            .Setup(x => x.GetReleaseByVersionAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ReleaseEntity)null);
+
+        _deploymentSnapshotService
+            .Setup(x => x.SnapshotVariableSetFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Squid.Message.Models.Deployments.Snapshots.VariableSetSnapshotDto { Id = 10 });
+        _deploymentSnapshotService
+            .Setup(x => x.SnapshotProcessFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Squid.Message.Models.Deployments.Snapshots.DeploymentProcessSnapshotDto { Id = 20 });
+
+        _releaseDataProvider
+            .Setup(x => x.CreateReleaseAsync(It.IsAny<ReleaseEntity>(), true, It.IsAny<CancellationToken>()))
+            .Callback<ReleaseEntity, bool, CancellationToken>((release, _, _) => release.Id = releaseId)
+            .Returns(Task.CompletedTask);
+
+        _mapper
+            .Setup(x => x.Map<Squid.Message.Models.Deployments.Release.ReleaseDto>(It.IsAny<ReleaseEntity>()))
+            .Returns(new Squid.Message.Models.Deployments.Release.ReleaseDto { Id = releaseId });
     }
 
     private void SetupRulesWithViolations()
