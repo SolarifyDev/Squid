@@ -263,7 +263,7 @@ public class PackageAcquisitionServiceTests : IDisposable
 
         var result = await _sut.AcquireAsync(feed, "com.acme:app", "1.0.0", 910, CancellationToken.None);
 
-        Path.GetFileName(result.LocalPath).ShouldBe("com.acme_app.1.0.0.zip");
+        Path.GetFileName(result.LocalPath).ShouldBe("com.acme_app--3384cf664a7e.1.0.0.zip");
         result.LocalPath.ShouldNotContain(":");
     }
 

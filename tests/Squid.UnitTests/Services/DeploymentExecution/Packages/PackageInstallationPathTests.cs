@@ -57,4 +57,33 @@ public class PackageInstallationPathTests
     {
         Should.Throw<InvalidOperationException>(() => PackageInstallationPath.ValidateCustomPath(path, windowsRules: true));
     }
+
+    [Theory]
+    [InlineData("Acme.Web", "Acme.Web")]
+    [InlineData("owner_repo", "owner_repo")]
+    public void EncodeExternalIdentitySegment_KeepsSafeIds(string input, string expected)
+        => PackageInstallationPath.EncodeExternalIdentitySegment(input, "Package").ShouldBe(expected);
+
+    [Fact]
+    public void EncodeExternalIdentitySegment_OwnerRepo_IsStableAndCollisionResistant()
+    {
+        var a = PackageInstallationPath.EncodeExternalIdentitySegment("owner/repo", "Package");
+        var b = PackageInstallationPath.EncodeExternalIdentitySegment("owner_repo", "Package");
+        a.ShouldNotBe(b);
+        a.ShouldStartWith("owner_repo--");
+        a.Length.ShouldBeGreaterThan("owner_repo--".Length + 11);
+        // deterministic
+        PackageInstallationPath.EncodeExternalIdentitySegment("owner/repo", "Package").ShouldBe(a);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(".")]
+    [InlineData("..")]
+    public void EncodeExternalIdentitySegment_RejectsEmptyOrDot(string input)
+    {
+        Should.Throw<InvalidOperationException>(() =>
+            PackageInstallationPath.EncodeExternalIdentitySegment(input, "Package"));
+    }
 }

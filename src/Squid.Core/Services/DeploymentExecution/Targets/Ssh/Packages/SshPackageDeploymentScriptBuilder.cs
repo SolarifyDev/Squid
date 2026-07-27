@@ -1,3 +1,5 @@
+using Squid.Core.Services.DeploymentExecution.Packages;
+
 namespace Squid.Core.Services.DeploymentExecution.Ssh.Packages;
 
 public sealed class SshPackageDeployScriptModel
@@ -297,8 +299,8 @@ public static class SshPackageDeploymentScriptBuilder
             return slash >= 0 ? name[(slash + 1)..] : name;
         }
 
-        var safeId = SanitizeSegment(model.PackageId);
-        var safeVersion = SanitizeSegment(model.PackageVersion);
+        var safeId = PackageInstallationPath.EncodeExternalIdentitySegment(model.PackageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(model.PackageVersion, "Version");
         return $"{safeId}.{safeVersion}.nupkg";
     }
 
@@ -408,16 +410,6 @@ public static class SshPackageDeploymentScriptBuilder
             "  echo \"[extraction] Failed to extract $ARCHIVE into $STAGING_DIR\" >&2\n" +
             "  exit 1\n" +
             "fi";
-    }
-
-    internal static string SanitizeSegment(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return "package";
-
-        var chars = value.Select(c => c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' ? '_' : c).ToArray();
-        var sanitized = new string(chars).Trim();
-        return string.IsNullOrEmpty(sanitized) ? "package" : sanitized;
     }
 
     internal static string Q(string value)

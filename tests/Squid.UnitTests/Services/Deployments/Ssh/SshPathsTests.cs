@@ -86,7 +86,7 @@ public class SshPathsTests
     [InlineData("/opt/squid", "MyApp", "1.0.0", ".nupkg", "/opt/squid/Packages/MyApp.1.0.0.nupkg")]
     [InlineData("/opt/squid", "MyApp", "1.0.0", ".zip", "/opt/squid/Packages/MyApp.1.0.0.zip")]
     [InlineData("/opt/squid", "MyApp", "1.0.0", ".tar.gz", "/opt/squid/Packages/MyApp.1.0.0.tar.gz")]
-    [InlineData("/opt/squid", "owner/repo", "v1", ".tar.gz", "/opt/squid/Packages/owner_repo.v1.tar.gz")]
+    [InlineData("/opt/squid", "owner/repo", "v1", ".tar.gz", "/opt/squid/Packages/owner_repo--65e817eec8cd.v1.tar.gz")]
     [InlineData("/home/deploy/.squid", "Acme.App", "1.2.3", "zip", "/home/deploy/.squid/Packages/Acme.App.1.2.3.zip")]
     public void PackageArchivePath_UsesRealExtensionAndSanitizesPackageId(
         string baseDir, string packageId, string version, string extension, string expected)

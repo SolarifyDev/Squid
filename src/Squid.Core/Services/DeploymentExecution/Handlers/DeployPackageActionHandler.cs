@@ -62,10 +62,10 @@ public class DeployPackageActionHandler : IActionHandler
                       ?? throw new DeploymentValidationException("Squid.Project.Name is required.");
 
         var segments = new PackageInstallationPathSegments(
-            PackageInstallationPath.SanitizeSegment(env, "Environment"),
-            PackageInstallationPath.SanitizeSegment(project, "Project"),
-            PackageInstallationPath.SanitizeSegment(packageId, "Package"),
-            PackageInstallationPath.SanitizeSegment(version, "Version"));
+            PackageInstallationPath.ValidateNamedSegment(env, "Environment"),
+            PackageInstallationPath.ValidateNamedSegment(project, "Project"),
+            PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package"),
+            PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version"));
 
         var customDir = action.GetProperty(SpecialVariables.Action.CustomInstallationDirectory) ?? string.Empty;
         var normalizedMode = string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase) ? "Custom" : "Versioned";

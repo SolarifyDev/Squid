@@ -45,8 +45,8 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         Directory.CreateDirectory(storageDir);
 
         var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
-        var safePackageId = SanitizeFileSegment(packageId);
-        var safeVersion = SanitizeFileSegment(version);
+        var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
         var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");
         await File.WriteAllBytesAsync(localPath, fetchResult.RawBytes, ct).ConfigureAwait(false);
 
@@ -129,18 +129,4 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         return InferExtensionFromPath(fileName);
     }
 
-    private static string SanitizeFileSegment(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return "package";
-
-        // Align with SSH remote segment rules so acquired local names match remote staging names.
-        var invalid = Path.GetInvalidFileNameChars();
-        var chars = value.Select(c =>
-            invalid.Contains(c) || c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|'
-                ? '_'
-                : c).ToArray();
-        var sanitized = new string(chars).Trim();
-        return string.IsNullOrEmpty(sanitized) ? "package" : sanitized;
-    }
 }

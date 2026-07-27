@@ -1,5 +1,6 @@
 using Renci.SshNet;
 using Serilog;
+using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
@@ -59,8 +60,8 @@ public static class SshPaths
 
     public static string PackageArchivePath(string baseDir, string packageId, string version, string extensionOrFileName = null)
     {
-        var safePackageId = SanitizePathSegment(packageId);
-        var safeVersion = SanitizePathSegment(version);
+        var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
         var extension = NormalizeArchiveExtension(extensionOrFileName);
         return $"{PackageCacheDirectory(baseDir)}/{safePackageId}.{safeVersion}{extension}";
     }
@@ -82,23 +83,13 @@ public static class SshPaths
     }
 
     public static string PackageExtractDir(string baseDir, string packageId, string version)
-        => $"{PackageCacheDirectory(baseDir)}/{SanitizePathSegment(packageId)}.{SanitizePathSegment(version)}";
+        => $"{PackageCacheDirectory(baseDir)}/{PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package")}.{PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version")}";
 
     public static string ApplicationsRoot(string homeDir)
         => $"{homeDir.TrimEnd('/')}/.squid/Applications";
 
     public static string VersionedInstallationDirectory(string homeDir, string environment, string project, string packageId, string version)
         => $"{ApplicationsRoot(homeDir)}/{environment}/{project}/{packageId}/{version}";
-
-    internal static string SanitizePathSegment(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return "package";
-
-        var chars = value.Select(c => c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' ? '_' : c).ToArray();
-        var sanitized = new string(chars).Trim();
-        return string.IsNullOrEmpty(sanitized) ? "package" : sanitized;
-    }
 
     internal static string NormalizeArchiveExtension(string extensionOrFileName)
     {

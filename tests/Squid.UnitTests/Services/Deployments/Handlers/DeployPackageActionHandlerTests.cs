@@ -1,6 +1,7 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -93,5 +94,18 @@ public class DeployPackageActionHandlerTests
         var intent = (DeployPackageIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
         intent.CustomInstallationDirectory.ShouldBe("/opt/apps/web");
         intent.InstallationDirectoryMode.ShouldBe("Custom");
+    }
+
+    [Fact]
+    public async Task DescribeIntent_GitHubOwnerRepo_PreservesIdentityAndEncodesPathSegments()
+    {
+        var ctx = CreateCtx(packageId: "owner/repo", packageReferenceName: "owner/repo", version: "v1.0.0");
+        var intent = (DeployPackageIntent)await ((IActionHandler)_handler).DescribeIntentAsync(ctx, CancellationToken.None);
+        intent.Package.PackageId.ShouldBe("owner/repo");
+        intent.Package.Version.ShouldBe("v1.0.0");
+        intent.PathSegments.PackageId.ShouldBe(
+            PackageInstallationPath.EncodeExternalIdentitySegment("owner/repo", "Package"));
+        intent.PathSegments.Version.ShouldBe(
+            PackageInstallationPath.EncodeExternalIdentitySegment("v1.0.0", "Version"));
     }
 }
