@@ -134,35 +134,47 @@ public sealed class WindowsServiceDeployRealHostE2ETests
 
     private static PsResult RunPowerShell(string script)
     {
+        // Windows PowerShell 5.1 can misparse UTF-8 stdin that begins with a preamble
+        // comment; run a BOM-less script file to match the real Tentacle script path.
+        var scriptPath = Path.Combine(Path.GetTempPath(), $"squid-windows-service-deploy-e2e-{Guid.NewGuid():N}.ps1");
+        File.WriteAllText(scriptPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
         var startInfo = new ProcessStartInfo
         {
             FileName = "powershell.exe",
-            Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -",
-            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            StandardInputEncoding = Encoding.UTF8,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+        startInfo.ArgumentList.Add("-NoProfile");
+        startInfo.ArgumentList.Add("-NonInteractive");
+        startInfo.ArgumentList.Add("-ExecutionPolicy");
+        startInfo.ArgumentList.Add("Bypass");
+        startInfo.ArgumentList.Add("-File");
+        startInfo.ArgumentList.Add(scriptPath);
 
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException("Failed to launch powershell.exe");
-
-        process.StandardInput.Write(script);
-        process.StandardInput.Close();
-
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        if (!process.WaitForExit(TimeSpan.FromMinutes(2)))
+        try
         {
-            try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
-            return new PsResult(124, stdout, stderr + "\nPowerShell script timed out after 2 minutes.");
-        }
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Failed to launch powershell.exe");
 
-        return new PsResult(process.ExitCode, stdout, stderr);
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            if (!process.WaitForExit(TimeSpan.FromMinutes(2)))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* best-effort cleanup */ }
+                return new PsResult(124, stdout, stderr + "\nPowerShell script timed out after 2 minutes.");
+            }
+
+            return new PsResult(process.ExitCode, stdout, stderr);
+        }
+        finally
+        {
+            try { if (File.Exists(scriptPath)) File.Delete(scriptPath); } catch { /* best-effort cleanup */ }
+        }
     }
 
     private static bool WaitForFileContent(string path, string expectedContent, TimeSpan timeout)
