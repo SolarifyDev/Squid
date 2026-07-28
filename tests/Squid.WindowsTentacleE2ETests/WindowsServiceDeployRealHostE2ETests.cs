@@ -84,14 +84,43 @@ public sealed class WindowsServiceDeployRealHostE2ETests
                 "This proves the existing service was stopped, package content was replaced, and SCM restarted the service process.");
     }
 
-    private static PsResult DeployPackage(DeployServiceTestContext ctx, string packageDir, string displayName, string description)
+    [Fact]
+    public void RealWindowsHost_InvalidExecutablePath_FailsBeforeServiceCreate()
+    {
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new DeployServiceTestContext("1.0.0");
+
+        var result = DeployPackage(
+            ctx,
+            ctx.PackageDir,
+            $"Squid Deploy E2E {ctx.Suffix}",
+            "Invalid executable path deployment should fail.",
+            executablePath: "missing-service-binary.exe");
+
+        result.ExitCode.ShouldNotBe(0,
+            customMessage:
+                "Deploy Windows Service must fail when the configured executable path does not exist in package content. " +
+                $"STDOUT:\n{result.StdOut}\n\nSTDERR:\n{result.StdErr}");
+        (result.StdOut + result.StdErr).ShouldContain("Windows service executable",
+            customMessage: "Failure output should point operators at the missing executable path.");
+        PowerShellSingleLine($"(Get-Service | Where-Object {{ $_.Name -eq '{EscapePowerShellSingleQuoted(ctx.Fixture.ServiceName)}' }} | Measure-Object).Count")
+            .ShouldBe("0", customMessage: "The deploy script validates the executable before sc.exe create, so no broken service should be left behind.");
+    }
+
+    private static PsResult DeployPackage(
+        DeployServiceTestContext ctx,
+        string packageDir,
+        string displayName,
+        string description,
+        string executablePath = "SquidUpgradeE2ETestService.exe")
     {
         var script = WindowsServiceDeployScriptBuilder.Build(BuildAction(
             (WindowsServiceDeployProperties.CreateOrUpdateService, "True"),
             (WindowsServiceDeployProperties.ServiceName, ctx.Fixture.ServiceName),
             (WindowsServiceDeployProperties.DisplayName, displayName),
             (WindowsServiceDeployProperties.Description, description),
-            (WindowsServiceDeployProperties.ExecutablePath, "SquidUpgradeE2ETestService.exe"),
+            (WindowsServiceDeployProperties.ExecutablePath, executablePath),
             (WindowsServiceDeployProperties.ServiceAccount, "LocalSystem"),
             (WindowsServiceDeployProperties.StartMode, "Manual"),
             (WindowsServiceDeployProperties.DesiredStatus, "Started"),

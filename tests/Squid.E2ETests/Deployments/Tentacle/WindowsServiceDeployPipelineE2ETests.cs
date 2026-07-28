@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.E2ETests.Deployments;
 using Squid.E2ETests.Infrastructure;
@@ -153,6 +154,46 @@ public class WindowsServiceDeployPipelineE2ETests
 
         captured.Masker.ShouldNotBeNull("Sensitive service-account password must be carried in the script request masker.");
         captured.Masker.Mask($"password={servicePassword}").ShouldBe($"password={SensitiveValueMasker.MaskToken}");
+    }
+
+    [Fact]
+    public async Task FullPipeline_DeployWindowsServiceOnNonWindowsTentacle_IsSkippedBeforeExecution()
+    {
+        ExecutionCapture.Clear();
+
+        var seed = await SeedWindowsServiceDeploymentAsync(
+            "TentaclePolling",
+            variables: null,
+            properties: new Dictionary<string, string>
+            {
+                ["Squid.Action.WindowsService.CreateOrUpdateService"] = "True",
+                ["Squid.Action.WindowsService.ServiceName"] = "LinuxSkippedWorker",
+                ["Squid.Action.WindowsService.ExecutablePath"] = "Order.Worker.exe",
+                ["Squid.Action.WindowsService.StartMode"] = "Automatic",
+                ["Squid.Action.WindowsService.DesiredStatus"] = "Started"
+            });
+
+        await _fixture.Run<IMachineRuntimeCapabilitiesCache>(capabilities =>
+        {
+            capabilities.Store(seed.MachineId, new Dictionary<string, string>
+            {
+                ["os"] = AgentOperatingSystems.Linux,
+                ["installedShells"] = "powershell,pwsh,cmd",
+                ["defaultShell"] = "powershell"
+            }, agentVersion: "9.0.0");
+
+            return Task.CompletedTask;
+        });
+
+        await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
+        {
+            await executor.ProcessAsync(seed.ServerTaskId, CancellationToken.None);
+        });
+
+        await AssertTaskStateAsync(seed.ServerTaskId, TaskState.Success);
+
+        ExecutionCapture.CapturedRequests.ShouldBeEmpty(
+            customMessage: "A Deploy Windows Service action planned for a non-Windows Tentacle target must be capability-filtered before script rendering or execution.");
     }
 
     private async Task<SeededDeployment> SeedWindowsServiceDeploymentAsync(
