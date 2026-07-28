@@ -44,7 +44,7 @@ public class WindowsServiceDeployScriptBuilderTests
     }
 
     [Fact]
-    public void Build_EmbeddedScriptStopsExistingService_BeforePackageExtraction()
+    public void Build_EmbeddedScriptStopsExistingService_BeforePackageDirectoryCopy()
     {
         var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
 
@@ -56,11 +56,11 @@ public class WindowsServiceDeployScriptBuilderTests
         stopExistingServiceIndex.ShouldBeGreaterThanOrEqualTo(0);
         packageRootIndex.ShouldBeGreaterThanOrEqualTo(0);
         stopExistingServiceIndex.ShouldBeLessThan(packageRootIndex,
-            customMessage: "Existing services must be stopped before package purge/extract touches the install directory.");
+            customMessage: "Existing services must be stopped before package copy touches the install directory.");
     }
 
     [Fact]
-    public void Build_EmbeddedScriptWaitsForStoppedServiceProcess_BeforePackageExtraction()
+    public void Build_EmbeddedScriptWaitsForStoppedServiceProcess_BeforePackageDirectoryCopy()
     {
         var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
 
@@ -72,7 +72,7 @@ public class WindowsServiceDeployScriptBuilderTests
         waitProcessCallIndex.ShouldBeGreaterThanOrEqualTo(0);
         packageRootIndex.ShouldBeGreaterThanOrEqualTo(0);
         waitProcessCallIndex.ShouldBeLessThan(packageRootIndex,
-            customMessage: "Existing service processes must exit before package purge/extract can safely replace locked binaries.");
+            customMessage: "Existing service processes must exit before package copy can safely replace locked binaries.");
     }
 
     [Fact]
@@ -83,7 +83,18 @@ public class WindowsServiceDeployScriptBuilderTests
         script.ShouldContain("function Invoke-WithRetry");
         script.ShouldContain("Invoke-WithRetry -Description \"Removing existing package extract directory '$extractTo'\"");
         script.ShouldContain("Invoke-WithRetry -Description \"Copying package content from '$($sourceItem.FullName)' to '$extractTo'\"");
-        script.ShouldContain("Invoke-WithRetry -Description \"Expanding package '$($sourceItem.FullName)' to '$extractTo'\"");
+        script.ShouldNotContain("Expand-Archive");
+        script.ShouldContain("Deploy Windows Service expects package acquisition to provide an extracted package directory");
+    }
+
+    [Fact]
+    public void Build_EmbeddedScriptFailsWhenNoPackageSourceIsAvailable()
+    {
+        var script = WindowsServiceDeployScriptBuilder.Build(BuildAction());
+
+        script.ShouldContain("No Windows service package source was available for this action.");
+        script.ShouldContain("Verify the release selected package is bound to this action name");
+        script.ShouldNotContain("return (Get-Location).Path");
     }
 
     [Fact]
