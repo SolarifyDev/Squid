@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -285,7 +286,11 @@ public class HalibutMachineExecutionStrategyTests
             .ReturnsAsync(NewStartResponse("package-ref"));
 
         var packagePath = Path.Combine(Path.GetTempPath(), $"Order.Worker.{Guid.NewGuid():N}.nupkg");
-        await File.WriteAllBytesAsync(packagePath, new byte[] { 1, 2, 3 }, CancellationToken.None);
+        CreatePackageArchive(packagePath, new Dictionary<string, string>
+        {
+            ["Demo.WindowsService.exe"] = "fake executable",
+            ["appsettings.json"] = "{}"
+        });
 
         try
         {
@@ -299,7 +304,8 @@ public class HalibutMachineExecutionStrategyTests
 
             capturedCommand.ShouldNotBeNull();
             capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references.json");
-            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references/Order.Worker.1.2.3.nupkg");
+            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references/Order.Worker.1.2.3/Demo.WindowsService.exe");
+            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references/Order.Worker.1.2.3/appsettings.json");
 
             var manifest = capturedCommand.Files.Single(f => f.Name == "package-references.json");
             var manifestPath = Path.Combine(Path.GetTempPath(), $"package-references-{Guid.NewGuid():N}.json");
@@ -310,7 +316,7 @@ public class HalibutMachineExecutionStrategyTests
                 var manifestJson = await File.ReadAllTextAsync(manifestPath, CancellationToken.None);
                 manifestJson.ShouldContain("\"PackageId\":\"Order.Worker\"");
                 manifestJson.ShouldContain("\"Version\":\"1.2.3\"");
-                manifestJson.ShouldContain("\"PackagePath\":\"package-references/Order.Worker.1.2.3.nupkg\"");
+                manifestJson.ShouldContain("\"PackagePath\":\"package-references/Order.Worker.1.2.3\"");
             }
             finally
             {
@@ -320,6 +326,19 @@ public class HalibutMachineExecutionStrategyTests
         finally
         {
             File.Delete(packagePath);
+        }
+    }
+
+    private static void CreatePackageArchive(string path, IReadOnlyDictionary<string, string> files)
+    {
+        using var stream = File.Create(path);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
+
+        foreach (var file in files)
+        {
+            var entry = archive.CreateEntry(file.Key);
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write(file.Value);
         }
     }
 

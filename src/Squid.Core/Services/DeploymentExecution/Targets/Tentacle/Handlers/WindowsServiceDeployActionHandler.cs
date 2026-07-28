@@ -13,6 +13,8 @@ public class WindowsServiceDeployActionHandler : IActionHandler
 {
     public string ActionType => SpecialVariables.ActionTypes.DeployWindowsService;
 
+    public ExecutionScope ExecutionScope => ExecutionScope.TargetLevel;
+
     public IReadOnlyDictionary<string, IReadOnlySet<string>> StaticRequirements { get; } =
         CapabilityRequirements.Empty
             .Require(CapabilityKeys.OsSlot, CapabilityKeys.Os.Windows)

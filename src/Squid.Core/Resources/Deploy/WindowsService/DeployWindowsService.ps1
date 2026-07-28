@@ -232,28 +232,15 @@ function Resolve-PackageRoot {
             return (Resolve-Path -LiteralPath $extractTo).Path
         }
 
-        if ([string]::IsNullOrWhiteSpace($extractTo)) {
-            $extractTo = Join-Path $sourceItem.DirectoryName ([System.IO.Path]::GetFileNameWithoutExtension($sourceItem.Name))
-        }
-
-        if ($purgeBeforeExtract -and (Test-Path -LiteralPath $extractTo)) {
-            Invoke-WithRetry -Description "Removing existing package extract directory '$extractTo'" -ScriptBlock {
-                Remove-Item -LiteralPath $extractTo -Recurse -Force
-            }
-        }
-
-        New-Item -ItemType Directory -Path $extractTo -Force | Out-Null
-        Invoke-WithRetry -Description "Expanding package '$($sourceItem.FullName)' to '$extractTo'" -ScriptBlock {
-            Expand-Archive -LiteralPath $sourceItem.FullName -DestinationPath $extractTo -Force
-        }
-        return (Resolve-Path -LiteralPath $extractTo).Path
+        throw "Windows service package source '$($sourceItem.FullName)' is a file. Deploy Windows Service expects package acquisition to provide an extracted package directory; do not pass a raw .nupkg/.zip archive to the action script."
     }
 
     if (-not [string]::IsNullOrWhiteSpace($extractTo) -and (Test-Path -LiteralPath $extractTo)) {
         return (Resolve-Path -LiteralPath $extractTo).Path
     }
 
-    return (Get-Location).Path
+    $workingDirectory = (Get-Location).Path
+    throw "No Windows service package source was available for this action. Squid expected either Squid.Action.WindowsService.Package.SourcePath, a package-references.json entry, a package-references directory, or an existing Squid.Action.WindowsService.Package.ExtractTo path. Working directory: '$workingDirectory'. Verify the release selected package is bound to this action name and that the Acquire Packages step completed."
 }
 
 function Resolve-ExecutablePath {

@@ -8,8 +8,10 @@ using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Releases.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Commands.Deployments.Release;
+using Squid.Message.Constants;
 using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
+using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Requests.Deployments.Release;
 
 namespace Squid.Core.Services.Deployments.Release;
@@ -125,6 +127,8 @@ public partial class ReleaseService : IReleaseService
         release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
         
         await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        LogSelectedPackageActionNameComparison(release.Id, deploymentProcessSnapshot, command.SelectedPackages);
 
         await PersistSelectedPackagesAsync(release.Id, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
 
@@ -255,9 +259,56 @@ public partial class ReleaseService : IReleaseService
                 FeedId = sp.FeedId,
                 PackageReferenceName = sp.PackageReferenceName ?? string.Empty,
                 Version = sp.Version ?? string.Empty
-            });
+            })
+            .ToList();
+
+        if (entities.Count == 0) return;
+
+        Log.Information(
+            "[Release] Persisting selected packages for release {ReleaseId}: {SelectedPackages}",
+            releaseId,
+            entities.Select(p => new
+            {
+                p.ActionName,
+                p.PackageReferenceName,
+                p.Version,
+                p.FeedId
+            }).ToList());
 
         await _releaseSelectedPackageDataProvider.InsertAllAsync(entities, ct).ConfigureAwait(false);
+    }
+
+    private static void LogSelectedPackageActionNameComparison(
+        int releaseId,
+        DeploymentProcessSnapshotDto deploymentProcessSnapshot,
+        List<CreateReleaseSelectedPackageDto> selectedPackages)
+    {
+        var windowsServiceActions = deploymentProcessSnapshot.Data.StepSnapshots
+            .SelectMany(step => step.ActionSnapshots.Select(action => new
+            {
+                StepName = step.Name,
+                action.Name,
+                action.ActionType
+            }))
+            .Where(action => string.Equals(
+                action.ActionType,
+                SpecialVariables.ActionTypes.DeployWindowsService,
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (windowsServiceActions.Count == 0) return;
+
+        var selectedPackageActionNames = (selectedPackages ?? new List<CreateReleaseSelectedPackageDto>())
+            .Select(package => package.ActionName)
+            .Where(actionName => !string.IsNullOrWhiteSpace(actionName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Information(
+            "[Release] Windows Service action/package action-name comparison for release {ReleaseId}: SnapshotActions={SnapshotActions}; SelectedPackageActionNames={SelectedPackageActionNames}",
+            releaseId,
+            windowsServiceActions,
+            selectedPackageActionNames);
     }
 
     private async Task ValidateChannelVersionRulesAsync(int channelId, List<CreateReleaseSelectedPackageDto> selectedPackages, CancellationToken ct)
