@@ -283,6 +283,9 @@ public partial class ReleaseService : IReleaseService
         DeploymentProcessSnapshotDto deploymentProcessSnapshot,
         List<CreateReleaseSelectedPackageDto> selectedPackages)
     {
+        if (deploymentProcessSnapshot?.Data?.StepSnapshots == null)
+            return;
+
         var windowsServiceActions = deploymentProcessSnapshot.Data.StepSnapshots
             .SelectMany(step => step.ActionSnapshots.Select(action => new
             {
