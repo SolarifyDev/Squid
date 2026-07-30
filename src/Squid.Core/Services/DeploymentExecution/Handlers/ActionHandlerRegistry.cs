@@ -1,3 +1,4 @@
+using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.Core.Services.DeploymentExecution.Handlers;
@@ -33,6 +34,17 @@ public class ActionHandlerRegistry : IActionHandlerRegistry
     {
         var handler = Resolve(action);
 
-        return handler?.ExecutionScope ?? ExecutionScope.StepLevel;
+        if (handler != null)
+            return handler.ExecutionScope;
+
+        // Package acquisition is an internally injected synthetic step. It has no
+        // IActionHandler because ExecuteStepsPhase handles it directly.
+        if (string.Equals(action?.ActionType, SpecialVariables.ActionTypes.TentaclePackage, StringComparison.OrdinalIgnoreCase))
+            return ExecutionScope.StepLevel;
+
+        // An unregistered action must not be silently reclassified as server-only.
+        // Target-level is conservative: the pipeline will expose the missing handler
+        // as a configuration error instead of reporting a successful no-op deploy.
+        return ExecutionScope.TargetLevel;
     }
 }

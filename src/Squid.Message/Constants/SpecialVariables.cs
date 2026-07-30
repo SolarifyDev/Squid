@@ -18,6 +18,7 @@ public static class SpecialVariables
         public const string HealthCheck = "Squid.HealthCheck";
         public const string DeployRelease = "Squid.DeployRelease";
         public const string DeployIngress = "Squid.DeployIngress";
+        public const string DeployWindowsService = "Squid.DeployWindowsService";
         public const string KubernetesKustomize = "Squid.KubernetesKustomize";
         public const string OpenClawInvokeTool = "Squid.OpenClaw.InvokeTool";
         public const string OpenClawRunAgent = "Squid.OpenClaw.RunAgent";
@@ -51,6 +52,7 @@ public static class SpecialVariables
             HealthCheck,
             DeployRelease,
             DeployIngress,
+            DeployWindowsService,
             KubernetesKustomize,
             OpenClawInvokeTool,
             OpenClawRunAgent,

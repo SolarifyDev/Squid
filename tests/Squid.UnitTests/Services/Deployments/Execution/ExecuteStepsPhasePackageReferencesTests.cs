@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Handlers;
@@ -10,6 +11,7 @@ using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
@@ -83,7 +85,7 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
 
     public void Dispose() { }
 
-    private DeploymentStepDto MakeStep(string actionName) => new()
+    private DeploymentStepDto MakeStep(string actionName, string actionType = "Squid.Script") => new()
     {
         Id = 1,
         StepOrder = 1,
@@ -99,7 +101,7 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
                 Id = 1,
                 ActionOrder = 1,
                 Name = actionName,
-                ActionType = "Squid.Script",
+                ActionType = actionType,
                 IsDisabled = false,
                 Properties = new List<DeploymentActionPropertyDto>
                 {
@@ -201,6 +203,35 @@ public class ExecuteStepsPhasePackageReferencesTests : IDisposable
         request.PackageReferences.Count.ShouldBe(2);
         request.PackageReferences.ShouldContain(p => p.PackageId == "nginx" && p.Version == "1.21.0");
         request.PackageReferences.ShouldContain(p => p.PackageId == "redis" && p.Version == "7.0.0");
+    }
+
+    [Fact]
+    public async Task BuildPackageReferences_WindowsServiceAction_PreservesSelectedPackageOrder()
+    {
+        const string actionName = "Deploy Worker";
+        _ctx.SelectedPackages = new List<ReleaseSelectedPackage>
+        {
+            new() { Id = 1, ReleaseId = 1, FeedId = 10, ActionName = actionName, PackageReferenceName = "Order.Worker", Version = "1.2.3" },
+            new() { Id = 2, ReleaseId = 1, FeedId = 10, ActionName = actionName, PackageReferenceName = "Order.Config", Version = "4.5.6" }
+        };
+        _ctx.AcquiredPackages = new Dictionary<string, PackageAcquisitionResult>
+        {
+            ["Order.Config"] = new PackageAcquisitionResult("/tmp/order-config.4.5.6.nupkg", "Order.Config", "4.5.6", 2000, "config-hash"),
+            ["order.worker"] = new PackageAcquisitionResult("/tmp/order-worker.1.2.3.nupkg", "Order.Worker", "1.2.3", 5000, "worker-hash")
+        };
+        _ctx.Steps = new List<DeploymentStepDto>
+        {
+            MakeStep(actionName, actionType: SpecialVariables.ActionTypes.DeployWindowsService)
+        };
+        _ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTargetContext() };
+
+        SetupActionHandler(actionName);
+
+        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+
+        _capturedRequests.Count.ShouldBe(1);
+        _capturedRequests[0].ActionName.ShouldBe(actionName);
+        _capturedRequests[0].PackageReferences.Select(p => p.PackageId).ShouldBe(new[] { "Order.Worker", "Order.Config" });
     }
 
     [Fact]

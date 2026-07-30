@@ -5,6 +5,7 @@ using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
+using Squid.Core.Services.DeploymentExecution.Tentacle.Handlers;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
@@ -301,6 +302,105 @@ public class DeploymentPlannerStaticRequirementsTests
                 ]), CancellationToken.None));
     }
 
+    // -- Windows service concrete action coverage ----------------------------
+
+    [Fact]
+    public async Task WindowsServiceAction_WindowsWithPowerShellCapabilities_NoViolation()
+    {
+        StubWindowsServiceHandler();
+        StubCache(1, new MachineRuntimeCapabilities
+        {
+            Os = AgentOperatingSystems.Windows,
+            InstalledShells = "powershell,pwsh,cmd"
+        });
+
+        var plan = await BuildPlanner().PlanAsync(BuildWindowsServiceRequest(targets:
+        [
+            BuildTargetContext(1, "win-tentacle", "web", CommunicationStyle.TentacleListening)
+        ]), CancellationToken.None);
+
+        plan.Steps.Single().Actions.Single().Dispatches.Single().Validation.IsValid.ShouldBeTrue(
+            customMessage: "Windows service deploy requires both Windows OS and PowerShell capability slots.");
+    }
+
+    [Fact]
+    public async Task WindowsServiceAction_NonWindowsCapabilities_EmitsOsViolation()
+    {
+        StubWindowsServiceHandler();
+        StubCache(1, new MachineRuntimeCapabilities
+        {
+            Os = AgentOperatingSystems.Linux,
+            InstalledShells = "powershell"
+        });
+
+        var plan = await BuildPlanner().PlanAsync(BuildWindowsServiceRequest(targets:
+        [
+            BuildTargetContext(1, "linux-target", "web", CommunicationStyle.Ssh)
+        ]), CancellationToken.None);
+
+        var dispatch = plan.Steps.Single().Actions.Single().Dispatches.Single();
+
+        dispatch.Validation.IsValid.ShouldBeFalse();
+        dispatch.Validation.Violations.ShouldContain(v =>
+            v.Code == ViolationCodes.MissingCapability && v.Detail == CapabilityKeys.OsSlot);
+        plan.BlockingReasons.ShouldContain(r => r.Code == PlanBlockingReasonCodes.CapabilityViolation);
+    }
+
+    [Fact]
+    public async Task WindowsServiceAction_WindowsWithoutPowerShell_EmitsShellViolation()
+    {
+        StubWindowsServiceHandler();
+        StubCache(1, new MachineRuntimeCapabilities
+        {
+            Os = AgentOperatingSystems.Windows,
+            InstalledShells = "cmd"
+        });
+
+        var plan = await BuildPlanner().PlanAsync(BuildWindowsServiceRequest(targets:
+        [
+            BuildTargetContext(1, "win-without-powershell", "web", CommunicationStyle.TentacleListening)
+        ]), CancellationToken.None);
+
+        var dispatch = plan.Steps.Single().Actions.Single().Dispatches.Single();
+
+        dispatch.Validation.IsValid.ShouldBeFalse();
+        dispatch.Validation.Violations.ShouldContain(v =>
+            v.Code == ViolationCodes.MissingCapability && v.Detail == CapabilityKeys.Shell.PowerShell);
+    }
+
+    [Fact]
+    public async Task WindowsServiceAction_ColdCache_OptimisticAllow()
+    {
+        StubWindowsServiceHandler();
+
+        var plan = await BuildPlanner().PlanAsync(BuildWindowsServiceRequest(targets:
+        [
+            BuildTargetContext(1, "fresh-windows-target", "web", CommunicationStyle.TentacleListening)
+        ]), CancellationToken.None);
+
+        plan.Steps.Single().Actions.Single().Dispatches.Single().Validation.IsValid.ShouldBeTrue(
+            customMessage: "Fresh targets with no cached runtime capabilities remain preview-allowed.");
+    }
+
+    [Fact]
+    public async Task ExecuteMode_WindowsServiceActionRequirementUnmet_ThrowsDeploymentPlanValidationException()
+    {
+        StubWindowsServiceHandler();
+        StubCache(1, new MachineRuntimeCapabilities
+        {
+            Os = AgentOperatingSystems.Windows,
+            InstalledShells = "cmd"
+        });
+
+        await Should.ThrowAsync<Squid.Core.Services.DeploymentExecution.Planning.Exceptions.DeploymentPlanValidationException>(
+            () => BuildPlanner().PlanAsync(BuildWindowsServiceRequest(
+                mode: PlanMode.Execute,
+                targets:
+                [
+                    BuildTargetContext(1, "win-without-powershell", "web", CommunicationStyle.TentacleListening)
+                ]), CancellationToken.None));
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -325,12 +425,29 @@ public class DeploymentPlannerStaticRequirementsTests
         _registry.Setup(r => r.Resolve(It.IsAny<DeploymentActionDto>())).Returns(handler.Object);
     }
 
+    private void StubWindowsServiceHandler()
+        => _registry.Setup(r => r.Resolve(It.Is<DeploymentActionDto>(a =>
+                a.ActionType == SpecialVariables.ActionTypes.DeployWindowsService)))
+            .Returns(new WindowsServiceDeployActionHandler());
+
     private void StubCache(int machineId, MachineRuntimeCapabilities caps)
         => _capabilitiesCache.Setup(c => c.TryGet(machineId)).Returns(caps);
 
     private static DeploymentPlanRequest BuildRequest(
         PlanMode mode = PlanMode.Preview,
         IList<DeploymentTargetContext> targets = null)
+        => BuildRequest(TestActionType, "Run", mode, targets);
+
+    private static DeploymentPlanRequest BuildWindowsServiceRequest(
+        PlanMode mode = PlanMode.Preview,
+        IList<DeploymentTargetContext> targets = null)
+        => BuildRequest(SpecialVariables.ActionTypes.DeployWindowsService, "Deploy Windows Service", mode, targets);
+
+    private static DeploymentPlanRequest BuildRequest(
+        string actionType,
+        string actionName,
+        PlanMode mode,
+        IList<DeploymentTargetContext> targets)
     {
         var step = new DeploymentStepDto
         {
@@ -347,8 +464,8 @@ public class DeploymentPlannerStaticRequirementsTests
                 {
                     Id = 100,
                     ActionOrder = 1,
-                    ActionType = TestActionType,
-                    Name = "Run"
+                    ActionType = actionType,
+                    Name = actionName
                 }
             }
         };
