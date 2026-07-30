@@ -272,3 +272,7 @@ __pycache__/
 # Local upload directory
 **/user-uploads
 /.claude
+
+
+# macos
+.DS_Store
