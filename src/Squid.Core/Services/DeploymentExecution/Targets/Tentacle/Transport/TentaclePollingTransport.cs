@@ -24,7 +24,8 @@ public sealed class TentaclePollingTransport : DeploymentTransport
         SupportedActionTypes = TransportCapabilities.ActionTypes(
             SpecialVariables.ActionTypes.Script,
             SpecialVariables.ActionTypes.HealthCheck,
-            SpecialVariables.ActionTypes.DeployToIISWebSite),
+            SpecialVariables.ActionTypes.DeployToIISWebSite,
+            SpecialVariables.ActionTypes.DeployWindowsService),
         OptionalFeatures = TransportCapabilities.Features("halibut", "bash", "tentacle")
     };
 

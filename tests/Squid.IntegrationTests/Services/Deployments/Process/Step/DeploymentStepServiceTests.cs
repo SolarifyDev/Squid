@@ -3,6 +3,7 @@ using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Deployments.Process.Step;
+using Squid.Message.Constants;
 using Squid.Message.Events.Deployments.Step;
 using Squid.Message.Models.Deployments.Process;
 
@@ -145,6 +146,55 @@ public class DeploymentStepServiceTests : TestBase
             properties.Count.ShouldBe(2);
             properties.ShouldAllBe(p => p.ActionId == actionId);
             properties.ShouldAllBe(p => p.ActionId != 0);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task CreateStep_WithDuplicateActionProperties_DeduplicatesBeforePersisting()
+    {
+        var processId = await SeedProcessAsync();
+
+        var result = await Run<IDeploymentStepService, DeploymentStepCreatedEvent>(async service =>
+        {
+            var command = new CreateDeploymentStepCommand
+            {
+                ProcessId = processId,
+                Step = new CreateOrUpdateDeploymentStepModel
+                {
+                    Name = "Deploy Windows Service",
+                    StepType = "Action",
+                    Condition = "Success",
+                    StartTrigger = "",
+                    PackageRequirement = "",
+                    Actions =
+                    [
+                        new CreateOrUpdateDeploymentActionModel
+                        {
+                            Name = "Deploy Windows Service",
+                            ActionType = SpecialVariables.ActionTypes.DeployWindowsService,
+                            Properties =
+                            [
+                                new ActionPropertyModel { PropertyName = "Squid.Action.WindowsService.ServiceName", PropertyValue = "OldService" },
+                                new ActionPropertyModel { PropertyName = "squid.action.windowsservice.servicename", PropertyValue = "DemoWindowsService" },
+                                new ActionPropertyModel { PropertyName = "Squid.Action.WindowsService.ExecutablePath", PropertyValue = "Demo.WindowsService.exe" }
+                            ]
+                        }
+                    ]
+                }
+            };
+
+            return await service.CreateDeploymentStepAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        var actionId = result.Data.Actions[0].Id;
+
+        await Run<IDeploymentActionPropertyDataProvider>(async provider =>
+        {
+            var properties = await provider.GetDeploymentActionPropertiesByActionIdAsync(actionId, CancellationToken.None).ConfigureAwait(false);
+
+            properties.Count.ShouldBe(2);
+            properties.ShouldContain(p => p.PropertyName == "Squid.Action.WindowsService.ServiceName" && p.PropertyValue == "DemoWindowsService");
+            properties.ShouldContain(p => p.PropertyName == "Squid.Action.WindowsService.ExecutablePath" && p.PropertyValue == "Demo.WindowsService.exe");
         }).ConfigureAwait(false);
     }
 

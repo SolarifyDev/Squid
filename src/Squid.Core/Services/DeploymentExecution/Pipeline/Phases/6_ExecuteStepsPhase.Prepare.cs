@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.VariableSubstitution;
@@ -51,11 +52,20 @@ public sealed partial class ExecuteStepsPhase
 
             if (handler == null)
             {
-                Log.Warning("[Deploy] No handler found for action {ActionType}, skipping", action.ActionType);
+                var message =
+                    $"No action handler is registered for action '{action.Name}' (type '{action.ActionType}') " +
+                    $"in step '{step.Name}'. Update the action type or deploy a Squid build that includes its handler.";
 
-                await lifecycle.EmitAsync(new ActionNoHandlerEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionType = action.ActionType }), ct).ConfigureAwait(false);
+                Log.Error("[Deploy] {Message}", message);
 
-                continue;
+                await lifecycle.EmitAsync(new ActionNoHandlerEvent(new DeploymentEventContext
+                {
+                    StepDisplayOrder = stepDisplayOrder,
+                    ActionType = action.ActionType,
+                    Message = message
+                }), ct).ConfigureAwait(false);
+
+                throw new DeploymentValidationException(message);
             }
 
             await lifecycle.EmitAsync(new ActionRunningEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, ActionName = action.Name, MachineName = tc.Machine.Name }), ct).ConfigureAwait(false);
@@ -92,15 +102,45 @@ public sealed partial class ExecuteStepsPhase
         if (string.IsNullOrEmpty(actionName) || _ctx.SelectedPackages.Count == 0)
             return new List<PackageAcquisitionResult>();
 
-        var names = _ctx.SelectedPackages
+        var selectedActionNames = _ctx.SelectedPackages
+            .Select(p => p.ActionName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Log.Information(
+            "[Deploy] BuildPackageReferences called for action '{ActionName}'. Selected package action names: {SelectedActionNames}",
+            actionName,
+            selectedActionNames);
+
+        var resolved = _ctx.SelectedPackages
             .Where(p => string.Equals(p.ActionName, actionName, StringComparison.OrdinalIgnoreCase))
             .Select(p => p.PackageReferenceName)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Where(packageReferenceName => !string.IsNullOrWhiteSpace(packageReferenceName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(FindAcquiredPackage)
+            .Where(package => package != null)
+            .ToList();
+
+        if (resolved.Count == 0)
+        {
+            Log.Warning(
+                "[Deploy] No package references resolved for action '{ActionName}'. Selected package action names were: {SelectedActionNames}",
+                actionName,
+                selectedActionNames);
+        }
+
+        return resolved;
+    }
+
+    private PackageAcquisitionResult? FindAcquiredPackage(string packageReferenceName)
+    {
+        if (_ctx.AcquiredPackages.TryGetValue(packageReferenceName, out var package))
+            return package;
 
         return _ctx.AcquiredPackages
-            .Where(kv => names.Contains(kv.Key))
-            .Select(kv => kv.Value)
-            .ToList();
+            .FirstOrDefault(kv => string.Equals(kv.Key, packageReferenceName, StringComparison.OrdinalIgnoreCase))
+            .Value;
     }
 
     private static SensitiveValueMasker BuildSensitiveMasker(List<VariableDto> variables)

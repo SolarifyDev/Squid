@@ -212,7 +212,12 @@ public class ExecuteStepsPhaseCapabilityFilterTests : IDisposable
         Dispatches = dispatches
     };
 
-    private static PlannedTargetDispatch BuildDispatch(int machineId, string machineName, bool isValid, string violationMessage = null) => new()
+    private static PlannedTargetDispatch BuildDispatch(
+        int machineId,
+        string machineName,
+        bool isValid,
+        string violationMessage = null,
+        string violationCode = ViolationCodes.UnsupportedActionType) => new()
     {
         Target = new PlannedTarget { MachineId = machineId, MachineName = machineName },
         Intent = new RunScriptIntent { Name = "test", ScriptBody = "echo 1", Syntax = ScriptSyntax.Bash },
@@ -224,7 +229,7 @@ public class ExecuteStepsPhaseCapabilityFilterTests : IDisposable
                 {
                     new CapabilityViolation
                     {
-                        Code = ViolationCodes.UnsupportedActionType,
+                        Code = violationCode,
                         Message = violationMessage ?? "transport does not support this action type"
                     }
                 }
@@ -271,6 +276,41 @@ public class ExecuteStepsPhaseCapabilityFilterTests : IDisposable
         evt.Context.ActionName.ShouldBe("Helm Upgrade");
         evt.Context.MachineName.ShouldBe("ssh-target");
         evt.Context.Message.ShouldContain("Squid.HelmChartUpgrade");
+    }
+
+    [Fact]
+    public async Task WindowsServiceAction_SkippedWhenDispatchValidationFails_BeforeHandlerRendererOrStrategy()
+    {
+        _handlerRegistryMock.Setup(r => r.ResolveScope(It.IsAny<DeploymentActionDto>())).Returns(ExecutionScope.TargetLevel);
+
+        var action = BuildAction(1, "Deploy Windows Service", SpecialVariables.ActionTypes.DeployWindowsService);
+        var target = BuildTarget(1, "linux-target");
+
+        _ctx.Steps = new List<DeploymentStepDto> { BuildStep(10, "Deploy Service", action) };
+        _ctx.AllTargetsContext = new List<DeploymentTargetContext> { target };
+
+        SeedPlan(BuildPlannedStep(10,
+            BuildPlannedAction(1, SpecialVariables.ActionTypes.DeployWindowsService,
+                BuildDispatch(
+                    1,
+                    "linux-target",
+                    isValid: false,
+                    "target is missing required Windows service capability 'os:windows'",
+                    ViolationCodes.MissingCapability))));
+
+        await _phase.ExecuteAsync(_ctx, CancellationToken.None);
+
+        _handlerRegistryMock.Verify(r => r.Resolve(It.Is<DeploymentActionDto>(a =>
+            a.ActionType == SpecialVariables.ActionTypes.DeployWindowsService)), Times.Never);
+        _sshRenderer.CapturedIntents.ShouldBeEmpty();
+        _k8sRenderer.CapturedIntents.ShouldBeEmpty();
+        _strategyMock.Verify(s => s.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        var evt = _emittedEvents.OfType<ActionCapabilityFilteredEvent>().Single();
+        evt.Context.ActionType.ShouldBe(SpecialVariables.ActionTypes.DeployWindowsService);
+        evt.Context.ActionName.ShouldBe("Deploy Windows Service");
+        evt.Context.MachineName.ShouldBe("linux-target");
+        evt.Context.Message.ShouldContain("Windows service capability");
     }
 
     [Fact]

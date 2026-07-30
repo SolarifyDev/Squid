@@ -58,6 +58,7 @@
     <EmbeddedResource Include="Services\DeploymentExecution\Runtime\Bundles\Resources\*" />
     <EmbeddedResource Include="Resources\Upgrade\*" />
     <EmbeddedResource Include="Resources\Deploy\IIS\*.ps1" />
+    <EmbeddedResource Include="Resources\Deploy\WindowsService\*.ps1" />
   </ItemGroup>
 
   <ItemGroup Label="DbUp">

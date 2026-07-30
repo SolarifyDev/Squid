@@ -255,4 +255,18 @@ public static class WindowsUpgradeE2ECategories
     /// <c>Get-WindowsFeature</c> probe.</para>
     /// </summary>
     public const string IISDeploy = "IISDeployE2E";
+
+    /// <summary>
+    /// E2E coverage for the production <c>Squid.DeployWindowsService</c>
+    /// action's PowerShell payload against a real Windows host. Drives
+    /// <c>WindowsServiceDeployScriptBuilder.Build(action)</c> to produce the
+    /// same script the dispatch path would ship, then executes it via real
+    /// <c>powershell.exe</c> and verifies SCM state plus the
+    /// <c>SquidUpgradeE2ETestService</c> marker/version contract.
+    ///
+    /// <para>Windows-only — requires SCM service-control permissions. Tests
+    /// no-op on non-Windows hosts via <c>WindowsServiceFixture.IsAvailable</c>.
+    /// </para>
+    /// </summary>
+    public const string WindowsServiceDeploy = "WindowsServiceDeployE2E";
 }

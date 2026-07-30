@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
@@ -7,6 +10,7 @@ using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Models.Deployments.Execution;
@@ -268,6 +272,74 @@ public class HalibutMachineExecutionStrategyTests
             It.IsAny<SensitiveValueMasker>(),
             It.IsAny<ScriptStatusResponse>(),
             It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteScriptAsync_DirectScript_AttachesPackageReferencesAsScriptFiles()
+    {
+        var machine = CreateValidMachine();
+        StartScriptCommand capturedCommand = null;
+        var scriptClient = SetupScriptClient("poll://sub-test/");
+
+        scriptClient.Setup(s => s.StartScriptAsync(It.IsAny<StartScriptCommand>()))
+            .Callback<StartScriptCommand>(cmd => capturedCommand = cmd)
+            .ReturnsAsync(NewStartResponse("package-ref"));
+
+        var packagePath = Path.Combine(Path.GetTempPath(), $"Order.Worker.{Guid.NewGuid():N}.nupkg");
+        CreatePackageArchive(packagePath, new Dictionary<string, string>
+        {
+            ["Demo.WindowsService.exe"] = "fake executable",
+            ["appsettings.json"] = "{}"
+        });
+
+        try
+        {
+            var request = CreateRequest(machine);
+            request.PackageReferences = new List<PackageAcquisitionResult>
+            {
+                new(packagePath, "Order.Worker", "1.2.3", 3, "abc123")
+            };
+
+            await _strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+            capturedCommand.ShouldNotBeNull();
+            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references.json");
+            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references/Order.Worker.1.2.3/Demo.WindowsService.exe");
+            capturedCommand.Files.Select(f => f.Name).ShouldContain("package-references/Order.Worker.1.2.3/appsettings.json");
+
+            var manifest = capturedCommand.Files.Single(f => f.Name == "package-references.json");
+            var manifestPath = Path.Combine(Path.GetTempPath(), $"package-references-{Guid.NewGuid():N}.json");
+            await manifest.Contents.Receiver().SaveToAsync(manifestPath, CancellationToken.None);
+
+            try
+            {
+                var manifestJson = await File.ReadAllTextAsync(manifestPath, CancellationToken.None);
+                manifestJson.ShouldContain("\"PackageId\":\"Order.Worker\"");
+                manifestJson.ShouldContain("\"Version\":\"1.2.3\"");
+                manifestJson.ShouldContain("\"PackagePath\":\"package-references/Order.Worker.1.2.3\"");
+            }
+            finally
+            {
+                File.Delete(manifestPath);
+            }
+        }
+        finally
+        {
+            File.Delete(packagePath);
+        }
+    }
+
+    private static void CreatePackageArchive(string path, IReadOnlyDictionary<string, string> files)
+    {
+        using var stream = File.Create(path);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
+
+        foreach (var file in files)
+        {
+            var entry = archive.CreateEntry(file.Key);
+            using var writer = new StreamWriter(entry.Open());
+            writer.Write(file.Value);
+        }
     }
 
     // === Request Timeout Override ===

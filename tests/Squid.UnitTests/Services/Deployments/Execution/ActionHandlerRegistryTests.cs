@@ -132,7 +132,15 @@ public class ActionHandlerRegistryTests
     }
 
     [Fact]
-    public void ResolveScope_UnknownAction_DefaultsToStepLevel()
+    public void ResolveScope_UnknownAction_DefaultsToTargetLevel()
+    {
+        var registry = new ActionHandlerRegistry(Enumerable.Empty<IActionHandler>());
+
+        registry.ResolveScope(CreateAction("Squid.UnknownAction")).ShouldBe(ExecutionScope.TargetLevel);
+    }
+
+    [Fact]
+    public void ResolveScope_SyntheticPackageAcquisitionAction_IsStepLevel()
     {
         var registry = new ActionHandlerRegistry(Enumerable.Empty<IActionHandler>());
 

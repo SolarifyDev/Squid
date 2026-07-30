@@ -46,6 +46,23 @@ public class PackageAcquisitionInjectorTests
         result[1].Name.ShouldBe("Deploy");
     }
 
+    [Fact]
+    public void Inject_WindowsServiceActionWithSelectedPackage_InjectsAcquireStep()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            BuildStep("Deploy Worker", "Deploy Worker", actionType: SpecialVariables.ActionTypes.DeployWindowsService)
+        };
+        var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy Worker" } };
+
+        var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
+
+        result.Count.ShouldBe(2);
+        result[0].Name.ShouldBe("Acquire Packages");
+        result[0].Actions[0].ActionType.ShouldBe(SpecialVariables.ActionTypes.TentaclePackage);
+        result[1].Actions[0].ActionType.ShouldBe(SpecialVariables.ActionTypes.DeployWindowsService);
+    }
+
     // === Pre-acquisition steps skip injection ===
 
     [Fact]

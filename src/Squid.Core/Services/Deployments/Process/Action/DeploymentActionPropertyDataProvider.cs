@@ -31,7 +31,11 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
 
     public async Task AddDeploymentActionPropertiesAsync(List<DeploymentActionProperty> properties, CancellationToken cancellationToken = default)
     {
-        await _repository.InsertAllAsync(properties, cancellationToken).ConfigureAwait(false);
+        var normalized = NormalizeProperties(properties);
+
+        if (normalized.Count == 0) return;
+
+        await _repository.InsertAllAsync(normalized, cancellationToken).ConfigureAwait(false);
         await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -73,5 +77,49 @@ public class DeploymentActionPropertyDataProvider : IDeploymentActionPropertyDat
         return await _repository.Query<DeploymentActionProperty>()
             .Where(p => actionIds.Contains(p.ActionId))
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static List<DeploymentActionProperty> NormalizeProperties(List<DeploymentActionProperty> properties)
+    {
+        if (properties == null || properties.Count == 0) return new List<DeploymentActionProperty>();
+
+        var normalized = new List<DeploymentActionProperty>();
+        var indexesByKey = new Dictionary<ActionPropertyKey, int>(ActionPropertyKeyComparer.Instance);
+
+        foreach (var property in properties)
+        {
+            if (property == null) continue;
+
+            var key = new ActionPropertyKey(property.ActionId, property.PropertyName);
+
+            if (indexesByKey.TryGetValue(key, out var index))
+            {
+                normalized[index].PropertyValue = property.PropertyValue;
+                continue;
+            }
+
+            indexesByKey[key] = normalized.Count;
+            normalized.Add(property);
+        }
+
+        return normalized;
+    }
+
+    private readonly record struct ActionPropertyKey(int ActionId, string PropertyName);
+
+    private sealed class ActionPropertyKeyComparer : IEqualityComparer<ActionPropertyKey>
+    {
+        public static readonly ActionPropertyKeyComparer Instance = new();
+
+        public bool Equals(ActionPropertyKey x, ActionPropertyKey y)
+        {
+            return x.ActionId == y.ActionId
+                   && string.Equals(x.PropertyName, y.PropertyName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        public int GetHashCode(ActionPropertyKey obj)
+        {
+            return HashCode.Combine(obj.ActionId, StringComparer.OrdinalIgnoreCase.GetHashCode(obj.PropertyName ?? string.Empty));
+        }
     }
 }
