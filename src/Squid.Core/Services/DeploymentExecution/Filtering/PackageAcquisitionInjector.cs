@@ -74,6 +74,7 @@ public static class PackageAcquisitionInjector
 
         return string.Equals(actionType, SpecialVariables.ActionTypes.TentaclePackage, StringComparison.OrdinalIgnoreCase)
             || string.Equals(actionType, SpecialVariables.ActionTypes.DeployToIISWebSite, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(actionType, SpecialVariables.ActionTypes.DeployWindowsService, StringComparison.OrdinalIgnoreCase)
             || string.Equals(actionType, SpecialVariables.ActionTypes.KubernetesDeployRawYaml, StringComparison.OrdinalIgnoreCase)
             || string.Equals(actionType, SpecialVariables.ActionTypes.Script, StringComparison.OrdinalIgnoreCase);
     }
