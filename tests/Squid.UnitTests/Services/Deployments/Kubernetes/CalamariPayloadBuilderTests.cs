@@ -137,7 +137,7 @@ public class CalamariPayloadBuilderTests
     {
         var payload = _builder.Build(CreateRequest());
 
-        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
+        payload.TemplateBody.ShouldContain("Get-Command -Name 'squid-calamari.exe' -CommandType Application");
         payload.TemplateBody.ShouldContain("$commandArgs = @(");
     }
 
@@ -146,8 +146,18 @@ public class CalamariPayloadBuilderTests
     {
         var payload = _builder.Build(CreateRequest(), ScriptSyntax.PowerShell);
 
-        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
-        payload.TemplateBody.ShouldContain("& $squidCalamari.Source @commandArgs");
+        var bundledLookup = payload.TemplateBody.IndexOf(
+            "Join-Path (Split-Path -Parent $installInfo.BinaryPath) 'squid-calamari.exe'",
+            StringComparison.Ordinal);
+        var pathFallback = payload.TemplateBody.IndexOf(
+            "Get-Command -Name 'squid-calamari.exe' -CommandType Application",
+            StringComparison.Ordinal);
+
+        bundledLookup.ShouldBeGreaterThanOrEqualTo(0,
+            customMessage: "Windows Tentacle deployments must derive the bundled squid-calamari.exe path from install-info.json.");
+        pathFallback.ShouldBeGreaterThan(bundledLookup,
+            customMessage: "PATH lookup must remain a fallback after the deterministic bundled Calamari path.");
+        payload.TemplateBody.ShouldContain("& $squidCalamari @commandArgs");
     }
 
     [Fact]

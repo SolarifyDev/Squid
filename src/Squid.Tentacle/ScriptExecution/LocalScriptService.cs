@@ -1354,7 +1354,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "squid-calamari",
+            FileName = ResolveCalamariExecutable(),
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -1392,6 +1392,24 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         return psi;
     }
+
+    internal static string ResolveCalamariExecutable(string tentacleDirectory, Func<string, bool> fileExists)
+    {
+        ArgumentNullException.ThrowIfNull(fileExists);
+
+        var bundledFileName = OperatingSystem.IsWindows() ? "squid-calamari.exe" : "squid-calamari";
+        if (!string.IsNullOrWhiteSpace(tentacleDirectory))
+        {
+            var bundledPath = Path.Combine(tentacleDirectory, bundledFileName);
+            if (fileExists(bundledPath))
+                return bundledPath;
+        }
+
+        return bundledFileName;
+    }
+
+    private static string ResolveCalamariExecutable() =>
+        ResolveCalamariExecutable(AppContext.BaseDirectory, File.Exists);
 
     /// <summary>
     /// Runs <c>python3 script.py</c>. <c>python3</c> must be on PATH; the

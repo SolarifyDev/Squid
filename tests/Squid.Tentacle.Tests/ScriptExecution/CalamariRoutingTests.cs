@@ -126,6 +126,33 @@ public sealed class CalamariRoutingTests
     }
 
     [Fact]
+    public void ResolveCalamariExecutable_BundledBinaryExists_PrefersAbsolutePath()
+    {
+        var tentacleDirectory = Path.Combine(Path.GetTempPath(), "squid-tentacle-current");
+        var bundledCalamari = Path.Combine(
+            tentacleDirectory,
+            OperatingSystem.IsWindows() ? "squid-calamari.exe" : "squid-calamari");
+
+        var resolved = LocalScriptService.ResolveCalamariExecutable(
+            tentacleDirectory,
+            candidate => candidate == bundledCalamari);
+
+        resolved.ShouldBe(bundledCalamari,
+            customMessage: "Tentacle must launch the Calamari bundled beside its own binary before considering PATH.");
+    }
+
+    [Fact]
+    public void ResolveCalamariExecutable_BundledBinaryMissing_FallsBackToPathCommand()
+    {
+        var resolved = LocalScriptService.ResolveCalamariExecutable(
+            Path.Combine(Path.GetTempPath(), "squid-tentacle-current"),
+            _ => false);
+
+        resolved.ShouldBe(OperatingSystem.IsWindows() ? "squid-calamari.exe" : "squid-calamari",
+            customMessage: "PATH lookup remains the compatibility fallback when a legacy install has no bundled Calamari binary.");
+    }
+
+    [Fact]
     public void BuildCalamariProcessStartInfo_PowerShell_UsesScriptPs1()
     {
         // PR-8 co-dependent fix: the per-syntax --script path. Without this,
