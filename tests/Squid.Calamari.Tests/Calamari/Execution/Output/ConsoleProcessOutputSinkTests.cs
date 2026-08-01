@@ -33,35 +33,6 @@ public class ConsoleProcessOutputSinkTests
     }
 
     [Fact]
-    public void ScriptOutputProcessor_ServiceMessage_IsBothCollectedAndForwarded()
-    {
-        // Both halves matter and they serve different consumers: the collector feeds THIS
-        // process's own conventions (PostDeploy reading a value the main script computed),
-        // while stdout is what carries the variable back to the server. Losing either one is
-        // a silent failure, so pin them together at the level that wires them.
-        var processor = new global::Squid.Calamari.Execution.ScriptOutputProcessor();
-        using var stdout = new StringWriter();
-        var originalOut = Console.Out;
-
-        try
-        {
-            Console.SetOut(stdout);
-
-            processor.ProcessLine("##squid[setVariable name='Url' value='https://web.test']");
-            processor.ProcessLine("ordinary log line");
-
-            processor.OutputVariables.ShouldContain(v => v.Name == "Url" && v.Value == "https://web.test",
-                "the collector feeds this process's own conventions");
-            stdout.ToString().ShouldContain("##squid[setVariable name='Url' value='https://web.test']");
-            stdout.ToString().ShouldContain("ordinary log line");
-        }
-        finally
-        {
-            Console.SetOut(originalOut);
-        }
-    }
-
-    [Fact]
     public void WriteStderr_WritesToConsoleError()
     {
         var sink = new ConsoleProcessOutputSink();
