@@ -160,10 +160,13 @@ public class DeploymentCompletionHandlerTests
     [InlineData(PauseOutcome.Transient)]
     public async Task AnyPauseOutcome_RacedByACancel_LeavesTheCancelToWin(PauseOutcome outcome)
     {
-        // The wedge this closes: Cancelling -> Paused is not a legal edge, so a blind transition
-        // throws, the runner's SafeCompleteAsync swallows it, and the task stays Cancelling
-        // FOREVER — holding the environment-wide concurrency slot with no reaper to free it.
-        // Every deployment to that environment is blocked from then on.
+        // What this pins: the pause does not overwrite a cancel that landed mid-unwind, and it
+        // stops reaching for an illegal edge to discover that. Cancelling -> Paused is not legal,
+        // so a blind transition threw and the runner's SafeCompleteAsync swallowed it.
+        //
+        // It does NOT pin that the task recovers. The row stays Cancelling either way — this
+        // handler cannot free it, and nothing else does today (see PauseIfStillExecutingAsync).
+        // The Times.Never below is the whole claim: no illegal transition is attempted.
         var ctx = CreateContext();
         _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Cancelling });

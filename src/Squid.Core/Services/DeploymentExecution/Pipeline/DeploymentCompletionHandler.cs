@@ -131,18 +131,28 @@ public sealed class DeploymentCompletionHandler(
     /// <see cref="TaskState.Executing"/> — the sole legal source of that edge.
     ///
     /// <para>Shared by all three pause outcomes (suspend, timeout, transient) because the
-    /// decision is identical for each and getting it wrong is expensive. A blind transition
-    /// throws <see cref="ServerTaskStateTransitionException"/> for every other state, and that
-    /// throw is swallowed by the runner's SafeCompleteAsync — leaving the task in whatever
-    /// state it was, with no further processing. The costly case is <c>Cancelling</c>: an
-    /// operator cancelling while the pipeline unwinds would leave the row stuck there
-    /// permanently, holding the environment's concurrency slot and blocking every other
-    /// deployment to that environment, with no reaper to free it.</para>
+    /// decision is identical for each. Skipping is the RIGHT semantic, not merely the safe one:
+    /// a cancel that lands mid-pause should win, and a task that already reached a terminal
+    /// state has recorded its outcome. <c>Paused</c> is skipped because the suspend sites that
+    /// self-transition are the common case and <c>Paused → Paused</c> is not legal either.</para>
     ///
-    /// <para>Skipping is also the RIGHT semantic, not merely the safe one: a cancel that lands
-    /// mid-pause should win, and a task that already reached a terminal state has recorded its
-    /// outcome. <c>Paused</c> is skipped because the suspend sites that self-transition are the
-    /// common case and <c>Paused → Paused</c> is not legal either.</para>
+    /// <para><b>What this does NOT do.</b> It does not rescue a task that is already
+    /// <c>Cancelling</c>. A blind transition threw
+    /// <see cref="ServerTaskStateTransitionException"/> from
+    /// <c>TaskState.EnsureValidTransition</c> — the first statement of
+    /// <c>TransitionStateAsync</c>, before any SQL — and the runner's <c>SafeCompleteAsync</c>
+    /// swallowed it, so the row stayed <c>Cancelling</c> with an empty transaction rolled back.
+    /// The guarded skip leaves it <c>Cancelling</c> too. The database outcome is byte-identical;
+    /// what changes is that an expected race is no longer signalled by an exception.</para>
+    ///
+    /// <para>That row is genuinely stuck: <c>Cancelling</c> counts as an active state so it
+    /// keeps holding the environment's concurrency slot, its only edges out
+    /// (<c>Cancelled</c>, <c>Failed</c>) need a live pipeline, re-cancel no-ops and resume
+    /// rejects it, and there is no reaper. Freeing it needs cross-pod cancel propagation or a
+    /// stale-active-task reaper — neither of which exists, and both out of scope here. The same
+    /// wedge reaches the success path, which transitions from a hardcoded <c>Executing</c>.
+    /// The <c>Cancelling</c> skip is therefore logged at Warning: it is the only remaining
+    /// signal that an environment just lost a concurrency slot with no automatic recovery.</para>
     /// </summary>
     private async Task PauseIfStillExecutingAsync(int serverTaskId, CancellationToken ct)
     {
@@ -150,7 +160,7 @@ public sealed class DeploymentCompletionHandler(
 
         if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
         {
-            Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is rather than forcing a pause", serverTaskId, fromState);
+            LogSkippedPause(serverTaskId, fromState);
             return;
         }
 
@@ -158,6 +168,25 @@ public sealed class DeploymentCompletionHandler(
         {
             await serverTaskService.TransitionStateAsync(serverTaskId, TaskState.Executing, TaskState.Paused, cancellationToken).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A skipped pause is routine for <c>Paused</c> and for a terminal task, but for
+    /// <c>Cancelling</c> it means the task is wedged: it holds the environment's concurrency
+    /// slot and nothing will free it. Before the guard, that case at least surfaced as an
+    /// Error from the swallowed transition exception; logging it at Warning keeps an alert on
+    /// the only path that indefinitely blocks an environment, without making the routine
+    /// <c>Paused</c> case noisy.
+    /// </summary>
+    private static void LogSkippedPause(int serverTaskId, string fromState)
+    {
+        if (string.Equals(fromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Warning("[Deploy] Task {TaskId} is Cancelling, not Executing — skipping the pause so the cancel wins. The task stays Cancelling and keeps holding its environment's concurrency slot; there is no automatic recovery for this state", serverTaskId);
+            return;
+        }
+
+        Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is rather than forcing a pause", serverTaskId, fromState);
     }
 
     private async Task<string> ResolveCurrentActiveStateAsync(int serverTaskId, CancellationToken ct)
