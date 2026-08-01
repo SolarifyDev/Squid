@@ -47,6 +47,14 @@ public sealed partial class ExecuteStepsPhase(
         foreach (var (batch, state) in ctx.ResumeBatchStates)
             _batchStates[batch] = state;
 
+        // Re-seed the captured set from the restored checkpoint so the NEXT checkpoint still
+        // carries the previous run's outputs. Without this a deployment that pauses twice
+        // would checkpoint only what it captured since the most recent resume, silently
+        // dropping everything the earlier run produced. Seeded here rather than in
+        // PrepareDeploymentPhase because protection needs the encryption service and the
+        // same KDF scope as every other write to this set.
+        _ctx.CapturedOutputVariables.Add(_ctx.RestoredOutputVariables, ProtectForCheckpoint);
+
         // Root span for the entire deployment execution. Child spans (batch,
         // step, target) attach automatically via System.Diagnostics.Activity's
         // async-local parenting. If no OTel listener is registered, this is a
@@ -179,7 +187,7 @@ public sealed partial class ExecuteStepsPhase(
     /// </summary>
     private async Task PersistCheckpointAsync(int batchIndex, CancellationToken ct)
     {
-        var outputVariablesJson = SerializeOutputVariables(_ctx.Variables);
+        var outputVariablesJson = SerializeOutputVariables();
         var batchStatesJson = SerializeBatchStates();
 
         var checkpoint = new DeploymentExecutionCheckpoint
@@ -315,34 +323,26 @@ public sealed partial class ExecuteStepsPhase(
     /// inspecting checkpoints to debug stuck deployments need to read
     /// non-secret variables; encrypting them all would block that workflow.
     /// </para>
+    ///
+    /// <para><b>Which variables</b>: the set the executor actually captured
+    /// (<see cref="DeploymentTaskContext.CapturedOutputVariables"/>), NOT a
+    /// name-filtered slice of <c>_ctx.Variables</c>. The former predicate
+    /// (<c>StartsWith("Squid.Action.")</c>) matched no real output variable —
+    /// they are minted as <c>Squid.Action[{step}].Output.{name}</c> with a
+    /// bracket — so every resume silently lost them. See
+    /// <see cref="Variables.CheckpointOutputVariableSerializer"/>.</para>
     /// </summary>
-    private string SerializeOutputVariables(List<VariableDto> variables)
-    {
-        if (variables == null || variables.Count == 0) return null;
+    private string SerializeOutputVariables()
+        => Variables.CheckpointOutputVariableSerializer.Serialize(_ctx.CapturedOutputVariables.CheckpointReady, variableEncryptionService, _ctx.ServerTaskId);
 
-        var outputVars = variables.Where(v => v.Name.StartsWith("Squid.Action.", StringComparison.OrdinalIgnoreCase)).ToList();
-
-        if (outputVars.Count == 0) return null;
-
-        var encrypted = outputVars.Select(EncryptIfSensitive).ToList();
-
-        return System.Text.Json.JsonSerializer.Serialize(encrypted);
-    }
-
-    private VariableDto EncryptIfSensitive(VariableDto v)
-    {
-        if (!v.IsSensitive || string.IsNullOrEmpty(v.Value)) return v;
-
-        // Already encrypted (e.g. resumed-and-rewritten path) — don't re-wrap.
-        if (variableEncryptionService.IsValidEncryptedValue(v.Value)) return v;
-
-        // Clone via the copy-constructor — pre-existing manual field-by-field
-        // copy was fragile against future VariableDto field additions (silent
-        // loss with no compiler warning). The copy-ctor is pinned by
-        // VariableDtoCopyConstructorTests so a missing field assignment fails
-        // unit tests at PR review, not in production checkpoint round-trips.
-        return new VariableDto(v) { Value = variableEncryptionService.EncryptAsync(v.Value, _ctx.ServerTaskId) };
-    }
+    /// <summary>
+    /// Protects a captured output variable for at-rest storage. Held as a method rather than
+    /// inlined so both capture sites in this phase — batch completion in <c>ApplyBatchResults</c>
+    /// and the restored-set re-seed at the top of <c>ExecuteAsync</c> — apply the same transform
+    /// under the same KDF scope.
+    /// </summary>
+    private VariableDto ProtectForCheckpoint(VariableDto variable)
+        => Variables.CheckpointOutputVariableSerializer.EncryptIfSensitive(variable, variableEncryptionService, _ctx.ServerTaskId);
 
     private void ApplyBatchResults(IEnumerable<StepExecutionResult> results)
     {
@@ -358,9 +358,18 @@ public sealed partial class ExecuteStepsPhase(
         {
             if (result.OutputVariables.Count > 0)
             {
-                var (mergedVariables, _) = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.Merge(
+                var mergeOutcome = Squid.Core.Services.DeploymentExecution.Variables.OutputVariableMerger.MergeDetailed(
                     _ctx.Variables, result.OutputVariables, collisionMode);
-                _ctx.Variables = mergedVariables;
+                _ctx.Variables = mergeOutcome.Merged;
+
+                // Checkpoint exactly what the merge APPENDED to the live list, verbatim and in
+                // order. Persisting from this accumulator rather than re-selecting out of
+                // _ctx.Variables by name is what keeps resume correct (see
+                // CheckpointOutputVariableSerializer), and taking the merge's own append list
+                // rather than re-deriving it is what keeps the restored set resolving to the
+                // same value the live run resolved. Writes the merge dropped (Strict
+                // first-writer-wins) never appear here, so a resume cannot resurrect them.
+                _ctx.CapturedOutputVariables.Add(mergeOutcome.Appended, ProtectForCheckpoint);
 
                 Log.Information("[Deploy] Captured {Count} output variables from batch {BatchIndex}", result.OutputVariables.Count, _currentBatchIndex);
 

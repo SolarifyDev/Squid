@@ -62,11 +62,43 @@ public sealed class DeploymentCompletionHandler(
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
 
-    public Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    /// <summary>
+    /// Terminal handling for <see cref="Exceptions.DeploymentSuspendedException"/>: leave the task
+    /// in <see cref="TaskState.Paused"/> with its checkpoint intact so an operator can resume it.
+    ///
+    /// <para><b>Why this transitions rather than only logging</b>: most suspend sites set Paused
+    /// themselves immediately before throwing (manual intervention, guided failure), so this used
+    /// to be a pure log. That made the resulting state an accident of WHICH site threw — a site
+    /// that throws without transitioning first would leave the task in whatever state it happened
+    /// to be in. An <c>Executing</c> task left that way is worse than any pause: <c>resume</c>
+    /// rejects a non-Paused task and <c>cancel</c> only moves it to <c>Cancelling</c>, while the
+    /// row keeps occupying the environment's concurrency slot and blocks every other deployment
+    /// to that environment. So the outcome is written here, once, for every suspend site.</para>
+    ///
+    /// <para>The transition fires ONLY from <see cref="TaskState.Executing"/>, the sole legal
+    /// source of a <c>→ Paused</c> edge. Every other state is left
+    /// alone deliberately: <c>Paused</c> is the self-transitioning sites' common case and
+    /// <c>Paused → Paused</c> is not legal; <c>Cancelling</c> means an operator cancelled while
+    /// the pipeline was unwinding and that cancel must win rather than be overwritten by a pause;
+    /// and a terminal task has already recorded its outcome. Transitioning blindly would throw
+    /// <see cref="ServerTaskStateTransitionException"/> in each of those cases.</para>
+    /// </summary>
+    public async Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
-        return Task.CompletedTask;
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is for the pause", ctx.ServerTaskId, fromState);
+            return;
+        }
+
+        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>
