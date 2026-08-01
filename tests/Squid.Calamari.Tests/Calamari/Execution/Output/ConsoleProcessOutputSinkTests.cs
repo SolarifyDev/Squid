@@ -6,8 +6,12 @@ namespace Squid.Calamari.Tests.Calamari.Execution.Output;
 public class ConsoleProcessOutputSinkTests
 {
     [Fact]
-    public void WriteStdout_ServiceMessage_IsSuppressed()
+    public void WriteStdout_ServiceMessage_IsForwardedSoTheServerCanSeeIt()
     {
+        // This process's stdout is the wire back to the server: the Tentacle captures it into
+        // the script's log lines, which are the server's ONLY source of output variables.
+        // Suppressing the line here silently lost every output variable a Calamari-run script
+        // emitted, while the direct (non-Calamari) path forwarded the identical line.
         var sink = new ConsoleProcessOutputSink();
         using var stdout = new StringWriter();
         var originalOut = Console.Out;
@@ -20,7 +24,7 @@ public class ConsoleProcessOutputSinkTests
             sink.WriteStdout("visible");
 
             stdout.ToString().ShouldContain("visible");
-            stdout.ToString().ShouldNotContain("##squid[setVariable");
+            stdout.ToString().ShouldContain("##squid[setVariable name='X' value='1']");
         }
         finally
         {

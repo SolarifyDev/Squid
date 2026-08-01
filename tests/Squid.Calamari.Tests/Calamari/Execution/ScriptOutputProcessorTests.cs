@@ -6,7 +6,7 @@ namespace Squid.Calamari.Tests.Calamari.Execution;
 public class ScriptOutputProcessorTests
 {
     [Fact]
-    public void ProcessLine_ServiceMessage_IsCollectedAndNotPrinted()
+    public void ProcessLine_ServiceMessage_IsCollectedAndAlsoForwardedToStdout()
     {
         var processor = new ScriptOutputProcessor();
         using var stdout = new StringWriter();
@@ -21,7 +21,10 @@ public class ScriptOutputProcessorTests
             processor.OutputVariables.Count.ShouldBe(1);
             processor.OutputVariables[0].Name.ShouldBe("BuildId");
             processor.OutputVariables[0].Value.ShouldBe("42");
-            stdout.ToString().ShouldNotContain("##squid[setVariable");
+            // Forwarded, not suppressed: stdout is how the variable reaches the SERVER
+            // (Tentacle -> log lines -> ExecuteStepsPhase.CaptureOutputVariables). The collector
+            // above serves only this process's own conventions.
+            stdout.ToString().ShouldContain("##squid[setVariable name='BuildId' value='42']");
         }
         finally
         {
