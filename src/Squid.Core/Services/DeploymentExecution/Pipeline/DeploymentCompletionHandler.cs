@@ -76,7 +76,7 @@ public sealed class DeploymentCompletionHandler(
     /// to that environment. So the outcome is written here, once, for every suspend site.</para>
     ///
     /// <para>The transition fires ONLY from <see cref="TaskState.Executing"/>, the sole legal
-    /// source of a <c>→ Paused</c> edge other than Paused itself. Every other state is left
+    /// source of a <c>→ Paused</c> edge. Every other state is left
     /// alone deliberately: <c>Paused</c> is the self-transitioning sites' common case and
     /// <c>Paused → Paused</c> is not legal; <c>Cancelling</c> means an operator cancelled while
     /// the pipeline was unwinding and that cancel must win rather than be overwritten by a pause;

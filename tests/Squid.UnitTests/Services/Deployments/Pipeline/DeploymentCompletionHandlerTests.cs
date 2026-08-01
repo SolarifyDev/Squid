@@ -129,7 +129,7 @@ public class DeploymentCompletionHandlerTests
     [InlineData(TaskState.Success)]
     public async Task OnPaused_NotExecuting_LeavesTheStateAlone(string currentState)
     {
-        // Executing is the only legal source of a -> Paused edge besides Paused itself. A racing
+        // Executing is the only legal source of a -> Paused edge. A racing
         // cancel (Cancelling) must win rather than be overwritten by a pause, and a terminal task
         // has already recorded its outcome. Transitioning blindly would throw.
         var ctx = CreateContext();

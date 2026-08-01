@@ -117,7 +117,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (DeploymentSuspendedException suspended)
         {
-            // Routed through SafeCompleteAsync like every other completion path: OnPausedAsync
+            // Routed through SafeCompleteAsync like every other terminal-handling catch path: OnPausedAsync
             // now writes state, so it can fail (a racing cancel, a DB blip), and an escaping
             // exception here would surface as a hard job failure that contradicts the pause the
             // pipeline already decided on. It was safe to call directly only while it just logged.
