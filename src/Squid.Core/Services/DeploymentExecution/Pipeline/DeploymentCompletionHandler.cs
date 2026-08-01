@@ -149,10 +149,17 @@ public sealed class DeploymentCompletionHandler(
     /// keeps holding the environment's concurrency slot, its only edges out
     /// (<c>Cancelled</c>, <c>Failed</c>) need a live pipeline, re-cancel no-ops and resume
     /// rejects it, and there is no reaper. Freeing it needs cross-pod cancel propagation or a
-    /// stale-active-task reaper — neither of which exists, and both out of scope here. The same
-    /// wedge reaches the success path, which transitions from a hardcoded <c>Executing</c>.
-    /// The <c>Cancelling</c> skip is therefore logged at Warning: it is the only remaining
-    /// signal that an environment just lost a concurrency slot with no automatic recovery.</para>
+    /// stale-active-task reaper — neither of which exists, and both out of scope here. The
+    /// <c>Cancelling</c> skip is therefore logged at Warning: it is the only remaining signal
+    /// that an environment just lost a concurrency slot with no automatic recovery.</para>
+    ///
+    /// <para><b>The success path does not share this.</b> <see cref="OnSuccessAsync"/> also
+    /// transitions from a hardcoded <c>Executing</c>, but it is the one completion callback the
+    /// runner invokes directly rather than through <c>SafeCompleteAsync</c>, so its
+    /// <see cref="ServerTaskStateTransitionException"/> is not swallowed: it reaches the runner's
+    /// general catch, which routes to <see cref="OnFailureAsync"/>, and that resolves the current
+    /// state and performs the legal <c>Cancelling → Failed</c>. The row ends terminal and the slot
+    /// is freed — at the cost of a deployment that succeeded being recorded as failed.</para>
     /// </summary>
     private async Task PauseIfStillExecutingAsync(int serverTaskId, CancellationToken ct)
     {
@@ -173,10 +180,16 @@ public sealed class DeploymentCompletionHandler(
     /// <summary>
     /// A skipped pause is routine for <c>Paused</c> and for a terminal task, but for
     /// <c>Cancelling</c> it means the task is wedged: it holds the environment's concurrency
-    /// slot and nothing will free it. Before the guard, that case at least surfaced as an
-    /// Error from the swallowed transition exception; logging it at Warning keeps an alert on
-    /// the only path that indefinitely blocks an environment, without making the routine
-    /// <c>Paused</c> case noisy.
+    /// slot and nothing will free it. Warning is the level for that one case, Information for
+    /// the rest, so the routine <c>Paused</c> case cannot bury it.
+    ///
+    /// <para>The two outcomes arrive here from different places, and Warning is right for both
+    /// for different reasons. Timeout and transient pauses previously transitioned blind, so a
+    /// <c>Cancelling</c> row raised an illegal-transition exception that the runner's
+    /// <c>SafeCompleteAsync</c> logged at Error — Warning is what stops the guard silently
+    /// deleting that alert. The suspend outcome already had this guard and already logged at
+    /// Information, so for it Warning is a deliberate uplift, not a preservation: the same
+    /// wedged state deserves the same level whichever outcome walked into it.</para>
     /// </summary>
     private static void LogSkippedPause(int serverTaskId, string fromState)
     {

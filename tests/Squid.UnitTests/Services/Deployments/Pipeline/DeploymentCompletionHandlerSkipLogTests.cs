@@ -20,12 +20,17 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 /// <summary>
 /// Pins the log LEVEL of a skipped pause, which is load-bearing rather than cosmetic.
 ///
-/// <para>Before the guard, a pause attempted against a <c>Cancelling</c> task threw an illegal-
-/// transition exception that the runner's <c>SafeCompleteAsync</c> logged at Error. The guard
-/// removes the exception, so that Error goes away — and with it the only signal that a task just
-/// became permanently stuck holding its environment's concurrency slot. Warning on the
-/// <c>Cancelling</c> branch is what keeps the alert; Information everywhere else is what keeps
-/// the routine <c>Paused</c> case from crying wolf.</para>
+/// <para>Warning on the <c>Cancelling</c> branch, Information everywhere else. The two halves of
+/// that split are load-bearing for different reasons, and the reason differs per outcome.</para>
+///
+/// <para>Timeout and transient pauses previously transitioned blind, so a <c>Cancelling</c> row
+/// raised an illegal-transition exception that the runner's <c>SafeCompleteAsync</c> logged at
+/// Error. The guard removes the exception, so Warning is what stops it silently deleting the only
+/// signal that a task became permanently stuck holding its environment's concurrency slot. The
+/// suspend outcome already had this guard and already logged at Information, so there Warning is a
+/// deliberate uplift rather than a preservation — the same wedged state should not be reported at
+/// two different levels depending on which outcome walked into it. Information everywhere else is
+/// what keeps the routine <c>Paused</c> case from crying wolf.</para>
 ///
 /// <para>Separate class from <c>DeploymentCompletionHandlerTests</c> because asserting levels
 /// means swapping the global <c>Log.Logger</c>, which requires
@@ -51,8 +56,10 @@ public sealed class DeploymentCompletionHandlerSkipLogTests
 
             skip.Level.ShouldBe(LogEventLevel.Warning,
                 customMessage: "This is the only remaining trace that an environment lost a concurrency slot with " +
-                               "no automatic recovery — the guard removed the Error that the swallowed transition " +
-                               "exception used to produce. At Information it will not reach an operator.");
+                               "no automatic recovery. For the timeout and transient outcomes the guard removed the " +
+                               "Error that the swallowed transition exception used to produce; for the suspend " +
+                               "outcome this is an uplift from Information. Either way, at Information it will not " +
+                               "reach an operator.");
 
             var rendered = skip.RenderMessage();
             rendered.ShouldContain("concurrency slot",
