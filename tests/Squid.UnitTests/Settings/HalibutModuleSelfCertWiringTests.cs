@@ -6,6 +6,7 @@ using Halibut;
 using Shouldly;
 using Squid.Core.Halibut;
 using Squid.Core.Settings.SelfCert;
+using Squid.UnitTests.Support;
 using Xunit;
 
 namespace Squid.UnitTests.Settings;
@@ -23,29 +24,44 @@ namespace Squid.UnitTests.Settings;
 /// <para>These resolve the real registration. The guard runs before any Halibut runtime or
 /// listener is constructed, so a rejected identity fails without opening a socket.</para>
 /// </summary>
+[Collection(GlobalStateSerialisedCollection.Name)]
 public sealed class HalibutModuleSelfCertWiringTests
 {
     [Fact]
     public void ResolvingHalibutRuntime_WithTheCommittedIdentity_IsRejected()
     {
-        // The end-to-end statement: with the repository's own certificate configured and no
-        // enforcement env var set, the server must refuse to build its Halibut identity.
-        var committed = ReadCommittedSelfCert();
+        // Pins WIRING, not the default, so the mode is set explicitly — leaving it ambient would
+        // make this test go red on a developer machine that exported the documented dev opt-out.
+        var restore = SetEnforcementEnvVar("strict");
 
-        using var container = BuildContainer(committed.Base64, committed.Password);
+        try
+        {
+            var committed = ReadCommittedSelfCert();
 
-        var ex = Should.Throw<Exception>(() => container.Resolve<HalibutRuntime>());
-        var message = Unwrap(ex).Message;
+            using var container = BuildContainer(committed.Base64, committed.Password);
 
-        message.ShouldContain(SelfCertValidator.EnforcementEnvVar,
-            customMessage: "Resolving the runtime with the committed identity must surface the SelfCert guard's " +
-                           "rejection (which names its escape hatch). A different failure means HalibutModule is " +
-                           "no longer calling EnsureNotPublishedIdentity.");
+            var ex = Should.Throw<Exception>(() => container.Resolve<HalibutRuntime>());
+            var message = Unwrap(ex).Message;
+
+            // NOT the env-var name: EnsureConfigured's message names it too, so asserting on it
+            // would pass just as happily if the identity were missing entirely and the published-
+            // identity check had been deleted. The thumbprint appears in only one of the two.
+            message.ShouldContain(CommittedThumbprint(),
+                customMessage: "Resolving the runtime with the committed identity must surface the published-" +
+                               "identity rejection, which names the offending thumbprint. A different failure " +
+                               "means HalibutModule is no longer calling EnsureNotPublishedIdentity.");
+        }
+        finally
+        {
+            restore();
+        }
     }
 
     [Fact]
     public void ResolvingHalibutRuntime_WithNoIdentityConfigured_FailsWithAnActionableMessage()
     {
+        // Unconditional by design — no mode substitutes for an absent identity — so this one is
+        // genuinely mode-independent and needs no env pinning.
         using var container = BuildContainer(base64: string.Empty, password: string.Empty);
 
         var ex = Should.Throw<Exception>(() => container.Resolve<HalibutRuntime>());
@@ -63,13 +79,22 @@ public sealed class HalibutModuleSelfCertWiringTests
         // Guards against 'fix by rejecting everything': a properly configured deployment must
         // still get a runtime. Also proves the two tests above fail for the RIGHT reason rather
         // than because resolution is broken in this harness.
-        var (base64, password) = CreateDeploymentSpecificPkcs12();
+        var restore = SetEnforcementEnvVar("strict");
 
-        using var container = BuildContainer(base64, password);
+        try
+        {
+            var (base64, password) = CreateDeploymentSpecificPkcs12();
 
-        var runtime = container.Resolve<HalibutRuntime>();
+            using var container = BuildContainer(base64, password);
 
-        runtime.ShouldNotBeNull();
+            var runtime = container.Resolve<HalibutRuntime>();
+
+            runtime.ShouldNotBeNull();
+        }
+        finally
+        {
+            restore();
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -91,13 +116,38 @@ public sealed class HalibutModuleSelfCertWiringTests
         return builder.Build();
     }
 
+    private static Action SetEnforcementEnvVar(string value)
+    {
+        var name = SelfCertValidator.EnforcementEnvVar;
+        var prior = Environment.GetEnvironmentVariable(name);
+
+        Environment.SetEnvironmentVariable(name, value);
+
+        return () => Environment.SetEnvironmentVariable(name, prior);
+    }
+
     private static (string Base64, string Password) ReadCommittedSelfCert()
     {
         var path = Path.Combine(RepoRoot(), "src", "Squid.Api", "appsettings.json");
         using var doc = JsonDocument.Parse(File.ReadAllText(path));
         var selfCert = doc.RootElement.GetProperty("SelfCert");
+        var base64 = selfCert.GetProperty("Base64").GetString();
 
-        return (selfCert.GetProperty("Base64").GetString(), selfCert.GetProperty("Password").GetString());
+        // Without this, a future appsettings.json that drops SelfCert:Base64 would silently turn
+        // the rejection test into an EnsureConfigured test that still passes for the wrong reason.
+        base64.ShouldNotBeNullOrWhiteSpace("the committed appsettings.json is expected to still carry a SelfCert");
+
+        return (base64, selfCert.GetProperty("Password").GetString());
+    }
+
+    /// <summary>Recomputed, not hardcoded, so it tracks a rotated committed certificate.</summary>
+    private static string CommittedThumbprint()
+    {
+        var committed = ReadCommittedSelfCert();
+        using var cert = System.Security.Cryptography.X509Certificates.X509CertificateLoader
+            .LoadPkcs12(Convert.FromBase64String(committed.Base64), committed.Password);
+
+        return cert.Thumbprint;
     }
 
     private static (string Base64, string Password) CreateDeploymentSpecificPkcs12()

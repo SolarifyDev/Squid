@@ -7,6 +7,7 @@ using System.Text.Json;
 using Shouldly;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Hardening;
+using Squid.UnitTests.Support;
 using Xunit;
 
 namespace Squid.UnitTests.Settings;
@@ -20,6 +21,7 @@ namespace Squid.UnitTests.Settings;
 /// deploy that forgot silently served the public identity — and anyone with repository read
 /// access could impersonate the server to every agent pinning that thumbprint.</para>
 /// </summary>
+[Collection(GlobalStateSerialisedCollection.Name)]
 public sealed class SelfCertValidatorTests
 {
     [Fact]
@@ -37,8 +39,21 @@ public sealed class SelfCertValidatorTests
         // identity is easy to miss and the consequence is fleet-wide impersonation, so this guard
         // deliberately opts into the stricter posture — same call the master-key guard made.
         SelfCertValidator.DefaultMode.ShouldBe(EnforcementMode.Strict);
-        SelfCertValidator.ResolveMode().ShouldBe(EnforcementMode.Strict,
-            customMessage: "With the env var unset the guard must resolve Strict, not the shared Warn default.");
+
+        // ResolveMode reads the environment, and this guard's own rejection message tells a
+        // developer to export that variable — so the one test that asserts the UNSET default has
+        // to clear it explicitly, or it goes red on exactly the machines that followed the advice.
+        var restore = SetEnforcementEnvVar(null);
+
+        try
+        {
+            SelfCertValidator.ResolveMode().ShouldBe(EnforcementMode.Strict,
+                customMessage: "With the env var unset the guard must resolve Strict, not the shared Warn default.");
+        }
+        finally
+        {
+            restore();
+        }
     }
 
     // ── The committed certificate ────────────────────────────────────────
@@ -63,14 +78,23 @@ public sealed class SelfCertValidatorTests
     {
         // The end-to-end statement of intent: with no configuration at all, the identity in the
         // repository must not be usable.
-        var committed = LoadCommittedCertificate();
+        var restore = SetEnforcementEnvVar(null);
 
-        var ex = Should.Throw<InvalidOperationException>(
-            () => SelfCertValidator.EnsureNotPublishedIdentity(committed, SelfCertValidator.ResolveMode()));
+        try
+        {
+            var committed = LoadCommittedCertificate();
 
-        ex.Message.ShouldContain(committed.Thumbprint);
-        ex.Message.ShouldContain(SelfCertValidator.EnforcementEnvVar,
-            customMessage: "The rejection must name its own escape hatch, or an operator who needs to proceed is stuck.");
+            var ex = Should.Throw<InvalidOperationException>(
+                () => SelfCertValidator.EnsureNotPublishedIdentity(committed, SelfCertValidator.ResolveMode()));
+
+            ex.Message.ShouldContain(committed.Thumbprint);
+            ex.Message.ShouldContain(SelfCertValidator.EnforcementEnvVar,
+                customMessage: "The rejection must name its own escape hatch, or an operator who needs to proceed is stuck.");
+        }
+        finally
+        {
+            restore();
+        }
     }
 
     [Theory]
@@ -126,6 +150,16 @@ public sealed class SelfCertValidatorTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    private static Action SetEnforcementEnvVar(string value)
+    {
+        var name = SelfCertValidator.EnforcementEnvVar;
+        var prior = Environment.GetEnvironmentVariable(name);
+
+        Environment.SetEnvironmentVariable(name, value);
+
+        return () => Environment.SetEnvironmentVariable(name, prior);
+    }
 
     /// <summary>Loads the certificate exactly as HalibutModule would, from the real appsettings.json.</summary>
     private static X509Certificate2 LoadCommittedCertificate()
