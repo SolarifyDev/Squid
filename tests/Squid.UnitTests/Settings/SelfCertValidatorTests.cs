@@ -152,10 +152,15 @@ public sealed class SelfCertValidatorTests
         return request.CreateSelfSigned(now.AddDays(-1), now.AddYears(1));
     }
 
+    /// <summary>
+    /// Walks up to the repository root. Accepts <c>.git</c> as either a directory (normal clone)
+    /// or a file (linked worktree, which is how review/agent tooling checks the branch out) —
+    /// a directory-only probe walks straight past a worktree root and fails spuriously there.
+    /// </summary>
     private static string RepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
             dir = dir.Parent;
 
         return dir?.FullName ?? throw new InvalidOperationException("Could not locate .git — test must run inside the Squid repo working tree");
