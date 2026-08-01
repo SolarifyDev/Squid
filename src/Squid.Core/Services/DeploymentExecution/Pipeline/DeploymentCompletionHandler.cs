@@ -75,30 +75,14 @@ public sealed class DeploymentCompletionHandler(
     /// row keeps occupying the environment's concurrency slot and blocks every other deployment
     /// to that environment. So the outcome is written here, once, for every suspend site.</para>
     ///
-    /// <para>The transition fires ONLY from <see cref="TaskState.Executing"/>, the sole legal
-    /// source of a <c>→ Paused</c> edge. Every other state is left
-    /// alone deliberately: <c>Paused</c> is the self-transitioning sites' common case and
-    /// <c>Paused → Paused</c> is not legal; <c>Cancelling</c> means an operator cancelled while
-    /// the pipeline was unwinding and that cancel must win rather than be overwritten by a pause;
-    /// and a terminal task has already recorded its outcome. Transitioning blindly would throw
-    /// <see cref="ServerTaskStateTransitionException"/> in each of those cases.</para>
+    /// <para>See <see cref="PauseIfStillExecutingAsync"/> for which states are written and why
+    /// the rest are deliberately left alone.</para>
     /// </summary>
     public async Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
-        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
-
-        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-        {
-            Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is for the pause", ctx.ServerTaskId, fromState);
-            return;
-        }
-
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
-        {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -118,12 +102,7 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} timed out; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
-
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
-        {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -134,19 +113,50 @@ public sealed class DeploymentCompletionHandler(
     /// pointer preserved, so a resume re-attaches to the still-running script
     /// instead of re-dispatching a duplicate. Like <see cref="OnTimedOutAsync"/> we
     /// deliberately do NOT delete the checkpoint and do NOT write a
-    /// <c>DeploymentCompletion</c> record (the deployment has not completed). This is
-    /// unconditional — there is no opt-out, because failing fast on a transient blip
-    /// would discard already-completed progress and risk a duplicate run.
+    /// <c>DeploymentCompletion</c> record (the deployment has not completed). Pausing on a
+    /// transient blip has no env-var opt-out (unlike the timeout's
+    /// <c>SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE</c>), because failing fast here would discard
+    /// already-completed progress and risk a duplicate run. That is separate from WHICH states
+    /// the pause is written from — see <see cref="PauseIfStillExecutingAsync"/>.
     /// </summary>
     public async Task OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} hit a transient infrastructure failure; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Moves the task to <see cref="TaskState.Paused"/>, but ONLY from
+    /// <see cref="TaskState.Executing"/> — the sole legal source of that edge.
+    ///
+    /// <para>Shared by all three pause outcomes (suspend, timeout, transient) because the
+    /// decision is identical for each and getting it wrong is expensive. A blind transition
+    /// throws <see cref="ServerTaskStateTransitionException"/> for every other state, and that
+    /// throw is swallowed by the runner's SafeCompleteAsync — leaving the task in whatever
+    /// state it was, with no further processing. The costly case is <c>Cancelling</c>: an
+    /// operator cancelling while the pipeline unwinds would leave the row stuck there
+    /// permanently, holding the environment's concurrency slot and blocking every other
+    /// deployment to that environment, with no reaper to free it.</para>
+    ///
+    /// <para>Skipping is also the RIGHT semantic, not merely the safe one: a cancel that lands
+    /// mid-pause should win, and a task that already reached a terminal state has recorded its
+    /// outcome. <c>Paused</c> is skipped because the suspend sites that self-transition are the
+    /// common case and <c>Paused → Paused</c> is not legal either.</para>
+    /// </summary>
+    private async Task PauseIfStillExecutingAsync(int serverTaskId, CancellationToken ct)
+    {
+        var fromState = await ResolveCurrentActiveStateAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is rather than forcing a pause", serverTaskId, fromState);
+            return;
+        }
 
         await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
         {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Paused, cancellationToken).ConfigureAwait(false);
+            await serverTaskService.TransitionStateAsync(serverTaskId, TaskState.Executing, TaskState.Paused, cancellationToken).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
     }
 
