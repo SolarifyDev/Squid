@@ -4,6 +4,7 @@ using Halibut.Diagnostics;
 using Halibut.ServiceModel;
 using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.SelfCert;
+using Squid.Message.Hardening;
 
 namespace Squid.Core.Halibut;
 
@@ -49,8 +50,14 @@ public class HalibutModule : Module
         {
             var selfCertSetting = ctx.Resolve<SelfCertSetting>();
 
+            // Fail with an actionable message before the loader turns a missing/committed
+            // identity into an opaque FormatException or a silently-public server key.
+            SelfCertValidator.EnsureConfigured(selfCertSetting.Base64);
+
             var certBytes = Convert.FromBase64String(selfCertSetting.Base64);
             var serverCert = X509CertificateLoader.LoadPkcs12(certBytes, selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
+
+            SelfCertValidator.EnsureNotPublishedIdentity(serverCert, SelfCertValidator.ResolveMode());
 
             var services = new DelegateServiceFactory();
 
