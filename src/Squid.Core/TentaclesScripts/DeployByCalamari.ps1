@@ -14,17 +14,13 @@ if ($env:OS -eq 'Windows_NT' -and -not [string]::IsNullOrWhiteSpace($env:Program
                 }
             }
         } catch {
-            Write-Verbose "Could not read Tentacle install-info.json: $($_.Exception.Message)"
+            Write-Warning "Could not read Tentacle install-info.json: $($_.Exception.Message)"
         }
     }
 }
 
 if (-not $squidCalamari) {
-    $squidCalamariCommand = if ($env:OS -eq 'Windows_NT') {
-        Get-Command -Name 'squid-calamari.exe' -CommandType Application -ErrorAction SilentlyContinue
-    } else {
-        Get-Command -Name 'squid-calamari' -CommandType Application -ErrorAction SilentlyContinue
-    }
+    $squidCalamariCommand = Get-Command -Name 'squid-calamari' -CommandType Application -ErrorAction SilentlyContinue
 
     if ($squidCalamariCommand) {
         $squidCalamari = $squidCalamariCommand.Path

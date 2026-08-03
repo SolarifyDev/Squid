@@ -57,6 +57,67 @@ public sealed class CalamariLookupE2ETests : IDisposable
         await VerifyBundledCalamariResolutionAsync(useVersionedTentacle: true);
     }
 
+    [Fact]
+    public async Task DeployByCalamari_CorruptInstallInfo_FallsBackToPathCommandWrapper()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        using var ctx = new InstallDirContext();
+        var installInfoDirectory = Path.Combine(_programData, "Squid", "Tentacle");
+        Directory.CreateDirectory(installInfoDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(installInfoDirectory, "install-info.json"),
+            "{ malformed install info",
+            Encoding.UTF8);
+
+        Directory.CreateDirectory(ctx.InstallDir);
+        var markerPath = Path.Combine(ctx.InstallDir, "calamari-marker.txt");
+        var resolutionScript = Path.Combine(ctx.InstallDir, "resolve-calamari.ps1");
+        var packagePath = Path.Combine(ctx.InstallDir, "package.yaml");
+        var variablesPath = Path.Combine(ctx.InstallDir, "variables.json");
+        var sensitiveVariablesPath = Path.Combine(ctx.InstallDir, "sensitive-variables.json");
+        await File.WriteAllTextAsync(packagePath, "apiVersion: v1", Encoding.UTF8);
+        await File.WriteAllTextAsync(variablesPath, "{}", Encoding.UTF8);
+        await File.WriteAllTextAsync(sensitiveVariablesPath, "{}", Encoding.UTF8);
+
+        Directory.CreateDirectory(ctx.ToolsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(ctx.ToolsDirectory, "kubectl.cmd"), "@exit /b 0", Encoding.ASCII);
+        await File.WriteAllTextAsync(Path.Combine(ctx.ToolsDirectory, "bash.cmd"), "@exit /b 0", Encoding.ASCII);
+
+        var shimPath = LocateCalamariShim();
+        await File.WriteAllTextAsync(
+            Path.Combine(ctx.ToolsDirectory, "squid-calamari.cmd"),
+            $"@echo off\r\n\"{shimPath}\" %*\r\n",
+            Encoding.ASCII);
+
+        var payload = new CalamariPayload
+        {
+            TemplateBody = UtilService.GetEmbeddedScriptContent("DeployByCalamari.ps1"),
+            SensitivePassword = "test-sensitive-password"
+        };
+        var renderedTemplate = payload.FillTemplate(packagePath, variablesPath, sensitiveVariablesPath);
+        renderedTemplate.ShouldNotContain("{{", customMessage: "rendered production template must not retain placeholders");
+        await File.WriteAllTextAsync(resolutionScript, renderedTemplate, Encoding.UTF8);
+
+        var (resExit, resOut, resErr) = await RunPowerShellAsync(
+            resolutionScript,
+            prependPathEntry: ctx.ToolsDirectory,
+            markerPath: markerPath);
+
+        resExit.ShouldBe(0,
+            customMessage: $"corrupt install-info.json MUST fall back to a PATH command wrapper. stdout:\n{resOut}\nstderr:\n{resErr}");
+        (resOut + resErr).ShouldContain("WARNING: Could not read Tentacle install-info.json:",
+            customMessage: "a corrupt discovery file must be visible in deployment output before PATH fallback is used");
+        File.Exists(markerPath).ShouldBeTrue(
+            customMessage: $"PATH wrapper must invoke the Calamari shim. stdout:\n{resOut}\nstderr:\n{resErr}");
+
+        var marker = await File.ReadAllTextAsync(markerPath);
+        marker.ShouldContain("apply-yaml", customMessage: $"calamari args must be forwarded through the wrapper:\n{marker}");
+        marker.ShouldContain($"--file={packagePath}", customMessage: $"package path must be rendered into wrapper args:\n{marker}");
+        marker.ShouldContain(Path.GetFullPath(shimPath),
+            customMessage: $"the PATH wrapper must invoke the Calamari shim. marker:\n{marker}");
+    }
+
     private async Task VerifyBundledCalamariResolutionAsync(bool useVersionedTentacle)
     {
         using var mirror = LocalReleaseMirror.Start();
