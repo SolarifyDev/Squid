@@ -48,8 +48,7 @@ public sealed class CalamariLookupE2ETests : IDisposable
         // Build a zip containing both the (fake) Tentacle binary and the real
         // squid-calamari.exe shim, and stage it as the release archive.
         var shimPath = LocateCalamariShim();
-        var shimBytes = await File.ReadAllBytesAsync(shimPath);
-        var zipBytes = BuildReleaseZip(shimBytes);
+        var zipBytes = BuildReleaseZip(shimPath);
         mirror.StagePreBuiltArchive(zipBytes);
 
         // Install Tentacle with -NoServiceInstall; install-info.json is written
@@ -104,18 +103,28 @@ public sealed class CalamariLookupE2ETests : IDisposable
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    private static byte[] BuildReleaseZip(byte[] shimBytes)
+    private static byte[] BuildReleaseZip(string shimExePath)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
+            // The shim is a framework-dependent apphost: without its sibling
+            // .dll / .runtimeconfig.json / .deps.json it cannot start after
+            // extraction, so bundle the whole build output like the other
+            // Windows E2E fixtures do.
+            var shimOutputDir = Path.GetDirectoryName(shimExePath)!;
+            foreach (var sourceFile in Directory.EnumerateFiles(shimOutputDir, "*", SearchOption.AllDirectories))
+            {
+                var relativePath = Path.GetRelativePath(shimOutputDir, sourceFile);
+                var entry = zip.CreateEntry(relativePath, CompressionLevel.Fastest);
+                using var entryStream = entry.Open();
+                using var fileStream = File.OpenRead(sourceFile);
+                fileStream.CopyTo(entryStream);
+            }
+
             var tentacleEntry = zip.CreateEntry("Squid.Tentacle.exe", CompressionLevel.Fastest);
             using (var writer = new StreamWriter(tentacleEntry.Open(), Encoding.UTF8))
                 writer.Write("# fake Squid.Tentacle.exe for E2E test\n");
-
-            var calamariEntry = zip.CreateEntry("squid-calamari.exe", CompressionLevel.Fastest);
-            using var calamariStream = calamariEntry.Open();
-            calamariStream.Write(shimBytes, 0, shimBytes.Length);
         }
 
         return ms.ToArray();
