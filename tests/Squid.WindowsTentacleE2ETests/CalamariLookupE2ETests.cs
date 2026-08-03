@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.WindowsTentacleE2ETests.Infrastructure;
 
 namespace Squid.WindowsTentacleE2ETests;
@@ -16,8 +18,8 @@ namespace Squid.WindowsTentacleE2ETests;
 /// <para><b>Tier</b>: 🟢 High-fidelity. Real <c>install-tentacle.ps1</c>
 /// against a <see cref="LocalReleaseMirror"/> serving a pre-built zip that
 /// contains both binaries, then a real <c>powershell.exe</c> process runs the
-/// same resolution logic that <c>DeployByCalamari.ps1</c> contains and invokes
-/// the resolved shim. The shim (a real PE executable built by the
+/// rendered, embedded <c>DeployByCalamari.ps1</c> template and invokes the
+/// resolved shim. The shim (a real PE executable built by the
 /// CalamariShim project) writes a marker file so the test can assert the
 /// absolute path was used.</para>
 ///
@@ -77,16 +79,37 @@ public sealed class CalamariLookupE2ETests : IDisposable
         File.Exists(installInfoPath).ShouldBeTrue(
             customMessage: $"install-info.json MUST exist at {installInfoPath}. stdout:\n{stdout}");
 
-        // Run the same resolution + invocation logic DeployByCalamari.ps1
-        // performs. The child PATH deliberately excludes the install dir, so
-        // only the install-info.json sibling lookup can succeed.
+        // Render and run the actual embedded production template. The child
+        // PATH deliberately excludes the install dir and every directory that
+        // contains squid-calamari.exe, so only the install-info.json sibling
+        // lookup can succeed.
         var markerPath = Path.Combine(ctx.InstallDir, "calamari-marker.txt");
         var resolutionScript = Path.Combine(ctx.InstallDir, "resolve-calamari.ps1");
-        await File.WriteAllTextAsync(resolutionScript, BuildResolutionScript(markerPath), Encoding.UTF8);
+        var packagePath = Path.Combine(ctx.InstallDir, "package.yaml");
+        var variablesPath = Path.Combine(ctx.InstallDir, "variables.json");
+        var sensitiveVariablesPath = Path.Combine(ctx.InstallDir, "sensitive-variables.json");
+        await File.WriteAllTextAsync(packagePath, "apiVersion: v1", Encoding.UTF8);
+        await File.WriteAllTextAsync(variablesPath, "{}", Encoding.UTF8);
+        await File.WriteAllTextAsync(sensitiveVariablesPath, "{}", Encoding.UTF8);
+
+        Directory.CreateDirectory(ctx.ToolsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(ctx.ToolsDirectory, "kubectl.cmd"), "@exit /b 0", Encoding.ASCII);
+        await File.WriteAllTextAsync(Path.Combine(ctx.ToolsDirectory, "bash.cmd"), "@exit /b 0", Encoding.ASCII);
+
+        var payload = new CalamariPayload
+        {
+            TemplateBody = UtilService.GetEmbeddedScriptContent("DeployByCalamari.ps1"),
+            SensitivePassword = "test-sensitive-password"
+        };
+        var renderedTemplate = payload.FillTemplate(packagePath, variablesPath, sensitiveVariablesPath);
+        renderedTemplate.ShouldNotContain("{{", customMessage: "rendered production template must not retain placeholders");
+        await File.WriteAllTextAsync(resolutionScript, renderedTemplate, Encoding.UTF8);
 
         var (resExit, resOut, resErr) = await RunPowerShellAsync(
             resolutionScript,
-            excludeDirFromPath: ctx.InstallDir);
+            excludeDirFromPath: ctx.InstallDir,
+            prependPathEntry: ctx.ToolsDirectory,
+            markerPath: markerPath);
 
         resExit.ShouldBe(0,
             customMessage: $"resolution script MUST exit 0. stdout:\n{resOut}\nstderr:\n{resErr}");
@@ -97,6 +120,8 @@ public sealed class CalamariLookupE2ETests : IDisposable
         var marker = await File.ReadAllTextAsync(markerPath);
         marker.ShouldContain("ProcessPath", customMessage: $"unexpected marker content:\n{marker}");
         marker.ShouldContain("apply-yaml", customMessage: $"calamari args must be forwarded:\n{marker}");
+        marker.ShouldContain($"--file={packagePath}", customMessage: $"package path must be rendered into calamari args:\n{marker}");
+        marker.ShouldContain($"--variables={variablesPath}", customMessage: $"variables path must be rendered into calamari args:\n{marker}");
         marker.ShouldContain(Path.GetFullPath(calamariExe),
             customMessage: $"shim must be invoked via absolute path. marker:\n{marker}");
     }
@@ -130,48 +155,6 @@ public sealed class CalamariLookupE2ETests : IDisposable
         return ms.ToArray();
     }
 
-    /// <summary>
-    /// Mirrors the resolution block in <c>src/Squid.Core/TentaclesScripts/
-    /// DeployByCalamari.ps1</c>, then invokes the resolved calamari with the
-    /// same command shape the production template uses.
-    /// </summary>
-    private static string BuildResolutionScript(string markerPath)
-    {
-        const string script = """
-            $ErrorActionPreference = 'Stop'
-
-            $squidCalamari = $null
-            $installInfoPath = Join-Path $env:ProgramData 'Squid\Tentacle\install-info.json'
-
-            if (Test-Path -LiteralPath $installInfoPath) {
-                $installInfo = Get-Content -LiteralPath $installInfoPath -Raw | ConvertFrom-Json
-                if (-not [string]::IsNullOrWhiteSpace($installInfo.BinaryPath)) {
-                    $candidate = Join-Path (Split-Path -Parent $installInfo.BinaryPath) 'squid-calamari.exe'
-                    if (Test-Path -LiteralPath $candidate) {
-                        $squidCalamari = $candidate
-                    }
-                }
-            }
-
-            if (-not $squidCalamari) {
-                $squidCalamariCommand = Get-Command -Name 'squid-calamari.exe' -CommandType Application -ErrorAction SilentlyContinue
-                if ($squidCalamariCommand) {
-                    $squidCalamari = $squidCalamariCommand.Path
-                }
-            }
-
-            if (-not $squidCalamari) {
-                Write-Error 'squid-calamari was not found beside Tentacle nor in PATH'
-                exit 1
-            }
-
-            & $squidCalamari --marker='__MARKER_PATH__' apply-yaml --file=test.yaml --variables=test.json
-            exit $LASTEXITCODE
-            """;
-
-        return script.Replace("__MARKER_PATH__", markerPath);
-    }
-
     private async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
     {
         var scriptPath = LocateInstallScript();
@@ -183,7 +166,9 @@ public sealed class CalamariLookupE2ETests : IDisposable
     private async Task<(int exitCode, string stdout, string stderr)> RunPowerShellAsync(
         string scriptPath,
         string[]? additionalArgs = null,
-        string? excludeDirFromPath = null)
+        string? excludeDirFromPath = null,
+        string? prependPathEntry = null,
+        string? markerPath = null)
     {
         var psi = new ProcessStartInfo
         {
@@ -197,13 +182,25 @@ public sealed class CalamariLookupE2ETests : IDisposable
         // Redirect %ProgramData% so install-info.json lands in the isolated dir.
         psi.EnvironmentVariables["ProgramData"] = _programData;
 
-        // Optionally strip a directory from PATH to prove the bundled lookup
-        // works without relying on PATH resolution.
-        if (excludeDirFromPath != null)
+        if (markerPath != null)
+        {
+            psi.EnvironmentVariables["SQUID_CALAMARI_E2E_MARKER"] = markerPath;
+        }
+
+        // Keep the commands required by the real template available, but
+        // remove the Tentacle directory and any PATH-provided Calamari binary.
+        if (excludeDirFromPath != null || prependPathEntry != null)
         {
             var pathEntries = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
                 .Split(';', StringSplitOptions.RemoveEmptyEntries)
-                .Where(p => !string.Equals(p.TrimEnd('\\'), excludeDirFromPath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+                .Select(p => p.Trim().Trim('"'))
+                .Where(p => excludeDirFromPath == null ||
+                    !string.Equals(p.TrimEnd('\\', '/'), excludeDirFromPath.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+                .Where(p => !File.Exists(Path.Combine(p, "squid-calamari.exe")));
+
+            if (prependPathEntry != null)
+                pathEntries = new[] { prependPathEntry }.Concat(pathEntries);
+
             psi.EnvironmentVariables["PATH"] = string.Join(';', pathEntries);
         }
 
@@ -275,12 +272,22 @@ public sealed class CalamariLookupE2ETests : IDisposable
         public string InstallDir { get; } =
             Path.Combine(Path.GetTempPath(), $"squid-calamari-install-{Guid.NewGuid():N}");
 
+        public string ToolsDirectory { get; } =
+            Path.Combine(Path.GetTempPath(), $"squid-calamari-tools-{Guid.NewGuid():N}");
+
         public void Dispose()
         {
             try
             {
                 if (Directory.Exists(InstallDir))
                     Directory.Delete(InstallDir, recursive: true);
+            }
+            catch { /* best-effort */ }
+
+            try
+            {
+                if (Directory.Exists(ToolsDirectory))
+                    Directory.Delete(ToolsDirectory, recursive: true);
             }
             catch { /* best-effort */ }
         }

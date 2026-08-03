@@ -7,13 +7,15 @@
 //   • the resolved path was an absolute path (install-info.json sibling)
 //   • the expected arguments were forwarded
 //
-// Usage: squid-calamari.exe [--marker=<path>] <calamari-args...>
+// Usage: SQUID_CALAMARI_E2E_MARKER=<path> squid-calamari.exe [--marker=<path>] <calamari-args...>
 //
-// The --marker argument is consumed by the shim and never forwarded to
-// "calamari logic" (there is none — this is a test double).  When absent
-// the shim silently exits 0 so tests that don't need a marker still work.
+// The environment variable keeps the marker mechanism separate from the
+// production command contract. --marker remains backward-compatible for
+// existing callers. Both are consumed by the shim and never forwarded to
+// "calamari logic" (there is none — this is a test double). When absent the
+// shim silently exits 0 so tests that don't need a marker still work.
 
-string markerPath = null;
+var markerPath = Environment.GetEnvironmentVariable("SQUID_CALAMARI_E2E_MARKER");
 var passthrough = new List<string>();
 
 foreach (var arg in args)

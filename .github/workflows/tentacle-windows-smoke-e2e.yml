@@ -79,7 +79,7 @@ jobs:
           # upgrade script, the Windows service deploy payload/handler, the
           # server-side upgrade strategy, the Windows E2E project, and this
           # workflow itself).
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.WindowsTentacleE2E\.CalamariShim/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.WindowsTentacleE2E\.CalamariShim/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (Tentacle paths changed)"
           else
