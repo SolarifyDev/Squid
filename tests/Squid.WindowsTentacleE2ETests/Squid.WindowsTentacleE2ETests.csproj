@@ -73,6 +73,15 @@
     <ProjectReference Include="..\Squid.WindowsTentacleE2E.VersionStampedShim\Squid.WindowsTentacleE2E.VersionStampedShim.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+
+    <!--
+      squid-calamari.exe shim used by CalamariLookupE2ETests. The test copies
+      the built PE beside a fake Squid.Tentacle.exe inside a pre-built release
+      zip and proves DeployByCalamari resolves the sibling via absolute path.
+    -->
+    <ProjectReference Include="..\Squid.WindowsTentacleE2E.CalamariShim\Squid.WindowsTentacleE2E.CalamariShim.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+    </ProjectReference>
   </ItemGroup>
 
 </Project>

@@ -269,4 +269,14 @@ public static class WindowsUpgradeE2ECategories
     /// </para>
     /// </summary>
     public const string WindowsServiceDeploy = "WindowsServiceDeployE2E";
+
+    /// <summary>
+    /// E2E coverage for the Calamari lookup fix: after a real
+    /// <c>install-tentacle.ps1</c> run, the DeployByCalamari resolution MUST
+    /// find <c>squid-calamari.exe</c> beside the installed Tentacle binary via
+    /// <c>install-info.json</c> (absolute path) even when the binary is not in
+    /// PATH. Windows-only — drives a real <c>powershell.exe</c> process plus
+    /// the real install script against <c>LocalReleaseMirror</c>.
+    /// </summary>
+    public const string CalamariLookup = "CalamariLookupE2E";
 }
