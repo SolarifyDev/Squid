@@ -1350,11 +1350,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         string? sensitivePassword,
         bool sensitiveCiphertextExists,
         ScriptType syntax,
-        string[] arguments)
+        string[] arguments,
+        string? tentacleDirectory = null)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = ResolveCalamariExecutable(),
+            FileName = ResolveCalamariExecutable(tentacleDirectory ?? AppContext.BaseDirectory, File.Exists),
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -1407,9 +1408,6 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         return bundledFileName;
     }
-
-    private static string ResolveCalamariExecutable() =>
-        ResolveCalamariExecutable(AppContext.BaseDirectory, File.Exists);
 
     /// <summary>
     /// Runs <c>python3 script.py</c>. <c>python3</c> must be on PATH; the

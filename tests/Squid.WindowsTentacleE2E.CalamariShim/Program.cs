@@ -26,6 +26,12 @@ foreach (var arg in args)
         passthrough.Add(arg);
 }
 
+if (passthrough.Count == 1 && passthrough[0].Equals("version", StringComparison.OrdinalIgnoreCase))
+{
+    Console.WriteLine("1.6.0-test");
+    return 0;
+}
+
 if (markerPath is not null)
 {
     var content = new System.Text.StringBuilder();

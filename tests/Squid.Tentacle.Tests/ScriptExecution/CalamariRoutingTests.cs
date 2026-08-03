@@ -142,6 +142,38 @@ public sealed class CalamariRoutingTests
     }
 
     [Fact]
+    public void BuildCalamariProcessStartInfo_BundledBinaryExists_UsesAbsolutePath()
+    {
+        var tentacleDirectory = Path.Combine(Path.GetTempPath(), $"squid-calamari-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tentacleDirectory);
+
+        try
+        {
+            var bundledCalamari = Path.Combine(
+                tentacleDirectory,
+                OperatingSystem.IsWindows() ? "squid-calamari.exe" : "squid-calamari");
+            File.WriteAllText(bundledCalamari, string.Empty);
+
+            var psi = LocalScriptService.BuildCalamariProcessStartInfo(
+                workDir: "/tmp/work",
+                variablesPath: "/tmp/work/variables.json",
+                sensitiveVariablesPath: "/tmp/work/sensitiveVariables.json",
+                sensitivePassword: null,
+                sensitiveCiphertextExists: false,
+                syntax: ScriptType.Bash,
+                arguments: Array.Empty<string>(),
+                tentacleDirectory: tentacleDirectory);
+
+            psi.FileName.ShouldBe(bundledCalamari,
+                customMessage: "The production Calamari process must use the bundled executable's absolute path when it exists beside Tentacle.");
+        }
+        finally
+        {
+            Directory.Delete(tentacleDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ResolveCalamariExecutable_BundledBinaryMissing_FallsBackToPathCommand()
     {
         var resolved = LocalScriptService.ResolveCalamariExecutable(

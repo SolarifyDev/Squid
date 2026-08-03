@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.WindowsTentacleE2ETests.Infrastructure;
@@ -13,7 +14,8 @@ namespace Squid.WindowsTentacleE2ETests;
 /// is installed beside <c>Squid.Tentacle.exe</c> (recorded via
 /// <c>install-info.json</c>), the DeployByCalamari resolution MUST pick the
 /// sibling via absolute path — even when <c>squid-calamari.exe</c> is NOT in
-/// PATH.
+/// PATH. Both the legacy flat layout and the production versioned
+/// <c>current</c>-junction layout are covered.
 ///
 /// <para><b>Tier</b>: 🟢 High-fidelity. Real <c>install-tentacle.ps1</c>
 /// against a <see cref="LocalReleaseMirror"/> serving a pre-built zip that
@@ -40,17 +42,31 @@ public sealed class CalamariLookupE2ETests : IDisposable
     }
 
     [Fact]
-    public async Task DeployByCalamari_BundledCalamariBesideTentacle_ResolvedViaAbsolutePath()
+    public async Task DeployByCalamari_BundledCalamariBesideFlatTentacle_ResolvedViaAbsolutePath()
     {
         if (!OperatingSystem.IsWindows()) return;
 
+        await VerifyBundledCalamariResolutionAsync(useVersionedTentacle: false);
+    }
+
+    [Fact]
+    public async Task DeployByCalamari_BundledCalamariBesideVersionedTentacle_ResolvedViaCurrentPointer()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        await VerifyBundledCalamariResolutionAsync(useVersionedTentacle: true);
+    }
+
+    private async Task VerifyBundledCalamariResolutionAsync(bool useVersionedTentacle)
+    {
         using var mirror = LocalReleaseMirror.Start();
         using var ctx = new InstallDirContext();
 
-        // Build a zip containing both the (fake) Tentacle binary and the real
-        // squid-calamari.exe shim, and stage it as the release archive.
+        // Build a zip containing the real squid-calamari.exe shim plus either
+        // a non-runnable fake Tentacle (flat fallback) or a runnable copy of
+        // the shim as Squid.Tentacle.exe (versioned current-junction layout).
         var shimPath = LocateCalamariShim();
-        var zipBytes = BuildReleaseZip(shimPath);
+        var zipBytes = BuildReleaseZip(shimPath, useVersionedTentacle);
         mirror.StagePreBuiltArchive(zipBytes);
 
         // Install Tentacle with -NoServiceInstall; install-info.json is written
@@ -65,19 +81,39 @@ public sealed class CalamariLookupE2ETests : IDisposable
         exitCode.ShouldBe(0,
             customMessage: $"install-tentacle.ps1 MUST exit 0. stdout:\n{stdout}\nstderr:\n{stderr}");
 
-        // Both binaries must be present beside each other in the install dir.
-        var tentacleExe = Path.Combine(ctx.InstallDir, "Squid.Tentacle.exe");
-        var calamariExe = Path.Combine(ctx.InstallDir, "squid-calamari.exe");
+        var activeDirectory = useVersionedTentacle
+            ? Path.Combine(ctx.InstallDir, "current")
+            : ctx.InstallDir;
+        var tentacleExe = Path.Combine(activeDirectory, "Squid.Tentacle.exe");
+        var calamariExe = Path.Combine(activeDirectory, "squid-calamari.exe");
         File.Exists(tentacleExe).ShouldBeTrue(
             customMessage: $"Squid.Tentacle.exe MUST exist at {tentacleExe}. stdout:\n{stdout}");
         File.Exists(calamariExe).ShouldBeTrue(
             customMessage: $"squid-calamari.exe MUST exist at {calamariExe}. stdout:\n{stdout}");
+
+        if (useVersionedTentacle)
+        {
+            var versionDirectory = Path.Combine(ctx.InstallDir, "versions", "1.6.0-test");
+            Directory.Exists(versionDirectory).ShouldBeTrue(
+                customMessage: $"versioned install MUST create {versionDirectory}. stdout:\n{stdout}");
+            new DirectoryInfo(activeDirectory).Attributes.HasFlag(FileAttributes.ReparsePoint).ShouldBeTrue(
+                customMessage: $"current MUST be a junction to the active version. stdout:\n{stdout}");
+        }
+        else
+        {
+            Directory.Exists(Path.Combine(ctx.InstallDir, "current")).ShouldBeFalse(
+                customMessage: $"flat fallback MUST not create a current junction. stdout:\n{stdout}");
+        }
 
         // install-info.json must point at the installed Tentacle binary so the
         // resolution logic can derive the sibling calamari path.
         var installInfoPath = Path.Combine(_programData, "Squid", "Tentacle", "install-info.json");
         File.Exists(installInfoPath).ShouldBeTrue(
             customMessage: $"install-info.json MUST exist at {installInfoPath}. stdout:\n{stdout}");
+        var installInfo = await File.ReadAllTextAsync(installInfoPath);
+        using var installInfoDocument = JsonDocument.Parse(installInfo);
+        installInfoDocument.RootElement.GetProperty("BinaryPath").GetString().ShouldBe(tentacleExe,
+            customMessage: $"install-info.json MUST identify the active {GetLayoutName(useVersionedTentacle)} Tentacle binary. Contents:\n{installInfo}");
 
         // Render and run the actual embedded production template. The child
         // PATH deliberately excludes the install dir and every directory that
@@ -128,7 +164,7 @@ public sealed class CalamariLookupE2ETests : IDisposable
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    private static byte[] BuildReleaseZip(string shimExePath)
+    private static byte[] BuildReleaseZip(string shimExePath, bool useVersionedTentacle)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
@@ -148,12 +184,24 @@ public sealed class CalamariLookupE2ETests : IDisposable
             }
 
             var tentacleEntry = zip.CreateEntry("Squid.Tentacle.exe", CompressionLevel.Fastest);
-            using (var writer = new StreamWriter(tentacleEntry.Open(), Encoding.UTF8))
+            using var tentacleStream = tentacleEntry.Open();
+            if (useVersionedTentacle)
+            {
+                using var shimStream = File.OpenRead(shimExePath);
+                shimStream.CopyTo(tentacleStream);
+            }
+            else
+            {
+                using var writer = new StreamWriter(tentacleStream, Encoding.UTF8);
                 writer.Write("# fake Squid.Tentacle.exe for E2E test\n");
+            }
         }
 
         return ms.ToArray();
     }
+
+    private static string GetLayoutName(bool useVersionedTentacle) =>
+        useVersionedTentacle ? "versioned current-junction" : "flat";
 
     private async Task<(int exitCode, string stdout, string stderr)> RunInstallScriptAsync(params string[] scriptArgs)
     {
