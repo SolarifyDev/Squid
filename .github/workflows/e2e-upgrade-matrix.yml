@@ -61,14 +61,19 @@ jobs:
           - distro: debian-12
             image: jrei/systemd-debian:12
             pkg_mgr: apt
+          # RHEL family uses each distro's OWN systemd-enabled init image rather than a
+          # jrei/* one. jrei publishes no systemd-rockylinux or systemd-almalinux repo at
+          # all (`docker pull` → "repository does not exist"), so both legs had never once
+          # started a container. The distro-official images are also not subject to a third
+          # party pruning old tags, which is what removed jrei/systemd-fedora:40.
           - distro: rockylinux-9
-            image: jrei/systemd-rockylinux:9
+            image: rockylinux/rockylinux:9-ubi-init
             pkg_mgr: dnf
           - distro: almalinux-9
-            image: jrei/systemd-almalinux:9
+            image: almalinux/9-init:9
             pkg_mgr: dnf
-          - distro: fedora-40
-            image: jrei/systemd-fedora:40
+          - distro: fedora-41
+            image: jrei/systemd-fedora:41
             pkg_mgr: dnf
     steps:
       - uses: actions/checkout@v4
@@ -101,15 +106,23 @@ jobs:
             docker exec squid-test-${{ matrix.distro }} bash -c \
               'export DEBIAN_FRONTEND=noninteractive && apt-get update -qq && apt-get install -y -qq curl sudo gnupg ca-certificates'
           else
+            # --allowerasing: the UBI-based Rocky/Alma init images ship curl-minimal, which
+            # CONFLICTS with the curl package ("conflicting requests", dnf exits non-zero)
+            # even though it already provides /usr/bin/curl. Allowing the swap keeps the
+            # step working on both those images and on Fedora, which ships full curl.
             docker exec squid-test-${{ matrix.distro }} bash -c \
-              'dnf install -y -q curl sudo gnupg2 ca-certificates procps-ng which'
+              'dnf install -y -q --allowerasing curl sudo gnupg2 ca-certificates procps-ng which'
           fi
 
+      # Staged under /root, NOT /tmp: systemd 256+ (Fedora 41) activates tmp.mount, so /tmp
+      # becomes a tmpfs that shadows whatever `docker cp` wrote into the image layer — the
+      # copy reports success and the file is then invisible to `bash`. el9's systemd 252
+      # leaves /tmp alone, which is why only the newer distro would have hit it.
       - name: Copy install-tentacle.sh from PR
-        run: docker cp deploy/scripts/install-tentacle.sh squid-test-${{ matrix.distro }}:/tmp/install-tentacle.sh
+        run: docker cp deploy/scripts/install-tentacle.sh squid-test-${{ matrix.distro }}:/root/install-tentacle.sh
 
       - name: Run install-tentacle.sh
-        run: docker exec squid-test-${{ matrix.distro }} bash /tmp/install-tentacle.sh
+        run: docker exec squid-test-${{ matrix.distro }} bash /root/install-tentacle.sh
 
       - name: Verify installer side effects
         run: |
@@ -128,10 +141,26 @@ jobs:
           docker exec squid-test-${{ matrix.distro }} test -f /etc/sudoers.d/squid-tentacle-upgrade
           docker exec squid-test-${{ matrix.distro }} visudo -c -f /etc/sudoers.d/squid-tentacle-upgrade
 
-          # Assertion 4: sudoers rule actually enumerable for the service user
-          docker exec squid-test-${{ matrix.distro }} sudo -U squid-tentacle -nl \
-            | grep -q "apt-get\|dnf\|yum" \
+          # Assertion 4: the rule actually grants squid-tentacle a package manager.
+          # Asserted on the sudoers file rather than via `sudo -U`, because `sudo -U <user> -l`
+          # runs PAM account management for the TARGET user, and the RHEL-family init images
+          # cannot satisfy it ("PAM account management error: Authentication service cannot
+          # retrieve authentication info" — systemd-logind is inactive in the container). That
+          # is a container limitation, not a product defect: the file is already proven valid
+          # sudoers syntax by assertion 3's visudo -c, and this pins that it grants the right
+          # user a package-manager command.
+          docker exec squid-test-${{ matrix.distro }} \
+            grep -qE '^squid-tentacle .*(apt-get|dnf|yum)' /etc/sudoers.d/squid-tentacle-upgrade \
             || (echo "::error::squid-tentacle user has no package-manager sudoers rule"; exit 1)
+
+          # Where sudo CAN run, additionally prove sudo itself enumerates the rule. Never
+          # silently skipped — an unavailable sudo is reported so the weaker coverage is visible.
+          if docker exec squid-test-${{ matrix.distro }} sudo -U squid-tentacle -nl 2>/dev/null \
+               | grep -q "apt-get\|dnf\|yum"; then
+            echo "sudo -U enumerated the rule (full verification)"
+          else
+            echo "::notice::sudo -U could not run in this container (PAM); relied on the sudoers-file assertion only"
+          fi
 
       - name: Teardown
         if: always()
