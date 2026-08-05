@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Squid.Message.Enums.OctopusImport;
 
@@ -277,7 +278,7 @@ public class OctopusInputExtractor : IOctopusInputExtractor
                 return;
             }
 
-            documents.Add(new OctopusExtractedJsonDocument(sourcePath, classification, root.Clone(), content.LongLength));
+            documents.Add(new OctopusExtractedJsonDocument(sourcePath, classification, root.Clone(), content.LongLength, ComputeSha1(content)));
         }
         catch (JsonException ex)
         {
@@ -348,6 +349,9 @@ public class OctopusInputExtractor : IOctopusInputExtractor
 
     private static bool HasJsonExtension(string sourcePath)
         => string.Equals(Path.GetExtension(sourcePath), ".json", StringComparison.OrdinalIgnoreCase);
+
+    private static string ComputeSha1(byte[] content)
+        => Convert.ToHexString(SHA1.HashData(content)).ToLowerInvariant();
 
     private static OctopusInputExtractionDiagnostic Warning(
         string code,

@@ -11,4 +11,14 @@ public static class OctopusInputExtractionDiagnosticCodes
     public const string EntryCountLimitExceeded = "octopus.input.entry_count_limit_exceeded";
     public const string EntrySizeLimitExceeded = "octopus.input.entry_size_limit_exceeded";
     public const string TotalSizeLimitExceeded = "octopus.input.total_size_limit_exceeded";
+    public const string ManifestMissing = "octopus.manifest.missing";
+    public const string MultipleManifests = "octopus.manifest.multiple";
+    public const string ManifestMalformed = "octopus.manifest.malformed";
+    public const string ManifestEntryMissingSource = "octopus.manifest.entry_missing_source";
+    public const string ManifestDuplicateSource = "octopus.manifest.duplicate_source";
+    public const string ManifestDocumentMissing = "octopus.manifest.document_missing";
+    public const string ManifestHashMismatch = "octopus.manifest.hash_mismatch";
+    public const string ManifestSourceIdMismatch = "octopus.manifest.source_id_mismatch";
+    public const string ManifestDocumentTypeMismatch = "octopus.manifest.document_type_mismatch";
+    public const string DocumentNotInManifest = "octopus.manifest.document_not_listed";
 }
