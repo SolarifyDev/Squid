@@ -55,8 +55,42 @@ public static class OutputVariableMerger
     /// Caller assigns the returned list back into the deployment context's
     /// <c>Variables</c> property; the collision list is informational
     /// (already logged inside this method).
+    ///
+    /// <para>Callers that need to know exactly WHICH entries were appended (the
+    /// deployment checkpoint does) should use <see cref="MergeDetailed"/> rather than
+    /// re-deriving it — see that method's remarks for why re-derivation cannot work.</para>
     /// </summary>
     public static (List<VariableDto> Merged, List<string> Collisions) Merge(
+        IReadOnlyList<VariableDto> existing,
+        IReadOnlyList<VariableDto> incoming,
+        EnforcementMode mode)
+    {
+        var result = MergeDetailed(existing, incoming, mode);
+
+        return (result.Merged, result.Collisions);
+    }
+
+    /// <summary>
+    /// The outcome of a merge: the combined list, the colliding names, and the entries
+    /// actually APPENDED to the combined list, in append order.
+    /// </summary>
+    public sealed record MergeOutcome(List<VariableDto> Merged, List<string> Collisions, List<VariableDto> Appended);
+
+    /// <summary>
+    /// As <see cref="Merge"/>, but also reports the entries it appended.
+    ///
+    /// <para><b>Why appended-set reporting exists</b>: the deployment checkpoint must persist
+    /// exactly what went live, and that cannot be re-derived after the fact. This method
+    /// compares each incoming write against the FIRST value indexed for its name and never
+    /// re-indexes, so the combined list can legitimately end with a repeat of an earlier
+    /// (name, value) pair — e.g. incoming A,B,C,B appends all four, and incoming U1,U2,U1
+    /// appends all three when a prior variable already shadows that name. A membership test
+    /// ("is this pair present in the merged list?") cannot distinguish those genuine appends
+    /// from a same-value re-emit that was skipped, and de-duplicating the result drops the
+    /// trailing entry that last-wins resolution actually returns. Only the merge itself knows,
+    /// so it reports it.</para>
+    /// </summary>
+    public static MergeOutcome MergeDetailed(
         IReadOnlyList<VariableDto> existing,
         IReadOnlyList<VariableDto> incoming,
         EnforcementMode mode)
@@ -70,6 +104,7 @@ public static class OutputVariableMerger
 
         var merged = new List<VariableDto>(existing);
         var collisions = new List<string>();
+        var appended = new List<VariableDto>();
 
         foreach (var v in incoming)
         {
@@ -78,6 +113,7 @@ public static class OutputVariableMerger
             if (!byName.TryGetValue(name, out var prior))
             {
                 merged.Add(v);
+                appended.Add(v);
                 byName[name] = v;
                 continue;
             }
@@ -94,11 +130,13 @@ public static class OutputVariableMerger
                     // collision to the caller — operator opted out of the
                     // detection entirely.
                     merged.Add(v);
+                    appended.Add(v);
                     break;
 
                 case EnforcementMode.Warn:
                     collisions.Add(name);
                     merged.Add(v);   // backward compat: keep both entries
+                    appended.Add(v);
                     Log.Warning(
                         "[Deploy] Output variable {VariableName} written by multiple targets with " +
                         "different values. Downstream consumers may pick either value depending on " +
@@ -123,6 +161,6 @@ public static class OutputVariableMerger
             }
         }
 
-        return (merged, collisions);
+        return new MergeOutcome(merged, collisions, appended);
     }
 }

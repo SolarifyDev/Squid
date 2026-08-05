@@ -13,6 +13,13 @@ public class DeploymentEventContext
     public string StepName { get; init; }
     public string StepType { get; init; }
 
+    // Pause
+    /// <summary>
+    /// Why a deployment paused, in operator-facing terms, when no interruption explains it.
+    /// Null for interruption-driven pauses, which keep the default wording.
+    /// </summary>
+    public string PauseReason { get; init; }
+
     // Target
     public string MachineName { get; init; }
     public CommunicationStyle CommunicationStyle { get; init; }

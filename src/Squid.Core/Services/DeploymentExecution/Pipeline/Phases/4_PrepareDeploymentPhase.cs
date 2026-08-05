@@ -78,6 +78,8 @@ public sealed class PrepareDeploymentPhase(
             ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Release.Number, Value = ctx.Release.Version ?? string.Empty });
         }
 
+        // The captured-set re-seed for these restored variables happens in ExecuteStepsPhase,
+        // which owns that accumulator and has the encryption service needed to protect them.
         if (ctx.RestoredOutputVariables.Count > 0)
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
     }

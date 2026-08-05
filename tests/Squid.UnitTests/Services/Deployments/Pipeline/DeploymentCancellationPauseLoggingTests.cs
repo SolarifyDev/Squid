@@ -45,6 +45,37 @@ public class DeploymentCancellationPauseLoggingTests
         var pauseLog = logs.FirstOrDefault(l => l.Message.Contains("paused", StringComparison.OrdinalIgnoreCase));
         pauseLog.ShouldNotBeNull("Should log deployment paused message");
         pauseLog.Category.ShouldBe(ServerTaskLogCategory.Info);
+
+        // Pinned verbatim: interruption-driven pauses (manual intervention, guided failure) supply
+        // no reason and MUST keep this exact wording — it is what operators have always seen, and
+        // it is the non-breaking guarantee the pause-reason change rests on. A weaker
+        // Contains("paused") cannot tell the two branches apart, since both begin the same way.
+        pauseLog.Message.ShouldBe("Deployment paused — waiting for interruption to be resolved");
+    }
+
+    [Fact]
+    public async Task DeploymentPausedWithReason_LogsTheReasonInsteadOfTheInterruptionWording()
+    {
+        // A pause with no interruption behind it (e.g. an undecryptable checkpoint secret) must
+        // tell the operator what actually happened. The default wording would send them looking
+        // for an interruption that does not exist and never will.
+        const string reason = "a checkpointed output variable (ApiKey) could not be decrypted; restore the key and resume";
+
+        var (lifecycle, logs, _, _) = CreateLifecycleHarness();
+        var ctx = CreateBaseContext();
+        lifecycle.Initialize(ctx);
+
+        await lifecycle.EmitAsync(new DeploymentStartingEvent(new DeploymentEventContext()), CancellationToken.None);
+        await lifecycle.EmitAsync(new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = reason }), CancellationToken.None);
+
+        var pauseLog = logs.FirstOrDefault(l => l.Message.Contains("paused", StringComparison.OrdinalIgnoreCase));
+        pauseLog.ShouldNotBeNull("Should log deployment paused message");
+        pauseLog.Message.ShouldContain(reason,
+            customMessage: "The supplied reason is the whole point of the pause message — without it the operator " +
+                           "has no idea what happened or what to do.");
+        pauseLog.Message.ShouldNotContain("waiting for interruption",
+            customMessage: "The default interruption wording must NOT appear when a reason was supplied; it would " +
+                           "send the operator after an interruption that does not exist.");
     }
 
     [Fact]

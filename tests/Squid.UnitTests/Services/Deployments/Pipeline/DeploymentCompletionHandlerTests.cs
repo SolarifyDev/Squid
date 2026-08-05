@@ -108,13 +108,127 @@ public class DeploymentCompletionHandlerTests
     // ========== OnPausedAsync ==========
 
     [Fact]
-    public async Task OnPaused_DoesNotTransitionState()
+    public async Task OnPaused_AlreadyPaused_DoesNotTransitionState()
     {
+        // The common case: manual intervention and guided failure set Paused themselves
+        // immediately before throwing DeploymentSuspendedException. Paused → Paused is not a
+        // legal edge, so re-writing it here would throw for them.
         var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Paused });
 
         await _sut.OnPausedAsync(ctx, CancellationToken.None);
 
         _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Cancelling)]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Success)]
+    public async Task OnPaused_NotExecuting_LeavesTheStateAlone(string currentState)
+    {
+        // Executing is the only legal source of a -> Paused edge. A racing
+        // cancel (Cancelling) must win rather than be overwritten by a pause, and a terminal task
+        // has already recorded its outcome. Transitioning blindly would throw.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await Should.NotThrowAsync(() => _sut.OnPausedAsync(ctx, CancellationToken.None));
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── The guard is shared by all three pause outcomes ──────────────────
+
+    /// <summary>Which pause outcome is being driven; all three share PauseIfStillExecutingAsync.</summary>
+    public enum PauseOutcome { Suspended, TimedOut, Transient }
+
+    private Task InvokePauseAsync(PauseOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    {
+        PauseOutcome.Suspended => _sut.OnPausedAsync(ctx, CancellationToken.None),
+        PauseOutcome.TimedOut => _sut.OnTimedOutAsync(ctx, new Exception("timeout"), CancellationToken.None),
+        PauseOutcome.Transient => _sut.OnTransientPauseAsync(ctx, new Exception("blip"), CancellationToken.None),
+        _ => throw new ArgumentOutOfRangeException(nameof(outcome))
+    };
+
+    [Theory]
+    [InlineData(PauseOutcome.Suspended)]
+    [InlineData(PauseOutcome.TimedOut)]
+    [InlineData(PauseOutcome.Transient)]
+    public async Task AnyPauseOutcome_RacedByACancel_LeavesTheCancelToWin(PauseOutcome outcome)
+    {
+        // What this pins: the pause does not overwrite a cancel that landed mid-unwind, and it
+        // stops reaching for an illegal edge to discover that. Cancelling -> Paused is not legal,
+        // so a blind transition threw and the runner's SafeCompleteAsync swallowed it.
+        //
+        // It does NOT pin that the task recovers. The row stays Cancelling either way — this
+        // handler cannot free it, and nothing else does today (see PauseIfStillExecutingAsync).
+        // The Times.Never below is the whole claim: no illegal transition is attempted.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Cancelling });
+
+        await Should.NotThrowAsync(() => InvokePauseAsync(outcome, ctx),
+            customMessage: $"{outcome} must not attempt the illegal Cancelling -> Paused transition.");
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(PauseOutcome.Suspended, TaskState.Paused)]
+    [InlineData(PauseOutcome.Suspended, TaskState.Pending)]
+    [InlineData(PauseOutcome.Suspended, TaskState.Success)]
+    [InlineData(PauseOutcome.TimedOut, TaskState.Paused)]
+    [InlineData(PauseOutcome.TimedOut, TaskState.Pending)]
+    [InlineData(PauseOutcome.TimedOut, TaskState.Success)]
+    [InlineData(PauseOutcome.Transient, TaskState.Paused)]
+    [InlineData(PauseOutcome.Transient, TaskState.Pending)]
+    [InlineData(PauseOutcome.Transient, TaskState.Success)]
+    public async Task AnyPauseOutcome_NotExecuting_LeavesTheStateAlone(PauseOutcome outcome, string currentState)
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await Should.NotThrowAsync(() => InvokePauseAsync(outcome, ctx));
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(PauseOutcome.Suspended)]
+    [InlineData(PauseOutcome.TimedOut)]
+    [InlineData(PauseOutcome.Transient)]
+    public async Task AnyPauseOutcome_StillExecuting_TransitionsToPaused(PauseOutcome outcome)
+    {
+        // The positive half: guarding must not stop the pause happening on the normal path.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await InvokePauseAsync(outcome, ctx);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnPaused_StillExecuting_TransitionsToPaused()
+    {
+        // A suspend site that runs BEFORE the task is claimed as Executing (the checkpoint
+        // resume phase) has no from-state of its own to transition, so the outcome must be
+        // written here. Leaving such a task Executing is worse than any pause: resume rejects a
+        // non-Paused task, cancel only reaches Cancelling, and the row keeps occupying the
+        // environment's concurrency slot — blocking every other deployment to that environment.
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+
+        await _sut.OnPausedAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

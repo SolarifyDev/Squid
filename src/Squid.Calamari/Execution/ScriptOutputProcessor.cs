@@ -4,8 +4,10 @@ using Squid.Calamari.Execution.Output;
 namespace Squid.Calamari.Execution;
 
 /// <summary>
-/// Routes script output lines: service messages are parsed and suppressed from stdout;
-/// plain log lines are forwarded to the console.
+/// Routes script output lines: service messages are parsed into the output-variable collector
+/// AND forwarded to stdout, because stdout is how they reach the server; plain log lines are
+/// forwarded unchanged. See <see cref="Output.ConsoleProcessOutputSink.WriteStdout"/> for why
+/// forwarding rather than suppressing is required.
 /// </summary>
 public class ScriptOutputProcessor
 {

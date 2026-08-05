@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Jobs;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
@@ -94,5 +95,35 @@ public class DeploymentPipelineRunnerTests
 
         completion.Verify(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Once);
         completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnSuccessThrowingAnIllegalTransition_FallsThroughToOnFailure()
+    {
+        // OnSuccessAsync transitions from a hardcoded Executing, so a task cancelled mid-pipeline
+        // makes it throw. Unlike every other completion callback it is invoked directly rather than
+        // through SafeCompleteAsync, so the exception is NOT swallowed — it reaches the general
+        // catch, which routes to OnFailureAsync, and that resolves the current state and performs
+        // the legal Cancelling -> Failed. That is why a Cancelling row does NOT wedge on the
+        // success path, which PauseIfStillExecutingAsync's doc-comment states; pinned here so the
+        // claim cannot quietly become false if the runner's call shape changes.
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        var completion = new Mock<IDeploymentCompletionHandler>();
+        completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Cancelling, TaskState.Success));
+        completion.Setup(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var okPhase = new Mock<IDeploymentPipelinePhase>();
+        okPhase.Setup(p => p.Order).Returns(1);
+        okPhase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var registry = new TaskCancellationRegistry();
+        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+
+        await Should.ThrowAsync<ServerTaskStateTransitionException>(() => runner.ProcessAsync(1, CancellationToken.None));
+
+        completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

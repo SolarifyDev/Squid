@@ -64,7 +64,7 @@ public class ProgramEntryPointTests
     }
 
     [Fact]
-    public async Task RunScript_HappyPath_Returns0_AndSuppressesServiceMessage()
+    public async Task RunScript_HappyPath_Returns0_AndForwardsServiceMessage()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "squid-calamari-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -79,7 +79,9 @@ public class ProgramEntryPointTests
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldContain("hello-from-inprocess");
-            result.Stdout.ShouldNotContain("##squid[setVariable");
+            // Forwarded on purpose — stdout is the transport the server reads output variables
+            // from. Suppressing it here silently lost every Calamari-path output variable.
+            result.Stdout.ShouldContain("##squid[setVariable name='BuildId' value='42']");
             result.Stderr.ShouldBeEmpty();
         }
         finally

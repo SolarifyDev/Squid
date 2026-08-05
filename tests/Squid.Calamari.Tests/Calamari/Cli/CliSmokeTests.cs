@@ -32,7 +32,10 @@ public class CliSmokeTests
 
             result.ExitCode.ShouldBe(0);
             result.Stdout.ShouldContain("hello-from-cli");
-            result.Stdout.ShouldNotContain("##squid[setVariable");
+            // Forwarded on purpose: the real binary's stdout is what the Tentacle captures and
+            // the server parses output variables from. This is the end-to-end proof that a
+            // Calamari-run script's output variable actually escapes the process.
+            result.Stdout.ShouldContain("##squid[setVariable name='X' value='1']");
             result.Stderr.ShouldBeEmpty();
         }
         finally
