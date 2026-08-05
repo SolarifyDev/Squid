@@ -8,7 +8,7 @@ namespace Squid.Core.Services.DeploymentExecution.Packages.Staging;
 /// <param name="Version">Package version (e.g. <c>1.2.3</c>).</param>
 /// <param name="LocalPath">Absolute path on the Squid server where the fetched package bytes live.</param>
 /// <param name="SizeBytes">Package size in bytes, as reported by the acquisition step.</param>
-/// <param name="Hash">MD5 hash of the local package bytes (hex, lower-case).</param>
+/// <param name="Hash">SHA-256 hash of the local package bytes (hex, lower-case).</param>
 public sealed record PackageRequirement(
     string PackageId,
     string Version,

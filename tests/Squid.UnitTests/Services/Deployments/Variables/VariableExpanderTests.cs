@@ -1,8 +1,10 @@
 using System.Collections.Generic;
+using System.Linq;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Core.Services.DeploymentExecution.Variables;
+using Squid.Core.VariableSubstitution;
 
 namespace Squid.UnitTests.Services.Deployments.Variables;
 
@@ -146,5 +148,66 @@ public class VariableExpanderTests
         var result = VariableExpander.ExpandString("plain text", dict);
 
         result.ShouldBe("plain text");
+    }
+
+    [Fact]
+    public void ExpandActionProperties_AfterBuildActionVariablesPromotesProperties_StillResolvesSimpleTokens()
+    {
+        // Regression for IIS E2E failures after BuildActionVariables started promoting
+        // action properties into the variable dictionary. Production path is:
+        //   base vars + action.Properties -> BuildActionVariables
+        //   -> VariableDictionaryFactory.Create -> ExpandActionProperties
+        // PropertyListBinder nests dotted Squid.Action.* keys; simple tokens like
+        // #{EnvName} must still resolve when those nested keys are present.
+        var baseVars = MakeVars(
+            ("EnvName", "Production"),
+            ("CertThumbprint", "ABCDEF0123456789ABCDEF0123456789ABCDEF01"));
+
+        var action = new DeploymentActionDto
+        {
+            Name = "IIS WebSite",
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new() { PropertyName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName", PropertyValue = "#{EnvName}" },
+                new() { PropertyName = "Squid.Action.IISWebSite.Bindings", PropertyValue = "[{\"thumbprint\":\"#{CertThumbprint}\"}]" },
+                new() { PropertyName = "Squid.Action.IISWebSite.WebSiteName", PropertyValue = "OrderApi" },
+            }
+        };
+
+        // Production order: expand with base vars only, then promote expanded props.
+        var expansionDict = VariableDictionaryFactory.Create(baseVars);
+        var expanded = VariableExpander.ExpandActionProperties(action, expansionDict);
+        var actionVars = EffectiveVariableBuilder.BuildActionVariables(baseVars, expanded, selectedPackages: null);
+
+        expanded.Properties.Single(p => p.PropertyName.EndsWith("EnvironmentName")).PropertyValue.ShouldBe("Production");
+        expanded.Properties.Single(p => p.PropertyName.EndsWith("Bindings")).PropertyValue.ShouldContain("ABCDEF0123456789ABCDEF0123456789ABCDEF01");
+        expanded.Properties.Single(p => p.PropertyName.EndsWith("Bindings")).PropertyValue.ShouldNotContain("#{CertThumbprint}");
+
+        // Variables shipped to the agent must not reintroduce unresolved templates.
+        actionVars.ShouldContain(v => v.Name.EndsWith("EnvironmentName") && v.Value == "Production");
+        actionVars.ShouldNotContain(v => (v.Value ?? string.Empty).Contains("#{"));
+    }
+
+    [Fact]
+    public void ExpandActionProperties_WhenRawPropertiesPromotedBeforeExpansion_LeavesTokensIfBindingPoisoned()
+    {
+        // Documents the IIS E2E failure mode: promoting raw action property values
+        // into the dictionary before expansion is not what breaks ExpandActionProperties
+        // itself (simple tokens still resolve), but those raw values end up in
+        // $SquidVariables and fail whole-script "no #{" assertions. This test pins
+        // the production-safe order via the sibling test above; this one asserts that
+        // BuildActionVariables on an unexpanded action still carries raw templates.
+        var baseVars = MakeVars(("EnvName", "Production"));
+        var action = new DeploymentActionDto
+        {
+            Name = "IIS WebSite",
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new() { PropertyName = "Squid.Action.IISWebSite.ConfigurationTransforms.EnvironmentName", PropertyValue = "#{EnvName}" },
+            }
+        };
+
+        var rawPromoted = EffectiveVariableBuilder.BuildActionVariables(baseVars, action, selectedPackages: null);
+        rawPromoted.ShouldContain(v => v.Name.EndsWith("EnvironmentName") && v.Value == "#{EnvName}");
     }
 }

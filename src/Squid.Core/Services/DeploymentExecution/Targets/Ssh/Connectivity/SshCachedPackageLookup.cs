@@ -5,8 +5,8 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
 /// <summary>
 /// Default SSH implementation of <see cref="ICachedPackageLookup"/>.
-/// Computes the MD5 of the local package bytes and compares it against
-/// <c>md5sum</c> output on the remote host; on match the package is
+/// Computes the SHA-256 of the local package bytes and compares it against
+/// <c>sha256sum</c> output on the remote host; on match the package is
 /// considered already staged.
 /// </summary>
 public class SshCachedPackageLookup : ICachedPackageLookup
@@ -20,8 +20,8 @@ public class SshCachedPackageLookup : ICachedPackageLookup
             var ssh = scope.GetSshClient();
 
             var localBytes = File.ReadAllBytes(localPath);
-            var localHash = SshFileTransfer.ComputeLocalMd5(localBytes);
-            var remoteHash = SshFileTransfer.CalculateRemoteMd5(ssh, remoteNupkgPath);
+            var localHash = SshFileTransfer.ComputeLocalSha256(localBytes);
+            var remoteHash = SshFileTransfer.CalculateRemoteSha256(ssh, remoteNupkgPath);
 
             if (string.IsNullOrEmpty(remoteHash)) return false;
 

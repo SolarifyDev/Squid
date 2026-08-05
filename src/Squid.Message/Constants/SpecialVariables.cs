@@ -98,6 +98,8 @@ public static class SpecialVariables
         public const string PackageId = "Squid.Action.Package.PackageId";
         public const string PackageVersion = "Squid.Action.Package.PackageVersion";
         public const string CustomInstallationDirectory = "Squid.Action.Package.CustomInstallationDirectory";
+        public const string InstallationDirectoryMode = "Squid.Action.Package.InstallationDirectoryMode";
+        public const string InstallationDirectoryPath = "Squid.Action.Package.InstallationDirectoryPath";
         public const string AdditionalInstallationDirectory = "Squid.Action.Package.AdditionalInstallationDirectory";
         public const string KubernetesYaml = "Squid.Action.KubernetesContainers.CustomResourceYaml";
         public const string KubernetesNamespace = "Squid.Action.KubernetesContainers.Namespace";
@@ -110,7 +112,11 @@ public static class SpecialVariables
         public const string DeployReleaseProjectId = "Squid.Action.DeployRelease.ProjectId";
         public const string DeployReleaseVersion = "Squid.Action.DeployRelease.Version";
         public const string DeployReleaseChannelId = "Squid.Action.DeployRelease.ChannelId";
+        public const string ConfigurationVariablesEnabled = "Squid.Action.ConfigurationVariables.Enabled";
+        public const string IgnoreVariableReplacementErrors = "Squid.Action.Package.IgnoreVariableReplacementErrors";
         public const string StructuredConfigurationVariablesEnabled = "Squid.Action.StructuredConfigurationVariables.Enabled";
+        public const string JsonConfigVariablesEnabled = "Squid.Action.JsonConfigVariables.Enabled";
+        public const string JsonConfigVariablesTargets = "Squid.Action.JsonConfigVariables.Targets";
     }
 
     public static class Step
@@ -123,6 +129,8 @@ public static class SpecialVariables
         public const string RequiredToSucceed = "Squid.Step.RequiredToSucceed";
         public const string MaxParallelism = "Squid.Step.MaxParallelism";
         public const string Timeout = "Squid.Step.Timeout";
+        public const string RetriesEnabled = "Squid.Step.RetriesEnabled";
+        public const string RetriesCount = "Squid.Step.RetriesCount";
     }
 
     public static class ScriptSyntax

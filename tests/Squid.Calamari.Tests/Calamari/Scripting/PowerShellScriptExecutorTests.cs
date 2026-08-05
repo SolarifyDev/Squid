@@ -1,3 +1,4 @@
+using System.IO;
 using Shouldly;
 using Squid.Calamari.Execution;
 using Squid.Calamari.Scripting;
@@ -6,32 +7,52 @@ using Xunit;
 namespace Squid.Calamari.Tests.Calamari.Scripting;
 
 /// <summary>
+/// PATH / process-env mutations must not race with other suites. xUnit
+/// disables parallelization for this collection across the whole assembly.
+/// </summary>
+[CollectionDefinition("ProcessEnvironmentIsolation", DisableParallelization = true)]
+public sealed class ProcessEnvironmentIsolationCollection
+{
+}
+
+/// <summary>
 /// PR-4 — unit-level tests for <see cref="PowerShellScriptExecutor"/>.
 /// Drives the resolver + argument shape via injectable seams without
 /// requiring <c>pwsh</c> on the test runner (which would fail on CI hosts
 /// that don't have PS Core installed).
 /// </summary>
+[Collection("ProcessEnvironmentIsolation")]
 public sealed class PowerShellScriptExecutorTests
 {
+    // PATH mutation is process-wide; serialize these cases so parallel tests cannot
+    // restore a real PATH under us mid-assertion (seen as intermittent CI flakes).
+    private static readonly object PathMutationGate = new();
+
     [Fact]
     public void ResolvePowerShellBinary_NeitherInstalled_ReturnsNull()
     {
         // Pin the contract: when PATH contains neither pwsh nor powershell.exe,
         // resolver returns null and the caller throws a clear error.
-        // (We can't easily "uninstall" pwsh for the test, so this test runs
-        // with a curated PATH set via env var.)
-        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        lock (PathMutationGate)
+        {
+            var originalPath = Environment.GetEnvironmentVariable("PATH");
+            var emptyDir = Path.Combine(Path.GetTempPath(), "squid-no-pwsh-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(emptyDir);
 
-        try
-        {
-            Environment.SetEnvironmentVariable("PATH", "/nonexistent-segment");
-            PowerShellScriptExecutor.ResolvePowerShellBinary().ShouldBeNull(
-                customMessage: "With no pwsh or powershell.exe on the PATH, resolver MUST return null. " +
-                               "Caller surfaces 'PowerShell not installed' error to operator.");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("PATH", originalPath);
+            try
+            {
+                // Use a real empty directory as the only PATH entry so File.Exists probes
+                // a concrete location without depending on whether pwsh is installed on the runner.
+                Environment.SetEnvironmentVariable("PATH", emptyDir);
+                PowerShellScriptExecutor.ResolvePowerShellBinary().ShouldBeNull(
+                    customMessage: "With no pwsh or powershell.exe on the PATH, resolver MUST return null. " +
+                                   "Caller surfaces 'PowerShell not installed' error to operator.");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PATH", originalPath);
+                try { Directory.Delete(emptyDir, recursive: true); } catch { /* best-effort */ }
+            }
         }
     }
 

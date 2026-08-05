@@ -52,6 +52,44 @@ public class StepTimeoutParserTests
         result.ShouldBeNull();
     }
 
+    [Theory]
+    [InlineData("30", 30)]
+    [InlineData("90", 90)]
+    [InlineData("0", null)]
+    public void ParseTimeout_NumericSeconds_ReturnsSeconds(string raw, int? expectedSeconds)
+    {
+        var step = BuildStepWithTimeout(raw);
+
+        var result = StepTimeoutParser.ParseTimeout(step);
+
+        if (expectedSeconds is null)
+            result.ShouldBeNull();
+        else
+            result.ShouldBe(TimeSpan.FromSeconds(expectedSeconds.Value));
+    }
+
+    [Fact]
+    public void ParseTimeout_TimeSpanString_StillSupported()
+    {
+        var step = BuildStepWithTimeout("00:15:00");
+
+        StepTimeoutParser.ParseTimeout(step).ShouldBe(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
+    public void ParseTimeout_LegacyMinutesProperty_IsConvertedToSecondsSemanticsWhenOnlyLegacyPresent()
+    {
+        var step = new DeploymentStepDto
+        {
+            Properties = new List<DeploymentStepPropertyDto>
+            {
+                new() { PropertyName = "Squid.Step.TimeoutInMinutes", PropertyValue = "2" }
+            }
+        };
+
+        StepTimeoutParser.ParseTimeout(step).ShouldBe(TimeSpan.FromMinutes(2));
+    }
+
     private static DeploymentStepDto BuildStepWithTimeout(string value)
     {
         return new DeploymentStepDto

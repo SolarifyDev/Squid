@@ -83,6 +83,18 @@ public class SshPathsTests
     }
 
     [Theory]
+    [InlineData("/opt/squid", "MyApp", "1.0.0", ".nupkg", "/opt/squid/Packages/MyApp.1.0.0.nupkg")]
+    [InlineData("/opt/squid", "MyApp", "1.0.0", ".zip", "/opt/squid/Packages/MyApp.1.0.0.zip")]
+    [InlineData("/opt/squid", "MyApp", "1.0.0", ".tar.gz", "/opt/squid/Packages/MyApp.1.0.0.tar.gz")]
+    [InlineData("/opt/squid", "owner/repo", "v1", ".tar.gz", "/opt/squid/Packages/owner_repo--65e817eec8cd.v1.tar.gz")]
+    [InlineData("/home/deploy/.squid", "Acme.App", "1.2.3", "zip", "/home/deploy/.squid/Packages/Acme.App.1.2.3.zip")]
+    public void PackageArchivePath_UsesRealExtensionAndSanitizesPackageId(
+        string baseDir, string packageId, string version, string extension, string expected)
+    {
+        SshPaths.PackageArchivePath(baseDir, packageId, version, extension).ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData("/opt/squid", "MyApp", "1.0.0", "/opt/squid/Packages/MyApp.1.0.0")]
     [InlineData("/home/deploy/.squid", "nginx", "1.21.0", "/home/deploy/.squid/Packages/nginx.1.21.0")]
     [InlineData("~/.squid", "pkg", "3.0.0-rc1", "~/.squid/Packages/pkg.3.0.0-rc1")]
@@ -126,4 +138,23 @@ public class SshPathsTests
 
         extractDir.ShouldStartWith(cacheDir);
     }
+
+    [Fact]
+    public void PackageArchivePathFromLocalFile_PreservesAcquiredFileNameWithColon()
+    {
+        var localPath = "/tmp/com.acme_app.1.0.0.zip"; // already sanitized on acquire
+        var remote = SshPaths.PackageArchivePathFromLocalFile("/opt/squid", "com.acme:app", "1.0.0", localPath);
+        remote.ShouldBe("/opt/squid/Packages/com.acme_app.1.0.0.zip");
+    }
+
+    [Fact]
+    public void PackageArchivePathFromLocalFile_MatchesScriptArchiveFileName()
+    {
+        var localPath = "/var/folders/tmp/owner_repo.v1.tar.gz";
+        var remote = SshPaths.PackageArchivePathFromLocalFile("/home/deploy/.squid", "owner/repo", "v1", localPath);
+        var archiveName = System.IO.Path.GetFileName(localPath);
+        remote.ShouldBe($"/home/deploy/.squid/Packages/{archiveName}");
+    }
+
 }
+

@@ -36,7 +36,8 @@ public enum PayloadKind
 {
     Unspecified = 0,
     None = 1,
-    YamlBundle = 2
+    YamlBundle = 2,
+    PackageArchive = 3
 }
 
 public enum RunnerKind

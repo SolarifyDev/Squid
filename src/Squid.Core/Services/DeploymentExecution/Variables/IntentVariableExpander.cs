@@ -29,6 +29,7 @@ public static class IntentVariableExpander
             KubernetesKustomizeIntent k => ExpandKustomize(k, variableDictionary),
             OpenClawInvokeIntent oc => ExpandOpenClaw(oc, variableDictionary),
             ManualInterventionIntent mi => ExpandManualIntervention(mi, variableDictionary),
+            DeployPackageIntent dp => ExpandDeployPackage(dp, variableDictionary),
             _ => intent
         };
     }
@@ -88,6 +89,15 @@ public static class IntentVariableExpander
         {
             Instructions = ExpandString(intent.Instructions, dict) ?? intent.Instructions
         };
+    }
+
+    private static DeployPackageIntent ExpandDeployPackage(DeployPackageIntent intent, VariableDictionary dict)
+    {
+        if (!string.Equals(intent.InstallationDirectoryMode, "Custom", StringComparison.OrdinalIgnoreCase))
+            return intent;
+
+        var expanded = ExpandString(intent.CustomInstallationDirectory, dict) ?? intent.CustomInstallationDirectory;
+        return intent with { CustomInstallationDirectory = expanded };
     }
 
     private static string? ExpandString(string? input, VariableDictionary dict)

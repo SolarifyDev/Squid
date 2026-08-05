@@ -33,7 +33,7 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E"
+        default: "Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E|Category=DeployPackageLinuxSmoke"
 
 permissions:
   contents: read
@@ -65,7 +65,7 @@ jobs:
           files=$(gh pr view "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --json files --jq '.files[].path')
           echo "Changed files:"; printf '%s\n' "$files"
 
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-linux-tentacle\.sh|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.LinuxTentacleE2ETests/|\.github/workflows/tentacle-linux-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-linux-tentacle\.sh|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Calamari/Commands/Package/|src/Squid\.Calamari/Commands/Configuration/ConfigurationVariablesStep\.cs|src/Squid\.Core/TentaclesScripts/DeployPackageByCalamari\.(sh|ps1)|src/Squid\.Core/Services/DeploymentExecution/Handlers/DeployPackageActionHandler\.cs|src/Squid\.Core/Services/DeploymentExecution/Intents/DeployPackageIntent\.cs|src/Squid\.Core/Services/DeploymentExecution/Packages/|src/Squid\.Core/Services/DeploymentExecution/Targets/Ssh/|src/Squid\.Core/Services/DeploymentExecution/Targets/Tentacle/Rendering/|src/Squid\.Core/Services/DeploymentExecution/Infrastructure/CalamariPayloadBuilder\.cs|src/Squid\.Core/Services/DeploymentExecution/Pipeline/Phases/|tests/Squid\.LinuxTentacleE2ETests/|tests/Squid\.E2ETests/Deployments/|tests/Squid\.Calamari\.Tests/Calamari/Package/|\.github/workflows/(tentacle-linux-smoke-e2e|e2e-k8s-pipeline)\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (versioned-upgrade paths changed)"
           else
@@ -102,10 +102,16 @@ jobs:
       - name: Restore Squid.LinuxTentacleE2ETests
         run: dotnet restore tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj --configfile "$NUGET_CONFIG"
 
+      # DeployPackageLinuxSmoke bootstrap needs the squid-calamari apphost on PATH.
+      # Building the test project alone does not guarantee Calamari output exists unless
+      # the project references it; keep an explicit Release build for CI clarity.
+      - name: Build Squid.Calamari (Release)
+        run: dotnet build src/Squid.Calamari/Squid.Calamari.csproj --configuration Release --configfile "$NUGET_CONFIG"
+
       - name: Run Linux versioned-upgrade smoke subset
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
-          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E"; fi
+          if [ -z "$FILTER" ]; then FILTER="Category=LinuxTentacleUpgradeScriptE2E|Category=LinuxTentacleUpgradeLifecycleE2E|Category=DeployPackageLinuxSmoke"; fi
           dotnet test tests/Squid.LinuxTentacleE2ETests/Squid.LinuxTentacleE2ETests.csproj \
             --configuration Release --no-restore \
             --filter "$FILTER" \

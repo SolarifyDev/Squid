@@ -62,7 +62,26 @@ public static class MachineCapabilitySet
         }
 
         if (string.Equals(osValue, AgentOperatingSystems.MacOS, StringComparison.OrdinalIgnoreCase))
+        {
             builder.Add(CapabilityKeys.OsSlot, ImmutableHashSet.Create<string>(StringComparer.OrdinalIgnoreCase, CapabilityKeys.Os.MacOS));
+            return;
+        }
+
+        // Legacy Unix form: older Tentacle binaries wrote Environment.OSVersion.VersionString
+        // into metadata["os"] (e.g. "Unix 7.0.11.360"). On both Linux and macOS that string
+        // starts with "Unix", so we cannot distinguish the two. Project both values so a
+        // Deploy-a-Package (or any handler that accepts either) still matches; a macOS-only
+        // or Linux-only requirement remains best-effort for these legacy agents.
+        if (osValue.StartsWith("Unix", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.Add(
+                CapabilityKeys.OsSlot,
+                ImmutableHashSet.Create<string>(
+                    StringComparer.OrdinalIgnoreCase,
+                    CapabilityKeys.Os.Linux,
+                    CapabilityKeys.Os.MacOS));
+            return;
+        }
 
         // AgentOperatingSystems.Unknown / unrecognised strings → don't project anything.
         // Validator treats "slot absent from target" as "unknown", which is permissive by design
