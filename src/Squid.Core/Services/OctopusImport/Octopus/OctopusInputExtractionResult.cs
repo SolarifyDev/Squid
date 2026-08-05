@@ -14,7 +14,8 @@ public sealed record OctopusExtractedJsonDocument(
     string SourcePath,
     OctopusDocumentClassification Classification,
     JsonElement Root,
-    long SizeBytes);
+    long SizeBytes,
+    string Sha1);
 
 public sealed record OctopusInputExtractionDiagnostic(
     OctopusImportCompatibilitySeverity Severity,
