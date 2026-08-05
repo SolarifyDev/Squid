@@ -65,21 +65,22 @@ public sealed class LinuxInstallScriptContext : IDisposable
     /// install-tentacle.sh expects this exact shape: <c>tar xzf "$ARCHIVE"
     /// -C "$INSTALL_DIR"</c> with no <c>--strip-components</c>.</para>
     /// </summary>
-    public byte[] BuildInstallTarGz(string version)
+    public byte[] BuildInstallTarGz(string version, string calamariScript = null)
     {
         var binaryBytes = File.ReadAllBytes(TestServiceScript);
 
-        // Single entry: Squid.Tentacle (the placeholder binary).
-        // No version.txt needed — install-tentacle.sh doesn't read it
-        // (only the upgrade flow's marker mechanism does). Keeping the
-        // tarball minimal matches what the production release pipeline
-        // ships for fresh installs.
-        var entries = new (string Name, byte[] Content)[]
+        // The placeholder reports its version from version.txt so the real
+        // installer follows the production versioned-layout branch.
+        var entries = new List<(string Name, byte[] Content)>
         {
-            ("Squid.Tentacle", binaryBytes)
+            ("Squid.Tentacle", binaryBytes),
+            ("version.txt", System.Text.Encoding.UTF8.GetBytes(version))
         };
 
-        return BuildTarGz(entries);
+        if (calamariScript != null)
+            entries.Add(("squid-calamari", System.Text.Encoding.UTF8.GetBytes(calamariScript)));
+
+        return BuildTarGz(entries.ToArray());
     }
 
     /// <summary>

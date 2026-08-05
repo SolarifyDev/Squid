@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Purpose-built squid-calamari.exe shim used by the CalamariLookupE2E test.
+    See the test class for the full rationale.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+
+    <!-- Match the filename the DeployByCalamari.ps1 template looks for. -->
+    <AssemblyName>squid-calamari</AssemblyName>
+    <RootNamespace>Squid.WindowsTentacleE2E.CalamariShim</RootNamespace>
+  </PropertyGroup>
+
+</Project>

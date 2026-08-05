@@ -27,6 +27,100 @@ namespace Squid.LinuxTentacleE2ETests;
 [Collection(LinuxTentacleHostStateCollection.Name)]
 public sealed class TentacleLinuxInstallScriptE2ETests
 {
+    [Fact]
+    [Trait("Category", LinuxTentacleE2ECategories.CalamariLookup)]
+    public void CalamariTemplate_NativeInstall_UsesBundledSiblingWithoutCalamariOnPath()
+    {
+        if (!LinuxInstallScriptContext.IsAvailable) return;
+
+        using var ctx = new LinuxInstallScriptContext();
+        var executionDir = Path.Combine(Path.GetTempPath(), $"squid-calamari-template-{Guid.NewGuid():N}");
+
+        try
+        {
+            const string version = "1.6.0-calamari-path";
+            const string calamariShim = """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                printf 'ProcessPath:%s\nArgs:%s\n' "$0" "$*" > "$SQUID_CALAMARI_E2E_MARKER"
+                """;
+            ctx.Mirror.StagePreBuiltArchive(ctx.BuildInstallTarGz(version, calamariShim));
+
+            var (installExit, installOutput) = ctx.RunInstallScript(version);
+            installExit.ShouldBe(0,
+                customMessage: $"native install MUST succeed before rendering the Calamari template. output:\n{installOutput}");
+
+            var bundledCalamari = Path.Combine(ctx.InstallDir, "versions", version, "squid-calamari");
+            File.Exists(bundledCalamari).ShouldBeTrue(
+                customMessage: "the installed version directory must contain the bundled Calamari binary");
+            File.GetUnixFileMode(bundledCalamari).HasFlag(UnixFileMode.UserExecute).ShouldBeTrue(
+                customMessage: "install-tentacle.sh must mark the bundled squid-calamari executable");
+
+            Directory.CreateDirectory(executionDir);
+            var toolsDirectory = Path.Combine(executionDir, "tools");
+            Directory.CreateDirectory(toolsDirectory);
+            var kubectlPath = Path.Combine(toolsDirectory, "kubectl");
+            File.WriteAllText(kubectlPath, "#!/usr/bin/env bash\nexit 0\n");
+            File.SetUnixFileMode(kubectlPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.CreateSymbolicLink(
+                Path.Combine(toolsDirectory, "squid-tentacle"),
+                Path.Combine(ctx.InstallDir, "squid-tentacle"));
+
+            var markerPath = Path.Combine(executionDir, "calamari-marker.txt");
+            var packagePath = Path.Combine(executionDir, "package.yaml");
+            var variablesPath = Path.Combine(executionDir, "variables.json");
+            var sensitiveVariablesPath = Path.Combine(executionDir, "sensitive-variables.json");
+            var scriptPath = Path.Combine(executionDir, "resolve-calamari.sh");
+            File.WriteAllText(packagePath, "apiVersion: v1\n");
+            File.WriteAllText(variablesPath, "{}");
+            File.WriteAllText(sensitiveVariablesPath, "{}");
+
+            var payload = new Squid.Core.Services.DeploymentExecution.Infrastructure.CalamariPayload
+            {
+                TemplateBody = Squid.Core.Services.Common.UtilService.GetEmbeddedScriptContent("DeployByCalamari.sh"),
+                SensitivePassword = "test-sensitive-password"
+            };
+            var renderedTemplate = payload.FillTemplate(packagePath, variablesPath, sensitiveVariablesPath);
+            renderedTemplate.ShouldNotContain("{{", customMessage: "rendered production template must not retain placeholders");
+            File.WriteAllText(scriptPath, renderedTemplate);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            psi.Environment["PATH"] = $"{toolsDirectory}:/usr/bin:/bin";
+            psi.Environment["SQUID_CALAMARI_E2E_MARKER"] = markerPath;
+            psi.ArgumentList.Add(scriptPath);
+
+            using var process = System.Diagnostics.Process.Start(psi)
+                ?? throw new InvalidOperationException("Failed to launch the rendered Calamari template");
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            process.WaitForExit(30_000).ShouldBeTrue("the rendered Calamari template must complete within 30 seconds");
+            process.ExitCode.ShouldBe(0,
+                customMessage: $"the Linux template must resolve bundled Calamari without PATH. stdout:\n{stdout}\nstderr:\n{stderr}");
+
+            File.Exists(markerPath).ShouldBeTrue(
+                customMessage: $"the bundled Calamari shim must have been invoked. stdout:\n{stdout}\nstderr:\n{stderr}");
+            var marker = File.ReadAllText(markerPath);
+            marker.ShouldContain(Path.GetFullPath(bundledCalamari),
+                customMessage: $"the template must execute Calamari beside the resolved Tentacle. marker:\n{marker}");
+            marker.ShouldContain("apply-yaml", customMessage: $"the rendered arguments must reach Calamari. marker:\n{marker}");
+            marker.ShouldContain($"--file={packagePath}", customMessage: $"the package path must be rendered. marker:\n{marker}");
+
+            ctx.MarkClean();
+        }
+        finally
+        {
+            try { if (Directory.Exists(executionDir)) Directory.Delete(executionDir, recursive: true); }
+            catch { /* best-effort */ }
+        }
+    }
+
     // ========================================================================
     // A2.u1-Linux — Bogus version → exit 1, clean error message, no partial install
     //
@@ -203,9 +297,8 @@ public sealed class TentacleLinuxInstallScriptE2ETests
                           $"output tail:\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}");
 
         // Versioned layout: the binary lives under versions/<v>, selected by a stable
-        // `current` symlink. (The placeholder reports "unknown" — no version.txt in the
-        // install tarball — so the dir is versions/unknown; the test asserts the
-        // structure, not the specific name.)
+        // `current` symlink. The fixture adds version.txt so the placeholder reports
+        // the requested version and exercises the production versioned-layout branch.
         var versionsDir = Path.Combine(ctx.InstallDir, "versions");
         Directory.Exists(versionsDir).ShouldBeTrue(
             customMessage: $"versioned install MUST create {versionsDir}. If absent: the .sh fell back to flat layout (binary couldn't report a version) OR the versioned extract regressed.");

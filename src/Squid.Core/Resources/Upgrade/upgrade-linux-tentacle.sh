@@ -621,7 +621,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
     fi
 
     sudo chmod +x "$NEW_VER_DIR/Squid.Tentacle"
-    [ -f "$NEW_VER_DIR/Squid.Calamari" ] && sudo chmod +x "$NEW_VER_DIR/Squid.Calamari"
+    [ -f "$NEW_VER_DIR/squid-calamari" ] && sudo chmod +x "$NEW_VER_DIR/squid-calamari"
 
     if id "$SERVICE_USER" >/dev/null 2>&1; then
       sudo chown -R "$SERVICE_USER:$SERVICE_USER" "$NEW_VER_DIR" 2>/dev/null || true
@@ -668,7 +668,7 @@ elif [ "$INSTALL_METHOD" = "tarball" ]; then
   fi
 
   sudo chmod +x "$INSTALL_DIR/Squid.Tentacle"
-  [ -f "$INSTALL_DIR/Squid.Calamari" ] && sudo chmod +x "$INSTALL_DIR/Squid.Calamari"
+  [ -f "$INSTALL_DIR/squid-calamari" ] && sudo chmod +x "$INSTALL_DIR/squid-calamari"
   sudo ln -sf "$INSTALL_DIR/Squid.Tentacle" "$INSTALL_DIR/squid-tentacle"
   sudo ln -sf "$INSTALL_DIR/squid-tentacle" /usr/local/bin/squid-tentacle 2>/dev/null || true
 

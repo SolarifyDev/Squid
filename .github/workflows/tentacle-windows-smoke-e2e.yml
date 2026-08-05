@@ -41,7 +41,7 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E"
+        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E"
 
 permissions:
   contents: read
@@ -79,7 +79,7 @@ jobs:
           # upgrade script, the Windows service deploy payload/handler, the
           # server-side upgrade strategy, the Windows E2E project, and this
           # workflow itself).
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|tests/Squid\.WindowsTentacleE2ETests/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Infrastructure/|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.WindowsTentacleE2E\.CalamariShim/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (Tentacle paths changed)"
           else
@@ -122,7 +122,7 @@ jobs:
       - name: Run Windows lifecycle smoke subset
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E" }
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E" }
           $resultsDir = Join-Path $env:RUNNER_TEMP "windows-lifecycle-smoke-results"
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `

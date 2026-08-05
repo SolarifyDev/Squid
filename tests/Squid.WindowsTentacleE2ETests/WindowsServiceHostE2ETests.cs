@@ -197,9 +197,10 @@ public sealed class WindowsServiceHostE2ETests
     // ========================================================================
     // Test 5 — Uninstall removes the service from the SCM database.
     //
-    // sc delete on an installed service returns 0 + future `sc query` returns
-    // 1060 ("specified service does not exist"). This is the rollback target
-    // for upgrades + the cleanup contract operators rely on.
+    // sc delete on an installed service returns 0, then the SCM finalizes the
+    // deletion asynchronously before `sc query` returns 1060 ("specified
+    // service does not exist"). This is the rollback target for upgrades +
+    // the cleanup contract operators rely on.
     // ========================================================================
 
     [Fact]
@@ -218,9 +219,8 @@ public sealed class WindowsServiceHostE2ETests
         uninstallExit.ShouldBe(0,
             customMessage: $"WindowsServiceHost.Uninstall must return 0 on success");
 
-        // sc query a deleted service returns 1060.
-        ScQueryExitCode(ctx.ServiceName).ShouldNotBe(0,
-            customMessage: $"after Uninstall, `sc query {ctx.ServiceName}` must return non-zero (typically 1060). If still 0, the service is still in the SCM database and a re-install would fail with 1073 (already exists).");
+        WaitForScGone(ctx.ServiceName, TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            customMessage: $"after Uninstall, `sc query {ctx.ServiceName}` must return non-zero (typically 1060) within 15s. If still 0, the service is still in the SCM database and a re-install would fail with 1073 (already exists).");
 
         // Mark uninstalled so the context's finally-block doesn't double-delete.
         ctx.MarkUninstalled();
@@ -609,6 +609,18 @@ public sealed class WindowsServiceHostE2ETests
         {
             var (exitCode, stdout, _) = RunSc("query", serviceName);
             if (exitCode == 0 && stdout.Contains(expectedState, StringComparison.OrdinalIgnoreCase))
+                return true;
+            Thread.Sleep(200);
+        }
+        return false;
+    }
+
+    private static bool WaitForScGone(string serviceName, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (ScQueryExitCode(serviceName) != 0)
                 return true;
             Thread.Sleep(200);
         }

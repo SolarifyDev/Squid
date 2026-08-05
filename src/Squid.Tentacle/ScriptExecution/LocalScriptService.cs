@@ -1350,11 +1350,12 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         string? sensitivePassword,
         bool sensitiveCiphertextExists,
         ScriptType syntax,
-        string[] arguments)
+        string[] arguments,
+        string? tentacleDirectory = null)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "squid-calamari",
+            FileName = ResolveCalamariExecutable(tentacleDirectory ?? AppContext.BaseDirectory, File.Exists),
             WorkingDirectory = workDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -1391,6 +1392,21 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         }
 
         return psi;
+    }
+
+    internal static string ResolveCalamariExecutable(string tentacleDirectory, Func<string, bool> fileExists)
+    {
+        ArgumentNullException.ThrowIfNull(fileExists);
+
+        var bundledFileName = OperatingSystem.IsWindows() ? "squid-calamari.exe" : "squid-calamari";
+        if (!string.IsNullOrWhiteSpace(tentacleDirectory))
+        {
+            var bundledPath = Path.Combine(tentacleDirectory, bundledFileName);
+            if (fileExists(bundledPath))
+                return bundledPath;
+        }
+
+        return bundledFileName;
     }
 
     /// <summary>
