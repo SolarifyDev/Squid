@@ -13,7 +13,8 @@ public class CommandResolverTests
         new ShowConfigCommand(),
         new NewCertificateCommand(),
         new RegisterCommand(),
-        new ServiceCommand()
+        new ServiceCommand(),
+        new VersionCommand()
     ];
 
     // ========================================================================
@@ -42,6 +43,65 @@ public class CommandResolverTests
     {
         CommandResolver.IsHelpFlag("").ShouldBeFalse();
         CommandResolver.IsHelpFlag(null).ShouldBeFalse();
+    }
+
+    // ========================================================================
+    // Version flag — must route to VersionCommand, never RunCommand
+    // ========================================================================
+
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("--VERSION")]   // case-insensitive, like the help flags
+    public void Resolve_VersionFlag_RoutesToVersionCommand(string flag)
+    {
+        // Without this route --version falls into the `-` → run default and STARTS THE AGENT:
+        // the probe captures no version, and a caller piping the output hangs on a process
+        // that never exits. That cost a production hang in 1.4.1/1.4.2, and is why
+        // deploy/packaging/after-install.sh spells it as the bare `version` verb with a
+        // timeout and </dev/null.
+        var route = CommandResolver.Resolve(Commands, [flag]);
+
+        route.Command.ShouldBeOfType<VersionCommand>(
+            customMessage: "--version must report the version, not start the agent.");
+        route.HelpRequested.ShouldBeFalse();
+        route.UnknownCommand.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Resolve_VersionVerb_StillRoutesToVersionCommand()
+    {
+        // The bare verb is what every existing caller uses (postinst, install scripts, CI).
+        // The alias must not disturb it.
+        var route = CommandResolver.Resolve(Commands, ["version"]);
+
+        route.Command.ShouldBeOfType<VersionCommand>();
+        route.RemainingArgs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Resolve_VersionFlag_NoVersionCommandRegistered_FallsBackToRun()
+    {
+        // A command set without a VersionCommand keeps today's behaviour rather than
+        // throwing — the alias is additive, never a new failure mode.
+        ITentacleCommand[] withoutVersion = [new RunCommand(), new ServiceCommand()];
+
+        var route = CommandResolver.Resolve(withoutVersion, ["--version"]);
+
+        route.Command.ShouldBeOfType<RunCommand>();
+        route.RemainingArgs.ShouldBe(["--version"]);
+    }
+
+    [Fact]
+    public void IsVersionFlag_ShortFormAndEmpty_ReturnFalse()
+    {
+        // -v stays an ordinary config flag: it is already pinned as one by
+        // Resolve_LeadingConfigFlag_DefaultsToRun_AndPassesAllArgsThrough, and it means
+        // "verbose" in most CLIs. Claiming it for version would be a breaking change.
+        CommandResolver.IsVersionFlag("-v").ShouldBeFalse();
+        CommandResolver.IsVersionFlag("-V").ShouldBeFalse();
+        CommandResolver.IsVersionFlag("version").ShouldBeFalse();  // the verb, not a flag
+        CommandResolver.IsVersionFlag("").ShouldBeFalse();
+        CommandResolver.IsVersionFlag(null).ShouldBeFalse();
     }
 
     // ========================================================================
