@@ -69,12 +69,21 @@ jobs:
 
       - name: Verify installed binary
         run: |
-          which squid-tentacle
+          # `command -v`, not `which`: RHEL 9 and current Fedora base images no longer
+          # ship the which package, so `which` exits 127 before anything is verified.
+          command -v squid-tentacle
           ls -la /opt/squid-tentacle/ | head
           # Version probe — must not be empty string; must exit 0.
-          VER=$(squid-tentacle --version 2>/dev/null | head -1)
+          #
+          # `version`, NOT `--version`: CommandResolver treats any leading `-` as a config
+          # flag and routes it to RunCommand, which STARTS THE AGENT instead of printing a
+          # version. deploy/packaging/after-install.sh documents the same trap (a prod hang
+          # observed in 1.4.1/1.4.2) and uses the same three defences copied here:
+          # the `version` subcommand, `</dev/null` so the probe never shares our stdin, and
+          # a hard `timeout` cap.
+          VER=$(timeout 10 squid-tentacle version 2>/dev/null </dev/null | head -1)
           if [ -z "$VER" ]; then
-            echo "::error::squid-tentacle --version returned empty output on ${{ matrix.image }}"
+            echo "::error::squid-tentacle version returned empty output on ${{ matrix.image }}"
             exit 1
           fi
           echo "Installed: $VER"
@@ -108,11 +117,12 @@ jobs:
 
       - name: Verify installed binary
         run: |
-          which squid-tentacle
+          # See the apt job for why `command -v` and the `version` subcommand.
+          command -v squid-tentacle
           ls -la /opt/squid-tentacle/ | head
-          VER=$(squid-tentacle --version 2>/dev/null | head -1)
+          VER=$(timeout 10 squid-tentacle version 2>/dev/null </dev/null | head -1)
           if [ -z "$VER" ]; then
-            echo "::error::squid-tentacle --version returned empty output on ${{ matrix.image }}"
+            echo "::error::squid-tentacle version returned empty output on ${{ matrix.image }}"
             exit 1
           fi
           echo "Installed: $VER"
