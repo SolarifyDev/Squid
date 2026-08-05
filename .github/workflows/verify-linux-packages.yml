@@ -104,7 +104,13 @@ jobs:
         run: |
           # Rocky 9 has dnf by default; Fedora has dnf. CentOS 7 (EOL) had yum.
           # `dnf` wraps `yum` — scripts work transparently.
-          dnf install -y ca-certificates curl || yum install -y ca-certificates curl
+          #
+          # --allowerasing: the Rocky 9 base image ships curl-minimal, which CONFLICTS with
+          # the curl package ("conflicting requests", dnf exits non-zero) even though it
+          # already provides /usr/bin/curl. Allowing the swap keeps this working on Rocky and
+          # on Fedora, which ships full curl and is unaffected.
+          dnf install -y --allowerasing ca-certificates curl \
+            || yum install -y ca-certificates curl
 
       - name: Configure Squid RPM repo
         run: |
