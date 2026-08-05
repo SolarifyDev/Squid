@@ -27,6 +27,20 @@ public static class CommandResolver
         if (IsHelpFlag(first))
             return CommandRoute.ForHelp();
 
+        // Same for --version, and for the same reason: without this it falls into the
+        // `-` → run default below and STARTS THE AGENT instead of reporting a version.
+        // That cost a production hang in 1.4.1/1.4.2 (see deploy/packaging/after-install.sh)
+        // and every caller since has had to remember to spell it as the bare `version` verb.
+        // Falls through when no VersionCommand is registered, so behaviour is unchanged for
+        // a command set that does not offer one.
+        if (IsVersionFlag(first))
+        {
+            var versionCommand = commands.OfType<VersionCommand>().FirstOrDefault();
+
+            if (versionCommand != null)
+                return CommandRoute.ForCommand(versionCommand, args[1..]);
+        }
+
         // Leading `-` or `--` is a configuration flag, not a verb → default to run.
         if (first.StartsWith('-'))
             return CommandRoute.ForCommand(commands.OfType<RunCommand>().FirstOrDefault() ?? commands[0], args);
@@ -49,6 +63,20 @@ public static class CommandResolver
             || arg.Equals("-h", StringComparison.OrdinalIgnoreCase)
             || arg.Equals("-?", StringComparison.Ordinal)
             || arg.Equals("/?", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Recognises the conventional long form of the version flag. Deliberately narrower than
+    /// <see cref="IsHelpFlag"/>: <c>-v</c> is NOT included, because a leading <c>-v</c> is
+    /// already pinned as an ordinary configuration flag that routes to run, and <c>-v</c>
+    /// means "verbose" in most CLIs. The bare <c>version</c> verb is matched by the normal
+    /// verb lookup and needs no entry here.
+    /// </summary>
+    public static bool IsVersionFlag(string arg)
+    {
+        if (string.IsNullOrEmpty(arg)) return false;
+
+        return arg.Equals("--version", StringComparison.OrdinalIgnoreCase);
     }
 }
 
