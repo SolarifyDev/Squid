@@ -8,5 +8,7 @@ public class OctopusImportSessionResultDto
 
     public List<OctopusImportResourceResultDto> Resources { get; set; } = [];
 
+    public List<OctopusImportIdMappingDto> IdMappings { get; set; } = [];
+
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];
 }
