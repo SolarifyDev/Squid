@@ -103,4 +103,17 @@ public class OctopusDocumentClassifierTests
 
         classification.Kind.ShouldBe(OctopusDocumentKind.Machine);
     }
+
+    [Theory]
+    [InlineData("deploymentprocess-Projects-1323-D4C63A85E7894C5D8C20D9297FEA1A43", OctopusDocumentKind.DeploymentProcess, false)]
+    [InlineData("variableset-Projects-1323-D4C63A85E7894C5D8C20D9297FEA1A43", OctopusDocumentKind.VariableSet, false)]
+    [InlineData("deploymentprocess-Projects-1323-s-21-8DWSK-D4C63A85E7894C5D8C20D9297FEA1A43", OctopusDocumentKind.DeploymentProcessSnapshot, true)]
+    [InlineData("variableset-Projects-1323-s-55-N6739-D4C63A85E7894C5D8C20D9297FEA1A43", OctopusDocumentKind.VariableSetSnapshot, true)]
+    public void ClassifyJsonDocument_MapsCurrentAndSnapshotProcessAndVariableSetIds(string id, OctopusDocumentKind expectedKind, bool expectedHistory)
+    {
+        var classification = OctopusDocumentClassifier.ClassifyJsonDocument("payload.json", id);
+
+        classification.Kind.ShouldBe(expectedKind);
+        classification.IsOutOfScopeHistory.ShouldBe(expectedHistory);
+    }
 }

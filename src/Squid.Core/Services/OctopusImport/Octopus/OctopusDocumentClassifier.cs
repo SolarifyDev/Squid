@@ -137,6 +137,10 @@ public static partial class OctopusDocumentClassifier
 
         var value = idOrFileName.Trim();
 
+        if (value.StartsWith("deploymentprocess-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.DeploymentProcess;
+        if (value.StartsWith("variableset-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.VariableSet;
         if (value.StartsWith("Projects-", StringComparison.OrdinalIgnoreCase))
             return OctopusDocumentKind.Project;
         if (value.StartsWith("ProjectGroups-", StringComparison.OrdinalIgnoreCase))

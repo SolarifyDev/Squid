@@ -21,4 +21,7 @@ public static class OctopusInputExtractionDiagnosticCodes
     public const string ManifestSourceIdMismatch = "octopus.manifest.source_id_mismatch";
     public const string ManifestDocumentTypeMismatch = "octopus.manifest.document_type_mismatch";
     public const string DocumentNotInManifest = "octopus.manifest.document_not_listed";
+    public const string GraphDocumentMalformed = "octopus.graph.document_malformed";
+    public const string GraphResourceMissingSourceId = "octopus.graph.resource_missing_source_id";
+    public const string GraphDuplicateSourceId = "octopus.graph.duplicate_source_id";
 }
