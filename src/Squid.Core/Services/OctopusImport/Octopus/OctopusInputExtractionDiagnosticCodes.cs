@@ -24,4 +24,5 @@ public static class OctopusInputExtractionDiagnosticCodes
     public const string GraphDocumentMalformed = "octopus.graph.document_malformed";
     public const string GraphResourceMissingSourceId = "octopus.graph.resource_missing_source_id";
     public const string GraphDuplicateSourceId = "octopus.graph.duplicate_source_id";
+    public const string DependencyCycle = "octopus.dependency.cycle";
 }
