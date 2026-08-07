@@ -21,6 +21,7 @@ public enum OctopusResourceReferenceKind
     Release,
     ServerTask,
     DeploymentAction,
+    Parent,
     TargetRole,
     WorkerPool,
     TenantTag
