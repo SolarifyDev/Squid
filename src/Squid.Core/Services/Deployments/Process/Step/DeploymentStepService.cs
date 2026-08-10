@@ -103,12 +103,7 @@ public class DeploymentStepService : IDeploymentStepService
             await _stepPropertyDataProvider.AddDeploymentStepPropertiesAsync(properties, cancellationToken).ConfigureAwait(false);
         }
 
-        await _actionDataProvider.DeleteDeploymentActionsByStepIdAsync(step.Id, cancellationToken).ConfigureAwait(false);
-
-        if (command.Step.Actions?.Any() == true)
-        {
-            await CreateActionsAsync(step.Id, command.Step.Actions, cancellationToken).ConfigureAwait(false);
-        }
+        await UpsertActionsAsync(step.Id, command.Step.Actions, cancellationToken).ConfigureAwait(false);
 
         var stepWithRelatedData = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
 
@@ -285,19 +280,104 @@ public class DeploymentStepService : IDeploymentStepService
 
     private async Task CreateActionsAsync(int stepId, List<CreateOrUpdateDeploymentActionModel> actions, CancellationToken cancellationToken)
     {
-        foreach (var action in actions)
+        for (var i = 0; i < actions.Count; i++)
         {
-            var mappedAction = _mapper.Map<DeploymentAction>(action);
-
-            mappedAction.StepId = stepId;
-
-            await _actionDataProvider.AddDeploymentActionAsync(mappedAction, true, cancellationToken).ConfigureAwait(false);
-
-            await PersistActionPropertiesAsync(mappedAction.Id, action.Properties, cancellationToken).ConfigureAwait(false);
-            await PersistActionEnvironmentsAsync(mappedAction.Id, action.Environments, cancellationToken).ConfigureAwait(false);
-            await PersistActionExcludedEnvironmentsAsync(mappedAction.Id, action.ExcludedEnvironments, cancellationToken).ConfigureAwait(false);
-            await PersistActionChannelsAsync(mappedAction.Id, action.Channels, cancellationToken).ConfigureAwait(false);
+            await CreateActionAsync(stepId, actions[i], i + 1, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private async Task UpsertActionsAsync(int stepId, List<CreateOrUpdateDeploymentActionModel> actions, CancellationToken cancellationToken)
+    {
+        actions ??= new List<CreateOrUpdateDeploymentActionModel>();
+
+        var existingActions = await _actionDataProvider.GetDeploymentActionsByStepIdAsync(stepId, cancellationToken).ConfigureAwait(false);
+        var existingActionsById = existingActions.ToDictionary(a => a.Id);
+        var retainedActionIds = new HashSet<int>();
+
+        for (var i = 0; i < actions.Count; i++)
+        {
+            var action = actions[i];
+            var existingAction = ResolveExistingAction(stepId, action, existingActions, existingActionsById, retainedActionIds, i);
+
+            if (existingAction == null)
+            {
+                await CreateActionAsync(stepId, action, i + 1, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            _mapper.Map(action, existingAction);
+            existingAction.StepId = stepId;
+            existingAction.ActionOrder = i + 1;
+
+            await _actionDataProvider.UpdateDeploymentActionAsync(existingAction, true, cancellationToken).ConfigureAwait(false);
+            await ReplaceActionRelatedDataAsync(existingAction.Id, action, cancellationToken).ConfigureAwait(false);
+        }
+
+        var removedActions = existingActions.Where(a => !retainedActionIds.Contains(a.Id)).ToList();
+
+        foreach (var removedAction in removedActions)
+        {
+            await _actionDataProvider.DeleteDeploymentActionAsync(removedAction, true, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static DeploymentAction ResolveExistingAction(
+        int stepId,
+        CreateOrUpdateDeploymentActionModel action,
+        List<DeploymentAction> existingActions,
+        Dictionary<int, DeploymentAction> existingActionsById,
+        HashSet<int> retainedActionIds,
+        int actionIndex)
+    {
+        if (action.Id is > 0)
+        {
+            if (!existingActionsById.TryGetValue(action.Id.Value, out var existingAction))
+                throw new InvalidOperationException($"DeploymentAction {action.Id.Value} does not belong to DeploymentStep {stepId}.");
+
+            if (!retainedActionIds.Add(existingAction.Id))
+                throw new InvalidOperationException($"DeploymentAction {action.Id.Value} was submitted more than once.");
+
+            return existingAction;
+        }
+
+        if (actionIndex >= existingActions.Count) return null;
+
+        var fallbackAction = existingActions[actionIndex];
+
+        if (!retainedActionIds.Add(fallbackAction.Id)) return null;
+
+        return fallbackAction;
+    }
+
+    private async Task ReplaceActionRelatedDataAsync(int actionId, CreateOrUpdateDeploymentActionModel action, CancellationToken cancellationToken)
+    {
+        var properties = _mapper.Map<List<DeploymentActionProperty>>(action.Properties ?? new List<ActionPropertyModel>());
+        properties.ForEach(p => p.ActionId = actionId);
+        await _actionPropertyDataProvider.UpdateDeploymentActionPropertiesAsync(actionId, properties, cancellationToken).ConfigureAwait(false);
+
+        await _actionEnvironmentDataProvider.DeleteActionEnvironmentsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
+        await PersistActionEnvironmentsAsync(actionId, action.Environments, cancellationToken).ConfigureAwait(false);
+
+        await _actionExcludedEnvironmentDataProvider.DeleteActionExcludedEnvironmentsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
+        await PersistActionExcludedEnvironmentsAsync(actionId, action.ExcludedEnvironments, cancellationToken).ConfigureAwait(false);
+
+        await _actionChannelDataProvider.DeleteActionChannelsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
+        await PersistActionChannelsAsync(actionId, action.Channels, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task CreateActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken)
+    {
+        var mappedAction = _mapper.Map<DeploymentAction>(action);
+
+        mappedAction.StepId = stepId;
+        mappedAction.ActionOrder = actionOrder;
+
+        await _actionDataProvider.AddDeploymentActionAsync(mappedAction, true, cancellationToken).ConfigureAwait(false);
+
+        await PersistActionPropertiesAsync(mappedAction.Id, action.Properties, cancellationToken).ConfigureAwait(false);
+        await PersistActionEnvironmentsAsync(mappedAction.Id, action.Environments, cancellationToken).ConfigureAwait(false);
+        await PersistActionExcludedEnvironmentsAsync(mappedAction.Id, action.ExcludedEnvironments, cancellationToken).ConfigureAwait(false);
+        await PersistActionChannelsAsync(mappedAction.Id, action.Channels, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task PersistActionPropertiesAsync(int actionId, List<ActionPropertyModel> properties, CancellationToken cancellationToken)
@@ -337,4 +417,3 @@ public class DeploymentStepService : IDeploymentStepService
         await _actionChannelDataProvider.AddActionChannelsAsync(entities, cancellationToken).ConfigureAwait(false);
     }
 }
-

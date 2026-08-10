@@ -2,6 +2,7 @@ namespace Squid.Message.Models.Deployments.Process;
 
 public class CreateOrUpdateDeploymentActionModel
 {
+    public int? Id { get; set; }
     public string Name { get; set; }
     public string ActionType { get; set; }
     public int? WorkerPoolId { get; set; }

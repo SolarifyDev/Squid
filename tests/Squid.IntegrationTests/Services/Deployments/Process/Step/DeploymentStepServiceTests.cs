@@ -222,6 +222,7 @@ public class DeploymentStepServiceTests : TestBase
             actions: [new CreateOrUpdateDeploymentActionModel { Name = "Old Action", ActionType = "Squid.Script" }]);
 
         var stepId = created.Id;
+        var actionId = created.Actions[0].Id;
 
         await Run<IDeploymentStepService>(async service =>
         {
@@ -264,6 +265,81 @@ public class DeploymentStepServiceTests : TestBase
 
             actions.Count.ShouldBe(1);
             actions[0].StepId.ShouldBe(stepId);
+            actions[0].Id.ShouldBe(actionId);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task UpdateStep_WithExistingActionId_PreservesActionId()
+    {
+        var processId = await SeedProcessAsync();
+
+        var created = await CreateStepAsync(processId, "Original Step",
+            actions:
+            [
+                new CreateOrUpdateDeploymentActionModel
+                {
+                    Name = "Original Action",
+                    ActionType = "Squid.Script",
+                    Properties =
+                    [
+                        new ActionPropertyModel { PropertyName = "OldProp", PropertyValue = "old" }
+                    ]
+                }
+            ]);
+
+        var stepId = created.Id;
+        var actionId = created.Actions[0].Id;
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            var command = new UpdateDeploymentStepCommand
+            {
+                Id = stepId,
+                Step = new CreateOrUpdateDeploymentStepModel
+                {
+                    Name = "Updated Step",
+                    StepType = "Action",
+                    Condition = "Success",
+                    StartTrigger = "",
+                    PackageRequirement = "",
+                    Actions =
+                    [
+                        new CreateOrUpdateDeploymentActionModel
+                        {
+                            Id = actionId,
+                            Name = "Updated Action",
+                            ActionType = "Squid.KubernetesDeployContainers",
+                            Properties =
+                            [
+                                new ActionPropertyModel { PropertyName = "NewProp", PropertyValue = "new" }
+                            ]
+                        }
+                    ]
+                }
+            };
+
+            await service.UpdateDeploymentStepAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentActionDataProvider>(async provider =>
+        {
+            var actions = await provider.GetDeploymentActionsByStepIdAsync(stepId, CancellationToken.None).ConfigureAwait(false);
+
+            actions.Count.ShouldBe(1);
+            actions[0].Id.ShouldBe(actionId);
+            actions[0].Name.ShouldBe("Updated Action");
+            actions[0].ActionType.ShouldBe("Squid.KubernetesDeployContainers");
+            actions[0].ActionOrder.ShouldBe(1);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentActionPropertyDataProvider>(async provider =>
+        {
+            var properties = await provider.GetDeploymentActionPropertiesByActionIdAsync(actionId, CancellationToken.None).ConfigureAwait(false);
+
+            properties.Count.ShouldBe(1);
+            properties[0].PropertyName.ShouldBe("NewProp");
+            properties[0].PropertyValue.ShouldBe("new");
         }).ConfigureAwait(false);
     }
 
