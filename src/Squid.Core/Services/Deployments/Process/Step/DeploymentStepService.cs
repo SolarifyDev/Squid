@@ -33,6 +33,7 @@ public class DeploymentStepService : IDeploymentStepService
     private readonly IActionEnvironmentDataProvider _actionEnvironmentDataProvider;
     private readonly IActionExcludedEnvironmentDataProvider _actionExcludedEnvironmentDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
+    private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
 
     public DeploymentStepService(
         IMapper mapper,
@@ -42,7 +43,8 @@ public class DeploymentStepService : IDeploymentStepService
         IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IActionExcludedEnvironmentDataProvider actionExcludedEnvironmentDataProvider,
-        IActionChannelDataProvider actionChannelDataProvider)
+        IActionChannelDataProvider actionChannelDataProvider,
+        IActionMachineRoleDataProvider actionMachineRoleDataProvider)
     {
         _mapper = mapper;
         _stepDataProvider = stepDataProvider;
@@ -52,6 +54,7 @@ public class DeploymentStepService : IDeploymentStepService
         _actionEnvironmentDataProvider = actionEnvironmentDataProvider;
         _actionExcludedEnvironmentDataProvider = actionExcludedEnvironmentDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
+        _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
     }
 
     public async Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken)
@@ -292,12 +295,18 @@ public class DeploymentStepService : IDeploymentStepService
 
         var existingActions = await _actionDataProvider.GetDeploymentActionsByStepIdAsync(stepId, cancellationToken).ConfigureAwait(false);
         var existingActionsById = existingActions.ToDictionary(a => a.Id);
+        var hasExplicitActionIds = actions.Any(a => a.Id is > 0);
         var retainedActionIds = new HashSet<int>();
+
+        if (actions.Count > 0)
+        {
+            await AssignTemporaryActionOrdersAsync(existingActions, cancellationToken).ConfigureAwait(false);
+        }
 
         for (var i = 0; i < actions.Count; i++)
         {
             var action = actions[i];
-            var existingAction = ResolveExistingAction(stepId, action, existingActions, existingActionsById, retainedActionIds, i);
+            var existingAction = ResolveExistingAction(stepId, action, existingActions, existingActionsById, retainedActionIds, i, hasExplicitActionIds);
 
             if (existingAction == null)
             {
@@ -321,13 +330,24 @@ public class DeploymentStepService : IDeploymentStepService
         }
     }
 
+    private async Task AssignTemporaryActionOrdersAsync(List<DeploymentAction> existingActions, CancellationToken cancellationToken)
+    {
+        for (var i = 0; i < existingActions.Count; i++)
+        {
+            existingActions[i].ActionOrder = -(i + 1);
+            var isLast = i == existingActions.Count - 1;
+            await _actionDataProvider.UpdateDeploymentActionAsync(existingActions[i], isLast, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private static DeploymentAction ResolveExistingAction(
         int stepId,
         CreateOrUpdateDeploymentActionModel action,
         List<DeploymentAction> existingActions,
         Dictionary<int, DeploymentAction> existingActionsById,
         HashSet<int> retainedActionIds,
-        int actionIndex)
+        int actionIndex,
+        bool hasExplicitActionIds)
     {
         if (action.Id is > 0)
         {
@@ -340,7 +360,7 @@ public class DeploymentStepService : IDeploymentStepService
             return existingAction;
         }
 
-        if (actionIndex >= existingActions.Count) return null;
+        if (hasExplicitActionIds || actionIndex >= existingActions.Count) return null;
 
         var fallbackAction = existingActions[actionIndex];
 
@@ -363,6 +383,8 @@ public class DeploymentStepService : IDeploymentStepService
 
         await _actionChannelDataProvider.DeleteActionChannelsByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
         await PersistActionChannelsAsync(actionId, action.Channels, cancellationToken).ConfigureAwait(false);
+
+        await _actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task CreateActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken)

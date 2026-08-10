@@ -344,6 +344,129 @@ public class DeploymentStepServiceTests : TestBase
     }
 
     [Fact]
+    public async Task UpdateStep_WithExistingActionIdAndInsertedAction_CreatesInsertedActionAndPreservesExistingAction()
+    {
+        var processId = await SeedProcessAsync();
+
+        var created = await CreateStepAsync(processId, "Original Step",
+            actions:
+            [
+                new CreateOrUpdateDeploymentActionModel
+                {
+                    Name = "Original Action",
+                    ActionType = "Squid.Script"
+                }
+            ]);
+
+        var stepId = created.Id;
+        var existingActionId = created.Actions[0].Id;
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            var command = new UpdateDeploymentStepCommand
+            {
+                Id = stepId,
+                Step = new CreateOrUpdateDeploymentStepModel
+                {
+                    Name = "Updated Step",
+                    StepType = "Action",
+                    Condition = "Success",
+                    StartTrigger = "",
+                    PackageRequirement = "",
+                    Actions =
+                    [
+                        new CreateOrUpdateDeploymentActionModel
+                        {
+                            Name = "Inserted Action",
+                            ActionType = "Squid.KubernetesDeployContainers"
+                        },
+                        new CreateOrUpdateDeploymentActionModel
+                        {
+                            Id = existingActionId,
+                            Name = "Existing Action",
+                            ActionType = "Squid.Script"
+                        }
+                    ]
+                }
+            };
+
+            await service.UpdateDeploymentStepAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentActionDataProvider>(async provider =>
+        {
+            var actions = await provider.GetDeploymentActionsByStepIdAsync(stepId, CancellationToken.None).ConfigureAwait(false);
+
+            actions.Count.ShouldBe(2);
+            actions[0].Id.ShouldNotBe(existingActionId);
+            actions[0].Name.ShouldBe("Inserted Action");
+            actions[0].ActionOrder.ShouldBe(1);
+            actions[1].Id.ShouldBe(existingActionId);
+            actions[1].Name.ShouldBe("Existing Action");
+            actions[1].ActionOrder.ShouldBe(2);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task UpdateStep_WithExistingActionId_ClearsStaleActionMachineRoles()
+    {
+        var processId = await SeedProcessAsync();
+
+        var created = await CreateStepAsync(processId, "Original Step",
+            actions:
+            [
+                new CreateOrUpdateDeploymentActionModel
+                {
+                    Name = "Original Action",
+                    ActionType = "Squid.Script"
+                }
+            ]);
+
+        var stepId = created.Id;
+        var actionId = created.Actions[0].Id;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+            await builder.CreateActionMachineRolesAsync(actionId, "web-server").ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IDeploymentStepService>(async service =>
+        {
+            var command = new UpdateDeploymentStepCommand
+            {
+                Id = stepId,
+                Step = new CreateOrUpdateDeploymentStepModel
+                {
+                    Name = "Updated Step",
+                    StepType = "Action",
+                    Condition = "Success",
+                    StartTrigger = "",
+                    PackageRequirement = "",
+                    Actions =
+                    [
+                        new CreateOrUpdateDeploymentActionModel
+                        {
+                            Id = actionId,
+                            Name = "Updated Action",
+                            ActionType = "Squid.KubernetesDeployContainers"
+                        }
+                    ]
+                }
+            };
+
+            await service.UpdateDeploymentStepAsync(command, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await Run<IActionMachineRoleDataProvider>(async provider =>
+        {
+            var roles = await provider.GetActionMachineRolesByActionIdAsync(actionId, CancellationToken.None).ConfigureAwait(false);
+
+            roles.Count.ShouldBe(0);
+        }).ConfigureAwait(false);
+    }
+
+    [Fact]
     public async Task UpdateStep_PersistsNameChange()
     {
         var processId = await SeedProcessAsync();
