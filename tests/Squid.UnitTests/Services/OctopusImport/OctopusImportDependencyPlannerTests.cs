@@ -42,6 +42,7 @@ public class OctopusImportDependencyPlannerTests
 
         plan.Diagnostics.ShouldBeEmpty();
         plan.OrderedResources.Select(r => r.SourceId).ShouldNotContain("Releases-1");
+        plan.OutOfScopeResources.Select(r => r.SourceId).ShouldBe(["Releases-1"]);
         plan.OrderedResources.ShouldRespectOrder("ProjectGroups-1", "Projects-1");
         plan.OrderedResources.ShouldRespectOrder("Lifecycles-1", "Projects-1");
         plan.OrderedResources.ShouldRespectOrder("Environments-1", "Phase-1");
@@ -56,6 +57,45 @@ public class OctopusImportDependencyPlannerTests
             d.SourceId == "Variables-1" &&
             d.DependsOnSourceId == "variableset-Projects-1" &&
             d.ReferenceKind == OctopusResourceReferenceKind.Parent);
+    }
+
+    [Fact]
+    public void BuildCurrentConfigurationPlan_SelectsCurrentProcessAndVariablesAndReportsHistoricalDocuments()
+    {
+        var resources = new[]
+        {
+            Node("variableset-Projects-1", OctopusResourceKind.VariableSet, ownerProjectId: "Projects-1"),
+            Node("Variables-1", OctopusResourceKind.Variable, ownerProjectId: "Projects-1", parentSourceId: "variableset-Projects-1"),
+            Node("variableset-Projects-1-s-1-ABC", OctopusResourceKind.VariableSetSnapshot, ownerProjectId: "Projects-1", isHistorical: true),
+            Node("SnapshotVariable-1", OctopusResourceKind.Variable, ownerProjectId: "Projects-1", parentSourceId: "variableset-Projects-1-s-1-ABC", isHistorical: true),
+            Node("deploymentprocess-Projects-1", OctopusResourceKind.DeploymentProcess, ownerProjectId: "Projects-1"),
+            Node("Steps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1"),
+            Node("deploymentprocess-Projects-1-s-1-ABC", OctopusResourceKind.DeploymentProcessSnapshot, ownerProjectId: "Projects-1", isHistorical: true),
+            Node("SnapshotSteps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1-s-1-ABC", isHistorical: true),
+            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1", isHistorical: true),
+            Node("Deployments-1", OctopusResourceKind.Deployment, ownerProjectId: "Projects-1", isHistorical: true),
+            Node("ServerTasks-1", OctopusResourceKind.ServerTask, ownerProjectId: "Projects-1", isHistorical: true)
+        };
+        var graph = new OctopusResourceGraph(resources, [], [], []);
+
+        var plan = _planner.BuildCurrentConfigurationPlan(graph);
+
+        plan.OrderedResources.Select(r => r.SourceId).ShouldBe([
+            "variableset-Projects-1",
+            "Variables-1",
+            "deploymentprocess-Projects-1",
+            "Steps-1"
+        ], ignoreOrder: true);
+        plan.OrderedResources.ShouldNotContain(r => r.SourceId.Contains("-s-", StringComparison.OrdinalIgnoreCase));
+        plan.OutOfScopeResources.Select(r => r.SourceId).ShouldBe([
+            "variableset-Projects-1-s-1-ABC",
+            "deploymentprocess-Projects-1-s-1-ABC",
+            "Releases-1",
+            "Deployments-1",
+            "ServerTasks-1"
+        ], ignoreOrder: true);
+        plan.OutOfScopeResources.Select(r => r.SourceId).ShouldNotContain("SnapshotVariable-1");
+        plan.OutOfScopeResources.Select(r => r.SourceId).ShouldNotContain("SnapshotSteps-1");
     }
 
     [Fact]

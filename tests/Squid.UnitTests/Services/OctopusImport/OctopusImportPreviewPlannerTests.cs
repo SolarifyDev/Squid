@@ -85,13 +85,31 @@ public class OctopusImportPreviewPlannerTests
     {
         var release = Node("Releases-1", OctopusResourceKind.Release, "1.0.0", isHistorical: true);
 
-        var preview = _planner.BuildPreviewPlan(Plan([release]), NoConflicts());
+        var preview = _planner.BuildPreviewPlan(Plan([], outOfScopeResources: [release]), NoConflicts());
 
         var result = preview.Resources.Single();
         result.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
         result.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Skipped);
         result.Diagnostics.Single().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info);
         result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ResourceOutOfScope);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_IncludesOutOfScopeResourcesAsSkippedPreviewResults()
+    {
+        var currentProcess = Node("deploymentprocess-Projects-1", OctopusResourceKind.DeploymentProcess, "Current process");
+        var frozenProcess = Node("deploymentprocess-Projects-1-s-1-ABC", OctopusResourceKind.DeploymentProcessSnapshot, "Frozen process", isHistorical: true);
+        var release = Node("Releases-1", OctopusResourceKind.Release, "1.0.0", isHistorical: true);
+
+        var preview = _planner.BuildPreviewPlan(Plan([currentProcess], outOfScopeResources: [frozenProcess, release]), NoConflicts());
+
+        preview.Resources.Single(r => r.SourceId == currentProcess.SourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.Create);
+        preview.Resources.Single(r => r.SourceId == frozenProcess.SourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        preview.Resources.Single(r => r.SourceId == release.SourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.Skip)
+            .SelectMany(r => r.Diagnostics)
+            .All(d => d.Code == OctopusImportPreviewDiagnosticCodes.ResourceOutOfScope)
+            .ShouldBeTrue();
     }
 
     [Fact]
@@ -146,8 +164,9 @@ public class OctopusImportPreviewPlannerTests
 
     private static OctopusImportDependencyPlan Plan(
         IReadOnlyList<OctopusResourceNode> resources,
-        IReadOnlyList<OctopusInputExtractionDiagnostic> diagnostics = null)
-        => new(resources, [], [], diagnostics ?? []);
+        IReadOnlyList<OctopusInputExtractionDiagnostic> diagnostics = null,
+        IReadOnlyList<OctopusResourceNode> outOfScopeResources = null)
+        => new(resources, [], [], diagnostics ?? [], outOfScopeResources ?? []);
 
     private static OctopusImportConflictDiscoveryResult NoConflicts()
         => new([]);

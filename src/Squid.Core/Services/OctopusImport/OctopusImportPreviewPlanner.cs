@@ -30,6 +30,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var resources = dependencyPlan.OrderedResources
+            .Concat(dependencyPlan.OutOfScopeResources)
+            .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
             .OrderBy(r => Rank(r.Kind))
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))

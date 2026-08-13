@@ -15,6 +15,13 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
         ArgumentNullException.ThrowIfNull(graph);
 
         var diagnostics = new List<OctopusInputExtractionDiagnostic>(graph.Diagnostics);
+        var outOfScopeResources = graph.Resources
+            .Where(IsOutOfScopeReportResource)
+            .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(r => Rank(r.Kind))
+            .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var resources = graph.Resources
             .Where(r => !r.IsHistorical && IsOrderable(r.Kind))
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
@@ -35,7 +42,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics);
+        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources);
     }
 
     private static IReadOnlyList<OrderingEdge> BuildOrderingEdges(OctopusResourceGraph graph, Dictionary<string, OctopusResourceNode> resources)
@@ -127,6 +134,13 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 
     private static bool IsOrderable(OctopusResourceKind kind)
         => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate);
+
+    private static bool IsOutOfScopeReportResource(OctopusResourceNode resource)
+        => resource.Kind is OctopusResourceKind.Release
+            or OctopusResourceKind.Deployment
+            or OctopusResourceKind.ServerTask
+            or OctopusResourceKind.DeploymentProcessSnapshot
+            or OctopusResourceKind.VariableSetSnapshot;
 
     private static int Rank(OctopusResourceKind kind)
     {
