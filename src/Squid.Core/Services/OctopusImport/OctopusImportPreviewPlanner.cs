@@ -44,6 +44,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         return new OctopusImportPreviewPlanDto
         {
+            GeneratedAt = DateTimeOffset.UtcNow,
             Resources = resources,
             Diagnostics = diagnostics
         };
