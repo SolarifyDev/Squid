@@ -4,6 +4,8 @@ namespace Squid.Message.Models.OctopusImport;
 
 public class OctopusImportPreviewPlanDto
 {
+    public DateTimeOffset GeneratedAt { get; set; }
+
     public List<OctopusImportResourceResultDto> Resources { get; set; } = [];
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];
