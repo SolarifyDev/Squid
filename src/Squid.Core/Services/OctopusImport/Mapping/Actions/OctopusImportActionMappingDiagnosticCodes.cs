@@ -10,4 +10,7 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string UnsupportedActionPlaceholderCreated = "OctopusImport.Action.UnsupportedActionPlaceholderCreated";
     public const string ActionPropertiesOmitted = "OctopusImport.Action.PropertiesOmitted";
     public const string SensitiveActionPropertyValueOmitted = "OctopusImport.Action.SensitivePropertyValueOmitted";
+    public const string MissingFeedMapping = "OctopusImport.Action.MissingFeedMapping";
+    public const string MalformedEmbeddedJson = "OctopusImport.Action.MalformedEmbeddedJson";
+    public const string UnsupportedProperty = "OctopusImport.Action.UnsupportedProperty";
 }

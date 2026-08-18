@@ -25,12 +25,16 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     private const string OctopusStepConditionExpressionPropertyName = "Octopus.Step.ConditionExpression";
     private const string OctopusMaxParallelismPropertyName = "Octopus.Action.MaxParallelism";
     private const string OctopusTimeoutPropertyName = "Octopus.Action.Timeout";
+    private readonly IOctopusImportActionMapperRegistry _actionMapperRegistry;
 
-    private readonly IOctopusImportActionMapperRegistry actionMapperRegistry;
+    public OctopusImportDeploymentProcessMapper()
+        : this(new OctopusImportActionMapperRegistry([]))
+    {
+    }
 
     public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry)
     {
-        this.actionMapperRegistry = actionMapperRegistry ?? throw new ArgumentNullException(nameof(actionMapperRegistry));
+        _actionMapperRegistry = actionMapperRegistry ?? throw new ArgumentNullException(nameof(actionMapperRegistry));
     }
 
     public OctopusImportDeploymentProcessMappingResult MapToCreateStepCommands(
@@ -53,7 +57,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var destinationProcessId = MapDestinationProcessId(process, idMap, deploymentProcessResource, diagnostics);
         var steps = (process.Steps ?? [])
-            .Select((step, index) => MapStep(step, index, destinationProcessId, destinationSpaceId, idMap, diagnostics, actionMapperRegistry))
+            .Select((step, index) => MapStep(step, index, destinationProcessId, destinationSpaceId, idMap, diagnostics, _actionMapperRegistry))
             .ToList();
 
         return new OctopusImportDeploymentProcessMappingResult(steps, diagnostics);
@@ -166,7 +170,6 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
         return new ActionMapping(action, actionIndex, model);
     }
-
     private static int? MapWorkerPool(
         OctopusDeploymentActionDto action,
         List<OctopusImportDiagnosticDto> diagnostics)

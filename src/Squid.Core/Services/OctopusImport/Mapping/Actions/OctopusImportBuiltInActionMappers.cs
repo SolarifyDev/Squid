@@ -8,22 +8,6 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 
-public sealed class OctopusImportKubernetesDeployContainersActionMapper : OctopusImportTypeOnlyActionMapper
-{
-    public OctopusImportKubernetesDeployContainersActionMapper()
-        : base("Octopus.KubernetesDeployContainers", SpecialVariables.ActionTypes.KubernetesDeployContainers)
-    {
-    }
-}
-
-public sealed class OctopusImportKubernetesDeployIngressActionMapper : OctopusImportTypeOnlyActionMapper
-{
-    public OctopusImportKubernetesDeployIngressActionMapper()
-        : base("Octopus.KubernetesDeployIngress", SpecialVariables.ActionTypes.KubernetesDeployIngress)
-    {
-    }
-}
-
 public sealed class OctopusImportScriptActionMapper : OctopusImportTypeOnlyActionMapper
 {
     public OctopusImportScriptActionMapper()
