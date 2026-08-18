@@ -1,6 +1,7 @@
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -125,6 +126,67 @@ public class OctopusImportDeploymentProcessMapperTests
         result.HasBlockers.ShouldBeFalse();
         result.Steps.Single().CreateCommand.Step.Actions.Single().ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
         result.Steps.Single().CreateCommand.Step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.RunOnServer).PropertyValue.ShouldBe("true");
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_UsesRegisteredActionMappersForScriptAndManualActions()
+    {
+        var mapper = new OctopusImportDeploymentProcessMapper(
+            new OctopusImportActionMapperRegistry([
+                new OctopusScriptActionMapper(),
+                new OctopusManualActionMapper()
+            ]));
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Script and approval",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Script",
+                    Name = "Run script",
+                    ActionType = "Octopus.Script",
+                    IsRequired = true,
+                    Properties =
+                    {
+                        ["Octopus.Action.Script.Syntax"] = "Bash",
+                        ["Octopus.Action.Script.ScriptBody"] = "echo #{Greeting}",
+                        ["Octopus.Action.Package.FeedId"] = "Feeds-1",
+                        ["Octopus.Action.Package.PackageId"] = "Acme.Tools"
+                    }
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Manual",
+                    Name = "Approval",
+                    ActionType = "Octopus.Manual",
+                    IsRequired = true,
+                    Properties =
+                    {
+                        ["Octopus.Action.Manual.Instructions"] = "Approve #{Release.Number}",
+                        ["Octopus.Action.Manual.ResponsibleTeamIds"] = "Teams-1"
+                    }
+                }
+            ]
+        });
+
+        var result = mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var actions = result.Steps.Single().CreateCommand.Step.Actions;
+
+        var scriptAction = actions.Single(a => a.Name == "Run script");
+        scriptAction.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
+        scriptAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.ScriptSyntax).PropertyValue.ShouldBe("Bash");
+        scriptAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.ScriptBody).PropertyValue.ShouldBe("echo #{Greeting}");
+        scriptAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.PackageFeedId).PropertyValue.ShouldBe("301");
+        scriptAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.PackageId).PropertyValue.ShouldBe("Acme.Tools");
+
+        var manualAction = actions.Single(a => a.Name == "Approval");
+        manualAction.ActionType.ShouldBe(SpecialVariables.ActionTypes.Manual);
+        manualAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.ManualInstructions).PropertyValue.ShouldBe("Approve #{Release.Number}");
+        manualAction.Properties.Single(p => p.PropertyName == SpecialVariables.Action.ManualResponsibleTeamIds).PropertyValue.ShouldBe("401");
     }
 
     [Fact]
@@ -276,6 +338,8 @@ public class OctopusImportDeploymentProcessMapperTests
         idMap.AddReused(Resource("Environments-1", OctopusResourceKind.Environment, "Production", new OctopusEnvironmentDto()), 101);
         idMap.AddReused(Resource("Environments-2", OctopusResourceKind.Environment, "Staging", new OctopusEnvironmentDto()), 102);
         idMap.AddReused(Resource("Channels-1", OctopusResourceKind.Channel, "Default", new OctopusChannelDto()), 201);
+        idMap.AddReused(Resource("Feeds-1", OctopusResourceKind.Feed, "Built-in feed", new OctopusFeedDto()), 301);
+        idMap.AddReused(Resource("Teams-1", OctopusResourceKind.Team, "Release approvers", new OctopusTeamDto()), 401);
         return idMap;
     }
 
