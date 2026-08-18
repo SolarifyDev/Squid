@@ -1,6 +1,7 @@
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -9,7 +10,7 @@ namespace Squid.UnitTests.Services.OctopusImport.Mapping;
 
 public class OctopusImportDeploymentProcessMapperTests
 {
-    private readonly OctopusImportDeploymentProcessMapper _mapper = new();
+    private readonly OctopusImportDeploymentProcessMapper _mapper = new(new OctopusImportActionMapperRegistry(BuiltInActionMappers()));
 
     [Fact]
     public void MapToCreateStepCommands_MapsStepOrderingFieldsActionsTargetRolesAndScopes()
@@ -204,7 +205,87 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
-    public void MapToCreateStepCommands_WhenActionTypeIsUnsupported_DisablesActionAndAddsBlocker()
+    public void MapToCreateStepCommands_MapsAllowlistedIisPropertiesAndAcknowledgesOmittedProperties()
+    {
+        const string secret = "iis-source-password";
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-IIS",
+            Name = "Deploy IIS",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-IIS",
+                    Name = "Deploy web",
+                    ActionType = "Octopus.IIS",
+                    Properties =
+                    {
+                        ["Octopus.Action.IISWebSite.WebSiteName"] = "Orders",
+                        ["Octopus.Action.IISWebSite.ApplicationPoolPassword"] = secret,
+                        ["Octopus.Action.IISWebSite.LegacyUnsupportedSetting"] = "legacy-value",
+                        ["Octopus.Action.TargetRoles"] = "web"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var action = result.Steps.Single().CreateCommand.Step.Actions.Single();
+        action.ActionType.ShouldBe(SpecialVariables.ActionTypes.DeployToIISWebSite);
+        action.Properties.Single(p => p.PropertyName == "Squid.Action.IISWebSite.WebSiteName").PropertyValue.ShouldBe("Orders");
+        action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Action.IISWebSite.ApplicationPoolPassword");
+        action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Action.IISWebSite.LegacyUnsupportedSetting");
+        result.Steps.Single().CreateCommand.Step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.TargetRoles).PropertyValue.ShouldBe("web");
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.ActionPropertiesOmitted);
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.SensitiveActionPropertyValueOmitted);
+        result.Diagnostics.All(d => d.Message.Contains(secret, StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_MapsAllowlistedWindowsServicePropertiesAndAcknowledgesOmittedProperties()
+    {
+        const string secret = "windows-service-source-password";
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Service",
+            Name = "Deploy service",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Service",
+                    Name = "Deploy worker",
+                    ActionType = "Octopus.WindowsService",
+                    Properties =
+                    {
+                        ["Octopus.Action.WindowsService.ServiceName"] = "OrderWorker",
+                        ["Octopus.Action.WindowsService.ExecutablePath"] = "OrderWorker.exe",
+                        ["Octopus.Action.WindowsService.CustomAccountPassword"] = secret,
+                        ["Octopus.Action.WindowsService.UnsupportedRecoveryPolicy"] = "restart"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var action = result.Steps.Single().CreateCommand.Step.Actions.Single();
+        action.ActionType.ShouldBe(SpecialVariables.ActionTypes.DeployWindowsService);
+        action.Properties.Single(p => p.PropertyName == "Squid.Action.WindowsService.ServiceName").PropertyValue.ShouldBe("OrderWorker");
+        action.Properties.Single(p => p.PropertyName == "Squid.Action.WindowsService.ExecutablePath").PropertyValue.ShouldBe("OrderWorker.exe");
+        action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Action.WindowsService.CustomAccountPassword");
+        action.Properties.ShouldNotContain(p => p.PropertyName == "Squid.Action.WindowsService.UnsupportedRecoveryPolicy");
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.ActionPropertiesOmitted);
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.SensitiveActionPropertyValueOmitted);
+        result.Diagnostics.All(d => d.Message.Contains(secret, StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_WhenActionTypeIsUnsupported_AddsDisabledPlaceholder()
     {
         var process = Process(new OctopusDeploymentStepDto
         {
@@ -223,11 +304,14 @@ public class OctopusImportDeploymentProcessMapperTests
 
         var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
 
-        result.HasBlockers.ShouldBeTrue();
+        result.HasBlockers.ShouldBeFalse();
         var action = result.Steps.Single().CreateCommand.Step.Actions.Single();
-        action.ActionType.ShouldBe("Octopus.CustomCommunityStep");
+        action.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
         action.IsDisabled.ShouldBeTrue();
-        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.UnsupportedActionType);
+        action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceIdProperty).PropertyValue.ShouldBe("Actions-Unknown");
+        action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceActionTypeProperty).PropertyValue.ShouldBe("Octopus.CustomCommunityStep");
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionType);
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionPlaceholderCreated);
     }
 
     [Fact]
@@ -294,4 +378,17 @@ public class OctopusImportDeploymentProcessMapperTests
             null,
             false,
             source);
+
+    private static IOctopusImportActionMapper[] BuiltInActionMappers()
+        =>
+        [
+            new OctopusImportKubernetesDeployContainersActionMapper(),
+            new OctopusImportKubernetesDeployIngressActionMapper(),
+            new OctopusImportScriptActionMapper(),
+            new OctopusImportManualActionMapper(),
+            new OctopusImportIisActionMapper(),
+            new OctopusImportWindowsServiceActionMapper(),
+            new OctopusImportDeployWindowsServiceActionMapper(),
+            new OctopusImportWindowsServiceDeployActionMapper()
+        ];
 }

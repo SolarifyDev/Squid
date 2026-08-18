@@ -25,9 +25,47 @@ public class OctopusImportActionMapperRegistryTests
         var result = registry.Map(action, context);
 
         result.Action.ShouldBeNull();
-        result.HasBlockers.ShouldBeTrue();
+        result.HasBlockers.ShouldBeFalse();
         result.Diagnostics.ShouldContain(d => d.Code == OctopusImportActionMappingDiagnosticCodes.UnsupportedActionType);
-        result.Diagnostics.Single().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+        result.Diagnostics.ShouldContain(d => d.Code == OctopusImportActionMappingDiagnosticCodes.UnsupportedActionSkipped);
+        result.Diagnostics.All(d => d.Severity == OctopusImportCompatibilitySeverity.Warning).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Map_CreatesRedactedDisabledPlaceholder_WhenConfiguredForDisabledPlaceholder()
+    {
+        const string secretLikeName = "Rotate password secret";
+        var registry = new OctopusImportActionMapperRegistry([]);
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-123",
+            Name = secretLikeName,
+            Slug = "deploy-worker",
+            ActionType = "Octopus.CustomCommunityStep",
+            Properties =
+            {
+                ["Octopus.Action.Custom.Password"] = "must-not-be-copied"
+            }
+        };
+        var context = new OctopusImportActionMappingContext(
+            new OctopusImportIdMap(),
+            42,
+            OctopusImportUnsupportedActionHandling.DisabledPlaceholder);
+
+        var result = registry.Map(action, context);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Action.ShouldNotBeNull();
+        result.Action.Name.ShouldBe(OctopusImportActionMapperRegistry.RedactedValue);
+        result.Action.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
+        result.Action.IsDisabled.ShouldBeTrue();
+        result.Action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceIdProperty).PropertyValue.ShouldBe("Actions-123");
+        result.Action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceNameProperty).PropertyValue.ShouldBe(OctopusImportActionMapperRegistry.RedactedValue);
+        result.Action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceSlugProperty).PropertyValue.ShouldBe("deploy-worker");
+        result.Action.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceActionTypeProperty).PropertyValue.ShouldBe("Octopus.CustomCommunityStep");
+        result.Action.Properties.All(p => p.PropertyValue.Contains("must-not-be-copied", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
+        result.Diagnostics.All(d => d.Message.Contains(secretLikeName, StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionPlaceholderCreated);
     }
 
     [Fact]
