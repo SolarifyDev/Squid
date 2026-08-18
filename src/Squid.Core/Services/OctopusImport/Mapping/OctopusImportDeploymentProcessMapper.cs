@@ -31,8 +31,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         : this(new OctopusImportActionMapperRegistry([]))
     {
     }
-
-    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry)
+    
+    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry = null)
     {
         _actionMapperRegistry = actionMapperRegistry ?? throw new ArgumentNullException(nameof(actionMapperRegistry));
     }
