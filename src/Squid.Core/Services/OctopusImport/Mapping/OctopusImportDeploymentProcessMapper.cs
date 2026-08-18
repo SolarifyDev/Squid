@@ -27,12 +27,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     private const string OctopusTimeoutPropertyName = "Octopus.Action.Timeout";
     private readonly IOctopusImportActionMapperRegistry _actionMapperRegistry;
 
-    public OctopusImportDeploymentProcessMapper()
-        : this(null)
-    {
-    }
-
-    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry)
+    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry = null)
     {
         _actionMapperRegistry = actionMapperRegistry;
     }
