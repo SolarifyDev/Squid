@@ -13,6 +13,70 @@ public class OctopusImportDeploymentProcessMapperTests
     private readonly OctopusImportDeploymentProcessMapper _mapper = new();
 
     [Fact]
+    public void MapToCreateStepCommands_UsesActionMapperRegistryForSupportedKubernetesActions()
+    {
+        var mapper = new OctopusImportDeploymentProcessMapper(new OctopusImportActionMapperRegistry(
+            [
+                new OctopusKubernetesDeployContainersActionMapper(),
+                new OctopusKubernetesDeployIngressActionMapper()
+            ]));
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Deploy Kubernetes resources",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-1",
+                    Name = "Deploy containers",
+                    ActionType = "Octopus.KubernetesDeployContainers",
+                    Packages =
+                    [
+                        new OctopusActionPackageDto
+                        {
+                            Name = "web",
+                            PackageId = "sjdistributor/web",
+                            FeedId = "Feeds-1083-D4C63A85E7894C5D8C20D9297FEA1A43"
+                        }
+                    ],
+                    Properties =
+                    {
+                        ["Octopus.Action.KubernetesContainers.Namespace"] = "#{K8SNamespace}",
+                        ["Octopus.Action.KubernetesContainers.Containers"] = """[{"Name":"web","FeedId":"Feeds-1083"}]"""
+                    }
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-2",
+                    Name = "Deploy ingress",
+                    ActionType = "Octopus.KubernetesDeployIngress",
+                    Properties =
+                    {
+                        ["Octopus.Action.KubernetesContainers.IngressName"] = "web-ingress",
+                        ["Octopus.Action.KubernetesContainers.IngressRules"] = """[{"host":"example.com","http":{"paths":[{"key":"/","value":"80","option":"web","option2":"Prefix"}]}}]"""
+                    }
+                }
+            ]
+        });
+        var idMap = IdMap();
+        idMap.AddReused(Resource("Feeds-1083-D4C63A85E7894C5D8C20D9297FEA1A43", OctopusResourceKind.Feed, "Docker Hub", new OctopusFeedDto()), 77);
+
+        var result = mapper.MapToCreateStepCommands(Resource(process), idMap, 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.ActionPropertyMappingDeferred);
+
+        var actions = result.Steps.Single().CreateCommand.Step.Actions;
+        actions[0].ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployContainers);
+        actions[0].Properties.ShouldContain(p => p.PropertyName == "Squid.Action.KubernetesContainers.Containers"
+                                                 && p.PropertyValue.Contains("\"PackageId\":\"sjdistributor/web\""));
+        actions[1].ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployIngress);
+        actions[1].Properties.ShouldContain(p => p.PropertyName == "Squid.Action.KubernetesContainers.IngressRules"
+                                                 && p.PropertyValue.Contains("\"serviceName\":\"web\""));
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_MapsStepOrderingFieldsActionsTargetRolesAndScopes()
     {
         var process = Process(
