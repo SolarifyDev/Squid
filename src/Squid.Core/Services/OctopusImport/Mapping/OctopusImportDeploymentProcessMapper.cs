@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Constants;
@@ -24,6 +25,17 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     private const string OctopusStepConditionExpressionPropertyName = "Octopus.Step.ConditionExpression";
     private const string OctopusMaxParallelismPropertyName = "Octopus.Action.MaxParallelism";
     private const string OctopusTimeoutPropertyName = "Octopus.Action.Timeout";
+    private readonly IOctopusImportActionMapperRegistry _actionMapperRegistry;
+
+    public OctopusImportDeploymentProcessMapper()
+        : this(null)
+    {
+    }
+
+    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry)
+    {
+        _actionMapperRegistry = actionMapperRegistry;
+    }
 
     public OctopusImportDeploymentProcessMappingResult MapToCreateStepCommands(
         OctopusResourceNode deploymentProcessResource,
@@ -69,7 +81,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         return default;
     }
 
-    private static OctopusImportDeploymentStepCommandMapping MapStep(
+    private OctopusImportDeploymentStepCommandMapping MapStep(
         OctopusDeploymentStepDto step,
         int stepIndex,
         int destinationProcessId,
@@ -78,7 +90,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         List<OctopusImportDiagnosticDto> diagnostics)
     {
         var actions = (step.Actions ?? [])
-            .Select((action, actionIndex) => MapAction(action, actionIndex, idMap, diagnostics))
+            .Select((action, actionIndex) => MapAction(action, actionIndex, destinationSpaceId, idMap, diagnostics))
             .ToList();
 
         var stepProperties = MapStepProperties(step, diagnostics);
@@ -117,35 +129,73 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             actions.Select(a => new OctopusImportDeploymentActionModelMapping(a.SourceAction.Id, a.SourceAction.Name, a.SourceIndex, a.Action)).ToList());
     }
 
+    private ActionMapping MapAction(
+        OctopusDeploymentActionDto action,
+        int actionIndex,
+        int destinationSpaceId,
+        OctopusImportIdMap idMap,
+        List<OctopusImportDiagnosticDto> diagnostics)
+        => MapAction(action, actionIndex, destinationSpaceId, idMap, diagnostics, _actionMapperRegistry);
+
     private static ActionMapping MapAction(
         OctopusDeploymentActionDto action,
         int actionIndex,
+        int destinationSpaceId,
         OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics)
+        List<OctopusImportDiagnosticDto> diagnostics,
+        IOctopusImportActionMapperRegistry actionMapperRegistry)
     {
-        var actionType = MapActionType(action, diagnostics);
-        var isUnsupportedActionType = string.Equals(actionType, action.ActionType, StringComparison.OrdinalIgnoreCase)
-            && !SpecialVariables.ActionTypes.All.Contains(actionType);
+        var model = MapActionModel(action, destinationSpaceId, idMap, diagnostics, actionMapperRegistry);
 
-        var model = new CreateOrUpdateDeploymentActionModel
-        {
-            Name = action.Name,
-            ActionType = actionType,
-            IsDisabled = action.IsDisabled || isUnsupportedActionType,
-            IsRequired = action.IsRequired,
-            WorkerPoolId = MapWorkerPool(action, diagnostics),
-            CanBeUsedForProjectVersioning = false,
-            Properties = MapActionProperties(action, diagnostics),
-            Environments = MapScopedIds(action, action.Environments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingEnvironmentMapping, "environment", idMap, diagnostics),
-            ExcludedEnvironments = MapScopedIds(action, action.ExcludedEnvironments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingExcludedEnvironmentMapping, "excluded environment", idMap, diagnostics),
-            Channels = MapScopedIds(action, action.Channels, OctopusResourceKind.Channel, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingChannelMapping, "channel", idMap, diagnostics)
-        };
+        model.WorkerPoolId = MapWorkerPool(action, diagnostics);
+        model.Environments = MapScopedIds(action, action.Environments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingEnvironmentMapping, "environment", idMap, diagnostics);
+        model.ExcludedEnvironments = MapScopedIds(action, action.ExcludedEnvironments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingExcludedEnvironmentMapping, "excluded environment", idMap, diagnostics);
+        model.Channels = MapScopedIds(action, action.Channels, OctopusResourceKind.Channel, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingChannelMapping, "channel", idMap, diagnostics);
 
         AddUnsupportedVariableScopeDiagnostics(action, diagnostics);
         AddUnsupportedTenantDiagnostics(action, diagnostics);
         AddUnsupportedActionConditionDiagnostic(action, diagnostics);
 
         return new ActionMapping(action, actionIndex, model);
+    }
+
+    private static CreateOrUpdateDeploymentActionModel MapActionModel(
+        OctopusDeploymentActionDto action,
+        int destinationSpaceId,
+        OctopusImportIdMap idMap,
+        List<OctopusImportDiagnosticDto> diagnostics,
+        IOctopusImportActionMapperRegistry actionMapperRegistry)
+    {
+        var actionType = action.ActionType?.Trim();
+
+        if (actionMapperRegistry?.SupportedActionTypes.Contains(actionType, StringComparer.OrdinalIgnoreCase) == true)
+        {
+            var result = actionMapperRegistry.Map(action, new OctopusImportActionMappingContext(idMap, destinationSpaceId));
+            diagnostics.AddRange(result.Diagnostics);
+
+            if (result.Action == null)
+            {
+                throw new InvalidOperationException(
+                    $"Import action mapper registry returned no action model for supported action type '{action.ActionType}'.");
+            }
+
+            result.Action.Properties ??= [];
+            return result.Action;
+        }
+
+        var squidActionType = MapActionType(action, diagnostics);
+        var isUnsupportedActionType = string.Equals(squidActionType, action.ActionType, StringComparison.OrdinalIgnoreCase)
+            && !SpecialVariables.ActionTypes.All.Contains(squidActionType);
+
+        return new CreateOrUpdateDeploymentActionModel
+        {
+            Name = action.Name,
+            ActionType = squidActionType,
+            IsDisabled = action.IsDisabled || isUnsupportedActionType,
+            IsRequired = action.IsRequired,
+            CanBeUsedForProjectVersioning = false,
+            Properties = MapActionProperties(action, diagnostics)
+        };
     }
 
     private static string MapActionType(
