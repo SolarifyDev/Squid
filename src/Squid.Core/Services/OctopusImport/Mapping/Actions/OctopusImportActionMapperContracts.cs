@@ -7,7 +7,10 @@ namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 
 public sealed class OctopusImportActionMappingContext
 {
-    public OctopusImportActionMappingContext(OctopusImportIdMap idMap, int destinationSpaceId)
+    public OctopusImportActionMappingContext(
+        OctopusImportIdMap idMap,
+        int destinationSpaceId,
+        OctopusImportUnsupportedActionHandling unsupportedActionHandling = OctopusImportUnsupportedActionHandling.Skip)
     {
         IdMap = idMap ?? throw new ArgumentNullException(nameof(idMap));
 
@@ -15,11 +18,20 @@ public sealed class OctopusImportActionMappingContext
             throw new ArgumentOutOfRangeException(nameof(destinationSpaceId), destinationSpaceId, "Destination space id must be positive.");
 
         DestinationSpaceId = destinationSpaceId;
+        UnsupportedActionHandling = unsupportedActionHandling;
     }
 
     public OctopusImportIdMap IdMap { get; }
 
     public int DestinationSpaceId { get; }
+
+    public OctopusImportUnsupportedActionHandling UnsupportedActionHandling { get; }
+}
+
+public enum OctopusImportUnsupportedActionHandling
+{
+    Skip = 0,
+    DisabledPlaceholder = 1
 }
 
 public interface IOctopusImportActionMapper : IScopedDependency
