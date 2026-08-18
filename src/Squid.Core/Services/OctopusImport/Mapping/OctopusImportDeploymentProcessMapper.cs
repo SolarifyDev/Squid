@@ -26,15 +26,19 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     private const string OctopusMaxParallelismPropertyName = "Octopus.Action.MaxParallelism";
     private const string OctopusTimeoutPropertyName = "Octopus.Action.Timeout";
     private readonly IOctopusImportActionMapperRegistry _actionMapperRegistry;
+    private readonly IOctopusImportRuntimeActionHandlerValidator _runtimeActionHandlerValidator;
 
     public OctopusImportDeploymentProcessMapper()
         : this(new OctopusImportActionMapperRegistry([]))
     {
     }
     
-    public OctopusImportDeploymentProcessMapper(IOctopusImportActionMapperRegistry actionMapperRegistry = null)
+    public OctopusImportDeploymentProcessMapper(
+        IOctopusImportActionMapperRegistry actionMapperRegistry = null,
+        IOctopusImportRuntimeActionHandlerValidator runtimeActionHandlerValidator = null)
     {
         _actionMapperRegistry = actionMapperRegistry ?? throw new ArgumentNullException(nameof(actionMapperRegistry));
+        _runtimeActionHandlerValidator = runtimeActionHandlerValidator;
     }
 
     public OctopusImportDeploymentProcessMappingResult MapToCreateStepCommands(
@@ -57,7 +61,15 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var destinationProcessId = MapDestinationProcessId(process, idMap, deploymentProcessResource, diagnostics);
         var steps = (process.Steps ?? [])
-            .Select((step, index) => MapStep(step, index, destinationProcessId, destinationSpaceId, idMap, diagnostics, _actionMapperRegistry))
+            .Select((step, index) => MapStep(
+                step,
+                index,
+                destinationProcessId,
+                destinationSpaceId,
+                idMap,
+                diagnostics,
+                _actionMapperRegistry,
+                _runtimeActionHandlerValidator))
             .ToList();
 
         return new OctopusImportDeploymentProcessMappingResult(steps, diagnostics);
@@ -88,7 +100,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         int destinationSpaceId,
         OctopusImportIdMap idMap,
         List<OctopusImportDiagnosticDto> diagnostics,
-        IOctopusImportActionMapperRegistry actionMapperRegistry)
+        IOctopusImportActionMapperRegistry actionMapperRegistry,
+        IOctopusImportRuntimeActionHandlerValidator runtimeActionHandlerValidator)
     {
         var actionMappingContext = new OctopusImportActionMappingContext(
             idMap,
@@ -98,7 +111,14 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var actions = new List<ActionMapping>();
         foreach (var (action, actionIndex) in (step.Actions ?? []).Select((action, actionIndex) => (action, actionIndex)))
         {
-            var mappedAction = MapAction(action, actionIndex, idMap, diagnostics, actionMappingContext, actionMapperRegistry);
+            var mappedAction = MapAction(
+                action,
+                actionIndex,
+                idMap,
+                diagnostics,
+                actionMappingContext,
+                actionMapperRegistry,
+                runtimeActionHandlerValidator);
             if (mappedAction != null)
                 actions.Add(mappedAction);
         }
@@ -145,7 +165,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         OctopusImportIdMap idMap,
         List<OctopusImportDiagnosticDto> diagnostics,
         OctopusImportActionMappingContext actionMappingContext,
-        IOctopusImportActionMapperRegistry actionMapperRegistry)
+        IOctopusImportActionMapperRegistry actionMapperRegistry,
+        IOctopusImportRuntimeActionHandlerValidator runtimeActionHandlerValidator)
     {
         var mappingResult = actionMapperRegistry.Map(action, actionMappingContext);
         diagnostics.AddRange(mappingResult.Diagnostics);
@@ -167,6 +188,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         AddUnsupportedVariableScopeDiagnostics(action, diagnostics);
         AddUnsupportedTenantDiagnostics(action, diagnostics);
         AddUnsupportedActionConditionDiagnostic(action, diagnostics);
+        if (runtimeActionHandlerValidator != null)
+            diagnostics.AddRange(runtimeActionHandlerValidator.Validate(action, model));
 
         return new ActionMapping(action, actionIndex, model);
     }

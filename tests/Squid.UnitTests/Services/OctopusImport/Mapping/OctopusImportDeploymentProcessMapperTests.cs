@@ -1,10 +1,12 @@
 using System.Linq;
+using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.Deployments.Process;
 
 namespace Squid.UnitTests.Services.OctopusImport.Mapping;
 
@@ -440,6 +442,96 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
+    public void MapToCreateStepCommands_WhenEnabledMappedActionHasNoRuntimeHandler_AddsBlocker()
+    {
+        var mapper = new OctopusImportDeploymentProcessMapper(
+            new OctopusImportActionMapperRegistry([new OctopusScriptActionMapper()]),
+            new OctopusImportRuntimeActionHandlerValidator(new ActionHandlerRegistry([])));
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Script",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Script",
+                    Name = "Run script",
+                    ActionType = "Octopus.Script",
+                    Properties =
+                    {
+                        ["Octopus.Action.Script.ScriptBody"] = "echo hello"
+                    }
+                }
+            ]
+        });
+
+        var result = mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler);
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_WhenEnabledMappedActionHasRuntimeHandler_DoesNotAddRuntimeBlocker()
+    {
+        var mapper = new OctopusImportDeploymentProcessMapper(
+            new OctopusImportActionMapperRegistry([new OctopusScriptActionMapper()]),
+            new OctopusImportRuntimeActionHandlerValidator(new ActionHandlerRegistry([RuntimeHandler(SpecialVariables.ActionTypes.Script)])));
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Script",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Script",
+                    Name = "Run script",
+                    ActionType = "Octopus.Script",
+                    Properties =
+                    {
+                        ["Octopus.Action.Script.ScriptBody"] = "echo hello"
+                    }
+                }
+            ]
+        });
+
+        var result = mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler);
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_WhenUnsupportedActionCreatesDisabledPlaceholder_DoesNotRequireRuntimeHandler()
+    {
+        var mapper = new OctopusImportDeploymentProcessMapper(
+            new OctopusImportActionMapperRegistry([]),
+            new OctopusImportRuntimeActionHandlerValidator(new ActionHandlerRegistry([])));
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Unsupported",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Unknown",
+                    Name = "Community step",
+                    ActionType = "Octopus.CustomCommunityStep"
+                }
+            ]
+        });
+
+        var result = mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionPlaceholderCreated);
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler);
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_WhenResourceIsNotDeploymentProcess_Throws()
     {
         Should.Throw<ArgumentException>(() => _mapper.MapToCreateStepCommands(
@@ -511,11 +603,20 @@ public class OctopusImportDeploymentProcessMapperTests
         [
             new OctopusKubernetesDeployContainersActionMapper(),
             new OctopusKubernetesDeployIngressActionMapper(),
-            new OctopusImportScriptActionMapper(),
-            new OctopusImportManualActionMapper(),
+            new OctopusScriptActionMapper(),
+            new OctopusManualActionMapper(),
             new OctopusImportIisActionMapper(),
             new OctopusImportWindowsServiceActionMapper(),
             new OctopusImportDeployWindowsServiceActionMapper(),
             new OctopusImportWindowsServiceDeployActionMapper()
         ];
+
+    private static IActionHandler RuntimeHandler(string actionType)
+    {
+        var handler = new Mock<IActionHandler>();
+        handler.Setup(h => h.ActionType).Returns(actionType);
+        handler.Setup(h => h.CanHandle(It.IsAny<DeploymentActionDto>()))
+            .Returns<DeploymentActionDto>(a => string.Equals(a?.ActionType, actionType, StringComparison.OrdinalIgnoreCase));
+        return handler.Object;
+    }
 }

@@ -8,22 +8,6 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 
-public sealed class OctopusImportScriptActionMapper : OctopusImportTypeOnlyActionMapper
-{
-    public OctopusImportScriptActionMapper()
-        : base("Octopus.Script", SpecialVariables.ActionTypes.Script)
-    {
-    }
-}
-
-public sealed class OctopusImportManualActionMapper : OctopusImportTypeOnlyActionMapper
-{
-    public OctopusImportManualActionMapper()
-        : base("Octopus.Manual", SpecialVariables.ActionTypes.Manual)
-    {
-    }
-}
-
 public sealed class OctopusImportIisActionMapper : IOctopusImportActionMapper
 {
     private static readonly IReadOnlySet<string> AllowedProperties =
