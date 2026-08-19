@@ -23,7 +23,37 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
+
+    Task<int> MarkInterruptedImportsFailedAsync(
+        DateTimeOffset now,
+        DateTimeOffset staleBefore,
+        TimeSpan failedRetentionPeriod,
+        CancellationToken ct = default);
+
+    Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(
+        DateTimeOffset now,
+        int limit,
+        CancellationToken ct = default);
+
+    Task<int> MarkTemporaryUploadCleanedAsync(
+        Guid sessionId,
+        string temporaryUploadPath,
+        DateTimeOffset cleanedAt,
+        CancellationToken ct = default);
+
+    Task<int> MarkTemporaryUploadCleanupFailedAsync(
+        Guid sessionId,
+        string temporaryUploadPath,
+        string error,
+        DateTimeOffset attemptedAt,
+        CancellationToken ct = default);
 }
+
+public sealed record OctopusImportTemporaryUploadCleanupCandidate(
+    Guid SessionId,
+    string TemporaryUploadPath,
+    OctopusImportSessionState State,
+    DateTimeOffset? CleanupAfter);
 
 public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvider
 {
@@ -122,7 +152,118 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.DataVersion, dataVersion)
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
-                .SetProperty(s => s.CompletedAt, now),
+                .SetProperty(s => s.CompletedAt, now)
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, now),
             ct);
+    }
+
+    public Task<int> MarkInterruptedImportsFailedAsync(
+        DateTimeOffset now,
+        DateTimeOffset staleBefore,
+        TimeSpan failedRetentionPeriod,
+        CancellationToken ct = default)
+    {
+        var dataVersion = Guid.NewGuid().ToByteArray();
+        var cleanupAfter = now.Add(failedRetentionPeriod);
+
+        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.ExpiresAt <= now &&
+                 s.LastStateChangedAt <= staleBefore &&
+                 s.State == OctopusImportSessionState.Importing.ToString(),
+            setters => setters
+                .SetProperty(s => s.State, OctopusImportSessionState.Failed.ToString())
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastStateChangedAt, now)
+                .SetProperty(s => s.LastModifiedDate, now)
+                .SetProperty(s => s.CompletedAt, now)
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter),
+            ct);
+    }
+
+    public async Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(
+        DateTimeOffset now,
+        int limit,
+        CancellationToken ct = default)
+    {
+        var effectiveLimit = Math.Max(1, limit);
+
+        var sessions = await _repository.QueryNoTracking<OctopusImportSession>(s =>
+                s.TemporaryUploadPath != null &&
+                s.TemporaryUploadPath != "" &&
+                s.TemporaryUploadCleanedAt == null &&
+                (s.TemporaryUploadCleanupAfter == null || s.TemporaryUploadCleanupAfter <= now) &&
+                (s.State == OctopusImportSessionState.Succeeded.ToString() ||
+                 s.State == OctopusImportSessionState.Failed.ToString() ||
+                 s.State == OctopusImportSessionState.Expired.ToString()))
+            .OrderBy(s => s.TemporaryUploadCleanupAfter ?? s.CompletedAt ?? s.ExpiresAt)
+            .Take(effectiveLimit)
+            .Select(s => new
+            {
+                s.SessionId,
+                s.TemporaryUploadPath,
+                s.State,
+                s.TemporaryUploadCleanupAfter
+            })
+            .ToListAsync(ct)
+            .ConfigureAwait(false);
+
+        return sessions
+            .Select(s => new OctopusImportTemporaryUploadCleanupCandidate(
+                s.SessionId,
+                s.TemporaryUploadPath,
+                Enum.Parse<OctopusImportSessionState>(s.State),
+                s.TemporaryUploadCleanupAfter))
+            .ToList();
+    }
+
+    public Task<int> MarkTemporaryUploadCleanedAsync(
+        Guid sessionId,
+        string temporaryUploadPath,
+        DateTimeOffset cleanedAt,
+        CancellationToken ct = default)
+    {
+        var dataVersion = Guid.NewGuid().ToByteArray();
+
+        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.SessionId == sessionId &&
+                 s.TemporaryUploadPath == temporaryUploadPath &&
+                 s.TemporaryUploadCleanedAt == null,
+            setters => setters
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastModifiedDate, cleanedAt)
+                .SetProperty(s => s.TemporaryUploadPath, (string)null)
+                .SetProperty(s => s.TemporaryUploadCleanedAt, cleanedAt)
+                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null),
+            ct);
+    }
+
+    public Task<int> MarkTemporaryUploadCleanupFailedAsync(
+        Guid sessionId,
+        string temporaryUploadPath,
+        string error,
+        DateTimeOffset attemptedAt,
+        CancellationToken ct = default)
+    {
+        var dataVersion = Guid.NewGuid().ToByteArray();
+        var safeError = SanitizeTemporaryUploadCleanupError(error);
+
+        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.SessionId == sessionId &&
+                 s.TemporaryUploadPath == temporaryUploadPath &&
+                 s.TemporaryUploadCleanedAt == null,
+            setters => setters
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastModifiedDate, attemptedAt)
+                .SetProperty(s => s.TemporaryUploadCleanupError, safeError),
+            ct);
+    }
+
+    internal static string SanitizeTemporaryUploadCleanupError(string error)
+    {
+        var safeError = string.IsNullOrWhiteSpace(error)
+            ? "Temporary upload cleanup failed."
+            : OctopusImportRedaction.RedactMetadataValue("TemporaryUploadCleanupError", error);
+
+        return safeError.Length > 1024 ? safeError[..1024] : safeError;
     }
 }

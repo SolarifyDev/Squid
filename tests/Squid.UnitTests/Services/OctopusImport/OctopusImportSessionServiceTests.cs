@@ -11,12 +11,15 @@ public class OctopusImportSessionServiceTests
 {
     private readonly Mock<IOctopusImportSessionDataProvider> _dataProvider = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
+    private readonly Mock<IOctopusImportTemporaryUploadSettings> _temporaryUploadSettings = new();
     private readonly OctopusImportSessionService _service;
 
     public OctopusImportSessionServiceTests()
     {
         _currentUser.SetupGet(u => u.Id).Returns(42);
-        _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object);
+        _temporaryUploadSettings.SetupGet(s => s.FailedRetentionPeriod).Returns(TimeSpan.FromHours(6));
+        _temporaryUploadSettings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
+        _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _temporaryUploadSettings.Object);
     }
 
     [Fact]
@@ -46,12 +49,59 @@ public class OctopusImportSessionServiceTests
         inserted.State.ShouldBe(OctopusImportSessionState.Uploaded.ToString());
         inserted.SourceSummaryJson.ShouldContain("export.zip");
         inserted.ExpiresAt.ShouldBe(expiresAt);
+        inserted.TemporaryUploadCleanupAfter.ShouldBe(expiresAt);
 
         result.SessionId.ShouldBe(inserted.SessionId);
         result.OwnerUserId.ShouldBe(42);
         result.DestinationSpaceId.ShouldBe(7);
         result.State.ShouldBe(OctopusImportSessionState.Uploaded);
         result.SourceSummary.FileName.ShouldBe("export.zip");
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_CapsRequestedExpiryToConfiguredRetentionPeriod()
+    {
+        OctopusImportSession inserted = null;
+
+        _dataProvider
+            .Setup(p => p.AddSessionAsync(It.IsAny<OctopusImportSession>(), true, It.IsAny<CancellationToken>()))
+            .Callback<OctopusImportSession, bool, CancellationToken>((session, _, _) => inserted = session)
+            .Returns(Task.CompletedTask);
+
+        var before = DateTimeOffset.UtcNow;
+
+        await _service.CreateSessionAsync(
+            7,
+            new OctopusImportSourceSummaryDto { FileName = "export.zip" },
+            before.AddDays(30),
+            CancellationToken.None);
+
+        var after = DateTimeOffset.UtcNow;
+        inserted.ExpiresAt.ShouldBeGreaterThanOrEqualTo(before.AddHours(24));
+        inserted.ExpiresAt.ShouldBeLessThanOrEqualTo(after.AddHours(24));
+        inserted.TemporaryUploadCleanupAfter.ShouldBe(inserted.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task CreateSessionAsync_WithoutExplicitExpiry_UsesConfiguredRetentionPeriod()
+    {
+        OctopusImportSession inserted = null;
+
+        _dataProvider
+            .Setup(p => p.AddSessionAsync(It.IsAny<OctopusImportSession>(), true, It.IsAny<CancellationToken>()))
+            .Callback<OctopusImportSession, bool, CancellationToken>((session, _, _) => inserted = session)
+            .Returns(Task.CompletedTask);
+
+        var before = DateTimeOffset.UtcNow;
+
+        await _service.CreateSessionAsync(
+            7,
+            new OctopusImportSourceSummaryDto { FileName = "export.zip" },
+            CancellationToken.None);
+
+        var after = DateTimeOffset.UtcNow;
+        inserted.ExpiresAt.ShouldBeGreaterThanOrEqualTo(before.AddHours(24));
+        inserted.ExpiresAt.ShouldBeLessThanOrEqualTo(after.AddHours(24));
     }
 
     [Fact]
@@ -73,6 +123,48 @@ public class OctopusImportSessionServiceTests
     {
         await Should.ThrowAsync<OctopusImportSessionNotFoundException>(
             () => _service.GetSessionAsync(Guid.NewGuid(), 7, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RegisterTemporaryUploadAsync_AttachesUploadMetadataToOwnedUploadedSession()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Uploaded);
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await _service.RegisterTemporaryUploadAsync(
+            sessionId,
+            7,
+            new OctopusImportTemporaryUpload("/tmp/squid-octopus-import-uploads/upload.zip", 1234),
+            CancellationToken.None);
+
+        session.TemporaryUploadPath.ShouldBe("/tmp/squid-octopus-import-uploads/upload.zip");
+        session.TemporaryUploadSizeBytes.ShouldBe(1234);
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.ExpiresAt);
+        session.TemporaryUploadCleanedAt.ShouldBeNull();
+        session.TemporaryUploadCleanupError.ShouldBeNull();
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RegisterTemporaryUploadAsync_RejectsAlreadyAdvancedSession()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Extracted);
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await Should.ThrowAsync<OctopusImportSessionStateTransitionException>(
+            () => _service.RegisterTemporaryUploadAsync(
+                sessionId,
+                7,
+                new OctopusImportTemporaryUpload("/tmp/upload.zip", 1234),
+                CancellationToken.None));
     }
 
     [Fact]
@@ -114,8 +206,31 @@ public class OctopusImportSessionServiceTests
 
         session.State.ShouldBe(OctopusImportSessionState.Extracted.ToString());
         session.RedactedNormalizedDataJson.ShouldBe("{\"projects\":1}");
+        session.TemporaryUploadCleanupAfter.ShouldBeNull();
         result.State.ShouldBe(OctopusImportSessionState.Extracted);
         _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdatePayloadAndTransitionAsync_WhenExpired_MakesTemporaryUploadImmediatelyEligibleForCleanup()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Uploaded);
+        session.TemporaryUploadPath = "/tmp/upload.zip";
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await _service.UpdatePayloadAndTransitionAsync(
+            sessionId,
+            7,
+            OctopusImportSessionState.Uploaded,
+            OctopusImportSessionState.Expired,
+            ct: CancellationToken.None);
+
+        session.CompletedAt.ShouldNotBeNull();
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.CompletedAt.Value);
     }
 
     [Fact]
@@ -200,10 +315,34 @@ public class OctopusImportSessionServiceTests
         session.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
         session.ResultJson.ShouldContain("Projects-1");
         session.CompletedAt.ShouldNotBeNull();
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.CompletedAt.Value);
         result.Result.Succeeded.ShouldBeTrue();
         result.Result.Resources.Count.ShouldBe(1);
         _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task RecordResultAsync_WhenFailed_RetainsTemporaryUploadForConfiguredFailureWindow()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Importing);
+        session.TemporaryUploadPath = "/tmp/upload.zip";
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await _service.RecordResultAsync(
+            sessionId,
+            7,
+            OctopusImportSessionState.Failed,
+            new OctopusImportSessionResultDto(),
+            CancellationToken.None);
+
+        session.CompletedAt.ShouldNotBeNull();
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.CompletedAt.Value.Add(TimeSpan.FromHours(6)));
+    }
+
 
     [Fact]
     public async Task RecordResultAsync_RedactsPersistedDiagnostics()

@@ -16,7 +16,18 @@ public interface IOctopusImportSessionService : IScopedDependency
         DateTimeOffset expiresAt,
         CancellationToken ct = default);
 
+    Task<OctopusImportSessionDto> CreateSessionAsync(
+        int destinationSpaceId,
+        OctopusImportSourceSummaryDto sourceSummary,
+        CancellationToken ct = default);
+
     Task<OctopusImportSessionDto> GetSessionAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default);
+
+    Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(
+        Guid sessionId,
+        int destinationSpaceId,
+        OctopusImportTemporaryUpload temporaryUpload,
+        CancellationToken ct = default);
 
     Task<OctopusImportSessionDto> UpdatePayloadAndTransitionAsync(
         Guid sessionId,
@@ -50,11 +61,16 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
     private readonly IOctopusImportSessionDataProvider _dataProvider;
     private readonly ICurrentUser _currentUser;
+    private readonly IOctopusImportTemporaryUploadSettings _temporaryUploadSettings;
 
-    public OctopusImportSessionService(IOctopusImportSessionDataProvider dataProvider, ICurrentUser currentUser)
+    public OctopusImportSessionService(
+        IOctopusImportSessionDataProvider dataProvider,
+        ICurrentUser currentUser,
+        IOctopusImportTemporaryUploadSettings temporaryUploadSettings)
     {
         _dataProvider = dataProvider;
         _currentUser = currentUser;
+        _temporaryUploadSettings = temporaryUploadSettings;
     }
 
     public async Task<OctopusImportSessionDto> CreateSessionAsync(
@@ -65,6 +81,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     {
         var ownerUserId = GetCurrentUserId();
         var now = DateTimeOffset.UtcNow;
+        var effectiveExpiresAt = GetEffectiveExpiresAt(expiresAt, now);
 
         var session = new OctopusImportSession
         {
@@ -74,7 +91,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             State = OctopusImportSessionState.Uploaded.ToString(),
             SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(sourceSummary ?? new OctopusImportSourceSummaryDto())),
             DataVersion = Guid.NewGuid().ToByteArray(),
-            ExpiresAt = expiresAt,
+            ExpiresAt = effectiveExpiresAt,
+            TemporaryUploadCleanupAfter = effectiveExpiresAt,
             LastStateChangedAt = now
         };
 
@@ -83,9 +101,48 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         return Map(session);
     }
 
+    public Task<OctopusImportSessionDto> CreateSessionAsync(
+        int destinationSpaceId,
+        OctopusImportSourceSummaryDto sourceSummary,
+        CancellationToken ct = default)
+    {
+        return CreateSessionAsync(
+            destinationSpaceId,
+            sourceSummary,
+            DateTimeOffset.UtcNow.Add(_temporaryUploadSettings.DefaultRetentionPeriod),
+            ct);
+    }
+
     public async Task<OctopusImportSessionDto> GetSessionAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
     {
         return Map(await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false));
+    }
+
+    public async Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(
+        Guid sessionId,
+        int destinationSpaceId,
+        OctopusImportTemporaryUpload temporaryUpload,
+        CancellationToken ct = default)
+    {
+        if (temporaryUpload == null)
+            throw new ArgumentNullException(nameof(temporaryUpload));
+        if (string.IsNullOrWhiteSpace(temporaryUpload.Path))
+            throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUpload));
+
+        var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+        var currentState = ParseState(session.State);
+        if (currentState != OctopusImportSessionState.Uploaded)
+            throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Uploaded);
+
+        session.TemporaryUploadPath = temporaryUpload.Path;
+        session.TemporaryUploadSizeBytes = temporaryUpload.SizeBytes;
+        session.TemporaryUploadCleanupAfter = session.ExpiresAt;
+        session.TemporaryUploadCleanedAt = null;
+        session.TemporaryUploadCleanupError = null;
+
+        await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
+
+        return Map(session);
     }
 
     public async Task<OctopusImportSessionDto> UpdatePayloadAndTransitionAsync(
@@ -116,7 +173,10 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             : OctopusImportRedaction.RedactJson(validatedPlanJson);
 
         if (OctopusImportSessionStateMachine.IsTerminal(newState))
+        {
             session.CompletedAt = session.LastStateChangedAt;
+            session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(newState, session.LastStateChangedAt);
+        }
 
         await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
 
@@ -159,6 +219,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.ResultJson = Serialize(OctopusImportRedaction.RedactDto(result));
         session.CompletedAt = completedAt;
         session.LastStateChangedAt = completedAt;
+        session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(terminalState, completedAt);
 
         await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
 
@@ -215,6 +276,23 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     }
 
     private static string Serialize<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
+
+    private DateTimeOffset GetTerminalUploadCleanupAfter(OctopusImportSessionState terminalState, DateTimeOffset completedAt)
+    {
+        return terminalState switch
+        {
+            OctopusImportSessionState.Succeeded => completedAt,
+            OctopusImportSessionState.Expired => completedAt,
+            OctopusImportSessionState.Failed => completedAt.Add(_temporaryUploadSettings.FailedRetentionPeriod),
+            _ => completedAt
+        };
+    }
+
+    private DateTimeOffset GetEffectiveExpiresAt(DateTimeOffset requestedExpiresAt, DateTimeOffset now)
+    {
+        var maxExpiresAt = now.Add(_temporaryUploadSettings.DefaultRetentionPeriod);
+        return requestedExpiresAt <= maxExpiresAt ? requestedExpiresAt : maxExpiresAt;
+    }
 
     private static T Deserialize<T>(string json) where T : class
     {
