@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
@@ -38,7 +39,7 @@ public sealed class OctopusImportRuntimeActionHandlerValidator : IOctopusImportR
 
         return
         [
-            new OctopusImportDiagnosticDto
+            OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
             {
                 Severity = OctopusImportCompatibilitySeverity.Blocker,
                 Code = OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler,
@@ -46,7 +47,7 @@ public sealed class OctopusImportRuntimeActionHandlerValidator : IOctopusImportR
                 ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
                 SourceId = sourceAction.Id,
                 ResourceName = sourceAction.Name
-            }
+            })
         ];
     }
 

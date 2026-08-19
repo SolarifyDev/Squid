@@ -119,6 +119,38 @@ public class OctopusImportSessionServiceTests
     }
 
     [Fact]
+    public async Task UpdatePayloadAndTransitionAsync_RedactsPersistedPayloadJson()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Uploaded);
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await _service.UpdatePayloadAndTransitionAsync(
+            sessionId,
+            7,
+            OctopusImportSessionState.Uploaded,
+            OctopusImportSessionState.Extracted,
+            redactedNormalizedDataJson: """
+            {
+              "variables": [{ "name": "ApiKey", "type": "Sensitive", "isSensitive": true, "value": "session-variable-secret" }],
+              "account": { "credentials": { "secretKey": "session-account-secret" } },
+              "machine": { "endpoint": { "uri": "https://worker.example", "bearerToken": "session-endpoint-token" } }
+            }
+            """,
+            validatedPlanJson: """{"properties":{"Octopus.Action.Custom.Password":"session-property-secret"}}""",
+            ct: CancellationToken.None);
+
+        session.RedactedNormalizedDataJson.ShouldNotContain("session-variable-secret");
+        session.RedactedNormalizedDataJson.ShouldNotContain("session-account-secret");
+        session.RedactedNormalizedDataJson.ShouldNotContain("session-endpoint-token");
+        session.RedactedNormalizedDataJson.ShouldContain("https://worker.example");
+        session.ValidatedPlanJson.ShouldNotContain("session-property-secret");
+    }
+
+    [Fact]
     public async Task TryStartConfirmationAsync_UsesAtomicValidatedToImportingAdmission()
     {
         var sessionId = Guid.NewGuid();
@@ -171,6 +203,42 @@ public class OctopusImportSessionServiceTests
         result.Result.Succeeded.ShouldBeTrue();
         result.Result.Resources.Count.ShouldBe(1);
         _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RecordResultAsync_RedactsPersistedDiagnostics()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Importing);
+
+        _dataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+
+        await _service.RecordResultAsync(
+            sessionId,
+            7,
+            OctopusImportSessionState.Failed,
+            new OctopusImportSessionResultDto
+            {
+                Diagnostics =
+                [
+                    new OctopusImportDiagnosticDto
+                    {
+                        Severity = OctopusImportCompatibilitySeverity.Warning,
+                        Code = OctopusImportRedactionDiagnosticCodes.SuspiciousPropertyValueRedacted,
+                        Message = "Failed with token=result-token-secret.",
+                        ResourceType = "DeploymentAction",
+                        SourceId = "Actions-1",
+                        ResourceName = "Rotate password secret"
+                    }
+                ]
+            },
+            CancellationToken.None);
+
+        session.ResultJson.ShouldNotContain("result-token-secret");
+        session.ResultJson.ShouldNotContain("Rotate password secret");
+        session.ResultJson.ShouldContain(OctopusImportRedaction.RedactedValue);
     }
 
     [Fact]

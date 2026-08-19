@@ -72,7 +72,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             DestinationSpaceId = destinationSpaceId,
             OwnerUserId = ownerUserId,
             State = OctopusImportSessionState.Uploaded.ToString(),
-            SourceSummaryJson = Serialize(sourceSummary ?? new OctopusImportSourceSummaryDto()),
+            SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(sourceSummary ?? new OctopusImportSourceSummaryDto())),
             DataVersion = Guid.NewGuid().ToByteArray(),
             ExpiresAt = expiresAt,
             LastStateChangedAt = now
@@ -108,8 +108,12 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
         session.State = newState.ToString();
         session.LastStateChangedAt = DateTimeOffset.UtcNow;
-        session.RedactedNormalizedDataJson = redactedNormalizedDataJson ?? session.RedactedNormalizedDataJson;
-        session.ValidatedPlanJson = validatedPlanJson ?? session.ValidatedPlanJson;
+        session.RedactedNormalizedDataJson = redactedNormalizedDataJson == null
+            ? session.RedactedNormalizedDataJson
+            : OctopusImportRedaction.RedactJson(redactedNormalizedDataJson);
+        session.ValidatedPlanJson = validatedPlanJson == null
+            ? session.ValidatedPlanJson
+            : OctopusImportRedaction.RedactJson(validatedPlanJson);
 
         if (OctopusImportSessionStateMachine.IsTerminal(newState))
             session.CompletedAt = session.LastStateChangedAt;
@@ -152,7 +156,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         result.CompletedAt = completedAt;
 
         session.State = terminalState.ToString();
-        session.ResultJson = Serialize(result);
+        session.ResultJson = Serialize(OctopusImportRedaction.RedactDto(result));
         session.CompletedAt = completedAt;
         session.LastStateChangedAt = completedAt;
 
@@ -195,8 +199,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             DestinationSpaceId = session.DestinationSpaceId,
             OwnerUserId = session.OwnerUserId,
             State = ParseState(session.State),
-            SourceSummary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson),
-            Result = Deserialize<OctopusImportSessionResultDto>(session.ResultJson),
+            SourceSummary = OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson)),
+            Result = OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSessionResultDto>(session.ResultJson)),
             ExpiresAt = session.ExpiresAt,
             CompletedAt = session.CompletedAt,
             LastStateChangedAt = session.LastStateChangedAt

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Enums.OctopusImport;
@@ -266,7 +267,7 @@ public class OctopusImportLifecycleMapper : IOctopusImportLifecycleMapper
         string phaseName,
         string message)
     {
-        diagnostics.Add(new OctopusImportDiagnosticDto
+        diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Warning,
             Code = diagnosticCode,
@@ -276,7 +277,7 @@ public class OctopusImportLifecycleMapper : IOctopusImportLifecycleMapper
             ResourceType = resource.Kind.ToString(),
             SourceId = resource.SourceId,
             ResourceName = resource.Name
-        });
+        }));
     }
 
     private static bool? ReadBoolean(IReadOnlyDictionary<string, JsonElement> properties, params string[] names)

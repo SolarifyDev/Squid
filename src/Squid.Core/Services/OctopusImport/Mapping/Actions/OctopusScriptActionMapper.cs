@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -177,7 +178,7 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         string code,
         string message,
         OctopusDeploymentActionDto action)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -185,7 +186,7 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
             ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
             SourceId = action.Id,
             ResourceName = action.Name
-        };
+        });
 
     private sealed record PackageReference(string PackageId, string FeedId, string Version);
 }

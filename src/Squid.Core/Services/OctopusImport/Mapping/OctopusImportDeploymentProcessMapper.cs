@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Process.Step;
@@ -419,7 +420,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         OctopusResourceKind resourceKind,
         string sourceId,
         string resourceName)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -427,7 +428,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             ResourceType = resourceKind.ToString(),
             SourceId = sourceId,
             ResourceName = resourceName
-        };
+        });
 
     private sealed record ActionMapping(
         OctopusDeploymentActionDto SourceAction,

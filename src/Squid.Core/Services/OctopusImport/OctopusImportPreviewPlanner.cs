@@ -147,7 +147,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
     }
 
     private static OctopusImportDiagnosticDto MapDependencyDiagnostic(OctopusInputExtractionDiagnostic diagnostic)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = diagnostic.Severity,
             Code = string.IsNullOrWhiteSpace(diagnostic.Code)
@@ -156,14 +156,14 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             Message = diagnostic.Message,
             SourceId = diagnostic.SourceId,
             ResourceType = diagnostic.DocumentKind?.ToString()
-        };
+        });
 
     private static OctopusImportDiagnosticDto Diagnostic(
         OctopusImportCompatibilitySeverity severity,
         string code,
         string message,
         OctopusResourceNode resource)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -171,7 +171,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             ResourceType = resource.Kind.ToString(),
             SourceId = resource.SourceId,
             ResourceName = resource.Name
-        };
+        });
 
     private static bool IsOutOfScope(OctopusResourceKind kind)
         => kind is OctopusResourceKind.Release

@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Tentacle.Handlers;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -294,7 +295,7 @@ internal static class OctopusImportActionMapperHelper
         string code,
         string message,
         OctopusDeploymentActionDto action)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -302,5 +303,5 @@ internal static class OctopusImportActionMapperHelper
             ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
             SourceId = action.Id,
             ResourceName = action.Name
-        };
+        });
 }

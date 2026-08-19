@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.ExternalFeed;
 using Squid.Message.Enums.OctopusImport;
@@ -100,7 +101,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             feed.FeedUri,
             feed.Name,
             feed.Slug,
-            BuildProperties(feed),
+            OctopusImportRedaction.RedactProperties(BuildProperties(feed)),
             diagnostics);
     }
 
@@ -167,7 +168,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
         string code,
         string message,
         OctopusResourceNode resource)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -175,7 +176,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             ResourceType = resource.Kind.ToString(),
             SourceId = resource.SourceId,
             ResourceName = resource.Name
-        };
+        });
 
     private sealed record FeedCommandMapping(
         string FeedType,
