@@ -24,6 +24,51 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
+    public void BuildPreviewPlan_WhenCurrentSensitiveVariableIsSelected_AddsRequiredInputMarker()
+    {
+        var variable = new OctopusVariableDto
+        {
+            Id = "Variables-Secret",
+            Name = "ApiKey",
+            Type = "Sensitive",
+            IsSensitive = true,
+            Value = "preview-source-secret",
+            Scope = { ["Environment"] = ["Environments-1"] }
+        };
+        var resource = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey", source: variable);
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), NoConflicts());
+
+        var resourceResult = preview.Resources.Single();
+        var requiredInput = resourceResult.RequiredInputs.Single();
+        preview.RequiredInputs.Single().InputKey.ShouldBe(requiredInput.InputKey);
+        requiredInput.Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
+        requiredInput.Name.ShouldBe("ApiKey");
+        requiredInput.ValueType.ShouldBe("Sensitive");
+        requiredInput.HasSourceValue.ShouldBeTrue();
+        requiredInput.SourceScopes["Environment"].ShouldBe(["Environments-1"]);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_WhenHistoricalSensitiveVariableIsOutOfScope_DoesNotRequireInput()
+    {
+        var variable = new OctopusVariableDto
+        {
+            Id = "Variables-Secret",
+            Name = "ApiKey",
+            Type = "Sensitive",
+            IsSensitive = true,
+            Value = "historical-source-secret"
+        };
+        var resource = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey", isHistorical: true, source: variable);
+
+        var preview = _planner.BuildPreviewPlan(Plan([], outOfScopeResources: [resource]), NoConflicts());
+
+        preview.RequiredInputs.ShouldBeEmpty();
+        preview.Resources.Single().RequiredInputs.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void BuildPreviewPlan_WhenSharedResourceHasOneConflict_ProposesReuseExisting()
     {
         var resource = Node("Feeds-1", OctopusResourceKind.Feed, "Docker");
@@ -195,7 +240,8 @@ public class OctopusImportPreviewPlannerTests
         string sourceId,
         OctopusResourceKind kind,
         string name,
-        bool isHistorical = false)
+        bool isHistorical = false,
+        object source = null)
         => new(
             sourceId,
             name,
@@ -205,5 +251,5 @@ public class OctopusImportPreviewPlannerTests
             "Projects-1",
             null,
             isHistorical,
-            new object());
+            source ?? new object());
 }
