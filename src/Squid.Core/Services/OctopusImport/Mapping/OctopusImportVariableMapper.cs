@@ -1,4 +1,5 @@
 using System.Globalization;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
@@ -354,7 +355,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         OctopusResourceKind resourceKind,
         string sourceId,
         string resourceName)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -362,7 +363,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             ResourceType = resourceKind.ToString(),
             SourceId = sourceId,
             ResourceName = resourceName
-        };
+        });
 
     private sealed record VariableSetCommandMapping(
         string Name,

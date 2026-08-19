@@ -1,3 +1,5 @@
+using Squid.Core.Services.OctopusImport;
+
 namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 
 public static class OctopusImportActionMappingDiagnosticCodes
@@ -10,7 +12,7 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string UnsupportedActionPlaceholderCreated = "OctopusImport.Action.UnsupportedActionPlaceholderCreated";
     public const string MissingRuntimeActionHandler = "OctopusImport.Action.MissingRuntimeActionHandler";
     public const string ActionPropertiesOmitted = "OctopusImport.Action.PropertiesOmitted";
-    public const string SensitiveActionPropertyValueOmitted = "OctopusImport.Action.SensitivePropertyValueOmitted";
+    public const string SensitiveActionPropertyValueOmitted = OctopusImportRedactionDiagnosticCodes.SensitiveActionPropertyValueOmitted;
     public const string UnsupportedScriptSyntax = "OctopusImport.Action.Script.UnsupportedSyntax";
     public const string MissingPackageFeedMapping = "OctopusImport.Action.Script.MissingPackageFeedMapping";
     public const string MultiplePackageReferencesUnsupported = "OctopusImport.Action.Script.MultiplePackageReferencesUnsupported";

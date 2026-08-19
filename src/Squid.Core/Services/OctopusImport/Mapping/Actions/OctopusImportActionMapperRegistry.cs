@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -12,7 +13,7 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
     internal const string PlaceholderSourceNameProperty = "Squid.Import.Octopus.SourceAction.Name";
     internal const string PlaceholderSourceSlugProperty = "Squid.Import.Octopus.SourceAction.Slug";
     internal const string PlaceholderSourceActionTypeProperty = "Squid.Import.Octopus.SourceAction.Type";
-    internal const string RedactedValue = "[redacted]";
+    internal const string RedactedValue = OctopusImportRedaction.RedactedValue;
 
     private readonly IReadOnlyDictionary<string, IOctopusImportActionMapper> _mappers;
 
@@ -41,7 +42,7 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
 
         if (!_mappers.TryGetValue(actionType, out var mapper))
         {
-            var redactedActionType = RedactMetadataValue(PlaceholderSourceActionTypeProperty, action.ActionType);
+            var redactedActionType = OctopusImportRedaction.RedactMetadataValue(PlaceholderSourceActionTypeProperty, action.ActionType);
             return Unsupported(
                 action,
                 OctopusImportActionMappingDiagnosticCodes.UnsupportedActionType,
@@ -95,15 +96,15 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
         string message,
         OctopusImportUnsupportedActionHandling handling)
     {
-        var redactedActionName = RedactMetadataValue(PlaceholderSourceNameProperty, action.Name);
-        var redactedSourceId = RedactMetadataValue(PlaceholderSourceIdProperty, action.Id);
+        var redactedActionName = OctopusImportRedaction.RedactMetadataValue(PlaceholderSourceNameProperty, action.Name);
+        var redactedSourceId = OctopusImportRedaction.RedactMetadataValue(PlaceholderSourceIdProperty, action.Id);
         var displayName = string.IsNullOrWhiteSpace(redactedActionName)
             ? "unsupported Octopus action"
             : redactedActionName;
 
         var diagnostics = new List<OctopusImportDiagnosticDto>
         {
-            new()
+            OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
             {
                 Severity = OctopusImportCompatibilitySeverity.Warning,
                 Code = code,
@@ -111,12 +112,12 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
                 ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
                 SourceId = redactedSourceId,
                 ResourceName = redactedActionName
-            }
+            })
         };
 
         if (handling == OctopusImportUnsupportedActionHandling.DisabledPlaceholder)
         {
-            diagnostics.Add(new OctopusImportDiagnosticDto
+            diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
             {
                 Severity = OctopusImportCompatibilitySeverity.Warning,
                 Code = OctopusImportActionMappingDiagnosticCodes.UnsupportedActionPlaceholderCreated,
@@ -124,12 +125,12 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
                 ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
                 SourceId = redactedSourceId,
                 ResourceName = redactedActionName
-            });
+            }));
 
             return new OctopusImportActionMappingResult(CreateDisabledPlaceholder(action), diagnostics);
         }
 
-        diagnostics.Add(new OctopusImportDiagnosticDto
+        diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Warning,
             Code = OctopusImportActionMappingDiagnosticCodes.UnsupportedActionSkipped,
@@ -137,7 +138,7 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
             ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
             SourceId = redactedSourceId,
             ResourceName = redactedActionName
-        });
+        }));
 
         return new OctopusImportActionMappingResult(null, diagnostics);
     }
@@ -145,9 +146,9 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
     private static CreateOrUpdateDeploymentActionModel CreateDisabledPlaceholder(OctopusDeploymentActionDto action)
         => new()
         {
-            Name = string.IsNullOrWhiteSpace(RedactMetadataValue(PlaceholderSourceNameProperty, action.Name))
+            Name = string.IsNullOrWhiteSpace(OctopusImportRedaction.RedactMetadataValue(PlaceholderSourceNameProperty, action.Name))
                 ? "Unsupported Octopus action"
-                : RedactMetadataValue(PlaceholderSourceNameProperty, action.Name),
+                : OctopusImportRedaction.RedactMetadataValue(PlaceholderSourceNameProperty, action.Name),
             ActionType = SpecialVariables.ActionTypes.Script,
             IsDisabled = true,
             IsRequired = action.IsRequired,
@@ -165,26 +166,6 @@ public class OctopusImportActionMapperRegistry : IOctopusImportActionMapperRegis
         => new()
         {
             PropertyName = propertyName,
-            PropertyValue = RedactMetadataValue(propertyName, value)
+            PropertyValue = OctopusImportRedaction.RedactMetadataValue(propertyName, value)
         };
-
-    internal static string RedactMetadataValue(string propertyName, string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return string.Empty;
-
-        return LooksSensitive(propertyName) || LooksSensitive(value)
-            ? RedactedValue
-            : value.Trim();
-    }
-
-    private static bool LooksSensitive(string value)
-        => value.Contains("password", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("secret", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("token", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("credential", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("certificate", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("pfx", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("privatekey", StringComparison.OrdinalIgnoreCase)
-           || value.Contains("private-key", StringComparison.OrdinalIgnoreCase);
 }

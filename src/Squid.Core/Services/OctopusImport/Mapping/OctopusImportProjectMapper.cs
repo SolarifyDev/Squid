@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.Deployments.Project;
@@ -178,7 +179,7 @@ public class OctopusImportProjectMapper : IOctopusImportProjectMapper
         string code,
         string message,
         OctopusResourceNode resource)
-        => new()
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = severity,
             Code = code,
@@ -186,7 +187,7 @@ public class OctopusImportProjectMapper : IOctopusImportProjectMapper
             ResourceType = resource.Kind.ToString(),
             SourceId = resource.SourceId,
             ResourceName = resource.Name
-        };
+        });
 
     private sealed class OctopusProjectImportMetadata
     {

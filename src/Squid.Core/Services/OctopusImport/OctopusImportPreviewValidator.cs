@@ -146,7 +146,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 
             if (previewGeneratedAt != default && match.Destination.LastModifiedDate > previewGeneratedAt)
             {
-                result.Diagnostics.Add(new OctopusImportDiagnosticDto
+                result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
                 {
                     Severity = OctopusImportCompatibilitySeverity.Blocker,
                     Code = OctopusImportPreviewDiagnosticCodes.StalePreviewPlan,
@@ -154,7 +154,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                     SourceId = previewResource.SourceId,
                     ResourceType = previewResource.SourceType,
                     ResourceName = previewResource.SourceName
-                });
+                }));
             }
         }
     }
@@ -181,7 +181,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         OctopusImportValidationResultDto result,
         OctopusImportResourceResultDto previewResource)
     {
-        result.Diagnostics.Add(new OctopusImportDiagnosticDto
+        result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Blocker,
             Code = OctopusImportPreviewDiagnosticCodes.IncompatibleSharedResourceReuse,
@@ -189,7 +189,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             SourceId = previewResource.SourceId,
             ResourceType = previewResource.SourceType,
             ResourceName = previewResource.SourceName
-        });
+        }));
     }
 
     private static void AddReferenceDiagnostic(
@@ -198,7 +198,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         string code,
         string message)
     {
-        result.Diagnostics.Add(new OctopusImportDiagnosticDto
+        result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Blocker,
             Code = code,
@@ -206,6 +206,6 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             SourceId = source.SourceId,
             ResourceType = source.Kind.ToString(),
             ResourceName = source.Name
-        });
+        }));
     }
 }
