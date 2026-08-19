@@ -40,7 +40,8 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
                 SpaceId = destinationSpaceId
             },
             null,
-            mapping.Diagnostics);
+            mapping.Diagnostics,
+            mapping.ManualConfigurationMarkers);
     }
 
     public OctopusImportFeedMappingResult MapToUpdateCommand(
@@ -68,7 +69,8 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
                 PackageAcquisitionLocationOptions = [],
                 SpaceId = destinationSpaceId
             },
-            mapping.Diagnostics);
+            mapping.Diagnostics,
+            mapping.ManualConfigurationMarkers);
     }
 
     private static FeedCommandMapping Map(OctopusResourceNode feedResource, int destinationSpaceId)
@@ -85,10 +87,16 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             ?? throw new ArgumentException("Octopus feed resource does not contain an OctopusFeedDto source.", nameof(feedResource));
 
         var diagnostics = new List<OctopusImportDiagnosticDto>();
+        var markers = new List<OctopusImportManualConfigurationMarker>();
         var mappedFeedType = MapFeedType(feed, feedResource, diagnostics);
 
         if (!string.IsNullOrWhiteSpace(feed.Username) || !string.IsNullOrWhiteSpace(feed.Password))
         {
+            markers.Add(OctopusImportManualConfiguration.CreateMarker(
+                feedResource,
+                OctopusImportManualConfiguration.FeedCredentialsField,
+                OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted));
+
             diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Warning,
                 OctopusImportFeedMappingDiagnosticCodes.CredentialsOmitted,
@@ -96,13 +104,17 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
                 feedResource));
         }
 
+        var properties = OctopusImportRedaction.RedactProperties(BuildProperties(feed));
+        OctopusImportManualConfiguration.AddMarkerProperties(properties, feedResource, markers);
+
         return new FeedCommandMapping(
             mappedFeedType,
             feed.FeedUri,
             feed.Name,
             feed.Slug,
-            OctopusImportRedaction.RedactProperties(BuildProperties(feed)),
-            diagnostics);
+            properties,
+            diagnostics,
+            markers);
     }
 
     private static string MapFeedType(
@@ -184,13 +196,15 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
         string Name,
         string Slug,
         Dictionary<string, string> Properties,
-        IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics);
+        IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics,
+        IReadOnlyList<OctopusImportManualConfigurationMarker> ManualConfigurationMarkers);
 }
 
 public sealed record OctopusImportFeedMappingResult(
     CreateExternalFeedCommand CreateCommand,
     UpdateExternalFeedCommand UpdateCommand,
-    IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics)
+    IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics,
+    IReadOnlyList<OctopusImportManualConfigurationMarker> ManualConfigurationMarkers)
 {
     public bool HasBlockers => Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
 }
