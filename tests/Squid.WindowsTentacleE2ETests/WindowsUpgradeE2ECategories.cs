@@ -257,6 +257,15 @@ public static class WindowsUpgradeE2ECategories
     public const string IISDeploy = "IISDeployE2E";
 
     /// <summary>
+    /// Deploy a Package Windows host path: server → agent file transfer →
+    /// production <c>DeployPackageByCalamari.ps1</c> bootstrap →
+    /// <c>squid-calamari deploy-package</c> durable install. Proves the
+    /// Windows PowerShell install path that Linux/SSH pipeline e2e does not cover.
+    /// </summary>
+    public const string DeployPackageSmoke = "DeployPackageWindowsSmoke";
+    public const string DeployPackageFull = "DeployPackageWindowsFull";
+
+    /// <summary>
     /// E2E coverage for the production <c>Squid.DeployWindowsService</c>
     /// action's PowerShell payload against a real Windows host. Drives
     /// <c>WindowsServiceDeployScriptBuilder.Build(action)</c> to produce the

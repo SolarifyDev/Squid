@@ -54,7 +54,12 @@ jobs:
         run: dotnet restore tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configfile "$NUGET_CONFIG"
 
       - name: Run Squid.Calamari.Tests
-        run: dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configuration Release --no-restore
+        run: |
+          FILTER=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            FILTER="--filter Category!=DeployPackageFull"
+          fi
+          dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configuration Release --no-restore $FILTER
 
   tentacle-tests:
     name: Squid Tentacle Tests

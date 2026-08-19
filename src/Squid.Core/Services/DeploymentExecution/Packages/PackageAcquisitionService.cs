@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Squid.Core.DependencyInjection;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Http;
@@ -8,6 +9,20 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
 {
     public async Task<PackageAcquisitionResult> AcquireAsync(ExternalFeed feed, string packageId, string version, int deploymentId, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(packageId))
+            throw new InvalidOperationException("Package ID is required for package acquisition.");
+        if (string.IsNullOrWhiteSpace(version))
+            throw new InvalidOperationException($"Package version is required for package '{packageId}'.");
+        if (feed is null)
+            throw new InvalidOperationException($"Feed is required for package '{packageId}' v{version}.");
+
+        var feedType = feed.FeedType ?? string.Empty;
+        if (IsUnsupportedPackageFeed(feedType))
+        {
+            throw new InvalidOperationException(
+                $"Feed type '{feed.FeedType}' cannot be installed by Deploy a Package. Use an archive-capable feed (NuGet/GitHub/HTTP).");
+        }
+
         var fetchResult = await packageContentFetcher.FetchAsync(feed, packageId, version, ct).ConfigureAwait(false);
 
         if (fetchResult.Warnings.Count > 0)
@@ -16,23 +31,102 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         if (fetchResult.RawBytes.Length == 0)
             throw new InvalidOperationException($"Package {packageId} v{version} from feed {feed.Id} returned empty content.");
 
-        var storageDir = PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId);
+        // Reject hostile archive entries before caching/uploading. BusyBox unzip rewrites
+        // traversal names during listing, so remote shell guards alone are not sufficient.
+        PackageArchiveSafety.EnsureArchiveEntriesAreSafe(fetchResult.RawBytes, packageId, version);
+
+        // Content-address under the deployment dir so concurrent acquisitions of the same
+        // package id/version (common in parallel E2E fixtures that each mint deploymentId=1)
+        // cannot overwrite each other and trip SHA-256 verification on the agent.
+        var hash = Convert.ToHexString(SHA256.HashData(fetchResult.RawBytes)).ToLowerInvariant();
+        var storageDir = Path.Combine(
+            PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId),
+            hash);
         Directory.CreateDirectory(storageDir);
 
-        var localPath = Path.Combine(storageDir, $"{packageId}.{version}.nupkg");
+        var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
+        var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
+        var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");
         await File.WriteAllBytesAsync(localPath, fetchResult.RawBytes, ct).ConfigureAwait(false);
-
-        var hash = ComputeMd5Hash(fetchResult.RawBytes);
 
         Log.Information("[Deploy] Package acquired: {PackageId} v{Version} -> {LocalPath} ({SizeBytes} bytes, hash {Hash})", packageId, version, localPath, fetchResult.RawBytes.Length, hash);
 
         return new PackageAcquisitionResult(localPath, packageId, version, fetchResult.RawBytes.Length, hash);
     }
 
-    private static string ComputeMd5Hash(byte[] bytes)
+    internal static bool IsUnsupportedPackageFeed(string feedType)
     {
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        var hash = md5.ComputeHash(bytes);
-        return Convert.ToHexString(hash);
+        if (string.IsNullOrWhiteSpace(feedType))
+            return false;
+
+        return feedType.Contains("Docker", StringComparison.OrdinalIgnoreCase)
+            || feedType.Contains("Helm", StringComparison.OrdinalIgnoreCase)
+            || feedType.Contains("Container", StringComparison.OrdinalIgnoreCase);
     }
+
+    internal static string ResolveArchiveExtension(string feedType, string packageId, string feedUri)
+    {
+        var fromPackageId = InferExtensionFromPath(packageId);
+        if (fromPackageId != null)
+            return fromPackageId;
+
+        if (!string.IsNullOrWhiteSpace(feedType) && feedType.Contains("NuGet", StringComparison.OrdinalIgnoreCase))
+            return ".nupkg";
+
+        if (!string.IsNullOrWhiteSpace(feedType) && feedType.Contains("GitHub", StringComparison.OrdinalIgnoreCase))
+            return ".tar.gz";
+
+        // Only honor feedUri when the last path segment looks like a package file
+        // (e.g. .../download/app.nupkg). Generic feed base URIs must not override.
+        var fromUri = InferExtensionFromPackageFilePath(feedUri);
+        if (fromUri != null)
+            return fromUri;
+
+        return ".zip";
+    }
+
+    private static string InferExtensionFromPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var path = value;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            path = uri.AbsolutePath;
+
+        if (path.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase)
+            || path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase))
+            return path.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase) ? ".tgz" : ".tar.gz";
+
+        if (path.EndsWith(".nupkg", StringComparison.OrdinalIgnoreCase))
+            return ".nupkg";
+
+        if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            return ".zip";
+
+        if (path.EndsWith(".tar", StringComparison.OrdinalIgnoreCase))
+            return ".tar";
+
+        return null;
+    }
+
+    private static string InferExtensionFromPackageFilePath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var path = value;
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+            path = uri.AbsolutePath;
+
+        path = path.TrimEnd('/');
+        var lastSlash = path.LastIndexOf('/');
+        var fileName = lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
+        if (string.IsNullOrWhiteSpace(fileName) || fileName.IndexOf('.') < 0)
+            return null;
+
+        return InferExtensionFromPath(fileName);
+    }
+
 }

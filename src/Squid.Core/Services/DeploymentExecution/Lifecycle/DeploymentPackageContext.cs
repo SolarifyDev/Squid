@@ -11,7 +11,7 @@ namespace Squid.Core.Services.DeploymentExecution.Lifecycle;
 /// <param name="PackageVersion">The package version.</param>
 /// <param name="PackageFeedId">The feed ID from which to acquire the package.</param>
 /// <param name="PackageSizeBytes">The downloaded package size in bytes.</param>
-/// <param name="PackageHash">The MD5 hash of the downloaded package.</param>
+/// <param name="PackageHash">The SHA-256 hash of the downloaded package.</param>
 /// <param name="PackageLocalPath">The local path to the downloaded package file.</param>
 /// <param name="PackageIndex">Zero-based index of this package within the selected packages list.</param>
 /// <param name="PackageCount">Total number of packages being acquired.</param>

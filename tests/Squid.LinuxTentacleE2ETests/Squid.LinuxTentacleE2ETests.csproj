@@ -54,6 +54,12 @@
       on it but the reference is harmless when unused.
     -->
     <ProjectReference Include="..\..\src\Squid.Tentacle\Squid.Tentacle.csproj" />
+    <!--
+      DeployPackageLinuxSmoke bootstrap needs squid-calamari on PATH.
+      Mirror WindowsTentacleE2ETests so `dotnet test` builds Calamari into
+      src/Squid.Calamari/bin/<Config>/net9.0 for EnsureCalamariOnPath.
+    -->
+    <ProjectReference Include="..\..\src\Squid.Calamari\Squid.Calamari.csproj" />
   </ItemGroup>
 
 </Project>

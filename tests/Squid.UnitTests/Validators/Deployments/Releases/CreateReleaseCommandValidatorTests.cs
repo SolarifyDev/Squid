@@ -124,4 +124,57 @@ public class CreateReleaseCommandValidatorTests
         result.IsValid.ShouldBeFalse();
         result.Errors.ShouldContain(e => e.PropertyName.Contains("Version"));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void SelectedPackage_WithInvalidFeedId_Fails(int feedId)
+    {
+        var command = new CreateReleaseCommand
+        {
+            Version = "1.0.0",
+            ProjectId = 1,
+            ChannelId = 1,
+            SelectedPackages =
+            [
+                new CreateReleaseSelectedPackageDto
+                {
+                    ActionName = "Deploy a Package",
+                    PackageReferenceName = "Newtonsoft.Json",
+                    Version = "13.0.3",
+                    FeedId = feedId
+                }
+            ]
+        };
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeFalse();
+        result.Errors.ShouldContain(e => e.PropertyName.Contains("FeedId"));
+    }
+
+    [Fact]
+    public void SelectedPackage_WithPositiveFeedId_Passes()
+    {
+        var command = new CreateReleaseCommand
+        {
+            Version = "1.0.0",
+            ProjectId = 1,
+            ChannelId = 1,
+            SelectedPackages =
+            [
+                new CreateReleaseSelectedPackageDto
+                {
+                    ActionName = "Deploy a Package",
+                    PackageReferenceName = "Newtonsoft.Json",
+                    Version = "13.0.3",
+                    FeedId = 1
+                }
+            ]
+        };
+
+        var result = _validator.Validate(command);
+
+        result.IsValid.ShouldBeTrue();
+    }
 }

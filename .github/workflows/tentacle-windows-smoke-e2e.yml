@@ -32,7 +32,9 @@ name: Tentacle Windows Smoke E2E
 # diagnostic (cross-platform logic already exercised by unit + Linux E2E).
 # Includes Squid.DeployWindowsService's real-host payload tests because they
 # are the same SCM-backed service availability surface as the lifecycle tests.
-# Skipping IIS lets the tests job skip the slow IIS+XDT setup.
+# Deploy Package Windows agent bootstrap smoke is included so PR gates prove
+# the PowerShell install path. Skipping IIS lets the tests job skip the slow
+# IIS+XDT setup.
 
 on:
   pull_request:
@@ -41,7 +43,11 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E"
+        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke"
+      host_test_filter:
+        description: "xUnit --filter override for the Windows-host Calamari smoke subset"
+        required: false
+        default: "Category=DeployPackageWindowsHostSmoke"
 
 permissions:
   contents: read
@@ -77,9 +83,9 @@ jobs:
 
           # Same path set the gate cares about (Tentacle source, the Windows
           # upgrade script, the Windows service deploy payload/handler, the
-          # server-side upgrade strategy, the Windows E2E project, and this
-          # workflow itself).
-          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Infrastructure/|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Core/TentaclesScripts/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.WindowsTentacleE2E\.CalamariShim/|\.github/workflows/tentacle-windows-smoke-e2e\.yml)'; then
+          # server-side upgrade strategy, Deploy Package install path, the
+          # Windows E2E project, and this workflow itself).
+          if printf '%s\n' "$files" | grep -qE '^(src/Squid\.Tentacle/|src/Squid\.Core/Resources/Upgrade/upgrade-windows-tentacle\.ps1|src/Squid\.Core/Resources/Deploy/WindowsService/|src/Squid\.Core/Services/DeploymentExecution/(Constants/WindowsServiceDeployProperties\.cs|Infrastructure/|Targets/Tentacle/Handlers/WindowsServiceDeploy)|deploy/scripts/install-tentacle\.ps1|src/Squid\.Core/Services/Machines/Upgrade/|src/Squid\.Calamari/Commands/Package/|src/Squid\.Calamari/Commands/Configuration/ConfigurationVariablesStep\.cs|src/Squid\.Core/TentaclesScripts/|src/Squid\.Core/Services/DeploymentExecution/Handlers/DeployPackageActionHandler\.cs|src/Squid\.Core/Services/DeploymentExecution/Intents/DeployPackageIntent\.cs|src/Squid\.Core/Services/DeploymentExecution/Packages/|src/Squid\.Core/Services/DeploymentExecution/Targets/Ssh/|src/Squid\.Core/Services/DeploymentExecution/Targets/Tentacle/Rendering/|src/Squid\.Core/Services/DeploymentExecution/Pipeline/Phases/|tests/Squid\.WindowsTentacleE2ETests/|tests/Squid\.WindowsTentacleE2E\.CalamariShim/|tests/Squid\.E2ETests/Deployments/|tests/Squid\.Calamari\.Tests/Calamari/Package/|\.github/workflows/(tentacle-windows-smoke-e2e|e2e-k8s-pipeline)\.yml)'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "-> relevant=true (Tentacle paths changed)"
           else
@@ -122,13 +128,29 @@ jobs:
       - name: Run Windows lifecycle smoke subset
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E" }
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke" }
           $resultsDir = Join-Path $env:RUNNER_TEMP "windows-lifecycle-smoke-results"
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `
             --filter $filter `
             --logger "console;verbosity=normal" `
             --logger "trx;LogFileName=windows-lifecycle-smoke.trx" `
+            --results-directory $resultsDir
+
+      - name: Restore Squid.Calamari.Tests
+        shell: pwsh
+        run: dotnet restore tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj --configfile "$env:NUGET_CONFIG"
+
+      - name: Run Deploy Package Windows host install subset
+        shell: pwsh
+        run: |
+          $filter = if ("${{ github.event.inputs.host_test_filter }}") { "${{ github.event.inputs.host_test_filter }}" } else { "Category=DeployPackageWindowsHostSmoke" }
+          $resultsDir = Join-Path $env:RUNNER_TEMP "windows-host-deploy-package-smoke-results"
+          dotnet test tests/Squid.Calamari.Tests/Squid.Calamari.Tests.csproj `
+            --configuration Release `
+            --filter $filter `
+            --logger "console;verbosity=normal" `
+            --logger "trx;LogFileName=windows-host-deploy-package-smoke.trx" `
             --results-directory $resultsDir
 
       - name: Capture leaked test services on failure

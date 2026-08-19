@@ -12,7 +12,7 @@ public class PackageAcquisitionInjectorTests
     [Fact]
     public void Inject_NoPackages_ReturnsOriginal()
     {
-        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App") };
+        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage) };
 
         var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, new List<ReleaseSelectedPackage>());
 
@@ -23,7 +23,7 @@ public class PackageAcquisitionInjectorTests
     [Fact]
     public void Inject_NullPackages_ReturnsOriginal()
     {
-        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App") };
+        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage) };
 
         var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, null);
 
@@ -35,7 +35,7 @@ public class PackageAcquisitionInjectorTests
     [Fact]
     public void Inject_HasPostAcquisitionPackages_InjectsAcquireStep()
     {
-        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App") };
+        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage) };
         var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy App" } };
 
         var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
@@ -88,7 +88,7 @@ public class PackageAcquisitionInjectorTests
         var steps = new List<DeploymentStepDto>
         {
             BuildStep("Health Check", "HC Action", actionType: SpecialVariables.ActionTypes.HealthCheck),
-            BuildStep("Deploy", "Deploy App")
+            BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage)
         };
         var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy App" } };
 
@@ -108,7 +108,7 @@ public class PackageAcquisitionInjectorTests
         var steps = new List<DeploymentStepDto>
         {
             BuildStep("Manual Approval", "Manual Action", actionType: SpecialVariables.ActionTypes.Manual),
-            BuildStep("Deploy", "Deploy App")
+            BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage)
         };
         var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy App" } };
 
@@ -127,7 +127,7 @@ public class PackageAcquisitionInjectorTests
     {
         var steps = new List<DeploymentStepDto>
         {
-            BuildStep("Deploy", "Deploy App", stepOrder: 5)
+            BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage, stepOrder: 5)
         };
         var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Deploy App" } };
 
@@ -144,12 +144,54 @@ public class PackageAcquisitionInjectorTests
     [Fact]
     public void Inject_NoMatchingActions_NoInjection()
     {
-        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App") };
+        var steps = new List<DeploymentStepDto> { BuildStep("Deploy", "Deploy App", actionType: SpecialVariables.ActionTypes.TentaclePackage) };
         var packages = new List<ReleaseSelectedPackage> { new() { ActionName = "Other Action" } };
 
         var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
 
         result.Count.ShouldBe(1);
+    }
+
+
+    [Fact]
+    public void Inject_KubernetesContainersSelectedPackage_DoesNotInjectAcquireStep()
+    {
+        // K8s container actions keep ReleaseSelectedPackage for image tag resolution,
+        // but package content is pulled by the cluster (registry), not by Squid archive
+        // acquisition. Injecting Acquire Packages would fail on Docker feeds / FeedId=0.
+        var steps = new List<DeploymentStepDto>
+        {
+            BuildStep("Deploy K8s Containers", "Deploy demo", actionType: SpecialVariables.ActionTypes.KubernetesDeployContainers)
+        };
+        var packages = new List<ReleaseSelectedPackage>
+        {
+            new() { ActionName = "Deploy demo", PackageReferenceName = "demo-nginx", Version = "1.0.0", FeedId = 1 }
+        };
+
+        var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
+
+        result.Count.ShouldBe(1);
+        result[0].Name.ShouldBe("Deploy K8s Containers");
+        result.ShouldNotContain(s => s.StepType == "AcquirePackages");
+    }
+
+    [Fact]
+    public void Inject_TentaclePackageSelectedPackage_InjectsAcquireStep()
+    {
+        var steps = new List<DeploymentStepDto>
+        {
+            BuildStep("Deploy Package", "Deploy a Package", actionType: SpecialVariables.ActionTypes.TentaclePackage)
+        };
+        var packages = new List<ReleaseSelectedPackage>
+        {
+            new() { ActionName = "Deploy a Package", PackageReferenceName = "Acme.Web", Version = "1.0.0", FeedId = 1 }
+        };
+
+        var result = PackageAcquisitionInjector.InjectAcquisitionSteps(steps, packages);
+
+        result.Count.ShouldBe(2);
+        result[0].StepType.ShouldBe("AcquirePackages");
+        result[1].Name.ShouldBe("Deploy Package");
     }
 
     // === Helpers ===

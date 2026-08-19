@@ -6,5 +6,6 @@ public sealed class CoreCommandModule : ICommandModule
     {
         yield return new RunScriptCliCommandHandler();
         yield return new ApplyYamlCliCommandHandler();
+        yield return new DeployPackageCliCommandHandler();
     }
 }

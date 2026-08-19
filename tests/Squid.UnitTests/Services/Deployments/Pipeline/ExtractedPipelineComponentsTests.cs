@@ -70,8 +70,70 @@ public class ExtractedPipelineComponentsTests
 
         var result = EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, selectedPackages);
 
-        result.Count.ShouldBe(2);
+        result.ShouldContain(v => v.Name == "Base" && v.Value == "1");
         result.ShouldContain(v => v.Name == SpecialVariables.Action.PackageVersion && v.Value == "1.2.3");
+    }
+
+    [Fact]
+    public void EffectiveVariableBuilder_BuildActionVariables_InjectsActionPropertiesAsVariables()
+    {
+        // Real failure mode from Deploy a Package live validation:
+        // SkipIfAlreadyInstalled / purge / config-rewrite flags live on the action
+        // properties bag. Calamari reads them as variables. If BuildActionVariables
+        // only injects package version, those options never reach the agent and
+        // operators see a full reinstall even when SkipIfAlreadyInstalled=True.
+        var effectiveVariables = new List<VariableDto>
+        {
+            new() { Name = "Base", Value = "1" }
+        };
+
+        var action = new DeploymentActionDto
+        {
+            Name = "Deploy a Package",
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new() { PropertyName = "Squid.Action.Package.SkipIfAlreadyInstalled", PropertyValue = "True" },
+                new() { PropertyName = "Squid.Action.Package.PurgeBeforeInstall", PropertyValue = "True" },
+                new() { PropertyName = "Squid.Action.Package.FeedId", PropertyValue = "1" },
+            }
+        };
+
+        var selectedPackages = new List<Squid.Core.Persistence.Entities.Deployments.ReleaseSelectedPackage>
+        {
+            new() { ActionName = "Deploy a Package", Version = "13.0.3", PackageReferenceName = "Newtonsoft.Json" }
+        };
+
+        var result = EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, selectedPackages);
+
+        result.ShouldContain(v => v.Name == "Base" && v.Value == "1");
+        result.ShouldContain(v => v.Name == SpecialVariables.Action.PackageVersion && v.Value == "13.0.3");
+        result.ShouldContain(v => v.Name == "Squid.Action.Package.SkipIfAlreadyInstalled" && v.Value == "True");
+        result.ShouldContain(v => v.Name == "Squid.Action.Package.PurgeBeforeInstall" && v.Value == "True");
+        result.ShouldContain(v => v.Name == "Squid.Action.Package.FeedId" && v.Value == "1");
+    }
+
+    [Fact]
+    public void EffectiveVariableBuilder_BuildActionVariables_InjectsActionProperties_EvenWithoutSelectedPackage()
+    {
+        var effectiveVariables = new List<VariableDto>
+        {
+            new() { Name = "Base", Value = "1" }
+        };
+
+        var action = new DeploymentActionDto
+        {
+            Name = "Deploy a Package",
+            Properties = new List<DeploymentActionPropertyDto>
+            {
+                new() { PropertyName = "Squid.Action.Package.SkipIfAlreadyInstalled", PropertyValue = "True" },
+            }
+        };
+
+        var result = EffectiveVariableBuilder.BuildActionVariables(effectiveVariables, action, selectedPackages: null);
+
+        result.ShouldContain(v => v.Name == "Base" && v.Value == "1");
+        result.ShouldContain(v => v.Name == "Squid.Action.Package.SkipIfAlreadyInstalled" && v.Value == "True");
+        result.ShouldNotContain(v => v.Name == SpecialVariables.Action.PackageVersion);
     }
 
     [Fact]

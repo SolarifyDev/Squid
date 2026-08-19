@@ -59,7 +59,24 @@ public static class PackageAcquisitionInjector
 
     private static bool StepReferencesPackages(DeploymentStepDto step, HashSet<string> packageActionNames)
     {
-        return step.Actions.Any(a => packageActionNames.Contains(a.Name));
+        // Only actions that acquire archive packages (zip/nupkg/tarball) should
+        // pull in the synthetic Acquire Packages step. Container/chart actions
+        // also store ReleaseSelectedPackage rows for tag/version resolution, but
+        // they resolve images/charts from registry feeds and must not archive-fetch.
+        return step.Actions.Any(a =>
+            packageActionNames.Contains(a.Name) && RequiresArchivePackageAcquisition(a.ActionType));
+    }
+
+    internal static bool RequiresArchivePackageAcquisition(string actionType)
+    {
+        if (string.IsNullOrWhiteSpace(actionType))
+            return false;
+
+        return string.Equals(actionType, SpecialVariables.ActionTypes.TentaclePackage, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(actionType, SpecialVariables.ActionTypes.DeployToIISWebSite, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(actionType, SpecialVariables.ActionTypes.DeployWindowsService, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(actionType, SpecialVariables.ActionTypes.KubernetesDeployRawYaml, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(actionType, SpecialVariables.ActionTypes.Script, StringComparison.OrdinalIgnoreCase);
     }
 
     private static DeploymentStepDto BuildAcquirePackagesStep()

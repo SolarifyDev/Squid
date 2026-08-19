@@ -1,44 +1,51 @@
+using System.Security.Cryptography;
+using System.Text;
 using Squid.Core.Services.DeploymentExecution.Ssh;
 
 namespace Squid.UnitTests.Services.Deployments.Ssh;
 
 public class SshFileTransferTests
 {
+    private static string Sha256Hex(byte[] data)
+        => Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant();
+
     [Theory]
-    [InlineData(new byte[] { 0x48, 0x65, 0x6C, 0x6C, 0x6F }, "8b1a9953c4611296a827abf8c47804d7")]
-    [InlineData(new byte[] { }, "d41d8cd98f00b204e9800998ecf8427e")]
-    public void ComputeLocalMd5_ReturnsCorrectHash(byte[] data, string expectedHash)
+    [InlineData(new byte[] { 0x48, 0x65, 0x6C, 0x6C, 0x6F })]
+    [InlineData(new byte[] { })]
+    public void ComputeLocalSha256_ReturnsCorrectHash(byte[] data)
     {
-        SshFileTransfer.ComputeLocalMd5(data).ShouldBe(expectedHash);
+        SshFileTransfer.ComputeLocalSha256(data).ShouldBe(Sha256Hex(data));
     }
 
     [Fact]
-    public void ComputeLocalMd5_SameDataProducesSameHash()
+    public void ComputeLocalSha256_SameDataProducesSameHash()
     {
-        var data = System.Text.Encoding.UTF8.GetBytes("test script content");
+        var data = Encoding.UTF8.GetBytes("test script content");
 
-        var hash1 = SshFileTransfer.ComputeLocalMd5(data);
-        var hash2 = SshFileTransfer.ComputeLocalMd5(data);
+        var hash1 = SshFileTransfer.ComputeLocalSha256(data);
+        var hash2 = SshFileTransfer.ComputeLocalSha256(data);
 
         hash1.ShouldBe(hash2);
     }
 
     [Fact]
-    public void ComputeLocalMd5_DifferentDataProducesDifferentHash()
+    public void ComputeLocalSha256_DifferentDataProducesDifferentHash()
     {
-        var data1 = System.Text.Encoding.UTF8.GetBytes("content A");
-        var data2 = System.Text.Encoding.UTF8.GetBytes("content B");
+        var data1 = Encoding.UTF8.GetBytes("content A");
+        var data2 = Encoding.UTF8.GetBytes("content B");
 
-        SshFileTransfer.ComputeLocalMd5(data1).ShouldNotBe(SshFileTransfer.ComputeLocalMd5(data2));
+        SshFileTransfer.ComputeLocalSha256(data1).ShouldNotBe(SshFileTransfer.ComputeLocalSha256(data2));
     }
 
     [Fact]
-    public void ComputeLocalMd5_ReturnsLowercaseHex()
+    public void ComputeLocalSha256_ReturnsLowercaseHex()
     {
-        var hash = SshFileTransfer.ComputeLocalMd5(new byte[] { 0xFF });
+        var data = "hello"u8.ToArray();
+        var hash = SshFileTransfer.ComputeLocalSha256(data);
 
+        hash.ShouldBe(Sha256Hex(data));
         hash.ShouldBe(hash.ToLowerInvariant());
-        hash.Length.ShouldBe(32);
+        hash.Length.ShouldBe(64);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Renci.SshNet;
 using Serilog;
+using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.Core.Services.DeploymentExecution.Ssh;
 
@@ -50,15 +51,64 @@ public static class SshPaths
         return string.Empty;
     }
 
-    // ========== Package Paths ==========
-
     private const string PackagesDirectoryName = "Packages";
 
     public static string PackageCacheDirectory(string baseDir) => $"{baseDir}/{PackagesDirectoryName}";
 
     public static string PackageNupkgPath(string baseDir, string packageId, string version)
-        => $"{PackageCacheDirectory(baseDir)}/{packageId}.{version}.nupkg";
+        => PackageArchivePath(baseDir, packageId, version, ".nupkg");
+
+    public static string PackageArchivePath(string baseDir, string packageId, string version, string extensionOrFileName = null)
+    {
+        var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
+        var extension = NormalizeArchiveExtension(extensionOrFileName);
+        return $"{PackageCacheDirectory(baseDir)}/{safePackageId}.{safeVersion}{extension}";
+    }
+
+    public static string PackageArchivePathFromLocalFile(string baseDir, string packageId, string version, string localPath)
+    {
+        if (!string.IsNullOrWhiteSpace(localPath))
+        {
+            var fileName = Path.GetFileName(localPath);
+            if (!string.IsNullOrWhiteSpace(fileName) && fileName.Contains('.'))
+            {
+                // Use the acquired archive file name as-is so staging remote path matches
+                // the script ARCHIVE_NAME (Path.GetFileName(localPath)). Do not re-sanitize.
+                return $"{PackageCacheDirectory(baseDir)}/{fileName}";
+            }
+        }
+
+        return PackageArchivePath(baseDir, packageId, version, localPath);
+    }
 
     public static string PackageExtractDir(string baseDir, string packageId, string version)
-        => $"{PackageCacheDirectory(baseDir)}/{packageId}.{version}";
+        => $"{PackageCacheDirectory(baseDir)}/{PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package")}.{PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version")}";
+
+    public static string ApplicationsRoot(string homeDir)
+        => $"{homeDir.TrimEnd('/')}/.squid/Applications";
+
+    public static string VersionedInstallationDirectory(string homeDir, string environment, string project, string packageId, string version)
+        => $"{ApplicationsRoot(homeDir)}/{environment}/{project}/{packageId}/{version}";
+
+    internal static string NormalizeArchiveExtension(string extensionOrFileName)
+    {
+        if (string.IsNullOrWhiteSpace(extensionOrFileName))
+            return ".nupkg";
+
+        var value = extensionOrFileName.Trim();
+        if (value.Contains('/') || value.Contains('\\'))
+            value = Path.GetFileName(value);
+
+        if (value.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase))
+            return ".tar.gz";
+        if (value.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase))
+            return ".tgz";
+
+        var ext = value.StartsWith('.') ? value : Path.GetExtension(value);
+        if (string.IsNullOrWhiteSpace(ext))
+            ext = value.StartsWith('.') ? value : $".{value}";
+
+        return ext.StartsWith('.') ? ext : $".{ext}";
+    }
 }

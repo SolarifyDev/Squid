@@ -25,6 +25,7 @@ public sealed class TentacleListeningTransport : DeploymentTransport
             SpecialVariables.ActionTypes.Script,
             SpecialVariables.ActionTypes.HealthCheck,
             SpecialVariables.ActionTypes.DeployToIISWebSite,
+            SpecialVariables.ActionTypes.TentaclePackage,
             SpecialVariables.ActionTypes.DeployWindowsService),
         OptionalFeatures = TransportCapabilities.Features("halibut", "bash", "tentacle")
     };

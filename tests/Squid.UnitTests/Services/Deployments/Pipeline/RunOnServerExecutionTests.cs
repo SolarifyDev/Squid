@@ -95,6 +95,80 @@ public class RunOnServerExecutionTests
         logs.ShouldContain(l => l.Message.Contains("previous step failed"));
     }
 
+    // ========== Step Retry Loop ==========
+
+    [Fact]
+    public async Task RunOnServerStep_RetriesEnabled_RetriesUntilSuccess()
+    {
+        var strategy = new FailNThenSucceedStrategy(failCount: 2);
+        var (phase, ctx, _, _) = CreateRunOnServerTestHarness(strategy);
+
+        var step = MakeRunOnServerStep("Retrying Server Step", 1);
+        step.IsRequired = false;
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = step.Id,
+            PropertyName = SpecialVariables.Step.RetriesEnabled,
+            PropertyValue = "true"
+        });
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = step.Id,
+            PropertyName = SpecialVariables.Step.RetriesCount,
+            PropertyValue = "2"
+        });
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Attempts.ShouldBe(3);
+        ctx.FailureEncountered.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RunOnServerStep_RetriesEnabled_ExhaustsAttemptsThenFails()
+    {
+        var strategy = new FailNThenSucceedStrategy(failCount: 10);
+        var (phase, ctx, _, _) = CreateRunOnServerTestHarness(strategy);
+
+        var step = MakeRunOnServerStep("Exhausting Retry Step", 1);
+        step.IsRequired = false;
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = step.Id,
+            PropertyName = SpecialVariables.Step.RetriesEnabled,
+            PropertyValue = "true"
+        });
+        step.Properties.Add(new DeploymentStepPropertyDto
+        {
+            StepId = step.Id,
+            PropertyName = SpecialVariables.Step.RetriesCount,
+            PropertyValue = "1"
+        });
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Attempts.ShouldBe(2);
+        ctx.FailureEncountered.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RunOnServerStep_RetriesDisabled_DoesNotRetry()
+    {
+        var strategy = new FailNThenSucceedStrategy(failCount: 1);
+        var (phase, ctx, _, _) = CreateRunOnServerTestHarness(strategy);
+
+        var step = MakeRunOnServerStep("No Retry Step", 1);
+        step.IsRequired = false;
+        ctx.Steps = new List<DeploymentStepDto> { step };
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        strategy.Attempts.ShouldBe(1);
+        ctx.FailureEncountered.ShouldBeTrue();
+    }
+
     // ========== Condition Evaluation ==========
 
     [Fact]
@@ -495,6 +569,26 @@ public class RunOnServerExecutionTests
         public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
         {
             return Task.FromResult(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = _lines });
+        }
+    }
+
+
+    private sealed class FailNThenSucceedStrategy : IExecutionStrategy
+    {
+        private readonly int _failCount;
+        private int _attempts;
+
+        public FailNThenSucceedStrategy(int failCount) => _failCount = failCount;
+
+        public int Attempts => _attempts;
+
+        public Task<ScriptExecutionResult> ExecuteScriptAsync(ScriptExecutionRequest request, CancellationToken ct)
+        {
+            _attempts++;
+            if (_attempts <= _failCount)
+                return Task.FromResult(new ScriptExecutionResult { Success = false, ExitCode = 1, LogLines = new List<string> { $"Error: fail attempt {_attempts}" } });
+
+            return Task.FromResult(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
         }
     }
 
