@@ -7,11 +7,18 @@ namespace Squid.Tentacle.Commands;
 /// Prints the binary's assembly version to stdout and exits 0.
 /// </summary>
 /// <remarks>
-/// <para>Added to close a CLI gap: <c>--version</c> falls into the default
-/// <see cref="RunCommand"/> (anything starting with <c>-</c> is treated as
-/// a config flag by <see cref="CommandResolver"/>), which starts the agent
-/// instead of reporting version — unexpected for anyone running it from
-/// the shell to check "did the upgrade land?".</para>
+/// <para>Added to close a CLI gap: <c>--version</c> used to fall into the default
+/// <see cref="RunCommand"/> (anything starting with <c>-</c> is treated as a config flag
+/// by <see cref="CommandResolver"/>), which started the agent instead of reporting a
+/// version — unexpected for anyone running it from the shell to check "did the upgrade
+/// land?", and a hang for anyone piping the output. <c>--version</c> is now routed here
+/// too, via <see cref="CommandResolver.IsVersionFlag"/>.</para>
+///
+/// <para>Callers that must also work against OLDER binaries — notably
+/// <c>deploy/packaging/after-install.sh</c>, which may probe a not-yet-replaced tentacle
+/// mid-upgrade — should keep using the bare <c>version</c> verb, which has always worked.
+/// The alias helps humans and new tooling, it does not make old binaries safe to probe
+/// with a flag.</para>
 ///
 /// <para>Called by the upgrade script's post-restart version verify step
 /// AND available to operators for ad-hoc checks:

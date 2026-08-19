@@ -162,36 +162,62 @@ public sealed class StubSquidServer : IAsyncDisposable
     public static async Task<StubSquidServer> StartAsync()
     {
         var cert = CreateSelfSignedCert();
-        var runtime = BuildRuntime(cert);
+        Exception lastAddressInUseException = null;
 
-        // Two unique loopback ports — Halibut polling + HTTP REST. Allocate
-        // both before either binds so we never see "address in use" on the
-        // second one because the first ephemeral-probe race captured it.
-        var pollingPort = GetEphemeralPort();
-        var serverPort = GetEphemeralPort();
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            HalibutRuntime runtime = null;
+            HttpListener httpListener = null;
 
-        // Halibut.Listen returns the actually-bound port (caller-port hint
-        // is just a suggestion). Re-read authoritatively for the canonical
-        // PollingUri.
-        var assignedPollingPort = runtime.Listen(pollingPort);
+            try
+            {
+                runtime = BuildRuntime(cert);
 
-        // HttpListener — must register the URL prefix before Start. Plain
-        // HTTP loopback works without admin / netsh urlacl on Windows.
-        var httpListener = new HttpListener();
-        httpListener.Prefixes.Add($"http://localhost:{serverPort}/");
-        httpListener.Start();
+                // Two unique loopback ports — Halibut polling + HTTP REST.
+                // TcpListener(0) is still a probe-then-bind flow, so retry if
+                // another parallel E2E grabs either port before we bind it.
+                var pollingPort = GetEphemeralPort();
+                var serverPort = GetEphemeralPort();
 
-        var httpLoopCts = new CancellationTokenSource();
-        var server = new StubSquidServer(cert, runtime, assignedPollingPort, httpListener, serverPort, httpLoopCts);
+                // Halibut.Listen returns the actually-bound port (caller-port
+                // hint is just a suggestion). Re-read authoritatively for the
+                // canonical PollingUri.
+                var assignedPollingPort = runtime.Listen(pollingPort);
 
-        // Start the listener loop AFTER construction so the loop body can
-        // bind `this` for HandleRequestAsync. Single assignment to
-        // _httpLoopTask; subsequent code never mutates it.
-        server._httpLoopTask = Task.Run(() => server.RunHttpLoopAsync(httpLoopCts.Token));
+                // HttpListener — must register the URL prefix before Start.
+                // Plain HTTP loopback works without admin / netsh urlacl on
+                // Windows.
+                httpListener = new HttpListener();
+                httpListener.Prefixes.Add($"http://localhost:{serverPort}/");
+                httpListener.Start();
 
-        await Task.Yield();   // gives the listener loop a chance to start accepting
+                var httpLoopCts = new CancellationTokenSource();
+                var server = new StubSquidServer(cert, runtime, assignedPollingPort, httpListener, serverPort, httpLoopCts);
 
-        return server;
+                // Start the listener loop AFTER construction so the loop body
+                // can bind `this` for HandleRequestAsync. Single assignment to
+                // _httpLoopTask; subsequent code never mutates it.
+                server._httpLoopTask = Task.Run(() => server.RunHttpLoopAsync(httpLoopCts.Token));
+
+                await Task.Yield();   // gives the listener loop a chance to start accepting
+
+                return server;
+            }
+            catch (Exception ex) when (IsAddressAlreadyInUse(ex))
+            {
+                lastAddressInUseException = ex;
+                try { httpListener?.Close(); } catch { }
+                if (runtime != null)
+                {
+                    try { await runtime.DisposeAsync().ConfigureAwait(false); } catch { }
+                }
+                if (attempt == 5) break;
+                await Task.Delay(25).ConfigureAwait(false);
+            }
+        }
+
+        try { cert.Dispose(); } catch { }
+        throw new InvalidOperationException("StubSquidServer failed to start after retrying loopback port allocation.", lastAddressInUseException);
     }
 
     /// <summary>
@@ -610,6 +636,20 @@ public sealed class StubSquidServer : IAsyncDisposable
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private static bool IsAddressAlreadyInUse(Exception ex)
+    {
+        if (ex is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse })
+            return true;
+
+        if (ex is HttpListenerException { NativeErrorCode: 98 or 10048 })
+            return true;
+
+        if (ex is AggregateException aggregate)
+            return aggregate.InnerExceptions.Any(IsAddressAlreadyInUse);
+
+        return ex.InnerException != null && IsAddressAlreadyInUse(ex.InnerException);
     }
 }
 

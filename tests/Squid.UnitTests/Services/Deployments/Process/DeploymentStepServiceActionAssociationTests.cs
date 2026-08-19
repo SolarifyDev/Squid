@@ -142,7 +142,8 @@ public class DeploymentStepServiceActionAssociationTests
         Mock<IDeploymentActionPropertyDataProvider> ActionProperty,
         Mock<IActionEnvironmentDataProvider> ActionEnvironment,
         Mock<IActionExcludedEnvironmentDataProvider> ActionExcludedEnvironment,
-        Mock<IActionChannelDataProvider> ActionChannel);
+        Mock<IActionChannelDataProvider> ActionChannel,
+        Mock<IActionMachineRoleDataProvider> ActionMachineRole);
 
     private static (DeploymentStepService Service, MockProviders Mocks) CreateServiceWithMocks()
     {
@@ -155,6 +156,7 @@ public class DeploymentStepServiceActionAssociationTests
         var actionEnvProvider = new Mock<IActionEnvironmentDataProvider>();
         var actionExEnvProvider = new Mock<IActionExcludedEnvironmentDataProvider>();
         var actionChannelProvider = new Mock<IActionChannelDataProvider>();
+        var actionMachineRoleProvider = new Mock<IActionMachineRoleDataProvider>();
 
         // Default: step insert assigns Id = 1
         stepProvider.Setup(p => p.AddDeploymentStepAsync(It.IsAny<DeploymentStep>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -186,8 +188,8 @@ public class DeploymentStepServiceActionAssociationTests
         actionChannelProvider.Setup(p => p.GetActionChannelsByActionIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActionChannel>());
 
-        var service = new DeploymentStepService(mapper, stepProvider.Object, stepPropertyProvider.Object, actionProvider.Object, actionPropertyProvider.Object, actionEnvProvider.Object, actionExEnvProvider.Object, actionChannelProvider.Object);
-        var mocks = new MockProviders(stepProvider, stepPropertyProvider, actionProvider, actionPropertyProvider, actionEnvProvider, actionExEnvProvider, actionChannelProvider);
+        var service = new DeploymentStepService(mapper, stepProvider.Object, stepPropertyProvider.Object, actionProvider.Object, actionPropertyProvider.Object, actionEnvProvider.Object, actionExEnvProvider.Object, actionChannelProvider.Object, actionMachineRoleProvider.Object);
+        var mocks = new MockProviders(stepProvider, stepPropertyProvider, actionProvider, actionPropertyProvider, actionEnvProvider, actionExEnvProvider, actionChannelProvider, actionMachineRoleProvider);
 
         return (service, mocks);
     }

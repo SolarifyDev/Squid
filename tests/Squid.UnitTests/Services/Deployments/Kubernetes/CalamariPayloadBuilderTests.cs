@@ -137,7 +137,8 @@ public class CalamariPayloadBuilderTests
     {
         var payload = _builder.Build(CreateRequest());
 
-        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
+        payload.TemplateBody.ShouldContain("Get-Command -Name 'squid-calamari' -CommandType Application");
+        payload.TemplateBody.ShouldContain("Write-Warning \"Could not read Tentacle install-info.json:");
         payload.TemplateBody.ShouldContain("$commandArgs = @(");
     }
 
@@ -146,8 +147,18 @@ public class CalamariPayloadBuilderTests
     {
         var payload = _builder.Build(CreateRequest(), ScriptSyntax.PowerShell);
 
-        payload.TemplateBody.ShouldContain("Get-Command \"squid-calamari\"");
-        payload.TemplateBody.ShouldContain("& $squidCalamari.Source @commandArgs");
+        var bundledLookup = payload.TemplateBody.IndexOf(
+            "Join-Path (Split-Path -Parent $installInfo.BinaryPath) 'squid-calamari.exe'",
+            StringComparison.Ordinal);
+        var pathFallback = payload.TemplateBody.IndexOf(
+            "Get-Command -Name 'squid-calamari' -CommandType Application",
+            StringComparison.Ordinal);
+
+        bundledLookup.ShouldBeGreaterThanOrEqualTo(0,
+            customMessage: "Windows Tentacle deployments must derive the bundled squid-calamari.exe path from install-info.json.");
+        pathFallback.ShouldBeGreaterThan(bundledLookup,
+            customMessage: "PATH lookup must remain a fallback after the deterministic bundled Calamari path.");
+        payload.TemplateBody.ShouldContain("& $squidCalamari @commandArgs");
     }
 
     [Fact]
@@ -157,7 +168,7 @@ public class CalamariPayloadBuilderTests
 
         payload.TemplateBody.ShouldContain("#!/usr/bin/env bash");
         payload.TemplateBody.ShouldContain("export PATH=\"/squid/bin:$PATH\"");
-        payload.TemplateBody.ShouldContain("squid-calamari \"${ARGS[@]}\"");
+        payload.TemplateBody.ShouldContain("\"$squidCalamari\" \"${ARGS[@]}\"");
     }
 
     [Fact]
@@ -165,6 +176,9 @@ public class CalamariPayloadBuilderTests
     {
         var payload = _builder.Build(CreateRequest(), ScriptSyntax.Bash);
 
+        payload.TemplateBody.ShouldContain("command -v squid-tentacle");
+        payload.TemplateBody.ShouldContain("readlink -f");
+        payload.TemplateBody.ShouldContain("squidCalamari");
         payload.TemplateBody.ShouldContain("command -v squid-calamari");
         payload.TemplateBody.ShouldContain("command -v kubectl");
     }

@@ -18,7 +18,7 @@ namespace Squid.WindowsTentacleE2ETests;
 ///         gives admin rights by default).</item>
 ///   <item>The dispatched inner script actually runs in a separate Task
 ///         Scheduler process tree as SYSTEM, surviving the wrapper's exit.</item>
-///   <item><c>/Z</c> auto-delete actually removes the task from the Task
+///   <item>the configured auto-delete settings remove the task from the Task
 ///         Scheduler library after run.</item>
 ///   <item>Concurrent dispatches with GUID-suffixed task names don't collide.</item>
 ///   <item>Inner-script failure does NOT propagate to the wrapper's exit code
@@ -160,11 +160,11 @@ exit 0
     }
 
     // ========================================================================
-    // Test 3: /Z auto-delete actually removes the task
+    // Test 3: auto-delete removes the task after its trigger expires
     // ========================================================================
 
     [Fact]
-    public void Wrapper_ScheduledTask_AutoDeletesAfterRun_ZFlag()
+    public void Wrapper_ScheduledTask_AutoDeletesAfterRun()
     {
         if (!OperatingSystem.IsWindows()) return;
 
@@ -181,12 +181,13 @@ exit 0
         WaitForFileExists(markerPath, TimeSpan.FromSeconds(60))
             .ShouldBeTrue("inner must complete before we check auto-delete");
 
-        // Task Scheduler /Z deletes "after expiration". A one-shot run with
-        // /SC ONCE expires immediately after the run completes, so the delete
-        // typically happens within seconds. Poll up to 60s.
-        WaitForTaskGone(taskName, TimeSpan.FromSeconds(60))
+        // The production wrapper's EndBoundary + DeleteExpiredTaskAfter
+        // settings schedule deletion for about 60s after registration. This
+        // wait begins only after the inner marker appears, so leave headroom
+        // for Task Scheduler load and query latency.
+        WaitForTaskGone(taskName, TimeSpan.FromSeconds(90))
             .ShouldBeTrue(
-                customMessage: $"task '{taskName}' should auto-delete via /Z after run completes; Task Scheduler library would otherwise accumulate orphan upgrade tasks across every dispatch");
+                customMessage: $"task '{taskName}' should auto-delete after its run completes; Task Scheduler library would otherwise accumulate orphan upgrade tasks across every dispatch");
     }
 
     // ========================================================================
@@ -484,7 +485,16 @@ exit 0
         };
         using var proc = Process.Start(psi);
         if (proc == null) return false;
-        proc.WaitForExit(5_000);
+
+        if (!proc.WaitForExit(5_000))
+        {
+            try { proc.Kill(entireProcessTree: true); } catch { }
+
+            // A timed-out query is inconclusive, not evidence that auto-delete
+            // removed the task. Keep polling so this test cannot pass spuriously.
+            return true;
+        }
+
         return proc.ExitCode == 0;
     }
 

@@ -85,4 +85,11 @@ public static class LinuxTentacleE2ECategories
     /// </summary>
     public const string DeployPackageSmoke = "DeployPackageLinuxSmoke";
     public const string DeployPackageFull = "DeployPackageLinuxFull";
+
+    /// <summary>
+    /// E2E coverage for resolving the Calamari binary bundled beside a native
+    /// Linux Tentacle installation. The test runs the production installer and
+    /// rendered deployment template with Calamari absent from PATH.
+    /// </summary>
+    public const string CalamariLookup = "LinuxTentacleCalamariLookupE2E";
 }

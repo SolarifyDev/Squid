@@ -297,7 +297,7 @@ fi
 
 # Make binaries executable. Calamari is spawned by Tentacle at runtime, so it also needs +x.
 chmod +x "$BIN_DIR/Squid.Tentacle"
-[ -f "$BIN_DIR/Squid.Calamari" ] && chmod +x "$BIN_DIR/Squid.Calamari"
+[ -f "$BIN_DIR/squid-calamari" ] && chmod +x "$BIN_DIR/squid-calamari"
 
 # Well-known-name symlink at the install root. Stable across upgrades — for versioned
 # installs it resolves through `current`, so the path survives a version swap.
