@@ -49,6 +49,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
                 Variables = mapping.Variables
             },
             null,
+            mapping.RequiredInputs,
             mapping.Diagnostics);
     }
 
@@ -77,6 +78,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
                 SpaceId = destinationSpaceId,
                 Variables = mapping.Variables
             },
+            mapping.RequiredInputs,
             mapping.Diagnostics);
     }
 
@@ -102,8 +104,9 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var ownerType = MapOwnerType(variableSet, variableSetResource, diagnostics);
         var ownerId = MapOwnerId(variableSet, idMap, variableSetResource, diagnostics);
+        var requiredInputs = new List<OctopusImportRequiredInputDto>();
         var variables = variableSet.Variables
-            .Select((variable, index) => MapVariable(variable, index, idMap, diagnostics))
+            .Select((variable, index) => MapVariable(variableSet, variable, index, idMap, diagnostics, requiredInputs))
             .ToList();
 
         return new VariableSetCommandMapping(
@@ -112,6 +115,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             ownerId,
             ownerType,
             variables,
+            requiredInputs,
             diagnostics);
     }
 
@@ -151,22 +155,26 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
     }
 
     private static VariableModel MapVariable(
+        OctopusVariableSetDto variableSet,
         OctopusVariableDto variable,
         int index,
         OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics)
+        List<OctopusImportDiagnosticDto> diagnostics,
+        List<OctopusImportRequiredInputDto> requiredInputs)
     {
         var variableType = MapVariableType(variable, diagnostics);
-        var isSensitive = variable.IsSensitive || IsType(variable.Type, "Sensitive");
+        var isSensitive = OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable);
 
         if (isSensitive)
         {
+            var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(variableSet.Id, variable.Id, index);
+            requiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable));
             diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Warning,
                 OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
                 $"Sensitive Octopus variable '{variable.Name}' was mapped without its source value and must be supplied manually after import.",
                 OctopusResourceKind.Variable,
-                variable.Id,
+                variableSourceId,
                 variable.Name));
         }
 
@@ -371,12 +379,14 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         int OwnerId,
         VariableSetOwnerType OwnerType,
         List<VariableModel> Variables,
+        IReadOnlyList<OctopusImportRequiredInputDto> RequiredInputs,
         IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics);
 }
 
 public sealed record OctopusImportVariableMappingResult(
     CreateVariableSetCommand CreateCommand,
     UpdateVariableSetCommand UpdateCommand,
+    IReadOnlyList<OctopusImportRequiredInputDto> RequiredInputs,
     IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics)
 {
     public bool HasBlockers => Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);

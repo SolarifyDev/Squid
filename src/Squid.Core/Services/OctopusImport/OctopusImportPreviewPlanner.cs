@@ -46,6 +46,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         {
             GeneratedAt = DateTimeOffset.UtcNow,
             Resources = resources,
+            RequiredInputs = resources
+                .SelectMany(r => r.RequiredInputs)
+                .ToList(),
             Diagnostics = diagnostics
         };
     }
@@ -62,6 +65,8 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             SourceName = resource.Name,
             OutcomeState = OctopusImportResourceOutcomeState.Pending
         };
+
+        AddRequiredInputs(result, resource);
 
         if (blockedSourceIds.Contains(resource.SourceId))
         {
@@ -107,6 +112,20 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         ApplyConflictAction(result, resource, conflict);
         return result;
+    }
+
+    private static void AddRequiredInputs(
+        OctopusImportResourceResultDto result,
+        OctopusResourceNode resource)
+    {
+        if (resource.IsHistorical || resource.Kind != OctopusResourceKind.Variable)
+            return;
+
+        var variable = resource.GetSource<OctopusVariableDto>();
+        if (!OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
+            return;
+
+        result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
     }
 
     private static void ApplyConflictAction(
