@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -89,6 +90,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
                 OctopusImportPreviewDiagnosticCodes.ResourceOutOfScope,
                 $"Octopus {resource.Kind} resource is outside the initial current-configuration import scope.",
                 resource));
+            AddManualConfigurationDiagnostics(result, resource);
             return result;
         }
 
@@ -101,16 +103,19 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
                 OctopusImportPreviewDiagnosticCodes.ResourceUnsupported,
                 $"Octopus {resource.Kind} resources are detected but are not imported by the current preview planner.",
                 resource));
+            AddManualConfigurationDiagnostics(result, resource);
             return result;
         }
 
         if (!conflictsBySourceId.TryGetValue(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
+            AddManualConfigurationDiagnostics(result, resource);
             return result;
         }
 
         ApplyConflictAction(result, resource, conflict);
+        AddManualConfigurationDiagnostics(result, resource);
         return result;
     }
 
@@ -191,6 +196,14 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             SourceId = resource.SourceId,
             ResourceName = resource.Name
         });
+
+    private static void AddManualConfigurationDiagnostics(
+        OctopusImportResourceResultDto result,
+        OctopusResourceNode resource)
+    {
+        foreach (var diagnostic in OctopusImportManualConfiguration.BuildRequiredConfigurationDiagnostics(resource))
+            result.Diagnostics.Add(diagnostic);
+    }
 
     private static bool IsOutOfScope(OctopusResourceKind kind)
         => kind is OctopusResourceKind.Release

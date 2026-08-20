@@ -1,4 +1,5 @@
 using System.Linq;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
@@ -61,6 +62,9 @@ public class OctopusImportFeedMapperTests
 
         result.CreateCommand.Username.ShouldBeNull();
         result.CreateCommand.Password.ShouldBeNull();
+        result.CreateCommand.Properties[OctopusImportManualConfiguration.RequiredPropertyName].ShouldBe("true");
+        result.CreateCommand.Properties[OctopusImportManualConfiguration.FieldsPropertyName].ShouldBe(OctopusImportManualConfiguration.FeedCredentialsField);
+        result.ManualConfigurationMarkers.Single().ReasonCode.ShouldBe(OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted);
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportFeedMappingDiagnosticCodes.CredentialsOmitted);
         result.Diagnostics.All(d => d.Message.Contains("encrypted-source-secret", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
     }
