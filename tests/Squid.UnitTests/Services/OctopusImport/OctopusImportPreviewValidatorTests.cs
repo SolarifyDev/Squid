@@ -186,6 +186,31 @@ public class OctopusImportPreviewValidatorTests
         result.Diagnostics.ShouldBeEmpty();
     }
 
+    [Fact]
+    public void Validate_PreservesRequiredInputMarkersFromPreview()
+    {
+        var variable = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey");
+        var preview = Preview([variable]);
+        preview.Resources.Single().RequiredInputs.Add(new OctopusImportRequiredInputDto
+        {
+            InputKey = "required-secret-input:SensitiveVariableValue:variable-value:Value",
+            Kind = OctopusImportRequiredInputKind.SensitiveVariableValue,
+            SourceId = variable.SourceId,
+            SourceType = variable.Kind.ToString(),
+            Name = variable.Name,
+            FieldName = "Value",
+            ValueType = "Sensitive",
+            HasSourceValue = true,
+            IsRequired = true
+        });
+        preview.RequiredInputs = preview.Resources.SelectMany(r => r.RequiredInputs).ToList();
+
+        var result = _validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), preview);
+
+        result.Diagnostics.ShouldBeEmpty();
+        result.RequiredInputs.Single().InputKey.ShouldBe("required-secret-input:SensitiveVariableValue:variable-value:Value");
+    }
+
     private static OctopusResourceGraph Graph(
         IReadOnlyList<OctopusResourceNode> resources,
         IReadOnlyList<OctopusResourceReference> references = null)

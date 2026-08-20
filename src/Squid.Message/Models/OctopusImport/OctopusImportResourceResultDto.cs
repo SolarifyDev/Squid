@@ -16,5 +16,7 @@ public class OctopusImportResourceResultDto
 
     public int? DestinationId { get; set; }
 
+    public List<OctopusImportRequiredInputDto> RequiredInputs { get; set; } = [];
+
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];
 }
