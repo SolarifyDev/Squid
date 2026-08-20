@@ -20,6 +20,16 @@ public class OctopusImportSession : IEntity<int>, IAuditable
 
     public string ResultJson { get; set; }
 
+    public string TemporaryUploadPath { get; set; }
+
+    public long? TemporaryUploadSizeBytes { get; set; }
+
+    public DateTimeOffset? TemporaryUploadCleanupAfter { get; set; }
+
+    public DateTimeOffset? TemporaryUploadCleanedAt { get; set; }
+
+    public string TemporaryUploadCleanupError { get; set; }
+
     public byte[] DataVersion { get; set; }
 
     public DateTimeOffset ExpiresAt { get; set; }
