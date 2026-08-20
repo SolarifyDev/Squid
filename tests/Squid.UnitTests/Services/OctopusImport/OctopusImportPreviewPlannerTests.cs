@@ -1,5 +1,6 @@
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
 
@@ -21,6 +22,51 @@ public class OctopusImportPreviewPlannerTests
         result.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Pending);
         result.DestinationId.ShouldBeNull();
         result.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_WhenCurrentSensitiveVariableIsSelected_AddsRequiredInputMarker()
+    {
+        var variable = new OctopusVariableDto
+        {
+            Id = "Variables-Secret",
+            Name = "ApiKey",
+            Type = "Sensitive",
+            IsSensitive = true,
+            Value = "preview-source-secret",
+            Scope = { ["Environment"] = ["Environments-1"] }
+        };
+        var resource = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey", source: variable);
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), NoConflicts());
+
+        var resourceResult = preview.Resources.Single();
+        var requiredInput = resourceResult.RequiredInputs.Single();
+        preview.RequiredInputs.Single().InputKey.ShouldBe(requiredInput.InputKey);
+        requiredInput.Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
+        requiredInput.Name.ShouldBe("ApiKey");
+        requiredInput.ValueType.ShouldBe("Sensitive");
+        requiredInput.HasSourceValue.ShouldBeTrue();
+        requiredInput.SourceScopes["Environment"].ShouldBe(["Environments-1"]);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_WhenHistoricalSensitiveVariableIsOutOfScope_DoesNotRequireInput()
+    {
+        var variable = new OctopusVariableDto
+        {
+            Id = "Variables-Secret",
+            Name = "ApiKey",
+            Type = "Sensitive",
+            IsSensitive = true,
+            Value = "historical-source-secret"
+        };
+        var resource = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey", isHistorical: true, source: variable);
+
+        var preview = _planner.BuildPreviewPlan(Plan([], outOfScopeResources: [resource]), NoConflicts());
+
+        preview.RequiredInputs.ShouldBeEmpty();
+        preview.Resources.Single().RequiredInputs.ShouldBeEmpty();
     }
 
     [Fact]
@@ -127,6 +173,50 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
+    public void BuildPreviewPlan_AddsManualConfigurationDiagnosticsForExternalResourceSecrets()
+    {
+        var feed = Node(new OctopusFeedDto
+        {
+            Id = "Feeds-1",
+            Name = "Docker",
+            Username = "feed-user",
+            Password = "feed-source-secret"
+        }, OctopusResourceKind.Feed);
+        var account = Node(new OctopusAccountDto
+        {
+            Id = "Accounts-1",
+            Name = "AWS",
+            Credentials = Json("""{ "SecretKey": "account-source-secret" }""")
+        }, OctopusResourceKind.Account);
+        var certificate = Node(new OctopusCertificateDto
+        {
+            Id = "Certificates-1",
+            Name = "TLS",
+            HasPrivateKey = true,
+            CertificateData = Json("""{ "Pfx": "certificate-source-secret" }""")
+        }, OctopusResourceKind.Certificate);
+        var target = Node(new OctopusMachineDto
+        {
+            Id = "Machines-1",
+            Name = "Kubernetes target",
+            Endpoint = Json("""{ "ProviderConfig": { "Token": "endpoint-source-secret" } }""")
+        }, OctopusResourceKind.Machine);
+
+        var preview = _planner.BuildPreviewPlan(Plan([feed, account, certificate, target]), NoConflicts());
+
+        preview.Resources.Single(r => r.SourceId == "Feeds-1").Diagnostics.Select(d => d.Code)
+            .ShouldContain(OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted);
+        preview.Resources.Single(r => r.SourceId == "Accounts-1").Diagnostics.Select(d => d.Code)
+            .ShouldContain(OctopusImportRedactionDiagnosticCodes.AccountCredentialsOmitted);
+        preview.Resources.Single(r => r.SourceId == "Certificates-1").Diagnostics.Select(d => d.Code)
+            .ShouldContain(OctopusImportRedactionDiagnosticCodes.CertificatePrivateMaterialOmitted);
+        preview.Resources.Single(r => r.SourceId == "Machines-1").Diagnostics.Select(d => d.Code)
+            .ShouldContain(OctopusImportRedactionDiagnosticCodes.EndpointSecretOmitted);
+        preview.Resources.SelectMany(r => r.Diagnostics).All(d =>
+            !d.Message.Contains("source-secret", StringComparison.OrdinalIgnoreCase)).ShouldBeTrue();
+    }
+
+    [Fact]
     public void BuildPreviewPlan_WhenDependencyPlanHasResourceBlocker_ProposesBlocked()
     {
         var project = Node("Projects-1", OctopusResourceKind.Project, "Project");
@@ -195,7 +285,8 @@ public class OctopusImportPreviewPlannerTests
         string sourceId,
         OctopusResourceKind kind,
         string name,
-        bool isHistorical = false)
+        bool isHistorical = false,
+        object source = null)
         => new(
             sourceId,
             name,
@@ -205,5 +296,34 @@ public class OctopusImportPreviewPlannerTests
             "Projects-1",
             null,
             isHistorical,
-            new object());
+            source ?? new object());
+
+    private static OctopusResourceNode Node<T>(T source, OctopusResourceKind kind, bool isHistorical = false)
+        where T : OctopusDocumentDto
+        => new(
+            source.Id,
+            source.Name,
+            kind,
+            DocumentKind(kind),
+            $"{source.Id}.json",
+            "Projects-1",
+            null,
+            isHistorical,
+            source);
+
+    private static System.Text.Json.JsonElement Json(string json)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
+
+    private static OctopusDocumentKind DocumentKind(OctopusResourceKind kind)
+        => kind switch
+        {
+            OctopusResourceKind.Feed => OctopusDocumentKind.Feed,
+            OctopusResourceKind.Account => OctopusDocumentKind.Account,
+            OctopusResourceKind.Certificate => OctopusDocumentKind.Certificate,
+            OctopusResourceKind.Machine => OctopusDocumentKind.Machine,
+            _ => OctopusDocumentKind.Project
+        };
 }

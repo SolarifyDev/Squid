@@ -181,6 +181,37 @@ public class OctopusImportRedactionTests
         redacted.ShouldContain("https://worker.example");
     }
 
+    [Fact]
+    public void RedactDto_PreservesRequiredInputMarkersWithoutSourceValues()
+    {
+        var requiredInput = OctopusImportRequiredInputBuilder.ForSensitiveVariable(
+            "Variables-Secret",
+            new OctopusVariableDto
+            {
+                Id = "Variables-Secret",
+                Name = "ApiKey",
+                Type = "Sensitive",
+                IsSensitive = true,
+                Value = "marker-source-secret",
+                Scope = { ["Environment"] = ["Environments-1"] }
+            });
+        var preview = new OctopusImportPreviewPlanDto
+        {
+            RequiredInputs = [requiredInput]
+        };
+
+        var redacted = OctopusImportRedaction.RedactDto(preview);
+
+        var redactedInput = redacted.RequiredInputs.Single();
+        redactedInput.InputKey.ShouldStartWith("required-secret-input:SensitiveVariableValue:");
+        redactedInput.InputKey.ShouldEndWith(":Value");
+        redactedInput.SourceId.ShouldBe("Variables-Secret");
+        redactedInput.Name.ShouldBe("ApiKey");
+        redactedInput.HasSourceValue.ShouldBeTrue();
+        Serialized(redacted).ShouldNotContain(OctopusImportRedaction.RedactedValue);
+        Serialized(redacted).ShouldNotContain("marker-source-secret");
+    }
+
     private static JsonElement Json(string json)
     {
         using var document = JsonDocument.Parse(json);

@@ -56,6 +56,11 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 
         ValidateReferences(graph, selectedResources, allCurrentResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
+        result.RequiredInputs = previewPlan.RequiredInputs
+            .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
+            .GroupBy(input => input.InputKey, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
 
         return result;
     }

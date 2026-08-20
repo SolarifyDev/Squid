@@ -20,4 +20,5 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string MissingFeedMapping = "OctopusImport.Action.MissingFeedMapping";
     public const string MalformedEmbeddedJson = "OctopusImport.Action.MalformedEmbeddedJson";
     public const string UnsupportedProperty = "OctopusImport.Action.UnsupportedProperty";
+    public const string SensitiveConfigMapValue = "OctopusImport.Action.Kubernetes.SensitiveConfigMapValue";
 }

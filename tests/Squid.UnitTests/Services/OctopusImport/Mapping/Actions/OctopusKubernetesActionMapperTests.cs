@@ -84,6 +84,73 @@ public class OctopusKubernetesActionMapperTests
     }
 
     [Fact]
+    public void ContainersMapper_WhenConfigMapValuesLookSensitive_AddsWarningWithoutChangingImportValue()
+    {
+        const string sourceSecret = "literal-api-key-value";
+        var mapper = new OctopusKubernetesDeployContainersActionMapper();
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-ConfigMap",
+            Name = "Deploy configmap",
+            ActionType = "Octopus.KubernetesDeployContainers",
+            Properties =
+            {
+                ["Octopus.Action.KubernetesContainers.ConfigMapValues"] = $$"""{"OPENAI_API_KEY":"{{sourceSecret}}","BASE_URL":"https://service.example"}"""
+            }
+        };
+
+        var result = mapper.Map(action, new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42));
+
+        result.HasBlockers.ShouldBeFalse();
+        var diagnostic = result.Diagnostics.Single(d => d.Code == OctopusImportActionMappingDiagnosticCodes.SensitiveConfigMapValue);
+        diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        Serialized(diagnostic).ShouldNotContain(sourceSecret);
+        Property(result.Action, "Squid.Action.KubernetesContainers.ConfigMapValues").ShouldContain(sourceSecret);
+    }
+
+    [Fact]
+    public void ContainersMapper_WhenConfigMapValuesAreNormal_DoesNotAddSensitiveConfigMapWarning()
+    {
+        var mapper = new OctopusKubernetesDeployContainersActionMapper();
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-ConfigMap",
+            Name = "Deploy configmap",
+            ActionType = "Octopus.KubernetesDeployContainers",
+            Properties =
+            {
+                ["Octopus.Action.KubernetesContainers.ConfigMapValues"] = """[{"key":"BASE_URL","value":"https://service.example"},{"key":"MODE","value":"production"}]"""
+            }
+        };
+
+        var result = mapper.Map(action, new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42));
+
+        result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportActionMappingDiagnosticCodes.SensitiveConfigMapValue);
+        Property(result.Action, "Squid.Action.KubernetesContainers.ConfigMapValues").ShouldContain("BASE_URL");
+    }
+
+    [Fact]
+    public void ContainersMapper_WhenSecretValuesLookSensitive_DoesNotAddConfigMapWarning()
+    {
+        var mapper = new OctopusKubernetesDeployContainersActionMapper();
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-Secret",
+            Name = "Deploy secret",
+            ActionType = "Octopus.KubernetesDeployContainers",
+            Properties =
+            {
+                ["Octopus.Action.KubernetesContainers.SecretValues"] = """[{"key":"OPENAI_API_KEY","value":"literal-api-key-value"}]"""
+            }
+        };
+
+        var result = mapper.Map(action, new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42));
+
+        result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportActionMappingDiagnosticCodes.SensitiveConfigMapValue);
+        Property(result.Action, "Squid.Action.KubernetesContainers.SecretValues").ShouldContain("literal-api-key-value");
+    }
+
+    [Fact]
     public void ContainersMapper_WhenFeedCannotBeMapped_AddsBlocker()
     {
         var mapper = new OctopusKubernetesDeployContainersActionMapper();
@@ -164,6 +231,9 @@ public class OctopusKubernetesActionMapperTests
 
     private static string Property(CreateOrUpdateDeploymentActionModel action, string name)
         => action.Properties.Single(p => p.PropertyName == name).PropertyValue;
+
+    private static string Serialized<T>(T value)
+        => JsonSerializer.Serialize(value);
 
     private static OctopusResourceNode Resource(
         string sourceId,

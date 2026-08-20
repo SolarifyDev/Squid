@@ -94,7 +94,7 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
 
         OctopusImportKubernetesActionMapperSupport.AddSimpleMappedProperties(action, model.Properties, PropertyMap);
         OctopusImportKubernetesActionMapperSupport.AddKubernetesExecutionProperties(action, model.Properties);
-        AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.ConfigMapValues", KubernetesProperties.ConfigMapValues);
+        AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.ConfigMapValues", KubernetesProperties.ConfigMapValues, diagnoseSensitiveConfigMapValues: true);
         AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.SecretValues", KubernetesProperties.SecretValues);
         AddNormalizedContainers(action, context, model.Properties, diagnostics);
         OctopusImportKubernetesActionMapperSupport.AddUnsupportedPropertyDiagnostics(action, SupportedProperties, diagnostics);
@@ -107,13 +107,70 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         List<ActionPropertyModel> properties,
         List<OctopusImportDiagnosticDto> diagnostics,
         string sourceName,
-        string destinationName)
+        string destinationName,
+        bool diagnoseSensitiveConfigMapValues = false)
     {
         if (!OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, sourceName, out var raw))
             return;
 
         var normalized = OctopusImportKubernetesActionMapperSupport.NormalizeStringDictionaryJson(raw, action, sourceName, diagnostics);
+        if (diagnoseSensitiveConfigMapValues)
+            AddSensitiveConfigMapValueDiagnostics(action, sourceName, normalized, diagnostics);
+
         OctopusImportKubernetesActionMapperSupport.AddProperty(properties, destinationName, normalized);
+    }
+
+    private static void AddSensitiveConfigMapValueDiagnostics(
+        OctopusDeploymentActionDto action,
+        string sourceName,
+        string normalized,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        var suspiciousEntryCount = CountSuspiciousStringDictionaryEntries(normalized);
+        if (suspiciousEntryCount == 0)
+            return;
+
+        diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportActionMappingDiagnosticCodes.SensitiveConfigMapValue,
+            $"Octopus Kubernetes ConfigMap property '{sourceName}' on action '{action.Name}' contains {suspiciousEntryCount} value(s) that look sensitive. Move secret or sensitive values to Kubernetes Secret values before relying on the imported action.",
+            action));
+    }
+
+    private static int CountSuspiciousStringDictionaryEntries(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return 0;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return doc.RootElement.ValueKind switch
+            {
+                JsonValueKind.Object => doc.RootElement.EnumerateObject()
+                    .Count(property => OctopusImportRedaction.ShouldRedactPropertyValue(property.Name, GetString(property.Value))),
+                JsonValueKind.Array => doc.RootElement.EnumerateArray()
+                    .Count(IsSuspiciousKeyValueElement),
+                _ => 0
+            };
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    private static bool IsSuspiciousKeyValueElement(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        var key = OctopusImportKubernetesActionMapperSupport.GetString(element, "Key")
+                  ?? OctopusImportKubernetesActionMapperSupport.GetString(element, "key");
+        var value = OctopusImportKubernetesActionMapperSupport.GetString(element, "Value")
+                    ?? OctopusImportKubernetesActionMapperSupport.GetString(element, "value");
+
+        return OctopusImportRedaction.ShouldRedactPropertyValue(key, value);
     }
 
     private static void AddNormalizedContainers(
@@ -215,6 +272,16 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         {
             JsonValue value when value.TryGetValue<string>(out var text) => text,
             JsonValue value when value.TryGetValue<int>(out var number) => number.ToString(),
+            _ => null
+        };
+
+    private static string GetString(JsonElement element)
+        => element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.GetRawText(),
+            JsonValueKind.True => "True",
+            JsonValueKind.False => "False",
             _ => null
         };
 }
