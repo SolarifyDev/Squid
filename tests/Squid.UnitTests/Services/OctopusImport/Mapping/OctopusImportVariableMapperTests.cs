@@ -1,4 +1,5 @@
 using System.Linq;
+using System.Text.Json;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
@@ -121,8 +122,46 @@ public class OctopusImportVariableMapperTests
         result.CreateCommand.Variables[0].Type.ShouldBe(VariableType.Password);
         result.CreateCommand.Variables[0].IsSensitive.ShouldBeTrue();
         result.CreateCommand.Variables[0].Value.ShouldBe(string.Empty);
+        var requiredInput = result.RequiredInputs.Single();
+        requiredInput.InputKey.ShouldStartWith("required-secret-input:SensitiveVariableValue:");
+        requiredInput.InputKey.ShouldEndWith(":Value");
+        requiredInput.Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
+        requiredInput.SourceId.ShouldBe("Variables-Secret");
+        requiredInput.SourceType.ShouldBe(OctopusResourceKind.Variable.ToString());
+        requiredInput.Name.ShouldBe("ApiKey");
+        requiredInput.FieldName.ShouldBe("Value");
+        requiredInput.ValueType.ShouldBe("Sensitive");
+        requiredInput.HasSourceValue.ShouldBeTrue();
+        requiredInput.IsRequired.ShouldBeTrue();
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted);
         result.Diagnostics.All(d => d.Message.Contains("encrypted-source-secret", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
+        JsonSerializer.Serialize(result.RequiredInputs).ToLowerInvariant().ShouldNotContain("encrypted-source-secret");
+    }
+
+    [Fact]
+    public void MapToCreateCommand_WhenSensitiveVariableHasScopes_RequiredInputPreservesSourceScopeMetadata()
+    {
+        var variableSet = VariableSet(new OctopusVariableDto
+        {
+            Id = "Variables-ScopedSecret",
+            Name = "DatabasePassword",
+            Value = "scoped-source-secret",
+            IsSensitive = true,
+            Scope =
+            {
+                ["Environment"] = ["Environments-2", "Environments-1"],
+                ["Role"] = ["web"]
+            }
+        });
+
+        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+
+        var requiredInput = result.RequiredInputs.Single();
+        requiredInput.HasSourceValue.ShouldBeTrue();
+        requiredInput.SourceScopes["Environment"].ShouldBe(["Environments-1", "Environments-2"]);
+        requiredInput.SourceScopes["Role"].ShouldBe(["web"]);
+        result.CreateCommand.Variables.Single().Value.ShouldBe(string.Empty);
+        JsonSerializer.Serialize(result).ToLowerInvariant().ShouldNotContain("scoped-source-secret");
     }
 
     [Theory]
