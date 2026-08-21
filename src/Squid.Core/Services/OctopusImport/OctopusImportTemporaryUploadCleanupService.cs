@@ -54,16 +54,17 @@ public sealed class OctopusImportTemporaryUploadCleanupService(
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 failed++;
+                var safeError = OctopusImportSessionDataProvider.SanitizeTemporaryUploadCleanupError(ex.Message);
                 Log.Warning(
-                    ex,
-                    "[OctopusImport] Failed to clean temporary upload for session {SessionId} in state {State}. It will be retried by the next cleanup sweep.",
+                    "[OctopusImport] Failed to clean temporary upload for session {SessionId} in state {State}. It will be retried by the next cleanup sweep. Error: {Error}",
                     candidate.SessionId,
-                    candidate.State);
+                    candidate.State,
+                    safeError);
 
                 await dataProvider.MarkTemporaryUploadCleanupFailedAsync(
                     candidate.SessionId,
                     candidate.TemporaryUploadPath,
-                    ex.Message,
+                    safeError,
                     now,
                     ct).ConfigureAwait(false);
             }
