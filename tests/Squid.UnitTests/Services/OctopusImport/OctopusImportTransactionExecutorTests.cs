@@ -18,7 +18,7 @@ public class OctopusImportTransactionExecutorTests
         await connection.OpenAsync();
 
         await using var db = CreateDbContext(connection);
-        await db.Database.EnsureCreatedAsync();
+        await CreateImportSessionTableAsync(connection);
 
         var repository = new EfRepository(db);
         var sut = new OctopusImportTransactionExecutor(repository, db);
@@ -34,6 +34,7 @@ public class OctopusImportTransactionExecutorTests
                 OwnerUserId = 42,
                 State = "Uploaded",
                 SourceSummaryJson = "{}",
+                DataVersion = Guid.NewGuid().ToByteArray(),
                 ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
                 LastStateChangedAt = DateTimeOffset.UtcNow
             }, ct).ConfigureAwait(false);
@@ -50,7 +51,7 @@ public class OctopusImportTransactionExecutorTests
         await connection.OpenAsync();
 
         await using var db = CreateDbContext(connection);
-        await db.Database.EnsureCreatedAsync();
+        await CreateImportSessionTableAsync(connection);
 
         var repository = new EfRepository(db);
         var sut = new OctopusImportTransactionExecutor(repository, db);
@@ -66,9 +67,12 @@ public class OctopusImportTransactionExecutorTests
                     OwnerUserId = 42,
                     State = "Uploaded",
                     SourceSummaryJson = "{}",
+                    DataVersion = Guid.NewGuid().ToByteArray(),
                     ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
                     LastStateChangedAt = DateTimeOffset.UtcNow
                 }, ct).ConfigureAwait(false);
+
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
 
                 throw new InvalidOperationException("boom");
             }));
@@ -84,7 +88,7 @@ public class OctopusImportTransactionExecutorTests
         await connection.OpenAsync();
 
         await using var db = CreateDbContext(connection);
-        await db.Database.EnsureCreatedAsync();
+        await CreateImportSessionTableAsync(connection);
 
         var repository = new EfRepository(db);
         var sut = new OctopusImportTransactionExecutor(repository, db);
@@ -102,5 +106,39 @@ public class OctopusImportTransactionExecutorTests
             .Options;
 
         return new SquidDbContext(options);
+    }
+
+    private static async Task CreateImportSessionTableAsync(SqliteConnection connection)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS octopus_import_session
+            (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                destination_space_id INTEGER NOT NULL,
+                owner_user_id INTEGER NOT NULL,
+                state TEXT NOT NULL,
+                source_summary_json TEXT NOT NULL DEFAULT '{}',
+                redacted_normalized_data_json TEXT NULL,
+                validated_plan_json TEXT NULL,
+                result_json TEXT NULL,
+                temporary_upload_path TEXT NULL,
+                temporary_upload_size_bytes INTEGER NULL,
+                temporary_upload_cleanup_after TEXT NULL,
+                temporary_upload_cleaned_at TEXT NULL,
+                temporary_upload_cleanup_error TEXT NULL,
+                data_version BLOB NOT NULL,
+                expires_at TEXT NOT NULL,
+                completed_at TEXT NULL,
+                last_state_changed_at TEXT NOT NULL,
+                created_date TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                last_modified_date TEXT NOT NULL,
+                last_modified_by INTEGER NOT NULL
+            );
+            """;
+
+        await command.ExecuteNonQueryAsync();
     }
 }
