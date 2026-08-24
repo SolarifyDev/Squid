@@ -49,7 +49,7 @@ public class OctopusImportConfirmationOrchestratorTests
 
         recorded.Resources.Count.ShouldBe(12);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
-        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Lifecycle.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.LifecyclePhase.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
@@ -91,7 +91,7 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Succeeded.ShouldBeFalse();
         recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
-        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
         recorded.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.Pending);
         recorded.IdMappings.Count.ShouldBe(1);
