@@ -103,6 +103,7 @@ public class OctopusImportTransactionExecutorTests
     {
         var options = new DbContextOptionsBuilder<SquidDbContext>()
             .UseSqlite(connection)
+            .UseSnakeCaseNamingConvention()
             .Options;
 
         return new SquidDbContext(options);
