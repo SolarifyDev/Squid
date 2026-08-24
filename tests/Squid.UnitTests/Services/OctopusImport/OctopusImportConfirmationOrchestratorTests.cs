@@ -1127,6 +1127,9 @@ public class OctopusImportConfirmationOrchestratorTests
         public Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(Guid sessionId, int destinationSpaceId, OctopusImportTemporaryUpload temporaryUpload, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(Guid sessionId, int destinationSpaceId, OctopusImportTemporaryUpload temporaryUpload, OctopusImportSourceSummaryDto sourceSummary, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
         public Task<OctopusImportSessionDto> UpdatePayloadAndTransitionAsync(Guid sessionId, int destinationSpaceId, OctopusImportSessionState expectedState, OctopusImportSessionState newState, string redactedNormalizedDataJson = null, string validatedPlanJson = null, CancellationToken ct = default)
             => throw new NotSupportedException();
 

@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 
 namespace Squid.Core.Services.OctopusImport;
 
-public sealed record OctopusImportTemporaryUpload(string Path, long SizeBytes);
+public sealed record OctopusImportTemporaryUpload(string Path, long SizeBytes, string Sha256 = null);
 
 public sealed record OctopusImportTemporaryUploadDeleteResult(bool Deleted, int FilesDeleted, int DirectoriesDeleted);
 
@@ -34,10 +34,25 @@ public sealed class OctopusImportTemporaryUploadStore(
         var destinationPath = Path.Combine(directory, fileName);
 
         await using var output = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-        await content.CopyToAsync(output, ct).ConfigureAwait(false);
+        using var hash = SHA256.Create();
+        var buffer = new byte[81920];
+
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var read = await content.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
+            if (read == 0)
+                break;
+
+            await output.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+            hash.TransformBlock(buffer, 0, read, buffer, 0);
+        }
+
+        hash.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
         await output.FlushAsync(ct).ConfigureAwait(false);
 
-        return new OctopusImportTemporaryUpload(destinationPath, output.Length);
+        return new OctopusImportTemporaryUpload(destinationPath, output.Length, Convert.ToHexString(hash.Hash).ToLowerInvariant());
     }
 
     public async Task<OctopusImportTemporaryUploadDeleteResult> SecureDeleteAsync(
