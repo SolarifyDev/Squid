@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Requests.OctopusImport;
 
 namespace Squid.Api.Controllers;
 
@@ -69,6 +71,47 @@ public class OctopusImportController : ControllerBase
                     SessionId = sessionId,
                     SpaceId = spaceId
                 },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("{sessionId:guid}/preview")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportPreviewResponse))]
+    public async Task<IActionResult> PreviewAsync(
+        Guid sessionId,
+        [FromQuery] int? spaceId,
+        CancellationToken cancellationToken)
+    {
+        var response = await _mediator
+            .RequestAsync<GetOctopusImportPreviewRequest, GetOctopusImportPreviewResponse>(
+                new GetOctopusImportPreviewRequest
+                {
+                    SessionId = sessionId,
+                    SpaceId = spaceId
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{sessionId:guid}/validate")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ValidateOctopusImportResponse))]
+    public async Task<IActionResult> ValidateAsync(
+        Guid sessionId,
+        [FromQuery] int? spaceId,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] ValidateOctopusImportCommand command,
+        CancellationToken cancellationToken)
+    {
+        command ??= new ValidateOctopusImportCommand();
+        command.SessionId = sessionId;
+        command.SpaceId = spaceId ?? command.SpaceId;
+
+        var response = await _mediator
+            .SendAsync<ValidateOctopusImportCommand, ValidateOctopusImportResponse>(
+                command,
                 cancellationToken)
             .ConfigureAwait(false);
 
