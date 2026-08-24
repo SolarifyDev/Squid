@@ -1,5 +1,6 @@
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using Squid.Core.Services.OctopusImport.Octopus;
 
@@ -24,6 +25,40 @@ public class OctopusArchiveExtractorTests
         result.Entries[0].RelativePath.ShouldBe("manifest.json");
         result.Entries[1].RelativePath.ShouldBe("Projects-1.json");
         Encoding.UTF8.GetString(result.Entries[1].Content).ShouldContain("Projects-1");
+    }
+
+    [Fact]
+    public async Task ExtractZipAsync_ManifestArchive_ReturnsManifestAndCurrentResourceFiles()
+    {
+        var bytes = CreateZipArchive(new Dictionary<string, byte[]>
+        {
+            ["manifest.json"] = JsonBytes("""
+            {
+              "Entries": [
+                {
+                  "Id": "Projects-1",
+                  "Name": "Project",
+                  "DocumentType": "Project",
+                  "DocumentSource": "Projects-1.json",
+                  "Hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ]
+            }
+            """),
+            ["Projects-1.json"] = JsonBytes("""{"Id":"Projects-1","Name":"Project"}"""),
+            ["variableset-Projects-1.json"] = JsonBytes("""{"Id":"variableset-Projects-1","OwnerId":"Projects-1"}""")
+        });
+
+        var result = await ExtractAsync(bytes);
+
+        result.EntryCount.ShouldBe(3);
+        result.Entries.Select(entry => entry.RelativePath).ShouldBe([
+            "manifest.json",
+            "Projects-1.json",
+            "variableset-Projects-1.json"
+        ]);
+        Encoding.UTF8.GetString(result.Entries.Single(entry => entry.RelativePath == "manifest.json").Content)
+            .ShouldContain("\"Entries\"");
     }
 
     [Theory]
