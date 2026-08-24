@@ -29,6 +29,13 @@ public interface IOctopusImportSessionService : IScopedDependency
         OctopusImportTemporaryUpload temporaryUpload,
         CancellationToken ct = default);
 
+    Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(
+        Guid sessionId,
+        int destinationSpaceId,
+        OctopusImportTemporaryUpload temporaryUpload,
+        OctopusImportSourceSummaryDto sourceSummary,
+        CancellationToken ct = default);
+
     Task<OctopusImportSessionDto> UpdatePayloadAndTransitionAsync(
         Guid sessionId,
         int destinationSpaceId,
@@ -124,6 +131,16 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         OctopusImportTemporaryUpload temporaryUpload,
         CancellationToken ct = default)
     {
+        return await RegisterTemporaryUploadAsync(sessionId, destinationSpaceId, temporaryUpload, null, ct).ConfigureAwait(false);
+    }
+
+    public async Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(
+        Guid sessionId,
+        int destinationSpaceId,
+        OctopusImportTemporaryUpload temporaryUpload,
+        OctopusImportSourceSummaryDto sourceSummary,
+        CancellationToken ct = default)
+    {
         if (temporaryUpload == null)
             throw new ArgumentNullException(nameof(temporaryUpload));
         if (string.IsNullOrWhiteSpace(temporaryUpload.Path))
@@ -139,6 +156,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.TemporaryUploadCleanupAfter = session.ExpiresAt;
         session.TemporaryUploadCleanedAt = null;
         session.TemporaryUploadCleanupError = null;
+        if (sourceSummary != null)
+            session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(sourceSummary));
 
         await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
 
