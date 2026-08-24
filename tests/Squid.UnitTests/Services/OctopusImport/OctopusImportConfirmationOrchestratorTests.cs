@@ -76,7 +76,7 @@ public class OctopusImportConfirmationOrchestratorTests
     [Fact]
     public async Task ConfirmAsync_WhenTransactionFails_RollsBackAndPersistsFailedSessionResult()
     {
-        var harness = CreateMinimalHarness(throwAfterAction: true);
+        var harness = CreateMinimalHarness(throwAfterAction: true, includeReusedEnvironment: true);
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
@@ -91,7 +91,7 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Succeeded.ShouldBeFalse();
         recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
-        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
         recorded.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.Pending);
         recorded.IdMappings.Count.ShouldBe(1);
@@ -152,13 +152,16 @@ public class OctopusImportConfirmationOrchestratorTests
     private static TestHarness CreateMinimalHarness(
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
-        bool withTransactionGate = false)
+        bool withTransactionGate = false,
+        bool includeReusedEnvironment = false)
     {
         var nodes = BuildMinimalNodes();
         return CreateHarness(
             nodes,
             BuildDependencyPlan(nodes.MinimalOrderedResources),
-            BuildPreviewPlan(nodes.MinimalOrderedResources),
+            BuildPreviewPlan(
+                nodes.MinimalOrderedResources,
+                reusedResources: includeReusedEnvironment ? [nodes.Environment] : null),
             admissionShouldSucceed,
             throwAfterAction,
             withTransactionGate);
