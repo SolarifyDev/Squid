@@ -168,19 +168,25 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     {
         var execution = new ConfirmationExecutionContext(request, result);
 
-        foreach (var resource in request.DependencyPlan.OrderedResources)
+        try
         {
-            if (execution.IsAlreadyCompleted(resource))
-                continue;
+            foreach (var resource in request.DependencyPlan.OrderedResources)
+            {
+                if (execution.IsAlreadyCompleted(resource))
+                    continue;
 
-            await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
+                await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
+            }
+
+            foreach (var resource in request.DependencyPlan.OutOfScopeResources)
+                execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
+
+            return result;
         }
-
-        foreach (var resource in request.DependencyPlan.OutOfScopeResources)
-            execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
-
-        execution.CopyMappingsToResult();
-        return result;
+        finally
+        {
+            execution.CopyMappingsToResult();
+        }
     }
 
     private async Task ExecuteResourceAsync(
@@ -736,7 +742,6 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         {
             var result = GetPreview(resource);
             return result?.OutcomeState is OctopusImportResourceOutcomeState.Created
-                or OctopusImportResourceOutcomeState.Reused
                 or OctopusImportResourceOutcomeState.Skipped
                 or OctopusImportResourceOutcomeState.Unsupported
                 or OctopusImportResourceOutcomeState.Blocked
