@@ -117,4 +117,44 @@ public class OctopusImportController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpPost("{sessionId:guid}/confirm")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ConfirmOctopusImportResponse))]
+    public async Task<IActionResult> ConfirmAsync(
+        Guid sessionId,
+        [FromQuery] int? spaceId,
+        CancellationToken cancellationToken)
+    {
+        var response = await _mediator
+            .SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(
+                new ConfirmOctopusImportCommand
+                {
+                    SessionId = sessionId,
+                    SpaceId = spaceId
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("{sessionId:guid}/status")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportStatusResponse))]
+    public async Task<IActionResult> StatusAsync(
+        Guid sessionId,
+        [FromQuery] int? spaceId,
+        CancellationToken cancellationToken)
+    {
+        var response = await _mediator
+            .RequestAsync<GetOctopusImportStatusRequest, GetOctopusImportStatusResponse>(
+                new GetOctopusImportStatusRequest
+                {
+                    SessionId = sessionId,
+                    SpaceId = spaceId
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }
