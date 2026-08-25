@@ -1,6 +1,7 @@
 using System.Linq;
-using Microsoft.Data.Sqlite;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 using Squid.Core.Persistence;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -83,12 +84,25 @@ public class OctopusImportSessionDataProviderTests
     [Fact]
     public async Task ExpireSessionsAsync_ExpiresEligibleSessionsButLeavesImportingAndTerminalSessionsUntouched()
     {
-        await using var connection = new SqliteConnection("DataSource=:memory:");
-        await connection.OpenAsync();
-        await using var db = CreateSqliteDbContext(connection);
-        await CreateImportSessionTableAsync(connection);
+        var repository = new Mock<IRepository>();
+        Expression<Func<OctopusImportSession, bool>> capturedPredicate = null;
+        Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>> capturedSetters = null;
 
-        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        repository
+            .Setup(r => r.ExecuteUpdateAsync(
+                It.IsAny<Expression<Func<OctopusImportSession, bool>>>(),
+                It.IsAny<Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<Expression<Func<OctopusImportSession, bool>>,
+                Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>>,
+                CancellationToken>((predicate, setters, _) =>
+            {
+                capturedPredicate = predicate;
+                capturedSetters = setters;
+            })
+            .ReturnsAsync(2);
+
+        var provider = new OctopusImportSessionDataProvider(repository.Object, Mock.Of<IUnitOfWork>());
         var now = DateTimeOffset.UtcNow;
 
         var uploaded = NewSession(OctopusImportSessionState.Uploaded, "uploaded.zip", now.AddMinutes(-1));
@@ -101,23 +115,30 @@ public class OctopusImportSessionDataProviderTests
         succeeded.ExpiresAt = now.AddMinutes(-1);
         var future = NewSession(OctopusImportSessionState.Validated, "future.zip", now.AddMinutes(1));
 
-        db.Set<OctopusImportSession>().AddRange(uploaded, previewed, importing, succeeded, future);
-        await db.SaveChangesAsync(CancellationToken.None);
-
         var changed = await provider.ExpireSessionsAsync(now, CancellationToken.None);
 
         changed.ShouldBe(2);
-        var states = await db.Set<OctopusImportSession>()
-            .AsNoTracking()
-            .ToDictionaryAsync(session => session.SessionId, session => session);
+        capturedPredicate.ShouldNotBeNull();
+        capturedSetters.ShouldNotBeNull();
 
-        states[uploaded.SessionId].State.ShouldBe(OctopusImportSessionState.Expired.ToString());
-        states[previewed.SessionId].State.ShouldBe(OctopusImportSessionState.Expired.ToString());
-        states[importing.SessionId].State.ShouldBe(OctopusImportSessionState.Importing.ToString());
-        states[succeeded.SessionId].State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
-        states[future.SessionId].State.ShouldBe(OctopusImportSessionState.Validated.ToString());
-        states[uploaded.SessionId].TemporaryUploadCleanupAfter.ShouldBe(now);
-        states[previewed.SessionId].TemporaryUploadCleanupAfter.ShouldBe(now);
+        var matches = capturedPredicate.Compile();
+        matches(uploaded).ShouldBeTrue();
+        matches(previewed).ShouldBeTrue();
+        matches(importing).ShouldBeFalse();
+        matches(succeeded).ShouldBeFalse();
+        matches(future).ShouldBeFalse();
+
+        var setterNames = new SetPropertyNameVisitor();
+        setterNames.Visit(capturedSetters);
+        setterNames.PropertyNames.ShouldBe(
+        [
+            nameof(OctopusImportSession.State),
+            nameof(OctopusImportSession.DataVersion),
+            nameof(OctopusImportSession.LastStateChangedAt),
+            nameof(OctopusImportSession.LastModifiedDate),
+            nameof(OctopusImportSession.CompletedAt),
+            nameof(OctopusImportSession.TemporaryUploadCleanupAfter)
+        ], ignoreOrder: true);
     }
 
     [Fact]
@@ -140,50 +161,6 @@ public class OctopusImportSessionDataProviderTests
         return new SquidDbContext(options);
     }
 
-    private static SquidDbContext CreateSqliteDbContext(SqliteConnection connection)
-    {
-        var options = new DbContextOptionsBuilder<SquidDbContext>()
-            .UseSqlite(connection)
-            .UseSnakeCaseNamingConvention()
-            .Options;
-
-        return new SquidDbContext(options);
-    }
-
-    private static async Task CreateImportSessionTableAsync(SqliteConnection connection)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TABLE IF NOT EXISTS octopus_import_session
-            (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                destination_space_id INTEGER NOT NULL,
-                owner_user_id INTEGER NOT NULL,
-                state TEXT NOT NULL,
-                source_summary_json TEXT NOT NULL DEFAULT '{}',
-                redacted_normalized_data_json TEXT NULL,
-                validated_plan_json TEXT NULL,
-                result_json TEXT NULL,
-                temporary_upload_path TEXT NULL,
-                temporary_upload_size_bytes INTEGER NULL,
-                temporary_upload_cleanup_after TEXT NULL,
-                temporary_upload_cleaned_at TEXT NULL,
-                temporary_upload_cleanup_error TEXT NULL,
-                data_version BLOB NOT NULL,
-                expires_at TEXT NOT NULL,
-                completed_at TEXT NULL,
-                last_state_changed_at TEXT NOT NULL,
-                created_date TEXT NOT NULL,
-                created_by INTEGER NOT NULL,
-                last_modified_date TEXT NOT NULL,
-                last_modified_by INTEGER NOT NULL
-            );
-            """;
-
-        await command.ExecuteNonQueryAsync();
-    }
-
     private static OctopusImportSession NewSession(
         OctopusImportSessionState state,
         string uploadFileName,
@@ -196,10 +173,36 @@ public class OctopusImportSessionDataProviderTests
             DestinationSpaceId = 7,
             State = state.ToString(),
             SourceSummaryJson = "{}",
+            DataVersion = Guid.NewGuid().ToByteArray(),
             TemporaryUploadPath = $"/tmp/squid-octopus-import-uploads/{uploadFileName}",
             TemporaryUploadCleanupAfter = cleanupAfter,
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             LastStateChangedAt = DateTimeOffset.UtcNow
         };
+    }
+
+    private sealed class SetPropertyNameVisitor : ExpressionVisitor
+    {
+        public List<string> PropertyNames { get; } = [];
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.Name == nameof(SetPropertyCalls<OctopusImportSession>.SetProperty) &&
+                StripQuotes(node.Arguments[0]) is LambdaExpression propertyExpression &&
+                propertyExpression.Body is MemberExpression member)
+            {
+                PropertyNames.Add(member.Member.Name);
+            }
+
+            return base.VisitMethodCall(node);
+        }
+    }
+
+    private static Expression StripQuotes(Expression expression)
+    {
+        while (expression.NodeType == ExpressionType.Quote)
+            expression = ((UnaryExpression)expression).Operand;
+
+        return expression;
     }
 }
