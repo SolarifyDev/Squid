@@ -126,6 +126,23 @@ public class OctopusImportSessionServiceTests
     }
 
     [Fact]
+    public async Task GetSessionAsync_RequiresAuthenticatedUserBeforeLookingUpSession()
+    {
+        _currentUser.SetupGet(u => u.Id).Returns((int?)null);
+
+        await Should.ThrowAsync<UnauthorizedAccessException>(
+            () => _service.GetSessionAsync(Guid.NewGuid(), 7, CancellationToken.None));
+
+        _dataProvider.Verify(
+            p => p.GetSessionAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task RegisterTemporaryUploadAsync_AttachesUploadMetadataToOwnedUploadedSession()
     {
         var sessionId = Guid.NewGuid();
@@ -280,6 +297,24 @@ public class OctopusImportSessionServiceTests
 
         admitted.ShouldBeTrue();
         _dataProvider.Verify(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryStartConfirmationAsync_WhenSessionIsMissing_ThrowsNotFoundWithoutAdmission()
+    {
+        var sessionId = Guid.NewGuid();
+
+        var exception = await Should.ThrowAsync<OctopusImportSessionNotFoundException>(
+            () => _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None));
+
+        exception.SessionId.ShouldBe(sessionId);
+        _dataProvider.Verify(
+            p => p.TryStartConfirmationAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<int>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

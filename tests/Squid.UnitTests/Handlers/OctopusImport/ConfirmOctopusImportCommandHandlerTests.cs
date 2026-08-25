@@ -94,6 +94,37 @@ public class ConfirmOctopusImportCommandHandlerTests
         harness.ConfirmationOrchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task Handle_WhenOwnedSessionHasNoTemporaryUpload_ReturnsBadRequestWithoutConfirming()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, null, OctopusImportSessionState.Validated));
+
+        var response = await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand
+        {
+            SessionId = sessionId,
+            SpaceId = 7
+        }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Data.Session.State.ShouldBe(OctopusImportSessionState.Validated);
+        harness.PlanningPipeline.Verify(
+            p => p.BuildPreviewAsync(
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        harness.ConfirmationOrchestrator.Verify(
+            o => o.ConfirmAsync(
+                It.IsAny<OctopusImportConfirmationRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static OctopusImportPreviewPlanDto Preview()
         => new()
         {
