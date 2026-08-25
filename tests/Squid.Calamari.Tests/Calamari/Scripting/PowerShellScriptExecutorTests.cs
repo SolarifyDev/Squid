@@ -11,6 +11,7 @@ namespace Squid.Calamari.Tests.Calamari.Scripting;
 /// requiring <c>pwsh</c> on the test runner (which would fail on CI hosts
 /// that don't have PS Core installed).
 /// </summary>
+[Collection("Process Globals")]
 public sealed class PowerShellScriptExecutorTests
 {
     [Fact]
