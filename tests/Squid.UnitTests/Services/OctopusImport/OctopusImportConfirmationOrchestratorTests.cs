@@ -74,6 +74,28 @@ public class OctopusImportConfirmationOrchestratorTests
     }
 
     [Fact]
+    public async Task ConfirmAsync_UsesExistingMediatorCommandsInDependencyOrder()
+    {
+        var harness = CreateRichHarness();
+
+        await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        var commandNames = harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0].GetType().Name)
+            .ToList();
+
+        commandNames.ShouldBe(
+        [
+            nameof(CreateProjectGroupCommand),
+            nameof(CreateLifeCycleCommand),
+            nameof(CreateProjectCommand),
+            nameof(UpdateVariableSetCommand),
+            nameof(CreateDeploymentStepCommand)
+        ]);
+    }
+
+    [Fact]
     public async Task ConfirmAsync_WhenTransactionFails_RollsBackAndPersistsFailedSessionResult()
     {
         var harness = CreateMinimalHarness(throwAfterAction: true, includeReusedEnvironment: true);
@@ -96,6 +118,39 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.Pending);
         recorded.IdMappings.Count.ShouldBe(1);
         recorded.IdMappings.Single().SourceId.ShouldBe(harness.Nodes.Environment.SourceId);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_WhenConfirmationValidationFindsStalePlan_DoesNotExecuteCommands()
+    {
+        var harness = CreateMinimalHarness();
+        harness.PreviewValidator
+            .Setup(v => v.Validate(
+                It.IsAny<OctopusResourceGraph>(),
+                It.IsAny<OctopusImportDependencyPlan>(),
+                It.IsAny<OctopusImportConflictDiscoveryResult>(),
+                It.IsAny<OctopusImportPreviewPlanDto>()))
+            .Returns(new OctopusImportValidationResultDto
+            {
+                Diagnostics =
+                [
+                    new OctopusImportDiagnosticDto
+                    {
+                        Severity = OctopusImportCompatibilitySeverity.Blocker,
+                        Code = OctopusImportPreviewDiagnosticCodes.StalePreviewPlan,
+                        Message = "The destination resource changed after preview."
+                    }
+                ]
+            });
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Succeeded.ShouldBeFalse();
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ValidationBlockedConfirmation);
+        harness.TransactionExecutor.ExecuteCalls.ShouldBe(0);
+        harness.Mediator.Invocations.ShouldBeEmpty();
     }
 
     [Fact]
@@ -269,6 +324,7 @@ public class OctopusImportConfirmationOrchestratorTests
             mediator,
             projectDataProvider,
             channelDataProvider,
+            previewValidator,
             nodes,
             dependencyPlan,
             previewPlan,
@@ -1058,6 +1114,7 @@ public class OctopusImportConfirmationOrchestratorTests
         Mock<IMediator> Mediator,
         Mock<IProjectDataProvider> ProjectDataProvider,
         Mock<IChannelDataProvider> ChannelDataProvider,
+        Mock<IOctopusImportPreviewValidator> PreviewValidator,
         ScenarioNodes Nodes,
         OctopusImportDependencyPlan DependencyPlan,
         OctopusImportPreviewPlanDto PreviewPlan,

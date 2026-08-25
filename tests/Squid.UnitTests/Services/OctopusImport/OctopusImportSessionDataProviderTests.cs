@@ -80,6 +80,42 @@ public class OctopusImportSessionDataProviderTests
     }
 
     [Fact]
+    public async Task ExpireSessionsAsync_ExpiresEligibleSessionsButLeavesImportingAndTerminalSessionsUntouched()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var now = DateTimeOffset.UtcNow;
+
+        var uploaded = NewSession(OctopusImportSessionState.Uploaded, "uploaded.zip", now.AddMinutes(-1));
+        uploaded.ExpiresAt = now.AddMinutes(-1);
+        var previewed = NewSession(OctopusImportSessionState.Previewed, "previewed.zip", now.AddMinutes(-1));
+        previewed.ExpiresAt = now.AddMinutes(-1);
+        var importing = NewSession(OctopusImportSessionState.Importing, "importing.zip", now.AddMinutes(-1));
+        importing.ExpiresAt = now.AddMinutes(-1);
+        var succeeded = NewSession(OctopusImportSessionState.Succeeded, "succeeded.zip", now.AddMinutes(-1));
+        succeeded.ExpiresAt = now.AddMinutes(-1);
+        var future = NewSession(OctopusImportSessionState.Validated, "future.zip", now.AddMinutes(1));
+
+        db.Set<OctopusImportSession>().AddRange(uploaded, previewed, importing, succeeded, future);
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        var changed = await provider.ExpireSessionsAsync(now, CancellationToken.None);
+
+        changed.ShouldBe(2);
+        var states = await db.Set<OctopusImportSession>()
+            .AsNoTracking()
+            .ToDictionaryAsync(session => session.SessionId, session => session);
+
+        states[uploaded.SessionId].State.ShouldBe(OctopusImportSessionState.Expired.ToString());
+        states[previewed.SessionId].State.ShouldBe(OctopusImportSessionState.Expired.ToString());
+        states[importing.SessionId].State.ShouldBe(OctopusImportSessionState.Importing.ToString());
+        states[succeeded.SessionId].State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
+        states[future.SessionId].State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+        states[uploaded.SessionId].TemporaryUploadCleanupAfter.ShouldBe(now);
+        states[previewed.SessionId].TemporaryUploadCleanupAfter.ShouldBe(now);
+    }
+
+    [Fact]
     public void SanitizeTemporaryUploadCleanupError_RedactsSensitiveErrorText()
     {
         var result = OctopusImportSessionDataProvider.SanitizeTemporaryUploadCleanupError(
