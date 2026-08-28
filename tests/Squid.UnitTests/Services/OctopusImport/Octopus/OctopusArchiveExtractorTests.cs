@@ -3,12 +3,15 @@ using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport.Octopus;
 
 public class OctopusArchiveExtractorTests
 {
     private readonly OctopusArchiveExtractor _extractor = new();
+    private readonly OctopusInputExtractor _inputExtractor = new();
+    private readonly OctopusManifestInventoryBuilder _manifestInventoryBuilder = new();
 
     [Fact]
     public async Task ExtractZipAsync_ValidZip_ReturnsNormalizedEntries()
@@ -59,6 +62,40 @@ public class OctopusArchiveExtractorTests
         ]);
         Encoding.UTF8.GetString(result.Entries.Single(entry => entry.RelativePath == "manifest.json").Content)
             .ShouldContain("\"Entries\"");
+    }
+
+    [Fact]
+    public async Task ExtractZipAsync_ManifestListedWorkerPool_FlowsThroughInputAndManifestValidation()
+    {
+        const string workerPoolJson = """{"Id":"WorkerPools-1","Name":"Default Worker Pool","DocumentType":"WorkerPool"}""";
+        var bytes = CreateZipArchive(new Dictionary<string, byte[]>
+        {
+            ["manifest.json"] = JsonBytes($$"""
+            {
+              "Entries": [
+                {
+                  "Id": "WorkerPools-1",
+                  "Name": "Default Worker Pool",
+                  "DocumentType": "WorkerPool",
+                  "DocumentSource": "WorkerPools-1.json",
+                  "Hash": "{{Sha1(workerPoolJson)}}"
+                }
+              ]
+            }
+            """),
+            ["WorkerPools-1.json"] = JsonBytes(workerPoolJson)
+        });
+
+        var archive = await ExtractAsync(bytes);
+        var input = await _inputExtractor.ExtractJsonEntriesAsync(archive.Entries);
+        var inventory = _manifestInventoryBuilder.Build(input);
+
+        input.Documents.Single(document => document.SourcePath == "WorkerPools-1.json")
+            .Classification.Kind.ShouldBe(OctopusDocumentKind.WorkerPool);
+        inventory.Items.Single().HasDocument.ShouldBeTrue();
+        inventory.Diagnostics.ShouldNotContain(d =>
+            d.Code == OctopusInputExtractionDiagnosticCodes.ManifestDocumentMissing ||
+            d.Severity == OctopusImportCompatibilitySeverity.Blocker);
     }
 
     [Theory]
@@ -246,4 +283,10 @@ public class OctopusArchiveExtractorTests
     }
 
     private static byte[] JsonBytes(string json) => Encoding.UTF8.GetBytes(json);
+
+    private static string Sha1(string value)
+    {
+        var bytes = System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
 }

@@ -133,14 +133,15 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
     }
 
     private static bool IsOrderable(OctopusResourceKind kind)
-        => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate);
+        => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate or OctopusResourceKind.WorkerPool);
 
     private static bool IsOutOfScopeReportResource(OctopusResourceNode resource)
         => resource.Kind is OctopusResourceKind.Release
             or OctopusResourceKind.Deployment
             or OctopusResourceKind.ServerTask
             or OctopusResourceKind.DeploymentProcessSnapshot
-            or OctopusResourceKind.VariableSetSnapshot;
+            or OctopusResourceKind.VariableSetSnapshot
+            or OctopusResourceKind.WorkerPool;
 
     private static int Rank(OctopusResourceKind kind)
     {

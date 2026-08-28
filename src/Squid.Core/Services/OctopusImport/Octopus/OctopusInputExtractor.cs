@@ -274,8 +274,6 @@ public class OctopusInputExtractor : IOctopusInputExtractor
                     sourcePath,
                     classification.SourceId,
                     classification.Kind));
-
-                return;
             }
 
             documents.Add(new OctopusExtractedJsonDocument(sourcePath, classification, root.Clone(), content.LongLength, ComputeSha1(content)));

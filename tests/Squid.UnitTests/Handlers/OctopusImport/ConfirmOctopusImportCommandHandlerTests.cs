@@ -31,7 +31,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         };
 
         harness.SessionDataProvider
-            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, validatedPlan));
         harness.PlanningPipeline
             .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
@@ -72,7 +72,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         var sessionId = Guid.NewGuid();
 
         harness.SessionDataProvider
-            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, CreateTempFile(), OctopusImportSessionState.Succeeded));
         harness.SessionService
             .Setup(s => s.GetSessionAsync(sessionId, 7, It.IsAny<CancellationToken>()))
@@ -101,7 +101,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         var sessionId = Guid.NewGuid();
 
         harness.SessionDataProvider
-            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, null, OctopusImportSessionState.Validated));
 
         var response = await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand

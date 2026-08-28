@@ -10,6 +10,8 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
 
     Task<OctopusImportSession> GetSessionAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
 
+    Task<OctopusImportSession> GetSessionNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
+
     Task UpdateSessionAsync(OctopusImportSession session, bool forceSave = true, CancellationToken ct = default);
 
     Task<int> TransitionStateAsync(
@@ -87,13 +89,51 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
             .FirstOrDefaultAsync(ct);
     }
 
+    public Task<OctopusImportSession> GetSessionNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default)
+    {
+        return _repository.QueryNoTracking<OctopusImportSession>(s =>
+                s.SessionId == sessionId &&
+                s.OwnerUserId == ownerUserId &&
+                s.DestinationSpaceId == destinationSpaceId)
+            .FirstOrDefaultAsync(ct);
+    }
+
     public async Task UpdateSessionAsync(OctopusImportSession session, bool forceSave = true, CancellationToken ct = default)
     {
-        session.DataVersion = Guid.NewGuid().ToByteArray();
-        await _repository.UpdateAsync(session, ct).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(session);
 
-        if (forceSave)
-            await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        var now = DateTimeOffset.UtcNow;
+        var dataVersion = Guid.NewGuid().ToByteArray();
+
+        var rowsAffected = await _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.Id == session.Id,
+            setters => setters
+                .SetProperty(s => s.SessionId, session.SessionId)
+                .SetProperty(s => s.DestinationSpaceId, session.DestinationSpaceId)
+                .SetProperty(s => s.OwnerUserId, session.OwnerUserId)
+                .SetProperty(s => s.State, session.State)
+                .SetProperty(s => s.SourceSummaryJson, session.SourceSummaryJson ?? "{}")
+                .SetProperty(s => s.RedactedNormalizedDataJson, session.RedactedNormalizedDataJson)
+                .SetProperty(s => s.ValidatedPlanJson, session.ValidatedPlanJson)
+                .SetProperty(s => s.ResultJson, session.ResultJson)
+                .SetProperty(s => s.TemporaryUploadPath, session.TemporaryUploadPath)
+                .SetProperty(s => s.TemporaryUploadSizeBytes, session.TemporaryUploadSizeBytes)
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, session.TemporaryUploadCleanupAfter)
+                .SetProperty(s => s.TemporaryUploadCleanedAt, session.TemporaryUploadCleanedAt)
+                .SetProperty(s => s.TemporaryUploadCleanupError, session.TemporaryUploadCleanupError)
+                .SetProperty(s => s.ExpiresAt, session.ExpiresAt)
+                .SetProperty(s => s.CompletedAt, session.CompletedAt)
+                .SetProperty(s => s.LastStateChangedAt, session.LastStateChangedAt)
+                .SetProperty(s => s.LastModifiedDate, now)
+                .SetProperty(s => s.DataVersion, dataVersion),
+            ct).ConfigureAwait(false);
+
+        if (rowsAffected != 1)
+            throw new DbUpdateConcurrencyException("The Octopus import session no longer exists.");
+
+        _repository.Detach(session);
+        session.DataVersion = dataVersion;
+        session.LastModifiedDate = now;
     }
 
     public Task<int> TransitionStateAsync(

@@ -148,6 +148,43 @@ public class OctopusManifestInventoryBuilderTests
     }
 
     [Fact]
+    public async Task Build_ManifestListedWorkerPool_DoesNotReportMissingDocument()
+    {
+        var workerPoolJson = """{"Id":"WorkerPools-1","Name":"Default Worker Pool","DocumentType":"WorkerPool"}""";
+        var result = await ExtractEntriesAsync(
+            ("manifest.json", BuildManifestJson(
+                ("WorkerPools-1", "WorkerPool", "WorkerPools-1.json", Sha1(workerPoolJson)))),
+            ("WorkerPools-1.json", workerPoolJson));
+
+        var inventory = _builder.Build(result);
+
+        inventory.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.ManifestDocumentMissing);
+        inventory.Diagnostics.ShouldNotContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+        inventory.Items.Single().HasDocument.ShouldBeTrue();
+        inventory.Items.Single().Classification.Kind.ShouldBe(OctopusDocumentKind.WorkerPool);
+        inventory.Counts.Single(c => c.Kind == OctopusDocumentKind.WorkerPool).Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Build_ManifestListedUnknownDocument_DoesNotReportMissingDocumentWhenJsonExists()
+    {
+        var extensionJson = """{"Id":"PluginResources-1","Name":"Extension owned resource","DocumentType":"PluginResource"}""";
+        var result = await ExtractEntriesAsync(
+            ("manifest.json", BuildManifestJson(
+                ("PluginResources-1", "PluginResource", "PluginResources-1.json", Sha1(extensionJson)))),
+            ("PluginResources-1.json", extensionJson));
+
+        var inventory = _builder.Build(result);
+
+        inventory.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.ManifestDocumentMissing);
+        inventory.Items.Single().HasDocument.ShouldBeTrue();
+        inventory.Items.Single().Classification.Kind.ShouldBe(OctopusDocumentKind.Unknown);
+        inventory.Diagnostics.ShouldContain(d =>
+            d.Code == OctopusInputExtractionDiagnosticCodes.UnrecognizedDocument &&
+            d.Severity == OctopusImportCompatibilitySeverity.Warning);
+    }
+
+    [Fact]
     public async Task Build_ManifestSnapshotsAndHistory_AreCountedByClassification()
     {
         var snapshotJson = """{"Id":"variableset-Projects-1-s-3-ABC","OwnerId":"Projects-1"}""";

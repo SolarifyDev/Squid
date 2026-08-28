@@ -210,7 +210,8 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             or OctopusResourceKind.Deployment
             or OctopusResourceKind.ServerTask
             or OctopusResourceKind.DeploymentProcessSnapshot
-            or OctopusResourceKind.VariableSetSnapshot;
+            or OctopusResourceKind.VariableSetSnapshot
+            or OctopusResourceKind.WorkerPool;
 
     private static bool IsUnsupported(OctopusResourceKind kind)
         => kind is OctopusResourceKind.Unknown
@@ -243,6 +244,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             OctopusResourceKind.Release => 920,
             OctopusResourceKind.Deployment => 930,
             OctopusResourceKind.ServerTask => 940,
+            OctopusResourceKind.WorkerPool => 950,
             _ => 1000
         };
     }

@@ -67,6 +67,13 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Project.SourceId).DestinationId.ShouldBe(1001);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.VariableSet.SourceId).DestinationId.ShouldBe(1002);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.DeploymentProcess.SourceId).DestinationId.ShouldBe(1003);
+        harness.ProcessMapper.Invocations
+            .Select(invocation => invocation.Arguments[1])
+            .OfType<OctopusImportIdMap>()
+            .Single()
+            .TryGetDestinationId(harness.Nodes.DeploymentProcess.SourceId, OctopusResourceKind.DeploymentProcess.ToString(), out var mappedProcessId)
+            .ShouldBeTrue();
+        mappedProcessId.ShouldBe(1003);
 
         harness.Nodes.ChannelUpdate.Captured.ShouldNotBeNull();
         harness.Nodes.ChannelUpdate.Captured.ProjectId.ShouldBe(1001);
@@ -451,6 +458,7 @@ public class OctopusImportConfirmationOrchestratorTests
                 var source = resource.GetSource<OctopusDeploymentProcessDto>();
                 var step = source.Steps.Single();
                 var action = step.Actions.Single();
+                idMap.TryGetDestinationId(source.Id, OctopusResourceKind.DeploymentProcess.ToString(), out var processId).ShouldBeTrue();
 
                 return new OctopusImportDeploymentProcessMappingResult(
                     [
@@ -460,7 +468,7 @@ public class OctopusImportConfirmationOrchestratorTests
                             0,
                             new CreateDeploymentStepCommand
                             {
-                                ProcessId = 1002,
+                                ProcessId = processId,
                                 SpaceId = spaceId,
                                 Step = new CreateOrUpdateDeploymentStepModel
                                 {

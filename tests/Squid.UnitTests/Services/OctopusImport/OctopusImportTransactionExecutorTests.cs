@@ -79,6 +79,7 @@ public class OctopusImportTransactionExecutorTests
 
         await using var verificationDb = CreateDbContext(connection);
         (await verificationDb.Set<OctopusImportSession>().CountAsync()).ShouldBe(0);
+        db.ChangeTracker.Entries().ShouldBeEmpty();
     }
 
     [Fact]

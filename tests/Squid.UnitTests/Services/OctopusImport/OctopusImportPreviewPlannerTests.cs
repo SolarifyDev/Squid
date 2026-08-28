@@ -141,6 +141,19 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
+    public void BuildPreviewPlan_WhenResourceIsWorkerPool_ProposesSkip()
+    {
+        var workerPool = Node("WorkerPools-1", OctopusResourceKind.WorkerPool, "Default Worker Pool");
+
+        var preview = _planner.BuildPreviewPlan(Plan([], outOfScopeResources: [workerPool]), NoConflicts());
+
+        var result = preview.Resources.Single();
+        result.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        result.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Skipped);
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ResourceOutOfScope);
+    }
+
+    [Fact]
     public void BuildPreviewPlan_IncludesOutOfScopeResourcesAsSkippedPreviewResults()
     {
         var currentProcess = Node("deploymentprocess-Projects-1", OctopusResourceKind.DeploymentProcess, "Current process");

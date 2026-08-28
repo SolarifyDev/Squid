@@ -27,11 +27,10 @@ public class OctopusImportController : ControllerBase
     [RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes)]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UploadOctopusImportResponse))]
     public async Task<IActionResult> UploadAsync(
-        [FromForm] IFormFile file,
-        [FromForm] int? spaceId,
+        [FromForm] UploadOctopusImportForm request,
         CancellationToken cancellationToken)
     {
-        if (file == null)
+        if (request?.File == null)
         {
             return Ok(new UploadOctopusImportResponse
             {
@@ -40,21 +39,28 @@ public class OctopusImportController : ControllerBase
             });
         }
 
-        await using var stream = file.OpenReadStream();
+        await using var stream = request.File.OpenReadStream();
         var response = await _mediator
             .SendAsync<UploadOctopusImportCommand, UploadOctopusImportResponse>(
                 new UploadOctopusImportCommand
                 {
-                    SpaceId = spaceId,
-                    FileName = file.FileName,
-                    ContentType = file.ContentType,
-                    SizeBytes = file.Length,
+                    SpaceId = request.SpaceId,
+                    FileName = request.File.FileName,
+                    ContentType = request.File.ContentType,
+                    SizeBytes = request.File.Length,
                     Content = stream
                 },
                 cancellationToken)
             .ConfigureAwait(false);
 
         return Ok(response);
+    }
+
+    public class UploadOctopusImportForm
+    {
+        public IFormFile File { get; set; }
+
+        public int? SpaceId { get; set; }
     }
 
     [HttpPost("{sessionId:guid}/extract")]

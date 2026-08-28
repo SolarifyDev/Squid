@@ -1,3 +1,4 @@
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -14,6 +15,35 @@ namespace Squid.UnitTests.Services.OctopusImport;
 
 public class NextChatExportFixtureTests
 {
+    [Fact]
+    public async Task RealFixture_MapsCurrentDeploymentProcessWithoutConfirmationBlockers()
+    {
+        var folder = FindFixtureFolder("Next Chat Export");
+        var extractor = new OctopusInputExtractor();
+        var inventoryBuilder = new OctopusManifestInventoryBuilder();
+        var graphBuilder = new OctopusResourceGraphBuilder();
+
+        var extraction = await extractor.ExtractFolderAsync(folder);
+        var inventory = inventoryBuilder.Build(extraction);
+        var graph = graphBuilder.Build(inventory);
+        var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph);
+        var currentProcess = graph.Resources.Single(resource =>
+            resource.Kind == OctopusResourceKind.DeploymentProcess && !resource.IsHistorical);
+        var idMap = BuildFixtureIdMap(graph);
+
+        var processMapping = CreateProcessMapper().MapToCreateStepCommands(currentProcess, idMap, 1);
+
+        extraction.Diagnostics.ShouldBeEmpty();
+        inventory.Diagnostics.ShouldBeEmpty();
+        graph.Diagnostics.ShouldBeEmpty();
+        dependencyPlan.Diagnostics.ShouldBeEmpty();
+        processMapping.HasBlockers.ShouldBeFalse();
+        processMapping.Diagnostics.Select(d => d.Code)
+            .ShouldNotContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingProcessMapping);
+        processMapping.Diagnostics.Select(d => d.Code)
+            .ShouldNotContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.UnsupportedActionCondition);
+    }
+
     [Fact]
     public async Task RedactedFixture_MapsCurrentConfigurationAndExcludesHistoricalResourcesWithoutLeakingSecrets()
     {
@@ -57,15 +87,8 @@ public class NextChatExportFixtureTests
         dependencyPlan.OutOfScopeResources.Count(resource => resource.Kind == OctopusResourceKind.Deployment).ShouldBe(502);
         dependencyPlan.OutOfScopeResources.Count(resource => resource.Kind == OctopusResourceKind.ServerTask).ShouldBe(502);
 
-        var idMap = BuildIdMap(graph, currentProcess);
-        var processMapping = new OctopusImportDeploymentProcessMapper(
-            new OctopusImportActionMapperRegistry(
-            [
-                new OctopusKubernetesDeployContainersActionMapper(),
-                new OctopusKubernetesDeployIngressActionMapper(),
-                new OctopusManualActionMapper()
-            ]))
-            .MapToCreateStepCommands(currentProcess, idMap, 7);
+        var idMap = BuildFixtureIdMap(graph);
+        var processMapping = CreateProcessMapper().MapToCreateStepCommands(currentProcess, idMap, 7);
 
         processMapping.HasBlockers.ShouldBeFalse();
         processMapping.Steps.Count.ShouldBe(3);
@@ -99,23 +122,43 @@ public class NextChatExportFixtureTests
         validationJson.ShouldNotContain(RedactedNextChatExport.FeedPassword);
     }
 
-    private static OctopusImportIdMap BuildIdMap(
-        OctopusResourceGraph graph,
-        OctopusResourceNode currentProcess)
+    private static OctopusImportIdMap BuildFixtureIdMap(OctopusResourceGraph graph)
     {
         var idMap = new OctopusImportIdMap();
-        idMap.AddReused(currentProcess, 500);
-        idMap.AddReused(Find(graph, "Environments-1"), 101);
-        idMap.AddReused(Find(graph, "Environments-2"), 102);
-        idMap.AddReused(Find(graph, "Environments-3"), 103);
-        idMap.AddReused(Find(graph, "Channels-1"), 201);
-        idMap.AddReused(Find(graph, "Feeds-1"), 301);
-        idMap.AddReused(Find(graph, "Teams-1"), 401);
+        var destinationId = 100;
+
+        foreach (var resource in graph.Resources
+                     .Where(resource => !resource.IsHistorical)
+                     .OrderBy(resource => resource.Kind)
+                     .ThenBy(resource => resource.SourceId, StringComparer.OrdinalIgnoreCase))
+        {
+            idMap.AddReused(resource, destinationId++);
+        }
+
         return idMap;
     }
 
-    private static OctopusResourceNode Find(OctopusResourceGraph graph, string sourceId)
-        => graph.Resources.Single(resource => resource.SourceId == sourceId);
+    private static OctopusImportDeploymentProcessMapper CreateProcessMapper()
+        => new(new OctopusImportActionMapperRegistry(
+        [
+            new OctopusKubernetesDeployContainersActionMapper(),
+            new OctopusKubernetesDeployIngressActionMapper(),
+            new OctopusManualActionMapper()
+        ]));
+
+    private static string FindFixtureFolder(string folderName)
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory != null;
+             directory = directory.Parent)
+        {
+            var candidate = Path.Combine(directory.FullName, folderName);
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+
+        throw new DirectoryNotFoundException($"Could not find '{folderName}' from '{AppContext.BaseDirectory}'.");
+    }
 
     private static class RedactedNextChatExport
     {

@@ -105,7 +105,7 @@ public class ConfirmOctopusImportCommandHandler(
             throw new UnauthorizedAccessException("Octopus import confirmation requires an authenticated user.");
 
         var session = await sessionDataProvider
-            .GetSessionAsync(command.SessionId, currentUser.Id.Value, destinationSpaceId, ct)
+            .GetSessionNoTrackingAsync(command.SessionId, currentUser.Id.Value, destinationSpaceId, ct)
             .ConfigureAwait(false);
 
         if (session == null)

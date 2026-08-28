@@ -99,6 +99,22 @@ public class OctopusImportDependencyPlannerTests
     }
 
     [Fact]
+    public void BuildCurrentConfigurationPlan_TreatsWorkerPoolAsOutOfScope()
+    {
+        var resources = new[]
+        {
+            Node("WorkerPools-1", OctopusResourceKind.WorkerPool)
+        };
+        var graph = new OctopusResourceGraph(resources, [], [], []);
+
+        var plan = _planner.BuildCurrentConfigurationPlan(graph);
+
+        plan.OrderedResources.ShouldBeEmpty();
+        plan.OutOfScopeResources.Single().SourceId.ShouldBe("WorkerPools-1");
+        plan.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void BuildCurrentConfigurationPlan_KeepsOptionalReferencesOutOfOrderingDependencies()
     {
         var resources = new[]

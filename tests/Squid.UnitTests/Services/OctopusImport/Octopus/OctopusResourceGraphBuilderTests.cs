@@ -131,7 +131,7 @@ public class OctopusResourceGraphBuilderTests
     }
 
     [Fact]
-    public async Task Build_HistoricalDocuments_MarksDocumentAndChildResourcesHistorical()
+    public async Task Build_HistoricalDocuments_MarksDocumentResourcesHistoricalWithoutExpandingSnapshotChildren()
     {
         var snapshotVariablesJson = """
                                     {
@@ -170,8 +170,9 @@ public class OctopusResourceGraphBuilderTests
 
         graph.Resources.Single(r => r.SourceId == "variableset-Projects-1-s-1-ABC").IsHistorical.ShouldBeTrue();
         graph.Resources.Single(r => r.SourceId == "deploymentprocess-Projects-1-s-1-ABC").IsHistorical.ShouldBeTrue();
-        graph.Resources.Single(r => r.SourceId == "Variables-1").IsHistorical.ShouldBeTrue();
-        graph.Resources.Single(r => r.SourceId == "Actions-1").IsHistorical.ShouldBeTrue();
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Variables-1");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Steps-1");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Actions-1");
         graph.Resources.Single(r => r.SourceId == "Releases-1").IsHistorical.ShouldBeTrue();
         graph.Resources.Single(r => r.SourceId == "Deployments-1").IsHistorical.ShouldBeTrue();
         graph.Resources.Single(r => r.SourceId == "ServerTasks-1").IsHistorical.ShouldBeTrue();
@@ -179,6 +180,90 @@ public class OctopusResourceGraphBuilderTests
             r.FromSourceId == "Releases-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.VariableSetSnapshot &&
             r.ToSourceId == "variableset-Projects-1-s-1-ABC");
+    }
+
+    [Fact]
+    public async Task Build_DuplicateChildIdsAcrossHistoricalSnapshots_DoesNotBlockExtraction()
+    {
+        const string firstSnapshotJson = """
+                                         {
+                                             "Id":"variableset-Projects-1-s-1-ABC",
+                                             "OwnerId":"Projects-1",
+                                             "Variables":[{"Id":"Variables-Reused","Name":"Snapshot variable"}]
+                                         }
+                                         """;
+        const string secondSnapshotJson = """
+                                          {
+                                              "Id":"variableset-Projects-1-s-2-DEF",
+                                              "OwnerId":"Projects-1",
+                                              "Variables":[{"Id":"Variables-Reused","Name":"Snapshot variable"}]
+                                          }
+                                          """;
+        const string firstProcessSnapshotJson = """
+                                                {
+                                                    "Id":"deploymentprocess-Projects-1-s-1-ABC",
+                                                    "OwnerId":"Projects-1",
+                                                    "Steps":[{"Id":"Steps-Reused","Actions":[{"Id":"Actions-Reused"}]}]
+                                                }
+                                                """;
+        const string secondProcessSnapshotJson = """
+                                                 {
+                                                     "Id":"deploymentprocess-Projects-1-s-2-DEF",
+                                                     "OwnerId":"Projects-1",
+                                                     "Steps":[{"Id":"Steps-Reused","Actions":[{"Id":"Actions-Reused"}]}]
+                                                 }
+                                                 """;
+
+        var inventory = await BuildInventoryAsync(
+            ("variableset-Projects-1-s-1-ABC", "ProjectVariables", "variableset-Projects-1-s-1-ABC.json", firstSnapshotJson),
+            ("variableset-Projects-1-s-2-DEF", "ProjectVariables", "variableset-Projects-1-s-2-DEF.json", secondSnapshotJson),
+            ("deploymentprocess-Projects-1-s-1-ABC", "DeploymentProcess", "deploymentprocess-Projects-1-s-1-ABC.json", firstProcessSnapshotJson),
+            ("deploymentprocess-Projects-1-s-2-DEF", "DeploymentProcess", "deploymentprocess-Projects-1-s-2-DEF.json", secondProcessSnapshotJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId);
+        graph.Resources.Count(r => r.Kind == OctopusResourceKind.VariableSetSnapshot).ShouldBe(2);
+        graph.Resources.Count(r => r.Kind == OctopusResourceKind.DeploymentProcessSnapshot).ShouldBe(2);
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Variables-Reused");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Steps-Reused");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Actions-Reused");
+    }
+
+    [Fact]
+    public async Task Build_CurrentDocumentOverridesHistoricalDuplicateSourceIdWithoutBlocker()
+    {
+        const string historicalProcessJson = """
+                                             {
+                                                 "Id":"deploymentprocess-Projects-1",
+                                                 "OwnerId":"Projects-1",
+                                                 "Steps":[]
+                                             }
+                                             """;
+        const string currentProcessJson = """
+                                          {
+                                              "Id":"deploymentprocess-Projects-1",
+                                              "OwnerId":"Projects-1",
+                                              "Steps":[
+                                                  {
+                                                      "Id":"Steps-1",
+                                                      "Name":"Deploy",
+                                                      "Actions":[]
+                                                  }
+                                              ]
+                                          }
+                                          """;
+
+        var inventory = await BuildInventoryAsync(
+            ("deploymentprocess-Projects-1-s-1-ABC", "DeploymentProcess", "deploymentprocess-Projects-1-s-1-ABC.json", historicalProcessJson),
+            ("deploymentprocess-Projects-1", "DeploymentProcess", "deploymentprocess-Projects-1.json", currentProcessJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId);
+        graph.Resources.Count(r => r.SourceId == "deploymentprocess-Projects-1").ShouldBe(1);
+        graph.Resources.Single(r => r.SourceId == "deploymentprocess-Projects-1").IsHistorical.ShouldBeFalse();
+        graph.Resources.ShouldContain(r => r.SourceId == "Steps-1");
     }
 
     [Fact]
@@ -230,6 +315,21 @@ public class OctopusResourceGraphBuilderTests
 
         graph.Diagnostics.ShouldBeEmpty();
         graph.References.Single(r => r.ReferenceKind == OctopusResourceReferenceKind.Lifecycle).ToSourceId.ShouldBe("Lifecycles-Missing");
+    }
+
+    [Fact]
+    public async Task Build_WorkerPoolDocument_AddsWorkerPoolResourceWithoutBlocker()
+    {
+        var workerPoolJson = """{"Id":"WorkerPools-1","Name":"Default Worker Pool","DocumentType":"WorkerPool"}""";
+        var inventory = await BuildInventoryAsync(("WorkerPools-1", "WorkerPool", "WorkerPools-1.json", workerPoolJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Diagnostics.ShouldNotContain(d => d.Severity == Squid.Message.Enums.OctopusImport.OctopusImportCompatibilitySeverity.Blocker);
+        var resource = graph.Resources.Single();
+        resource.SourceId.ShouldBe("WorkerPools-1");
+        resource.Kind.ShouldBe(OctopusResourceKind.WorkerPool);
+        resource.DocumentKind.ShouldBe(OctopusDocumentKind.WorkerPool);
     }
 
     private async Task<OctopusManifestInventoryResult> BuildInventoryAsync(params (string Id, string DocumentType, string DocumentSource, string Json)[] documents)

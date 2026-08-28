@@ -115,6 +115,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             var mappedAction = MapAction(
                 action,
                 actionIndex,
+                step.Condition,
                 idMap,
                 diagnostics,
                 actionMappingContext,
@@ -163,6 +164,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     private static ActionMapping MapAction(
         OctopusDeploymentActionDto action,
         int actionIndex,
+        string stepCondition,
         OctopusImportIdMap idMap,
         List<OctopusImportDiagnosticDto> diagnostics,
         OctopusImportActionMappingContext actionMappingContext,
@@ -188,7 +190,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
         AddUnsupportedVariableScopeDiagnostics(action, diagnostics);
         AddUnsupportedTenantDiagnostics(action, diagnostics);
-        AddUnsupportedActionConditionDiagnostic(action, diagnostics);
+        AddUnsupportedActionConditionDiagnostic(action, stepCondition, diagnostics);
         if (runtimeActionHandlerValidator != null)
             diagnostics.AddRange(runtimeActionHandlerValidator.Validate(action, model));
 
@@ -202,9 +204,9 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             return null;
 
         diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
+            OctopusImportCompatibilitySeverity.Warning,
             OctopusImportDeploymentProcessMappingDiagnosticCodes.WorkerPoolUnsupported,
-            $"Octopus worker pool configuration for action '{action.Name}' cannot be mapped until worker pools are imported or selected.",
+            $"Octopus worker pool configuration for action '{action.Name}' is not mapped to Squid and was omitted.",
             OctopusResourceKind.DeploymentAction,
             action.Id,
             action.Name));
@@ -368,9 +370,13 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
     private static void AddUnsupportedActionConditionDiagnostic(
         OctopusDeploymentActionDto action,
+        string stepCondition,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
         if (string.IsNullOrWhiteSpace(action.Condition))
+            return;
+
+        if (string.Equals(action.Condition, stepCondition, StringComparison.OrdinalIgnoreCase))
             return;
 
         diagnostics.Add(Diagnostic(

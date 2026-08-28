@@ -53,7 +53,7 @@ public class OctopusInputExtractorTests
     }
 
     [Fact]
-    public async Task ExtractStandaloneJsonAsync_UnrecognizedJson_ReturnsDiagnostic()
+    public async Task ExtractStandaloneJsonAsync_UnrecognizedJson_ReturnsDiagnosticAndPreservesDocument()
     {
         var result = await ExtractStandaloneAsync("""
         {
@@ -61,7 +61,9 @@ public class OctopusInputExtractorTests
         }
         """, "unknown.json");
 
-        result.Documents.ShouldBeEmpty();
+        result.Documents.Count.ShouldBe(1);
+        result.Documents[0].Classification.Kind.ShouldBe(OctopusDocumentKind.Unknown);
+        result.Documents[0].SourcePath.ShouldBe("unknown.json");
         result.Diagnostics.Count.ShouldBe(1);
         result.Diagnostics[0].Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
         result.Diagnostics[0].Code.ShouldBe(OctopusInputExtractionDiagnosticCodes.UnrecognizedDocument);

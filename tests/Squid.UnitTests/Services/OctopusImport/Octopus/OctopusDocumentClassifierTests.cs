@@ -72,6 +72,7 @@ public class OctopusDocumentClassifierTests
     [InlineData("Releases-93056-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Release, true)]
     [InlineData("Deployments-390384-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Deployment, true)]
     [InlineData("ServerTasks-2032665-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.ServerTask, true)]
+    [InlineData("WorkerPools-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.WorkerPool, false)]
     [InlineData("deploymentprocess-Projects-1323-s-21-8DWSK-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.DeploymentProcessSnapshot, true)]
     [InlineData("variableset-Projects-1323-s-55-N6739-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.VariableSetSnapshot, true)]
     public void ClassifyFileName_MapsKnownExportFileNames(string fileName, OctopusDocumentKind expectedKind, bool outOfScope)
@@ -102,6 +103,19 @@ public class OctopusDocumentClassifierTests
             "Machines-1-D4C63A85E7894C5D8C20D9297FEA1A43");
 
         classification.Kind.ShouldBe(OctopusDocumentKind.Machine);
+    }
+
+    [Fact]
+    public void ClassifyJsonDocument_MapsWorkerPoolDocumentType()
+    {
+        var classification = OctopusDocumentClassifier.ClassifyJsonDocument(
+            "WorkerPools-1-D4C63A85E7894C5D8C20D9297FEA1A43.json",
+            "WorkerPools-1-D4C63A85E7894C5D8C20D9297FEA1A43",
+            "WorkerPool");
+
+        classification.Kind.ShouldBe(OctopusDocumentKind.WorkerPool);
+        classification.ManifestDocumentType.ShouldBe("WorkerPool");
+        classification.IsCurrentConfiguration.ShouldBeTrue();
     }
 
     [Theory]

@@ -443,6 +443,10 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         execution.AddCreated(resource, destination.Id);
 
+        var source = resource.GetSource<OctopusProjectDto>()
+            ?? throw new OctopusImportConfirmationException("Project source payload is missing.");
+        execution.AddCreatedMappingIfPresent(source.VariableSetId, OctopusResourceKind.VariableSet, destination.VariableSetId);
+        execution.AddCreatedMappingIfPresent(source.DeploymentProcessId, OctopusResourceKind.DeploymentProcess, destination.DeploymentProcessId);
     }
 
     private async Task CreateChannelAsync(
@@ -756,6 +760,16 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             var resource = FindResource(sourceId, kind);
             if (resource != null)
                 AddCreated(resource, destinationId);
+        }
+
+        public void AddCreatedMappingIfPresent(string sourceId, OctopusResourceKind kind, int destinationId)
+        {
+            if (destinationId <= 0)
+                return;
+
+            var resource = FindResource(sourceId, kind);
+            if (resource != null && !IdMap.TryGetDestinationId(resource, out _))
+                IdMap.AddCreated(resource, destinationId);
         }
 
         public void AddCreated(OctopusResourceNode resource, int destinationId)

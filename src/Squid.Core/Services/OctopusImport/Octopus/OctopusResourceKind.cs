@@ -25,5 +25,6 @@ public enum OctopusResourceKind
     Release,
     Deployment,
     ServerTask,
-    ActionTemplate
+    ActionTemplate,
+    WorkerPool
 }

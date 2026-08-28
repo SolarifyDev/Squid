@@ -109,13 +109,13 @@ public class OctopusImportSessionServiceTests
     {
         var sessionId = Guid.NewGuid();
         _dataProvider
-            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Extracted));
 
         var result = await _service.GetSessionAsync(sessionId, 7, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Extracted);
-        _dataProvider.Verify(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public class OctopusImportSessionServiceTests
             () => _service.GetSessionAsync(Guid.NewGuid(), 7, CancellationToken.None));
 
         _dataProvider.Verify(
-            p => p.GetSessionAsync(
+            p => p.GetSessionNoTrackingAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
@@ -287,7 +287,7 @@ public class OctopusImportSessionServiceTests
     {
         var sessionId = Guid.NewGuid();
         _dataProvider
-            .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
         _dataProvider
             .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))

@@ -42,6 +42,134 @@ public class OctopusImportSessionDataProviderTests
     }
 
     [Fact]
+    public async Task GetSessionNoTrackingAsync_ReturnsOwnedSessionWithoutTrackingIt()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var session = NewSession(
+            OctopusImportSessionState.Validated,
+            "validated.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        db.Set<OctopusImportSession>().Add(session);
+        await db.SaveChangesAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
+
+        var result = await provider.GetSessionNoTrackingAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.SessionId.ShouldBe(session.SessionId);
+        db.ChangeTracker.Entries<OctopusImportSession>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task GetSessionAsync_ReturnsOwnedSessionWithTrackingForUpdates()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var session = NewSession(
+            OctopusImportSessionState.Uploaded,
+            "uploaded.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        db.Set<OctopusImportSession>().Add(session);
+        await db.SaveChangesAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
+
+        var result = await provider.GetSessionAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            CancellationToken.None);
+
+        result.ShouldNotBeNull();
+        result.SessionId.ShouldBe(session.SessionId);
+        db.ChangeTracker.Entries<OctopusImportSession>().Single().Entity.ShouldBeSameAs(result);
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_UpdatesCurrentRowAfterAtomicStateTransition()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var session = NewSession(
+            OctopusImportSessionState.Validated,
+            "validated.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        db.Set<OctopusImportSession>().Add(session);
+        await db.SaveChangesAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
+
+        var tracked = await provider.GetSessionAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            CancellationToken.None);
+
+        var transitioned = await provider.TransitionStateAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            OctopusImportSessionState.Validated,
+            OctopusImportSessionState.Importing,
+            CancellationToken.None);
+
+        transitioned.ShouldBe(1);
+        tracked.State = OctopusImportSessionState.Succeeded.ToString();
+        tracked.ResultJson = "{\"succeeded\":true}";
+        tracked.CompletedAt = DateTimeOffset.UtcNow;
+        tracked.LastStateChangedAt = tracked.CompletedAt.Value;
+
+        await provider.UpdateSessionAsync(tracked, ct: CancellationToken.None);
+
+        var saved = await db.Set<OctopusImportSession>()
+            .AsNoTracking()
+            .SingleAsync(s => s.Id == session.Id, CancellationToken.None);
+        saved.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
+        saved.ResultJson.ShouldContain("\"succeeded\":true");
+        db.ChangeTracker.Entries<OctopusImportSession>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_UpdatesRowDirectlyWithoutUnitOfWorkSaveChanges()
+    {
+        var repository = new Mock<IRepository>();
+        var unitOfWork = new Mock<IUnitOfWork>();
+
+        repository
+            .Setup(r => r.ExecuteUpdateAsync(
+                It.IsAny<Expression<Func<OctopusImportSession, bool>>>(),
+                It.IsAny<Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var provider = new OctopusImportSessionDataProvider(repository.Object, unitOfWork.Object);
+        var session = NewSession(
+            OctopusImportSessionState.Failed,
+            "failed.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+        session.Id = 123;
+        session.SourceSummaryJson = null;
+
+        await provider.UpdateSessionAsync(session, ct: CancellationToken.None);
+
+        repository.Verify(r => r.ExecuteUpdateAsync(
+            It.IsAny<Expression<Func<OctopusImportSession, bool>>>(),
+            It.IsAny<Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        repository.Verify(r => r.Detach(session), Times.Once);
+        unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        session.DataVersion.ShouldNotBeNull();
+        session.DataVersion.Length.ShouldBe(16);
+        session.LastModifiedDate.ShouldNotBe(default);
+    }
+
+    [Fact]
     public async Task GetTemporaryUploadCleanupCandidatesAsync_ReturnsOnlyTerminalUploadsWhoseCleanupWindowHasElapsed()
     {
         await using var db = CreateDbContext();

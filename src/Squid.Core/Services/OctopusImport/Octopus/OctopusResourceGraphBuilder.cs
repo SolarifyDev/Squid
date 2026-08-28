@@ -22,11 +22,11 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         var diagnostics = new List<OctopusInputExtractionDiagnostic>(inventory.Diagnostics);
         var resources = new List<OctopusResourceNode>();
         var references = new List<OctopusResourceReference>();
-        var resourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resourceIndexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in inventory.Items.Where(i => i.HasDocument))
         {
-            var context = new GraphBuildContext(item, diagnostics, resources, references, resourceIds);
+            var context = new GraphBuildContext(item, diagnostics, resources, references, resourceIndexes);
             AddDocumentResource(context);
         }
 
@@ -95,6 +95,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
                 break;
             case OctopusDocumentKind.ActionTemplate:
                 AddJsonDocument(context, OctopusResourceKind.ActionTemplate);
+                break;
+            case OctopusDocumentKind.WorkerPool:
+                AddJsonDocument(context, OctopusResourceKind.WorkerPool);
                 break;
             default:
                 AddJsonDocument(context, OctopusResourceKind.Unknown);
@@ -186,6 +189,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
         AddReference(context, process.Id, kind, OctopusResourceReferenceKind.Project, process.OwnerId, OctopusResourceKind.Project, process.OwnerId, true);
 
+        if (kind == OctopusResourceKind.DeploymentProcessSnapshot)
+            return;
+
         foreach (var step in process.Steps.Select((value, index) => (value, index)))
             AddDeploymentStep(context, process, kind, step.value, step.index);
     }
@@ -245,6 +251,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             return;
 
         AddReference(context, variableSet.Id, kind, OctopusResourceReferenceKind.Project, variableSet.OwnerId, OctopusResourceKind.Project, variableSet.OwnerId, true);
+
+        if (kind == OctopusResourceKind.VariableSetSnapshot)
+            return;
 
         foreach (var variable in variableSet.Variables.Select((value, index) => (value, index)))
             AddVariable(context, variableSet, kind, variable.value, variable.index);
@@ -382,20 +391,32 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             return false;
         }
 
-        if (!context.ResourceIds.Add(sourceId))
+        if (!context.ResourceIndexes.TryGetValue(sourceId, out var existingIndex))
         {
-            context.Diagnostics.Add(Blocker(
-                OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId,
-                $"Octopus import graph contains duplicate source id '{sourceId}'.",
-                sourcePath,
-                sourceId,
-                documentKind));
-
-            return false;
+            context.ResourceIndexes[sourceId] = context.Resources.Count;
+            context.Resources.Add(new OctopusResourceNode(sourceId, name, kind, documentKind, sourcePath, ownerProjectId, parentSourceId, isHistorical, source));
+            return true;
         }
 
-        context.Resources.Add(new OctopusResourceNode(sourceId, name, kind, documentKind, sourcePath, ownerProjectId, parentSourceId, isHistorical, source));
-        return true;
+        var existing = context.Resources[existingIndex];
+
+        if (existing.IsHistorical && !isHistorical)
+        {
+            context.Resources[existingIndex] = new OctopusResourceNode(sourceId, name, kind, documentKind, sourcePath, ownerProjectId, parentSourceId, isHistorical, source);
+            return true;
+        }
+
+        if (existing.IsHistorical || isHistorical)
+            return false;
+
+        context.Diagnostics.Add(Blocker(
+            OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId,
+            $"Octopus import graph contains duplicate source id '{sourceId}'.",
+            sourcePath,
+            sourceId,
+            documentKind));
+
+        return false;
     }
 
     private static T Deserialize<T>(GraphBuildContext context)
@@ -518,7 +539,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         List<OctopusInputExtractionDiagnostic> Diagnostics,
         List<OctopusResourceNode> Resources,
         List<OctopusResourceReference> References,
-        HashSet<string> ResourceIds)
+        Dictionary<string, int> ResourceIndexes)
     {
         public OctopusExtractedJsonDocument Document => Item.Document;
 

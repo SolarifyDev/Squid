@@ -113,6 +113,7 @@ public static partial class OctopusDocumentClassifier
             "Deployment" => OctopusDocumentKind.Deployment,
             "ServerTask" => OctopusDocumentKind.ServerTask,
             "ActionTemplate" => OctopusDocumentKind.ActionTemplate,
+            "WorkerPool" => OctopusDocumentKind.WorkerPool,
             _ => OctopusDocumentKind.Unknown
         };
     }
@@ -171,6 +172,8 @@ public static partial class OctopusDocumentClassifier
             return OctopusDocumentKind.ServerTask;
         if (value.StartsWith("ActionTemplates-", StringComparison.OrdinalIgnoreCase))
             return OctopusDocumentKind.ActionTemplate;
+        if (value.StartsWith("WorkerPools-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.WorkerPool;
 
         return OctopusDocumentKind.Unknown;
     }

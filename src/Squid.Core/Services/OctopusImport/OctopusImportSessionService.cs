@@ -122,7 +122,14 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
     public async Task<OctopusImportSessionDto> GetSessionAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
     {
-        return Map(await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false));
+        var session = await _dataProvider
+            .GetSessionNoTrackingAsync(sessionId, GetCurrentUserId(), destinationSpaceId, ct)
+            .ConfigureAwait(false);
+
+        if (session == null)
+            throw new OctopusImportSessionNotFoundException(sessionId);
+
+        return Map(session);
     }
 
     public async Task<OctopusImportSessionDto> RegisterTemporaryUploadAsync(
@@ -205,7 +212,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
     {
         var ownerUserId = GetCurrentUserId();
-        var session = await _dataProvider.GetSessionAsync(sessionId, ownerUserId, destinationSpaceId, ct).ConfigureAwait(false);
+        var session = await _dataProvider.GetSessionNoTrackingAsync(sessionId, ownerUserId, destinationSpaceId, ct).ConfigureAwait(false);
 
         if (session == null)
             throw new OctopusImportSessionNotFoundException(sessionId);

@@ -301,6 +301,33 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
+    public void MapToCreateStepCommands_WhenActionConditionMatchesStepCondition_DoesNotAddBlocker()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Deploy",
+            Condition = "Success",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-1",
+                    Name = "Deploy",
+                    ActionType = "Octopus.Script",
+                    Condition = "Success"
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.UnsupportedActionCondition);
+        result.Steps.Single().CreateCommand.Step.Condition.ShouldBe("Success");
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_WhenActionHasUnsupportedTargetingOrCondition_AddsBlockers()
     {
         var process = Process(new OctopusDeploymentStepDto
@@ -329,6 +356,36 @@ public class OctopusImportDeploymentProcessMapperTests
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.VariableScopedActionTargetUnsupported);
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.TenantTagsUnsupported);
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportDeploymentProcessMappingDiagnosticCodes.UnsupportedActionCondition);
+        result.Diagnostics.Single(d => d.Code == OctopusImportDeploymentProcessMappingDiagnosticCodes.WorkerPoolUnsupported)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_WhenActionHasWorkerPoolOnly_AddsWarningAndOmitsWorkerPool()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Deploy",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-1",
+                    Name = "Deploy",
+                    ActionType = "Octopus.Script",
+                    WorkerPoolId = "WorkerPools-1"
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var action = result.Steps.Single().CreateCommand.Step.Actions.Single();
+        action.WorkerPoolId.ShouldBeNull();
+        var diagnostic = result.Diagnostics.Single(d => d.Code == OctopusImportDeploymentProcessMappingDiagnosticCodes.WorkerPoolUnsupported);
+        diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
     }
 
     [Fact]
