@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Autofac;
 using Halibut;
+using Serilog;
+using Serilog.Events;
 using Shouldly;
 using Squid.Core.Halibut;
 using Squid.Core.Settings.SelfCert;
@@ -12,44 +16,41 @@ using Xunit;
 namespace Squid.UnitTests.Settings;
 
 /// <summary>
-/// Pins that <see cref="HalibutModule"/> actually CALLS the SelfCert guard.
+/// Pins that <see cref="HalibutModule"/> actually WIRES the SelfCert guard, and where.
 ///
 /// <para><b>Why this exists separately from <c>SelfCertValidatorTests</c></b>: those exercise the
 /// validator in isolation, which proves it makes the right decision but nothing about whether it
-/// is on the path that serves the identity. Deleting both call sites from <c>HalibutModule</c>
-/// left the entire suite green — the validator would still be perfect and production still
-/// unprotected. The bug class this whole guard exists to prevent is a seam nobody tested across,
-/// so the seam itself is pinned here.</para>
+/// is on a path that runs. The 1.9.5 incident was a WIRING failure mode: enforcement lived only
+/// inside the lazily-resolved <c>HalibutRuntime</c> factory, the one startup consumer swallowed
+/// its exception into a log line, and the strict-mode server came up half-alive — web UI working,
+/// every deploy and health check failing with an Autofac resolution exception.</para>
 ///
-/// <para>These resolve the real registration. The guard runs before any Halibut runtime or
-/// listener is constructed, so a rejected identity fails without opening a socket.</para>
+/// <para>The contract pinned here: enforcement runs synchronously at container BUILD via
+/// <see cref="SelfCertStartupCheck"/>. Strict refuses to start, cleanly; the default (Warn) logs
+/// the rotation warning once at startup and the server works; a missing or unloadable identity
+/// never fails the build — those keep failing lazily in the factory with actionable context.</para>
 /// </summary>
 [Collection(GlobalStateSerialisedCollection.Name)]
 public sealed class HalibutModuleSelfCertWiringTests
 {
     [Fact]
-    public void ResolvingHalibutRuntime_WithTheCommittedIdentity_IsRejected()
+    public void StrictMode_CommittedIdentity_FailsContainerBuild()
     {
-        // Pins WIRING, not the default, so the mode is set explicitly — leaving it ambient would
-        // make this test go red on a developer machine that exported the documented dev opt-out.
+        // Fail-fast is the point of opting into strict: the server must refuse to START, not
+        // come up half-alive and fail every deploy at DI resolution.
         var restore = SetEnforcementEnvVar("strict");
 
         try
         {
             var committed = ReadCommittedSelfCert();
 
-            using var container = BuildContainer(committed.Base64, committed.Password);
-
-            var ex = Should.Throw<Exception>(() => container.Resolve<HalibutRuntime>());
+            var ex = Should.Throw<Exception>(() => BuildContainer(committed.Base64, committed.Password));
             var message = Unwrap(ex).Message;
 
-            // NOT the env-var name: EnsureConfigured's message names it too, so asserting on it
-            // would pass just as happily if the identity were missing entirely and the published-
-            // identity check had been deleted. The thumbprint appears in only one of the two.
             message.ShouldContain(CommittedThumbprint(),
-                customMessage: "Resolving the runtime with the committed identity must surface the published-" +
-                               "identity rejection, which names the offending thumbprint. A different failure " +
-                               "means HalibutModule is no longer calling EnsureNotPublishedIdentity.");
+                customMessage: "Container build with the committed identity under strict must surface the " +
+                               "published-identity rejection, which names the offending thumbprint. A different " +
+                               "failure means SelfCertStartupCheck is no longer registered or no longer checks.");
         }
         finally
         {
@@ -58,27 +59,77 @@ public sealed class HalibutModuleSelfCertWiringTests
     }
 
     [Fact]
-    public void ResolvingHalibutRuntime_WithNoIdentityConfigured_FailsWithAnActionableMessage()
+    public void DefaultMode_CommittedIdentity_BuildsRunsAndWarnsOnce()
     {
-        // Unconditional by design — no mode substitutes for an absent identity — so this one is
-        // genuinely mode-independent and needs no env pinning.
+        // The non-breaking half of the contract: an un-rotated deployment upgrading in place
+        // must keep working — container builds, Halibut resolves — and the operator must be
+        // told at startup, where they actually look, exactly what to rotate.
+        var restoreEnv = SetEnforcementEnvVar(null);
+        var (sink, restoreLogger) = InstallCapturingLogger();
+
+        try
+        {
+            var committed = ReadCommittedSelfCert();
+
+            using var container = BuildContainer(committed.Base64, committed.Password);
+            var runtime = container.Resolve<HalibutRuntime>();
+
+            runtime.ShouldNotBeNull("an un-rotated identity must still produce a working runtime under the default mode");
+
+            var warnings = sink.Events.Where(e => e.Level == LogEventLevel.Warning && e.RenderMessage().Contains(CommittedThumbprint())).ToList();
+
+            warnings.Count.ShouldBe(1,
+                customMessage: "The startup check must warn about the published identity exactly once. Zero means " +
+                               "the guard is silently dead; more than one means enforcement is duplicated again.");
+        }
+        finally
+        {
+            restoreLogger();
+            restoreEnv();
+        }
+    }
+
+    [Fact]
+    public void NoIdentityConfigured_DoesNotFailBuild_AndResolvingStillFailsActionably()
+    {
+        // The startup check must never turn a server that used to start into one that does not:
+        // a missing identity keeps today's lazy behaviour — build succeeds, first Halibut use
+        // fails with the message that names the setting to populate.
         using var container = BuildContainer(base64: string.Empty, password: string.Empty);
 
         var ex = Should.Throw<Exception>(() => container.Resolve<HalibutRuntime>());
-        var message = Unwrap(ex).Message;
 
-        message.ShouldContain(SelfCertValidator.SettingPath,
+        Unwrap(ex).Message.ShouldContain(SelfCertValidator.SettingPath,
             customMessage: "An absent identity must name the setting to populate, not surface an opaque " +
                            "FormatException from inside the PKCS#12 loader. A different message means " +
                            "HalibutModule is no longer calling EnsureConfigured.");
     }
 
     [Fact]
-    public void ResolvingHalibutRuntime_WithADeploymentSpecificIdentity_Succeeds()
+    public void UnloadableIdentity_DoesNotFailBuild()
     {
-        // Guards against 'fix by rejecting everything': a properly configured deployment must
-        // still get a runtime. Also proves the two tests above fail for the RIGHT reason rather
-        // than because resolution is broken in this harness.
+        // Corrupt Base64 is the loader's problem at first use, not the startup check's: turning
+        // it into a build failure would be a new way for an upgrade to stop a server starting.
+        var restore = SetEnforcementEnvVar("strict");
+
+        try
+        {
+            using var container = BuildContainer(base64: "not-base64!!", password: "x");
+
+            container.ShouldNotBeNull();
+        }
+        finally
+        {
+            restore();
+        }
+    }
+
+    [Fact]
+    public void StrictMode_DeploymentSpecificIdentity_BuildsAndResolves()
+    {
+        // Guards against 'fix by rejecting everything': a rotated deployment opting into strict
+        // must build and get a runtime. Also proves the strict-rejection test above fails for
+        // the RIGHT reason rather than because building is broken in this harness.
         var restore = SetEnforcementEnvVar("strict");
 
         try
@@ -86,7 +137,6 @@ public sealed class HalibutModuleSelfCertWiringTests
             var (base64, password) = CreateDeploymentSpecificPkcs12();
 
             using var container = BuildContainer(base64, password);
-
             var runtime = container.Resolve<HalibutRuntime>();
 
             runtime.ShouldNotBeNull();
@@ -99,7 +149,7 @@ public sealed class HalibutModuleSelfCertWiringTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    /// <summary>Autofac unwraps registration failures in DependencyResolutionException.</summary>
+    /// <summary>Autofac wraps registration/startable failures in DependencyResolutionException.</summary>
     private static Exception Unwrap(Exception ex)
     {
         while (ex.InnerException != null) ex = ex.InnerException;
@@ -124,6 +174,25 @@ public sealed class HalibutModuleSelfCertWiringTests
         Environment.SetEnvironmentVariable(name, value);
 
         return () => Environment.SetEnvironmentVariable(name, prior);
+    }
+
+    private static (CapturingLogSink Sink, Action Restore) InstallCapturingLogger()
+    {
+        var original = Log.Logger;
+        var sink = new CapturingLogSink();
+
+        Log.Logger = new LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(sink).CreateLogger();
+
+        return (sink, () => Log.Logger = original);
+    }
+
+    private sealed class CapturingLogSink : Serilog.Core.ILogEventSink
+    {
+        private readonly List<LogEvent> _events = new();
+
+        public IReadOnlyList<LogEvent> Events { get { lock (_events) return _events.ToList(); } }
+
+        public void Emit(LogEvent logEvent) { lock (_events) _events.Add(logEvent); }
     }
 
     private static (string Base64, string Password) ReadCommittedSelfCert()

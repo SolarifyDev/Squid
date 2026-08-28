@@ -21,7 +21,7 @@ namespace Squid.Core.Settings.SelfCert;
 ///         <description>ALWAYS throw — no mode helps, Halibut cannot start without an
 ///         identity, and the alternative is an opaque failure deep inside the loader.</description></item>
 ///   <item><term>a known-published thumbprint</term>
-///         <description>Off → allow silently; Warn → allow + warn; Strict (default) → throw.</description></item>
+///         <description>Off → allow silently; Warn (default) → allow + warn; Strict → throw.</description></item>
 ///   <item><term>any other certificate</term>
 ///         <description>All modes allow silently.</description></item>
 /// </list>
@@ -31,9 +31,9 @@ public static class SelfCertValidator
     /// <summary>
     /// Operator escape hatch (Rule 8): selects how a known-published server identity is handled.
     /// Recognised values <c>off</c> / <c>warn</c> / <c>strict</c>; unset defaults to
-    /// <see cref="EnforcementMode.Strict"/>.
+    /// <see cref="EnforcementMode.Warn"/>.
     ///
-    /// <para>Pinned literal — renaming it silently re-arms the rejection for every operator who
+    /// <para>Pinned literal — renaming it silently changes the posture for every operator who
     /// set it by its documented name.</para>
     /// </summary>
     public const string EnforcementEnvVar = "SQUID_SELFCERT_ENFORCEMENT";
@@ -41,13 +41,20 @@ public static class SelfCertValidator
     public const string SettingPath = "SelfCert:Base64";
 
     /// <summary>
-    /// Mode used when <see cref="EnforcementEnvVar"/> is unset. Deliberately stricter than the
-    /// shared <see cref="EnforcementModeReader.Read(string, EnforcementMode)"/> default of
-    /// <see cref="EnforcementMode.Warn"/>: a warning about a published server identity is easy to
-    /// miss, and the consequence of missing it is fleet-wide impersonation. Same posture the
-    /// master-key guard settled on.
+    /// Mode used when <see cref="EnforcementEnvVar"/> is unset: <see cref="EnforcementMode.Warn"/>.
+    ///
+    /// <para>This guard originally shipped (1.9.5) defaulting to Strict, borrowing the
+    /// master-key guard's posture — and broke a working production on upgrade: its deployment
+    /// still carried the committed certificate, so every deploy and health check failed at DI
+    /// resolution while the web UI stayed up. The master-key precedent does not transfer. That
+    /// guard rejects an EMPTY key — a configuration that never protected anything, so refusing
+    /// it breaks nothing that worked. This guard rejects a WORKING identity that the entire
+    /// fleet's trust is pinned to; refusing it by default turns an upgrade into an outage that
+    /// only a fleet-wide re-trust (or the env var) can end. Warn keeps existing deployments
+    /// running while telling the operator, on every startup, exactly what to rotate and why;
+    /// <c>strict</c> stays available as the opt-in for deployments that have rotated.</para>
     /// </summary>
-    public const EnforcementMode DefaultMode = EnforcementMode.Strict;
+    public const EnforcementMode DefaultMode = EnforcementMode.Warn;
 
     /// <summary>Resolves the configured mode, defaulting to <see cref="DefaultMode"/>.</summary>
     public static EnforcementMode ResolveMode() => EnforcementModeReader.Read(EnforcementEnvVar, DefaultMode);
