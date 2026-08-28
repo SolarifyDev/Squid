@@ -46,18 +46,22 @@ public class HalibutModule : Module
         // which reads halibut.Logs directly.
         builder.Register(ctx => ctx.Resolve<HalibutRuntime>().Logs).As<ILogFactory>().SingleInstance();
 
+        // Published-identity enforcement runs here, synchronously at container build, NOT in
+        // the runtime factory below: the factory is resolved lazily and the startup path that
+        // touches it swallows exceptions into a log line, which left a strict-mode server
+        // half-alive (UI up, every deploy/health-check failing at DI resolution).
+        builder.RegisterType<SelfCertStartupCheck>().As<IStartable>().SingleInstance();
+
         builder.Register(ctx =>
         {
             var selfCertSetting = ctx.Resolve<SelfCertSetting>();
 
-            // Fail with an actionable message before the loader turns a missing/committed
-            // identity into an opaque FormatException or a silently-public server key.
+            // Fail with an actionable message before the loader turns a missing identity
+            // into an opaque FormatException.
             SelfCertValidator.EnsureConfigured(selfCertSetting.Base64);
 
             var certBytes = Convert.FromBase64String(selfCertSetting.Base64);
             var serverCert = X509CertificateLoader.LoadPkcs12(certBytes, selfCertSetting.Password, X509KeyStorageFlags.MachineKeySet);
-
-            SelfCertValidator.EnsureNotPublishedIdentity(serverCert, SelfCertValidator.ResolveMode());
 
             var services = new DelegateServiceFactory();
 
