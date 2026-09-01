@@ -1,5 +1,6 @@
 using System.Linq;
 using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Models.Deployments.Execution;
 
@@ -120,7 +121,7 @@ public class ExecutionIntentTests
     // ------------------------------------------------------------------
 
     [Fact]
-    public void DeployPackageIntent_CarriesPackageReferenceAndScripts()
+    public void DeployPackageIntent_CarriesPackageReferenceAndPathPlan()
     {
         var intent = new DeployPackageIntent
         {
@@ -132,17 +133,18 @@ public class ExecutionIntentTests
                 FeedId = "docker-hub",
                 PurposeHint = "primary"
             },
-            ExtractTo = "content/app",
-            PreDeployScript = "echo before",
-            PostDeployScript = "echo after",
+            InstallationDirectoryMode = "Versioned",
+            PathSegments = new PackageInstallationPathSegments("Production", "WebApp", "Acme.Web", "2.0.0"),
             ScriptSyntax = ScriptSyntax.Bash
         };
 
         intent.Package.PackageId.ShouldBe("Acme.Web");
         intent.Package.PurposeHint.ShouldBe("primary");
-        intent.ExtractTo.ShouldBe("content/app");
-        intent.PreDeployScript.ShouldBe("echo before");
-        intent.PostDeployScript.ShouldBe("echo after");
+        intent.InstallationDirectoryMode.ShouldBe("Versioned");
+        intent.PathSegments.EnvironmentName.ShouldBe("Production");
+        intent.PathSegments.ProjectName.ShouldBe("WebApp");
+        intent.PathSegments.PackageId.ShouldBe("Acme.Web");
+        intent.PathSegments.Version.ShouldBe("2.0.0");
     }
 
     [Fact]

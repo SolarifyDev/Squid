@@ -33,22 +33,26 @@ public sealed class SelfCertValidatorTests
     }
 
     [Fact]
-    public void DefaultMode_IsStrict_NotTheSharedWarnDefault()
+    public void DefaultMode_IsWarn_BecauseStrictBrokeAWorkingDeploymentOnUpgrade()
     {
-        // The shared EnforcementModeReader default is Warn. A warning about a published server
-        // identity is easy to miss and the consequence is fleet-wide impersonation, so this guard
-        // deliberately opts into the stricter posture — same call the master-key guard made.
-        SelfCertValidator.DefaultMode.ShouldBe(EnforcementMode.Strict);
+        // This guard shipped in 1.9.5 defaulting to Strict and took down a production's deploys
+        // and health checks on upgrade: its config still carried the committed certificate — a
+        // WORKING identity the whole fleet's trust is pinned to, not a broken one like the empty
+        // master key that justified Strict elsewhere. Warn keeps existing deployments running
+        // while telling the operator what to rotate; strict is the opt-in for rotated fleets.
+        // Changing this constant back to Strict re-creates that outage for every deployment
+        // that has not rotated.
+        SelfCertValidator.DefaultMode.ShouldBe(EnforcementMode.Warn);
 
-        // ResolveMode reads the environment, and this guard's own rejection message tells a
-        // developer to export that variable — so the one test that asserts the UNSET default has
-        // to clear it explicitly, or it goes red on exactly the machines that followed the advice.
+        // ResolveMode reads the environment — the one test asserting the UNSET default has to
+        // clear the var explicitly, or it goes red on machines that exported it.
         var restore = SetEnforcementEnvVar(null);
 
         try
         {
-            SelfCertValidator.ResolveMode().ShouldBe(EnforcementMode.Strict,
-                customMessage: "With the env var unset the guard must resolve Strict, not the shared Warn default.");
+            SelfCertValidator.ResolveMode().ShouldBe(EnforcementMode.Warn,
+                customMessage: "With the env var unset the guard must resolve Warn — a working (if insecure) " +
+                               "identity must keep working across an upgrade.");
         }
         finally
         {
@@ -74,38 +78,30 @@ public sealed class SelfCertValidatorTests
     }
 
     [Fact]
-    public void CommittedCertificate_IsRejectedUnderTheDefaultMode()
+    public void CommittedCertificate_IsRejectedUnderStrict()
     {
-        // The end-to-end statement of intent: with no configuration at all, the identity in the
-        // repository must not be usable.
-        var restore = SetEnforcementEnvVar(null);
+        // The opt-in posture for fleets that have rotated: the identity in the repository must
+        // not be usable.
+        var committed = LoadCommittedCertificate();
 
-        try
-        {
-            var committed = LoadCommittedCertificate();
+        var ex = Should.Throw<InvalidOperationException>(
+            () => SelfCertValidator.EnsureNotPublishedIdentity(committed, EnforcementMode.Strict));
 
-            var ex = Should.Throw<InvalidOperationException>(
-                () => SelfCertValidator.EnsureNotPublishedIdentity(committed, SelfCertValidator.ResolveMode()));
-
-            ex.Message.ShouldContain(committed.Thumbprint);
-            ex.Message.ShouldContain(SelfCertValidator.EnforcementEnvVar,
-                customMessage: "The rejection must name its own escape hatch, or an operator who needs to proceed is stuck.");
-        }
-        finally
-        {
-            restore();
-        }
+        ex.Message.ShouldContain(committed.Thumbprint);
+        ex.Message.ShouldContain(SelfCertValidator.EnforcementEnvVar,
+            customMessage: "The rejection must name its own escape hatch, or an operator who needs to proceed is stuck.");
     }
 
     [Theory]
     [InlineData(EnforcementMode.Off)]
     [InlineData(EnforcementMode.Warn)]
-    public void CommittedCertificate_IsAllowedUnderTheEscapeHatchModes(EnforcementMode mode)
+    public void CommittedCertificate_IsAllowedUnderOffAndWarn(EnforcementMode mode)
     {
         var committed = LoadCommittedCertificate();
 
         Should.NotThrow(() => SelfCertValidator.EnsureNotPublishedIdentity(committed, mode),
-            customMessage: $"{mode} is the documented opt-out; local development depends on it.");
+            customMessage: $"{mode} must allow the identity through — Warn is the default every un-rotated " +
+                           "deployment runs under, and Off is the silent opt-out.");
     }
 
     [Theory]

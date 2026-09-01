@@ -30,7 +30,7 @@ public class FullUploadStagingHandler : IPackageStagingHandler
     public Task<PackageStagingPlan> TryPlanAsync(PackageRequirement requirement, PackageStagingContext context, CancellationToken ct)
     {
         var sshContext = (SshPackageStagingContext)context;
-        var remoteNupkgPath = SshPaths.PackageNupkgPath(sshContext.BaseDirectory, requirement.PackageId, requirement.Version);
+        var remoteNupkgPath = SshPaths.PackageArchivePathFromLocalFile(sshContext.BaseDirectory, requirement.PackageId, requirement.Version, requirement.LocalPath);
 
         _uploader.UploadPackage(sshContext.Scope, requirement.LocalPath, remoteNupkgPath);
 

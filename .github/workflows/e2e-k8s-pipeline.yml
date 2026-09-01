@@ -33,9 +33,9 @@ on:
   workflow_dispatch:
     inputs:
       test_filter:
-        description: 'xUnit --filter override (default: Category=E2E)'
+        description: 'xUnit --filter override (PR defaults to Deploy Package smoke; full runs keep all E2E)'
         required: false
-        default: 'Category=E2E'
+        default: ''
 
 permissions:
   contents: read
@@ -138,7 +138,13 @@ jobs:
       - name: Run E2E tests
         run: |
           FILTER="${{ github.event.inputs.test_filter }}"
-          if [ -z "$FILTER" ]; then FILTER="Category=E2E"; fi
+          if [ -z "$FILTER" ]; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              FILTER="Category=E2E&Category!=DeployPackageFull"
+            else
+              FILTER="Category=E2E|Category=DeployPackageSmoke|Category=DeployPackageFull"
+            fi
+          fi
           echo "Running with filter: $FILTER"
           dotnet test tests/Squid.E2ETests/Squid.E2ETests.csproj \
             --configuration Release --no-build \

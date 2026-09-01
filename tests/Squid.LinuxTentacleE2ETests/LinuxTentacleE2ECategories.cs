@@ -78,4 +78,18 @@ public static class LinuxTentacleE2ECategories
     /// cleanup via the fixture's IDisposable per Rule 12.3.</para>
     /// </summary>
     public const string InstallScript = "LinuxTentacleInstallScriptE2E";
+
+    /// <summary>
+    /// Deploy a Package Linux agent bootstrap E2E using production
+    /// <c>DeployPackageByCalamari.sh</c> + real Halibut dispatch.
+    /// </summary>
+    public const string DeployPackageSmoke = "DeployPackageLinuxSmoke";
+    public const string DeployPackageFull = "DeployPackageLinuxFull";
+
+    /// <summary>
+    /// E2E coverage for resolving the Calamari binary bundled beside a native
+    /// Linux Tentacle installation. The test runs the production installer and
+    /// rendered deployment template with Calamari absent from PATH.
+    /// </summary>
+    public const string CalamariLookup = "LinuxTentacleCalamariLookupE2E";
 }

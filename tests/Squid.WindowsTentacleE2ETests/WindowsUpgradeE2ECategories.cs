@@ -257,6 +257,15 @@ public static class WindowsUpgradeE2ECategories
     public const string IISDeploy = "IISDeployE2E";
 
     /// <summary>
+    /// Deploy a Package Windows host path: server → agent file transfer →
+    /// production <c>DeployPackageByCalamari.ps1</c> bootstrap →
+    /// <c>squid-calamari deploy-package</c> durable install. Proves the
+    /// Windows PowerShell install path that Linux/SSH pipeline e2e does not cover.
+    /// </summary>
+    public const string DeployPackageSmoke = "DeployPackageWindowsSmoke";
+    public const string DeployPackageFull = "DeployPackageWindowsFull";
+
+    /// <summary>
     /// E2E coverage for the production <c>Squid.DeployWindowsService</c>
     /// action's PowerShell payload against a real Windows host. Drives
     /// <c>WindowsServiceDeployScriptBuilder.Build(action)</c> to produce the
@@ -269,4 +278,14 @@ public static class WindowsUpgradeE2ECategories
     /// </para>
     /// </summary>
     public const string WindowsServiceDeploy = "WindowsServiceDeployE2E";
+
+    /// <summary>
+    /// E2E coverage for the Calamari lookup fix: after a real
+    /// <c>install-tentacle.ps1</c> run, the DeployByCalamari resolution MUST
+    /// find <c>squid-calamari.exe</c> beside the installed Tentacle binary via
+    /// <c>install-info.json</c> (absolute path) even when the binary is not in
+    /// PATH. Windows-only — drives a real <c>powershell.exe</c> process plus
+    /// the real install script against <c>LocalReleaseMirror</c>.
+    /// </summary>
+    public const string CalamariLookup = "CalamariLookupE2E";
 }

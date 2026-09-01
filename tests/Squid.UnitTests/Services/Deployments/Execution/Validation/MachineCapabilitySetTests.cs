@@ -99,6 +99,28 @@ public class MachineCapabilitySetTests
                     "pass IIS-deploy gating — a real regression risk.");
     }
 
+    // ── OS projection — legacy Unix form tolerance ───────────────────────────
+
+    [Theory]
+    [InlineData("Unix 7.0.11.360")]
+    [InlineData("Unix 13.4.0.0")]
+    [InlineData("unix 5.15.0")]
+    public void From_LegacyUnixVersionString_ProjectsToLinuxAndMacOs(string osValue)
+    {
+        // Real production failure mode observed with Docker Linux Tentacle: older
+        // agents wrote Environment.OSVersion.VersionString ("Unix ...") into
+        // metadata["os"]. Without tolerance the os slot is omitted while other
+        // slots (architecture/shells) warm the cache, so ValidateStaticRequirements
+        // rejects Deploy a Package with "Target does not advertise capability slot 'os'".
+        var caps = new MachineRuntimeCapabilities { Os = osValue, Architecture = "X64" };
+        var projected = MachineCapabilitySet.From(caps);
+
+        projected.ContainsKey(CapabilityKeys.OsSlot).ShouldBeTrue(
+            customMessage: $"Legacy Unix OS string '{osValue}' MUST project an os slot.");
+        projected[CapabilityKeys.OsSlot].ShouldContain(CapabilityKeys.Os.Linux);
+        projected[CapabilityKeys.OsSlot].ShouldContain(CapabilityKeys.Os.MacOS);
+    }
+
     [Fact]
     public void From_UnknownOs_OmitsSlotSoSlotMatchIsOptimistic()
     {

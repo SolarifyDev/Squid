@@ -36,11 +36,11 @@ public static class SshFileTransfer
     {
         UploadBytes(sftp, data, remotePath);
 
-        var localHash = ComputeLocalMd5(data);
-        var remoteHash = CalculateRemoteMd5(ssh, remotePath);
+        var localHash = ComputeLocalSha256(data);
+        var remoteHash = CalculateRemoteSha256(ssh, remotePath);
 
         if (!string.IsNullOrEmpty(remoteHash) && !string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"MD5 checksum mismatch for {remotePath}: local={localHash}, remote={remoteHash}");
+            throw new InvalidOperationException($"SHA-256 checksum mismatch for {remotePath}: local={localHash}, remote={remoteHash}");
     }
 
     public static byte[] DownloadFile(SftpClient client, string remotePath)
@@ -51,26 +51,26 @@ public static class SshFileTransfer
         return stream.ToArray();
     }
 
-    public static string CalculateRemoteMd5(SshClient ssh, string remotePath)
+    public static string CalculateRemoteSha256(SshClient ssh, string remotePath)
     {
         try
         {
-            var result = SshRemoteShellExecutor.Execute(ssh, $"md5sum \"{remotePath}\" | awk '{{ print $1 }}'", TimeSpan.FromSeconds(10));
+            var result = SshRemoteShellExecutor.Execute(ssh, $"sha256sum \"{remotePath}\" | awk '{{ print $1 }}'", TimeSpan.FromSeconds(10));
 
             if (result.ExitCode != 0) return string.Empty;
 
-            return result.Output.Trim();
+            return result.Output.Trim().ToLowerInvariant();
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[SSH] Failed to calculate remote MD5 for {RemotePath}", remotePath);
+            Log.Warning(ex, "[SSH] Failed to calculate remote SHA-256 for {RemotePath}", remotePath);
             return string.Empty;
         }
     }
 
-    internal static string ComputeLocalMd5(byte[] data)
+    internal static string ComputeLocalSha256(byte[] data)
     {
-        var hashBytes = MD5.HashData(data);
+        var hashBytes = SHA256.HashData(data);
 
         return Convert.ToHexString(hashBytes).ToLowerInvariant();
     }

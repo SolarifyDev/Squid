@@ -1,33 +1,32 @@
+using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Intents;
 
 /// <summary>
-/// Intent to stage a package on the target, extract it, and optionally run
-/// pre- and post-deploy scripts against the extracted root.
+/// Intent to stage a package on the target, extract it into a durable installation
+/// directory, and run package conventions (PreDeploy / PostDeploy).
 ///
 /// <para>
-/// The renderer consults <c>IPackageStagingPlanner</c> (Phase 7) to decide whether to
-/// full-upload, cache-hit, remote-download, or delta-stage the package.
+/// The renderer consults acquisition results + transport capabilities and materialises
+/// a Tentacle Calamari <c>deploy-package</c> request or an SSH durable-install script.
+/// Package identity and version come from Release selection, not latest resolution.
 /// </para>
 /// </summary>
 public sealed record DeployPackageIntent : ExecutionIntent
 {
-    /// <summary>The package to acquire and extract.</summary>
     public required IntentPackageReference Package { get; init; }
 
+    /// <summary><c>Versioned</c> or <c>Custom</c>.</summary>
+    public string InstallationDirectoryMode { get; init; } = "Versioned";
+
     /// <summary>
-    /// Relative path under the transport work directory where the package should be
-    /// extracted. Empty string means "extract at the work directory root".
+    /// Custom absolute installation directory when mode is <c>Custom</c>.
+    /// May still contain <c>#{variable}</c> tokens before IntentVariableExpander runs.
     /// </summary>
-    public string ExtractTo { get; init; } = string.Empty;
+    public string CustomInstallationDirectory { get; init; } = string.Empty;
 
-    /// <summary>Optional script to run after extraction but before <see cref="PostDeployScript"/>.</summary>
-    public string? PreDeployScript { get; init; }
+    public required PackageInstallationPathSegments PathSegments { get; init; }
 
-    /// <summary>Optional script to run after deployment completes successfully.</summary>
-    public string? PostDeployScript { get; init; }
-
-    /// <summary>Syntax of both <see cref="PreDeployScript"/> and <see cref="PostDeployScript"/>.</summary>
     public ScriptSyntax ScriptSyntax { get; init; } = ScriptSyntax.Bash;
 }

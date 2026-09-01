@@ -64,6 +64,28 @@ public class DeploymentPackageReferenceServiceTests
     }
 
     [Fact]
+    public async Task GetPackageReferences_ActionLevel_UsesPackageIdAsReferenceName()
+    {
+        var actions = new List<DeploymentAction>
+        {
+            new() { Id = 1, Name = "DeployPackage", StepId = 100 }
+        };
+        var properties = new List<DeploymentActionProperty>
+        {
+            new() { ActionId = 1, PropertyName = SpecialVariables.Action.PackageFeedId, PropertyValue = "5" },
+            new() { ActionId = 1, PropertyName = SpecialVariables.Action.PackageId, PropertyValue = "Acme.Web" }
+        };
+        SetupBasicProjectPipeline(actions, properties);
+
+        var refs = await CreateService().GetPackageReferencesAsync(1);
+
+        refs.Count.ShouldBe(1);
+        refs[0].PackageId.ShouldBe("Acme.Web");
+        refs[0].PackageReferenceName.ShouldBe("Acme.Web");
+        refs[0].FeedId.ShouldBe(5);
+    }
+
+    [Fact]
     public async Task GetPackageReferences_BothContainerAndActionLevel_BothDetected()
     {
         var actions = new List<DeploymentAction>
@@ -85,7 +107,7 @@ public class DeploymentPackageReferenceServiceTests
 
         refs.Count.ShouldBe(2);
         refs.ShouldContain(r => r.PackageId == "nginx" && r.PackageReferenceName == "web");
-        refs.ShouldContain(r => r.PackageId == "k8s-manifests" && r.PackageReferenceName == string.Empty);
+        refs.ShouldContain(r => r.PackageId == "k8s-manifests" && r.PackageReferenceName == "k8s-manifests");
     }
 
     [Fact]

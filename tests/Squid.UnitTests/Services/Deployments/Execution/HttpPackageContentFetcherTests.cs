@@ -179,6 +179,35 @@ public class HttpPackageContentFetcherTests
         url.ShouldBe("https://nuget.example.com/api/v2/package/MyPackage/1.0.0");
     }
 
+    [Theory]
+    [InlineData("https://api.nuget.org/v3")]
+    [InlineData("https://api.nuget.org/v3/")]
+    [InlineData("https://api.nuget.org/v3/index.json")]
+    public void BuildDownloadUrl_NuGetOrgV3FeedUri_UsesWwwNuGetV2PackagePath(string feedUri)
+    {
+        // Live failure mode: operators commonly paste nuget.org's V3 service index URI.
+        // Download still uses the V2 package path; if we leave "/v3" on the base we
+        // construct https://api.nuget.org/v3/api/v2/package/... which 404s with empty content.
+        var feed = CreateFeed("NuGet Feed", feedUri);
+
+        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "Newtonsoft.Json", "13.0.3");
+
+        url.ShouldBe("https://www.nuget.org/api/v2/package/Newtonsoft.Json/13.0.3");
+    }
+
+    [Theory]
+    [InlineData("https://packages.example.com/v3", "https://packages.example.com/api/v2/package/MyPackage/1.0.0")]
+    [InlineData("https://packages.example.com/v3/", "https://packages.example.com/api/v2/package/MyPackage/1.0.0")]
+    [InlineData("https://packages.example.com/v3/index.json", "https://packages.example.com/api/v2/package/MyPackage/1.0.0")]
+    public void BuildDownloadUrl_PrivateNuGetV3FeedUri_StripsV3SuffixBeforeV2PackagePath(string feedUri, string expected)
+    {
+        var feed = CreateFeed("NuGet", feedUri);
+
+        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "MyPackage", "1.0.0");
+
+        url.ShouldBe(expected);
+    }
+
     // === BuildAuthHeaders Tests ===
 
     [Fact]

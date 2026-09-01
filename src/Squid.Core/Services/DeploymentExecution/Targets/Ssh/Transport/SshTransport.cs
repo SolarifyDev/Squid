@@ -22,7 +22,8 @@ public sealed class SshTransport : DeploymentTransport
         RequiresContextPreparationForPackagedPayload = false,
         SupportedActionTypes = TransportCapabilities.ActionTypes(
             SpecialVariables.ActionTypes.Script,
-            SpecialVariables.ActionTypes.HealthCheck),
+            SpecialVariables.ActionTypes.HealthCheck,
+            SpecialVariables.ActionTypes.TentaclePackage),
         OptionalFeatures = TransportCapabilities.Features("bash", "ssh", "sftp")
     };
 

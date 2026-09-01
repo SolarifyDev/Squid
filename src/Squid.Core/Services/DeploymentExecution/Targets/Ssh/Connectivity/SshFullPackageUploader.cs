@@ -7,7 +7,7 @@ namespace Squid.Core.Services.DeploymentExecution.Ssh;
 /// Default SSH implementation of <see cref="IFullPackageUploader"/>.
 /// Reads the local package bytes and uploads them via
 /// <see cref="SshFileTransfer.UploadBytesVerified"/>, which also performs a
-/// post-upload MD5 check.
+/// post-upload SHA-256 check.
 /// </summary>
 public class SshFullPackageUploader : IFullPackageUploader
 {

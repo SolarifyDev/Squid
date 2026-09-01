@@ -193,7 +193,7 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
             references.Add(new PackageReferenceDto
             {
                 ActionName = action.Name,
-                PackageReferenceName = string.Empty,
+                PackageReferenceName = packageIdProp.PropertyValue,
                 PackageId = packageIdProp.PropertyValue,
                 FeedId = actionFeedId
             });

@@ -35,7 +35,7 @@ public class CacheHitStagingHandler : IPackageStagingHandler
     public Task<PackageStagingPlan> TryPlanAsync(PackageRequirement requirement, PackageStagingContext context, CancellationToken ct)
     {
         var sshContext = (SshPackageStagingContext)context;
-        var remoteNupkgPath = SshPaths.PackageNupkgPath(sshContext.BaseDirectory, requirement.PackageId, requirement.Version);
+        var remoteNupkgPath = SshPaths.PackageArchivePathFromLocalFile(sshContext.BaseDirectory, requirement.PackageId, requirement.Version, requirement.LocalPath);
 
         if (!_cachedLookup.TryFindCachedPackage(sshContext.Scope, remoteNupkgPath, requirement.LocalPath))
             return Task.FromResult<PackageStagingPlan>(null);
