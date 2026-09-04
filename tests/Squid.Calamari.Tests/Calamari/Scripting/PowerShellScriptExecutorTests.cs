@@ -7,23 +7,12 @@ using Xunit;
 namespace Squid.Calamari.Tests.Calamari.Scripting;
 
 /// <summary>
-/// PATH / process-env mutations must not race with other suites. xUnit
-/// disables parallelization for this collection across the whole assembly.
-/// </summary>
-[CollectionDefinition("ProcessEnvironmentIsolation", DisableParallelization = true)]
-public sealed class ProcessEnvironmentIsolationCollection
-{
-}
-
-/// <summary>
 /// PR-4 — unit-level tests for <see cref="PowerShellScriptExecutor"/>.
 /// Drives the resolver + argument shape via injectable seams without
 /// requiring <c>pwsh</c> on the test runner (which would fail on CI hosts
 /// that don't have PS Core installed).
 /// </summary>
 [Collection("Process Globals")]
-
-[Collection("ProcessEnvironmentIsolation")]
 public sealed class PowerShellScriptExecutorTests
 {
     // PATH mutation is process-wide; serialize these cases so parallel tests cannot
