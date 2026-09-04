@@ -53,7 +53,7 @@ public class VariableService : IVariableService
     {
         var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
-        variableSet.Name = command.Name;
+        variableSet.Name = command.Name ?? variableSet.Name ?? string.Empty;
         variableSet.Description = command.Description;
         variableSet.OwnerId = command.OwnerId;
         variableSet.OwnerType = command.OwnerType;
@@ -230,7 +230,7 @@ public class VariableService : IVariableService
 
         if (lvs == null) return;
 
-        lvs.Name = newName ?? string.Empty;
+        lvs.Name = newName ?? lvs.Name ?? string.Empty;
 
         await _libraryVariableSetDataProvider.UpdateAsync(lvs, ct: ct).ConfigureAwait(false);
     }

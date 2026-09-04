@@ -36,6 +36,8 @@ public interface IRepository
     /// </summary>
     void Detach<TEntity>(TEntity entity) where TEntity : class, IEntity;
 
+    void ClearChangeTracker();
+
     Task<int> CountAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
         CancellationToken cancellationToken = default) where TEntity : class, IEntity;
 
