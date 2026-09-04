@@ -330,7 +330,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     ProjectGroup = new CreateOrUpdateProjectGroupModel
                     {
                         Name = group.Name,
-                        Description = group.Description,
+                        Description = group.Description ?? string.Empty,
                         Slug = group.Slug,
                         SpaceId = execution.DestinationSpaceId
                     }

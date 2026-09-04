@@ -78,6 +78,12 @@ public class OctopusImportConfirmationOrchestratorTests
         harness.Nodes.ChannelUpdate.Captured.ShouldNotBeNull();
         harness.Nodes.ChannelUpdate.Captured.ProjectId.ShouldBe(1001);
         harness.Nodes.ChannelUpdate.Captured.LifecycleId.ShouldBe(13);
+        harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<CreateProjectGroupCommand>()
+            .Single()
+            .ProjectGroup.Description.ShouldBeEmpty();
     }
 
     [Fact]
