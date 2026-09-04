@@ -41,10 +41,4 @@
     <ProjectReference Include="..\..\src\Squid.Api\Squid.Api.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <None Include="..\..\Next Chat Export\**\*" Link="Next Chat Export\%(RecursiveDir)%(Filename)%(Extension)">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
-
 </Project>

@@ -845,6 +845,8 @@ public class OctopusImportConfirmationOrchestratorTests
                 Id = "Projects-1",
                 Name = "App",
                 Slug = "app",
+                VariableSetId = "VariableSets-1",
+                DeploymentProcessId = "DeploymentProcesses-1",
                 ProjectGroupId = "ProjectsGroups-1",
                 LifecycleId = "Lifecycles-1"
             },
