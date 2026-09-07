@@ -25,12 +25,13 @@ public class OctopusImportDependencyPlannerTests
             Node("Phase-1", OctopusResourceKind.LifecyclePhase, parentSourceId: "Lifecycles-1"),
             Node("Environments-1", OctopusResourceKind.Environment),
             Node("Feeds-1", OctopusResourceKind.Feed),
-            Node("Releases-1", OctopusResourceKind.Release, isHistorical: true)
+            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1")
         };
         var dependencies = new[]
         {
             Dependency("Projects-1", "ProjectGroups-1", OctopusResourceReferenceKind.ProjectGroup, OctopusResourceKind.ProjectGroup),
             Dependency("Projects-1", "Lifecycles-1", OctopusResourceReferenceKind.Lifecycle, OctopusResourceKind.Lifecycle),
+            Dependency("Releases-1", "Projects-1", OctopusResourceReferenceKind.Project, OctopusResourceKind.Project),
             Dependency("Phase-1", "Environments-1", OctopusResourceReferenceKind.Environment, OctopusResourceKind.Environment),
             Dependency("variableset-Projects-1", "Projects-1", OctopusResourceReferenceKind.Project, OctopusResourceKind.Project),
             Dependency("deploymentprocess-Projects-1", "Projects-1", OctopusResourceReferenceKind.Project, OctopusResourceKind.Project),
@@ -41,10 +42,11 @@ public class OctopusImportDependencyPlannerTests
         var plan = _planner.BuildCurrentConfigurationPlan(graph);
 
         plan.Diagnostics.ShouldBeEmpty();
-        plan.OrderedResources.Select(r => r.SourceId).ShouldNotContain("Releases-1");
-        plan.OutOfScopeResources.Select(r => r.SourceId).ShouldBe(["Releases-1"]);
+        plan.OrderedResources.Select(r => r.SourceId).ShouldContain("Releases-1");
+        plan.OutOfScopeResources.ShouldBeEmpty();
         plan.OrderedResources.ShouldRespectOrder("ProjectGroups-1", "Projects-1");
         plan.OrderedResources.ShouldRespectOrder("Lifecycles-1", "Projects-1");
+        plan.OrderedResources.ShouldRespectOrder("Projects-1", "Releases-1");
         plan.OrderedResources.ShouldRespectOrder("Environments-1", "Phase-1");
         plan.OrderedResources.ShouldRespectOrder("Lifecycles-1", "Phase-1");
         plan.OrderedResources.ShouldRespectOrder("Projects-1", "variableset-Projects-1");
@@ -72,7 +74,7 @@ public class OctopusImportDependencyPlannerTests
             Node("Steps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1"),
             Node("deploymentprocess-Projects-1-s-1-ABC", OctopusResourceKind.DeploymentProcessSnapshot, ownerProjectId: "Projects-1", isHistorical: true),
             Node("SnapshotSteps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1-s-1-ABC", isHistorical: true),
-            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1", isHistorical: true),
+            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1"),
             Node("Deployments-1", OctopusResourceKind.Deployment, ownerProjectId: "Projects-1", isHistorical: true),
             Node("ServerTasks-1", OctopusResourceKind.ServerTask, ownerProjectId: "Projects-1", isHistorical: true)
         };
@@ -84,13 +86,13 @@ public class OctopusImportDependencyPlannerTests
             "variableset-Projects-1",
             "Variables-1",
             "deploymentprocess-Projects-1",
-            "Steps-1"
+            "Steps-1",
+            "Releases-1"
         ], ignoreOrder: true);
         plan.OrderedResources.ShouldNotContain(r => r.SourceId.Contains("-s-", StringComparison.OrdinalIgnoreCase));
         plan.OutOfScopeResources.Select(r => r.SourceId).ShouldBe([
             "variableset-Projects-1-s-1-ABC",
             "deploymentprocess-Projects-1-s-1-ABC",
-            "Releases-1",
             "Deployments-1",
             "ServerTasks-1"
         ], ignoreOrder: true);

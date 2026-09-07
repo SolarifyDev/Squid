@@ -206,8 +206,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
     }
 
     private static bool IsOutOfScope(OctopusResourceKind kind)
-        => kind is OctopusResourceKind.Release
-            or OctopusResourceKind.Deployment
+        => kind is OctopusResourceKind.Deployment
             or OctopusResourceKind.ServerTask
             or OctopusResourceKind.DeploymentProcessSnapshot
             or OctopusResourceKind.VariableSetSnapshot
@@ -239,9 +238,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             OctopusResourceKind.DeploymentProcess => 150,
             OctopusResourceKind.DeploymentStep => 160,
             OctopusResourceKind.DeploymentAction => 170,
+            OctopusResourceKind.Release => 180,
             OctopusResourceKind.DeploymentProcessSnapshot => 900,
             OctopusResourceKind.VariableSetSnapshot => 910,
-            OctopusResourceKind.Release => 920,
             OctopusResourceKind.Deployment => 930,
             OctopusResourceKind.ServerTask => 940,
             OctopusResourceKind.WorkerPool => 950,

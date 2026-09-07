@@ -12,6 +12,7 @@ using Squid.Message.Commands.Deployments.LifeCycle;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Commands.Deployments.ProjectGroup;
+using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -21,6 +22,7 @@ using Squid.Message.Models.Deployments.LifeCycle;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Project;
 using Squid.Message.Models.Deployments.ProjectGroup;
+using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.OctopusImport;
 
@@ -47,7 +49,7 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Succeeded.ShouldBeTrue();
         recorded.Diagnostics.ShouldBeEmpty();
 
-        recorded.Resources.Count.ShouldBe(12);
+        recorded.Resources.Count.ShouldBe(13);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Lifecycle.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
@@ -60,13 +62,15 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.DeploymentProcess.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.DeploymentStep.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.DeploymentAction.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.Release.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
 
-        recorded.IdMappings.Count.ShouldBe(12);
+        recorded.IdMappings.Count.ShouldBe(13);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Project.SourceId).DestinationId.ShouldBe(1001);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.VariableSet.SourceId).DestinationId.ShouldBe(1002);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.DeploymentProcess.SourceId).DestinationId.ShouldBe(1003);
+        recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Release.SourceId).DestinationId.ShouldBe(1009);
         harness.ProcessMapper.Invocations
             .Select(invocation => invocation.Arguments[1])
             .OfType<OctopusImportIdMap>()
@@ -84,6 +88,21 @@ public class OctopusImportConfirmationOrchestratorTests
             .OfType<CreateProjectGroupCommand>()
             .Single()
             .ProjectGroup.Description.ShouldBeEmpty();
+
+        var releaseCommand = harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<CreateReleaseCommand>()
+            .Single();
+        releaseCommand.SpaceId.ShouldBe(harness.Nodes.DestinationSpaceId);
+        releaseCommand.ProjectId.ShouldBe(1001);
+        releaseCommand.ChannelId.ShouldBe(1008);
+        releaseCommand.Version.ShouldBe("1.0.0");
+        releaseCommand.ReleaseNote.ShouldBe("Imported release notes");
+        releaseCommand.SelectedPackages.Single().ActionName.ShouldBe("Run");
+        releaseCommand.SelectedPackages.Single().PackageReferenceName.ShouldBe("app");
+        releaseCommand.SelectedPackages.Single().Version.ShouldBe("1.2.3");
+        releaseCommand.SelectedPackages.Single().FeedId.ShouldBe(77);
     }
 
     [Fact]
@@ -104,7 +123,8 @@ public class OctopusImportConfirmationOrchestratorTests
             nameof(CreateLifeCycleCommand),
             nameof(CreateProjectCommand),
             nameof(UpdateVariableSetCommand),
-            nameof(CreateDeploymentStepCommand)
+            nameof(CreateDeploymentStepCommand),
+            nameof(CreateReleaseCommand)
         ]);
     }
 
@@ -648,6 +668,23 @@ public class OctopusImportConfirmationOrchestratorTests
                 });
         }
 
+        if (nodes.Release != null)
+        {
+            mediator
+                .Setup(m => m.SendAsync<CreateReleaseCommand, CreateReleaseResponse>(It.IsAny<CreateReleaseCommand>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new CreateReleaseResponse
+                {
+                    Data = new ReleaseDto
+                    {
+                        Id = 1009,
+                        ProjectId = 1001,
+                        ChannelId = 1008,
+                        SpaceId = nodes.DestinationSpaceId,
+                        Version = nodes.Release.GetSource<OctopusReleaseDto>().Version
+                    }
+                });
+        }
+
         if (nodes.Channel != null)
         {
             channelDataProvider
@@ -741,6 +778,7 @@ public class OctopusImportConfirmationOrchestratorTests
             null,
             null,
             project,
+            null,
             null,
             null,
             null,
@@ -919,7 +957,16 @@ public class OctopusImportConfirmationOrchestratorTests
             {
                 Id = "Actions-1",
                 Name = "Run",
-                ActionType = "Octopus.Script"
+                ActionType = "Octopus.Script",
+                Packages =
+                [
+                    new OctopusActionPackageDto
+                    {
+                        Name = "app",
+                        PackageId = "app",
+                        FeedId = "77"
+                    }
+                ]
             },
             "Steps-1");
 
@@ -938,7 +985,16 @@ public class OctopusImportConfirmationOrchestratorTests
                     {
                         Id = "Actions-1",
                         Name = "Run",
-                        ActionType = "Octopus.Script"
+                        ActionType = "Octopus.Script",
+                        Packages =
+                        [
+                            new OctopusActionPackageDto
+                            {
+                                Name = "app",
+                                PackageId = "app",
+                                FeedId = "77"
+                            }
+                        ]
                     }
                 ]
             },
@@ -965,9 +1021,43 @@ public class OctopusImportConfirmationOrchestratorTests
                             {
                                 Id = "Actions-1",
                                 Name = "Run",
-                                ActionType = "Octopus.Script"
+                                ActionType = "Octopus.Script",
+                                Packages =
+                                [
+                                    new OctopusActionPackageDto
+                                    {
+                                        Name = "app",
+                                        PackageId = "app",
+                                        FeedId = "77"
+                                    }
+                                ]
                             }
                         ]
+                    }
+                ]
+            },
+            "Projects-1");
+
+        var release = Node(
+            "Releases-1",
+            OctopusResourceKind.Release,
+            OctopusDocumentKind.Release,
+            "1.0.0",
+            new OctopusReleaseDto
+            {
+                Id = "Releases-1",
+                Name = "1.0.0",
+                ProjectId = "Projects-1",
+                ChannelId = "Channels-1",
+                Version = "1.0.0",
+                ReleaseNotes = "Imported release notes",
+                SelectedPackages =
+                [
+                    new OctopusSelectedPackageDto
+                    {
+                        ActionName = "Run",
+                        PackageReferenceName = "app",
+                        Version = "1.2.3"
                     }
                 ]
             },
@@ -986,7 +1076,8 @@ public class OctopusImportConfirmationOrchestratorTests
             variableTwo,
             deploymentProcess,
             deploymentStep,
-            deploymentAction
+            deploymentAction,
+            release
         };
 
         return new ScenarioNodes(
@@ -1004,6 +1095,7 @@ public class OctopusImportConfirmationOrchestratorTests
             deploymentProcess,
             deploymentStep,
             deploymentAction,
+            release,
             ordered,
             ordered,
             new ChannelUpdateCapture());
@@ -1158,6 +1250,7 @@ public class OctopusImportConfirmationOrchestratorTests
         OctopusResourceNode DeploymentProcess,
         OctopusResourceNode DeploymentStep,
         OctopusResourceNode DeploymentAction,
+        OctopusResourceNode Release,
         IReadOnlyList<OctopusResourceNode> MinimalOrderedResources,
         IReadOnlyList<OctopusResourceNode> RichOrderedResources,
         ChannelUpdateCapture ChannelUpdate);

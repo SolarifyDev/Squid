@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
@@ -10,6 +12,7 @@ using Squid.Message.Commands.Deployments.LifeCycle;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Commands.Deployments.ProjectGroup;
+using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.Deployments.Channel;
@@ -295,6 +298,9 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 case OctopusResourceKind.DeploymentStep:
                 case OctopusResourceKind.DeploymentAction:
                     execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Created);
+                    return;
+                case OctopusResourceKind.Release:
+                    await CreateReleaseAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
                 default:
                     execution.MarkFailed(resource, Diagnostic(
@@ -585,6 +591,148 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     execution.AddCreated(actionResource, response.Data.Actions[i].Id);
             }
         }
+    }
+
+    private async Task CreateReleaseAsync(
+        ConfirmationExecutionContext execution,
+        OctopusResourceNode resource,
+        CancellationToken ct)
+    {
+        var source = resource.GetSource<OctopusReleaseDto>()
+            ?? throw new OctopusImportConfirmationException("Release source payload is missing.");
+
+        if (!execution.IdMap.TryGetDestinationId(source.ProjectId, OctopusResourceKind.Project.ToString(), out var projectId))
+            throw MappingBlocked(resource, $"Octopus release project '{source.ProjectId}' has not been mapped.");
+
+        if (!execution.IdMap.TryGetDestinationId(source.ChannelId, OctopusResourceKind.Channel.ToString(), out var channelId))
+            throw MappingBlocked(resource, $"Octopus release channel '{source.ChannelId}' has not been mapped.");
+
+        var selectedPackages = BuildReleaseSelectedPackages(execution, resource, source);
+        var response = await _mediator
+            .SendAsync<CreateReleaseCommand, CreateReleaseResponse>(
+                new CreateReleaseCommand
+                {
+                    SpaceId = execution.DestinationSpaceId,
+                    ProjectId = projectId,
+                    ChannelId = channelId,
+                    Version = string.IsNullOrWhiteSpace(source.Version) ? resource.Name : source.Version,
+                    ReleaseNote = source.ReleaseNotes,
+                    SelectedPackages = selectedPackages
+                },
+                ct)
+            .ConfigureAwait(false);
+
+        if (response?.Data?.Id is not > 0)
+            throw new OctopusImportConfirmationException("Create release command did not return a destination release id.");
+
+        execution.AddCreated(resource, response.Data.Id);
+    }
+
+    private static List<CreateReleaseSelectedPackageDto> BuildReleaseSelectedPackages(
+        ConfirmationExecutionContext execution,
+        OctopusResourceNode releaseResource,
+        OctopusReleaseDto release)
+    {
+        var selectedPackages = release.SelectedPackages ?? [];
+        if (selectedPackages.Count == 0) return [];
+
+        return selectedPackages
+            .Where(package => !string.IsNullOrWhiteSpace(package.ActionName)
+                              && !string.IsNullOrWhiteSpace(package.Version))
+            .Select(package =>
+            {
+                if (!TryResolveReleaseSelectedPackageFeedId(execution, package, out var feedId))
+                {
+                    execution.MarkFailed(releaseResource, Diagnostic(
+                        OctopusImportCompatibilitySeverity.Blocker,
+                        OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping,
+                        $"Octopus release package selection for action '{package.ActionName}' references a package feed that has not been mapped to a destination Squid feed.",
+                        releaseResource));
+                    throw new OctopusImportConfirmationException("Release selected package feed mapping is missing.");
+                }
+
+                return new CreateReleaseSelectedPackageDto
+                {
+                    ActionName = package.ActionName,
+                    PackageReferenceName = package.PackageReferenceName ?? string.Empty,
+                    Version = package.Version,
+                    FeedId = feedId
+                };
+            })
+            .ToList();
+    }
+
+    private static bool TryResolveReleaseSelectedPackageFeedId(
+        ConfirmationExecutionContext execution,
+        OctopusSelectedPackageDto selectedPackage,
+        out int feedId)
+    {
+        var sourceFeedId = GetExtensionString(selectedPackage.ExtensionData, "FeedId")
+                           ?? GetSourceFeedIdFromAction(execution, selectedPackage);
+
+        return OctopusImportKubernetesActionMapperSupport.TryResolveFeedId(sourceFeedId, execution.IdMap, out feedId);
+    }
+
+    private static string GetSourceFeedIdFromAction(
+        ConfirmationExecutionContext execution,
+        OctopusSelectedPackageDto selectedPackage)
+    {
+        var action = execution.CurrentResources
+            .Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction)
+            .Select(resource => resource.GetSource<OctopusDeploymentActionDto>())
+            .FirstOrDefault(action => action != null
+                                      && string.Equals(action.Name, selectedPackage.ActionName, StringComparison.OrdinalIgnoreCase));
+
+        if (action == null)
+            return null;
+
+        var package = FindActionPackage(action, selectedPackage.PackageReferenceName);
+        if (!string.IsNullOrWhiteSpace(package?.FeedId))
+            return package.FeedId;
+
+        if (OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, "Octopus.Action.Package.FeedId", out var actionFeedId))
+            return actionFeedId;
+
+        return action.Container?.FeedId;
+    }
+
+    private static OctopusActionPackageDto FindActionPackage(
+        OctopusDeploymentActionDto action,
+        string packageReferenceName)
+    {
+        var packages = action.Packages ?? [];
+        if (packages.Count == 0)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(packageReferenceName))
+            return packages.Count == 1 ? packages[0] : null;
+
+        return packages.FirstOrDefault(package =>
+            string.Equals(package.Name, packageReferenceName, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(package.Id, packageReferenceName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string GetExtensionString(
+        Dictionary<string, JsonElement> extensionData,
+        string propertyName)
+    {
+        if (extensionData == null)
+            return null;
+
+        foreach (var (key, value) in extensionData)
+        {
+            if (!string.Equals(key, propertyName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return value.ValueKind switch
+            {
+                JsonValueKind.String => value.GetString(),
+                JsonValueKind.Number => value.GetRawText(),
+                _ => null
+            };
+        }
+
+        return null;
     }
 
     private static IEnumerable<OctopusResourceNode> GetOwnedChildResources(

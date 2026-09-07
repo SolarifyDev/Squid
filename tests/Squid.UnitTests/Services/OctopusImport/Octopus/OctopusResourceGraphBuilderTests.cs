@@ -180,6 +180,14 @@ public class OctopusResourceGraphBuilderTests
             r.FromSourceId == "Releases-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.VariableSetSnapshot &&
             r.ToSourceId == "variableset-Projects-1-s-1-ABC");
+        graph.References.Single(r =>
+            r.FromSourceId == "Releases-1" &&
+            r.ReferenceKind == OctopusResourceReferenceKind.VariableSetSnapshot)
+            .IsRequired.ShouldBeFalse();
+        graph.References.Single(r =>
+            r.FromSourceId == "Releases-1" &&
+            r.ReferenceKind == OctopusResourceReferenceKind.DeploymentProcessSnapshot)
+            .CreatesDependency.ShouldBeFalse();
     }
 
     [Fact]

@@ -314,8 +314,8 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
         AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.Project, release.ProjectId, OctopusResourceKind.Project, release.ProjectId, true);
         AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.Channel, release.ChannelId, OctopusResourceKind.Channel, release.ProjectId, true);
-        AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.VariableSetSnapshot, release.ProjectVariableSetSnapshotId, OctopusResourceKind.VariableSetSnapshot, release.ProjectId, true);
-        AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.DeploymentProcessSnapshot, release.ProjectDeploymentProcessSnapshotId, OctopusResourceKind.DeploymentProcessSnapshot, release.ProjectId, true);
+        AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.VariableSetSnapshot, release.ProjectVariableSetSnapshotId, OctopusResourceKind.VariableSetSnapshot, release.ProjectId, false);
+        AddReference(context, release.Id, OctopusResourceKind.Release, OctopusResourceReferenceKind.DeploymentProcessSnapshot, release.ProjectDeploymentProcessSnapshotId, OctopusResourceKind.DeploymentProcessSnapshot, release.ProjectId, false);
     }
 
     private static void AddDeployment(GraphBuildContext context)

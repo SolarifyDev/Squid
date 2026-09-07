@@ -15,4 +15,5 @@ public static class OctopusImportConfirmationDiagnosticCodes
     public const string TransactionRolledBack = "OctopusImport.Confirmation.TransactionRolledBack";
     public const string ChannelRulesStoredAsMetadata = "OctopusImport.Confirmation.ChannelRulesStoredAsMetadata";
     public const string DeploymentSettingsStoredAsProjectMetadata = "OctopusImport.Confirmation.DeploymentSettingsStoredAsProjectMetadata";
+    public const string MissingReleasePackageFeedMapping = "OctopusImport.Confirmation.MissingReleasePackageFeedMapping";
 }

@@ -136,8 +136,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
         => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate or OctopusResourceKind.WorkerPool);
 
     private static bool IsOutOfScopeReportResource(OctopusResourceNode resource)
-        => resource.Kind is OctopusResourceKind.Release
-            or OctopusResourceKind.Deployment
+        => resource.Kind is OctopusResourceKind.Deployment
             or OctopusResourceKind.ServerTask
             or OctopusResourceKind.DeploymentProcessSnapshot
             or OctopusResourceKind.VariableSetSnapshot
@@ -164,6 +163,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             OctopusResourceKind.DeploymentProcess => 150,
             OctopusResourceKind.DeploymentStep => 160,
             OctopusResourceKind.DeploymentAction => 170,
+            OctopusResourceKind.Release => 180,
             _ => 1000
         };
     }
