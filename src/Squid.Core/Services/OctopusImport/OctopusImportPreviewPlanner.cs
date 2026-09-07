@@ -81,6 +81,13 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
+        if (resource.Kind == OctopusResourceKind.Release)
+        {
+            result.PreviewAction = OctopusImportPreviewAction.Create;
+            AddManualConfigurationDiagnostics(result, resource);
+            return result;
+        }
+
         if (resource.IsHistorical || IsOutOfScope(resource.Kind))
         {
             result.PreviewAction = OctopusImportPreviewAction.Skip;

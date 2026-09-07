@@ -23,7 +23,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var resources = graph.Resources
-            .Where(r => !r.IsHistorical && IsOrderable(r.Kind))
+            .Where(IsCurrentConfigurationResource)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToDictionary(r => r.SourceId, StringComparer.OrdinalIgnoreCase);
@@ -134,6 +134,9 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 
     private static bool IsOrderable(OctopusResourceKind kind)
         => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate or OctopusResourceKind.WorkerPool);
+
+    private static bool IsCurrentConfigurationResource(OctopusResourceNode resource)
+        => IsOrderable(resource.Kind) && (!resource.IsHistorical || resource.Kind == OctopusResourceKind.Release);
 
     private static bool IsOutOfScopeReportResource(OctopusResourceNode resource)
         => resource.Kind is OctopusResourceKind.Deployment

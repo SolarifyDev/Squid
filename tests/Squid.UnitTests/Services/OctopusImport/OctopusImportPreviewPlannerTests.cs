@@ -127,9 +127,9 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
-    public void BuildPreviewPlan_WhenResourceIsHistoricalOrOutOfScope_ProposesSkip()
+    public void BuildPreviewPlan_WhenHistoricalSnapshotOrOutOfScope_ProposesSkip()
     {
-        var release = Node("Releases-1", OctopusResourceKind.Release, "1.0.0", isHistorical: true);
+        var release = Node("deploymentprocess-Projects-1-s-1-ABC", OctopusResourceKind.DeploymentProcessSnapshot, "Frozen process", isHistorical: true);
 
         var preview = _planner.BuildPreviewPlan(Plan([], outOfScopeResources: [release]), NoConflicts());
 
@@ -141,9 +141,9 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
-    public void BuildPreviewPlan_WhenReleaseIsCurrent_ProposesCreate()
+    public void BuildPreviewPlan_WhenReleaseIsHistorical_ProposesCreate()
     {
-        var release = Node("Releases-1", OctopusResourceKind.Release, "1.0.0");
+        var release = Node("Releases-1", OctopusResourceKind.Release, "1.0.0", isHistorical: true);
 
         var preview = _planner.BuildPreviewPlan(Plan([release]), NoConflicts());
 

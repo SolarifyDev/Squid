@@ -25,7 +25,7 @@ public class OctopusImportDependencyPlannerTests
             Node("Phase-1", OctopusResourceKind.LifecyclePhase, parentSourceId: "Lifecycles-1"),
             Node("Environments-1", OctopusResourceKind.Environment),
             Node("Feeds-1", OctopusResourceKind.Feed),
-            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1")
+            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1", isHistorical: true)
         };
         var dependencies = new[]
         {
@@ -74,7 +74,7 @@ public class OctopusImportDependencyPlannerTests
             Node("Steps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1"),
             Node("deploymentprocess-Projects-1-s-1-ABC", OctopusResourceKind.DeploymentProcessSnapshot, ownerProjectId: "Projects-1", isHistorical: true),
             Node("SnapshotSteps-1", OctopusResourceKind.DeploymentStep, ownerProjectId: "Projects-1", parentSourceId: "deploymentprocess-Projects-1-s-1-ABC", isHistorical: true),
-            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1"),
+            Node("Releases-1", OctopusResourceKind.Release, ownerProjectId: "Projects-1", isHistorical: true),
             Node("Deployments-1", OctopusResourceKind.Deployment, ownerProjectId: "Projects-1", isHistorical: true),
             Node("ServerTasks-1", OctopusResourceKind.ServerTask, ownerProjectId: "Projects-1", isHistorical: true)
         };
