@@ -10,6 +10,8 @@ public class UploadOctopusImportCommand : ICommand, ISpaceScoped
 {
     public int? SpaceId { get; set; }
 
+    public string Password { get; set; }
+
     public string FileName { get; set; }
 
     public string ContentType { get; set; }

@@ -53,10 +53,16 @@ public class UploadOctopusImportCommandHandlerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(completedSession);
 
-        var sut = new UploadOctopusImportCommandHandler(sessionService.Object, uploadStore.Object);
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        passwordValidator
+            .Setup(v => v.ValidateAsync(It.IsAny<Stream>(), "export.zip", "octopus-password", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OctopusExportPasswordValidationResult(OctopusExportPasswordValidationStatus.Valid));
+
+        var sut = new UploadOctopusImportCommandHandler(sessionService.Object, uploadStore.Object, passwordValidator.Object);
         var command = new UploadOctopusImportCommand
         {
             SpaceId = 7,
+            Password = "octopus-password",
             FileName = "export.zip",
             ContentType = "application/zip",
             SizeBytes = 123,
@@ -84,7 +90,8 @@ public class UploadOctopusImportCommandHandlerTests
     {
         var sut = new UploadOctopusImportCommandHandler(
             Mock.Of<IOctopusImportSessionService>(),
-            Mock.Of<IOctopusImportTemporaryUploadStore>());
+            Mock.Of<IOctopusImportTemporaryUploadStore>(),
+            Mock.Of<IOctopusExportPasswordValidator>());
 
         var response = await sut.Handle(Context(new UploadOctopusImportCommand
         {
@@ -94,6 +101,59 @@ public class UploadOctopusImportCommandHandlerTests
         }), CancellationToken.None);
 
         response.Code.ShouldBe(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Handle_WhenPasswordIsMissing_ReturnsBadRequest()
+    {
+        var sut = new UploadOctopusImportCommandHandler(
+            Mock.Of<IOctopusImportSessionService>(),
+            Mock.Of<IOctopusImportTemporaryUploadStore>(),
+            Mock.Of<IOctopusExportPasswordValidator>());
+
+        var response = await sut.Handle(Context(new UploadOctopusImportCommand
+        {
+            SpaceId = 7,
+            FileName = "export.zip",
+            SizeBytes = 123,
+            Content = new MemoryStream(Encoding.UTF8.GetBytes("zip"))
+        }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Msg.ShouldBe("Octopus import upload requires a password.");
+    }
+
+    [Fact]
+    public async Task Handle_WhenPasswordCannotDecryptExport_ReturnsBadRequestBeforeCreatingSession()
+    {
+        var sessionService = new Mock<IOctopusImportSessionService>();
+        var uploadStore = new Mock<IOctopusImportTemporaryUploadStore>();
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        passwordValidator
+            .Setup(v => v.ValidateAsync(It.IsAny<Stream>(), "export.zip", "wrong-password", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OctopusExportPasswordValidationResult(OctopusExportPasswordValidationStatus.Invalid));
+
+        var sut = new UploadOctopusImportCommandHandler(sessionService.Object, uploadStore.Object, passwordValidator.Object);
+        var response = await sut.Handle(Context(new UploadOctopusImportCommand
+        {
+            SpaceId = 7,
+            Password = "wrong-password",
+            FileName = "export.zip",
+            SizeBytes = 123,
+            Content = new MemoryStream(Encoding.UTF8.GetBytes("zip"))
+        }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Msg.ShouldBe("The password provided was incorrect, and did not match the password used\nwhen the data was exported.");
+        sessionService.Verify(s => s.CreateSessionAsync(
+            It.IsAny<int>(),
+            It.IsAny<OctopusImportSourceSummaryDto>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        uploadStore.Verify(s => s.SaveAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<Stream>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static IReceiveContext<T> Context<T>(T message) where T : class, ICommand
