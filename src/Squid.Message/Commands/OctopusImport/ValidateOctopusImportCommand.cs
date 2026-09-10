@@ -26,4 +26,6 @@ public class ValidateOctopusImportResponseData
     public OctopusImportPreviewPlanDto PreviewPlan { get; set; }
 
     public OctopusImportValidationResultDto Validation { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

@@ -70,7 +70,8 @@ public class UploadOctopusImportCommandHandler(
                 Code = HttpStatusCode.OK,
                 Data = new UploadOctopusImportResponseData
                 {
-                    Session = session
+                    Session = session,
+                    BlockerSummary = OctopusImportBlockerSummaryBuilder.Build()
                 }
             };
         }

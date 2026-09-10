@@ -20,4 +20,6 @@ public class GetOctopusImportStatusResponse : SquidResponse<GetOctopusImportStat
 public class GetOctopusImportStatusResponseData
 {
     public OctopusImportSessionDto Session { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

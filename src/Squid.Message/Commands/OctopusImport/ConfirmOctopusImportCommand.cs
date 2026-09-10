@@ -20,4 +20,6 @@ public class ConfirmOctopusImportResponse : SquidResponse<ConfirmOctopusImportRe
 public class ConfirmOctopusImportResponseData
 {
     public OctopusImportSessionDto Session { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

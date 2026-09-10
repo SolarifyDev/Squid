@@ -641,7 +641,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                               && !string.IsNullOrWhiteSpace(package.Version))
             .Select(package =>
             {
-                if (!TryResolveReleaseSelectedPackageFeedId(execution, package, out var feedId))
+                if (!TryResolveReleaseSelectedPackageFeedId(execution, release, package, out var feedId))
                 {
                     execution.MarkFailed(releaseResource, Diagnostic(
                         OctopusImportCompatibilitySeverity.Blocker,
@@ -664,24 +664,41 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
     private static bool TryResolveReleaseSelectedPackageFeedId(
         ConfirmationExecutionContext execution,
+        OctopusReleaseDto release,
         OctopusSelectedPackageDto selectedPackage,
         out int feedId)
     {
         var sourceFeedId = GetExtensionString(selectedPackage.ExtensionData, "FeedId")
-                           ?? GetSourceFeedIdFromAction(execution, selectedPackage);
+                           ?? GetSourceFeedIdFromAction(execution, release, selectedPackage);
 
         return OctopusImportKubernetesActionMapperSupport.TryResolveFeedId(sourceFeedId, execution.IdMap, out feedId);
     }
 
     private static string GetSourceFeedIdFromAction(
         ConfirmationExecutionContext execution,
+        OctopusReleaseDto release,
         OctopusSelectedPackageDto selectedPackage)
     {
-        var action = execution.CurrentResources
-            .Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction)
-            .Select(resource => resource.GetSource<OctopusDeploymentActionDto>())
-            .FirstOrDefault(action => action != null
-                                      && string.Equals(action.Name, selectedPackage.ActionName, StringComparison.OrdinalIgnoreCase));
+        var snapshot = execution.Request.Graph.Resources
+            .Where(resource => resource.Kind == OctopusResourceKind.DeploymentProcessSnapshot)
+            .FirstOrDefault(resource => string.Equals(
+                resource.SourceId,
+                release.ProjectDeploymentProcessSnapshotId,
+                StringComparison.OrdinalIgnoreCase))
+            ?.GetSource<OctopusDeploymentProcessDto>();
+        var action = FindReleaseAction(
+                         snapshot?.Steps.SelectMany(step => step.Actions) ?? [],
+                         selectedPackage)
+                     ?? FindReleaseAction(
+                         execution.CurrentResources
+                             .Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction)
+                             .Where(resource => string.Equals(
+                                 resource.OwnerProjectId,
+                                 release.ProjectId,
+                                 StringComparison.OrdinalIgnoreCase))
+                             .Select(resource => resource.GetSource<OctopusDeploymentActionDto>())
+                             .Where(action => action != null),
+                         selectedPackage);
 
         if (action == null)
             return null;
@@ -694,6 +711,21 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             return actionFeedId;
 
         return action.Container?.FeedId;
+    }
+
+    private static OctopusDeploymentActionDto FindReleaseAction(
+        IEnumerable<OctopusDeploymentActionDto> actions,
+        OctopusSelectedPackageDto selectedPackage)
+    {
+        var matchingActions = actions
+            .Where(action => string.Equals(
+                action.Name,
+                selectedPackage.ActionName,
+                StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return matchingActions.FirstOrDefault(action => FindActionPackage(action, selectedPackage.PackageReferenceName) != null)
+               ?? matchingActions.FirstOrDefault();
     }
 
     private static OctopusActionPackageDto FindActionPackage(

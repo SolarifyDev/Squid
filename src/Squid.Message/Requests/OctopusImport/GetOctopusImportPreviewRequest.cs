@@ -22,4 +22,6 @@ public class GetOctopusImportPreviewResponseData
     public OctopusImportSessionDto Session { get; set; }
 
     public OctopusImportPreviewPlanDto PreviewPlan { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

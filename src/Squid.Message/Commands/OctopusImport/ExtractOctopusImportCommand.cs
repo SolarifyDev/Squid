@@ -22,4 +22,6 @@ public class ExtractOctopusImportResponseData
     public OctopusImportSessionDto Session { get; set; }
 
     public OctopusImportExtractionResultDto Extraction { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

@@ -91,7 +91,8 @@ public class ExtractOctopusImportCommandHandler(
             Data = new ExtractOctopusImportResponseData
             {
                 Session = updatedSession,
-                Extraction = result
+                Extraction = result,
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(result)
             }
         };
     }
@@ -219,7 +220,8 @@ public class ExtractOctopusImportCommandHandler(
                     DestinationSpaceId = command.SpaceId ?? 0,
                     State = OctopusImportSessionState.Uploaded
                 },
-                Extraction = extraction
+                Extraction = extraction,
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(extraction)
             }
         };
     }

@@ -37,14 +37,21 @@ public class ConfirmOctopusImportCommandHandler(
         var state = ParseState(session.State);
 
         if (OctopusImportSessionStateMachine.IsTerminal(state) || state == OctopusImportSessionState.Importing)
+        {
+            var currentSession = await sessionService
+                .GetSessionAsync(command.SessionId, destinationSpaceId, cancellationToken)
+                .ConfigureAwait(false);
+
             return new ConfirmOctopusImportResponse
             {
                 Code = HttpStatusCode.OK,
                 Data = new ConfirmOctopusImportResponseData
                 {
-                    Session = await sessionService.GetSessionAsync(command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false)
+                    Session = currentSession,
+                    BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(currentSession?.Result)
                 }
             };
+        }
 
         if (state != OctopusImportSessionState.Validated)
             return BadRequest(command, state, "Octopus import confirmation requires a validated session.");
@@ -93,7 +100,8 @@ public class ConfirmOctopusImportCommandHandler(
             Code = HttpStatusCode.OK,
             Data = new ConfirmOctopusImportResponseData
             {
-                Session = resultSession
+                Session = resultSession,
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(resultSession?.Result)
             }
         };
     }
@@ -126,7 +134,15 @@ public class ConfirmOctopusImportCommandHandler(
         ConfirmOctopusImportCommand command,
         OctopusImportSessionState state,
         string message)
-        => new()
+    {
+        var diagnostic = new OctopusImportDiagnosticDto
+        {
+            Severity = OctopusImportCompatibilitySeverity.Blocker,
+            Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRequiresValidatedSession,
+            Message = message
+        };
+
+        return new ConfirmOctopusImportResponse
         {
             Code = HttpStatusCode.BadRequest,
             Msg = message,
@@ -137,9 +153,11 @@ public class ConfirmOctopusImportCommandHandler(
                     SessionId = command.SessionId,
                     DestinationSpaceId = command.SpaceId ?? 0,
                     State = state
-                }
+                },
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build([diagnostic])
             }
         };
+    }
 
     private static int GetSpaceId(ConfirmOctopusImportCommand command)
         => command.SpaceId

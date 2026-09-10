@@ -129,6 +129,118 @@ public class OctopusImportConfirmationOrchestratorTests
     }
 
     [Fact]
+    public async Task ConfirmAsync_ResolvesReleasePackageFeedFromItsProcessSnapshot()
+    {
+        var harness = CreateRichHarness();
+        var release = harness.Nodes.Release.GetSource<OctopusReleaseDto>();
+        release.ProjectDeploymentProcessSnapshotId = "DeploymentProcesses-1-Snapshot";
+        var snapshot = new OctopusResourceNode(
+            release.ProjectDeploymentProcessSnapshotId,
+            "Historical process",
+            OctopusResourceKind.DeploymentProcessSnapshot,
+            OctopusDocumentKind.DeploymentProcessSnapshot,
+            "snapshot.json",
+            release.ProjectId,
+            null,
+            true,
+            new OctopusDeploymentProcessDto
+            {
+                Id = release.ProjectDeploymentProcessSnapshotId,
+                OwnerId = release.ProjectId,
+                Steps =
+                [
+                    new OctopusDeploymentStepDto
+                    {
+                        Actions =
+                        [
+                            new OctopusDeploymentActionDto
+                            {
+                                Name = "Run",
+                                Packages =
+                                [
+                                    new OctopusActionPackageDto
+                                    {
+                                        Name = "app",
+                                        FeedId = "88"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            });
+        var request = harness.Request with
+        {
+            Graph = new OctopusResourceGraph(
+                harness.Request.Graph.Resources.Concat([snapshot]).ToList(),
+                [],
+                [],
+                [])
+        };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        var releaseCommand = harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<CreateReleaseCommand>()
+            .Single();
+        releaseCommand.SelectedPackages.Single().FeedId.ShouldBe(88);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_DoesNotResolveReleasePackageFeedFromAnotherProjectAction()
+    {
+        var harness = CreateRichHarness();
+        var foreignAction = new OctopusResourceNode(
+            "Actions-Foreign",
+            "Run",
+            OctopusResourceKind.DeploymentAction,
+            OctopusDocumentKind.DeploymentProcess,
+            "foreign-process.json",
+            "Projects-2",
+            "Steps-Foreign",
+            false,
+            new OctopusDeploymentActionDto
+            {
+                Id = "Actions-Foreign",
+                Name = "Run",
+                Packages =
+                [
+                    new OctopusActionPackageDto
+                    {
+                        Name = "app",
+                        FeedId = "Feeds-Missing"
+                    }
+                ]
+            });
+        var orderedResources = new[] { foreignAction }
+            .Concat(harness.DependencyPlan.OrderedResources)
+            .ToList();
+        var dependencyPlan = new OctopusImportDependencyPlan(orderedResources, [], [], []);
+        var previewPlan = BuildPreviewPlan(orderedResources, reusedResources: [harness.Nodes.Environment]);
+        previewPlan.Resources.Single(resource => resource.SourceId == foreignAction.SourceId).PreviewAction = OctopusImportPreviewAction.Skip;
+        previewPlan.Resources.Single(resource => resource.SourceId == foreignAction.SourceId).OutcomeState = OctopusImportResourceOutcomeState.Skipped;
+        var request = harness.Request with
+        {
+            DependencyPlan = dependencyPlan,
+            PreviewPlan = previewPlan,
+            Graph = new OctopusResourceGraph(orderedResources, [], [], [])
+        };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        var releaseCommand = harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<CreateReleaseCommand>()
+            .Single();
+        releaseCommand.SelectedPackages.Single().FeedId.ShouldBe(77);
+    }
+
+    [Fact]
     public async Task ConfirmAsync_WhenTransactionFails_RollsBackAndPersistsFailedSessionResult()
     {
         var harness = CreateMinimalHarness(throwAfterAction: true, includeReusedEnvironment: true);

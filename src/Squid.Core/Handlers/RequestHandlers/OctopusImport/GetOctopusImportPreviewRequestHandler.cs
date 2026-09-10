@@ -69,7 +69,8 @@ public class GetOctopusImportPreviewRequestHandler(
             Data = new GetOctopusImportPreviewResponseData
             {
                 Session = responseSession,
-                PreviewPlan = OctopusImportRedaction.RedactDto(snapshot.PreviewPlan)
+                PreviewPlan = OctopusImportRedaction.RedactDto(snapshot.PreviewPlan),
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(snapshot.PreviewPlan)
             }
         };
     }
@@ -126,7 +127,16 @@ public class GetOctopusImportPreviewRequestHandler(
                             Message = message
                         })
                     ]
-                }
+                },
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(
+                    [
+                        new OctopusImportDiagnosticDto
+                        {
+                            Severity = OctopusImportCompatibilitySeverity.Blocker,
+                            Code = "OctopusImport.Preview.Unavailable",
+                            Message = message
+                        }
+                    ])
             }
         };
 

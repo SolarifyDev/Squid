@@ -87,7 +87,8 @@ public class ValidateOctopusImportCommandHandler(
             {
                 Session = responseSession,
                 PreviewPlan = previewPlan,
-                Validation = validation
+                Validation = validation,
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(previewPlan, validation)
             }
         };
     }
@@ -134,6 +135,8 @@ public class ValidateOctopusImportCommandHandler(
             }));
         }
 
+        var blockerSummary = OctopusImportBlockerSummaryBuilder.Build(previewPlan, validation);
+
         return new ValidateOctopusImportResponse
         {
             Code = HttpStatusCode.BadRequest,
@@ -147,7 +150,8 @@ public class ValidateOctopusImportCommandHandler(
                     State = state
                 },
                 PreviewPlan = previewPlan,
-                Validation = validation
+                Validation = validation,
+                BlockerSummary = blockerSummary
             }
         };
     }

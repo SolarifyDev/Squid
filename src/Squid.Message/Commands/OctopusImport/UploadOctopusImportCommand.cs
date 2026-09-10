@@ -28,4 +28,6 @@ public class UploadOctopusImportResponse : SquidResponse<UploadOctopusImportResp
 public class UploadOctopusImportResponseData
 {
     public OctopusImportSessionDto Session { get; set; }
+
+    public OctopusImportBlockerSummaryDto BlockerSummary { get; set; }
 }

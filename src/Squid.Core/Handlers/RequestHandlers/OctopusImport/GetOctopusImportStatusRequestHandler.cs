@@ -24,7 +24,8 @@ public class GetOctopusImportStatusRequestHandler(
             Code = HttpStatusCode.OK,
             Data = new GetOctopusImportStatusResponseData
             {
-                Session = response
+                Session = response,
+                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(response?.Result)
             }
         };
     }

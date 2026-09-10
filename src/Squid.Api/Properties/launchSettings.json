@@ -16,8 +16,7 @@
       "launchUrl": "swagger",
       "applicationUrl": "https://localhost:7078;http://localhost:5078",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "SQUID_SELFCERT_ENFORCEMENT": "warn"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
     "IIS Express": {
