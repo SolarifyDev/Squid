@@ -25,6 +25,7 @@ public interface IOctopusInputExtractor : IScopedDependency
 public class OctopusInputExtractor : IOctopusInputExtractor
 {
     private const int CopyBufferSize = 81920;
+    private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
 
     public async Task<OctopusInputExtractionResult> ExtractStandaloneJsonAsync(
         Stream jsonStream,
@@ -251,7 +252,10 @@ public class OctopusInputExtractor : IOctopusInputExtractor
     {
         try
         {
-            using var jsonDocument = JsonDocument.Parse(content);
+            var jsonContent = HasUtf8Bom(content)
+                ? content.AsMemory(Utf8Bom.Length)
+                : content.AsMemory();
+            using var jsonDocument = JsonDocument.Parse(jsonContent);
             var root = jsonDocument.RootElement;
 
             if (root.ValueKind != JsonValueKind.Object)
@@ -286,6 +290,12 @@ public class OctopusInputExtractor : IOctopusInputExtractor
                 sourcePath));
         }
     }
+
+    private static bool HasUtf8Bom(byte[] content)
+        => content.Length >= Utf8Bom.Length
+           && content[0] == Utf8Bom[0]
+           && content[1] == Utf8Bom[1]
+           && content[2] == Utf8Bom[2];
 
     private static OctopusDocumentClassification ClassifyJson(string sourcePath, JsonElement root)
     {

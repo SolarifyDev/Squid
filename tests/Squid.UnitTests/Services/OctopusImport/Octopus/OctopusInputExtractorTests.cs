@@ -40,6 +40,20 @@ public class OctopusInputExtractorTests
     }
 
     [Fact]
+    public async Task ExtractJsonEntriesAsync_Utf8BomJson_ReturnsRecognizedDocument()
+    {
+        var json = JsonBytes("""{"Id":"Projects-1","Name":"Project"}""");
+        var content = Encoding.UTF8.GetPreamble().Concat(json).ToArray();
+
+        var result = await _extractor.ExtractJsonEntriesAsync(
+            [new OctopusExtractedArchiveEntry("Projects-1.json", content)]);
+
+        result.Documents.Single().Classification.Kind.ShouldBe(OctopusDocumentKind.Project);
+        result.Documents.Single().SizeBytes.ShouldBe(content.LongLength);
+        result.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
     public async Task ExtractStandaloneJsonAsync_MalformedJson_ReturnsStructuredDiagnostic()
     {
         var result = await ExtractStandaloneAsync("""{"Id":""", "bad.json");

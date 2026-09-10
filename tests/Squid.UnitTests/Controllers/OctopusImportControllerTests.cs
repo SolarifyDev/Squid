@@ -42,7 +42,11 @@ public class OctopusImportControllerTests
         };
 
         using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("zip"));
-        var file = new FormFile(stream, 0, stream.Length, "file", "export.zip");
+        var file = new FormFile(stream, 0, stream.Length, "file", "export.zip")
+        {
+            Headers = new HeaderDictionary(),
+            ContentType = "application/zip"
+        };
         var request = new OctopusImportController.UploadOctopusImportForm
         {
             File = file,
@@ -55,5 +59,6 @@ public class OctopusImportControllerTests
         result.ShouldBeOfType<OkObjectResult>();
         captured.ShouldNotBeNull();
         captured.Password.ShouldBe("octopus-password");
+        captured.ContentType.ShouldBe("application/zip");
     }
 }
