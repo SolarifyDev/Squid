@@ -2,7 +2,7 @@ using Squid.Calamari.Tests.TestSupport;
 
 namespace Squid.Calamari.Tests.Calamari.Host;
 
-[Collection("Console IO")]
+[Collection("Process Globals")]
 public class ProgramEntryPointTests
 {
     [Fact]

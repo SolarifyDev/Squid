@@ -9,6 +9,7 @@ namespace Squid.Calamari.Tests.Calamari.Scripting;
 /// resolver + argument shape via injected seams without requiring Python
 /// on the test runner.
 /// </summary>
+[Collection("Process Globals")]
 public sealed class PythonScriptExecutorTests
 {
     [Fact]

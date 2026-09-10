@@ -2,7 +2,7 @@ using Squid.Calamari.Tests.TestSupport;
 
 namespace Squid.Calamari.Tests.Calamari.Cli;
 
-[Collection("Process Environment")]
+[Collection("Process Globals")]
 public class CliSmokeTests
 {
     [Fact]
