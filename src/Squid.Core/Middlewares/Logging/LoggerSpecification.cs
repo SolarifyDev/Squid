@@ -1,6 +1,7 @@
 using System.Runtime.ExceptionServices;
 using Mediator.Net.Pipeline;
 using Squid.Core.Extensions;
+using Squid.Message.Commands.OctopusImport;
 
 namespace Squid.Core.Middlewares.Logging;
 
@@ -22,8 +23,22 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
     public Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
         _logger.Information("----- Handling message {MessageName} ({@Message})", context.Message.GetGenericTypeName(),
-            context.Message);
+            GetSafeMessage(context.Message));
         return Task.CompletedTask;
+    }
+
+    private static object GetSafeMessage(IMessage message)
+    {
+        if (message is not UploadOctopusImportCommand upload)
+            return message;
+
+        return new
+        {
+            upload.SpaceId,
+            upload.FileName,
+            upload.ContentType,
+            upload.SizeBytes
+        };
     }
 
     public Task Execute(TContext context, CancellationToken cancellationToken)

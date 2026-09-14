@@ -2,11 +2,13 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -16,6 +18,7 @@ public class ConfirmOctopusImportCommandHandler(
     IOctopusImportSessionDataProvider sessionDataProvider,
     IOctopusImportSessionService sessionService,
     ICurrentUser currentUser,
+    IAuthorizationService authorizationService,
     IOctopusImportPlanningPipeline planningPipeline,
     IOctopusImportConfirmationOrchestrator confirmationOrchestrator)
     : ICommandHandler<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>
@@ -84,6 +87,13 @@ public class ConfirmOctopusImportCommandHandler(
             return BadRequest(command, state, ex.Message);
         }
 
+        await EnsureImportPermissionsAsync(
+                validatedPlan.PreviewPlan,
+                snapshot.Graph,
+                destinationSpaceId,
+                cancellationToken)
+            .ConfigureAwait(false);
+
         var resultSession = await confirmationOrchestrator
             .ConfirmAsync(
                 new OctopusImportConfirmationRequest(
@@ -104,6 +114,69 @@ public class ConfirmOctopusImportCommandHandler(
                 BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(resultSession?.Result)
             }
         };
+    }
+
+    private async Task EnsureImportPermissionsAsync(
+        OctopusImportPreviewPlanDto previewPlan,
+        OctopusResourceGraph graph,
+        int destinationSpaceId,
+        CancellationToken ct)
+    {
+        if (currentUser.Id == null)
+            throw new UnauthorizedAccessException("Octopus import confirmation requires an authenticated user.");
+
+        var currentResources = graph.Resources
+            .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var permissions = previewPlan.Resources
+            .Where(r => r.PreviewAction == OctopusImportPreviewAction.Create)
+            .Select(r => ResolvePermission(r, currentResources))
+            .Where(permission => permission.HasValue)
+            .Select(permission => permission.Value)
+            .Distinct();
+
+        foreach (var permission in permissions)
+        {
+            await authorizationService
+                .EnsurePermissionAsync(
+                    new PermissionCheckRequest
+                    {
+                        UserId = currentUser.Id.Value,
+                        Permission = permission,
+                        SpaceId = destinationSpaceId
+                    },
+                    ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private static Permission? ResolvePermission(
+        OctopusImportResourceResultDto previewResource,
+        IReadOnlyDictionary<string, OctopusResourceNode> currentResources)
+    {
+        if (!currentResources.TryGetValue(previewResource.SourceId, out var resource))
+            return null;
+
+        return resource.Kind switch
+        {
+            OctopusResourceKind.ProjectGroup or OctopusResourceKind.Project => Permission.ProjectCreate,
+            OctopusResourceKind.Environment => Permission.EnvironmentCreate,
+            OctopusResourceKind.Lifecycle => Permission.LifecycleCreate,
+            OctopusResourceKind.Feed => Permission.FeedEdit,
+            OctopusResourceKind.Account => Permission.AccountCreate,
+            OctopusResourceKind.Channel => ResolveChannelPermission(resource),
+            OctopusResourceKind.VariableSet => Permission.VariableEdit,
+            OctopusResourceKind.DeploymentProcess => Permission.ProcessEdit,
+            OctopusResourceKind.Release => Permission.ReleaseCreate,
+            _ => null
+        };
+    }
+
+    private static Permission ResolveChannelPermission(OctopusResourceNode resource)
+    {
+        return resource.GetSource<OctopusChannelDto>()?.IsDefault == true
+            ? Permission.ChannelEdit
+            : Permission.ChannelCreate;
     }
 
     private async Task<OctopusImportSession> GetOwnedSessionAsync(ConfirmOctopusImportCommand command, CancellationToken ct)
