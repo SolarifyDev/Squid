@@ -1,6 +1,9 @@
 using System.Runtime.ExceptionServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Mediator.Net.Pipeline;
 using Squid.Core.Extensions;
+using Squid.Core.Services.OctopusImport;
 using Squid.Message.Commands.OctopusImport;
 
 namespace Squid.Core.Middlewares.Logging;
@@ -8,6 +11,13 @@ namespace Squid.Core.Middlewares.Logging;
 public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
     where TContext : IContext<IMessage>
 {
+    private static readonly JsonSerializerOptions SafeJsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        ReferenceHandler = ReferenceHandler.IgnoreCycles,
+        MaxDepth = 16
+    };
+
     private readonly ILogger _logger;
 
     public LoggerSpecification(ILogger logger)
@@ -29,16 +39,36 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
 
     private static object GetSafeMessage(IMessage message)
     {
-        if (message is not UploadOctopusImportCommand upload)
-            return message;
-
-        return new
+        if (message is UploadOctopusImportCommand upload)
         {
-            upload.SpaceId,
-            upload.FileName,
-            upload.ContentType,
-            upload.SizeBytes
-        };
+            return new
+            {
+                upload.SpaceId,
+                upload.FileName,
+                upload.ContentType,
+                upload.SizeBytes
+            };
+        }
+
+        return GetSafeValue(message);
+    }
+
+    private static object GetSafeValue(object value)
+    {
+        if (value == null)
+            return null;
+
+        try
+        {
+            var json = JsonSerializer.Serialize(value, value.GetType(), SafeJsonOptions);
+            var redactedJson = OctopusImportRedaction.RedactJson(json);
+            using var document = JsonDocument.Parse(redactedJson);
+            return document.RootElement.Clone();
+        }
+        catch (Exception) when (value is not string)
+        {
+            return new { Type = value.GetType().FullName };
+        }
     }
 
     public Task Execute(TContext context, CancellationToken cancellationToken)
@@ -49,7 +79,7 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
     public Task AfterExecute(TContext context, CancellationToken cancellationToken)
     {
         _logger.Information("----- Message {MessageName} handled - response: {@Response}",
-            context.Message.GetGenericTypeName(), context.Result);
+            context.Message.GetGenericTypeName(), GetSafeValue(context.Result));
         
         return Task.CompletedTask;
     }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -146,7 +147,8 @@ public class OctopusImportTransactionIntegrationTests : TestBase
                 .AsNoTracking()
                 .SingleAsync(s => s.SessionId == sessionId);
             session.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
-            session.ResultJson.ShouldContain("\"succeeded\":true");
+            using var resultDocument = JsonDocument.Parse(session.ResultJson);
+            resultDocument.RootElement.GetProperty("succeeded").GetBoolean().ShouldBeTrue();
         });
     }
 }
