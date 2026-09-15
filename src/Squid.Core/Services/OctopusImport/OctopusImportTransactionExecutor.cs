@@ -50,8 +50,15 @@ public sealed class OctopusImportTransactionExecutor : IOctopusImportTransaction
         }
         catch
         {
-            await transaction.RollbackAsync(ct).ConfigureAwait(false);
-            _repository.ClearChangeTracker();
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _repository.ClearChangeTracker();
+            }
+
             throw;
         }
     }
@@ -74,8 +81,15 @@ public sealed class OctopusImportTransactionExecutor : IOctopusImportTransaction
         }
         catch
         {
-            await transaction.RollbackAsync(ct).ConfigureAwait(false);
-            _repository.ClearChangeTracker();
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _repository.ClearChangeTracker();
+            }
+
             throw;
         }
     }

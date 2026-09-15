@@ -8,6 +8,7 @@ using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Environment;
+using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Commands.Deployments.LifeCycle;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Project;
@@ -126,6 +127,69 @@ public class OctopusImportConfirmationOrchestratorTests
             nameof(CreateDeploymentStepCommand),
             nameof(CreateReleaseCommand)
         ]);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_WhenProjectHasMultipleChannels_ReusesDefaultAndCreatesTheOthers()
+    {
+        var harness = CreateRichHarness();
+        var nonDefaultChannel = Node(
+            "Channels-2",
+            OctopusResourceKind.Channel,
+            OctopusDocumentKind.Channel,
+            "Beta",
+            new OctopusChannelDto
+            {
+                Id = "Channels-2",
+                Name = "Beta",
+                Slug = "beta",
+                ProjectId = harness.Nodes.Project.SourceId,
+                LifecycleId = harness.Nodes.Lifecycle.SourceId,
+                IsDefault = false
+            },
+            harness.Nodes.Project.SourceId);
+        var resources = harness.DependencyPlan.OrderedResources.ToList();
+        resources.Insert(resources.FindIndex(r => r.SourceId == harness.Nodes.Channel.SourceId) + 1, nonDefaultChannel);
+        var dependencyPlan = BuildDependencyPlan(resources);
+        var previewPlan = BuildPreviewPlan(resources, reusedResources: [harness.Nodes.Environment]);
+        harness.Mediator
+            .Setup(m => m.SendAsync<CreateChannelCommand, CreateChannelResponse>(It.IsAny<CreateChannelCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreateChannelResponse
+            {
+                Data = new ChannelDto
+                {
+                    Id = 1010,
+                    Name = "Beta",
+                    Slug = "beta",
+                    ProjectId = 1001,
+                    LifecycleId = 13,
+                    SpaceId = harness.Nodes.DestinationSpaceId,
+                    IsDefault = false
+                }
+            });
+        var request = harness.Request with
+        {
+            Graph = new OctopusResourceGraph(resources, [], [], []),
+            DependencyPlan = dependencyPlan,
+            PreviewPlan = previewPlan
+        };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.ChannelDataProvider.Verify(
+            p => p.UpdateChannelAsync(It.IsAny<Channel>(), false, It.IsAny<CancellationToken>()),
+            Times.Once);
+        var command = harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<CreateChannelCommand>()
+            .Single();
+        command.Channel.Name.ShouldBe("Beta");
+        command.Channel.ProjectId.ShouldBe(1001);
+        command.Channel.LifecycleId.ShouldBe(13);
+        command.Channel.IsDefault.ShouldBeFalse();
+        result.Result.IdMappings.Single(m => m.SourceId == nonDefaultChannel.SourceId).DestinationId.ShouldBe(1010);
     }
 
     [Fact]
@@ -250,7 +314,7 @@ public class OctopusImportConfirmationOrchestratorTests
         result.State.ShouldBe(OctopusImportSessionState.Failed);
         result.Result.Succeeded.ShouldBeFalse();
         harness.SessionService.CurrentSession.State.ShouldBe(OctopusImportSessionState.Failed);
-        harness.SessionService.RecordResultCalls.ShouldBe(1);
+        harness.SessionService.RecordResultCalls.ShouldBe(2);
         harness.TransactionExecutor.ExecuteCalls.ShouldBe(1);
 
         var recorded = harness.SessionService.RecordedResult;

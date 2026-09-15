@@ -198,6 +198,23 @@ public class OctopusImportPreviewPlannerTests
         result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ResourceUnsupported);
     }
 
+    [Theory]
+    [InlineData(OctopusResourceKind.Team, "Teams-1")]
+    [InlineData(OctopusResourceKind.Machine, "Machines-1")]
+    public void BuildPreviewPlan_WhenResourceHasNoConfirmationImplementation_ProposesUnsupported(
+        OctopusResourceKind kind,
+        string sourceId)
+    {
+        var resource = Node(sourceId, kind, kind.ToString());
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), NoConflicts());
+
+        var result = preview.Resources.Single();
+        result.PreviewAction.ShouldBe(OctopusImportPreviewAction.Unsupported);
+        result.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Unsupported);
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ResourceUnsupported);
+    }
+
     [Fact]
     public void BuildPreviewPlan_AddsManualConfigurationDiagnosticsForExternalResourceSecrets()
     {

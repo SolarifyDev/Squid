@@ -187,6 +187,22 @@ public class OctopusImportPreviewValidatorTests
     }
 
     [Fact]
+    public void Validate_WhenConflictingProjectWasChangedToCreate_AddsRenameBlocker()
+    {
+        var project = Node("Projects-1", OctopusResourceKind.Project, "App");
+        var preview = Preview([project]);
+        var conflicts = new OctopusImportConflictDiscoveryResult(
+        [
+            Conflict(project, Match(300, OctopusResourceKind.Project, "App"))
+        ]);
+
+        var result = _validator.Validate(Graph([project]), Plan([project]), conflicts, preview);
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RenameRequiredForProject);
+    }
+
+    [Fact]
     public void Validate_PreservesRequiredInputMarkersFromPreview()
     {
         var variable = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey");

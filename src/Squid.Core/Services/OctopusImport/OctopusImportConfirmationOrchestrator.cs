@@ -108,25 +108,33 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             return await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
 
         var result = BuildInitialResult(request.PreviewPlan);
-        var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
-        if (request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker))
-            return await _sessionService
-                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, ct)
-                .ConfigureAwait(false);
-
         try
         {
+            var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
+            if (request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker))
+                return await _sessionService
+                    .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
+                    .ConfigureAwait(false);
+
             var context = new OctopusImportTransactionContext(request.SessionId, request.DestinationSpaceId);
-            result = await _transactionExecutor
+            return await _transactionExecutor
                 .ExecuteInImportTransactionAsync(
                     context,
-                    (_, transactionCt) => ExecuteAsync(request, result, transactionCt),
-                    ct)
-                .ConfigureAwait(false);
+                    async (_, transactionCt) =>
+                    {
+                        result = await ExecuteAsync(request, result, transactionCt).ConfigureAwait(false);
+                        result.Succeeded = true;
 
-            result.Succeeded = true;
-            return await _sessionService
-                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Succeeded, result, ct)
+                        return await _sessionService
+                            .RecordResultAsync(
+                                request.SessionId,
+                                request.DestinationSpaceId,
+                                OctopusImportSessionState.Succeeded,
+                                result,
+                                transactionCt)
+                            .ConfigureAwait(false);
+                    },
+                    ct)
                 .ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -135,7 +143,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             result.Succeeded = false;
 
             return await _sessionService
-                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, ct)
+                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
                 .ConfigureAwait(false);
         }
     }
@@ -434,7 +442,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             .FirstOrDefault(r => r != null);
         var defaultChannel = GetOwnedChildResources(execution, resource.SourceId, OctopusResourceKind.Channel)
             .Select(r => r.GetSource<OctopusChannelDto>())
-            .FirstOrDefault(r => r != null);
+            .FirstOrDefault(r => r?.IsDefault == true);
         var mapping = _projectMapper.MapToCreateOrUpdateModel(resource, execution.IdMap, execution.DestinationSpaceId, settings, defaultChannel);
         execution.AddDiagnostics(resource, mapping.Diagnostics);
         EnsureNoBlockers(mapping.Diagnostics);
@@ -482,23 +490,46 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 resource));
         }
 
-        var defaultChannel = await _channelDataProvider
-            .GetDefaultChannelByProjectIdAsync(projectId, ct)
+        if (channel.IsDefault)
+        {
+            var defaultChannel = await _channelDataProvider
+                .GetDefaultChannelByProjectIdAsync(projectId, ct)
+                .ConfigureAwait(false);
+            if (defaultChannel == null)
+                throw new OctopusImportConfirmationException("Default project channel was not created alongside the project.");
+
+            defaultChannel.Name = channel.Name;
+            defaultChannel.Description = null;
+            defaultChannel.ProjectId = projectId;
+            defaultChannel.LifecycleId = lifecycleId;
+            defaultChannel.SpaceId = execution.DestinationSpaceId;
+            defaultChannel.Slug = channel.Slug;
+            defaultChannel.IsDefault = true;
+
+            await _channelDataProvider.UpdateChannelAsync(defaultChannel, forceSave: false, cancellationToken: ct).ConfigureAwait(false);
+            execution.AddCreated(resource, defaultChannel.Id);
+            return;
+        }
+
+        var response = await _mediator
+            .SendAsync<CreateChannelCommand, CreateChannelResponse>(
+                new CreateChannelCommand
+                {
+                    Channel = new CreateOrUpdateChannelModel
+                    {
+                        Name = channel.Name,
+                        Description = null,
+                        ProjectId = projectId,
+                        LifecycleId = lifecycleId,
+                        SpaceId = execution.DestinationSpaceId,
+                        Slug = channel.Slug,
+                        IsDefault = false
+                    }
+                },
+                ct)
             .ConfigureAwait(false);
-        if (defaultChannel == null)
-            throw new OctopusImportConfirmationException("Default project channel was not created alongside the project.");
 
-        defaultChannel.Name = channel.Name;
-        defaultChannel.Description = null;
-        defaultChannel.ProjectId = projectId;
-        defaultChannel.LifecycleId = lifecycleId;
-        defaultChannel.SpaceId = execution.DestinationSpaceId;
-        defaultChannel.Slug = channel.Slug;
-        defaultChannel.IsDefault = channel.IsDefault;
-
-        await _channelDataProvider.UpdateChannelAsync(defaultChannel, forceSave: false, cancellationToken: ct).ConfigureAwait(false);
-
-        execution.AddCreated(resource, defaultChannel.Id);
+        execution.AddCreated(resource, response.Data.Id);
     }
 
     private static void MarkDeploymentSettingsHandled(

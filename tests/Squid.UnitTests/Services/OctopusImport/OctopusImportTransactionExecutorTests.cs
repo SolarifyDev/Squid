@@ -100,6 +100,45 @@ public class OctopusImportTransactionExecutorTests
         result.ShouldBe("confirmed");
     }
 
+    [Fact]
+    public async Task ExecuteInImportTransactionAsync_RollsBackWhenRequestIsCancelled()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        await using var db = CreateDbContext(connection);
+        await CreateImportSessionTableAsync(connection);
+
+        var repository = new EfRepository(db);
+        var sut = new OctopusImportTransactionExecutor(repository, db);
+        var context = new OctopusImportTransactionContext(Guid.NewGuid(), 7);
+        using var cancellation = new CancellationTokenSource();
+
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            sut.ExecuteInImportTransactionAsync(context, async (_, ct) =>
+            {
+                await repository.InsertAsync(new OctopusImportSession
+                {
+                    SessionId = Guid.NewGuid(),
+                    DestinationSpaceId = 7,
+                    OwnerUserId = 42,
+                    State = "Importing",
+                    SourceSummaryJson = "{}",
+                    DataVersion = Guid.NewGuid().ToByteArray(),
+                    ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+                    LastStateChangedAt = DateTimeOffset.UtcNow
+                }, ct).ConfigureAwait(false);
+
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
+                cancellation.Cancel();
+                ct.ThrowIfCancellationRequested();
+            }, cancellation.Token));
+
+        await using var verificationDb = CreateDbContext(connection);
+        (await verificationDb.Set<OctopusImportSession>().CountAsync()).ShouldBe(0);
+        db.ChangeTracker.Entries().ShouldBeEmpty();
+    }
+
     private static SquidDbContext CreateDbContext(SqliteConnection connection)
     {
         var options = new DbContextOptionsBuilder<SquidDbContext>()

@@ -6,10 +6,12 @@ using System.Text.Json.Serialization;
 using Mediator.Net.Contracts;
 using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -24,6 +26,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         var sessionId = Guid.NewGuid();
         var uploadPath = CreateTempFile();
         var preview = Preview();
+        preview.Resources.Single().SourceType = "Unknown";
         var validatedPlan = new OctopusImportValidatedPlanDto
         {
             PreviewPlan = preview,
@@ -62,6 +65,12 @@ public class ConfirmOctopusImportCommandHandlerTests
                 request.SessionId == sessionId &&
                 request.DestinationSpaceId == 7 &&
                 request.PreviewPlan.Resources.Single().SourceId == "Projects-1"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        harness.AuthorizationService.Verify(a => a.EnsurePermissionAsync(
+            It.Is<PermissionCheckRequest>(request =>
+                request.UserId == 42
+                && request.SpaceId == 7
+                && request.Permission == Permission.ProjectCreate),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -144,7 +153,22 @@ public class ConfirmOctopusImportCommandHandlerTests
 
     private static OctopusImportPlanningSnapshot Snapshot(OctopusImportPreviewPlanDto preview)
         => new(
-            new OctopusResourceGraph([], [], [], []),
+            new OctopusResourceGraph(
+            [
+                new OctopusResourceNode(
+                    "Projects-1",
+                    "Project",
+                    OctopusResourceKind.Project,
+                    OctopusDocumentKind.Project,
+                    "project.json",
+                    null,
+                    null,
+                    false,
+                    new object())
+            ],
+            [],
+            [],
+            []),
             new OctopusImportDependencyPlan([], [], [], []),
             new OctopusImportConflictDiscoveryResult([]),
             preview);
@@ -192,10 +216,14 @@ public class ConfirmOctopusImportCommandHandlerTests
         public Harness()
         {
             CurrentUser.SetupGet(u => u.Id).Returns(42);
+            AuthorizationService
+                .Setup(a => a.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
             Sut = new ConfirmOctopusImportCommandHandler(
                 SessionDataProvider.Object,
                 SessionService.Object,
                 CurrentUser.Object,
+                AuthorizationService.Object,
                 PlanningPipeline.Object,
                 ConfirmationOrchestrator.Object);
         }
@@ -205,6 +233,8 @@ public class ConfirmOctopusImportCommandHandlerTests
         public Mock<IOctopusImportSessionService> SessionService { get; } = new();
 
         public Mock<ICurrentUser> CurrentUser { get; } = new();
+
+        public Mock<IAuthorizationService> AuthorizationService { get; } = new();
 
         public Mock<IOctopusImportPlanningPipeline> PlanningPipeline { get; } = new();
 

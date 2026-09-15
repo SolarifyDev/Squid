@@ -222,7 +222,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
     private static bool IsUnsupported(OctopusResourceKind kind)
         => kind is OctopusResourceKind.Unknown
             or OctopusResourceKind.ActionTemplate
-            or OctopusResourceKind.Certificate;
+            or OctopusResourceKind.Certificate
+            or OctopusResourceKind.Team
+            or OctopusResourceKind.Machine;
 
     private static int Rank(OctopusResourceKind kind)
     {

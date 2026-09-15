@@ -55,6 +55,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         ValidateReferences(graph, selectedResources, allCurrentResources, result);
+        ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         result.RequiredInputs = previewPlan.RequiredInputs
             .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
@@ -63,6 +64,27 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .ToList();
 
         return result;
+    }
+
+    private static void ValidateProjectConflicts(
+        IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,
+        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources,
+        OctopusImportValidationResultDto result)
+    {
+        foreach (var conflict in conflictsBySourceId.Values.Where(c => c.Source.Kind == OctopusResourceKind.Project))
+        {
+            if (previewResources.TryGetValue(conflict.Source.SourceId, out var previewResource)
+                && previewResource.PreviewAction is not (OctopusImportPreviewAction.Create or OctopusImportPreviewAction.ReuseExisting))
+            {
+                continue;
+            }
+
+            AddReferenceDiagnostic(
+                result,
+                conflict.Source,
+                OctopusImportPreviewDiagnosticCodes.RenameRequiredForProject,
+                "A project with the same name or slug already exists in the destination space. Project imports are never silently merged.");
+        }
     }
 
     private static void ValidateReferences(
