@@ -330,6 +330,22 @@ public class OctopusImportConfirmationOrchestratorTests
     }
 
     [Fact]
+    public async Task ConfirmAsync_WhenResultInitializationFailsAfterAdmission_PersistsFailedSession()
+    {
+        var harness = CreateMinimalHarness();
+        harness.Request.PreviewPlan.Resources = null;
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Succeeded.ShouldBeFalse();
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+        harness.SessionService.TryStartConfirmationCalls.ShouldBe(1);
+        harness.SessionService.RecordResultCalls.ShouldBe(1);
+        harness.TransactionExecutor.ExecuteCalls.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task ConfirmAsync_WhenConfirmationValidationFindsStalePlan_DoesNotExecuteCommands()
     {
         var harness = CreateMinimalHarness();

@@ -180,6 +180,8 @@ public static class OctopusImportBlockerSummaryBuilder
                 BuildDependencyMessage(code, resources),
             OctopusImportPreviewDiagnosticCodes.StalePreviewPlan =>
                 "The destination changed after the preview was created. Generate a new preview before importing.",
+            OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing =>
+                BuildResourceMessage(resources, "requires a sensitive value that cannot be imported in this release."),
             OctopusImportActionMappingDiagnosticCodes.UnsupportedActionType or
             OctopusImportDeploymentProcessMappingDiagnosticCodes.UnsupportedActionType =>
                 BuildResourceMessage(resources, "uses an action type that is not supported and cannot be imported."),

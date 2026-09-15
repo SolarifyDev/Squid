@@ -13,7 +13,7 @@ namespace Squid.Calamari.Tests.Calamari.Package;
 /// that the Linux/Bash coordinator tests intentionally skip.
 /// Non-Windows hosts no-op so local macOS/Linux runs stay green.
 /// </summary>
-[Collection("Console IO")]
+[Collection("Process Globals")]
 public sealed class DeployPackageWindowsHostE2ETests : IDisposable
 {
     private const string PackageId = "Acme.Web";

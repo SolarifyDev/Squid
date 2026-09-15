@@ -105,7 +105,7 @@ public class OctopusImportVariableMapperTests
     }
 
     [Fact]
-    public void MapToCreateCommand_WhenVariableIsSensitive_OmitsSourceValueAndAddsWarning()
+    public void MapToCreateCommand_WhenVariableIsSensitive_OmitsSourceValueAndAddsBlocker()
     {
         var variableSet = VariableSet(new OctopusVariableDto
         {
@@ -118,7 +118,7 @@ public class OctopusImportVariableMapperTests
 
         var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
 
-        result.HasBlockers.ShouldBeFalse();
+        result.HasBlockers.ShouldBeTrue();
         result.CreateCommand.Variables[0].Type.ShouldBe(VariableType.Password);
         result.CreateCommand.Variables[0].IsSensitive.ShouldBeTrue();
         result.CreateCommand.Variables[0].Value.ShouldBe(string.Empty);
@@ -134,6 +134,8 @@ public class OctopusImportVariableMapperTests
         requiredInput.HasSourceValue.ShouldBeTrue();
         requiredInput.IsRequired.ShouldBeTrue();
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted);
+        result.Diagnostics.Single(d => d.Code == OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
         result.Diagnostics.All(d => d.Message.Contains("encrypted-source-secret", StringComparison.OrdinalIgnoreCase)).ShouldBeFalse();
         JsonSerializer.Serialize(result.RequiredInputs).ToLowerInvariant().ShouldNotContain("encrypted-source-secret");
     }

@@ -9,6 +9,7 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string RenameRequiredForProject = "octopus.preview.project_rename_required";
     public const string RenameRequiredForAmbiguousConflict = "octopus.preview.resource_rename_required_ambiguous";
     public const string ResourceBlockedByDependencyPlan = "octopus.preview.resource_blocked_by_dependency_plan";
+    public const string RequiredSensitiveVariableInputMissing = "octopus.validation.required_sensitive_variable_input_missing";
     public const string UnresolvedReference = "octopus.validation.unresolved_reference";
     public const string MissingTargetRole = "octopus.validation.missing_target_role";
     public const string MissingMachine = "octopus.validation.missing_machine";
