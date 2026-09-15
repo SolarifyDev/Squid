@@ -63,12 +63,31 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
             var json = JsonSerializer.Serialize(value, value.GetType(), SafeJsonOptions);
             var redactedJson = OctopusImportRedaction.RedactJson(json);
             using var document = JsonDocument.Parse(redactedJson);
-            return document.RootElement.Clone();
+            return ToLogValue(document.RootElement);
         }
         catch (Exception) when (value is not string)
         {
             return new { Type = value.GetType().FullName };
         }
+    }
+
+    private static object ToLogValue(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Object => element.EnumerateObject()
+                .ToDictionary(property => property.Name, property => ToLogValue(property.Value)),
+            JsonValueKind.Array => element.EnumerateArray()
+                .Select(ToLogValue)
+                .ToList(),
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number when element.TryGetInt64(out var integer) => integer,
+            JsonValueKind.Number when element.TryGetDecimal(out var decimalValue) => decimalValue,
+            JsonValueKind.Number => element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
     }
 
     public Task Execute(TContext context, CancellationToken cancellationToken)
