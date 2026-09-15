@@ -48,6 +48,9 @@ public class OctopusImportPreviewPlannerTests
         requiredInput.ValueType.ShouldBe("Sensitive");
         requiredInput.HasSourceValue.ShouldBeTrue();
         requiredInput.SourceScopes["Environment"].ShouldBe(["Environments-1"]);
+        resourceResult.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
+        resourceResult.Diagnostics.Single().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+        preview.HasBlockers.ShouldBeTrue();
     }
 
     [Fact]

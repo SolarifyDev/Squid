@@ -170,9 +170,9 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(variableSet.Id, variable.Id, index);
             requiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable));
             diagnostics.Add(Diagnostic(
-                OctopusImportCompatibilitySeverity.Warning,
+                OctopusImportCompatibilitySeverity.Blocker,
                 OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
-                $"Sensitive Octopus variable '{variable.Name}' was mapped without its source value and must be supplied manually after import.",
+                $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.",
                 OctopusResourceKind.Variable,
                 variableSourceId,
                 variable.Name));

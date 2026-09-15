@@ -223,8 +223,33 @@ public class OctopusImportPreviewValidatorTests
 
         var result = _validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), preview);
 
-        result.Diagnostics.ShouldBeEmpty();
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
         result.RequiredInputs.Single().InputKey.ShouldBe("required-secret-input:SensitiveVariableValue:variable-value:Value");
+    }
+
+    [Fact]
+    public void Validate_WhenSensitiveRequiredInputWasRemovedFromPreview_RebuildsMarkerAndAddsBlocker()
+    {
+        var variable = Node(
+            "variable-value",
+            OctopusResourceKind.Variable,
+            "ApiKey",
+            new OctopusVariableDto
+            {
+                Id = "variable-value",
+                Name = "ApiKey",
+                Type = "Sensitive",
+                IsSensitive = true,
+                Value = "encrypted-source-value"
+            });
+        var preview = Preview([variable]);
+
+        var result = _validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), preview);
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
+        result.RequiredInputs.Single().Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
     }
 
     private static OctopusResourceGraph Graph(
@@ -286,7 +311,8 @@ public class OctopusImportPreviewValidatorTests
     private static OctopusResourceNode Node(
         string sourceId,
         OctopusResourceKind kind,
-        string name)
+        string name,
+        object source = null)
         => new(
             sourceId,
             name,
@@ -296,5 +322,5 @@ public class OctopusImportPreviewValidatorTests
             "Projects-1",
             null,
             false,
-            new object());
+            source ?? new object());
 }

@@ -59,11 +59,40 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         result.RequiredInputs = previewPlan.RequiredInputs
             .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
+            .Concat(BuildRequiredInputs(selectedResources.Values))
             .GroupBy(input => input.InputKey, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
+        ValidateRequiredInputs(result);
 
         return result;
+    }
+
+    private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(
+        IEnumerable<OctopusResourceNode> selectedResources)
+    {
+        foreach (var resource in selectedResources.Where(resource => resource.Kind == OctopusResourceKind.Variable))
+        {
+            var variable = resource.GetSource<OctopusVariableDto>();
+            if (variable != null && OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
+                yield return OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable);
+        }
+    }
+
+    private static void ValidateRequiredInputs(OctopusImportValidationResultDto result)
+    {
+        foreach (var input in result.RequiredInputs.Where(input => input.IsRequired))
+        {
+            result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
+            {
+                Severity = OctopusImportCompatibilitySeverity.Blocker,
+                Code = OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,
+                Message = "Sensitive variable values cannot be imported in this release. Confirmation is blocked while this required input is unresolved.",
+                SourceId = input.SourceId,
+                ResourceType = input.SourceType,
+                ResourceName = input.Name
+            }));
+        }
     }
 
     private static void ValidateProjectConflicts(

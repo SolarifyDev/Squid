@@ -107,9 +107,10 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         if (!admitted)
             return await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
 
-        var result = BuildInitialResult(request.PreviewPlan);
+        OctopusImportSessionResultDto result = null;
         try
         {
+            result = BuildInitialResult(request.PreviewPlan);
             var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
             if (request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker))
                 return await _sessionService
@@ -139,6 +140,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         }
         catch (Exception ex)
         {
+            result ??= new OctopusImportSessionResultDto();
             MarkRolledBack(result, ex);
             result.Succeeded = false;
 

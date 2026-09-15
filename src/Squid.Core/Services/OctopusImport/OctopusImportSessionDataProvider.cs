@@ -207,8 +207,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         var cleanupAfter = now.Add(failedRetentionPeriod);
 
         return _repository.ExecuteUpdateAsync<OctopusImportSession>(
-            s => s.ExpiresAt <= now &&
-                 s.LastStateChangedAt <= staleBefore &&
+            s => s.LastStateChangedAt <= staleBefore &&
                  s.State == OctopusImportSessionState.Importing.ToString(),
             setters => setters
                 .SetProperty(s => s.State, OctopusImportSessionState.Failed.ToString())

@@ -138,6 +138,11 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return;
 
         result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Blocker,
+            OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,
+            "Sensitive variable values cannot be imported in this release. Confirmation is blocked while this required input is unresolved.",
+            resource));
     }
 
     private static void ApplyConflictAction(
