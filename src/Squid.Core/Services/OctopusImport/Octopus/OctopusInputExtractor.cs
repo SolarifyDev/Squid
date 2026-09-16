@@ -26,6 +26,18 @@ public class OctopusInputExtractor : IOctopusInputExtractor
 {
     private const int CopyBufferSize = 81920;
     private static readonly byte[] Utf8Bom = [0xEF, 0xBB, 0xBF];
+    private readonly OctopusArchiveExtractionOptions _defaultOptions;
+
+    public OctopusInputExtractor()
+        : this(OctopusArchiveExtractionOptions.Default)
+    {
+    }
+
+    public OctopusInputExtractor(OctopusArchiveExtractionOptions defaultOptions)
+    {
+        _defaultOptions = defaultOptions ?? throw new ArgumentNullException(nameof(defaultOptions));
+        _defaultOptions.EnsureValid();
+    }
 
     public async Task<OctopusInputExtractionResult> ExtractStandaloneJsonAsync(
         Stream jsonStream,
@@ -35,7 +47,7 @@ public class OctopusInputExtractor : IOctopusInputExtractor
     {
         ArgumentNullException.ThrowIfNull(jsonStream);
 
-        options ??= OctopusArchiveExtractionOptions.Default;
+        options ??= _defaultOptions;
         options.EnsureValid();
 
         var diagnostics = new List<OctopusInputExtractionDiagnostic>();
@@ -54,7 +66,7 @@ public class OctopusInputExtractor : IOctopusInputExtractor
         OctopusArchiveExtractionOptions options = null,
         CancellationToken ct = default)
     {
-        options ??= OctopusArchiveExtractionOptions.Default;
+        options ??= _defaultOptions;
         options.EnsureValid();
 
         var diagnostics = new List<OctopusInputExtractionDiagnostic>();

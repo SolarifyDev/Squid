@@ -118,6 +118,23 @@ public class OctopusImportDependencyPlannerTests
         plan.Diagnostics.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(OctopusResourceKind.ActionTemplate)]
+    [InlineData(OctopusResourceKind.Tenant)]
+    [InlineData(OctopusResourceKind.Runbook)]
+    [InlineData(OctopusResourceKind.Trigger)]
+    public void BuildCurrentConfigurationPlan_IncludesExplicitlyUnsupportedResources(
+        OctopusResourceKind resourceKind)
+    {
+        var resource = Node($"{resourceKind}-1", resourceKind);
+        var graph = new OctopusResourceGraph([resource], [], [], []);
+
+        var plan = _planner.BuildCurrentConfigurationPlan(graph);
+
+        plan.OrderedResources.Single().ShouldBe(resource);
+        plan.OutOfScopeResources.ShouldBeEmpty();
+    }
+
     [Fact]
     public void BuildCurrentConfigurationPlan_KeepsOptionalReferencesOutOfOrderingDependencies()
     {

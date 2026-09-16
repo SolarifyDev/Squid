@@ -9,14 +9,18 @@ namespace Squid.Core.Handlers.CommandHandlers.OctopusImport;
 public class UploadOctopusImportCommandHandler(
     IOctopusImportSessionService sessionService,
     IOctopusImportTemporaryUploadStore uploadStore,
-    IOctopusExportPasswordValidator passwordValidator)
+    IOctopusExportPasswordValidator passwordValidator,
+    OctopusArchiveExtractionOptions limits = null)
     : ICommandHandler<UploadOctopusImportCommand, UploadOctopusImportResponse>
 {
+    private readonly OctopusArchiveExtractionOptions _limits = limits ?? OctopusArchiveExtractionOptions.Default;
+
     public async Task<UploadOctopusImportResponse> Handle(
         IReceiveContext<UploadOctopusImportCommand> context,
         CancellationToken cancellationToken)
     {
         var command = context.Message;
+        _limits.EnsureValid();
 
         if (command.Content == null)
             return BadRequest("Octopus import upload requires a file stream.");
@@ -24,6 +28,8 @@ public class UploadOctopusImportCommandHandler(
             return BadRequest("Octopus import upload requires a file name.");
         if (command.SizeBytes <= 0)
             return BadRequest("Octopus import upload requires a non-empty file.");
+        if (command.SizeBytes > _limits.MaxUploadSizeBytes)
+            return BadRequest($"Octopus import upload exceeds the configured maximum file size of {_limits.MaxUploadSizeBytes} bytes.");
         if (string.IsNullOrWhiteSpace(command.Password))
             return BadRequest("Octopus import upload requires a password.");
 
@@ -33,7 +39,7 @@ public class UploadOctopusImportCommandHandler(
         {
             if (!command.Content.CanSeek)
             {
-                bufferedContent = await BufferContentAsync(command.Content, cancellationToken).ConfigureAwait(false);
+                bufferedContent = await BufferContentAsync(command.Content, _limits.MaxUploadSizeBytes, cancellationToken).ConfigureAwait(false);
 
                 if (bufferedContent == null)
                     return BadRequest("Octopus import upload exceeds the maximum allowed file size.");
@@ -82,7 +88,10 @@ public class UploadOctopusImportCommandHandler(
         }
     }
 
-    private static async Task<MemoryStream> BufferContentAsync(Stream content, CancellationToken ct)
+    private static async Task<MemoryStream> BufferContentAsync(
+        Stream content,
+        long maxUploadSizeBytes,
+        CancellationToken ct)
     {
         var memoryStream = new MemoryStream();
         var buffer = new byte[81920];
@@ -97,7 +106,7 @@ public class UploadOctopusImportCommandHandler(
                 if (read == 0)
                     break;
 
-                if (memoryStream.Length + read > OctopusArchiveExtractionOptions.DefaultMaxTotalUncompressedSizeBytes)
+                if (memoryStream.Length + read > maxUploadSizeBytes)
                     return null;
 
                 await memoryStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);

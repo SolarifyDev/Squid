@@ -73,6 +73,10 @@ public class OctopusDocumentClassifierTests
     [InlineData("Deployments-390384-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Deployment, true)]
     [InlineData("ServerTasks-2032665-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.ServerTask, true)]
     [InlineData("WorkerPools-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.WorkerPool, false)]
+    [InlineData("Tenants-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Tenant, false)]
+    [InlineData("Runbooks-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Runbook, false)]
+    [InlineData("runbookprocess-Runbooks-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Runbook, false)]
+    [InlineData("ProjectTriggers-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Trigger, false)]
     [InlineData("deploymentprocess-Projects-1323-s-21-8DWSK-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.DeploymentProcessSnapshot, true)]
     [InlineData("variableset-Projects-1323-s-55-N6739-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.VariableSetSnapshot, true)]
     public void ClassifyFileName_MapsKnownExportFileNames(string fileName, OctopusDocumentKind expectedKind, bool outOfScope)
@@ -115,6 +119,25 @@ public class OctopusDocumentClassifierTests
 
         classification.Kind.ShouldBe(OctopusDocumentKind.WorkerPool);
         classification.ManifestDocumentType.ShouldBe("WorkerPool");
+        classification.IsCurrentConfiguration.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("Tenant", OctopusDocumentKind.Tenant)]
+    [InlineData("Runbook", OctopusDocumentKind.Runbook)]
+    [InlineData("RunbookProcess", OctopusDocumentKind.Runbook)]
+    [InlineData("ProjectTrigger", OctopusDocumentKind.Trigger)]
+    [InlineData("Trigger", OctopusDocumentKind.Trigger)]
+    public void ClassifyJsonDocument_MapsExplicitlyUnsupportedDocumentTypes(
+        string documentType,
+        OctopusDocumentKind expectedKind)
+    {
+        var classification = OctopusDocumentClassifier.ClassifyJsonDocument(
+            "unsupported.json",
+            "Unsupported-1",
+            documentType);
+
+        classification.Kind.ShouldBe(expectedKind);
         classification.IsCurrentConfiguration.ShouldBeTrue();
     }
 

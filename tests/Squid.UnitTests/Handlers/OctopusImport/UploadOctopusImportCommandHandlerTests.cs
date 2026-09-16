@@ -4,6 +4,7 @@ using System.Text;
 using Mediator.Net.Contracts;
 using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -121,6 +122,38 @@ public class UploadOctopusImportCommandHandlerTests
 
         response.Code.ShouldBe(HttpStatusCode.BadRequest);
         response.Msg.ShouldBe("Octopus import upload requires a password.");
+    }
+
+    [Fact]
+    public async Task Handle_WhenConfiguredUploadLimitIsExceeded_RejectsBeforeValidationOrPersistence()
+    {
+        var sessionService = new Mock<IOctopusImportSessionService>();
+        var uploadStore = new Mock<IOctopusImportTemporaryUploadStore>();
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        var sut = new UploadOctopusImportCommandHandler(
+            sessionService.Object,
+            uploadStore.Object,
+            passwordValidator.Object,
+            new OctopusArchiveExtractionOptions { MaxUploadSizeBytes = 2 });
+
+        var response = await sut.Handle(Context(new UploadOctopusImportCommand
+        {
+            SpaceId = 7,
+            Password = "octopus-password",
+            FileName = "export.zip",
+            SizeBytes = 3,
+            Content = new MemoryStream(Encoding.UTF8.GetBytes("zip"))
+        }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Msg.ShouldContain("2 bytes");
+        passwordValidator.Verify(v => v.ValidateAsync(
+            It.IsAny<Stream>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        sessionService.VerifyNoOtherCalls();
+        uploadStore.VerifyNoOtherCalls();
     }
 
     [Fact]

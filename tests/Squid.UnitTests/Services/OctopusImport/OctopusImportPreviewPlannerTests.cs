@@ -204,6 +204,10 @@ public class OctopusImportPreviewPlannerTests
     [Theory]
     [InlineData(OctopusResourceKind.Team, "Teams-1")]
     [InlineData(OctopusResourceKind.Machine, "Machines-1")]
+    [InlineData(OctopusResourceKind.ActionTemplate, "ActionTemplates-1")]
+    [InlineData(OctopusResourceKind.Tenant, "Tenants-1")]
+    [InlineData(OctopusResourceKind.Runbook, "Runbooks-1")]
+    [InlineData(OctopusResourceKind.Trigger, "ProjectTriggers-1")]
     public void BuildPreviewPlan_WhenResourceHasNoConfirmationImplementation_ProposesUnsupported(
         OctopusResourceKind kind,
         string sourceId)

@@ -5,6 +5,7 @@ using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -21,6 +22,8 @@ public class GlobalExceptionFilter : IExceptionFilter
             MachineNotFoundException => HttpStatusCode.NotFound,
             MachineNameConflictException => HttpStatusCode.Conflict,
             MachineEndpointUpdateNotApplicableException => HttpStatusCode.BadRequest,
+            OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
+            OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError
         };
 

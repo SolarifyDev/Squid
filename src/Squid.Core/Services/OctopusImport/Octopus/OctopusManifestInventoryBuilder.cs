@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Octopus;
@@ -10,6 +11,11 @@ public interface IOctopusManifestInventoryBuilder : IScopedDependency
 
 public class OctopusManifestInventoryBuilder : IOctopusManifestInventoryBuilder
 {
+    private const int HighestVerifiedSchemaVersion = 722;
+    private static readonly Regex SchemaVersionPattern = new(
+        @"^Script(?<version>\d+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -46,6 +52,8 @@ public class OctopusManifestInventoryBuilder : IOctopusManifestInventoryBuilder
 
         if (manifest == null)
             return new OctopusManifestInventoryResult(null, [], [], diagnostics);
+
+        ValidateSchemaVersions(manifest, diagnostics);
 
         var documentsByPath = extractionResult.Documents
             .Where(d => d.Classification.Kind != OctopusDocumentKind.Manifest)
@@ -110,6 +118,44 @@ public class OctopusManifestInventoryBuilder : IOctopusManifestInventoryBuilder
             .ToList();
 
         return new OctopusManifestInventoryResult(manifest, items, counts, diagnostics);
+    }
+
+    private static void ValidateSchemaVersions(
+        OctopusExportManifestDto manifest,
+        List<OctopusInputExtractionDiagnostic> diagnostics)
+    {
+        var newerVersionCount = 0;
+        var unrecognizedVersionCount = 0;
+
+        foreach (var schemaVersion in manifest.SchemaVersions ?? [])
+        {
+            var match = string.IsNullOrWhiteSpace(schemaVersion)
+                ? Match.Empty
+                : SchemaVersionPattern.Match(schemaVersion.Trim());
+
+            if (!match.Success || !int.TryParse(match.Groups["version"].Value, out var version))
+            {
+                unrecognizedVersionCount++;
+                continue;
+            }
+
+            if (version > HighestVerifiedSchemaVersion)
+                newerVersionCount++;
+        }
+
+        if (newerVersionCount > 0)
+        {
+            diagnostics.Add(Warning(
+                OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionNewer,
+                $"Octopus import manifest contains {newerVersionCount} schema version entry or entries newer than the highest verified version Script{HighestVerifiedSchemaVersion:D4}. Compatibility has not been verified."));
+        }
+
+        if (unrecognizedVersionCount > 0)
+        {
+            diagnostics.Add(Warning(
+                OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionUnrecognized,
+                $"Octopus import manifest contains {unrecognizedVersionCount} unrecognized schema version entry or entries. Compatibility has not been verified."));
+        }
     }
 
     private static OctopusExtractedJsonDocument SelectManifest(List<OctopusExtractedJsonDocument> manifestDocuments)

@@ -1,7 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
-using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
 
@@ -12,8 +10,6 @@ namespace Squid.Api.Controllers;
 [Route("api/octopus-import")]
 public class OctopusImportController : ControllerBase
 {
-    private const long MaxUploadBytes = OctopusArchiveExtractionOptions.DefaultMaxTotalUncompressedSizeBytes;
-
     private readonly IMediator _mediator;
 
     public OctopusImportController(IMediator mediator)
@@ -23,8 +19,6 @@ public class OctopusImportController : ControllerBase
 
     [HttpPost("upload")]
     [Consumes("multipart/form-data")]
-    [RequestSizeLimit(MaxUploadBytes)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxUploadBytes)]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(UploadOctopusImportResponse))]
     public async Task<IActionResult> UploadAsync(
         [FromForm] UploadOctopusImportForm request,

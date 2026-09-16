@@ -114,6 +114,11 @@ public static partial class OctopusDocumentClassifier
             "ServerTask" => OctopusDocumentKind.ServerTask,
             "ActionTemplate" => OctopusDocumentKind.ActionTemplate,
             "WorkerPool" => OctopusDocumentKind.WorkerPool,
+            "Tenant" => OctopusDocumentKind.Tenant,
+            "Runbook" => OctopusDocumentKind.Runbook,
+            "RunbookProcess" => OctopusDocumentKind.Runbook,
+            "ProjectTrigger" => OctopusDocumentKind.Trigger,
+            "Trigger" => OctopusDocumentKind.Trigger,
             _ => OctopusDocumentKind.Unknown
         };
     }
@@ -174,6 +179,14 @@ public static partial class OctopusDocumentClassifier
             return OctopusDocumentKind.ActionTemplate;
         if (value.StartsWith("WorkerPools-", StringComparison.OrdinalIgnoreCase))
             return OctopusDocumentKind.WorkerPool;
+        if (value.StartsWith("Tenants-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.Tenant;
+        if (value.StartsWith("Runbooks-", StringComparison.OrdinalIgnoreCase) ||
+            value.StartsWith("runbookprocess-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.Runbook;
+        if (value.StartsWith("ProjectTriggers-", StringComparison.OrdinalIgnoreCase) ||
+            value.StartsWith("Triggers-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.Trigger;
 
         return OctopusDocumentKind.Unknown;
     }

@@ -203,6 +203,34 @@ public class OctopusImportPreviewValidatorTests
     }
 
     [Fact]
+    public void Validate_WhenReleasePackageFeedCannotBeResolved_AddsPreflightBlocker()
+    {
+        var action = ReleaseAction("Feeds-Missing");
+        var release = Release();
+        var resources = new[] { action, release };
+
+        var result = _validator.Validate(Graph(resources), Plan(resources), NoConflicts(), Preview(resources));
+
+        var diagnostic = result.Diagnostics.Single();
+        diagnostic.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping);
+        diagnostic.SourceId.ShouldBe(release.SourceId);
+        result.HasBlockers.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Validate_WhenReleasePackageFeedWillBeCreated_PassesPreflight()
+    {
+        var feed = Node("Feeds-1", OctopusResourceKind.Feed, "Packages");
+        var action = ReleaseAction(feed.SourceId);
+        var release = Release();
+        var resources = new[] { feed, action, release };
+
+        var result = _validator.Validate(Graph(resources), Plan(resources), NoConflicts(), Preview(resources));
+
+        result.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void Validate_PreservesRequiredInputMarkersFromPreview()
     {
         var variable = Node("Variables-Secret", OctopusResourceKind.Variable, "ApiKey");
@@ -323,4 +351,43 @@ public class OctopusImportPreviewValidatorTests
             null,
             false,
             source ?? new object());
+
+    private static OctopusResourceNode ReleaseAction(string feedId)
+        => Node(
+            "Actions-1",
+            OctopusResourceKind.DeploymentAction,
+            "Deploy",
+            new OctopusDeploymentActionDto
+            {
+                Id = "Actions-1",
+                Name = "Deploy",
+                Packages =
+                [
+                    new OctopusActionPackageDto
+                    {
+                        Name = "app",
+                        FeedId = feedId
+                    }
+                ]
+            });
+
+    private static OctopusResourceNode Release()
+        => Node(
+            "Releases-1",
+            OctopusResourceKind.Release,
+            "1.0.0",
+            new OctopusReleaseDto
+            {
+                Id = "Releases-1",
+                ProjectId = "Projects-1",
+                SelectedPackages =
+                [
+                    new OctopusSelectedPackageDto
+                    {
+                        ActionName = "Deploy",
+                        PackageReferenceName = "app",
+                        Version = "1.2.3"
+                    }
+                ]
+            });
 }

@@ -23,5 +23,8 @@ public enum OctopusDocumentKind
     Deployment,
     ServerTask,
     ActionTemplate,
-    WorkerPool
+    WorkerPool,
+    Tenant,
+    Runbook,
+    Trigger
 }
