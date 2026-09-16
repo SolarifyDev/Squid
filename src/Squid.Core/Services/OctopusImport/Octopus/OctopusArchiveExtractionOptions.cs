@@ -47,8 +47,5 @@ public sealed class OctopusArchiveExtractionOptions : IConfigurationSetting
 
         if (MaxUploadSizeBytes <= 0)
             throw new ArgumentOutOfRangeException(nameof(MaxUploadSizeBytes), MaxUploadSizeBytes, "Upload size limit must be greater than zero.");
-
-        if (MaxEntrySizeBytes > MaxTotalUncompressedSizeBytes)
-            throw new ArgumentOutOfRangeException(nameof(MaxEntrySizeBytes), MaxEntrySizeBytes, "Entry size limit cannot exceed the total uncompressed size limit.");
     }
 }

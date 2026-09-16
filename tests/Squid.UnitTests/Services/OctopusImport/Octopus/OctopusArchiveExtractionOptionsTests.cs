@@ -41,7 +41,7 @@ public class OctopusArchiveExtractionOptionsTests
     }
 
     [Fact]
-    public void EnsureValid_WhenEntryLimitExceedsTotalLimit_Throws()
+    public void EnsureValid_WhenEntryLimitExceedsTotalLimit_AllowsIndependentLimits()
     {
         var options = new OctopusArchiveExtractionOptions
         {
@@ -49,6 +49,6 @@ public class OctopusArchiveExtractionOptionsTests
             MaxTotalUncompressedSizeBytes = 1
         };
 
-        Should.Throw<ArgumentOutOfRangeException>(options.EnsureValid);
+        Should.NotThrow(options.EnsureValid);
     }
 }

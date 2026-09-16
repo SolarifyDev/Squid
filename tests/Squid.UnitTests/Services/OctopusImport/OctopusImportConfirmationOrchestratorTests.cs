@@ -308,6 +308,15 @@ public class OctopusImportConfirmationOrchestratorTests
     public async Task ConfirmAsync_WhenReleasePackageFeedCannotBeResolved_BlocksBeforeTransaction()
     {
         var harness = CreateRichHarness();
+        var previewValidator = new OctopusImportPreviewValidator();
+        harness.PreviewValidator
+            .Setup(v => v.Validate(
+                It.IsAny<OctopusResourceGraph>(),
+                It.IsAny<OctopusImportDependencyPlan>(),
+                It.IsAny<OctopusImportConflictDiscoveryResult>(),
+                It.IsAny<OctopusImportPreviewPlanDto>()))
+            .Returns<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto>(
+                previewValidator.Validate);
         harness.Nodes.DeploymentAction.GetSource<OctopusDeploymentActionDto>()
             .Packages.Single().FeedId = "Feeds-Missing";
         harness.Nodes.DeploymentProcess.GetSource<OctopusDeploymentProcessDto>()
