@@ -161,11 +161,12 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             OctopusResourceKind.Project => 100,
             OctopusResourceKind.Channel => 110,
             OctopusResourceKind.DeploymentSettings => 120,
-            OctopusResourceKind.VariableSet => 130,
-            OctopusResourceKind.Variable => 140,
-            OctopusResourceKind.DeploymentProcess => 150,
-            OctopusResourceKind.DeploymentStep => 160,
-            OctopusResourceKind.DeploymentAction => 170,
+            // Process and action ids are required when mapping action/process-scoped variables.
+            OctopusResourceKind.DeploymentProcess => 130,
+            OctopusResourceKind.DeploymentStep => 140,
+            OctopusResourceKind.DeploymentAction => 150,
+            OctopusResourceKind.VariableSet => 160,
+            OctopusResourceKind.Variable => 170,
             OctopusResourceKind.Release => 180,
             _ => 1000
         };
