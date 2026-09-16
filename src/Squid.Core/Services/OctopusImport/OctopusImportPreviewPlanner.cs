@@ -34,7 +34,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Concat(dependencyPlan.OutOfScopeResources)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
-            .OrderBy(r => Rank(r.Kind))
+            .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))
             .ToList();
@@ -88,7 +88,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (resource.IsHistorical || IsOutOfScope(resource.Kind))
+        if (resource.IsHistorical || OctopusResourceMetadata.For(resource.Kind).IsPreviewOutOfScope)
         {
             result.PreviewAction = OctopusImportPreviewAction.Skip;
             result.OutcomeState = OctopusImportResourceOutcomeState.Skipped;
@@ -101,7 +101,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (IsUnsupported(resource.Kind))
+        if (OctopusResourceMetadata.For(resource.Kind).IsUnsupported)
         {
             result.PreviewAction = OctopusImportPreviewAction.Unsupported;
             result.OutcomeState = OctopusImportResourceOutcomeState.Unsupported;
@@ -217,55 +217,4 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             result.Diagnostics.Add(diagnostic);
     }
 
-    private static bool IsOutOfScope(OctopusResourceKind kind)
-        => kind is OctopusResourceKind.Deployment
-            or OctopusResourceKind.ServerTask
-            or OctopusResourceKind.DeploymentProcessSnapshot
-            or OctopusResourceKind.VariableSetSnapshot
-            or OctopusResourceKind.WorkerPool;
-
-    private static bool IsUnsupported(OctopusResourceKind kind)
-        => kind is OctopusResourceKind.Unknown
-            or OctopusResourceKind.ActionTemplate
-            or OctopusResourceKind.Certificate
-            or OctopusResourceKind.Team
-            or OctopusResourceKind.Machine
-            or OctopusResourceKind.Tenant
-            or OctopusResourceKind.Runbook
-            or OctopusResourceKind.Trigger;
-
-    private static int Rank(OctopusResourceKind kind)
-    {
-        return kind switch
-        {
-            OctopusResourceKind.ProjectGroup => 10,
-            OctopusResourceKind.Environment => 20,
-            OctopusResourceKind.Lifecycle => 30,
-            OctopusResourceKind.LifecyclePhase => 40,
-            OctopusResourceKind.Feed => 50,
-            OctopusResourceKind.Team => 60,
-            OctopusResourceKind.Machine => 70,
-            OctopusResourceKind.Account => 80,
-            OctopusResourceKind.Certificate => 90,
-            OctopusResourceKind.Project => 100,
-            OctopusResourceKind.Channel => 110,
-            OctopusResourceKind.DeploymentSettings => 120,
-            OctopusResourceKind.DeploymentProcess => 130,
-            OctopusResourceKind.DeploymentStep => 140,
-            OctopusResourceKind.DeploymentAction => 150,
-            OctopusResourceKind.VariableSet => 160,
-            OctopusResourceKind.Variable => 170,
-            OctopusResourceKind.Release => 180,
-            OctopusResourceKind.ActionTemplate => 190,
-            OctopusResourceKind.Tenant => 200,
-            OctopusResourceKind.Runbook => 210,
-            OctopusResourceKind.Trigger => 220,
-            OctopusResourceKind.DeploymentProcessSnapshot => 900,
-            OctopusResourceKind.VariableSetSnapshot => 910,
-            OctopusResourceKind.Deployment => 930,
-            OctopusResourceKind.ServerTask => 940,
-            OctopusResourceKind.WorkerPool => 950,
-            _ => 1000
-        };
-    }
 }

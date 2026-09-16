@@ -24,6 +24,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             MachineEndpointUpdateNotApplicableException => HttpStatusCode.BadRequest,
             OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
+            OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError
         };
 

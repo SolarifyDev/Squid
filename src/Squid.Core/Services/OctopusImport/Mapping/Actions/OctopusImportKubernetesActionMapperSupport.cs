@@ -13,10 +13,10 @@ namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 internal static class OctopusImportKubernetesActionMapperSupport
 {
     internal const string OctopusKubernetesContainersPrefix = "Octopus.Action.KubernetesContainers.";
-    internal const string OctopusKubernetesPrefix = "Octopus.Action.Kubernetes.";
-    internal const string OctopusResourceStatusCheck = "Octopus.Action.Kubernetes.ResourceStatusCheck";
-    internal const string OctopusDeploymentTimeout = "Octopus.Action.Kubernetes.DeploymentTimeout";
-    internal const string OctopusEnabledFeatures = "Octopus.Action.EnabledFeatures";
+    internal const string OctopusKubernetesPrefix = OctopusPropertyNames.KubernetesPrefix;
+    internal const string OctopusResourceStatusCheck = OctopusPropertyNames.ActionKubernetesResourceStatusCheck;
+    internal const string OctopusDeploymentTimeout = OctopusPropertyNames.ActionKubernetesDeploymentTimeout;
+    internal const string OctopusEnabledFeatures = OctopusPropertyNames.ActionEnabledFeatures;
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -130,8 +130,8 @@ internal static class OctopusImportKubernetesActionMapperSupport
     }
 
     private static bool IsStepLevelActionProperty(string propertyName)
-        => string.Equals(propertyName, "Octopus.Action.TargetRoles", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(propertyName, "Octopus.Action.RunOnServer", StringComparison.OrdinalIgnoreCase);
+        => string.Equals(propertyName, OctopusPropertyNames.ActionTargetRoles, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, OctopusPropertyNames.ActionRunOnServer, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsEmptyJson(string value)
     {

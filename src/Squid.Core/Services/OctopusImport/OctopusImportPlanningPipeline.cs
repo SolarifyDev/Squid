@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Models.OctopusImport;
 
@@ -28,6 +29,7 @@ public class OctopusImportPlanningPipeline(
     : IOctopusImportPlanningPipeline
 {
     private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
+    private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
 
     public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
         string temporaryUploadPath,
@@ -52,6 +54,35 @@ public class OctopusImportPlanningPipeline(
     }
 
     private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
+    {
+        var fileInfo = new FileInfo(temporaryUploadPath);
+        var cacheKey = new ExtractionCacheKey(
+            Path.GetFullPath(temporaryUploadPath),
+            fileInfo.Length,
+            fileInfo.LastWriteTimeUtc);
+
+        var extraction = _extractions.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<Task<OctopusInputExtractionResult>>(
+                () => ExtractInputCoreAsync(temporaryUploadPath, CancellationToken.None),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return await extraction.Value.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!extraction.Value.IsCompleted)
+        {
+            throw;
+        }
+        catch
+        {
+            _extractions.TryRemove(cacheKey, out _);
+            throw;
+        }
+    }
+
+    private async Task<OctopusInputExtractionResult> ExtractInputCoreAsync(string temporaryUploadPath, CancellationToken ct)
     {
         await using var stream = new FileStream(temporaryUploadPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
 
@@ -83,4 +114,9 @@ public class OctopusImportPlanningPipeline(
 
         return true;
     }
+
+    private sealed record ExtractionCacheKey(
+        string FullPath,
+        long Length,
+        DateTime LastWriteTimeUtc);
 }

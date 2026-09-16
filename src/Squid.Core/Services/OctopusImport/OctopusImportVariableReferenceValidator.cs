@@ -1,4 +1,5 @@
 using System.Reflection;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.VariableSubstitution.Templates;
 using Squid.Message.Constants;
@@ -26,9 +27,9 @@ public class OctopusImportVariableReferenceValidator : IOctopusImportVariableRef
             ["Octopus.Machine.Roles"] = SpecialVariables.Machine.Roles,
             ["Octopus.Deployment.Id"] = SpecialVariables.Deployment.Id,
             ["Octopus.Release.Number"] = SpecialVariables.Release.Number,
-            ["Octopus.Action.Package.PackageId"] = SpecialVariables.Action.PackageId,
-            ["Octopus.Action.Package.FeedId"] = SpecialVariables.Action.PackageFeedId,
-            ["Octopus.Action.Package.PackageVersion"] = SpecialVariables.Action.PackageVersion
+            [OctopusPropertyNames.ActionPackageId] = SpecialVariables.Action.PackageId,
+            [OctopusPropertyNames.ActionPackageFeedId] = SpecialVariables.Action.PackageFeedId,
+            [OctopusPropertyNames.ActionPackageVersion] = SpecialVariables.Action.PackageVersion
         };
 
     private static readonly IReadOnlySet<string> SquidSystemVariableNames = BuildSquidSystemVariableNames();

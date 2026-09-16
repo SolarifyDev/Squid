@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -11,13 +12,6 @@ namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
 {
     private const string OctopusActionTypeName = "Octopus.Script";
-    private const string OctopusScriptBodyPropertyName = "Octopus.Action.Script.ScriptBody";
-    private const string OctopusScriptSyntaxPropertyName = "Octopus.Action.Script.Syntax";
-    private const string OctopusScriptSourcePropertyName = "Octopus.Action.Script.ScriptSource";
-    private const string OctopusPackageFeedIdPropertyName = "Octopus.Action.Package.FeedId";
-    private const string OctopusPackageIdPropertyName = "Octopus.Action.Package.PackageId";
-    private const string OctopusPackageVersionPropertyName = "Octopus.Action.Package.PackageVersion";
-
     private static readonly IReadOnlySet<string> SupportedSyntaxes =
         Enum.GetNames<ScriptSyntax>().ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -35,9 +29,9 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var properties = new List<ActionPropertyModel>();
 
-        AddMappedProperty(properties, action.Properties, OctopusScriptSourcePropertyName, SpecialVariables.Action.ScriptSource);
+        AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptSource, SpecialVariables.Action.ScriptSource);
         AddMappedSyntax(properties, action, diagnostics);
-        AddMappedProperty(properties, action.Properties, OctopusScriptBodyPropertyName, SpecialVariables.Action.ScriptBody);
+        AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptBody, SpecialVariables.Action.ScriptBody);
         AddPackageReferenceProperties(properties, action, context, diagnostics);
 
         var model = new CreateOrUpdateDeploymentActionModel
@@ -58,7 +52,7 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         OctopusDeploymentActionDto action,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
-        var syntax = GetProperty(action.Properties, OctopusScriptSyntaxPropertyName);
+        var syntax = GetProperty(action.Properties, OctopusPropertyNames.ActionScriptSyntax);
 
         if (string.IsNullOrWhiteSpace(syntax))
             return;
@@ -130,9 +124,9 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
                 firstPackage.Version);
         }
 
-        var packageId = GetProperty(action.Properties, OctopusPackageIdPropertyName);
-        var feedId = GetProperty(action.Properties, OctopusPackageFeedIdPropertyName);
-        var version = GetProperty(action.Properties, OctopusPackageVersionPropertyName);
+        var packageId = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageId);
+        var feedId = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageFeedId);
+        var version = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageVersion);
 
         if (string.IsNullOrWhiteSpace(packageId)
             && string.IsNullOrWhiteSpace(feedId)

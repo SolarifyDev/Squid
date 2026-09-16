@@ -163,7 +163,9 @@ public class OctopusImportSessionServiceTests
         session.TemporaryUploadCleanupAfter.ShouldBe(session.ExpiresAt);
         session.TemporaryUploadCleanedAt.ShouldBeNull();
         session.TemporaryUploadCleanupError.ShouldBeNull();
-        _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(
+            p => p.UpdateSessionAsync(session, session.DataVersion, true, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -200,7 +202,9 @@ public class OctopusImportSessionServiceTests
                 OctopusImportSessionState.Previewed,
                 ct: CancellationToken.None));
 
-        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(
+            p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), true, It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -225,7 +229,9 @@ public class OctopusImportSessionServiceTests
         session.RedactedNormalizedDataJson.ShouldBe("{\"projects\":1}");
         session.TemporaryUploadCleanupAfter.ShouldBeNull();
         result.State.ShouldBe(OctopusImportSessionState.Extracted);
-        _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(
+            p => p.UpdateSessionAsync(session, session.DataVersion, true, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -290,13 +296,15 @@ public class OctopusImportSessionServiceTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
         _dataProvider
-            .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None);
 
         admitted.ShouldBeTrue();
-        _dataProvider.Verify(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(
+            p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -313,6 +321,7 @@ public class OctopusImportSessionServiceTests
                 It.IsAny<Guid>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
+                It.IsAny<byte[]>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -353,7 +362,9 @@ public class OctopusImportSessionServiceTests
         session.TemporaryUploadCleanupAfter.ShouldBe(session.CompletedAt.Value);
         result.Result.Succeeded.ShouldBeTrue();
         result.Result.Resources.Count.ShouldBe(1);
-        _dataProvider.Verify(p => p.UpdateSessionAsync(session, true, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(
+            p => p.UpdateSessionAsync(session, session.DataVersion, true, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
