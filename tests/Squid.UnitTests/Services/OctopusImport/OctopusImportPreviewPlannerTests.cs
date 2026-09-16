@@ -288,14 +288,24 @@ public class OctopusImportPreviewPlannerTests
     {
         var resources = new[]
         {
+            Node("Variables-1", OctopusResourceKind.Variable, "Variable"),
+            Node("variableset-Projects-1", OctopusResourceKind.VariableSet, "Variables"),
             Node("Actions-1", OctopusResourceKind.DeploymentAction, "Action"),
+            Node("deploymentprocess-Projects-1", OctopusResourceKind.DeploymentProcess, "Process"),
             Node("Projects-1", OctopusResourceKind.Project, "Project"),
             Node("Environments-1", OctopusResourceKind.Environment, "Development")
         };
 
         var preview = _planner.BuildPreviewPlan(Plan(resources), NoConflicts());
 
-        preview.Resources.Select(r => r.SourceId).ToList().ShouldBe(["Environments-1", "Projects-1", "Actions-1"]);
+        preview.Resources.Select(r => r.SourceId).ToList().ShouldBe([
+            "Environments-1",
+            "Projects-1",
+            "deploymentprocess-Projects-1",
+            "Actions-1",
+            "variableset-Projects-1",
+            "Variables-1"
+        ]);
     }
 
     private static OctopusImportDependencyPlan Plan(

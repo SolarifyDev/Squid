@@ -55,6 +55,8 @@ public class OctopusImportDependencyPlannerTests
         plan.OrderedResources.ShouldRespectOrder("deploymentprocess-Projects-1", "Steps-1");
         plan.OrderedResources.ShouldRespectOrder("Steps-1", "Actions-1");
         plan.OrderedResources.ShouldRespectOrder("Feeds-1", "Actions-1");
+        plan.OrderedResources.ShouldRespectOrder("deploymentprocess-Projects-1", "variableset-Projects-1");
+        plan.OrderedResources.ShouldRespectOrder("Actions-1", "variableset-Projects-1");
         plan.AppliedDependencies.ShouldContain(d =>
             d.SourceId == "Variables-1" &&
             d.DependsOnSourceId == "variableset-Projects-1" &&

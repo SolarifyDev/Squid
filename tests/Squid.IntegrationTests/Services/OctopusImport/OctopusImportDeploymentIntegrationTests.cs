@@ -10,6 +10,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Constants;
@@ -29,7 +30,7 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
     }
 
     [Fact]
-    public async Task ArchiveImport_ImportedProjectProcess_CanCompleteDeployment()
+    public async Task ArchiveImport_ImportedProjectProcessAndScopedVariables_CanCompleteDeployment()
     {
         var sessionId = Guid.NewGuid();
         var archivePath = CreateDeployableProjectArchive();
@@ -57,6 +58,31 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
 
                     result.State.ShouldBe(OctopusImportSessionState.Succeeded);
                     result.Result.Succeeded.ShouldBeTrue();
+
+                    var project = await db.Set<Project>()
+                        .SingleAsync(p => p.SpaceId == SpaceId && p.Name == "Imported Deployable Project");
+                    var importedAction = await db.Set<DeploymentAction>()
+                        .SingleAsync(action => action.Name == "Imported script action");
+                    var importedVariable = await db.Set<Variable>()
+                        .SingleAsync(variable => variable.VariableSetId == project.VariableSetId && variable.Name == "Scoped variable");
+                    var scopes = await db.Set<VariableScope>()
+                        .Where(scope => scope.VariableId == importedVariable.Id)
+                        .ToListAsync();
+                    var actionMapping = result.Result.IdMappings.Single(mapping =>
+                        mapping.SourceType == OctopusResourceKind.DeploymentAction.ToString() &&
+                        mapping.SourceId == "Actions-1");
+                    var processMapping = result.Result.IdMappings.Single(mapping =>
+                        mapping.SourceType == OctopusResourceKind.DeploymentProcess.ToString() &&
+                        mapping.SourceId == "deploymentprocess-Projects-1");
+
+                    actionMapping.DestinationId.ShouldBe(importedAction.Id);
+                    processMapping.DestinationId.ShouldBe(project.DeploymentProcessId);
+                    scopes
+                        .Select(scope => (scope.ScopeType, scope.ScopeValue))
+                        .ShouldBe([
+                            (VariableScopeType.Action, importedAction.Id.ToString()),
+                            (VariableScopeType.Process, project.DeploymentProcessId.ToString())
+                        ], ignoreOrder: true);
                 });
         }
         finally
@@ -201,7 +227,23 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
                 "variableset-Projects-1",
                 "ProjectVariables",
                 "variableset-Projects-1.json",
-                """{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[]}"""),
+                """
+                {
+                  "Id":"variableset-Projects-1",
+                  "OwnerId":"Projects-1",
+                  "OwnerType":"Project",
+                  "Variables":[{
+                    "Id":"Variables-1",
+                    "Name":"Scoped variable",
+                    "Value":"scoped-value",
+                    "Type":"String",
+                    "Scope":{
+                      "Action":["Actions-1"],
+                      "Process":["deploymentprocess-Projects-1"]
+                    }
+                  }]
+                }
+                """),
             Document(
                 "deploymentprocess-Projects-1",
                 "DeploymentProcess",
