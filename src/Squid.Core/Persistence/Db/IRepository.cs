@@ -36,6 +36,11 @@ public interface IRepository
     /// </summary>
     void Detach<TEntity>(TEntity entity) where TEntity : class, IEntity;
 
+    /// <summary>
+    /// Clears every entity tracked by the scoped DbContext. Call only after rolling back work
+    /// that owns the current unit-of-work boundary; unrelated tracked changes in the same scope
+    /// are intentionally discarded as well.
+    /// </summary>
     void ClearChangeTracker();
 
     Task<int> CountAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,

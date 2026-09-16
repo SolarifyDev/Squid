@@ -31,7 +31,8 @@ public sealed class OctopusImportTransactionExecutor : IOctopusImportTransaction
     /// <summary>
     /// Opens one database transaction for the whole confirmation scope, runs the caller's work
     /// inside that boundary, flushes pending save changes, and commits only when the work
-    /// completes successfully.
+    /// completes successfully. On rollback the executor clears the entire scoped change tracker,
+    /// so the import transaction must own all pending work in that scope.
     /// </summary>
     public async Task ExecuteInImportTransactionAsync(
         OctopusImportTransactionContext context,

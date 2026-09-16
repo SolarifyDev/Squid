@@ -122,4 +122,50 @@ public class LibraryVariableSetSyncTests
         variableSet.Name.ShouldBe("OldName");
         _variableDataProvider.Verify(v => v.UpdateVariableSetAsync(variableSet, true, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task UpdateVariableSet_LibraryTypeWithNullName_PreservesBothExistingNames()
+    {
+        var variableSet = new VariableSet
+        {
+            Id = 10,
+            Name = "OldName",
+            OwnerId = 5,
+            OwnerType = VariableSetOwnerType.LibraryVariableSet,
+            SpaceId = 1
+        };
+        var libraryVariableSet = new LibraryVariableSet
+        {
+            Id = 5,
+            Name = "OldName",
+            VariableSetId = 10,
+            SpaceId = 1
+        };
+
+        _variableDataProvider
+            .Setup(v => v.GetVariableSetByIdAsync(10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(variableSet);
+        _libraryVariableSetDataProvider
+            .Setup(l => l.GetByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(libraryVariableSet);
+        _mapper.Setup(m => m.Map<VariableSetDto>(It.IsAny<VariableSet>())).Returns(new VariableSetDto());
+
+        var command = new UpdateVariableSetCommand
+        {
+            Id = 10,
+            Name = null,
+            Description = "desc",
+            OwnerId = 5,
+            OwnerType = VariableSetOwnerType.LibraryVariableSet,
+            SpaceId = 1
+        };
+
+        await _service.UpdateVariableSetAsync(command, CancellationToken.None);
+
+        variableSet.Name.ShouldBe("OldName");
+        libraryVariableSet.Name.ShouldBe("OldName");
+        _libraryVariableSetDataProvider.Verify(
+            l => l.UpdateAsync(libraryVariableSet, true, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }

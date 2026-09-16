@@ -74,6 +74,64 @@ public class ConfirmOctopusImportCommandHandlerTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(OctopusResourceKind.ProjectGroup, Permission.ProjectCreate, false)]
+    [InlineData(OctopusResourceKind.Project, Permission.ProjectCreate, false)]
+    [InlineData(OctopusResourceKind.Environment, Permission.EnvironmentCreate, false)]
+    [InlineData(OctopusResourceKind.Lifecycle, Permission.LifecycleCreate, false)]
+    [InlineData(OctopusResourceKind.Feed, Permission.FeedEdit, false)]
+    [InlineData(OctopusResourceKind.Account, Permission.AccountCreate, false)]
+    [InlineData(OctopusResourceKind.Channel, Permission.ChannelCreate, false)]
+    [InlineData(OctopusResourceKind.Channel, Permission.ChannelEdit, true)]
+    [InlineData(OctopusResourceKind.VariableSet, Permission.VariableEdit, false)]
+    [InlineData(OctopusResourceKind.DeploymentProcess, Permission.ProcessEdit, false)]
+    [InlineData(OctopusResourceKind.Release, Permission.ReleaseCreate, false)]
+    public async Task Handle_WhenPlanCreatesResource_PreflightsMappedPermission(
+        OctopusResourceKind resourceKind,
+        Permission expectedPermission,
+        bool isDefaultChannel)
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var sourceId = $"{resourceKind}-1";
+        var preview = Preview(sourceId, resourceKind.ToString());
+        var validatedPlan = new OctopusImportValidatedPlanDto
+        {
+            PreviewPlan = preview,
+            Validation = new OctopusImportValidationResultDto()
+        };
+
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, validatedPlan));
+        harness.PlanningPipeline
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Snapshot(preview, resourceKind, sourceId, isDefaultChannel));
+        harness.ConfirmationOrchestrator
+            .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OctopusImportSessionDto
+            {
+                SessionId = sessionId,
+                DestinationSpaceId = 7,
+                State = OctopusImportSessionState.Succeeded
+            });
+
+        await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand
+        {
+            SessionId = sessionId,
+            SpaceId = 7
+        }), CancellationToken.None);
+
+        harness.AuthorizationService.Verify(a => a.EnsurePermissionAsync(
+            It.Is<PermissionCheckRequest>(request =>
+                request.UserId == 42
+                && request.SpaceId == 7
+                && request.Permission == expectedPermission),
+            It.IsAny<CancellationToken>()), Times.Once);
+        harness.AuthorizationService.Invocations.Count.ShouldBe(1);
+    }
+
     [Fact]
     public async Task Handle_WhenSessionIsAlreadyTerminal_ReturnsCurrentSessionWithoutConfirmingAgain()
     {
@@ -134,7 +192,9 @@ public class ConfirmOctopusImportCommandHandlerTests
             Times.Never);
     }
 
-    private static OctopusImportPreviewPlanDto Preview()
+    private static OctopusImportPreviewPlanDto Preview(
+        string sourceId = "Projects-1",
+        string sourceType = "Project")
         => new()
         {
             GeneratedAt = DateTimeOffset.UtcNow,
@@ -142,8 +202,8 @@ public class ConfirmOctopusImportCommandHandlerTests
             [
                 new OctopusImportResourceResultDto
                 {
-                    SourceId = "Projects-1",
-                    SourceType = "Project",
+                    SourceId = sourceId,
+                    SourceType = sourceType,
                     SourceName = "Project",
                     PreviewAction = OctopusImportPreviewAction.Create,
                     OutcomeState = OctopusImportResourceOutcomeState.Pending
@@ -165,6 +225,34 @@ public class ConfirmOctopusImportCommandHandlerTests
                     null,
                     false,
                     new object())
+            ],
+            [],
+            [],
+            []),
+            new OctopusImportDependencyPlan([], [], [], []),
+            new OctopusImportConflictDiscoveryResult([]),
+            preview);
+
+    private static OctopusImportPlanningSnapshot Snapshot(
+        OctopusImportPreviewPlanDto preview,
+        OctopusResourceKind resourceKind,
+        string sourceId,
+        bool isDefaultChannel)
+        => new(
+            new OctopusResourceGraph(
+            [
+                new OctopusResourceNode(
+                    sourceId,
+                    resourceKind.ToString(),
+                    resourceKind,
+                    OctopusDocumentKind.Unknown,
+                    "resource.json",
+                    null,
+                    null,
+                    false,
+                    resourceKind == OctopusResourceKind.Channel
+                        ? new OctopusChannelDto { IsDefault = isDefaultChannel }
+                        : new object())
             ],
             [],
             [],
