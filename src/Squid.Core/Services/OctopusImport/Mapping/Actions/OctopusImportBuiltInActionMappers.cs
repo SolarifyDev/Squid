@@ -150,8 +150,8 @@ internal static class OctopusImportActionMapperHelper
 
     private static readonly IReadOnlySet<string> StepLevelActionProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        "Octopus.Action.TargetRoles",
-        "Octopus.Action.RunOnServer"
+        OctopusPropertyNames.ActionTargetRoles,
+        OctopusPropertyNames.ActionRunOnServer
     };
 
     public static CreateOrUpdateDeploymentActionModel CreateAction(

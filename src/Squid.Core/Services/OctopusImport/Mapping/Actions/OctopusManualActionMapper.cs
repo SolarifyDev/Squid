@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -10,8 +11,6 @@ namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
 public sealed class OctopusManualActionMapper : IOctopusImportActionMapper
 {
     private const string OctopusActionTypeName = "Octopus.Manual";
-    private const string OctopusInstructionsPropertyName = "Octopus.Action.Manual.Instructions";
-    private const string OctopusResponsibleTeamIdsPropertyName = "Octopus.Action.Manual.ResponsibleTeamIds";
 
     public string OctopusActionType => OctopusActionTypeName;
 
@@ -27,7 +26,7 @@ public sealed class OctopusManualActionMapper : IOctopusImportActionMapper
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var properties = new List<ActionPropertyModel>();
 
-        AddMappedProperty(properties, action.Properties, OctopusInstructionsPropertyName, SpecialVariables.Action.ManualInstructions);
+        AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionManualInstructions, SpecialVariables.Action.ManualInstructions);
         AddResponsibleTeams(properties, action, context, diagnostics);
 
         var model = new CreateOrUpdateDeploymentActionModel
@@ -49,7 +48,7 @@ public sealed class OctopusManualActionMapper : IOctopusImportActionMapper
         OctopusImportActionMappingContext context,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
-        var sourceTeamIds = SplitReferenceList(GetProperty(action.Properties, OctopusResponsibleTeamIdsPropertyName)).ToList();
+        var sourceTeamIds = SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)).ToList();
 
         if (sourceTeamIds.Count == 0)
             return;

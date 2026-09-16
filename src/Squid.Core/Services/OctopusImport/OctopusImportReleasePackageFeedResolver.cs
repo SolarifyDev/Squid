@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -86,7 +87,7 @@ internal static class OctopusImportReleasePackageFeedResolver
 
         if (Mapping.Actions.OctopusImportKubernetesActionMapperSupport.TryGetProperty(
                 action,
-                "Octopus.Action.Package.FeedId",
+                OctopusPropertyNames.ActionPackageFeedId,
                 out var actionFeedId))
         {
             return actionFeedId;

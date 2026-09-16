@@ -20,12 +20,6 @@ public interface IOctopusImportDeploymentProcessMapper : IScopedDependency
 public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProcessMapper
 {
     private const string StepTypeAction = "Action";
-    private const string OctopusTargetRolesPropertyName = "Octopus.Action.TargetRoles";
-    private const string OctopusRunOnServerPropertyName = "Octopus.Action.RunOnServer";
-    private const string OctopusConditionExpressionPropertyName = "Octopus.Action.ConditionExpression";
-    private const string OctopusStepConditionExpressionPropertyName = "Octopus.Step.ConditionExpression";
-    private const string OctopusMaxParallelismPropertyName = "Octopus.Action.MaxParallelism";
-    private const string OctopusTimeoutPropertyName = "Octopus.Action.Timeout";
     private readonly IOctopusImportActionMapperRegistry _actionMapperRegistry;
     private readonly IOctopusImportRuntimeActionHandlerValidator _runtimeActionHandlerValidator;
 
@@ -216,8 +210,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
 
     private static bool IsStepLevelActionProperty(string propertyName)
-        => string.Equals(propertyName, OctopusTargetRolesPropertyName, StringComparison.OrdinalIgnoreCase)
-           || string.Equals(propertyName, OctopusRunOnServerPropertyName, StringComparison.OrdinalIgnoreCase);
+        => string.Equals(propertyName, OctopusPropertyNames.ActionTargetRoles, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, OctopusPropertyNames.ActionRunOnServer, StringComparison.OrdinalIgnoreCase);
 
     private static List<StepPropertyModel> MapStepProperties(
         OctopusDeploymentStepDto step,
@@ -226,12 +220,12 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var properties = new List<StepPropertyModel>();
         var sourceProperties = step.Properties ?? [];
 
-        AddMappedStepProperty(properties, sourceProperties, OctopusTargetRolesPropertyName, SpecialVariables.Step.TargetRoles);
-        AddMappedStepProperty(properties, sourceProperties, OctopusRunOnServerPropertyName, SpecialVariables.Step.RunOnServer);
-        AddMappedStepProperty(properties, sourceProperties, OctopusConditionExpressionPropertyName, SpecialVariables.Step.ConditionExpression);
-        AddMappedStepProperty(properties, sourceProperties, OctopusStepConditionExpressionPropertyName, SpecialVariables.Step.ConditionExpression);
-        AddMappedStepProperty(properties, sourceProperties, OctopusMaxParallelismPropertyName, SpecialVariables.Step.MaxParallelism);
-        AddMappedStepProperty(properties, sourceProperties, OctopusTimeoutPropertyName, SpecialVariables.Step.Timeout);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTargetRoles, SpecialVariables.Step.TargetRoles);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionRunOnServer, SpecialVariables.Step.RunOnServer);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionConditionExpression, SpecialVariables.Step.ConditionExpression);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.StepConditionExpression, SpecialVariables.Step.ConditionExpression);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionMaxParallelism, SpecialVariables.Step.MaxParallelism);
+        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTimeout, SpecialVariables.Step.Timeout);
 
         return properties;
     }
@@ -390,7 +384,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
     private static IEnumerable<string> GetTargetRoles(OctopusDeploymentActionDto action)
     {
-        if (action.Properties == null || !action.Properties.TryGetValue(OctopusTargetRolesPropertyName, out var targetRoles))
+        if (action.Properties == null || !action.Properties.TryGetValue(OctopusPropertyNames.ActionTargetRoles, out var targetRoles))
             return [];
 
         return SplitReferenceList(targetRoles);
@@ -398,7 +392,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
     private static bool IsRunOnServer(OctopusDeploymentActionDto action)
         => action.Properties != null
-           && action.Properties.TryGetValue(OctopusRunOnServerPropertyName, out var runOnServer)
+           && action.Properties.TryGetValue(OctopusPropertyNames.ActionRunOnServer, out var runOnServer)
            && bool.TryParse(runOnServer, out var parsed)
            && parsed;
 

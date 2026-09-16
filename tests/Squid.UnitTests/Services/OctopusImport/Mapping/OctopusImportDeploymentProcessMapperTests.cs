@@ -15,6 +15,64 @@ public class OctopusImportDeploymentProcessMapperTests
     private readonly OctopusImportDeploymentProcessMapper _mapper = new(new OctopusImportActionMapperRegistry(BuiltInActionMappers()));
 
     [Fact]
+    public void MapToCreateStepCommands_CompatibilityMatrix_UsesRealExportMappersAndKeepsUnknownActionsExplicit()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-1",
+            Name = "Compatibility matrix",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Containers",
+                    Name = "Deploy containers",
+                    ActionType = "Octopus.KubernetesDeployContainers"
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Ingress",
+                    Name = "Deploy ingress",
+                    ActionType = "Octopus.KubernetesDeployIngress"
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Manual",
+                    Name = "Approve deployment",
+                    ActionType = "Octopus.Manual"
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Unproven",
+                    Name = "Unproven runtime-capable action",
+                    ActionType = "Octopus.CustomCommunityStep"
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var actions = result.Steps.Single().CreateCommand.Step.Actions;
+        actions.Single(a => a.Name == "Deploy containers").ShouldSatisfyAllConditions(
+            a => a.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployContainers),
+            a => a.IsDisabled.ShouldBeFalse());
+        actions.Single(a => a.Name == "Deploy ingress").ShouldSatisfyAllConditions(
+            a => a.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployIngress),
+            a => a.IsDisabled.ShouldBeFalse());
+        actions.Single(a => a.Name == "Approve deployment").ShouldSatisfyAllConditions(
+            a => a.ActionType.ShouldBe(SpecialVariables.ActionTypes.Manual),
+            a => a.IsDisabled.ShouldBeFalse());
+        actions.Single(a => a.Name == "Unproven runtime-capable action").ShouldSatisfyAllConditions(
+            a => a.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script),
+            a => a.IsDisabled.ShouldBeTrue(),
+            a => a.Properties.Single(p => p.PropertyName == OctopusImportActionMapperRegistry.PlaceholderSourceActionTypeProperty)
+                .PropertyValue.ShouldBe("Octopus.CustomCommunityStep"));
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionType);
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportActionMappingDiagnosticCodes.UnsupportedActionPlaceholderCreated);
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_UsesActionMapperRegistryForSupportedKubernetesActions()
     {
         var mapper = new OctopusImportDeploymentProcessMapper(new OctopusImportActionMapperRegistry(

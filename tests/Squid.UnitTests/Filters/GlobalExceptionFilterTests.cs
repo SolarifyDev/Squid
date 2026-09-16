@@ -36,6 +36,16 @@ public class GlobalExceptionFilterTests
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
     }
 
+    [Fact]
+    public void OnException_WhenOctopusImportUpdateIsConcurrent_ReturnsConflictEnvelopeWithHttp200()
+    {
+        var exception = new OctopusImportSessionConcurrencyException(Guid.NewGuid());
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
+    }
+
     private static ExceptionContext Execute(Exception exception)
     {
         var httpContext = new DefaultHttpContext();

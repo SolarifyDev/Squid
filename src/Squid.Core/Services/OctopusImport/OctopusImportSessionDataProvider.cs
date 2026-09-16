@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
@@ -12,7 +13,11 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
 
     Task<OctopusImportSession> GetSessionNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
 
-    Task UpdateSessionAsync(OctopusImportSession session, bool forceSave = true, CancellationToken ct = default);
+    Task UpdateSessionAsync(
+        OctopusImportSession session,
+        byte[] expectedDataVersion,
+        bool forceSave = true,
+        CancellationToken ct = default);
 
     Task<int> TransitionStateAsync(
         Guid sessionId,
@@ -22,7 +27,21 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
         OctopusImportSessionState newState,
         CancellationToken ct = default);
 
-    Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
+    Task<int> TransitionStateAsync(
+        Guid sessionId,
+        int ownerUserId,
+        int destinationSpaceId,
+        OctopusImportSessionState expectedState,
+        OctopusImportSessionState newState,
+        byte[] expectedDataVersion,
+        CancellationToken ct = default);
+
+    Task<bool> TryStartConfirmationAsync(
+        Guid sessionId,
+        int ownerUserId,
+        int destinationSpaceId,
+        byte[] expectedDataVersion,
+        CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
 
@@ -98,15 +117,21 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
             .FirstOrDefaultAsync(ct);
     }
 
-    public async Task UpdateSessionAsync(OctopusImportSession session, bool forceSave = true, CancellationToken ct = default)
+    public async Task UpdateSessionAsync(
+        OctopusImportSession session,
+        byte[] expectedDataVersion,
+        bool forceSave = true,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(expectedDataVersion);
 
         var now = DateTimeOffset.UtcNow;
         var dataVersion = Guid.NewGuid().ToByteArray();
 
         var rowsAffected = await _repository.ExecuteUpdateAsync<OctopusImportSession>(
-            s => s.Id == session.Id,
+            s => s.Id == session.Id &&
+                 s.DataVersion == expectedDataVersion,
             setters => setters
                 .SetProperty(s => s.SessionId, session.SessionId)
                 .SetProperty(s => s.DestinationSpaceId, session.DestinationSpaceId)
@@ -128,10 +153,11 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.DataVersion, dataVersion),
             ct).ConfigureAwait(false);
 
-        if (rowsAffected != 1)
-            throw new DbUpdateConcurrencyException("The Octopus import session no longer exists.");
-
         _repository.Detach(session);
+
+        if (rowsAffected != 1)
+            throw new OctopusImportSessionConcurrencyException(session.SessionId);
+
         session.DataVersion = dataVersion;
         session.LastModifiedDate = now;
     }
@@ -142,6 +168,23 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         int destinationSpaceId,
         OctopusImportSessionState expectedState,
         OctopusImportSessionState newState,
+        CancellationToken ct = default)
+        => TransitionStateAsync(
+            sessionId,
+            ownerUserId,
+            destinationSpaceId,
+            expectedState,
+            newState,
+            null,
+            ct);
+
+    public Task<int> TransitionStateAsync(
+        Guid sessionId,
+        int ownerUserId,
+        int destinationSpaceId,
+        OctopusImportSessionState expectedState,
+        OctopusImportSessionState newState,
+        byte[] expectedDataVersion,
         CancellationToken ct = default)
     {
         OctopusImportSessionStateMachine.EnsureValidTransition(expectedState, newState);
@@ -154,7 +197,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
             s => s.SessionId == sessionId &&
                  s.OwnerUserId == ownerUserId &&
                  s.DestinationSpaceId == destinationSpaceId &&
-                 s.State == expectedState.ToString(),
+                 s.State == expectedState.ToString() &&
+                 (expectedDataVersion == null || s.DataVersion == expectedDataVersion),
             setters => setters
                 .SetProperty(s => s.State, newState.ToString())
                 .SetProperty(s => s.DataVersion, dataVersion)
@@ -164,14 +208,22 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
             ct);
     }
 
-    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default)
+    public async Task<bool> TryStartConfirmationAsync(
+        Guid sessionId,
+        int ownerUserId,
+        int destinationSpaceId,
+        byte[] expectedDataVersion,
+        CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(expectedDataVersion);
+
         var rowsAffected = await TransitionStateAsync(
             sessionId,
             ownerUserId,
             destinationSpaceId,
             OctopusImportSessionState.Validated,
             OctopusImportSessionState.Importing,
+            expectedDataVersion,
             ct).ConfigureAwait(false);
 
         return rowsAffected == 1;

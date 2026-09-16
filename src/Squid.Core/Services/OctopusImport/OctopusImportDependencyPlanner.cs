@@ -16,14 +16,14 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 
         var diagnostics = new List<OctopusInputExtractionDiagnostic>(graph.Diagnostics);
         var outOfScopeResources = graph.Resources
-            .Where(IsOutOfScopeReportResource)
+            .Where(r => OctopusResourceMetadata.For(r.Kind).IsReportOutOfScope)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
-            .OrderBy(r => Rank(r.Kind))
+            .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var resources = graph.Resources
-            .Where(IsCurrentConfigurationResource)
+            .Where(r => OctopusResourceMetadata.For(r.Kind).IsCurrentConfiguration(r))
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToDictionary(r => r.SourceId, StringComparer.OrdinalIgnoreCase);
@@ -36,7 +36,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ToList();
         var optionalReferences = graph.References
             .Where(r => !r.IsRequired && resources.ContainsKey(r.FromSourceId))
-            .OrderBy(r => Rank(r.FromKind))
+            .OrderBy(r => OctopusResourceMetadata.For(r.FromKind).Rank)
             .ThenBy(r => r.FromSourceId, StringComparer.OrdinalIgnoreCase)
             .ThenBy(r => r.ReferenceKind)
             .ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase)
@@ -108,7 +108,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 
         var remaining = resources.Values
             .Where(r => incoming[r.SourceId].Count > 0)
-            .OrderBy(r => Rank(r.Kind))
+            .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -125,55 +125,12 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 
     private static int CompareResources(OctopusResourceNode left, OctopusResourceNode right)
     {
-        var rankComparison = Rank(left.Kind).CompareTo(Rank(right.Kind));
+        var rankComparison = OctopusResourceMetadata.For(left.Kind).Rank
+            .CompareTo(OctopusResourceMetadata.For(right.Kind).Rank);
         if (rankComparison != 0)
             return rankComparison;
 
         return string.Compare(left.SourceId, right.SourceId, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsOrderable(OctopusResourceKind kind)
-        => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.WorkerPool);
-
-    private static bool IsCurrentConfigurationResource(OctopusResourceNode resource)
-        => IsOrderable(resource.Kind) && (!resource.IsHistorical || resource.Kind == OctopusResourceKind.Release);
-
-    private static bool IsOutOfScopeReportResource(OctopusResourceNode resource)
-        => resource.Kind is OctopusResourceKind.Deployment
-            or OctopusResourceKind.ServerTask
-            or OctopusResourceKind.DeploymentProcessSnapshot
-            or OctopusResourceKind.VariableSetSnapshot
-            or OctopusResourceKind.WorkerPool;
-
-    private static int Rank(OctopusResourceKind kind)
-    {
-        return kind switch
-        {
-            OctopusResourceKind.ProjectGroup => 10,
-            OctopusResourceKind.Environment => 20,
-            OctopusResourceKind.Lifecycle => 30,
-            OctopusResourceKind.LifecyclePhase => 40,
-            OctopusResourceKind.Feed => 50,
-            OctopusResourceKind.Team => 60,
-            OctopusResourceKind.Machine => 70,
-            OctopusResourceKind.Account => 80,
-            OctopusResourceKind.Certificate => 90,
-            OctopusResourceKind.Project => 100,
-            OctopusResourceKind.Channel => 110,
-            OctopusResourceKind.DeploymentSettings => 120,
-            // Process and action ids are required when mapping action/process-scoped variables.
-            OctopusResourceKind.DeploymentProcess => 130,
-            OctopusResourceKind.DeploymentStep => 140,
-            OctopusResourceKind.DeploymentAction => 150,
-            OctopusResourceKind.VariableSet => 160,
-            OctopusResourceKind.Variable => 170,
-            OctopusResourceKind.Release => 180,
-            OctopusResourceKind.ActionTemplate => 190,
-            OctopusResourceKind.Tenant => 200,
-            OctopusResourceKind.Runbook => 210,
-            OctopusResourceKind.Trigger => 220,
-            _ => 1000
-        };
     }
 
     private sealed record OrderingEdge(

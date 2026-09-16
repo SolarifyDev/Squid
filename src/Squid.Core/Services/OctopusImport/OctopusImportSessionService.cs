@@ -166,7 +166,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (sourceSummary != null)
             session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(sourceSummary));
 
-        await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
+        await _dataProvider
+            .UpdateSessionAsync(session, session.DataVersion, ct: ct)
+            .ConfigureAwait(false);
 
         return Map(session);
     }
@@ -204,7 +206,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(newState, session.LastStateChangedAt);
         }
 
-        await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
+        await _dataProvider
+            .UpdateSessionAsync(session, session.DataVersion, ct: ct)
+            .ConfigureAwait(false);
 
         return Map(session);
     }
@@ -217,7 +221,12 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (session == null)
             throw new OctopusImportSessionNotFoundException(sessionId);
 
-        return await _dataProvider.TryStartConfirmationAsync(sessionId, ownerUserId, destinationSpaceId, ct).ConfigureAwait(false);
+        return await _dataProvider.TryStartConfirmationAsync(
+            sessionId,
+            ownerUserId,
+            destinationSpaceId,
+            session.DataVersion,
+            ct).ConfigureAwait(false);
     }
 
     public async Task<OctopusImportSessionDto> RecordResultAsync(
@@ -247,7 +256,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.LastStateChangedAt = completedAt;
         session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(terminalState, completedAt);
 
-        await _dataProvider.UpdateSessionAsync(session, ct: ct).ConfigureAwait(false);
+        await _dataProvider
+            .UpdateSessionAsync(session, session.DataVersion, ct: ct)
+            .ConfigureAwait(false);
 
         return Map(session);
     }

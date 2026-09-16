@@ -7,6 +7,7 @@ using Squid.Core.Persistence;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
@@ -93,7 +94,7 @@ public class OctopusImportSessionDataProviderTests
     }
 
     [Fact]
-    public async Task UpdateSessionAsync_UpdatesCurrentRowAfterAtomicStateTransition()
+    public async Task UpdateSessionAsync_WhenAtomicStateTransitionMadeVersionStale_ThrowsConcurrencyException()
     {
         await using var connection = new SqliteConnection("DataSource=:memory:");
         await connection.OpenAsync();
@@ -129,14 +130,94 @@ public class OctopusImportSessionDataProviderTests
         tracked.CompletedAt = DateTimeOffset.UtcNow;
         tracked.LastStateChangedAt = tracked.CompletedAt.Value;
 
-        await provider.UpdateSessionAsync(tracked, ct: CancellationToken.None);
+        var exception = await Should.ThrowAsync<OctopusImportSessionConcurrencyException>(
+            () => provider.UpdateSessionAsync(tracked, tracked.DataVersion, ct: CancellationToken.None));
+
+        exception.SessionId.ShouldBe(session.SessionId);
+        var saved = await db.Set<OctopusImportSession>()
+            .AsNoTracking()
+            .SingleAsync(s => s.Id == session.Id, CancellationToken.None);
+        saved.State.ShouldBe(OctopusImportSessionState.Importing.ToString());
+        saved.ResultJson.ShouldBeNull();
+        db.ChangeTracker.Entries<OctopusImportSession>().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_WhenTrackedVersionIsCurrent_UpdatesRow()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        await using var db = CreateSqliteDbContext(connection);
+        await CreateImportSessionTableAsync(connection);
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var session = NewSession(
+            OctopusImportSessionState.Importing,
+            "importing.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        db.Set<OctopusImportSession>().Add(session);
+        await db.SaveChangesAsync(CancellationToken.None);
+        db.ChangeTracker.Clear();
+
+        var tracked = await provider.GetSessionAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            CancellationToken.None);
+        tracked.State = OctopusImportSessionState.Succeeded.ToString();
+        tracked.ResultJson = "{\"succeeded\":true}";
+        tracked.CompletedAt = DateTimeOffset.UtcNow;
+        tracked.LastStateChangedAt = tracked.CompletedAt.Value;
+
+        await provider.UpdateSessionAsync(tracked, tracked.DataVersion, ct: CancellationToken.None);
 
         var saved = await db.Set<OctopusImportSession>()
             .AsNoTracking()
             .SingleAsync(s => s.Id == session.Id, CancellationToken.None);
         saved.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
         saved.ResultJson.ShouldContain("\"succeeded\":true");
-        db.ChangeTracker.Entries<OctopusImportSession>().ShouldBeEmpty();
+        saved.DataVersion.ShouldBe(tracked.DataVersion);
+    }
+
+    [Fact]
+    public async Task TransitionStateAsync_WhenExpectedVersionIsStale_DoesNotUpdateRow()
+    {
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+        await using var db = CreateSqliteDbContext(connection);
+        await CreateImportSessionTableAsync(connection);
+        var provider = new OctopusImportSessionDataProvider(new EfRepository(db), db);
+        var session = NewSession(
+            OctopusImportSessionState.Validated,
+            "validated.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        db.Set<OctopusImportSession>().Add(session);
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        var staleVersion = session.DataVersion.ToArray();
+        await provider.TransitionStateAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            OctopusImportSessionState.Validated,
+            OctopusImportSessionState.Importing,
+            ct: CancellationToken.None);
+
+        var rowsAffected = await provider.TransitionStateAsync(
+            session.SessionId,
+            session.OwnerUserId,
+            session.DestinationSpaceId,
+            OctopusImportSessionState.Validated,
+            OctopusImportSessionState.Importing,
+            staleVersion,
+            CancellationToken.None);
+
+        rowsAffected.ShouldBe(0);
+        var saved = await db.Set<OctopusImportSession>()
+            .AsNoTracking()
+            .SingleAsync(s => s.Id == session.Id, CancellationToken.None);
+        saved.State.ShouldBe(OctopusImportSessionState.Importing.ToString());
     }
 
     [Fact]
@@ -160,7 +241,7 @@ public class OctopusImportSessionDataProviderTests
         session.Id = 123;
         session.SourceSummaryJson = null;
 
-        await provider.UpdateSessionAsync(session, ct: CancellationToken.None);
+        await provider.UpdateSessionAsync(session, session.DataVersion, ct: CancellationToken.None);
 
         repository.Verify(r => r.ExecuteUpdateAsync(
             It.IsAny<Expression<Func<OctopusImportSession, bool>>>(),
@@ -171,6 +252,27 @@ public class OctopusImportSessionDataProviderTests
         session.DataVersion.ShouldNotBeNull();
         session.DataVersion.Length.ShouldBe(16);
         session.LastModifiedDate.ShouldNotBe(default);
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_WhenExpectedVersionIsMissing_ThrowsBeforeUpdating()
+    {
+        var repository = new Mock<IRepository>();
+        var provider = new OctopusImportSessionDataProvider(repository.Object, Mock.Of<IUnitOfWork>());
+        var session = NewSession(
+            OctopusImportSessionState.Failed,
+            "failed.zip",
+            DateTimeOffset.UtcNow.AddHours(1));
+
+        await Should.ThrowAsync<ArgumentNullException>(
+            () => provider.UpdateSessionAsync(session, null, ct: CancellationToken.None));
+
+        repository.Verify(
+            r => r.ExecuteUpdateAsync(
+                It.IsAny<Expression<Func<OctopusImportSession, bool>>>(),
+                It.IsAny<Expression<Func<SetPropertyCalls<OctopusImportSession>, SetPropertyCalls<OctopusImportSession>>>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

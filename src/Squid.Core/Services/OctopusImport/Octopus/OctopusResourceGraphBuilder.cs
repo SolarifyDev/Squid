@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Octopus;
@@ -239,10 +240,10 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         foreach (var package in action.Packages)
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Feed, package.FeedId, OctopusResourceKind.Feed, process.OwnerId, true);
 
-        foreach (var targetRole in SplitReferenceList(GetProperty(action.Properties, "Octopus.Action.TargetRoles")))
+        foreach (var targetRole in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionTargetRoles)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.TargetRole, targetRole, null, process.OwnerId, false);
 
-        foreach (var teamId in SplitReferenceList(GetProperty(action.Properties, "Octopus.Action.Manual.ResponsibleTeamIds")))
+        foreach (var teamId in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Team, teamId, OctopusResourceKind.Team, process.OwnerId, false);
     }
 
