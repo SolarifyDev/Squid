@@ -2,7 +2,7 @@ using Squid.Calamari.Execution;
 
 namespace Squid.Calamari.Tests.Calamari.Execution;
 
-[Collection("Process Globals")]
+[Collection("Console IO")]
 public class ScriptOutputProcessorTests
 {
     [Fact]

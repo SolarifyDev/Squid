@@ -2,7 +2,7 @@ using Squid.Calamari.Execution.Output;
 
 namespace Squid.Calamari.Tests.Calamari.Execution.Output;
 
-[Collection("Process Globals")]
+[Collection("Console IO")]
 public class ConsoleProcessOutputSinkTests
 {
     [Fact]

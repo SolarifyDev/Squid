@@ -2,7 +2,7 @@ using Squid.Calamari.Commands;
 
 namespace Squid.Calamari.Tests.Calamari.Commands;
 
-[Collection("Process Globals")]
+[Collection("Process Environment")]
 public class RunScriptCommandTests
 {
     [Fact]

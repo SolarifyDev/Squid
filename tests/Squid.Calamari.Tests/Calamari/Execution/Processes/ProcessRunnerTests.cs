@@ -3,7 +3,6 @@ using Squid.Calamari.Execution.Processes;
 
 namespace Squid.Calamari.Tests.Calamari.Execution.Processes;
 
-[Collection("Process Globals")]
 public class ProcessRunnerTests
 {
     [Fact]

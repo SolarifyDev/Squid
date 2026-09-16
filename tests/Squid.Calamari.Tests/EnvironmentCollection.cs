@@ -2,7 +2,7 @@ using Xunit;
 
 namespace Squid.Calamari.Tests;
 
-[CollectionDefinition("Process Globals", DisableParallelization = true)]
+[CollectionDefinition("Process Environment", DisableParallelization = true)]
 public class EnvironmentCollection
 {
 }
