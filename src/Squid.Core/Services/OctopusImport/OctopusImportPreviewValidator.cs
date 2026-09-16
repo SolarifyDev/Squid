@@ -55,6 +55,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         ValidateReferences(graph, selectedResources, allCurrentResources, result);
+        ValidateReleasePackageFeeds(graph, selectedResources, previewResources, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         result.RequiredInputs = previewPlan.RequiredInputs
@@ -66,6 +67,45 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         ValidateRequiredInputs(result);
 
         return result;
+    }
+
+    private static void ValidateReleasePackageFeeds(
+        OctopusResourceGraph graph,
+        IReadOnlyDictionary<string, OctopusResourceNode> selectedResources,
+        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources,
+        OctopusImportValidationResultDto result)
+    {
+        foreach (var releaseResource in selectedResources.Values.Where(resource => resource.Kind == OctopusResourceKind.Release))
+        {
+            if (!previewResources.TryGetValue(releaseResource.SourceId, out var releasePreview)
+                || releasePreview.PreviewAction != OctopusImportPreviewAction.Create)
+            {
+                continue;
+            }
+
+            var release = releaseResource.GetSource<OctopusReleaseDto>();
+            if (release == null)
+                continue;
+
+            foreach (var selectedPackage in (release.SelectedPackages ?? []).Where(package =>
+                         !string.IsNullOrWhiteSpace(package.ActionName)
+                         && !string.IsNullOrWhiteSpace(package.Version)))
+            {
+                var sourceFeedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(
+                    graph,
+                    selectedResources.Values,
+                    release,
+                    selectedPackage);
+                if (OctopusImportReleasePackageFeedResolver.HasPlannedDestination(sourceFeedId, previewResources))
+                    continue;
+
+                AddReferenceDiagnostic(
+                    result,
+                    releaseResource,
+                    OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping,
+                    $"Octopus release package selection for action '{selectedPackage.ActionName}' references a package feed that cannot be mapped to a destination Squid feed.");
+            }
+        }
     }
 
     private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(

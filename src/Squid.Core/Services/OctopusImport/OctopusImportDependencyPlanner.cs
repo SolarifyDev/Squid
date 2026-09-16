@@ -133,7 +133,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
     }
 
     private static bool IsOrderable(OctopusResourceKind kind)
-        => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.ActionTemplate or OctopusResourceKind.WorkerPool);
+        => kind is not (OctopusResourceKind.Unknown or OctopusResourceKind.WorkerPool);
 
     private static bool IsCurrentConfigurationResource(OctopusResourceNode resource)
         => IsOrderable(resource.Kind) && (!resource.IsHistorical || resource.Kind == OctopusResourceKind.Release);
@@ -168,6 +168,10 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             OctopusResourceKind.VariableSet => 160,
             OctopusResourceKind.Variable => 170,
             OctopusResourceKind.Release => 180,
+            OctopusResourceKind.ActionTemplate => 190,
+            OctopusResourceKind.Tenant => 200,
+            OctopusResourceKind.Runbook => 210,
+            OctopusResourceKind.Trigger => 220,
             _ => 1000
         };
     }

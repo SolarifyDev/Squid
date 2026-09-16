@@ -190,6 +190,25 @@ public class OctopusArchiveExtractorTests
     }
 
     [Fact]
+    public async Task ExtractZipAsync_InjectedOverrideAppliesWhenCallDoesNotSpecifyOptions()
+    {
+        var extractor = new OctopusArchiveExtractor(new OctopusArchiveExtractionOptions
+        {
+            MaxEntryCount = 1
+        });
+        var bytes = CreateZipArchive(new Dictionary<string, byte[]>
+        {
+            ["one.json"] = JsonBytes("{}"),
+            ["two.json"] = JsonBytes("{}")
+        });
+
+        var ex = await Should.ThrowAsync<OctopusArchiveExtractionException>(() =>
+            extractor.ExtractZipAsync(new MemoryStream(bytes)));
+
+        ex.Code.ShouldBe(OctopusArchiveExtractionErrorCodes.EntryCountLimitExceeded);
+    }
+
+    [Fact]
     public async Task ExtractZipAsync_PerEntryLimitExceeded_RejectsArchive()
     {
         var bytes = CreateZipArchive(new Dictionary<string, byte[]>

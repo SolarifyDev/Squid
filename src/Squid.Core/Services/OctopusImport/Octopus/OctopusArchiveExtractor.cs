@@ -25,6 +25,18 @@ public class OctopusArchiveExtractor : IOctopusArchiveExtractor
         ".rar",
         ".7z"
     };
+    private readonly OctopusArchiveExtractionOptions _defaultOptions;
+
+    public OctopusArchiveExtractor()
+        : this(OctopusArchiveExtractionOptions.Default)
+    {
+    }
+
+    public OctopusArchiveExtractor(OctopusArchiveExtractionOptions defaultOptions)
+    {
+        _defaultOptions = defaultOptions ?? throw new ArgumentNullException(nameof(defaultOptions));
+        _defaultOptions.EnsureValid();
+    }
 
     public async Task<OctopusArchiveExtractionResult> ExtractZipAsync(
         Stream archiveStream,
@@ -33,7 +45,7 @@ public class OctopusArchiveExtractor : IOctopusArchiveExtractor
     {
         ArgumentNullException.ThrowIfNull(archiveStream);
 
-        options ??= OctopusArchiveExtractionOptions.Default;
+        options ??= _defaultOptions;
         options.EnsureValid();
 
         try

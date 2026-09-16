@@ -305,6 +305,25 @@ public class OctopusImportConfirmationOrchestratorTests
     }
 
     [Fact]
+    public async Task ConfirmAsync_WhenReleasePackageFeedCannotBeResolved_BlocksBeforeTransaction()
+    {
+        var harness = CreateRichHarness();
+        harness.Nodes.DeploymentAction.GetSource<OctopusDeploymentActionDto>()
+            .Packages.Single().FeedId = "Feeds-Missing";
+        harness.Nodes.DeploymentProcess.GetSource<OctopusDeploymentProcessDto>()
+            .Steps.Single().Actions.Single().Packages.Single().FeedId = "Feeds-Missing";
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Diagnostics.ShouldContain(diagnostic =>
+            diagnostic.Code == OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping);
+        harness.TransactionExecutor.ExecuteCalls.ShouldBe(0);
+        harness.Mediator.Invocations.ShouldNotContain(invocation =>
+            invocation.Method.Name == nameof(IMediator.SendAsync));
+    }
+
+    [Fact]
     public async Task ConfirmAsync_WhenTransactionFails_RollsBackAndPersistsFailedSessionResult()
     {
         var harness = CreateMinimalHarness(throwAfterAction: true, includeReusedEnvironment: true);

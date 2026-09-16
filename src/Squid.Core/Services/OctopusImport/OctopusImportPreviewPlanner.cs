@@ -229,7 +229,10 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             or OctopusResourceKind.ActionTemplate
             or OctopusResourceKind.Certificate
             or OctopusResourceKind.Team
-            or OctopusResourceKind.Machine;
+            or OctopusResourceKind.Machine
+            or OctopusResourceKind.Tenant
+            or OctopusResourceKind.Runbook
+            or OctopusResourceKind.Trigger;
 
     private static int Rank(OctopusResourceKind kind)
     {
@@ -253,6 +256,10 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             OctopusResourceKind.VariableSet => 160,
             OctopusResourceKind.Variable => 170,
             OctopusResourceKind.Release => 180,
+            OctopusResourceKind.ActionTemplate => 190,
+            OctopusResourceKind.Tenant => 200,
+            OctopusResourceKind.Runbook => 210,
+            OctopusResourceKind.Trigger => 220,
             OctopusResourceKind.DeploymentProcessSnapshot => 900,
             OctopusResourceKind.VariableSetSnapshot => 910,
             OctopusResourceKind.Deployment => 930,

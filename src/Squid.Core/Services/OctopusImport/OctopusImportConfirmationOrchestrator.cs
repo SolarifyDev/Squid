@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
@@ -701,103 +700,13 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         OctopusSelectedPackageDto selectedPackage,
         out int feedId)
     {
-        var sourceFeedId = GetExtensionString(selectedPackage.ExtensionData, "FeedId")
-                           ?? GetSourceFeedIdFromAction(execution, release, selectedPackage);
+        var sourceFeedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(
+            execution.Request.Graph,
+            execution.CurrentResources,
+            release,
+            selectedPackage);
 
         return OctopusImportKubernetesActionMapperSupport.TryResolveFeedId(sourceFeedId, execution.IdMap, out feedId);
-    }
-
-    private static string GetSourceFeedIdFromAction(
-        ConfirmationExecutionContext execution,
-        OctopusReleaseDto release,
-        OctopusSelectedPackageDto selectedPackage)
-    {
-        var snapshot = execution.Request.Graph.Resources
-            .Where(resource => resource.Kind == OctopusResourceKind.DeploymentProcessSnapshot)
-            .FirstOrDefault(resource => string.Equals(
-                resource.SourceId,
-                release.ProjectDeploymentProcessSnapshotId,
-                StringComparison.OrdinalIgnoreCase))
-            ?.GetSource<OctopusDeploymentProcessDto>();
-        var action = FindReleaseAction(
-                         snapshot?.Steps.SelectMany(step => step.Actions) ?? [],
-                         selectedPackage)
-                     ?? FindReleaseAction(
-                         execution.CurrentResources
-                             .Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction)
-                             .Where(resource => string.Equals(
-                                 resource.OwnerProjectId,
-                                 release.ProjectId,
-                                 StringComparison.OrdinalIgnoreCase))
-                             .Select(resource => resource.GetSource<OctopusDeploymentActionDto>())
-                             .Where(action => action != null),
-                         selectedPackage);
-
-        if (action == null)
-            return null;
-
-        var package = FindActionPackage(action, selectedPackage.PackageReferenceName);
-        if (!string.IsNullOrWhiteSpace(package?.FeedId))
-            return package.FeedId;
-
-        if (OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, "Octopus.Action.Package.FeedId", out var actionFeedId))
-            return actionFeedId;
-
-        return action.Container?.FeedId;
-    }
-
-    private static OctopusDeploymentActionDto FindReleaseAction(
-        IEnumerable<OctopusDeploymentActionDto> actions,
-        OctopusSelectedPackageDto selectedPackage)
-    {
-        var matchingActions = actions
-            .Where(action => string.Equals(
-                action.Name,
-                selectedPackage.ActionName,
-                StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        return matchingActions.FirstOrDefault(action => FindActionPackage(action, selectedPackage.PackageReferenceName) != null)
-               ?? matchingActions.FirstOrDefault();
-    }
-
-    private static OctopusActionPackageDto FindActionPackage(
-        OctopusDeploymentActionDto action,
-        string packageReferenceName)
-    {
-        var packages = action.Packages ?? [];
-        if (packages.Count == 0)
-            return null;
-
-        if (string.IsNullOrWhiteSpace(packageReferenceName))
-            return packages.Count == 1 ? packages[0] : null;
-
-        return packages.FirstOrDefault(package =>
-            string.Equals(package.Name, packageReferenceName, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(package.Id, packageReferenceName, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string GetExtensionString(
-        Dictionary<string, JsonElement> extensionData,
-        string propertyName)
-    {
-        if (extensionData == null)
-            return null;
-
-        foreach (var (key, value) in extensionData)
-        {
-            if (!string.Equals(key, propertyName, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            return value.ValueKind switch
-            {
-                JsonValueKind.String => value.GetString(),
-                JsonValueKind.Number => value.GetRawText(),
-                _ => null
-            };
-        }
-
-        return null;
     }
 
     private static IEnumerable<OctopusResourceNode> GetOwnedChildResources(

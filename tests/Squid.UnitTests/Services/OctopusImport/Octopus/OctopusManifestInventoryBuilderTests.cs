@@ -203,6 +203,37 @@ public class OctopusManifestInventoryBuilderTests
         inventory.Items.All(i => i.Classification.IsOutOfScopeHistory).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task Build_EmptyOrVerifiedSchemaVersions_DoNotAddCompatibilityWarnings()
+    {
+        var result = await ExtractEntriesAsync(
+            ("manifest.json", BuildManifestJsonWithSchemas(["Script0722RefactorInterruptArgoCDApplicationSync"])));
+
+        var inventory = _builder.Build(result);
+
+        inventory.Diagnostics.ShouldNotContain(d =>
+            d.Code == OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionNewer ||
+            d.Code == OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionUnrecognized);
+    }
+
+    [Fact]
+    public async Task Build_NewerAndUnrecognizedSchemaVersions_AddWarningsWithoutBlocking()
+    {
+        var result = await ExtractEntriesAsync(
+            ("manifest.json", BuildManifestJsonWithSchemas([
+                "Script0723FutureSchemaChange",
+                "FutureSchemaFormat"
+            ])));
+
+        var inventory = _builder.Build(result);
+
+        inventory.Diagnostics.Single(d => d.Code == OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionNewer)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        inventory.Diagnostics.Single(d => d.Code == OctopusInputExtractionDiagnosticCodes.ManifestSchemaVersionUnrecognized)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        inventory.Diagnostics.ShouldNotContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+    }
+
     private async Task<OctopusInputExtractionResult> ExtractEntriesAsync(params (string Path, string Json)[] entries)
     {
         var archiveEntries = entries
@@ -230,6 +261,15 @@ public class OctopusManifestInventoryBuilderTests
         };
 
         return JsonSerializer.Serialize(manifest);
+    }
+
+    private static string BuildManifestJsonWithSchemas(string[] schemaVersions)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            SchemaVersions = schemaVersions,
+            Entries = Array.Empty<object>()
+        });
     }
 
     private static string Sha1(string value)

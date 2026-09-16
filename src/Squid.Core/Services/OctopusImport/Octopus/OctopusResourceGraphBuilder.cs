@@ -99,6 +99,15 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             case OctopusDocumentKind.WorkerPool:
                 AddJsonDocument(context, OctopusResourceKind.WorkerPool);
                 break;
+            case OctopusDocumentKind.Tenant:
+                AddJsonDocument(context, OctopusResourceKind.Tenant);
+                break;
+            case OctopusDocumentKind.Runbook:
+                AddJsonDocument(context, OctopusResourceKind.Runbook);
+                break;
+            case OctopusDocumentKind.Trigger:
+                AddJsonDocument(context, OctopusResourceKind.Trigger);
+                break;
             default:
                 AddJsonDocument(context, OctopusResourceKind.Unknown);
                 break;

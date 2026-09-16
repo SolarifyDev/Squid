@@ -47,6 +47,40 @@ public class OctopusImportTransactionIntegrationTests : TestBase
     }
 
     [Fact]
+    public async Task BuildPreviewAsync_WithUnsupportedCompatibilityDocuments_ReportsEveryResource()
+    {
+        var archivePath = CreateArchive(
+            ("ActionTemplates-1", "ActionTemplate", "ActionTemplates-1.json", """{"Id":"ActionTemplates-1","Name":"Shared template"}"""),
+            ("Tenants-1", "Tenant", "Tenants-1.json", """{"Id":"Tenants-1","Name":"Customer A"}"""),
+            ("Runbooks-1", "Runbook", "Runbooks-1.json", """{"Id":"Runbooks-1","Name":"Emergency rollback"}"""),
+            ("ProjectTriggers-1", "ProjectTrigger", "ProjectTriggers-1.json", """{"Id":"ProjectTriggers-1","Name":"Scheduled deployment"}"""));
+
+        try
+        {
+            await Run<IOctopusImportPlanningPipeline>(async pipeline =>
+            {
+                var snapshot = await pipeline.BuildPreviewAsync(archivePath, 7);
+
+                snapshot.Graph.Resources.Select(resource => resource.Kind).ShouldBe([
+                    OctopusResourceKind.ActionTemplate,
+                    OctopusResourceKind.Tenant,
+                    OctopusResourceKind.Runbook,
+                    OctopusResourceKind.Trigger
+                ], ignoreOrder: true);
+                snapshot.PreviewPlan.Resources.Count.ShouldBe(4);
+                snapshot.PreviewPlan.Resources.ShouldAllBe(resource =>
+                    resource.PreviewAction == OctopusImportPreviewAction.Unsupported &&
+                    resource.Diagnostics.Any(diagnostic =>
+                        diagnostic.Code == OctopusImportPreviewDiagnosticCodes.ResourceUnsupported));
+            });
+        }
+        finally
+        {
+            File.Delete(archivePath);
+        }
+    }
+
+    [Fact]
     public async Task ExecuteInImportTransactionAsync_WhenImportFails_RollsBackResourcesAndSessionResultTogether()
     {
         var sessionId = Guid.NewGuid();
