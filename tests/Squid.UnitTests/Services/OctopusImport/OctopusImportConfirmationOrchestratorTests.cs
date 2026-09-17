@@ -104,6 +104,13 @@ public class OctopusImportConfirmationOrchestratorTests
         releaseCommand.SelectedPackages.Single().PackageReferenceName.ShouldBe("app");
         releaseCommand.SelectedPackages.Single().Version.ShouldBe("1.2.3");
         releaseCommand.SelectedPackages.Single().FeedId.ShouldBe(77);
+
+        harness.Mediator.Invocations
+            .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
+            .Select(invocation => invocation.Arguments[0])
+            .OfType<UpdateVariableSetCommand>()
+            .Single()
+            .Name.ShouldBe(harness.Nodes.Project.Name);
     }
 
     [Fact]
@@ -671,7 +678,7 @@ public class OctopusImportConfirmationOrchestratorTests
                 It.IsAny<OctopusImportIdMap>(),
                 It.IsAny<int>(),
                 destinationSpaceId,
-                null,
+                nodes.Project.Name,
                 null))
             .Returns((OctopusResourceNode resource, OctopusImportIdMap idMap, int destinationVariableSetId, int spaceId, string name, string description) =>
             {
@@ -681,6 +688,7 @@ public class OctopusImportConfirmationOrchestratorTests
                     new UpdateVariableSetCommand
                     {
                         Id = destinationVariableSetId,
+                        Name = name,
                         OwnerId = 1001,
                         OwnerType = VariableSetOwnerType.Project,
                         SpaceId = spaceId,
