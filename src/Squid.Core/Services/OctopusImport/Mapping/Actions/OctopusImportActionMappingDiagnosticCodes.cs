@@ -21,4 +21,7 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string MalformedEmbeddedJson = "OctopusImport.Action.MalformedEmbeddedJson";
     public const string UnsupportedProperty = "OctopusImport.Action.UnsupportedProperty";
     public const string SensitiveConfigMapValue = "OctopusImport.Action.Kubernetes.SensitiveConfigMapValue";
+    public const string UnsupportedActionSource = "OctopusImport.Action.UnsupportedSource";
+    public const string UnsupportedHelmValueSource = "OctopusImport.Action.Helm.UnsupportedValueSource";
+    public const string KubernetesYamlFileSelectionUnsupported = "OctopusImport.Action.KubernetesYaml.FileSelectionUnsupported";
 }

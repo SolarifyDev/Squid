@@ -93,6 +93,33 @@ public class OctopusScriptActionMapperTests
     }
 
     [Fact]
+    public void Map_WhenOnlyUniqueSourceIdPrefixFeedMappingExists_AddsBlocker()
+    {
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-5",
+            Name = "Run script",
+            ActionType = "Octopus.Script",
+            Properties =
+            {
+                ["Octopus.Action.Package.FeedId"] = "Feeds-1",
+                ["Octopus.Action.Package.PackageId"] = "Acme.Tools"
+            }
+        };
+
+        var idMap = new OctopusImportIdMap();
+        idMap.AddReused(
+            Resource("Feeds-1-PREFIX", OctopusResourceKind.Feed, "Built-in feed", new OctopusFeedDto()),
+            301);
+
+        var result = _mapper.Map(action, new OctopusImportActionMappingContext(idMap, 7));
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportActionMappingDiagnosticCodes.MissingPackageFeedMapping);
+        result.Action.Properties.ShouldNotContain(p => p.PropertyName == SpecialVariables.Action.PackageFeedId);
+    }
+
+    [Fact]
     public void Map_WhenSyntaxIsUnsupported_AddsBlocker()
     {
         var action = new OctopusDeploymentActionDto

@@ -99,6 +99,29 @@ public class OctopusImportActionMapperRegistryTests
         registry.SupportedActionTypes.ShouldContain("Octopus.Manual");
     }
 
+    [Theory]
+    [InlineData("Octopus.KubernetesDeployRawYaml", SpecialVariables.ActionTypes.KubernetesDeployRawYaml)]
+    [InlineData("Octopus.HelmChartUpgrade", SpecialVariables.ActionTypes.HelmChartUpgrade)]
+    [InlineData("Octopus.TentaclePackage", SpecialVariables.ActionTypes.TentaclePackage)]
+    public void Map_DelegatesExtendedActionTypesToRegisteredMappers(
+        string octopusActionType,
+        string squidActionType)
+    {
+        var registry = new OctopusImportActionMapperRegistry(BuiltInExtendedMappers());
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-1",
+            Name = "Extended action",
+            ActionType = octopusActionType
+        };
+        var context = new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42);
+
+        var result = registry.Map(action, context);
+
+        result.Action.ActionType.ShouldBe(squidActionType);
+        registry.SupportedActionTypes.ShouldContain(octopusActionType);
+    }
+
     [Fact]
     public void Constructor_Throws_WhenDuplicateActionTypeIsRegistered()
     {
@@ -149,4 +172,12 @@ public class OctopusImportActionMapperRegistryTests
                 []);
         }
     }
+
+    private static IOctopusImportActionMapper[] BuiltInExtendedMappers()
+        =>
+        [
+            new OctopusKubernetesDeployRawYamlActionMapper(),
+            new OctopusHelmChartUpgradeActionMapper(),
+            new OctopusTentaclePackageActionMapper()
+        ];
 }

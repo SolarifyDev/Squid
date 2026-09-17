@@ -32,7 +32,13 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptSource, SpecialVariables.Action.ScriptSource);
         AddMappedSyntax(properties, action, diagnostics);
         AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptBody, SpecialVariables.Action.ScriptBody);
-        AddPackageReferenceProperties(properties, action, context, diagnostics);
+        OctopusImportPackageMapperSupport.AddPackageReferenceProperties(
+            properties,
+            action,
+            context,
+            diagnostics,
+            $"Octopus script action '{action.Name}'",
+            diagnoseMultiplePackages: true);
 
         var model = new CreateOrUpdateDeploymentActionModel
         {
@@ -68,74 +74,6 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         }
 
         properties.Add(Property(SpecialVariables.Action.ScriptSyntax, syntax.Trim()));
-    }
-
-    private static void AddPackageReferenceProperties(
-        List<ActionPropertyModel> properties,
-        OctopusDeploymentActionDto action,
-        OctopusImportActionMappingContext context,
-        List<OctopusImportDiagnosticDto> diagnostics)
-    {
-        var packageReference = ResolvePackageReference(action);
-
-        if (packageReference == null)
-            return;
-
-        if ((action.Packages?.Count ?? 0) > 1)
-        {
-            diagnostics.Add(Diagnostic(
-                OctopusImportCompatibilitySeverity.Blocker,
-                OctopusImportActionMappingDiagnosticCodes.MultiplePackageReferencesUnsupported,
-                $"Octopus script action '{action.Name}' contains multiple package references. Squid script action import currently supports one action-level package reference.",
-                action));
-        }
-
-        if (!string.IsNullOrWhiteSpace(packageReference.PackageId))
-            properties.Add(Property(SpecialVariables.Action.PackageId, packageReference.PackageId));
-
-        if (!string.IsNullOrWhiteSpace(packageReference.Version))
-            properties.Add(Property(SpecialVariables.Action.PackageVersion, packageReference.Version));
-
-        if (string.IsNullOrWhiteSpace(packageReference.FeedId))
-            return;
-
-        if (context.IdMap.TryGetDestinationId(packageReference.FeedId, OctopusResourceKind.Feed.ToString(), out var destinationFeedId))
-        {
-            properties.Add(Property(SpecialVariables.Action.PackageFeedId, destinationFeedId.ToString()));
-            return;
-        }
-
-        diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
-            OctopusImportActionMappingDiagnosticCodes.MissingPackageFeedMapping,
-            $"Octopus script action '{action.Name}' references package feed '{packageReference.FeedId}', which has not been mapped to a destination Squid feed.",
-            action));
-    }
-
-    private static PackageReference ResolvePackageReference(OctopusDeploymentActionDto action)
-    {
-        var firstPackage = action.Packages?.FirstOrDefault();
-
-        if (firstPackage != null)
-        {
-            return new PackageReference(
-                firstPackage.PackageId,
-                firstPackage.FeedId,
-                firstPackage.Version);
-        }
-
-        var packageId = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageId);
-        var feedId = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageFeedId);
-        var version = GetProperty(action.Properties, OctopusPropertyNames.ActionPackageVersion);
-
-        if (string.IsNullOrWhiteSpace(packageId)
-            && string.IsNullOrWhiteSpace(feedId)
-            && string.IsNullOrWhiteSpace(version))
-        {
-            return null;
-        }
-
-        return new PackageReference(packageId, feedId, version);
     }
 
     private static void AddMappedProperty(
@@ -182,5 +120,4 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
             ResourceName = action.Name
         });
 
-    private sealed record PackageReference(string PackageId, string FeedId, string Version);
 }
