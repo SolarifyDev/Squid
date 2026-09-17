@@ -564,7 +564,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             execution.IdMap,
             variableSetId,
             execution.DestinationSpaceId,
-            name: null,
+            name: project.Name,
             description: null);
         execution.AddDiagnostics(resource, mapping.Diagnostics);
         EnsureNoBlockers(mapping.Diagnostics);
