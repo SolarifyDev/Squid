@@ -718,6 +718,9 @@ public class OctopusImportDeploymentProcessMapperTests
         [
             new OctopusKubernetesDeployContainersActionMapper(),
             new OctopusKubernetesDeployIngressActionMapper(),
+            new OctopusKubernetesDeployRawYamlActionMapper(),
+            new OctopusHelmChartUpgradeActionMapper(),
+            new OctopusTentaclePackageActionMapper(),
             new OctopusScriptActionMapper(),
             new OctopusManualActionMapper(),
             new OctopusImportIisActionMapper(),

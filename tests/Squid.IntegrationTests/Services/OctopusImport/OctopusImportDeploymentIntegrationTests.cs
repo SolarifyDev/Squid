@@ -83,71 +83,70 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
                             (VariableScopeType.Process, project.DeploymentProcessId.ToString())
                         ], ignoreOrder: true);
                 });
+            await Run<SquidDbContext, IReleaseService, IDeploymentService, IDeploymentTaskExecutor>(
+                async (db, releaseService, deploymentService, executor) =>
+                {
+                    var project = await db.Set<Project>()
+                        .SingleAsync(p => p.SpaceId == SpaceId && p.Name == "Imported Deployable Project");
+                    var environment = await db.Set<SquidEnvironment>()
+                        .SingleAsync(e => e.SpaceId == SpaceId && e.Name == "Imported Production");
+                    var channel = await db.Set<Channel>()
+                        .SingleAsync(c => c.ProjectId == project.Id && c.IsDefault);
+                    var importedStep = await db.Set<DeploymentStep>()
+                        .SingleAsync(step => step.ProcessId == project.DeploymentProcessId);
+                    var importedAction = await db.Set<DeploymentAction>()
+                        .SingleAsync(action => action.StepId == importedStep.Id);
+                    var importedScriptBody = await db.Set<DeploymentActionProperty>()
+                        .SingleAsync(property =>
+                            property.ActionId == importedAction.Id &&
+                            property.PropertyName == SpecialVariables.Action.ScriptBody);
+
+                    importedStep.Name.ShouldBe("Imported script step");
+                    importedAction.Name.ShouldBe("Imported script action");
+                    importedAction.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
+                    importedScriptBody.PropertyValue.ShouldBe(scriptBody);
+
+                    var releaseEvent = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
+                    {
+                        SpaceId = SpaceId,
+                        ProjectId = project.Id,
+                        ChannelId = channel.Id,
+                        Version = "1.0.0"
+                    });
+                    var release = await db.Set<Release>()
+                        .SingleAsync(candidate => candidate.Id == releaseEvent.Release.Id);
+
+                    var deploymentEvent = await deploymentService.CreateDeploymentAsync(new CreateDeploymentCommand
+                    {
+                        SpaceId = SpaceId,
+                        ReleaseId = release.Id,
+                        EnvironmentId = environment.Id,
+                        Name = "Deploy imported project"
+                    });
+
+                    await executor.ProcessAsync(deploymentEvent.TaskId, CancellationToken.None);
+
+                    db.ChangeTracker.Clear();
+                    var completedTask = await db.Set<ServerTask>()
+                        .AsNoTracking()
+                        .SingleAsync(task => task.Id == deploymentEvent.TaskId);
+                    var completion = await db.Set<DeploymentCompletion>()
+                        .AsNoTracking()
+                        .SingleAsync(candidate => candidate.DeploymentId == deploymentEvent.Deployment.Id);
+
+                    completedTask.State.ShouldBe(TaskState.Success);
+                    completion.State.ShouldBe(TaskState.Success);
+                });
+
+            File.Exists(markerPath).ShouldBeTrue(
+                "the imported deployment must execute its script through the real local process transport");
+            File.ReadAllText(markerPath).ShouldBe("executed");
         }
         finally
         {
             File.Delete(archivePath);
             File.Delete(markerPath);
         }
-
-        await Run<SquidDbContext, IReleaseService, IDeploymentService, IDeploymentTaskExecutor>(
-            async (db, releaseService, deploymentService, executor) =>
-            {
-                var project = await db.Set<Project>()
-                    .SingleAsync(p => p.SpaceId == SpaceId && p.Name == "Imported Deployable Project");
-                var environment = await db.Set<SquidEnvironment>()
-                    .SingleAsync(e => e.SpaceId == SpaceId && e.Name == "Imported Production");
-                var channel = await db.Set<Channel>()
-                    .SingleAsync(c => c.ProjectId == project.Id && c.IsDefault);
-                var importedStep = await db.Set<DeploymentStep>()
-                    .SingleAsync(step => step.ProcessId == project.DeploymentProcessId);
-                var importedAction = await db.Set<DeploymentAction>()
-                    .SingleAsync(action => action.StepId == importedStep.Id);
-                var importedScriptBody = await db.Set<DeploymentActionProperty>()
-                    .SingleAsync(property =>
-                        property.ActionId == importedAction.Id &&
-                        property.PropertyName == SpecialVariables.Action.ScriptBody);
-
-                importedStep.Name.ShouldBe("Imported script step");
-                importedAction.Name.ShouldBe("Imported script action");
-                importedAction.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
-                importedScriptBody.PropertyValue.ShouldBe(scriptBody);
-
-                var releaseEvent = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
-                {
-                    SpaceId = SpaceId,
-                    ProjectId = project.Id,
-                    ChannelId = channel.Id,
-                    Version = "1.0.0"
-                });
-                var release = await db.Set<Release>()
-                    .SingleAsync(candidate => candidate.Id == releaseEvent.Release.Id);
-
-                var deploymentEvent = await deploymentService.CreateDeploymentAsync(new CreateDeploymentCommand
-                {
-                    SpaceId = SpaceId,
-                    ReleaseId = release.Id,
-                    EnvironmentId = environment.Id,
-                    Name = "Deploy imported project"
-                });
-
-                await executor.ProcessAsync(deploymentEvent.TaskId, CancellationToken.None);
-
-                db.ChangeTracker.Clear();
-                var completedTask = await db.Set<ServerTask>()
-                    .AsNoTracking()
-                    .SingleAsync(task => task.Id == deploymentEvent.TaskId);
-                var completion = await db.Set<DeploymentCompletion>()
-                    .AsNoTracking()
-                    .SingleAsync(candidate => candidate.DeploymentId == deploymentEvent.Deployment.Id);
-
-                completedTask.State.ShouldBe(TaskState.Success);
-                completion.State.ShouldBe(TaskState.Success);
-            });
-
-        File.Exists(markerPath).ShouldBeTrue(
-            "the imported deployment must execute its script through the real local process transport");
-        File.ReadAllText(markerPath).ShouldBe("executed");
     }
 
     private static OctopusImportSession CreateSession(Guid sessionId)
