@@ -1,11 +1,8 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Moq;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
-using Squid.Core.Services.DeploymentExecution.Script;
-using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
@@ -33,7 +30,9 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
     public async Task ArchiveImport_ImportedProjectProcessAndScopedVariables_CanCompleteDeployment()
     {
         var sessionId = Guid.NewGuid();
-        var archivePath = CreateDeployableProjectArchive();
+        var markerPath = Path.Combine(Path.GetTempPath(), $"squid-octopus-import-deployment-{Guid.NewGuid():N}.marker");
+        var scriptBody = $"printf 'executed' > '{EscapeSingleQuotedShellValue(markerPath)}'";
+        var archivePath = CreateDeployableProjectArchive(scriptBody);
 
         try
         {
@@ -88,17 +87,8 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
         finally
         {
             File.Delete(archivePath);
+            File.Delete(markerPath);
         }
-
-        var executionStrategy = new Mock<IExecutionStrategy>();
-        executionStrategy
-            .Setup(strategy => strategy.ExecuteScriptAsync(It.IsAny<ScriptExecutionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScriptExecutionResult
-            {
-                Success = true,
-                ExitCode = 0,
-                LogLines = []
-            });
 
         await Run<SquidDbContext, IReleaseService, IDeploymentService, IDeploymentTaskExecutor>(
             async (db, releaseService, deploymentService, executor) =>
@@ -121,7 +111,7 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
                 importedStep.Name.ShouldBe("Imported script step");
                 importedAction.Name.ShouldBe("Imported script action");
                 importedAction.ActionType.ShouldBe(SpecialVariables.ActionTypes.Script);
-                importedScriptBody.PropertyValue.ShouldBe("echo imported-project-deployed");
+                importedScriptBody.PropertyValue.ShouldBe(scriptBody);
 
                 var releaseEvent = await releaseService.CreateReleaseAsync(new CreateReleaseCommand
                 {
@@ -153,14 +143,11 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
 
                 completedTask.State.ShouldBe(TaskState.Success);
                 completion.State.ShouldBe(TaskState.Success);
-            },
-            builder => RegisterDeploymentDependencies(builder, executionStrategy.Object));
+            });
 
-        executionStrategy.Verify(
-            strategy => strategy.ExecuteScriptAsync(
-                It.Is<ScriptExecutionRequest>(request => request.ScriptBody == "echo imported-project-deployed"),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        File.Exists(markerPath).ShouldBeTrue(
+            "the imported deployment must execute its script through the real local process transport");
+        File.ReadAllText(markerPath).ShouldBe("executed");
     }
 
     private static OctopusImportSession CreateSession(Guid sessionId)
@@ -178,7 +165,7 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
         };
     }
 
-    private static string CreateDeployableProjectArchive()
+    private static string CreateDeployableProjectArchive(string scriptBody)
     {
         var documents = new[]
         {
@@ -266,12 +253,12 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
                         "Octopus.Action.RunOnServer":"true",
                         "Octopus.Action.Script.ScriptSource":"Inline",
                         "Octopus.Action.Script.Syntax":"Bash",
-                        "Octopus.Action.Script.ScriptBody":"echo imported-project-deployed"
+                        "Octopus.Action.Script.ScriptBody":__SCRIPT_BODY__
                       }
                     }]
                   }]
                 }
-                """)
+                """.Replace("__SCRIPT_BODY__", JsonSerializer.Serialize(scriptBody)))
         };
 
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-import-deployment-{Guid.NewGuid():N}.zip");
@@ -319,18 +306,6 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
-    private static void RegisterDeploymentDependencies(ContainerBuilder builder, IExecutionStrategy executionStrategy)
-    {
-        var transport = new Mock<IDeploymentTransport>();
-        transport.Setup(candidate => candidate.CommunicationStyle).Returns(CommunicationStyle.None);
-        transport.Setup(candidate => candidate.Strategy).Returns(executionStrategy);
-        transport.Setup(candidate => candidate.Capabilities).Returns(ServerTransport.Capability);
-
-        var registry = new Mock<ITransportRegistry>();
-        registry.Setup(candidate => candidate.Resolve(CommunicationStyle.None)).Returns(transport.Object);
-
-        builder.RegisterInstance(registry.Object)
-            .As<ITransportRegistry>()
-            .SingleInstance();
-    }
+    private static string EscapeSingleQuotedShellValue(string value)
+        => value.Replace("'", "'\"'\"'", StringComparison.Ordinal);
 }
