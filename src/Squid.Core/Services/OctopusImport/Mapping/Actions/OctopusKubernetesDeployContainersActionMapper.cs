@@ -50,6 +50,8 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         ["Octopus.Action.KubernetesContainers.ServiceClusterIp"] = KubernetesProperties.ServiceClusterIp,
         ["Octopus.Action.KubernetesContainers.ServiceAnnotations"] = KubernetesProperties.ServiceAnnotations,
         ["Octopus.Action.KubernetesContainers.ServicePorts"] = KubernetesProperties.ServicePorts,
+        ["Octopus.Action.KubernetesContainers.IngressName"] = KubernetesProperties.IngressName,
+        ["Octopus.Action.KubernetesContainers.IngressClassName"] = KubernetesProperties.IngressClassName,
         ["Octopus.Action.KubernetesContainers.ConfigMapName"] = KubernetesProperties.ConfigMapName,
         ["Octopus.Action.KubernetesContainers.SecretName"] = KubernetesProperties.SecretName,
         ["Octopus.Action.KubernetesContainers.ObjectStatusCheck"] = KubernetesProperties.ObjectStatusCheck,
@@ -70,6 +72,9 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
                 "Octopus.Action.KubernetesContainers.Containers",
                 "Octopus.Action.KubernetesContainers.ConfigMapValues",
                 "Octopus.Action.KubernetesContainers.SecretValues",
+                "Octopus.Action.KubernetesContainers.IngressAnnotations",
+                "Octopus.Action.KubernetesContainers.IngressRules",
+                "Octopus.Action.KubernetesContainers.IngressTlsCertificates",
                 OctopusImportKubernetesActionMapperSupport.OctopusResourceStatusCheck,
                 OctopusImportKubernetesActionMapperSupport.OctopusDeploymentTimeout,
                 "Octopus.Action.Kubernetes.ServerSideApply.Enabled",
@@ -97,6 +102,9 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.ConfigMapValues", KubernetesProperties.ConfigMapValues, diagnoseSensitiveConfigMapValues: true);
         AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.SecretValues", KubernetesProperties.SecretValues);
         AddNormalizedContainers(action, context, model.Properties, diagnostics);
+        OctopusImportKubernetesActionMapperSupport.AddIngressAnnotations(action, model.Properties, diagnostics);
+        OctopusImportKubernetesActionMapperSupport.AddIngressRules(action, model.Properties, diagnostics);
+        OctopusImportKubernetesActionMapperSupport.AddIngressTlsCertificates(action, model.Properties, diagnostics);
         OctopusImportKubernetesActionMapperSupport.AddUnsupportedPropertyDiagnostics(action, SupportedProperties, diagnostics);
 
         return new OctopusImportActionMappingResult(model, diagnostics);

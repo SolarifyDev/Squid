@@ -172,6 +172,54 @@ public class OctopusKubernetesActionMapperTests
     }
 
     [Fact]
+    public void ContainersMapper_MapsEmbeddedIngressProperties()
+    {
+        var mapper = new OctopusKubernetesDeployContainersActionMapper();
+        var action = new OctopusDeploymentActionDto
+        {
+            Id = "Actions-Containers-Ingress",
+            Name = "Configure and apply Kubernetes resources",
+            ActionType = "Octopus.KubernetesDeployContainers",
+            Properties =
+            {
+                ["Octopus.Action.KubernetesContainers.IngressName"] = "ingress-web",
+                ["Octopus.Action.KubernetesContainers.IngressClassName"] = "nginx",
+                ["Octopus.Action.KubernetesContainers.Namespace"] = "#{K8SNamespace}",
+                ["Octopus.Action.KubernetesContainers.IngressAnnotations"] = """[{"key":"cert-manager.io/cluster-issuer","value":"letsencrypt"}]""",
+                ["Octopus.Action.KubernetesContainers.IngressRules"] = """[{"host":"#{IngressDomainName}","http":{"paths":[{"key":"/","value":"3000","option":"web-service","option2":"ImplementationSpecific"}]}}]""",
+                ["Octopus.Action.KubernetesContainers.IngressTlsCertificates"] = """[{"hosts":["#{IngressDomainName}"],"secretName":"#{TlsSecret}"}]"""
+            }
+        };
+
+        var result = mapper.Map(action, new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42));
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Action.ActionType.ShouldBe(SpecialVariables.ActionTypes.KubernetesDeployContainers);
+        Property(result.Action, "Squid.Action.KubernetesContainers.IngressName").ShouldBe("ingress-web");
+        Property(result.Action, "Squid.Action.KubernetesContainers.IngressClassName").ShouldBe("nginx");
+        Property(result.Action, "Squid.Action.KubernetesContainers.Namespace").ShouldBe("#{K8SNamespace}");
+        result.Diagnostics.ShouldNotContain(d =>
+            d.Code == OctopusImportActionMappingDiagnosticCodes.UnsupportedProperty
+            && d.Message.Contains("Ingress", StringComparison.OrdinalIgnoreCase));
+
+        using var annotations = JsonDocument.Parse(Property(result.Action, "Squid.Action.KubernetesContainers.IngressAnnotations"));
+        annotations.RootElement.EnumerateArray().Single().GetProperty("Key").GetString()
+            .ShouldBe("cert-manager.io/cluster-issuer");
+
+        using var rules = JsonDocument.Parse(Property(result.Action, "Squid.Action.KubernetesContainers.IngressRules"));
+        var path = rules.RootElement.EnumerateArray().Single().GetProperty("paths").EnumerateArray().Single();
+        path.GetProperty("path").GetString().ShouldBe("/");
+        path.GetProperty("pathType").GetString().ShouldBe("ImplementationSpecific");
+        path.GetProperty("backend").GetProperty("serviceName").GetString().ShouldBe("web-service");
+        path.GetProperty("backend").GetProperty("servicePort").GetString().ShouldBe("3000");
+
+        using var tls = JsonDocument.Parse(Property(result.Action, "Squid.Action.KubernetesContainers.IngressTlsCertificates"));
+        var tlsEntry = tls.RootElement.EnumerateArray().Single();
+        tlsEntry.GetProperty("secretName").GetString().ShouldBe("#{TlsSecret}");
+        tlsEntry.GetProperty("hosts").EnumerateArray().Single().GetString().ShouldBe("#{IngressDomainName}");
+    }
+
+    [Fact]
     public void IngressMapper_MapsAnnotationsRulesClassNamespaceAndTls()
     {
         var mapper = new OctopusKubernetesDeployIngressActionMapper();

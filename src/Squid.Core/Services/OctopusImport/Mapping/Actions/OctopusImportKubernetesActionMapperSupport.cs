@@ -102,6 +102,188 @@ internal static class OctopusImportKubernetesActionMapperSupport
         }
     }
 
+    internal static void AddIngressAnnotations(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressAnnotations";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        var normalized = NormalizeStringDictionaryJson(raw, action, sourceName, diagnostics);
+        AddProperty(properties, KubernetesProperties.IngressAnnotations, normalized);
+    }
+
+    internal static void AddIngressRules(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressRules";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+                AddProperty(properties, KubernetesProperties.IngressRules, raw);
+                return;
+            }
+
+            var normalized = new JsonArray();
+
+            foreach (var rule in doc.RootElement.EnumerateArray())
+            {
+                if (rule.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                normalized.Add(NormalizeIngressRule(rule));
+            }
+
+            AddProperty(properties, KubernetesProperties.IngressRules, normalized.ToJsonString());
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+            AddProperty(properties, KubernetesProperties.IngressRules, raw);
+        }
+    }
+
+    internal static void AddIngressTlsCertificates(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressTlsCertificates";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+                AddProperty(properties, KubernetesProperties.IngressTlsCertificates, raw);
+                return;
+            }
+
+            var normalized = new JsonArray();
+
+            foreach (var tls in doc.RootElement.EnumerateArray())
+            {
+                if (tls.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var entry = new JsonObject();
+                var secretName = GetString(tls, KubernetesIngressPayloadProperties.SecretName);
+
+                if (!string.IsNullOrWhiteSpace(secretName))
+                    entry[KubernetesIngressPayloadProperties.SecretName] = secretName;
+
+                if (tls.TryGetProperty(KubernetesIngressPayloadProperties.Hosts, out var hosts)
+                    && hosts.ValueKind == JsonValueKind.Array)
+                {
+                    entry[KubernetesIngressPayloadProperties.Hosts] = Clone(hosts);
+                }
+
+                normalized.Add(entry);
+            }
+
+            AddProperty(properties, KubernetesProperties.IngressTlsCertificates, normalized.ToJsonString());
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+            AddProperty(properties, KubernetesProperties.IngressTlsCertificates, raw);
+        }
+    }
+
+    private static JsonObject NormalizeIngressRule(JsonElement source)
+    {
+        var rule = new JsonObject();
+        var host = GetString(source, KubernetesIngressPayloadProperties.Host);
+
+        if (host != null)
+            rule[KubernetesIngressPayloadProperties.Host] = host;
+
+        var paths = FindIngressPaths(source);
+
+        if (paths.ValueKind != JsonValueKind.Array)
+            return rule;
+
+        var normalizedPaths = new JsonArray();
+
+        foreach (var path in paths.EnumerateArray())
+        {
+            if (path.ValueKind != JsonValueKind.Object)
+                continue;
+
+            normalizedPaths.Add(NormalizeIngressPath(path));
+        }
+
+        rule[KubernetesIngressPayloadProperties.Paths] = normalizedPaths;
+        return rule;
+    }
+
+    private static JsonElement FindIngressPaths(JsonElement rule)
+    {
+        if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Http, out var http)
+            && http.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out var nestedPaths))
+        {
+            return nestedPaths;
+        }
+
+        if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out var paths))
+            return paths;
+
+        return default;
+    }
+
+    private static JsonObject NormalizeIngressPath(JsonElement source)
+    {
+        if (source.TryGetProperty(KubernetesIngressPayloadProperties.Path, out _)
+            || source.TryGetProperty(KubernetesIngressPayloadProperties.Backend, out _)
+            || source.TryGetProperty(KubernetesIngressPayloadProperties.ServiceName, out _))
+        {
+            return Clone(source)?.AsObject() ?? new JsonObject();
+        }
+
+        var path = GetString(source, "key") ?? "/";
+        var servicePort = GetString(source, "value");
+        var serviceName = GetString(source, "option");
+        var pathType = GetString(source, "option2");
+
+        if (string.IsNullOrWhiteSpace(pathType))
+            pathType = KubernetesIngressDefaultValues.PathType;
+
+        var normalized = new JsonObject
+        {
+            [KubernetesIngressPayloadProperties.Path] = path,
+            [KubernetesIngressPayloadProperties.PathType] = pathType
+        };
+
+        if (!string.IsNullOrWhiteSpace(serviceName) || !string.IsNullOrWhiteSpace(servicePort))
+        {
+            normalized[KubernetesIngressPayloadProperties.Backend] = new JsonObject
+            {
+                [KubernetesIngressPayloadProperties.ServiceName] = serviceName ?? string.Empty,
+                [KubernetesIngressPayloadProperties.ServicePort] = servicePort ?? string.Empty
+            };
+        }
+
+        return normalized;
+    }
+
     internal static void AddUnsupportedPropertyDiagnostics(
         OctopusDeploymentActionDto action,
         IReadOnlySet<string> supportedProperties,
