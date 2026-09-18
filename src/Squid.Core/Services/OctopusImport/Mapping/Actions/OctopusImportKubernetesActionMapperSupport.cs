@@ -1,0 +1,458 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Constants;
+using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.Deployments.Process;
+using Squid.Message.Models.OctopusImport;
+
+namespace Squid.Core.Services.OctopusImport.Mapping.Actions;
+
+internal static class OctopusImportKubernetesActionMapperSupport
+{
+    internal const string OctopusKubernetesContainersPrefix = "Octopus.Action.KubernetesContainers.";
+    internal const string OctopusKubernetesPrefix = OctopusPropertyNames.KubernetesPrefix;
+    internal const string OctopusResourceStatusCheck = OctopusPropertyNames.ActionKubernetesResourceStatusCheck;
+    internal const string OctopusDeploymentTimeout = OctopusPropertyNames.ActionKubernetesDeploymentTimeout;
+    internal const string OctopusEnabledFeatures = OctopusPropertyNames.ActionEnabledFeatures;
+
+    internal static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    internal static CreateOrUpdateDeploymentActionModel CreateActionModel(OctopusDeploymentActionDto action, string squidActionType)
+        => new()
+        {
+            Name = action.Name,
+            ActionType = squidActionType,
+            IsDisabled = action.IsDisabled,
+            IsRequired = action.IsRequired,
+            CanBeUsedForProjectVersioning = false,
+            Properties = []
+        };
+
+    internal static void AddProperty(List<ActionPropertyModel> properties, string name, string value)
+    {
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(value))
+            return;
+
+        properties.Add(new ActionPropertyModel
+        {
+            PropertyName = name,
+            PropertyValue = value
+        });
+    }
+
+    internal static bool TryGetProperty(OctopusDeploymentActionDto action, string sourceName, out string value)
+    {
+        value = null;
+
+        if (action.Properties == null)
+            return false;
+
+        foreach (var property in action.Properties)
+        {
+            if (!string.Equals(property.Key, sourceName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            value = property.Value;
+            return !string.IsNullOrWhiteSpace(value);
+        }
+
+        return false;
+    }
+
+    internal static void AddSimpleMappedProperties(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        IReadOnlyDictionary<string, string> propertyMap)
+    {
+        foreach (var (sourceName, destinationName) in propertyMap)
+        {
+            if (TryGetProperty(action, sourceName, out var value))
+                AddProperty(properties, destinationName, value);
+        }
+    }
+
+    internal static void AddKubernetesExecutionProperties(OctopusDeploymentActionDto action, List<ActionPropertyModel> properties)
+    {
+        if (TryGetProperty(action, OctopusResourceStatusCheck, out var statusCheck))
+            AddProperty(properties, KubernetesProperties.ObjectStatusCheck, statusCheck);
+
+        if (TryGetProperty(action, OctopusDeploymentTimeout, out var timeout))
+            AddProperty(properties, KubernetesProperties.ObjectStatusCheckTimeout, timeout);
+
+        foreach (var property in action.Properties ?? [])
+        {
+            if (!property.Key.StartsWith(OctopusKubernetesPrefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (string.Equals(property.Key, OctopusResourceStatusCheck, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(property.Key, OctopusDeploymentTimeout, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var suffix = property.Key[OctopusKubernetesPrefix.Length..];
+            var destinationName = $"Squid.Action.Kubernetes.{suffix}";
+            AddProperty(properties, destinationName, property.Value);
+        }
+    }
+
+    internal static void AddIngressAnnotations(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressAnnotations";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        var normalized = NormalizeStringDictionaryJson(raw, action, sourceName, diagnostics);
+        AddProperty(properties, KubernetesProperties.IngressAnnotations, normalized);
+    }
+
+    internal static void AddIngressRules(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressRules";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+                AddProperty(properties, KubernetesProperties.IngressRules, raw);
+                return;
+            }
+
+            var normalized = new JsonArray();
+
+            foreach (var rule in doc.RootElement.EnumerateArray())
+            {
+                if (rule.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                normalized.Add(NormalizeIngressRule(rule));
+            }
+
+            AddProperty(properties, KubernetesProperties.IngressRules, normalized.ToJsonString());
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+            AddProperty(properties, KubernetesProperties.IngressRules, raw);
+        }
+    }
+
+    internal static void AddIngressTlsCertificates(
+        OctopusDeploymentActionDto action,
+        List<ActionPropertyModel> properties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        const string sourceName = "Octopus.Action.KubernetesContainers.IngressTlsCertificates";
+
+        if (!TryGetProperty(action, sourceName, out var raw))
+            return;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+                AddProperty(properties, KubernetesProperties.IngressTlsCertificates, raw);
+                return;
+            }
+
+            var normalized = new JsonArray();
+
+            foreach (var tls in doc.RootElement.EnumerateArray())
+            {
+                if (tls.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var entry = new JsonObject();
+                var secretName = GetString(tls, KubernetesIngressPayloadProperties.SecretName);
+
+                if (!string.IsNullOrWhiteSpace(secretName))
+                    entry[KubernetesIngressPayloadProperties.SecretName] = secretName;
+
+                if (tls.TryGetProperty(KubernetesIngressPayloadProperties.Hosts, out var hosts)
+                    && hosts.ValueKind == JsonValueKind.Array)
+                {
+                    entry[KubernetesIngressPayloadProperties.Hosts] = Clone(hosts);
+                }
+
+                normalized.Add(entry);
+            }
+
+            AddProperty(properties, KubernetesProperties.IngressTlsCertificates, normalized.ToJsonString());
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add(MalformedJsonDiagnostic(action, sourceName));
+            AddProperty(properties, KubernetesProperties.IngressTlsCertificates, raw);
+        }
+    }
+
+    private static JsonObject NormalizeIngressRule(JsonElement source)
+    {
+        var rule = new JsonObject();
+        var host = GetString(source, KubernetesIngressPayloadProperties.Host);
+
+        if (host != null)
+            rule[KubernetesIngressPayloadProperties.Host] = host;
+
+        var paths = FindIngressPaths(source);
+
+        if (paths.ValueKind != JsonValueKind.Array)
+            return rule;
+
+        var normalizedPaths = new JsonArray();
+
+        foreach (var path in paths.EnumerateArray())
+        {
+            if (path.ValueKind != JsonValueKind.Object)
+                continue;
+
+            normalizedPaths.Add(NormalizeIngressPath(path));
+        }
+
+        rule[KubernetesIngressPayloadProperties.Paths] = normalizedPaths;
+        return rule;
+    }
+
+    private static JsonElement FindIngressPaths(JsonElement rule)
+    {
+        if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Http, out var http)
+            && http.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out var nestedPaths))
+        {
+            return nestedPaths;
+        }
+
+        if (rule.TryGetProperty(KubernetesIngressPayloadProperties.Paths, out var paths))
+            return paths;
+
+        return default;
+    }
+
+    private static JsonObject NormalizeIngressPath(JsonElement source)
+    {
+        if (source.TryGetProperty(KubernetesIngressPayloadProperties.Path, out _)
+            || source.TryGetProperty(KubernetesIngressPayloadProperties.Backend, out _)
+            || source.TryGetProperty(KubernetesIngressPayloadProperties.ServiceName, out _))
+        {
+            return Clone(source)?.AsObject() ?? new JsonObject();
+        }
+
+        var path = GetString(source, "key") ?? "/";
+        var servicePort = GetString(source, "value");
+        var serviceName = GetString(source, "option");
+        var pathType = GetString(source, "option2");
+
+        if (string.IsNullOrWhiteSpace(pathType))
+            pathType = KubernetesIngressDefaultValues.PathType;
+
+        var normalized = new JsonObject
+        {
+            [KubernetesIngressPayloadProperties.Path] = path,
+            [KubernetesIngressPayloadProperties.PathType] = pathType
+        };
+
+        if (!string.IsNullOrWhiteSpace(serviceName) || !string.IsNullOrWhiteSpace(servicePort))
+        {
+            normalized[KubernetesIngressPayloadProperties.Backend] = new JsonObject
+            {
+                [KubernetesIngressPayloadProperties.ServiceName] = serviceName ?? string.Empty,
+                [KubernetesIngressPayloadProperties.ServicePort] = servicePort ?? string.Empty
+            };
+        }
+
+        return normalized;
+    }
+
+    internal static void AddUnsupportedPropertyDiagnostics(
+        OctopusDeploymentActionDto action,
+        IReadOnlySet<string> supportedProperties,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        foreach (var property in action.Properties ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(property.Value))
+                continue;
+
+            if (supportedProperties.Contains(property.Key)
+                || string.Equals(property.Key, OctopusEnabledFeatures, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (IsStepLevelActionProperty(property.Key) || IsEmptyJson(property.Value))
+                continue;
+
+            diagnostics.Add(Diagnostic(
+                OctopusImportCompatibilitySeverity.Warning,
+                OctopusImportActionMappingDiagnosticCodes.UnsupportedProperty,
+                $"Octopus action property '{property.Key}' for action '{action.Name}' is not supported by the Kubernetes import action mapper and was omitted.",
+            action));
+        }
+    }
+
+    private static bool IsStepLevelActionProperty(string propertyName)
+        => string.Equals(propertyName, OctopusPropertyNames.ActionTargetRoles, StringComparison.OrdinalIgnoreCase)
+           || string.Equals(propertyName, OctopusPropertyNames.ActionRunOnServer, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsEmptyJson(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return true;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(value);
+
+            return doc.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => doc.RootElement.GetArrayLength() == 0,
+                JsonValueKind.Object => !doc.RootElement.EnumerateObject().Any(),
+                JsonValueKind.Null or JsonValueKind.Undefined => true,
+                _ => false
+            };
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    internal static string NormalizeStringDictionaryJson(
+        string raw,
+        OctopusDeploymentActionDto action,
+        string sourcePropertyName,
+        List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return raw;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                return raw;
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return raw;
+
+            var normalized = new JsonArray();
+
+            foreach (var element in doc.RootElement.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var key = GetString(element, "Key") ?? GetString(element, "key");
+                var value = GetString(element, "Value") ?? GetString(element, "value");
+
+                if (string.IsNullOrWhiteSpace(key) || value == null)
+                    continue;
+
+                normalized.Add(new JsonObject
+                {
+                    ["Key"] = key,
+                    ["Value"] = value
+                });
+            }
+
+            return normalized.ToJsonString();
+        }
+        catch (JsonException)
+        {
+            diagnostics.Add(MalformedJsonDiagnostic(action, sourcePropertyName));
+            return raw;
+        }
+    }
+
+    internal static bool TryResolveFeedId(string sourceFeedId, OctopusImportIdMap idMap, out int destinationFeedId)
+    {
+        destinationFeedId = default;
+
+        if (string.IsNullOrWhiteSpace(sourceFeedId))
+            return false;
+
+        if (int.TryParse(sourceFeedId, out destinationFeedId) && destinationFeedId > 0)
+            return true;
+
+        if (idMap.TryGetDestinationId(sourceFeedId, OctopusResourceKind.Feed.ToString(), out destinationFeedId))
+            return true;
+
+        var sourcePrefix = sourceFeedId.Trim();
+        var matches = idMap.Mappings
+            .Where(m => string.Equals(m.SourceType, OctopusResourceKind.Feed.ToString(), StringComparison.OrdinalIgnoreCase)
+                        && m.SourceId.StartsWith($"{sourcePrefix}-", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (matches.Count == 1)
+        {
+            destinationFeedId = matches[0].DestinationId;
+            return true;
+        }
+
+        return false;
+    }
+
+    internal static string GetString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+            return null;
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.String => property.GetString(),
+            JsonValueKind.Number => property.GetRawText(),
+            JsonValueKind.True => "True",
+            JsonValueKind.False => "False",
+            _ => null
+        };
+    }
+
+    internal static JsonNode Clone(JsonElement element)
+        => JsonNode.Parse(element.GetRawText());
+
+    internal static OctopusImportDiagnosticDto MalformedJsonDiagnostic(
+        OctopusDeploymentActionDto action,
+        string sourcePropertyName)
+        => Diagnostic(
+            OctopusImportCompatibilitySeverity.Blocker,
+            OctopusImportActionMappingDiagnosticCodes.MalformedEmbeddedJson,
+            $"Octopus action property '{sourcePropertyName}' for action '{action.Name}' contains malformed embedded JSON.",
+            action);
+
+    internal static OctopusImportDiagnosticDto Diagnostic(
+        OctopusImportCompatibilitySeverity severity,
+        string code,
+        string message,
+        OctopusDeploymentActionDto action)
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
+        {
+            Severity = severity,
+            Code = code,
+            Message = message,
+            ResourceType = OctopusResourceKind.DeploymentAction.ToString(),
+            SourceId = action.Id,
+            ResourceName = action.Name
+        });
+}

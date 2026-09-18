@@ -86,6 +86,11 @@ public class EfRepository : IRepository
         _dbContext.Entry(entity).State = EntityState.Detached;
     }
 
+    public void ClearChangeTracker()
+    {
+        _dbContext.ChangeTracker.Clear();
+    }
+
     public Task<int> CountAsync<TEntity>(Expression<Func<TEntity, bool>> predicate,
         CancellationToken cancellationToken = default) where TEntity : class, IEntity
     {
