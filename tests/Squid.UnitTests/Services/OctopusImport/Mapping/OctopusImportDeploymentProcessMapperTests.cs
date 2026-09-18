@@ -253,6 +253,79 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
+    public void MapToCreateStepCommands_RunOnServerWithWorkerPoolAndTargetRoles_UsesTargetLevelExecution()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-TargetedWorker",
+            Name = "Deploy Kubernetes containers",
+            Properties =
+            {
+                [OctopusPropertyNames.ActionTargetRoles] = "SJUSAKS"
+            },
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-TargetedWorker",
+                    Name = "Deploy Kubernetes containers",
+                    ActionType = "Octopus.KubernetesDeployContainers",
+                    WorkerPoolId = "WorkerPools-1",
+                    IsRequired = true,
+                    Properties =
+                    {
+                        [OctopusPropertyNames.ActionRunOnServer] = "true"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var step = result.Steps.Single().CreateCommand.Step;
+        step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.TargetRoles).PropertyValue.ShouldBe("SJUSAKS");
+        step.Properties.ShouldNotContain(p => p.PropertyName == SpecialVariables.Step.RunOnServer);
+        result.Diagnostics.Single(d => d.Code == OctopusImportDeploymentProcessMappingDiagnosticCodes.WorkerPoolUnsupported)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_StepRunOnServerWithWorkerPoolAndTargetRoles_UsesTargetLevelExecution()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-StepLevelRunOnServer",
+            Name = "Deploy Kubernetes containers",
+            Properties =
+            {
+                [OctopusPropertyNames.ActionTargetRoles] = "SJUSAKS",
+                [OctopusPropertyNames.ActionRunOnServer] = "true"
+            },
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-StepLevelRunOnServer",
+                    Name = "Deploy Kubernetes containers",
+                    ActionType = "Octopus.KubernetesDeployContainers",
+                    WorkerPoolId = "WorkerPools-1",
+                    IsRequired = true
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        var step = result.Steps.Single().CreateCommand.Step;
+        step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.TargetRoles).PropertyValue.ShouldBe("SJUSAKS");
+        step.Properties.ShouldNotContain(p => p.PropertyName == SpecialVariables.Step.RunOnServer);
+        result.Diagnostics.Single(d => d.Code == OctopusImportDeploymentProcessMappingDiagnosticCodes.WorkerPoolUnsupported)
+            .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_UsesRegisteredActionMappersForScriptAndManualActions()
     {
         var mapper = new OctopusImportDeploymentProcessMapper(

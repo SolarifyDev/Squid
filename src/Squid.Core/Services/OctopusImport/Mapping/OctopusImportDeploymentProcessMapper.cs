@@ -124,8 +124,33 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         foreach (var targetRole in actions.SelectMany(a => GetTargetRoles(a.SourceAction)))
             AddOrAppendStepProperty(stepProperties, SpecialVariables.Step.TargetRoles, targetRole);
 
-        foreach (var action in actions.Where(a => IsRunOnServer(a.SourceAction)))
+        var hasTargetRoles = stepProperties.Any(p =>
+            string.Equals(p.PropertyName, SpecialVariables.Step.TargetRoles, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(p.PropertyValue));
+        var hasWorkerPool = actions.Any(a =>
+            !string.IsNullOrWhiteSpace(a.SourceAction.WorkerPoolId)
+            || !string.IsNullOrWhiteSpace(a.SourceAction.WorkerPoolVariable));
+        var hasRunOnServer = actions.Any(a => IsRunOnServer(a.SourceAction))
+            || stepProperties.Any(p =>
+                string.Equals(p.PropertyName, SpecialVariables.Step.RunOnServer, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(p.PropertyValue, "true", StringComparison.OrdinalIgnoreCase));
+
+        // Octopus "Worker Pool on behalf of target tags" still selects deployment
+        // targets and then runs the action on a worker using those targets' context.
+        // Squid has no worker-pool execution model, so importing this as RunOnServer
+        // would discard the target selection entirely. Preserve the target-level
+        // execution semantics and leave WorkerPoolUnsupported as the explicit warning.
+        var useTargetLevelForWorkerExecution = hasTargetRoles && hasWorkerPool && hasRunOnServer;
+
+        if (useTargetLevelForWorkerExecution)
+        {
+            stepProperties.RemoveAll(p =>
+                string.Equals(p.PropertyName, SpecialVariables.Step.RunOnServer, StringComparison.OrdinalIgnoreCase));
+        }
+        else if (hasRunOnServer)
+        {
             AddOrAppendStepProperty(stepProperties, SpecialVariables.Step.RunOnServer, "true");
+        }
 
         var stepModel = new CreateOrUpdateDeploymentStepModel
         {
