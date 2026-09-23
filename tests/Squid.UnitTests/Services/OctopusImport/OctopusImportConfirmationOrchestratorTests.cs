@@ -104,6 +104,8 @@ public class OctopusImportConfirmationOrchestratorTests
         releaseCommand.SelectedPackages.Single().PackageReferenceName.ShouldBe("app");
         releaseCommand.SelectedPackages.Single().Version.ShouldBe("1.2.3");
         releaseCommand.SelectedPackages.Single().FeedId.ShouldBe(77);
+        releaseCommand.HistoricalCreatedDate.ShouldBe(
+            harness.Nodes.Release.GetSource<OctopusReleaseDto>().Assembled);
 
         harness.Mediator.Invocations
             .Where(invocation => invocation.Method.Name == nameof(IMediator.SendAsync))
@@ -523,6 +525,7 @@ public class OctopusImportConfirmationOrchestratorTests
         var variableMapper = new Mock<IOctopusImportVariableMapper>();
         var processMapper = new Mock<IOctopusImportDeploymentProcessMapper>();
         var shellMapper = new Mock<IOctopusImportExternalResourceShellMapper>();
+        var deploymentHistoryImporter = new Mock<IOctopusImportDeploymentHistoryImporter>();
         var mediator = new Mock<IMediator>();
         var projectDataProvider = new Mock<IProjectDataProvider>();
         var channelDataProvider = new Mock<IChannelDataProvider>();
@@ -566,6 +569,7 @@ public class OctopusImportConfirmationOrchestratorTests
             variableMapper.Object,
             processMapper.Object,
             shellMapper.Object,
+            deploymentHistoryImporter.Object,
             projectDataProvider.Object,
             channelDataProvider.Object,
             mediator.Object);
@@ -581,6 +585,7 @@ public class OctopusImportConfirmationOrchestratorTests
             variableMapper,
             processMapper,
             shellMapper,
+            deploymentHistoryImporter,
             mediator,
             projectDataProvider,
             channelDataProvider,
@@ -1278,6 +1283,7 @@ public class OctopusImportConfirmationOrchestratorTests
                 ProjectId = "Projects-1",
                 ChannelId = "Channels-1",
                 Version = "1.0.0",
+                Assembled = DateTimeOffset.Parse("2024-06-01T12:30:00Z"),
                 ReleaseNotes = "Imported release notes",
                 SelectedPackages =
                 [
@@ -1449,6 +1455,7 @@ public class OctopusImportConfirmationOrchestratorTests
         Mock<IOctopusImportVariableMapper> VariableMapper,
         Mock<IOctopusImportDeploymentProcessMapper> ProcessMapper,
         Mock<IOctopusImportExternalResourceShellMapper> ShellMapper,
+        Mock<IOctopusImportDeploymentHistoryImporter> DeploymentHistoryImporter,
         Mock<IMediator> Mediator,
         Mock<IProjectDataProvider> ProjectDataProvider,
         Mock<IChannelDataProvider> ChannelDataProvider,

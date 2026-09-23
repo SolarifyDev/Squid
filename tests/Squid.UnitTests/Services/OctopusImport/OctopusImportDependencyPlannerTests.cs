@@ -89,14 +89,14 @@ public class OctopusImportDependencyPlannerTests
             "Variables-1",
             "deploymentprocess-Projects-1",
             "Steps-1",
-            "Releases-1"
+            "Releases-1",
+            "Deployments-1",
+            "ServerTasks-1"
         ], ignoreOrder: true);
         plan.OrderedResources.ShouldNotContain(r => r.SourceId.Contains("-s-", StringComparison.OrdinalIgnoreCase));
         plan.OutOfScopeResources.Select(r => r.SourceId).ShouldBe([
             "variableset-Projects-1-s-1-ABC",
-            "deploymentprocess-Projects-1-s-1-ABC",
-            "Deployments-1",
-            "ServerTasks-1"
+            "deploymentprocess-Projects-1-s-1-ABC"
         ], ignoreOrder: true);
         plan.OutOfScopeResources.Select(r => r.SourceId).ShouldNotContain("SnapshotVariable-1");
         plan.OutOfScopeResources.Select(r => r.SourceId).ShouldNotContain("SnapshotSteps-1");

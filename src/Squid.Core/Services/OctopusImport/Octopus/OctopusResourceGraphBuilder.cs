@@ -340,7 +340,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Project, deployment.ProjectId, OctopusResourceKind.Project, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Environment, deployment.EnvironmentId, OctopusResourceKind.Environment, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Release, deployment.ReleaseId, OctopusResourceKind.Release, deployment.ProjectId, true);
-        AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.ServerTask, deployment.TaskId, OctopusResourceKind.ServerTask, deployment.ProjectId, false);
+        AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.ServerTask, deployment.TaskId, OctopusResourceKind.ServerTask, deployment.ProjectId, false, true);
     }
 
     private static void AddServerTask(GraphBuildContext context)

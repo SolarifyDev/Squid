@@ -156,6 +156,23 @@ public class OctopusImportPreviewPlannerTests
         result.Diagnostics.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(OctopusResourceKind.Deployment, "Deployments-1")]
+    [InlineData(OctopusResourceKind.ServerTask, "ServerTasks-1")]
+    public void BuildPreviewPlan_WhenDeploymentHistoryIsHistorical_ProposesCreate(
+        OctopusResourceKind kind,
+        string sourceId)
+    {
+        var resource = Node(sourceId, kind, kind.ToString(), isHistorical: true);
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), NoConflicts());
+
+        var result = preview.Resources.Single();
+        result.PreviewAction.ShouldBe(OctopusImportPreviewAction.Create);
+        result.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Pending);
+        result.Diagnostics.ShouldBeEmpty();
+    }
+
     [Fact]
     public void BuildPreviewPlan_WhenResourceIsWorkerPool_ProposesSkip()
     {

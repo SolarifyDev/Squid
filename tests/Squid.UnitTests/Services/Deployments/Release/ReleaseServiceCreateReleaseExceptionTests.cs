@@ -251,6 +251,46 @@ public class ReleaseServiceCreateReleaseExceptionTests
         package.FeedId.ShouldBe(42);
     }
 
+    [Fact]
+    public async Task CreateReleaseAsync_HistoricalCreatedDate_PersistsRequestedTimestamp()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        var historicalCreatedDate = DateTimeOffset.Parse("2024-06-01T12:30:00Z");
+        command.HistoricalCreatedDate = historicalCreatedDate;
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1 });
+        SetupSuccessfulCreatePipeline(releaseId: 1001);
+
+        await sut.CreateReleaseAsync(command, CancellationToken.None);
+
+        _repository.Verify(
+            x => x.ExecuteUpdateAsync<ReleaseEntity>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<ReleaseEntity, bool>>>(),
+                It.IsAny<System.Linq.Expressions.Expression<Func<Microsoft.EntityFrameworkCore.Query.SetPropertyCalls<ReleaseEntity>, Microsoft.EntityFrameworkCore.Query.SetPropertyCalls<ReleaseEntity>>>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateReleaseAsync_WithoutHistoricalCreatedDate_DoesNotRewriteCreatedDate()
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1 });
+        SetupSuccessfulCreatePipeline(releaseId: 1001);
+
+        await sut.CreateReleaseAsync(command, CancellationToken.None);
+
+        _repository.Verify(
+            x => x.ExecuteUpdateAsync<ReleaseEntity>(
+                It.IsAny<System.Linq.Expressions.Expression<Func<ReleaseEntity, bool>>>(),
+                It.IsAny<System.Linq.Expressions.Expression<Func<Microsoft.EntityFrameworkCore.Query.SetPropertyCalls<ReleaseEntity>, Microsoft.EntityFrameworkCore.Query.SetPropertyCalls<ReleaseEntity>>>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private void SetupValidProjectAndChannel(Project project)
     {
         _projectDataProvider.Setup(x => x.GetProjectByIdAsync(project.Id, It.IsAny<CancellationToken>()))

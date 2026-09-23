@@ -435,6 +435,8 @@ public class OctopusDeploymentDto : OctopusDocumentDto
 {
     public string ProjectId { get; set; }
 
+    public string ChannelId { get; set; }
+
     public string EnvironmentId { get; set; }
 
     public string ReleaseId { get; set; }
@@ -443,12 +445,18 @@ public class OctopusDeploymentDto : OctopusDocumentDto
 
     public string DeployedBy { get; set; }
 
+    public string DeployedById { get; set; }
+
+    public List<string> DeployedToMachineIds { get; set; } = [];
+
     public DateTimeOffset? Created { get; set; }
 }
 
 public class OctopusServerTaskDto : OctopusDocumentDto
 {
     public string Description { get; set; }
+
+    public string ErrorMessage { get; set; }
 
     public string State { get; set; }
 
@@ -457,6 +465,10 @@ public class OctopusServerTaskDto : OctopusDocumentDto
     public DateTimeOffset? StartTime { get; set; }
 
     public DateTimeOffset? CompletedTime { get; set; }
+
+    public bool HasWarningsOrErrors { get; set; }
+
+    public int DurationSeconds { get; set; }
 
     public string ProjectId { get; set; }
 
