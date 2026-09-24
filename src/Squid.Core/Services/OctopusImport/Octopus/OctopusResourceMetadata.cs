@@ -35,8 +35,8 @@ internal readonly record struct OctopusResourceMetadata(
             [OctopusResourceKind.Trigger] = new(220, true, false, false, true),
             [OctopusResourceKind.DeploymentProcessSnapshot] = new(900, true, true, true, false),
             [OctopusResourceKind.VariableSetSnapshot] = new(910, true, true, true, false),
-            [OctopusResourceKind.Deployment] = new(930, true, true, true, false),
-            [OctopusResourceKind.ServerTask] = new(940, true, true, true, false),
+            [OctopusResourceKind.Deployment] = new(930, true, false, false, false),
+            [OctopusResourceKind.ServerTask] = new(940, true, false, false, false),
             [OctopusResourceKind.WorkerPool] = new(950, false, true, true, false)
         };
 
@@ -46,5 +46,9 @@ internal readonly record struct OctopusResourceMetadata(
             : throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown Octopus resource kind.");
 
     public bool IsCurrentConfiguration(OctopusResourceNode resource)
-        => IsOrderable && (!resource.IsHistorical || resource.Kind == OctopusResourceKind.Release);
+        => IsOrderable &&
+           (!resource.IsHistorical ||
+            resource.Kind is OctopusResourceKind.Release
+                or OctopusResourceKind.Deployment
+                or OctopusResourceKind.ServerTask);
 }

@@ -81,7 +81,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (resource.Kind == OctopusResourceKind.Release)
+        if (resource.Kind is OctopusResourceKind.Release
+            or OctopusResourceKind.Deployment
+            or OctopusResourceKind.ServerTask)
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
             AddManualConfigurationDiagnostics(result, resource);
