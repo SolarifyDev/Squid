@@ -1,7 +1,9 @@
 using Correlate.AspNetCore;
 using Correlate.DependencyInjection;
 using Squid.Api.Filters;
+using Squid.Api.Controllers;
 using Squid.Core.Constants;
+using Squid.Core.Services.OctopusImport.Octopus;
 
 namespace Squid.Api;
 
@@ -16,8 +18,12 @@ public class Startup
 
     public void ConfigureServices(IServiceCollection services)
     {
+        var octopusImportLimits = new OctopusArchiveExtractionOptions(Configuration);
+        octopusImportLimits.EnsureValid();
+
         services.AddCorrelate(options => options.RequestHeaders = SquidApiConstants.CorrelationIdHeaders);
-        services.AddControllers();
+        services.AddControllers(options =>
+            options.Conventions.Add(new OctopusImportUploadLimitConvention(octopusImportLimits)));
         services.AddOptions();
         services.AddCustomSwagger();
         services.AddHttpContextAccessor();

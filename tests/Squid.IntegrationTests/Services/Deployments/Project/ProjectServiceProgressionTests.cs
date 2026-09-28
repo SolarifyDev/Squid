@@ -175,7 +175,7 @@ public class ProjectServiceProgressionTests : TestBase
     }
 
     [Fact]
-    public async Task GetProgression_Top3PerChannel_LimitsReleasesCorrectly()
+    public async Task GetProgression_ReturnsAllReleasesForProject()
     {
         var seed = await SeedProjectWithLifecycleAsync().ConfigureAwait(false);
         int channelId = 0;
@@ -207,14 +207,16 @@ public class ProjectServiceProgressionTests : TestBase
             .Where(r => r.Release.ChannelId == channelId)
             .ToList();
 
-        channelReleases.Count.ShouldBe(3);
+        channelReleases.Count.ShouldBe(5);
+        channelReleases.ShouldContain(r => r.Release.Version == "1.0.1");
+        channelReleases.ShouldContain(r => r.Release.Version == "1.0.2");
         channelReleases.ShouldContain(r => r.Release.Version == "1.0.5");
         channelReleases.ShouldContain(r => r.Release.Version == "1.0.4");
         channelReleases.ShouldContain(r => r.Release.Version == "1.0.3");
     }
 
     [Fact]
-    public async Task GetProgression_CurrentlyDeployedRelease_IncludedEvenBeyondTop3()
+    public async Task GetProgression_DeployedRelease_IsIncluded()
     {
         var seed = await SeedProjectWithLifecycleAsync().ConfigureAwait(false);
         int oldReleaseId = 0, channelId = 0;
