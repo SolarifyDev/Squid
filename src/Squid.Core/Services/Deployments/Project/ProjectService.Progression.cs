@@ -9,8 +9,6 @@ namespace Squid.Core.Services.Deployments.Project;
 
 public partial class ProjectService
 {
-    private const int ReleasesPerChannel = 3;
-
     public async Task<GetProjectProgressionResponse> GetProjectProgressionAsync(
         GetProjectProgressionRequest request, CancellationToken cancellationToken)
     {
@@ -85,47 +83,13 @@ public partial class ProjectService
 
     private async Task<List<ReleaseEntity>> LoadProgressionReleasesAsync(int projectId, List<Channel> channels, CancellationToken ct)
     {
-        var topReleaseIds = new HashSet<int>();
-
-        foreach (var channel in channels)
-        {
-            var channelReleases = await _repository
-                .QueryNoTracking<ReleaseEntity>(r => r.ProjectId == projectId && r.ChannelId == channel.Id)
-                .OrderByDescending(r => r.CreatedDate)
-                .Take(ReleasesPerChannel)
-                .ToListAsync(ct).ConfigureAwait(false);
-
-            foreach (var r in channelReleases)
-                topReleaseIds.Add(r.Id);
-        }
-
-        var deployedReleaseIds = await LoadCurrentlyDeployedReleaseIdsAsync(projectId, ct).ConfigureAwait(false);
-
-        topReleaseIds.UnionWith(deployedReleaseIds);
-
-        if (topReleaseIds.Count == 0) return new();
-
-        var allReleaseIds = topReleaseIds.ToList();
+        var channelIds = channels.Select(channel => channel.Id).ToList();
+        if (channelIds.Count == 0) return new();
 
         return await _repository
-            .QueryNoTracking<ReleaseEntity>(r => allReleaseIds.Contains(r.Id))
+            .QueryNoTracking<ReleaseEntity>(r => r.ProjectId == projectId && channelIds.Contains(r.ChannelId))
             .OrderByDescending(r => r.CreatedDate)
             .ToListAsync(ct).ConfigureAwait(false);
-    }
-
-    private async Task<HashSet<int>> LoadCurrentlyDeployedReleaseIdsAsync(int projectId, CancellationToken ct)
-    {
-        var completions = await _deploymentCompletionDataProvider.GetLatestSuccessfulCompletionsAsync(projectId, ct).ConfigureAwait(false);
-
-        if (completions.Count == 0) return new();
-
-        var deploymentIds = completions.Select(c => c.DeploymentId).Distinct().ToList();
-
-        var deployments = await _repository
-            .QueryNoTracking<Deployment>(d => deploymentIds.Contains(d.Id))
-            .ToListAsync(ct).ConfigureAwait(false);
-
-        return deployments.Select(d => d.ReleaseId).ToHashSet();
     }
 
     private async Task<List<Deployment>> LoadDeploymentsForReleasesAsync(List<ReleaseEntity> releases, CancellationToken ct)

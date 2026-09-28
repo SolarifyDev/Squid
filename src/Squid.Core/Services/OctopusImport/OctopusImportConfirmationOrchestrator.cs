@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
@@ -47,6 +48,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     private readonly IOctopusImportVariableMapper _variableMapper;
     private readonly IOctopusImportDeploymentProcessMapper _processMapper;
     private readonly IOctopusImportExternalResourceShellMapper _externalResourceShellMapper;
+    private readonly IOctopusImportDeploymentHistoryImporter _deploymentHistoryImporter;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
     private readonly IMediator _mediator;
@@ -63,6 +65,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         IOctopusImportVariableMapper variableMapper,
         IOctopusImportDeploymentProcessMapper processMapper,
         IOctopusImportExternalResourceShellMapper externalResourceShellMapper,
+        IOctopusImportDeploymentHistoryImporter deploymentHistoryImporter,
         IProjectDataProvider projectDataProvider,
         IChannelDataProvider channelDataProvider,
         IMediator mediator)
@@ -78,6 +81,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         _variableMapper = variableMapper;
         _processMapper = processMapper;
         _externalResourceShellMapper = externalResourceShellMapper;
+        _deploymentHistoryImporter = deploymentHistoryImporter;
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
         _mediator = mediator;
@@ -311,6 +315,10 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 case OctopusResourceKind.Release:
                     await CreateReleaseAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
+                case OctopusResourceKind.ServerTask:
+                case OctopusResourceKind.Deployment:
+                    await ImportDeploymentHistoryAsync(execution, resource, ct).ConfigureAwait(false);
+                    return;
                 default:
                     execution.MarkFailed(resource, Diagnostic(
                         OctopusImportCompatibilitySeverity.Blocker,
@@ -322,6 +330,12 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         }
         catch (Exception ex) when (ex is not OctopusImportConfirmationException)
         {
+            Log.Error(
+                ex,
+                "Octopus import confirmation failed while importing {ResourceKind} {ResourceName} ({ResourceId}).",
+                resource.Kind,
+                resource.Name,
+                resource.SourceId);
             execution.MarkFailed(resource, Diagnostic(
                 OctopusImportCompatibilitySeverity.Blocker,
                 OctopusImportConfirmationDiagnosticCodes.ResourceExecutionFailed,
@@ -649,7 +663,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     ChannelId = channelId,
                     Version = string.IsNullOrWhiteSpace(source.Version) ? resource.Name : source.Version,
                     ReleaseNote = source.ReleaseNotes,
-                    SelectedPackages = selectedPackages
+                    SelectedPackages = selectedPackages,
+                    HistoricalCreatedDate = source.Assembled
                 },
                 ct)
             .ConfigureAwait(false);
@@ -658,6 +673,64 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             throw new OctopusImportConfirmationException("Create release command did not return a destination release id.");
 
         execution.AddCreated(resource, response.Data.Id);
+    }
+
+    private async Task ImportDeploymentHistoryAsync(
+        ConfirmationExecutionContext execution,
+        OctopusResourceNode resource,
+        CancellationToken ct)
+    {
+        if (resource.Kind == OctopusResourceKind.ServerTask)
+        {
+            execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Created);
+            return;
+        }
+
+        var deployment = resource.GetSource<OctopusDeploymentDto>()
+            ?? throw new OctopusImportConfirmationException("Deployment source payload is missing.");
+        var taskResource = execution.FindResource(deployment.TaskId, OctopusResourceKind.ServerTask);
+        var task = taskResource?.GetSource<OctopusServerTaskDto>()
+            ?? throw new OctopusImportConfirmationException("Octopus deployment server task source payload is missing.");
+
+        if (!execution.IdMap.TryGetDestinationId(deployment.ProjectId, OctopusResourceKind.Project.ToString(), out var projectId))
+            throw MappingBlocked(resource, $"Octopus deployment project '{deployment.ProjectId}' has not been mapped.");
+        if (!execution.IdMap.TryGetDestinationId(deployment.ChannelId, OctopusResourceKind.Channel.ToString(), out var channelId))
+            throw MappingBlocked(resource, $"Octopus deployment channel '{deployment.ChannelId}' has not been mapped.");
+        if (!execution.IdMap.TryGetDestinationId(deployment.ReleaseId, OctopusResourceKind.Release.ToString(), out var releaseId))
+            throw MappingBlocked(resource, $"Octopus deployment release '{deployment.ReleaseId}' has not been mapped.");
+        if (!execution.IdMap.TryGetDestinationId(deployment.EnvironmentId, OctopusResourceKind.Environment.ToString(), out var environmentId))
+            throw MappingBlocked(resource, $"Octopus deployment environment '{deployment.EnvironmentId}' has not been mapped.");
+
+        var created = deployment.Created ?? task.QueueTime ?? task.StartTime ?? DateTimeOffset.UtcNow;
+        var queueTime = task.QueueTime ?? created;
+        var result = await _deploymentHistoryImporter.ImportAsync(
+            new OctopusImportDeploymentHistoryRequest(
+                execution.DestinationSpaceId,
+                projectId,
+                channelId,
+                releaseId,
+                environmentId,
+                deployment.Name ?? resource.Name,
+                JsonSerializer.Serialize(deployment),
+                deployment.DeployedBy,
+                deployment.DeployedById,
+                JsonSerializer.Serialize(deployment.DeployedToMachineIds ?? []),
+                created,
+                task.Name,
+                task.Description ?? string.Empty,
+                queueTime,
+                task.StartTime,
+                task.CompletedTime,
+                task.State,
+                task.ErrorMessage ?? string.Empty,
+                task.HasWarningsOrErrors,
+                task.DurationSeconds),
+            ct)
+            .ConfigureAwait(false);
+
+        execution.AddCreated(resource, result.DeploymentId);
+        if (taskResource != null)
+            execution.AddCreated(taskResource, result.TaskId);
     }
 
     private static List<CreateReleaseSelectedPackageDto> BuildReleaseSelectedPackages(
@@ -844,7 +917,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             CurrentResources = request.DependencyPlan.OrderedResources
-                .Where(r => !r.IsHistorical)
+                .Where(r => OctopusResourceMetadata.For(r.Kind).IsCurrentConfiguration(r))
                 .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
                 .Select(g => g.First())
                 .ToList();

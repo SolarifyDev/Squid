@@ -15,6 +15,8 @@ public class OctopusResourceMetadataTests
     [Theory]
     [InlineData(OctopusResourceKind.Project, false, true)]
     [InlineData(OctopusResourceKind.Release, true, true)]
+    [InlineData(OctopusResourceKind.Deployment, true, true)]
+    [InlineData(OctopusResourceKind.ServerTask, true, true)]
     [InlineData(OctopusResourceKind.DeploymentProcessSnapshot, true, false)]
     [InlineData(OctopusResourceKind.VariableSetSnapshot, true, false)]
     public void IsCurrentConfiguration_UsesSharedRankMetadata(

@@ -173,9 +173,9 @@ public class OctopusResourceGraphBuilderTests
         graph.Resources.ShouldNotContain(r => r.SourceId == "Variables-1");
         graph.Resources.ShouldNotContain(r => r.SourceId == "Steps-1");
         graph.Resources.ShouldNotContain(r => r.SourceId == "Actions-1");
-        graph.Resources.Single(r => r.SourceId == "Releases-1").IsHistorical.ShouldBeTrue();
-        graph.Resources.Single(r => r.SourceId == "Deployments-1").IsHistorical.ShouldBeTrue();
-        graph.Resources.Single(r => r.SourceId == "ServerTasks-1").IsHistorical.ShouldBeTrue();
+        graph.Resources.Single(r => r.SourceId == "Releases-1").IsHistorical.ShouldBeFalse();
+        graph.Resources.Single(r => r.SourceId == "Deployments-1").IsHistorical.ShouldBeFalse();
+        graph.Resources.Single(r => r.SourceId == "ServerTasks-1").IsHistorical.ShouldBeFalse();
         graph.References.ShouldContain(r =>
             r.FromSourceId == "Releases-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.VariableSetSnapshot &&

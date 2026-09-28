@@ -13,6 +13,7 @@ using Squid.Message.Events.Deployments.Release;
 using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Requests.Deployments.Release;
+using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
 namespace Squid.Core.Services.Deployments.Release;
 
@@ -127,6 +128,17 @@ public partial class ReleaseService : IReleaseService
         release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
         
         await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (command.HistoricalCreatedDate is { } historicalCreatedDate)
+        {
+            historicalCreatedDate = historicalCreatedDate.ToUniversalTime();
+            await _repository.ExecuteUpdateAsync<ReleaseEntity>(
+                    candidate => candidate.Id == release.Id,
+                    setters => setters.SetProperty(candidate => candidate.CreatedDate, historicalCreatedDate),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            release.CreatedDate = historicalCreatedDate;
+        }
 
         LogSelectedPackageActionNameComparison(release.Id, deploymentProcessSnapshot, command.SelectedPackages);
 

@@ -208,7 +208,7 @@ public static partial class OctopusDocumentClassifier
         => kind is OctopusDocumentKind.DeploymentProcessSnapshot or OctopusDocumentKind.VariableSetSnapshot;
 
     private static bool IsOutOfScopeHistory(OctopusDocumentKind kind)
-        => IsSnapshotKind(kind) || kind is OctopusDocumentKind.Release or OctopusDocumentKind.Deployment or OctopusDocumentKind.ServerTask;
+        => IsSnapshotKind(kind);
 
     private static bool IsSnapshotId(string id)
         => !string.IsNullOrWhiteSpace(id) && SnapshotIdPattern().IsMatch(id);

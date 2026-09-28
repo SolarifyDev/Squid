@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Squid.Message.Attributes;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Release;
@@ -20,6 +21,9 @@ public class CreateReleaseCommand : ICommand, ISpaceScoped
     public bool IgnoreChannelRules { get; set; }
 
     public List<CreateReleaseSelectedPackageDto> SelectedPackages { get; set; } = new();
+
+    [JsonIgnore]
+    public DateTimeOffset? HistoricalCreatedDate { get; set; }
 }
 
 public class CreateReleaseResponse : SquidResponse<ReleaseDto>

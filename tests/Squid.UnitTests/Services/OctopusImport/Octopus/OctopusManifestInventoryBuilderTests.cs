@@ -200,7 +200,10 @@ public class OctopusManifestInventoryBuilderTests
 
         inventory.Counts.Single(c => c.Kind == OctopusDocumentKind.VariableSetSnapshot).Count.ShouldBe(1);
         inventory.Counts.Single(c => c.Kind == OctopusDocumentKind.Release).Count.ShouldBe(1);
-        inventory.Items.All(i => i.Classification.IsOutOfScopeHistory).ShouldBeTrue();
+        inventory.Items.Single(i => i.Classification.Kind == OctopusDocumentKind.VariableSetSnapshot)
+            .Classification.IsOutOfScopeHistory.ShouldBeTrue();
+        inventory.Items.Single(i => i.Classification.Kind == OctopusDocumentKind.Release)
+            .Classification.IsOutOfScopeHistory.ShouldBeFalse();
     }
 
     [Fact]
