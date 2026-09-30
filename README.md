@@ -167,8 +167,6 @@ Upload -> Extract -> Preview -> Validate -> Confirm -> Succeeded
 - 敏感变量以空值导入并标记为待填写；Feed、账户、证书和目标密钥不会从导出文件静默恢复。
 - 不支持的动作会跳过，或创建为禁用且已脱敏的占位动作。
 
-详细 API 与限制：[`docs/octopus-import-api.md`](docs/octopus-import-api.md)
-
 ---
 
 ## 📦 快速开始
@@ -301,7 +299,6 @@ dotnet test Squid.sln
 |---|---|
 | [`docs/deployment-pipeline-architecture.md`](docs/deployment-pipeline-architecture.md) | 完整部署流水线架构 |
 | [`docs/k8s-deployment-architecture.md`](docs/k8s-deployment-architecture.md) | Kubernetes 部署架构 |
-| [`docs/octopus-import-api.md`](docs/octopus-import-api.md) | Octopus 导入 API |
 | [`docs/windows-tentacle-install.md`](docs/windows-tentacle-install.md) | Windows Tentacle 安装与排障 |
 | [`docs/api-key-permissions.md`](docs/api-key-permissions.md) | API Key 与权限模型 |
 | [`docs/tentacle-self-upgrade-design.md`](docs/tentacle-self-upgrade-design.md) | Tentacle 自升级设计 |

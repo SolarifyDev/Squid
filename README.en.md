@@ -167,8 +167,6 @@ Upload -> Extract -> Preview -> Validate -> Confirm -> Succeeded
 - Imports sensitive variables with empty values and marks them as required input. Feed, account, certificate, and target secrets are never silently recovered from the export.
 - Skips unsupported actions or creates disabled, redacted placeholder actions.
 
-Detailed API and limitations: [`docs/octopus-import-api.md`](docs/octopus-import-api.md)
-
 ---
 
 ## 📦 Quick Start
@@ -301,7 +299,6 @@ The test suite covers domain logic, the deployment pipeline, Octopus import, Kub
 |---|---|
 | [`docs/deployment-pipeline-architecture.md`](docs/deployment-pipeline-architecture.md) | Full deployment pipeline architecture |
 | [`docs/k8s-deployment-architecture.md`](docs/k8s-deployment-architecture.md) | Kubernetes deployment architecture |
-| [`docs/octopus-import-api.md`](docs/octopus-import-api.md) | Octopus import API |
 | [`docs/windows-tentacle-install.md`](docs/windows-tentacle-install.md) | Windows Tentacle installation and troubleshooting |
 | [`docs/api-key-permissions.md`](docs/api-key-permissions.md) | API key and permission model |
 | [`docs/tentacle-self-upgrade-design.md`](docs/tentacle-self-upgrade-design.md) | Tentacle self-upgrade design |
