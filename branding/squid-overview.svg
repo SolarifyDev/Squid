@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Squid deployment overview</title>
+  <desc id="desc">Squid orchestrates releases and approvals to Kubernetes, Tentacle, SSH, and OpenClaw targets.</desc>
+
+  <rect width="1200" height="560" rx="30" fill="#08111F"/>
+  <rect x="1" y="1" width="1198" height="558" rx="29" stroke="#1E293B" stroke-width="2"/>
+
+  <g font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+    <text x="64" y="70" fill="#F8FAFC" font-size="28" font-weight="800">Squid Server</text>
+    <text x="64" y="98" fill="#94A3B8" font-size="15">Projects, releases, orchestration, and audit</text>
+
+    <rect x="64" y="138" width="232" height="102" rx="18" fill="#0F172A" stroke="#334155"/>
+    <text x="88" y="177" fill="#5EEAD4" font-size="14" font-weight="700" letter-spacing="1.2">DEFINE</text>
+    <text x="88" y="207" fill="#F8FAFC" font-size="22" font-weight="700">Project + Variables</text>
+    <text x="88" y="229" fill="#94A3B8" font-size="14">Environments · Lifecycles · Channels</text>
+
+    <rect x="328" y="138" width="232" height="102" rx="18" fill="#0F172A" stroke="#334155"/>
+    <text x="352" y="177" fill="#22D3EE" font-size="14" font-weight="700" letter-spacing="1.2">PACKAGE</text>
+    <text x="352" y="207" fill="#F8FAFC" font-size="22" font-weight="700">Release</text>
+    <text x="352" y="229" fill="#94A3B8" font-size="14">Snapshots · versions · history</text>
+
+    <rect x="592" y="138" width="232" height="102" rx="18" fill="#0F172A" stroke="#2DD4BF" stroke-width="2"/>
+    <text x="616" y="177" fill="#2DD4BF" font-size="14" font-weight="700" letter-spacing="1.2">ORCHESTRATE</text>
+    <text x="616" y="207" fill="#F8FAFC" font-size="22" font-weight="700">Deployment</text>
+    <text x="616" y="229" fill="#94A3B8" font-size="14">Conditions · parallelism · retries</text>
+
+    <rect x="856" y="138" width="280" height="102" rx="18" fill="#0F172A" stroke="#334155"/>
+    <text x="880" y="177" fill="#FBBF24" font-size="14" font-weight="700" letter-spacing="1.2">APPROVE</text>
+    <text x="880" y="207" fill="#F8FAFC" font-size="22" font-weight="700">Manual Intervention</text>
+    <text x="880" y="229" fill="#94A3B8" font-size="14">Teams · permissions · audit events</text>
+
+    <path d="M296 189H328" stroke="#475569" stroke-width="3" stroke-linecap="round"/>
+    <path d="M560 189H592" stroke="#475569" stroke-width="3" stroke-linecap="round"/>
+    <path d="M824 189H856" stroke="#475569" stroke-width="3" stroke-linecap="round"/>
+
+    <path d="M708 240V294" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/>
+    <path d="M708 294H176V362" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/>
+    <path d="M708 294H442V362" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/>
+    <path d="M708 294H708V362" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/>
+    <path d="M708 294H974V362" stroke="#2DD4BF" stroke-width="3" stroke-linecap="round"/>
+
+    <rect x="64" y="362" width="224" height="128" rx="18" fill="#111C2E" stroke="#334155"/>
+    <circle cx="92" cy="392" r="9" fill="#326CE5"/>
+    <text x="112" y="398" fill="#F8FAFC" font-size="18" font-weight="700">Kubernetes</text>
+    <text x="88" y="430" fill="#CBD5E1" font-size="14">Agent · API</text>
+    <text x="88" y="456" fill="#94A3B8" font-size="13">kubectl · Helm · Kustomize</text>
+
+    <rect x="330" y="362" width="224" height="128" rx="18" fill="#111C2E" stroke="#334155"/>
+    <circle cx="358" cy="392" r="9" fill="#2DD4BF"/>
+    <text x="378" y="398" fill="#F8FAFC" font-size="18" font-weight="700">Tentacle</text>
+    <text x="354" y="430" fill="#CBD5E1" font-size="14">Polling · Listening</text>
+    <text x="354" y="456" fill="#94A3B8" font-size="13">Scripts · packages · services</text>
+
+    <rect x="596" y="362" width="224" height="128" rx="18" fill="#111C2E" stroke="#334155"/>
+    <circle cx="624" cy="392" r="9" fill="#F59E0B"/>
+    <text x="644" y="398" fill="#F8FAFC" font-size="18" font-weight="700">SSH</text>
+    <text x="620" y="430" fill="#CBD5E1" font-size="14">SSH · SFTP</text>
+    <text x="620" y="456" fill="#94A3B8" font-size="13">Bash · PowerShell · Python</text>
+
+    <rect x="862" y="362" width="274" height="128" rx="18" fill="#111C2E" stroke="#334155"/>
+    <circle cx="890" cy="392" r="9" fill="#A78BFA"/>
+    <text x="910" y="398" fill="#F8FAFC" font-size="18" font-weight="700">OpenClaw</text>
+    <text x="886" y="430" fill="#CBD5E1" font-size="14">HTTP API</text>
+    <text x="886" y="456" fill="#94A3B8" font-size="13">Tools · agents · assertions</text>
+
+    <rect x="64" y="510" width="1072" height="1" fill="#1E293B"/>
+    <text x="64" y="538" fill="#64748B" font-size="13">Self-hosted</text>
+    <text x="456" y="538" fill="#64748B" font-size="13">PostgreSQL</text>
+    <text x="776" y="538" fill="#64748B" font-size="13">Redis / Hangfire</text>
+    <text x="1030" y="538" fill="#5EEAD4" font-size="13" font-weight="700">Free software</text>
+  </g>
+</svg>

@@ -1,35 +1,113 @@
-# Squid
+<div align="center">
 
-[中文](README.md) | [English](README.en.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
+  <img src="branding/squid-wordmark.png" alt="Squid" width="300">
+</picture>
 
-> **Octopus Deploy 的免费、自托管替代方案。**
-> 用一套清晰的发布流程，把应用、Kubernetes、Windows Service 和脚本部署到任意目标。
+### 免费、自托管的应用与 Kubernetes 部署平台
 
-[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7)](#从-octopus-迁移)
-[![License](https://img.shields.io/badge/license-see%20repository-lightgrey)](#许可证)
+用一套清晰的发布模型，把应用、Kubernetes、Windows Service 和脚本部署到任意目标。
+项目、用户与部署目标不设软件收费上限。自托管、可扩展、对 Octopus 用户友好。
+
+<br>
+
+[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
+[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Deploy](https://img.shields.io/badge/deploy-Kubernetes%20%C2%B7%20Linux%20%C2%B7%20Windows-0F766E?style=flat-square)](#-支持的部署目标)
+[![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7?style=flat-square)](#-从-octopus-迁移)
+[![License](https://img.shields.io/badge/license-see%20repository-64748B?style=flat-square)](#-许可证)
+
+[English](README.en.md) · **简体中文**
+
+<br>
+
+[![开始部署](https://img.shields.io/badge/开始部署-Quick%20Start-0F766E?style=for-the-badge&logo=rocket&logoColor=white)](#-快速开始)
+&nbsp;
+[![迁移 Octopus](https://img.shields.io/badge/迁移-Octopus%20Project-2F81F7?style=for-the-badge&logo=octopusdeploy&logoColor=white)](#-从-octopus-迁移)
+
+<br>
+
+<img src="branding/squid-overview.svg" alt="Squid 将项目、发布、审批和部署目标编排在同一条交付流水线上" width="1000">
+
+</div>
 
 ---
 
-## 为什么选择 Squid
+**Squid** 为交付团队提供熟悉但更开放的部署体验。定义项目与变量，创建 Release，编排审批、脚本、包和 Kubernetes 操作，再发布到 Agent、Tentacle、SSH 或自定义目标。
 
-Squid 是一个面向现代交付团队的自托管部署平台：项目、环境、生命周期、变量、发布、部署目标、审批与审计，一个都不少。它保留 Octopus 用户熟悉的交付模型，同时提供**无项目数、无节点数、无用户席位的软件收费**。
+> 🧩 **Octopus 式模型** · 🆓 **软件免费** · 🏠 **完整自托管** · ☸️ **Kubernetes 原生** · 🔐 **敏感值保护** · 📜 **审计与权限**
 
-| 你最关心的事 | Squid | Octopus Deploy |
+## ✨ 为什么选择 Squid
+
+| | |
+|---|---|
+| 🆓 **免费自托管** | 不按项目、用户席位或部署目标数量收取软件费用。基础设施成本由部署方掌控。 |
+| 🧩 **熟悉的交付模型** | Spaces、项目、环境、生命周期、Channel、Release、变量与部署历史，迁移成本更低。 |
+| ☸️ **Kubernetes 原生** | 支持 Kubernetes Agent / API、kubectl、Helm、Kustomize 和原生资源编排。 |
+| 🖥️ **异构目标统一发布** | Kubernetes、Windows Tentacle、Linux Tentacle、SSH 与 HTTP API 目标使用同一套流程。 |
+| 🔁 **Octopus 项目导入** | 上传 Octopus 导出文件，预览兼容性、校验冲突，再事务化导入当前可部署配置。 |
+| 🔐 **敏感值默认谨慎** | 导入时不恢复密钥；变量支持加密、输出捕获与日志脱敏。 |
+| 🚀 **可扩展执行架构** | Transport、Intent、Action Handler 分层，新增目标与动作不需要重写部署管线。 |
+| 📜 **治理能力内建** | JWT / API Key、RBAC、团队、权限范围、人工审批与审计事件。 |
+
+> **一句话：** 保留 Octopus 用户熟悉的发布方式，同时摆脱项目数、用户数和目标节点数的阶梯计费。
+
+---
+
+## ⚖️ Squid vs Octopus
+
+### 💰 收费方式
+
+| | Squid | Octopus Deploy |
 |---|---:|---:|
 | 软件费用 | **免费自托管** | 按项目和版本分级收费 |
-| 项目数量 | **不限制** | 免费版 10 个项目；Professional 从 20 个项目起 |
-| 部署目标 / 节点 | **不限制** | 随项目档位和使用方式定价 |
-| 用户席位 | **不限制** | 免费版 10 个用户；付费版不限用户 |
-| Octopus 项目迁移 | **内置 Octopus 导入** | 原生 |
-| 私有化部署 | **完整支持** | Server：支持；Cloud：不支持自托管 |
-| Kubernetes Agent / API | **支持** | 支持 |
-| SSH / Windows Tentacle | **支持** | 支持 |
+| 项目数量 | **不限制** | Free：10；Professional：20 起 |
+| 用户席位 | **不限制** | Free：10；付费版不限 |
+| 部署目标 / 节点 | **不限制** | 随档位与使用方式定价 |
+| 公开价格参考 | — | Professional：US$4,330 / 年起 |
 
-> Octopus 价格仅作公开资料对比，参考 `octopus.com/pricing`（2026-09-28）；实际价格和权益以 Octopus 官方页面为准。Squid 不承诺与 Octopus 所有商业版功能逐项完全等价，差异见[能力边界](#能力边界)。
+> Octopus 价格仅作公开资料对比，参考 `octopus.com/pricing`（2026-09-29）。实际价格与权益以 Octopus 官方页面为准。
 
-## 一眼看懂
+### 🧮 功能对比
+
+| 能力 | Squid | Octopus Deploy |
+|---|:---:|:---:|
+| 自托管 | Yes | Yes（Server） |
+| 项目 / 环境 / 生命周期 | Yes | Yes |
+| Release 与部署历史 | Yes | Yes |
+| 变量作用域与敏感变量 | Yes | Yes |
+| Kubernetes Agent | Yes | Yes |
+| Kubernetes API | Yes | Yes |
+| Helm / Kustomize / YAML | Yes | Yes |
+| SSH 目标 | Yes | Yes |
+| Windows Tentacle | Yes | Yes |
+| Windows Service / IIS | Yes | Yes |
+| 人工审批 | Yes | Yes |
+| RBAC / API Key / 审计 | Yes | Yes |
+| Octopus 项目导入 | Yes | Native |
+| Tenant 模型 | Partial | Yes |
+| Tenant 标签过滤 | No | Yes |
+| 全球部署冻结 | Partial | Yes |
+| SIEM 审计流 | Partial | Yes |
+| 托管云服务 | No（自托管） | Yes |
+
+---
+
+## 🚀 核心能力
+
+| 领域 | 能力 |
+|---|---|
+| 交付模型 | Spaces、项目组、项目、环境、生命周期、Channel、Release、部署历史 |
+| 部署编排 | 步骤条件、并行步骤、延迟启动、目标角色、环境/Channel 过滤、超时与重试 |
+| 变量系统 | 变量作用域、敏感变量、变量快照、输出变量、配置变量替换 |
+| 安全与治理 | JWT / API Key、RBAC、权限范围、团队、审计事件、人工审批 |
+| 执行能力 | Bash、PowerShell、Python、C#、HTTP、包部署、健康检查、回滚 |
+| 云原生 | Kubernetes Agent / API、kubectl、Helm、Kustomize、原生 K8s 资源 |
+| 平台 | Windows、Linux、Docker、Kubernetes |
+
+### 🗺️ 部署流水线
 
 ```mermaid
 flowchart LR
@@ -49,65 +127,9 @@ flowchart LR
     H --> L["OpenClaw"]
 ```
 
-**核心能力**
+---
 
-| 领域 | 能力 |
-|---|---|
-| 交付模型 | Spaces、项目组、项目、环境、生命周期、Channel、Release、部署历史 |
-| 部署编排 | 步骤条件、并行步骤、延迟启动、目标角色、环境/Channel 过滤、超时与重试 |
-| 变量系统 | 变量作用域、敏感变量、变量快照、输出变量、配置变量替换 |
-| 安全与治理 | JWT / API Key、RBAC、权限范围、团队、审计事件、人工审批 |
-| 执行能力 | Bash、PowerShell、Python、C#、HTTP、包部署、健康检查、回滚 |
-| 云原生 | Kubernetes Agent / API、kubectl、Helm、Kustomize、原生 K8s 资源 |
-| 平台 | Windows、Linux、Docker、Kubernetes |
-| 迁移 | Octopus 导出文件上传、预览、校验、确认导入 |
-
-## 对比 Octopus
-
-### 收费方式
-
-```text
-Octopus Free
-  10 projects  |  10 users
-  超出后需要升级
-
-Octopus Professional
-  20 projects  |  US$4,330 / year
-  项目越多，价格越高
-
-Squid
-  ∞ projects  |  ∞ users  |  ∞ targets
-  Self-hosted  |  软件免费
-```
-
-> 这里的“免费”指 Squid 自身的软件授权与使用不按项目、用户或部署目标收费。运行 Squid 所需的服务器、PostgreSQL、Redis、对象存储、网络与运维成本由部署方承担。
-
-### 功能对比
-
-| 能力 | Squid | Octopus Deploy |
-|---|:---:|:---:|
-| 自托管 | Yes | Yes（Server） |
-| 项目 / 环境 / 生命周期 | Yes | Yes |
-| Release 与部署历史 | Yes | Yes |
-| 变量作用域与敏感变量 | Yes | Yes |
-| Kubernetes Agent | Yes | Yes |
-| Kubernetes API | Yes | Yes |
-| Helm / Kustomize / YAML | Yes | Yes |
-| SSH 目标 | Yes | Yes |
-| Windows Tentacle | Yes | Yes |
-| Windows Service / IIS | Yes | Yes |
-| 人工审批 | Yes | Yes |
-| RBAC / API Key / 审计 | Yes | Yes |
-| Octopus 项目导入 | Yes | Native |
-| Tenant（租户）模型 | Partial | Yes |
-| Tenant 标签过滤 | No | Yes |
-| 全球部署冻结 | Partial | Yes |
-| SIEM 审计流 | Partial | Yes |
-| 托管云服务 | No（自托管） | Yes |
-
-**结论很直接：** 如果你希望保留 Octopus 式的发布模型，同时摆脱项目数、用户数和目标节点数的阶梯计费，Squid 值得评估。
-
-## 支持的部署目标
+## 🎯 支持的部署目标
 
 | 目标 | 通信方式 | 适合场景 | 主要能力 |
 |---|---|---|---|
@@ -118,36 +140,9 @@ Squid
 | SSH | SSH / SFTP | Linux 主机、无需安装 Agent | Bash、PowerShell、Python、包上传 |
 | OpenClaw | HTTP API | Agent 工具调用与自动化 | 工具、Agent、等待、断言、结果提取 |
 
-## 执行架构
+---
 
-```mermaid
-flowchart TB
-    subgraph Server["Squid Server"]
-        API["Squid.Api"]
-        CORE["Squid.Core"]
-        DB[("PostgreSQL")]
-        REDIS[("Redis / Hangfire")]
-        API --> CORE
-        CORE --> DB
-        CORE --> REDIS
-    end
-
-    subgraph Agents["Deployment Targets"]
-        AGENT["Kubernetes Agent"]
-        TENTACLE["Tentacle"]
-        SSH["SSH Host"]
-    end
-
-    CORE -->|"Halibut"| AGENT
-    CORE -->|"Halibut"| TENTACLE
-    CORE -->|"SSH"| SSH
-
-    AGENT --> WORK["Script Pods<br/>kubectl / helm / bash"]
-    TENTACLE --> CALAMARI["squid-calamari<br/>scripts / packages"]
-    SSH --> REMOTE["Remote Shell<br/>uploads / executions"]
-```
-
-## 从 Octopus 迁移
+## 🔄 从 Octopus 迁移
 
 Squid 内置后端导入流程，不需要手工重建每一个项目。
 
@@ -172,7 +167,11 @@ Upload -> Extract -> Preview -> Validate -> Confirm -> Succeeded
 - 敏感变量以空值导入并标记为待填写；Feed、账户、证书和目标密钥不会从导出文件静默恢复。
 - 不支持的动作会跳过，或创建为禁用且已脱敏的占位动作。
 
-## 快速开始
+详细 API 与限制：[`docs/octopus-import-api.md`](docs/octopus-import-api.md)
+
+---
+
+## 📦 快速开始
 
 ### 运行条件
 
@@ -235,7 +234,36 @@ irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/inst
 helm upgrade --install squid-agent deploy/helm/kubernetes-agent
 ```
 
-## 项目结构
+---
+
+## 🏗️ 架构与项目结构
+
+```mermaid
+flowchart TB
+    subgraph Server["Squid Server"]
+        API["Squid.Api"]
+        CORE["Squid.Core"]
+        DB[("PostgreSQL")]
+        REDIS[("Redis / Hangfire")]
+        API --> CORE
+        CORE --> DB
+        CORE --> REDIS
+    end
+
+    subgraph Agents["Deployment Targets"]
+        AGENT["Kubernetes Agent"]
+        TENTACLE["Tentacle"]
+        SSH["SSH Host"]
+    end
+
+    CORE -->|"Halibut"| AGENT
+    CORE -->|"Halibut"| TENTACLE
+    CORE -->|"SSH"| SSH
+
+    AGENT --> WORK["Script Pods<br/>kubectl / helm / bash"]
+    TENTACLE --> CALAMARI["squid-calamari<br/>scripts / packages"]
+    SSH --> REMOTE["Remote Shell<br/>uploads / executions"]
+```
 
 ```text
 Squid/
@@ -255,7 +283,9 @@ Squid/
 └── tests/                          # Unit、Integration、E2E 测试
 ```
 
-## 测试
+---
+
+## 🧪 测试
 
 ```bash
 dotnet test Squid.sln
@@ -263,18 +293,23 @@ dotnet test Squid.sln
 
 测试覆盖领域逻辑、部署流水线、Octopus 导入、Kubernetes、SSH、Tentacle、Calamari、Windows Service 与端到端场景。
 
-## 文档
+---
+
+## 📚 文档
 
 | 文档 | 内容 |
 |---|---|
 | [`docs/deployment-pipeline-architecture.md`](docs/deployment-pipeline-architecture.md) | 完整部署流水线架构 |
 | [`docs/k8s-deployment-architecture.md`](docs/k8s-deployment-architecture.md) | Kubernetes 部署架构 |
+| [`docs/octopus-import-api.md`](docs/octopus-import-api.md) | Octopus 导入 API |
 | [`docs/windows-tentacle-install.md`](docs/windows-tentacle-install.md) | Windows Tentacle 安装与排障 |
 | [`docs/api-key-permissions.md`](docs/api-key-permissions.md) | API Key 与权限模型 |
 | [`docs/tentacle-self-upgrade-design.md`](docs/tentacle-self-upgrade-design.md) | Tentacle 自升级设计 |
 | [`CLAUDE.md`](CLAUDE.md) | 开发者架构参考 |
 
-## 能力边界
+---
+
+## 🧭 能力边界
 
 Squid 的目标是覆盖绝大多数应用与 Kubernetes 交付场景，而不是逐项复制 Octopus 的全部商业能力。当前主要差异：
 
@@ -284,10 +319,14 @@ Squid 的目标是覆盖绝大多数应用与 Kubernetes 交付场景，而不�
 - 不提供 Squid 官方托管云，生产环境由使用者自托管。
 - 全球部署冻结、SIEM 审计流等企业治理能力尚未达到 Octopus 的完整对等程度。
 
-## 许可证
+---
+
+## 📄 许可证
 
 仓库当前未包含独立的 `LICENSE` 文件。Squid 的软件使用条款以仓库、发行说明或项目所有方提供的正式授权说明为准；在正式用于生产前，请向维护方确认授权范围。
 
-## 参与贡献
+## 🤝 参与贡献
 
 欢迎提交 Issue、Pull Request、部署场景与文档改进。新增执行目标、Action 或导入映射时，请优先遵循现有 Transport、Intent、Handler、Mediator 与测试模式。
+
+<div align="center"><sub>Built with .NET · PostgreSQL · Redis · Kubernetes · Halibut</sub></div>

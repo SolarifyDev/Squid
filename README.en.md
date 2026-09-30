@@ -1,88 +1,76 @@
-# Squid
+<div align="center">
 
-[中文](README.md) | [English](README.en.md)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
+  <img src="branding/squid-wordmark.png" alt="Squid" width="300">
+</picture>
 
-> **The free, self-hosted alternative to Octopus Deploy.**
-> Use one clear release workflow to deploy applications, Kubernetes workloads, Windows Services, and scripts to any target.
+### Free, self-hosted application and Kubernetes deployment
 
-[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7)](#migrating-from-octopus)
-[![License](https://img.shields.io/badge/license-see%20repository-lightgrey)](#license)
+One clear release model for applications, Kubernetes workloads, Windows Services, and scripts.
+No software limits on projects, users, or deployment targets. Self-hosted, extensible, and familiar to Octopus users.
+
+<br>
+
+[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
+[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Deploy](https://img.shields.io/badge/deploy-Kubernetes%20%C2%B7%20Linux%20%C2%B7%20Windows-0F766E?style=flat-square)](#-supported-deployment-targets)
+[![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7?style=flat-square)](#-migrating-from-octopus)
+[![License](https://img.shields.io/badge/license-see%20repository-64748B?style=flat-square)](#-license)
+
+**English** · [简体中文](README.md)
+
+<br>
+
+[![Quick Start](https://img.shields.io/badge/Quick%20Start-Deploy%20Squid-0F766E?style=for-the-badge&logo=rocket&logoColor=white)](#-quick-start)
+&nbsp;
+[![Import Octopus](https://img.shields.io/badge/Import-Octopus%20Project-2F81F7?style=for-the-badge&logo=octopusdeploy&logoColor=white)](#-migrating-from-octopus)
+
+<br>
+
+<img src="branding/squid-overview.svg" alt="Squid orchestrates projects, releases, approvals, and deployment targets in one delivery pipeline" width="1000">
+
+</div>
 
 ---
 
-## Why Squid
+**Squid** gives delivery teams a familiar deployment model with fewer constraints. Define projects and variables, create releases, orchestrate approvals, scripts, packages, and Kubernetes operations, then deploy to agents, Tentacles, SSH hosts, or custom targets.
 
-Squid is a self-hosted deployment platform for modern delivery teams. It covers projects, environments, lifecycles, variables, releases, deployment targets, approvals, and audit history. It keeps the delivery model Octopus users already understand while offering **software pricing with no project limit, target limit, or user-seat limit**.
+> 🧩 **Octopus-style model** · 🆓 **Free software** · 🏠 **Self-hosted** · ☸️ **Kubernetes native** · 🔐 **Secret-safe** · 📜 **Audited**
 
-| What matters most | Squid | Octopus Deploy |
+## ✨ Why Squid
+
+| | |
+|---|---|
+| 🆓 **Free self-hosting** | No software charge by project, user seat, or deployment target count. You remain in control of infrastructure cost. |
+| 🧩 **A familiar delivery model** | Spaces, projects, environments, lifecycles, channels, releases, variables, and deployment history. |
+| ☸️ **Kubernetes native** | Kubernetes Agent / API, kubectl, Helm, Kustomize, and native resource orchestration. |
+| 🖥️ **One pipeline, many targets** | Kubernetes, Windows Tentacle, Linux Tentacle, SSH, and HTTP API targets share the same workflow. |
+| 🔁 **Octopus project import** | Upload an Octopus export, preview compatibility, validate conflicts, and import current configuration transactionally. |
+| 🔐 **Careful with secrets** | Secrets are never silently recovered during import. Variables support encryption, output capture, and log masking. |
+| 🚀 **Extensible execution** | Transport, Intent, and Action Handler layers let new targets and actions plug in without rewriting the pipeline. |
+| 📜 **Governance built in** | JWT / API keys, RBAC, teams, permission scopes, manual approvals, and audit events. |
+
+> **In short:** keep the release model Octopus users know while removing tiered limits on projects, users, and deployment targets.
+
+---
+
+## ⚖️ Squid vs Octopus
+
+### 💰 Pricing Model
+
+| | Squid | Octopus Deploy |
 |---|---:|---:|
 | Software cost | **Free self-hosted** | Tiered by project count and edition |
-| Project count | **Unlimited** | Free: 10 projects; Professional starts at 20 |
+| Project count | **Unlimited** | Free: 10; Professional starts at 20 |
+| User seats | **Unlimited** | Free: 10; unlimited on paid plans |
 | Deployment targets / nodes | **Unlimited** | Priced by plan and usage model |
-| User seats | **Unlimited** | Free: 10 users; paid plans are unlimited |
-| Octopus project migration | **Built-in Octopus import** | Native |
-| Self-hosting | **Fully supported** | Server: supported; Cloud: not self-hosted |
-| Kubernetes Agent / API | **Supported** | Supported |
-| SSH / Windows Tentacle | **Supported** | Supported |
+| Public pricing reference | — | Professional: from USD 4,330 / year |
 
-> Octopus pricing is included only as a public reference from `octopus.com/pricing` (2026-09-28). Actual prices and entitlements are governed by the Octopus website. Squid does not claim exact feature parity with every commercial Octopus capability. See [Limitations](#limitations) for the current differences.
+> Octopus pricing is included only as a public reference from `octopus.com/pricing` (2026-09-29). Actual prices and entitlements are governed by the Octopus website.
 
-## At a Glance
-
-```mermaid
-flowchart LR
-    A["Projects + Variables<br/>Environments + Lifecycles"] --> B["Release"]
-    B --> C{"Deployment Orchestration"}
-    C --> D["Manual Approval"]
-    C --> E["Scripts / HTTP / Packages"]
-    C --> F["Kubernetes<br/>Helm / Kustomize / YAML"]
-    C --> G["Windows Service<br/>IIS"]
-    D --> H["Deployment Targets"]
-    E --> H
-    F --> H
-    G --> H
-    H --> I["Kubernetes Agent / API"]
-    H --> J["Tentacle<br/>Polling / Listening"]
-    H --> K["SSH"]
-    H --> L["OpenClaw"]
-```
-
-**Core capabilities**
-
-| Area | Capabilities |
-|---|---|
-| Delivery model | Spaces, project groups, projects, environments, lifecycles, channels, releases, deployment history |
-| Deployment orchestration | Step conditions, parallel steps, delayed starts, target roles, environment/channel filters, timeouts, and retries |
-| Variables | Variable scopes, sensitive variables, variable snapshots, output variables, and configuration variable replacement |
-| Security and governance | JWT / API keys, RBAC, permission scopes, teams, audit events, and manual approvals |
-| Execution | Bash, PowerShell, Python, C#, HTTP, package deployment, health checks, and rollback |
-| Cloud native | Kubernetes Agent / API, kubectl, Helm, Kustomize, and native Kubernetes resources |
-| Platforms | Windows, Linux, Docker, and Kubernetes |
-| Migration | Octopus export upload, preview, validation, and confirmed import |
-
-## Squid vs Octopus
-
-### Pricing Model
-
-```text
-Octopus Free
-  10 projects  |  10 users
-  Upgrade required beyond the free limits
-
-Octopus Professional
-  20 projects  |  USD 4,330 / year
-  Price increases with project count
-
-Squid
-  unlimited projects  |  unlimited users  |  unlimited targets
-  Self-hosted          |  Free software
-```
-
-> "Free" means Squid does not charge for the software itself by project count, user count, or deployment target count. The operator is responsible for the infrastructure and operational cost of running Squid, including servers, PostgreSQL, Redis, object storage, networking, and maintenance.
-
-### Feature Comparison
+### 🧮 Feature Comparison
 
 | Capability | Squid | Octopus Deploy |
 |---|:---:|:---:|
@@ -105,9 +93,43 @@ Squid
 | SIEM audit streaming | Partial | Yes |
 | Hosted cloud service | No (self-hosted) | Yes |
 
-**The takeaway:** if you want to keep an Octopus-style release model while removing tiered limits on projects, users, and deployment targets, Squid is worth evaluating.
+---
 
-## Supported Deployment Targets
+## 🚀 Capabilities
+
+| Area | Capabilities |
+|---|---|
+| Delivery model | Spaces, project groups, projects, environments, lifecycles, channels, releases, deployment history |
+| Deployment orchestration | Step conditions, parallel steps, delayed starts, target roles, environment/channel filters, timeouts, and retries |
+| Variables | Variable scopes, sensitive variables, variable snapshots, output variables, and configuration variable replacement |
+| Security and governance | JWT / API keys, RBAC, permission scopes, teams, audit events, and manual approvals |
+| Execution | Bash, PowerShell, Python, C#, HTTP, package deployment, health checks, and rollback |
+| Cloud native | Kubernetes Agent / API, kubectl, Helm, Kustomize, and native Kubernetes resources |
+| Platforms | Windows, Linux, Docker, and Kubernetes |
+
+### 🗺️ Deployment Pipeline
+
+```mermaid
+flowchart LR
+    A["Projects + Variables<br/>Environments + Lifecycles"] --> B["Release"]
+    B --> C{"Deployment Orchestration"}
+    C --> D["Manual Approval"]
+    C --> E["Scripts / HTTP / Packages"]
+    C --> F["Kubernetes<br/>Helm / Kustomize / YAML"]
+    C --> G["Windows Service<br/>IIS"]
+    D --> H["Deployment Targets"]
+    E --> H
+    F --> H
+    G --> H
+    H --> I["Kubernetes Agent / API"]
+    H --> J["Tentacle<br/>Polling / Listening"]
+    H --> K["SSH"]
+    H --> L["OpenClaw"]
+```
+
+---
+
+## 🎯 Supported Deployment Targets
 
 | Target | Communication | Best For | Main Capabilities |
 |---|---|---|---|
@@ -118,36 +140,9 @@ Squid
 | SSH | SSH / SFTP | Linux hosts without an installed agent | Bash, PowerShell, Python, and package upload |
 | OpenClaw | HTTP API | Agent tool calls and automation | Tools, agents, waits, assertions, and result extraction |
 
-## Execution Architecture
+---
 
-```mermaid
-flowchart TB
-    subgraph Server["Squid Server"]
-        API["Squid.Api"]
-        CORE["Squid.Core"]
-        DB[("PostgreSQL")]
-        REDIS[("Redis / Hangfire")]
-        API --> CORE
-        CORE --> DB
-        CORE --> REDIS
-    end
-
-    subgraph Agents["Deployment Targets"]
-        AGENT["Kubernetes Agent"]
-        TENTACLE["Tentacle"]
-        SSH["SSH Host"]
-    end
-
-    CORE -->|"Halibut"| AGENT
-    CORE -->|"Halibut"| TENTACLE
-    CORE -->|"SSH"| SSH
-
-    AGENT --> WORK["Script Pods<br/>kubectl / helm / bash"]
-    TENTACLE --> CALAMARI["squid-calamari<br/>scripts / packages"]
-    SSH --> REMOTE["Remote Shell<br/>uploads / executions"]
-```
-
-## Migrating From Octopus
+## 🔄 Migrating From Octopus
 
 Squid includes a backend import workflow, so you do not have to rebuild every project by hand.
 
@@ -172,7 +167,11 @@ Upload -> Extract -> Preview -> Validate -> Confirm -> Succeeded
 - Imports sensitive variables with empty values and marks them as required input. Feed, account, certificate, and target secrets are never silently recovered from the export.
 - Skips unsupported actions or creates disabled, redacted placeholder actions.
 
-## Quick Start
+Detailed API and limitations: [`docs/octopus-import-api.md`](docs/octopus-import-api.md)
+
+---
+
+## 📦 Quick Start
 
 ### Requirements
 
@@ -235,7 +234,36 @@ Deploy the Kubernetes Agent:
 helm upgrade --install squid-agent deploy/helm/kubernetes-agent
 ```
 
-## Repository Layout
+---
+
+## 🏗️ Architecture and Layout
+
+```mermaid
+flowchart TB
+    subgraph Server["Squid Server"]
+        API["Squid.Api"]
+        CORE["Squid.Core"]
+        DB[("PostgreSQL")]
+        REDIS[("Redis / Hangfire")]
+        API --> CORE
+        CORE --> DB
+        CORE --> REDIS
+    end
+
+    subgraph Agents["Deployment Targets"]
+        AGENT["Kubernetes Agent"]
+        TENTACLE["Tentacle"]
+        SSH["SSH Host"]
+    end
+
+    CORE -->|"Halibut"| AGENT
+    CORE -->|"Halibut"| TENTACLE
+    CORE -->|"SSH"| SSH
+
+    AGENT --> WORK["Script Pods<br/>kubectl / helm / bash"]
+    TENTACLE --> CALAMARI["squid-calamari<br/>scripts / packages"]
+    SSH --> REMOTE["Remote Shell<br/>uploads / executions"]
+```
 
 ```text
 Squid/
@@ -255,7 +283,9 @@ Squid/
 `-- tests/                          # Unit, integration, and E2E tests
 ```
 
-## Tests
+---
+
+## 🧪 Tests
 
 ```bash
 dotnet test Squid.sln
@@ -263,18 +293,23 @@ dotnet test Squid.sln
 
 The test suite covers domain logic, the deployment pipeline, Octopus import, Kubernetes, SSH, Tentacle, Calamari, Windows Service, and end-to-end scenarios.
 
-## Documentation
+---
+
+## 📚 Documentation
 
 | Document | Contents |
 |---|---|
 | [`docs/deployment-pipeline-architecture.md`](docs/deployment-pipeline-architecture.md) | Full deployment pipeline architecture |
 | [`docs/k8s-deployment-architecture.md`](docs/k8s-deployment-architecture.md) | Kubernetes deployment architecture |
+| [`docs/octopus-import-api.md`](docs/octopus-import-api.md) | Octopus import API |
 | [`docs/windows-tentacle-install.md`](docs/windows-tentacle-install.md) | Windows Tentacle installation and troubleshooting |
 | [`docs/api-key-permissions.md`](docs/api-key-permissions.md) | API key and permission model |
 | [`docs/tentacle-self-upgrade-design.md`](docs/tentacle-self-upgrade-design.md) | Tentacle self-upgrade design |
 | [`CLAUDE.md`](CLAUDE.md) | Developer architecture reference |
 
-## Limitations
+---
+
+## 🧭 Limitations
 
 Squid aims to cover the majority of application and Kubernetes delivery scenarios. It does not attempt to clone every commercial Octopus capability. Current major differences:
 
@@ -284,10 +319,14 @@ Squid aims to cover the majority of application and Kubernetes delivery scenario
 - Squid does not provide an official hosted cloud service. Production deployments are self-hosted.
 - Enterprise governance capabilities such as global deployment freezes and SIEM audit streaming do not yet reach full Octopus parity.
 
-## License
+---
+
+## 📄 License
 
 This repository does not currently contain a standalone `LICENSE` file. The applicable terms for Squid are governed by the repository, release notes, or the formal licensing terms provided by the project owner. Confirm the licensing scope with the maintainers before using Squid in production.
 
-## Contributing
+## 🤝 Contributing
 
 Issues, pull requests, deployment scenarios, and documentation improvements are welcome. When adding a new execution target, action, or import mapping, follow the existing Transport, Intent, Handler, Mediator, and test patterns.
+
+<div align="center"><sub>Built with .NET · PostgreSQL · Redis · Kubernetes · Halibut</sub></div>
