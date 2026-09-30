@@ -17,7 +17,7 @@ No software limits on projects, users, or deployment targets. Self-hosted, exten
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Deploy](https://img.shields.io/badge/deploy-Kubernetes%20%C2%B7%20Linux%20%C2%B7%20Windows-0F766E?style=flat-square)](#-supported-deployment-targets)
 [![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7?style=flat-square)](#-migrating-from-octopus)
-[![License](https://img.shields.io/badge/license-see%20repository-64748B?style=flat-square)](#-license)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square)](LICENSE)
 
 **English** · [简体中文](README.md)
 
@@ -320,7 +320,11 @@ Squid aims to cover the majority of application and Kubernetes delivery scenario
 
 ## 📄 License
 
-This repository does not currently contain a standalone `LICENSE` file. The applicable terms for Squid are governed by the repository, release notes, or the formal licensing terms provided by the project owner. Confirm the licensing scope with the maintainers before using Squid in production.
+This project is licensed under the [MIT License](LICENSE).
+
+You are free to use, copy, modify, merge, publish, distribute, sublicense, and sell copies of Squid, provided that the original copyright notice and license notice are retained. The software is provided "as is", without warranty of any kind.
+
+Third-party components remain subject to their respective licenses.
 
 ## 🤝 Contributing
 

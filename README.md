@@ -17,7 +17,7 @@
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-required-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Deploy](https://img.shields.io/badge/deploy-Kubernetes%20%C2%B7%20Linux%20%C2%B7%20Windows-0F766E?style=flat-square)](#-支持的部署目标)
 [![Octopus Import](https://img.shields.io/badge/Octopus-import%20supported-2F81F7?style=flat-square)](#-从-octopus-迁移)
-[![License](https://img.shields.io/badge/license-see%20repository-64748B?style=flat-square)](#-许可证)
+[![License: MIT](https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square)](LICENSE)
 
 [English](README.en.md) · **简体中文**
 
@@ -320,7 +320,11 @@ Squid 的目标是覆盖绝大多数应用与 Kubernetes 交付场景，而不�
 
 ## 📄 许可证
 
-仓库当前未包含独立的 `LICENSE` 文件。Squid 的软件使用条款以仓库、发行说明或项目所有方提供的正式授权说明为准；在正式用于生产前，请向维护方确认授权范围。
+本项目采用 [MIT License](LICENSE)。
+
+你可以自由使用、复制、修改、合并、发布、分发、再许可和销售 Squid 的副本，但需要保留原始版权声明和许可证声明。软件按“原样”提供，不附带任何明示或默示担保。
+
+第三方组件仍适用其各自的许可证。
 
 ## 🤝 参与贡献
 
