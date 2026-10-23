@@ -1,4 +1,5 @@
 using Squid.Core.Utils;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Message.Commands.Deployments.ProjectGroup;
 using Squid.Message.Events.Deployments.ProjectGroup;
 using Squid.Message.Models.Deployments.ProjectGroup;
@@ -47,7 +48,28 @@ public class ProjectGroupService : IProjectGroupService
     public async Task<ProjectGroupUpdatedEvent> UpdateProjectGroupAsync(
         UpdateProjectGroupCommand command, CancellationToken cancellationToken)
     {
-        var projectGroup = _mapper.Map<Persistence.Entities.Deployments.ProjectGroup>(command.ProjectGroup);
+        var projectGroupId = command.Id > 0 ? command.Id : command.ProjectGroup?.Id ?? 0;
+        var projectGroup = await _projectGroupDataProvider.GetByIdAsync(projectGroupId, cancellationToken).ConfigureAwait(false);
+
+        if (projectGroup == null)
+            throw new DeploymentEntityNotFoundException("ProjectGroup", projectGroupId);
+
+        var update = command.ProjectGroup;
+        if (update == null)
+            throw new InvalidOperationException("ProjectGroup update payload is required.");
+
+        var targetSpaceId = update.SpaceId;
+
+        if (targetSpaceId != 0 && projectGroup.SpaceId != targetSpaceId)
+            throw new DeploymentEntityNotFoundException("ProjectGroup", projectGroupId, "Project group belongs to a different space.");
+
+        if (!string.IsNullOrWhiteSpace(update.Name))
+            projectGroup.Name = update.Name;
+
+        projectGroup.Description = update.Description;
+
+        if (!string.IsNullOrWhiteSpace(update.Slug))
+            projectGroup.Slug = update.Slug;
 
         await _projectGroupDataProvider.UpdateAsync(projectGroup, ct: cancellationToken).ConfigureAwait(false);
 

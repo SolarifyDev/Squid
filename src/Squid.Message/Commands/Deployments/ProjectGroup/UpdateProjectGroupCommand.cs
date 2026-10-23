@@ -8,6 +8,8 @@ namespace Squid.Message.Commands.Deployments.ProjectGroup;
 [RequiresPermission(Permission.ProjectEdit)]
 public class UpdateProjectGroupCommand : ICommand, ISpaceScoped
 {
+    public int Id { get; set; }
+
     public CreateOrUpdateProjectGroupModel ProjectGroup { get; set; }
     int? ISpaceScoped.SpaceId => ProjectGroup?.SpaceId;
 }
