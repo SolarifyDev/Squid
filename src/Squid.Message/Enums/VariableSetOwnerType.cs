@@ -18,5 +18,10 @@ public enum VariableSetOwnerType
     /// <summary>
     /// 环境变量集
     /// </summary>
-    Environment = 3
+    Environment = 3,
+
+    /// <summary>
+    /// Runbook 变量集
+    /// </summary>
+    Runbook = 4
 }

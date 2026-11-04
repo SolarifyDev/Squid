@@ -142,6 +142,8 @@ public class TestDataBuilder
         {
             Version = 1,
             SpaceId = 1,
+            ProcessKind = DeploymentProcessKind.ProjectDeployment,
+            OwnerId = null,
             LastModifiedDate = DateTimeOffset.UtcNow,
             LastModifiedBy = 0
         };
