@@ -7,6 +7,11 @@ public interface IGenericDataProvider : IScopedDependency
     Task<T> ExecuteInTransactionAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken = default);
     
     Task ExecuteInTransactionAsync(Func<CancellationToken, Task> action, CancellationToken cancellationToken = default);
+
+    Task<T> ExecuteInTransactionAsync<T>(
+        Func<CancellationToken, Task<T>> action,
+        Func<CancellationToken, Task> beforeSave,
+        CancellationToken cancellationToken = default);
 }
 
 public class GenericDataProvider : IGenericDataProvider
@@ -45,6 +50,27 @@ public class GenericDataProvider : IGenericDataProvider
             await action(cancellationToken).ConfigureAwait(false);
             await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task<T> ExecuteInTransactionAsync<T>(
+        Func<CancellationToken, Task<T>> action,
+        Func<CancellationToken, Task> beforeSave,
+        CancellationToken cancellationToken = default)
+    {
+        using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            T result = await action(cancellationToken).ConfigureAwait(false);
+            await beforeSave(cancellationToken).ConfigureAwait(false);
+            await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
         }
         catch
         {
