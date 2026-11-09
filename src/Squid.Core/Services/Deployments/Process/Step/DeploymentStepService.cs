@@ -18,9 +18,11 @@ public interface IDeploymentStepService : IScopedDependency
 
     Task<DeploymentStepsReorderedEvent> ReorderDeploymentStepsAsync(ReorderDeploymentStepsCommand command, CancellationToken cancellationToken);
 
-    Task<GetDeploymentStepResponse> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken);
-
     Task<GetDeploymentStepsResponse> GetDeploymentStepsAsync(GetDeploymentStepsRequest request, CancellationToken cancellationToken);
+
+    Task<GetDeploymentStepResponse> GetDeploymentStepAsync(
+        GetDeploymentStepRequest request,
+        CancellationToken cancellationToken);
 }
 
 public class DeploymentStepService : IDeploymentStepService
@@ -34,6 +36,7 @@ public class DeploymentStepService : IDeploymentStepService
     private readonly IActionExcludedEnvironmentDataProvider _actionExcludedEnvironmentDataProvider;
     private readonly IActionChannelDataProvider _actionChannelDataProvider;
     private readonly IActionMachineRoleDataProvider _actionMachineRoleDataProvider;
+    private readonly IProcessContextGuard _processContextGuard;
 
     public DeploymentStepService(
         IMapper mapper,
@@ -44,7 +47,8 @@ public class DeploymentStepService : IDeploymentStepService
         IActionEnvironmentDataProvider actionEnvironmentDataProvider,
         IActionExcludedEnvironmentDataProvider actionExcludedEnvironmentDataProvider,
         IActionChannelDataProvider actionChannelDataProvider,
-        IActionMachineRoleDataProvider actionMachineRoleDataProvider)
+        IActionMachineRoleDataProvider actionMachineRoleDataProvider,
+        IProcessContextGuard processContextGuard)
     {
         _mapper = mapper;
         _stepDataProvider = stepDataProvider;
@@ -55,10 +59,18 @@ public class DeploymentStepService : IDeploymentStepService
         _actionExcludedEnvironmentDataProvider = actionExcludedEnvironmentDataProvider;
         _actionChannelDataProvider = actionChannelDataProvider;
         _actionMachineRoleDataProvider = actionMachineRoleDataProvider;
+        _processContextGuard = processContextGuard;
     }
 
     public async Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken)
     {
+        await ResolveWriteContextAsync(
+            command.ProcessId,
+            command.ProjectId,
+            command.RunbookId,
+            command.SpaceId,
+            cancellationToken).ConfigureAwait(false);
+
         var step = _mapper.Map<DeploymentStep>(command.Step);
         
         step.ProcessId = command.ProcessId;
@@ -91,6 +103,18 @@ public class DeploymentStepService : IDeploymentStepService
         
         if (step == null) throw new DeploymentEntityNotFoundException("DeploymentStep", command.Id);
 
+        await ResolveWriteContextAsync(
+            step.ProcessId,
+            command.ProjectId,
+            command.RunbookId,
+            command.SpaceId,
+            cancellationToken).ConfigureAwait(false);
+
+        await ValidateSubmittedActionIdsAsync(
+            step.Id,
+            command.Step.Actions,
+            cancellationToken).ConfigureAwait(false);
+
         _mapper.Map(command.Step, step);
 
         await _stepDataProvider.UpdateDeploymentStepAsync(step, true, cancellationToken).ConfigureAwait(false);
@@ -115,7 +139,28 @@ public class DeploymentStepService : IDeploymentStepService
 
     public async Task<DeploymentStepDeletedEvent> DeleteDeploymentStepsAsync(DeleteDeploymentStepCommand command, CancellationToken cancellationToken)
     {
+        if (command.Ids == null
+            || command.Ids.Count == 0
+            || command.Ids.Any(id => id <= 0)
+            || command.Ids.Distinct().Count() != command.Ids.Count)
+        {
+            throw new ProcessContextMismatchException(
+                "Every submitted deployment step ID must be positive and unique.");
+        }
+
         var steps = await _stepDataProvider.GetDeploymentStepsByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+
+        var resolvedSteps = await ResolveSubmittedStepsAsync(
+            command.Ids,
+            steps,
+            null,
+            command.ProjectId,
+            command.RunbookId,
+            command.SpaceId,
+            write: true,
+            cancellationToken).ConfigureAwait(false);
+
+        steps = resolvedSteps;
         var processIds = steps.Select(s => s.ProcessId).Distinct().ToList();
 
         await _stepDataProvider.DeleteDeploymentStepsAsync(steps, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -134,7 +179,31 @@ public class DeploymentStepService : IDeploymentStepService
 
     public async Task<DeploymentStepsReorderedEvent> ReorderDeploymentStepsAsync(ReorderDeploymentStepsCommand command, CancellationToken cancellationToken)
     {
+        await ResolveWriteContextAsync(
+            command.ProcessId,
+            command.ProjectId,
+            command.RunbookId,
+            command.SpaceId,
+            cancellationToken).ConfigureAwait(false);
+
         var existingSteps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
+        var distinctOrderStepIds = command.StepOrders.Select(o => o.StepId).Distinct().Count();
+
+        if (distinctOrderStepIds != command.StepOrders.Count)
+        {
+            throw new ProcessContextMismatchException(
+                "Every submitted deployment step must be unique.");
+        }
+
+        await ResolveSubmittedStepsAsync(
+            command.StepOrders.Select(o => o.StepId).ToList(),
+            existingSteps,
+            command.ProcessId,
+            command.ProjectId,
+            command.RunbookId,
+            command.SpaceId,
+            write: true,
+            cancellationToken).ConfigureAwait(false);
 
         var existingStepIds = existingSteps.Select(s => s.Id).ToHashSet();
         var submittedStepIds = command.StepOrders.Select(o => o.StepId).ToHashSet();
@@ -176,17 +245,15 @@ public class DeploymentStepService : IDeploymentStepService
         return new DeploymentStepsReorderedEvent { Data = reorderedSteps };
     }
 
-    public async Task<GetDeploymentStepResponse> GetDeploymentStepByIdAsync(int id, CancellationToken cancellationToken)
-    {
-        var step = await GetStepWithRelatedDataAsync(id, cancellationToken).ConfigureAwait(false);
-        
-        if (step == null) throw new DeploymentEntityNotFoundException("DeploymentStep", id);
-        
-        return new GetDeploymentStepResponse { Data = step };
-    }
-
     public async Task<GetDeploymentStepsResponse> GetDeploymentStepsAsync(GetDeploymentStepsRequest request, CancellationToken cancellationToken)
     {
+        await ResolveReadContextAsync(
+            request.ProcessId,
+            request.ProjectId,
+            request.RunbookId,
+            request.SpaceId,
+            cancellationToken).ConfigureAwait(false);
+
         var (count, data) = await _stepDataProvider.GetDeploymentStepPagingAsync(
             request.ProcessId, request.PageIndex, request.PageSize, cancellationToken).ConfigureAwait(false);
 
@@ -203,6 +270,155 @@ public class DeploymentStepService : IDeploymentStepService
         {
             Data = new GetDeploymentStepsResponseData { Count = count, Steps = steps }
         };
+    }
+
+    public async Task<GetDeploymentStepResponse> GetDeploymentStepAsync(
+        GetDeploymentStepRequest request,
+        CancellationToken cancellationToken)
+    {
+        var step = await _stepDataProvider.GetDeploymentStepByIdAsync(request.Id, cancellationToken).ConfigureAwait(false);
+        if (step == null)
+        {
+            throw new DeploymentEntityNotFoundException("DeploymentStep", request.Id);
+        }
+
+        await ResolveReadContextAsync(
+            request.ProcessId ?? step.ProcessId,
+            request.ProjectId,
+            request.RunbookId,
+            request.SpaceId,
+            cancellationToken,
+            expectedStep: step,
+            explicitProcessId: request.ProcessId.HasValue).ConfigureAwait(false);
+
+        var stepWithRelatedData = await GetStepWithRelatedDataAsync(step.Id, cancellationToken).ConfigureAwait(false);
+        return new GetDeploymentStepResponse { Data = stepWithRelatedData };
+    }
+
+    private async Task<ProcessContext> ResolveReadContextAsync(
+        int processId,
+        int? projectId,
+        int? runbookId,
+        int? spaceId,
+        CancellationToken cancellationToken,
+        DeploymentStep expectedStep = null,
+        bool explicitProcessId = true)
+    {
+        if (!explicitProcessId && processId <= 0)
+        {
+            throw new ProcessContextMismatchException(
+                "ProcessId context is required when a step has no persisted process.");
+        }
+
+        var context = await _processContextGuard.ResolveForReadAsync(
+            new ProcessContextRequest(processId, spaceId, projectId, runbookId),
+            cancellationToken).ConfigureAwait(false);
+
+        if (expectedStep != null && expectedStep.ProcessId != context.ProcessId)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentStep {expectedStep.Id} does not belong to process {context.ProcessId}.");
+        }
+
+        return context;
+    }
+
+    private async Task<ProcessContext> ResolveWriteContextAsync(
+        int processId,
+        int? projectId,
+        int? runbookId,
+        int? spaceId,
+        CancellationToken cancellationToken)
+    {
+        return await _processContextGuard.ResolveForWriteAsync(
+            new ProcessContextRequest(processId, spaceId, projectId, runbookId),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<DeploymentStep>> ResolveSubmittedStepsAsync(
+        IReadOnlyCollection<int> submittedStepIds,
+        List<DeploymentStep> persistedSteps,
+        int? expectedProcessId,
+        int? projectId,
+        int? runbookId,
+        int? spaceId,
+        bool write,
+        CancellationToken cancellationToken)
+    {
+        var distinctStepIds = submittedStepIds?.Where(id => id > 0).Distinct().ToList()
+            ?? new List<int>();
+        var distinctPersistedSteps = persistedSteps
+            .Where(step => distinctStepIds.Contains(step.Id))
+            .ToList();
+
+        if (distinctStepIds.Count == 0 || distinctPersistedSteps.Count != distinctStepIds.Count)
+        {
+            throw new ProcessContextMismatchException(
+                "Every submitted deployment step must exist in the resolved process.");
+        }
+
+        var processIds = distinctPersistedSteps.Select(step => step.ProcessId).Distinct().ToList();
+        if (processIds.Count != 1)
+        {
+            throw new ProcessContextMismatchException(
+                "Every submitted deployment step must belong to the same process.");
+        }
+
+        var resolvedProcessId = processIds[0];
+        if (expectedProcessId.HasValue && resolvedProcessId != expectedProcessId.Value)
+        {
+            throw new ProcessContextMismatchException(
+                $"Submitted deployment steps do not belong to process {expectedProcessId.Value}.");
+        }
+
+        var request = new ProcessContextRequest(resolvedProcessId, spaceId, projectId, runbookId);
+        if (write)
+        {
+            await _processContextGuard.ResolveForWriteAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _processContextGuard.ResolveForReadAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
+        return distinctPersistedSteps;
+    }
+
+    private async Task ValidateSubmittedActionIdsAsync(
+        int stepId,
+        List<CreateOrUpdateDeploymentActionModel> actions,
+        CancellationToken cancellationToken)
+    {
+        if (actions == null || actions.Count == 0)
+        {
+            return;
+        }
+
+        var submittedActionIds = actions
+            .Where(action => action.Id is > 0)
+            .Select(action => action.Id.Value)
+            .ToList();
+
+        if (submittedActionIds.Count != submittedActionIds.Distinct().Count())
+        {
+            throw new ProcessContextMismatchException(
+                "A deployment action cannot be submitted more than once.");
+        }
+
+        if (submittedActionIds.Count == 0)
+        {
+            return;
+        }
+
+        var allBelongToStep = await _actionDataProvider
+            .AllBelongToStepAsync(submittedActionIds, stepId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!allBelongToStep)
+        {
+            throw new ProcessContextMismatchException(
+                "Every submitted deployment action must belong to the resolved deployment step.");
+        }
     }
 
     private async Task<DeploymentStepDto> GetStepWithRelatedDataAsync(int stepId, CancellationToken cancellationToken)
@@ -300,6 +516,7 @@ public class DeploymentStepService : IDeploymentStepService
 
         if (actions.Count > 0)
         {
+            hasExplicitActionIds = true;
             await AssignTemporaryActionOrdersAsync(existingActions, cancellationToken).ConfigureAwait(false);
         }
 

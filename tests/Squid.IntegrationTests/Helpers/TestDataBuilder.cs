@@ -153,6 +153,71 @@ public class TestDataBuilder
         return entity;
     }
 
+    public async Task<Runbook> CreateRunbookAsync(
+        int projectId = 1,
+        int spaceId = 1,
+        string name = "Test Runbook")
+    {
+        var runbookId = await NextSequenceAsync("runbook_id_seq").ConfigureAwait(false);
+        var processId = await NextSequenceAsync("deployment_process_id_seq").ConfigureAwait(false);
+        var variableSetId = await NextSequenceAsync("variable_set_id_seq").ConfigureAwait(false);
+
+        var variableSet = new VariableSet
+        {
+            Id = variableSetId,
+            SpaceId = spaceId,
+            Name = name,
+            Description = string.Empty,
+            OwnerType = VariableSetOwnerType.Runbook,
+            OwnerId = runbookId,
+            Version = 1,
+            RelatedDocumentIds = "[]",
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+
+        var process = new DeploymentProcess
+        {
+            Id = processId,
+            ProjectId = projectId,
+            SpaceId = spaceId,
+            Version = 1,
+            ProcessKind = DeploymentProcessKind.Runbook,
+            OwnerId = runbookId,
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+
+        var runbook = new Runbook
+        {
+            Id = runbookId,
+            ProjectId = projectId,
+            SpaceId = spaceId,
+            Name = name,
+            Description = string.Empty,
+            TagsJson = "[]",
+            ProcessId = processId,
+            VariableSetId = variableSetId,
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+
+        await _repository.InsertAsync(variableSet).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(process).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(runbook).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return runbook;
+    }
+
+    private async Task<int> NextSequenceAsync(string sequenceName)
+    {
+        var rows = await _repository.SqlQueryRawAsync<SequenceValue>(
+            $"SELECT nextval('{sequenceName}')::integer AS \"Value\"").ConfigureAwait(false);
+        return rows.Single().Value;
+    }
+
     public async Task<DeploymentStep> CreateDeploymentStepAsync(
         int processId,
         int stepOrder,
@@ -545,4 +610,9 @@ public class TestDataBuilder
 
         return phase;
     }
+}
+
+internal sealed class SequenceValue
+{
+    public int Value { get; set; }
 }
