@@ -14,6 +14,7 @@ public sealed record AuditDocumentKeys
     public int? ReleaseId { get; init; }
     public int? EnvironmentId { get; init; }
     public int? MachineId { get; init; }
+    public int? DocumentId { get; init; }
 
     public string Name { get; init; }
 }

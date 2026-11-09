@@ -1,7 +1,10 @@
+using Squid.Message.Attributes;
+using Squid.Message.Enums;
 using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Runbook;
 
+[RequiresPermission(Permission.RunbookEdit)]
 public class DeleteRunbookCommand : ICommand, ISpaceScoped
 {
     public int Id { get; set; }

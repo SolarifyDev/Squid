@@ -62,6 +62,7 @@ public class AuditDocumentRegistryTests
         type.ShouldBe("Runbook");
         keys.SpaceId.ShouldBe(2);
         keys.ProjectId.ShouldBe(5);
+        keys.DocumentId.ShouldBe(11);
         keys.Name.ShouldBe("Payment Recovery");
     }
 

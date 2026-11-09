@@ -40,7 +40,7 @@ public sealed class AuditDocumentRegistry : IAuditDocumentRegistry
         [typeof(ProjectGroup)] = new("ProjectGroup", e => { var g = (ProjectGroup)e; return new AuditDocumentKeys { SpaceId = g.SpaceId, Name = g.Name }; }),
         [typeof(ExternalFeed)] = new("ExternalFeed", e => { var f = (ExternalFeed)e; return new AuditDocumentKeys { SpaceId = f.SpaceId, Name = f.Name }; }),
         [typeof(Certificate)] = new("Certificate", e => { var c = (Certificate)e; return new AuditDocumentKeys { SpaceId = c.SpaceId, Name = c.Name }; }),
-        [typeof(Runbook)] = new("Runbook", e => { var r = (Runbook)e; return new AuditDocumentKeys { SpaceId = r.SpaceId, ProjectId = r.ProjectId, Name = r.Name }; })
+        [typeof(Runbook)] = new("Runbook", e => { var r = (Runbook)e; return new AuditDocumentKeys { SpaceId = r.SpaceId, ProjectId = r.ProjectId, DocumentId = r.Id, Name = r.Name }; })
     };
 
     public bool TryDescribe(object entity, out string documentType, out AuditDocumentKeys keys)
