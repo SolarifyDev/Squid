@@ -516,7 +516,6 @@ public class DeploymentStepService : IDeploymentStepService
 
         if (actions.Count > 0)
         {
-            hasExplicitActionIds = true;
             await AssignTemporaryActionOrdersAsync(existingActions, cancellationToken).ConfigureAwait(false);
         }
 

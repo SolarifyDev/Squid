@@ -215,7 +215,7 @@ public class DeploymentStepServiceActionAssociationTests
 
         // Default: GetStepById returns step with one action (for read tests)
         stepProvider.Setup(p => p.GetDeploymentStepByIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DeploymentStep { Id = 1, Name = "Step 1", StepType = "Action", Condition = "Success" });
+            .ReturnsAsync(new DeploymentStep { Id = 1, ProcessId = 1, Name = "Step 1", StepType = "Action", Condition = "Success" });
         actionProvider.Setup(p => p.GetDeploymentActionsByStepIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<DeploymentAction> { new() { Id = 1, StepId = 1, Name = "Action 1", ActionType = "Squid.Script" } });
         actionPropertyProvider.Setup(p => p.GetDeploymentActionPropertiesByActionIdAsync(1, It.IsAny<CancellationToken>()))

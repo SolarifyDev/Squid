@@ -153,6 +153,106 @@ public class TestDataBuilder
         return entity;
     }
 
+    public async Task<DeploymentProcess> CreateProjectDeploymentProcessAsync(
+        string projectName = "Test Project",
+        int spaceId = 1)
+    {
+        var projectGroupId = await NextSequenceAsync("project_group_id_seq").ConfigureAwait(false);
+        var lifecycleId = await NextSequenceAsync("lifecycle_id_seq").ConfigureAwait(false);
+        var processId = await NextSequenceAsync("deployment_process_id_seq").ConfigureAwait(false);
+        var variableSetId = await NextSequenceAsync("variable_set_id_seq").ConfigureAwait(false);
+
+        var projectGroup = new ProjectGroup
+        {
+            Id = projectGroupId,
+            Name = $"Project Group {projectGroupId}",
+            Description = string.Empty,
+            SpaceId = spaceId,
+            Slug = $"project-group-{projectGroupId}"
+        };
+        var lifecycle = new Lifecycle
+        {
+            Id = lifecycleId,
+            Name = $"Lifecycle {lifecycleId}",
+            SpaceId = spaceId,
+            Slug = $"lifecycle-{lifecycleId}",
+            ReleaseRetentionKeepForever = true,
+            TentacleRetentionKeepForever = true
+        };
+        var process = new DeploymentProcess
+        {
+            Id = processId,
+            SpaceId = spaceId,
+            Version = 1,
+            ProcessKind = DeploymentProcessKind.ProjectDeployment,
+            OwnerId = null,
+            LastModifiedDate = DateTimeOffset.UtcNow,
+            LastModifiedBy = 0
+        };
+        var variableSet = new VariableSet
+        {
+            Id = variableSetId,
+            Name = projectName,
+            OwnerType = VariableSetOwnerType.Project,
+            OwnerId = 0,
+            SpaceId = spaceId,
+            Version = 1,
+            RelatedDocumentIds = "[]",
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+        var project = new Project
+        {
+            Name = projectName,
+            Slug = $"{projectName.ToLowerInvariant().Replace(' ', '-')}-{processId}",
+            IsDisabled = false,
+            VariableSetId = variableSetId,
+            DeploymentProcessId = processId,
+            ProjectGroupId = projectGroupId,
+            LifecycleId = lifecycleId,
+            AutoCreateRelease = false,
+            Json = string.Empty,
+            IncludedLibraryVariableSetIds = "[]",
+            DiscreteChannelRelease = false,
+            SpaceId = spaceId,
+            LastModifiedDate = DateTimeOffset.UtcNow,
+            AllowIgnoreChannelRules = false
+        };
+
+        await _repository.InsertAsync(projectGroup).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(lifecycle).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(process).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(variableSet).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        await _repository.InsertAsync(project).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        process.ProjectId = project.Id;
+        variableSet.OwnerId = project.Id;
+        await _repository.UpdateAsync(process).ConfigureAwait(false);
+        await _repository.UpdateAsync(variableSet).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        var defaultChannel = new Channel
+        {
+            Name = "Default",
+            ProjectId = project.Id,
+            SpaceId = spaceId,
+            IsDefault = true,
+            Slug = "default"
+        };
+        await _repository.InsertAsync(defaultChannel).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+        return process;
+    }
+
     public async Task<Runbook> CreateRunbookAsync(
         int projectId = 1,
         int spaceId = 1,
@@ -299,6 +399,18 @@ public class TestDataBuilder
     public async Task CreateActionEnvironmentsAsync(int actionId, params int[] environmentIds)
     {
         var entities = environmentIds.Select(envId => new ActionEnvironment
+        {
+            ActionId = actionId,
+            EnvironmentId = envId
+        }).ToList();
+
+        await _repository.InsertAllAsync(entities).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+    }
+
+    public async Task CreateActionExcludedEnvironmentsAsync(int actionId, params int[] environmentIds)
+    {
+        var entities = environmentIds.Select(envId => new ActionExcludedEnvironment
         {
             ActionId = actionId,
             EnvironmentId = envId

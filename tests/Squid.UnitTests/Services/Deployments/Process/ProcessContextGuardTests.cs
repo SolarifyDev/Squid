@@ -29,7 +29,7 @@ public class ProcessContextGuardTests
     [Fact]
     public async Task ResolveForWriteAsync_RunbookProcess_UsesRunbookEditAndPersistedScope()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var runbook = Runbook(30, 10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.Runbook, 30);
 
@@ -58,7 +58,7 @@ public class ProcessContextGuardTests
     [Fact]
     public async Task ResolveForReadAsync_ProjectProcess_UsesProcessView()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.ProjectDeployment, null);
 
         SetupQuery(process, project);
@@ -78,7 +78,7 @@ public class ProcessContextGuardTests
     [Fact]
     public async Task ResolveForWriteAsync_RunbookProcessWithoutExplicitRunbookContext_IsRejected()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.Runbook, 30);
 
         SetupQuery(process, project);
@@ -94,7 +94,7 @@ public class ProcessContextGuardTests
     [Fact]
     public async Task ResolveForWriteAsync_WrongRunbookForProcess_IsRejected()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.Runbook, 30);
         var anotherRunbook = Runbook(31, 10, 20, 41);
 
@@ -111,7 +111,7 @@ public class ProcessContextGuardTests
     [Fact]
     public async Task ResolveForWriteAsync_WrongProjectOrSpace_IsRejected()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.ProjectDeployment, null);
 
         SetupQuery(process, project);
@@ -124,9 +124,25 @@ public class ProcessContextGuardTests
     }
 
     [Fact]
+    public async Task ResolveForWriteAsync_ProjectProcessNotLinkedFromProject_IsRejected()
+    {
+        var project = Project(10, 20, 41);
+        var process = Process(40, 10, 20, DeploymentProcessKind.ProjectDeployment, null);
+
+        SetupQuery(process, project);
+
+        await Should.ThrowAsync<ProcessContextMismatchException>(() =>
+            _guard.ResolveForWriteAsync(new ProcessContextRequest(40, 20, 10)));
+
+        _authorizationService.Verify(service => service.EnsurePermissionAsync(
+            It.IsAny<PermissionCheckRequest>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ResolveProjectDeploymentAsync_RunbookProcess_IsRejectedAsDeploymentProcess()
     {
-        var project = Project(10, 20);
+        var project = Project(10, 20, 40);
         var runbook = Runbook(30, 10, 20, 40);
         var process = Process(40, 10, 20, DeploymentProcessKind.Runbook, 30);
 
@@ -176,12 +192,13 @@ public class ProcessContextGuardTests
                 : new[] { runbook }.AsQueryable().BuildMock());
     }
 
-    private static SquidProject Project(int id, int spaceId)
+    private static SquidProject Project(int id, int spaceId, int deploymentProcessId)
     {
         return new SquidProject
         {
             Id = id,
             SpaceId = spaceId,
+            DeploymentProcessId = deploymentProcessId,
             Name = $"Project {id}",
             Slug = $"project-{id}"
         };

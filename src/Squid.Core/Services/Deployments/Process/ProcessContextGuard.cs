@@ -151,12 +151,6 @@ public class ProcessContextGuard(
             throw new ProcessContextMismatchException("A positive ProcessId is required.");
         }
 
-        if (request.ProjectId.HasValue && request.RunbookId.HasValue)
-        {
-            throw new ProcessContextMismatchException(
-                "A process request cannot declare both ProjectId and RunbookId context.");
-        }
-
         var process = await repository.QueryNoTracking<DeploymentProcess>(
                 p => p.Id == request.ProcessId)
             .FirstOrDefaultAsync(cancellationToken)
@@ -198,7 +192,7 @@ public class ProcessContextGuard(
 
         return process.ProcessKind switch
         {
-            DeploymentProcessKind.ProjectDeployment => ResolveProjectContext(process, request),
+            DeploymentProcessKind.ProjectDeployment => ResolveProjectContext(process, project, request),
             DeploymentProcessKind.Runbook => allowRunbook
                 ? await ResolveRunbookContextAsync(process, request, cancellationToken).ConfigureAwait(false)
                 : throw new ProcessContextMismatchException(
@@ -210,6 +204,7 @@ public class ProcessContextGuard(
 
     private static ProcessContext ResolveProjectContext(
         DeploymentProcess process,
+        Persistence.Entities.Deployments.Project project,
         ProcessContextRequest request)
     {
         if (request.RunbookId.HasValue)
@@ -222,6 +217,12 @@ public class ProcessContextGuard(
         {
             throw new ProcessContextMismatchException(
                 $"Project deployment process {process.Id} must not have an owner.");
+        }
+
+        if (project.DeploymentProcessId != process.Id)
+        {
+            throw new ProcessContextMismatchException(
+                $"Process {process.Id} is not the deployment process for project {project.Id}.");
         }
 
         if (request.ProjectId.HasValue && request.ProjectId.Value != process.ProjectId)

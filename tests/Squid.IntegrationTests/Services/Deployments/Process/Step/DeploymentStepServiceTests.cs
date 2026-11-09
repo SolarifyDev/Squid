@@ -650,7 +650,8 @@ public class DeploymentStepServiceTests : TestBase
         await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
         {
             var builder = new TestDataBuilder(repository, unitOfWork);
-            process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
+            process = await builder.CreateProjectDeploymentProcessAsync("Deployment Step Project")
+                .ConfigureAwait(false);
         }).ConfigureAwait(false);
 
         return process!.Id;
