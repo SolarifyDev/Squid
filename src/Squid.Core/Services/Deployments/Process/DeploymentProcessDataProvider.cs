@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums;
 
 namespace Squid.Core.Services.Deployments.Process;
 
@@ -59,7 +60,8 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task<(int count, List<DeploymentProcess>)> GetDeploymentProcessPagingAsync(int? spaceId = null, int? projectId = null, int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default)
     {
-        var query = _repository.Query<DeploymentProcess>();
+        var query = _repository.Query<DeploymentProcess>()
+            .Where(p => p.ProcessKind == DeploymentProcessKind.ProjectDeployment && p.OwnerId == null);
 
         if (spaceId.HasValue)
             query = query.Where(p => p.SpaceId == spaceId.Value);
@@ -82,7 +84,10 @@ public class DeploymentProcessDataProvider : IDeploymentProcessDataProvider
 
     public async Task<int> GetNextVersionAsync(int projectId, CancellationToken cancellationToken = default)
     {
-        var maxVersion = await _repository.Query<DeploymentProcess>(p => p.ProjectId == projectId)
+        var maxVersion = await _repository.Query<DeploymentProcess>(
+                p => p.ProjectId == projectId
+                     && p.ProcessKind == DeploymentProcessKind.ProjectDeployment
+                     && p.OwnerId == null)
             .Select(p => (int?)p.Version)
             .MaxAsync(cancellationToken).ConfigureAwait(false);
 

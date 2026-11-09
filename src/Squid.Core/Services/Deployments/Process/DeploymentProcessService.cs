@@ -3,6 +3,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Process.Action;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Process;
+using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.Process;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Requests.Deployments.Process;
@@ -18,6 +19,10 @@ public interface IDeploymentProcessService : IScopedDependency
     Task DeleteDeploymentProcessAsync(int id, CancellationToken cancellationToken);
     
     Task<DeploymentProcessDto> GetDeploymentProcessByIdAsync(int id, CancellationToken cancellationToken);
+
+    Task<DeploymentProcessDto> GetProjectDeploymentProcessAsync(
+        GetDeploymentProcessRequest request,
+        CancellationToken cancellationToken);
     
     Task<GetDeploymentProcessesResponse> GetDeploymentProcessesAsync(GetDeploymentProcessesRequest request, CancellationToken cancellationToken);
 }
@@ -30,6 +35,7 @@ public class DeploymentProcessService : IDeploymentProcessService
     private readonly IDeploymentStepPropertyDataProvider _stepPropertyDataProvider;
     private readonly IDeploymentActionPropertyDataProvider _actionPropertyDataProvider;
     private readonly IMapper _mapper;
+    private readonly IProcessContextGuard _processContextGuard;
 
     public DeploymentProcessService(
         IMapper mapper,
@@ -37,7 +43,8 @@ public class DeploymentProcessService : IDeploymentProcessService
         IDeploymentActionDataProvider actionDataProvider,
         IDeploymentProcessDataProvider processDataProvider,
         IDeploymentStepPropertyDataProvider stepPropertyDataProvider,
-        IDeploymentActionPropertyDataProvider actionPropertyDataProvider)
+        IDeploymentActionPropertyDataProvider actionPropertyDataProvider,
+        IProcessContextGuard processContextGuard)
     {
         _mapper = mapper;
         _stepDataProvider = stepDataProvider;
@@ -45,6 +52,7 @@ public class DeploymentProcessService : IDeploymentProcessService
         _processDataProvider = processDataProvider;
         _stepPropertyDataProvider = stepPropertyDataProvider;
         _actionPropertyDataProvider = actionPropertyDataProvider;
+        _processContextGuard = processContextGuard;
     }
 
     public async Task<DeploymentProcessCreatedEvent> CreateDeploymentProcessAsync(CreateDeploymentProcessCommand command, CancellationToken cancellationToken)
@@ -71,6 +79,12 @@ public class DeploymentProcessService : IDeploymentProcessService
             throw new DeploymentEntityNotFoundException("DeploymentProcess", command.Id);
         }
 
+        if (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {command.Id} is not a project deployment process.");
+        }
+
         _mapper.Map(command, process);
 
         await _processDataProvider.UpdateDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -89,6 +103,12 @@ public class DeploymentProcessService : IDeploymentProcessService
             throw new DeploymentEntityNotFoundException("DeploymentProcess", id);
         }
 
+        if (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {id} is not a project deployment process.");
+        }
+
         await _stepDataProvider.DeleteDeploymentStepsByProcessIdAsync(id, cancellationToken).ConfigureAwait(false);
         await _processDataProvider.DeleteDeploymentProcessAsync(process, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
@@ -99,6 +119,43 @@ public class DeploymentProcessService : IDeploymentProcessService
         if (process == null)
         {
             throw new DeploymentEntityNotFoundException("DeploymentProcess", id);
+        }
+
+        if (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {id} is not a project deployment process.");
+        }
+
+        return await BuildDeploymentProcessDtoAsync(process, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DeploymentProcessDto> GetProjectDeploymentProcessAsync(
+        GetDeploymentProcessRequest request,
+        CancellationToken cancellationToken)
+    {
+        var context = await _processContextGuard.ResolveProjectDeploymentAsync(
+            request.Id,
+            request.ProjectId,
+            request.SpaceId,
+            request.RunbookId,
+            cancellationToken).ConfigureAwait(false);
+
+        await _processContextGuard.EnsurePermissionAsync(
+            context,
+            write: false,
+            cancellationToken).ConfigureAwait(false);
+
+        var process = await _processDataProvider.GetDeploymentProcessByIdAsync(request.Id, cancellationToken).ConfigureAwait(false);
+        if (process == null)
+        {
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", request.Id);
+        }
+
+        if (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {request.Id} is not a project deployment process.");
         }
 
         return await BuildDeploymentProcessDtoAsync(process, cancellationToken).ConfigureAwait(false);

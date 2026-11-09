@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Process.Action;
+using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Models.Deployments.Process;
@@ -86,7 +87,13 @@ public class DeploymentStepServiceActionAssociationTests
         mocks.ActionEnvironment.Setup(p => p.GetActionEnvironmentsByActionIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActionEnvironment> { new() { ActionId = 1, EnvironmentId = 5 }, new() { ActionId = 1, EnvironmentId = 10 } });
 
-        var result = await service.GetDeploymentStepByIdAsync(1, CancellationToken.None);
+        var result = await service.GetDeploymentStepAsync(
+            new Squid.Message.Requests.Deployments.Process.Step.GetDeploymentStepRequest
+            {
+                Id = 1,
+                ProcessId = 1
+            },
+            CancellationToken.None);
 
         result.Data.Actions[0].Environments.ShouldBe(new List<int> { 5, 10 });
     }
@@ -99,7 +106,13 @@ public class DeploymentStepServiceActionAssociationTests
         mocks.ActionExcludedEnvironment.Setup(p => p.GetActionExcludedEnvironmentsByActionIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActionExcludedEnvironment> { new() { ActionId = 1, EnvironmentId = 99 } });
 
-        var result = await service.GetDeploymentStepByIdAsync(1, CancellationToken.None);
+        var result = await service.GetDeploymentStepAsync(
+            new Squid.Message.Requests.Deployments.Process.Step.GetDeploymentStepRequest
+            {
+                Id = 1,
+                ProcessId = 1
+            },
+            CancellationToken.None);
 
         result.Data.Actions[0].ExcludedEnvironments.ShouldBe(new List<int> { 99 });
     }
@@ -112,7 +125,13 @@ public class DeploymentStepServiceActionAssociationTests
         mocks.ActionChannel.Setup(p => p.GetActionChannelsByActionIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActionChannel> { new() { ActionId = 1, ChannelId = 20 } });
 
-        var result = await service.GetDeploymentStepByIdAsync(1, CancellationToken.None);
+        var result = await service.GetDeploymentStepAsync(
+            new Squid.Message.Requests.Deployments.Process.Step.GetDeploymentStepRequest
+            {
+                Id = 1,
+                ProcessId = 1
+            },
+            CancellationToken.None);
 
         result.Data.Actions[0].Channels.ShouldBe(new List<int> { 20 });
     }
@@ -157,6 +176,30 @@ public class DeploymentStepServiceActionAssociationTests
         var actionExEnvProvider = new Mock<IActionExcludedEnvironmentDataProvider>();
         var actionChannelProvider = new Mock<IActionChannelDataProvider>();
         var actionMachineRoleProvider = new Mock<IActionMachineRoleDataProvider>();
+        var processContextGuard = new Mock<IProcessContextGuard>();
+
+        processContextGuard
+            .Setup(guard => guard.ResolveForWriteAsync(It.IsAny<ProcessContextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContext(
+                1,
+                1,
+                1,
+                ProcessContextKind.ProjectDeployment,
+                null));
+        processContextGuard
+            .Setup(guard => guard.ResolveForReadAsync(It.IsAny<ProcessContextRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessContext(
+                1,
+                1,
+                1,
+                ProcessContextKind.ProjectDeployment,
+                null));
+        actionProvider
+            .Setup(provider => provider.AllBelongToStepAsync(
+                It.IsAny<List<int>>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
 
         // Default: step insert assigns Id = 1
         stepProvider.Setup(p => p.AddDeploymentStepAsync(It.IsAny<DeploymentStep>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
@@ -172,7 +215,7 @@ public class DeploymentStepServiceActionAssociationTests
 
         // Default: GetStepById returns step with one action (for read tests)
         stepProvider.Setup(p => p.GetDeploymentStepByIdAsync(1, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DeploymentStep { Id = 1, Name = "Step 1", StepType = "Action", Condition = "Success" });
+            .ReturnsAsync(new DeploymentStep { Id = 1, ProcessId = 1, Name = "Step 1", StepType = "Action", Condition = "Success" });
         actionProvider.Setup(p => p.GetDeploymentActionsByStepIdAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<DeploymentAction> { new() { Id = 1, StepId = 1, Name = "Action 1", ActionType = "Squid.Script" } });
         actionPropertyProvider.Setup(p => p.GetDeploymentActionPropertiesByActionIdAsync(1, It.IsAny<CancellationToken>()))
@@ -188,7 +231,17 @@ public class DeploymentStepServiceActionAssociationTests
         actionChannelProvider.Setup(p => p.GetActionChannelsByActionIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ActionChannel>());
 
-        var service = new DeploymentStepService(mapper, stepProvider.Object, stepPropertyProvider.Object, actionProvider.Object, actionPropertyProvider.Object, actionEnvProvider.Object, actionExEnvProvider.Object, actionChannelProvider.Object, actionMachineRoleProvider.Object);
+        var service = new DeploymentStepService(
+            mapper,
+            stepProvider.Object,
+            stepPropertyProvider.Object,
+            actionProvider.Object,
+            actionPropertyProvider.Object,
+            actionEnvProvider.Object,
+            actionExEnvProvider.Object,
+            actionChannelProvider.Object,
+            actionMachineRoleProvider.Object,
+            processContextGuard.Object);
         var mocks = new MockProviders(stepProvider, stepPropertyProvider, actionProvider, actionPropertyProvider, actionEnvProvider, actionExEnvProvider, actionChannelProvider, actionMachineRoleProvider);
 
         return (service, mocks);
