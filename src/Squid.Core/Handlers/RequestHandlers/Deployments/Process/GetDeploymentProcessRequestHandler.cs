@@ -15,7 +15,7 @@ public class GetDeploymentProcessRequestHandler : IRequestHandler<GetDeploymentP
     public async Task<GetDeploymentProcessResponse> Handle(IReceiveContext<GetDeploymentProcessRequest> context, CancellationToken cancellationToken)
     {
         var deploymentProcess = await _deploymentProcessService
-            .GetProjectDeploymentProcessAsync(context.Message, cancellationToken)
+            .GetDeploymentProcessAsync(context.Message, cancellationToken)
             .ConfigureAwait(false);
 
         return new GetDeploymentProcessResponse

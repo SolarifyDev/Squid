@@ -27,6 +27,19 @@ public class SquidResponse : IResponse
     /// </summary>
     [JsonPropertyName("suggestedRoles")]
     public IReadOnlyList<string> SuggestedRoles { get; set; }
+
+    /// <summary>
+    /// Stable machine-readable code for structured validation failures.
+    /// Null on success and unstructured failures.
+    /// </summary>
+    [JsonPropertyName("validationCode")]
+    public string ValidationCode { get; set; }
+
+    /// <summary>
+    /// The request field associated with <see cref="ValidationCode"/>.
+    /// </summary>
+    [JsonPropertyName("validationField")]
+    public string ValidationField { get; set; }
 }
 
 public class SquidResponse<T> : SquidResponse

@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Runbooks.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Response;
@@ -17,6 +19,9 @@ public class GlobalExceptionFilter : IExceptionFilter
         var statusCode = context.Exception switch
         {
             ValidationException => HttpStatusCode.BadRequest,
+            RunbookNameConflictException => HttpStatusCode.Conflict,
+            RunbookValidationException => HttpStatusCode.BadRequest,
+            DeploymentEntityNotFoundException => HttpStatusCode.NotFound,
             UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             PermissionDeniedException => HttpStatusCode.Forbidden,
             MachineNotFoundException => HttpStatusCode.NotFound,
@@ -49,6 +54,12 @@ public class GlobalExceptionFilter : IExceptionFilter
         if (context.Exception is PermissionDeniedException permissionEx)
         {
             EnrichForPermissionDenial(response, permissionEx);
+        }
+
+        if (context.Exception is RunbookValidationException runbookValidation)
+        {
+            response.ValidationCode = runbookValidation.Code;
+            response.ValidationField = runbookValidation.Field;
         }
 
         context.Result = new OkObjectResult(response);

@@ -11,7 +11,7 @@ public class DeleteRunbookCommand : ICommand, ISpaceScoped
 
     public int ProjectId { get; set; }
 
-    public int SpaceId { get; set; }
+    public int? SpaceId { get; set; }
 
     int? ISpaceScoped.SpaceId => SpaceId;
 }

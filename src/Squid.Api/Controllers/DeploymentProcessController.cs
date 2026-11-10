@@ -24,9 +24,19 @@ public class DeploymentProcessController : ControllerBase
 
     [HttpGet("detail/{id:int}")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetDeploymentProcessResponse))]
-    public async Task<IActionResult> GetDeploymentProcessAsync(int id)
+    public async Task<IActionResult> GetDeploymentProcessAsync(
+        int id,
+        [FromQuery] int? projectId,
+        [FromQuery] int? spaceId,
+        [FromQuery] int? runbookId)
     {
-        var request = new GetDeploymentProcessRequest { Id = id };
+        var request = new GetDeploymentProcessRequest
+        {
+            Id = id,
+            ProjectId = projectId,
+            SpaceId = spaceId,
+            RunbookId = runbookId
+        };
         var response = await _mediator.RequestAsync<GetDeploymentProcessRequest, GetDeploymentProcessResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
