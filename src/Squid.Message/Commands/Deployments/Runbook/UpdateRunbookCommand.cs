@@ -12,7 +12,7 @@ public class UpdateRunbookCommand : ICommand, ISpaceScoped
 
     public int ProjectId { get; set; }
 
-    public int SpaceId { get; set; }
+    public int? SpaceId { get; set; }
 
     public UpdateRunbookModel Runbook { get; set; }
 

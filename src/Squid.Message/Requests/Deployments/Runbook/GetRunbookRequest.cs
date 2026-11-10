@@ -12,7 +12,7 @@ public class GetRunbookRequest : IRequest, ISpaceScoped
 
     public int ProjectId { get; set; }
 
-    public int SpaceId { get; set; }
+    public int? SpaceId { get; set; }
 
     int? ISpaceScoped.SpaceId => SpaceId;
 }

@@ -56,7 +56,15 @@ public class RunbookService(
                 nameof(command.Runbook),
                 "Runbook input is required.");
 
-        var project = await ResolveProjectAsync(model.ProjectId, model.SpaceId, cancellationToken)
+        var spaceId = model.SpaceId;
+        if (spaceId <= 0)
+        {
+            throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(model.SpaceId),
+                "Runbook space is required.");
+        }
+        var project = await ResolveProjectAsync(model.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var name = RunbookInputNormalizer.NormalizeName(model.Name);
@@ -91,13 +99,18 @@ public class RunbookService(
                 nameof(command.Runbook),
                 "Runbook input is required.");
 
-        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var spaceId = command.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(command.SpaceId),
+                "Runbook space is required.");
+        var project = await ResolveProjectAsync(command.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var runbook = await GetOwnedRunbookAsync(
             command.Id,
             command.ProjectId,
-            command.SpaceId,
+            spaceId,
             cancellationToken).ConfigureAwait(false);
         await EnsurePermissionAsync(runbook.ProjectId, runbook.SpaceId, Permission.RunbookEdit, cancellationToken)
             .ConfigureAwait(false);
@@ -127,13 +140,18 @@ public class RunbookService(
         CopyRunbookCommand command,
         CancellationToken cancellationToken = default)
     {
-        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var spaceId = command.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(command.SpaceId),
+                "Runbook space is required.");
+        var project = await ResolveProjectAsync(command.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var source = await GetOwnedRunbookAsync(
             command.SourceRunbookId,
             command.ProjectId,
-            command.SpaceId,
+            spaceId,
             cancellationToken).ConfigureAwait(false);
         await EnsurePermissionAsync(source.ProjectId, source.SpaceId, Permission.RunbookEdit, cancellationToken)
             .ConfigureAwait(false);
@@ -144,7 +162,7 @@ public class RunbookService(
             var copy = await aggregateDataProvider.CopyAsync(
                 source.Id,
                 command.ProjectId,
-                command.SpaceId,
+                spaceId,
                 name,
                 cancellationToken).ConfigureAwait(false);
 
@@ -160,20 +178,25 @@ public class RunbookService(
         DeleteRunbookCommand command,
         CancellationToken cancellationToken = default)
     {
-        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var spaceId = command.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(command.SpaceId),
+                "Runbook space is required.");
+        var project = await ResolveProjectAsync(command.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         await GetOwnedRunbookAsync(
             command.Id,
             command.ProjectId,
-            command.SpaceId,
+            spaceId,
             cancellationToken).ConfigureAwait(false);
         await EnsurePermissionAsync(project.Id, project.SpaceId, Permission.RunbookEdit, cancellationToken)
             .ConfigureAwait(false);
         await aggregateDataProvider.DeleteAsync(
             command.Id,
             command.ProjectId,
-            command.SpaceId,
+            spaceId,
             cancellationToken).ConfigureAwait(false);
 
         return new DeleteRunbookResponseData { Id = command.Id };
@@ -183,12 +206,17 @@ public class RunbookService(
         GetRunbookRequest request,
         CancellationToken cancellationToken = default)
     {
-        var project = await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
+        var spaceId = request.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(request.SpaceId),
+                "Runbook space is required.");
+        await ResolveProjectAsync(request.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         var runbook = await GetOwnedRunbookAsync(
             request.Id,
             request.ProjectId,
-            request.SpaceId,
+            spaceId,
             cancellationToken).ConfigureAwait(false);
         await EnsurePermissionAsync(runbook.ProjectId, runbook.SpaceId, Permission.RunbookView, cancellationToken)
             .ConfigureAwait(false);
@@ -200,7 +228,12 @@ public class RunbookService(
         GetRunbooksRequest request,
         CancellationToken cancellationToken = default)
     {
-        var project = await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
+        var spaceId = request.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(request.SpaceId),
+                "Runbook space is required.");
+        var project = await ResolveProjectAsync(request.ProjectId, spaceId, cancellationToken)
             .ConfigureAwait(false);
         await EnsurePermissionAsync(project, Permission.RunbookView, cancellationToken).ConfigureAwait(false);
         var (pageIndex, pageSize) = RunbookInputNormalizer.NormalizePaging(
@@ -208,7 +241,7 @@ public class RunbookService(
             request.PageSize);
         var (count, runbooks) = await runbookDataProvider.GetRunbookPagingAsync(
             request.ProjectId,
-            request.SpaceId,
+            spaceId,
             pageIndex,
             pageSize,
             cancellationToken).ConfigureAwait(false);

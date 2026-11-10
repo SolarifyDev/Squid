@@ -10,7 +10,7 @@ public class GetRunbooksRequest : IPaginatedRequest, ISpaceScoped
 {
     public int ProjectId { get; set; }
 
-    public int SpaceId { get; set; }
+    public int? SpaceId { get; set; }
 
     public int PageIndex { get; set; }
 

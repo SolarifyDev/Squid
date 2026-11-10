@@ -23,6 +23,10 @@ public interface IDeploymentProcessService : IScopedDependency
     Task<DeploymentProcessDto> GetProjectDeploymentProcessAsync(
         GetDeploymentProcessRequest request,
         CancellationToken cancellationToken);
+
+    Task<DeploymentProcessDto> GetDeploymentProcessAsync(
+        GetDeploymentProcessRequest request,
+        CancellationToken cancellationToken);
     
     Task<GetDeploymentProcessesResponse> GetDeploymentProcessesAsync(GetDeploymentProcessesRequest request, CancellationToken cancellationToken);
 }
@@ -153,6 +157,50 @@ public class DeploymentProcessService : IDeploymentProcessService
         }
 
         if (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {request.Id} is not a project deployment process.");
+        }
+
+        return await BuildDeploymentProcessDtoAsync(process, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DeploymentProcessDto> GetDeploymentProcessAsync(
+        GetDeploymentProcessRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.RunbookId.HasValue)
+        {
+            await _processContextGuard.ResolveForReadAsync(
+                new ProcessContextRequest(
+                    request.Id,
+                    request.SpaceId,
+                    request.ProjectId,
+                    request.RunbookId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var context = await _processContextGuard.ResolveProjectDeploymentAsync(
+                request.Id,
+                request.ProjectId,
+                request.SpaceId,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            await _processContextGuard.EnsurePermissionAsync(
+                context,
+                write: false,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        var process = await _processDataProvider.GetDeploymentProcessByIdAsync(request.Id, cancellationToken).ConfigureAwait(false);
+        if (process == null)
+        {
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", request.Id);
+        }
+
+        if (!request.RunbookId.HasValue
+            && (process.ProcessKind != DeploymentProcessKind.ProjectDeployment || process.OwnerId.HasValue))
         {
             throw new ProcessContextMismatchException(
                 $"DeploymentProcess {request.Id} is not a project deployment process.");
