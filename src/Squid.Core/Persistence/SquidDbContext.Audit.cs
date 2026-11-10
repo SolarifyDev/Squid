@@ -81,7 +81,13 @@ public partial class SquidDbContext
         ReleaseId = keys.ReleaseId,
         EnvironmentId = keys.EnvironmentId,
         MachineId = keys.MachineId,
-        References = new DocumentEventReferences { DocumentType = documentType, Name = keys.Name }
+        References = new DocumentEventReferences
+        {
+            DocumentType = documentType,
+            DocumentId = keys.DocumentId,
+            ProjectId = keys.ProjectId,
+            Name = keys.Name
+        }
     };
 
     private void DetachAll(IEnumerable<Event> events)

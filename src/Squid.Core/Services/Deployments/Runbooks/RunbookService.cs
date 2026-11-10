@@ -1,8 +1,12 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
+using Squid.Core.Services.Identity;
 using Squid.Message.Commands.Deployments.Runbook;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Runbook;
 using Squid.Message.Requests.Deployments.Runbook;
 
@@ -38,7 +42,9 @@ public interface IRunbookService : IScopedDependency
 public class RunbookService(
     IRunbookDataProvider runbookDataProvider,
     IRunbookAggregateDataProvider aggregateDataProvider,
-    IProjectDataProvider projectDataProvider) : IRunbookService
+    IProjectDataProvider projectDataProvider,
+    IAuthorizationService authorizationService,
+    ICurrentUser currentUser) : IRunbookService
 {
     public async Task<RunbookDto> CreateRunbookAsync(
         CreateRunbookCommand command,
@@ -52,6 +58,7 @@ public class RunbookService(
 
         var project = await ResolveProjectAsync(model.ProjectId, model.SpaceId, cancellationToken)
             .ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var name = RunbookInputNormalizer.NormalizeName(model.Name);
         var description = RunbookInputNormalizer.NormalizeDescription(model.Description);
         var tags = RunbookInputNormalizer.NormalizeTags(model.Tags);
@@ -84,13 +91,16 @@ public class RunbookService(
                 nameof(command.Runbook),
                 "Runbook input is required.");
 
-        await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
             .ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var runbook = await GetOwnedRunbookAsync(
             command.Id,
             command.ProjectId,
             command.SpaceId,
             cancellationToken).ConfigureAwait(false);
+        await EnsurePermissionAsync(runbook.ProjectId, runbook.SpaceId, Permission.RunbookEdit, cancellationToken)
+            .ConfigureAwait(false);
 
         var name = RunbookInputNormalizer.NormalizeName(model.Name);
         var description = RunbookInputNormalizer.NormalizeDescription(model.Description);
@@ -117,13 +127,16 @@ public class RunbookService(
         CopyRunbookCommand command,
         CancellationToken cancellationToken = default)
     {
-        await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
             .ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
         var source = await GetOwnedRunbookAsync(
             command.SourceRunbookId,
             command.ProjectId,
             command.SpaceId,
             cancellationToken).ConfigureAwait(false);
+        await EnsurePermissionAsync(source.ProjectId, source.SpaceId, Permission.RunbookEdit, cancellationToken)
+            .ConfigureAwait(false);
         var name = RunbookInputNormalizer.NormalizeCopyName(source.Name, command.Name);
 
         try
@@ -147,7 +160,15 @@ public class RunbookService(
         DeleteRunbookCommand command,
         CancellationToken cancellationToken = default)
     {
-        await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+        var project = await ResolveProjectAsync(command.ProjectId, command.SpaceId, cancellationToken)
+            .ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookEdit, cancellationToken).ConfigureAwait(false);
+        await GetOwnedRunbookAsync(
+            command.Id,
+            command.ProjectId,
+            command.SpaceId,
+            cancellationToken).ConfigureAwait(false);
+        await EnsurePermissionAsync(project.Id, project.SpaceId, Permission.RunbookEdit, cancellationToken)
             .ConfigureAwait(false);
         await aggregateDataProvider.DeleteAsync(
             command.Id,
@@ -162,13 +183,15 @@ public class RunbookService(
         GetRunbookRequest request,
         CancellationToken cancellationToken = default)
     {
-        await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
+        var project = await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
             .ConfigureAwait(false);
         var runbook = await GetOwnedRunbookAsync(
             request.Id,
             request.ProjectId,
             request.SpaceId,
             cancellationToken).ConfigureAwait(false);
+        await EnsurePermissionAsync(runbook.ProjectId, runbook.SpaceId, Permission.RunbookView, cancellationToken)
+            .ConfigureAwait(false);
 
         return ToDto(runbook);
     }
@@ -177,8 +200,9 @@ public class RunbookService(
         GetRunbooksRequest request,
         CancellationToken cancellationToken = default)
     {
-        await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
+        var project = await ResolveProjectAsync(request.ProjectId, request.SpaceId, cancellationToken)
             .ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookView, cancellationToken).ConfigureAwait(false);
         var (pageIndex, pageSize) = RunbookInputNormalizer.NormalizePaging(
             request.PageIndex,
             request.PageSize);
@@ -237,6 +261,41 @@ public class RunbookService(
         }
 
         return runbook;
+    }
+
+    private async Task EnsurePermissionAsync(
+        Persistence.Entities.Deployments.Project project,
+        Permission permission,
+        CancellationToken cancellationToken) =>
+        await EnsurePermissionAsync(project.Id, project.SpaceId, permission, cancellationToken).ConfigureAwait(false);
+
+    private async Task EnsurePermissionAsync(
+        int projectId,
+        int spaceId,
+        Permission permission,
+        CancellationToken cancellationToken)
+    {
+        if (currentUser.IsInternal)
+        {
+            return;
+        }
+
+        if (currentUser.Id == null)
+        {
+            throw new PermissionDeniedException(
+                permission,
+                "Authorization rejected: user identity not resolved.");
+        }
+
+        await authorizationService.EnsurePermissionAsync(
+            new PermissionCheckRequest
+            {
+                UserId = currentUser.Id.Value,
+                Permission = permission,
+                SpaceId = spaceId,
+                ProjectId = projectId
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private static RunbookDto ToDto(Runbook runbook)

@@ -47,8 +47,10 @@ public class RunbookServiceIntegrationTests : TestBase
                     .ToList();
 
                 runbookEvents.Count(e => e.Category == EventCategory.DocumentCreated).ShouldBe(1);
+                var createdEvent = runbookEvents.Single(e => e.Category == EventCategory.DocumentCreated);
                 runbookEvents.Count(e => e.Category == EventCategory.DocumentModified).ShouldBe(0);
-                runbookEvents.ShouldContain(e => e.ProjectId == project.Id);
+                createdEvent.ProjectId.ShouldBe(project.Id);
+                AssertDocumentReference(createdEvent.ReferencesJson, "Runbook", result.Id, "Payment Recovery");
 
                 db.ChangeTracker.Clear();
 
@@ -114,6 +116,9 @@ public class RunbookServiceIntegrationTests : TestBase
 
                 runbookEvents.Count(e => e.Category == EventCategory.DocumentCreated).ShouldBe(1);
                 runbookEvents.Count(e => e.Category == EventCategory.DocumentModified).ShouldBe(1);
+                var modifiedEvent = runbookEvents.Single(e => e.Category == EventCategory.DocumentModified);
+                modifiedEvent.ProjectId.ShouldBe(project.Id);
+                AssertDocumentReference(modifiedEvent.ReferencesJson, "Runbook", created.Id, "Audit After");
                 updated.Id.ShouldBe(created.Id);
                 updated.ProcessId.ShouldBe(created.ProcessId);
                 updated.VariableSetId.ShouldBe(created.VariableSetId);
@@ -328,13 +333,16 @@ public class RunbookServiceIntegrationTests : TestBase
     [Fact]
     public async Task Delete_RemovesOnlyOwnedAggregateAndChildren()
     {
+        var projectId = 0;
+        var sourceId = 0;
+
         await Run<SquidDbContext>(async db =>
         {
             var project = await SeedProjectAsync(db);
+            projectId = project.Id;
             var projectProcessId = project.DeploymentProcessId;
             var projectVariableSetId = project.VariableSetId;
             var otherProject = await SeedProjectAsync(db, "Other Project", "other-project");
-            var sourceId = 0;
             var otherId = 0;
 
             await Run<IRunbookService>(async service =>
@@ -391,6 +399,9 @@ public class RunbookServiceIntegrationTests : TestBase
                 .ToList();
 
             deletedEvents.Count(e => e.Category == EventCategory.DocumentDeleted).ShouldBeGreaterThanOrEqualTo(1);
+            var deletedEvent = deletedEvents.First(e => e.Category == EventCategory.DocumentDeleted);
+            deletedEvent.ProjectId.ShouldBe(projectId);
+            AssertDocumentReference(deletedEvent.ReferencesJson, "Runbook", sourceId, "Delete Me");
         });
     }
 
@@ -440,6 +451,20 @@ public class RunbookServiceIntegrationTests : TestBase
                 Tags = tags.ToList()
             }
         };
+    }
+
+    private static void AssertDocumentReference(
+        string referencesJson,
+        string documentType,
+        int documentId,
+        string name)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(referencesJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("DocumentType").GetString().ShouldBe(documentType);
+        root.GetProperty("DocumentId").GetInt32().ShouldBe(documentId);
+        root.GetProperty("Name").GetString().ShouldBe(name);
     }
 
     private static async Task<SquidProject> SeedProjectAsync(
