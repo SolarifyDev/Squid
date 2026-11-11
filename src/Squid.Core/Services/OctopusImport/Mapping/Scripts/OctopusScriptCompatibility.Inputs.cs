@@ -25,6 +25,7 @@ internal static partial class OctopusScriptCompatibility
 
         ctx.Parameters = names.Select(name => ResolveTemplateParameter(name, properties, definitions)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
         ctx.Siblings = ctx.Parameters.Where(p => !p.IsSensitive).ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+        ctx.SensitiveParameterNames = ctx.Parameters.Where(p => p.IsSensitive).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     // A value Octopus encrypted in the export is a secret whatever the template says — the definition
@@ -87,6 +88,8 @@ internal static partial class OctopusScriptCompatibility
     {
         if (!ctx.Body.Contains("#{", StringComparison.Ordinal) || OctopusTemplateSpans.TryParse(ctx.Body, out _)) return;
 
+        ctx.SubstitutionUnparsable = true;
+
         ctx.Report(OctopusImportCompatibilitySeverity.Warning, OctopusImportActionMappingDiagnosticCodes.ScriptVariableSubstitutionUnparsable, $"Octopus script action '{ctx.Action.Name}' contains a '#{{' that Squid's variable substitution cannot parse, so no #{{...}} expression in this script is substituted at deploy time (Octopus values read by the script will be empty). Escape a literal '#{{' as '##{{'.");
     }
 
@@ -106,7 +109,8 @@ internal static partial class OctopusScriptCompatibility
     [GeneratedRegex(@"\$OctopusParameters\[\s*(?<q>['""])(?<key>[^'""\r\n]+)\k<q>\s*\]", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex PowerShellParameterReference();
 
-    [GeneratedRegex(@"get_octopusvariable\s+(?:(?<q>['""])(?<key>[^'""\r\n]+)\k<q>|(?<key>[^\s'""`$()]+))", RegexOptions.CultureInvariant)]
+    // An unquoted key ends at whitespace, a quote, an expansion or a shell metacharacter (get_octopusvariable Region; …).
+    [GeneratedRegex(@"get_octopusvariable\s+(?:(?<q>['""])(?<key>[^'""\r\n]+)\k<q>|(?<key>[^\s'""`$();|&<>]+))", RegexOptions.CultureInvariant)]
     private static partial Regex BashParameterReference();
 
     // $OctopusParameters[$x], $OctopusParameters["a-$x"], $OctopusParameters.Keys / .Item(…) / .GetEnumerator() …

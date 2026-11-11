@@ -98,6 +98,10 @@ internal static partial class OctopusScriptCompatibility
                 case OctopusTemplateSpanKind.Substitution:
                     CollectSubstitution(ctx, span, segments, expanding);
                     break;
+                case OctopusTemplateSpanKind.Block when ctx.SubstitutionUnparsable:
+                    // Squid will not substitute this script, so the tag would reach the shell as raw text
+                    // (a bash comment that swallows the rest of the line). Nothing it controls can be evaluated.
+                    break;
                 default:
                     WarnIndirectSiblingUse(ctx, span.SymbolName, expanding);
                     segments.Add(new ValueSegment(SegmentKind.Template, span.OpenTag));
@@ -231,7 +235,7 @@ internal static partial class OctopusScriptCompatibility
 
     private static void SubstituteParameterReferencesInBody(CompatibilityContext ctx)
     {
-        if (ctx.Siblings.Count == 0 || !ctx.Body.Contains("#{", StringComparison.Ordinal) || !OctopusTemplateSpans.TryParse(ctx.Body, out var spans)) return;
+        if (ctx.Siblings.Count + ctx.SensitiveParameterNames.Count == 0 || !ctx.Body.Contains("#{", StringComparison.Ordinal) || !OctopusTemplateSpans.TryParse(ctx.Body, out var spans)) return;
 
         var body = new StringBuilder(ctx.Body.Length);
 
@@ -246,15 +250,35 @@ internal static partial class OctopusScriptCompatibility
         {
             if (span.Kind == OctopusTemplateSpanKind.Block)
             {
+                WarnIndirectSiblingUse(ctx, span.SymbolName, expanding);
                 output.Append(span.OpenTag);
                 AppendWithParametersInlined(ctx, span.Children, output, expanding);
                 output.Append(span.CloseTag);
             }
             else if (span.Kind == OctopusTemplateSpanKind.Substitution && TryGetSibling(ctx, span, expanding, out var sibling))
                 AppendSiblingTemplate(ctx, sibling, span, output, expanding);
+            else if (span.Kind == OctopusTemplateSpanKind.Substitution)
+                AppendBodySubstitution(ctx, span, output, expanding);
             else
                 output.Append(span.Raw);
         }
+    }
+
+    private static void AppendBodySubstitution(CompatibilityContext ctx, OctopusTemplateSpan span, StringBuilder output, List<string> expanding)
+    {
+        if (!span.IsPlainSymbol) WarnIndirectSiblingUse(ctx, span.SymbolName, expanding);
+
+        output.Append(span.IsPlainSymbol && ctx.SensitiveParameterNames.Contains(span.SymbolName ?? string.Empty) ? GuardedSensitiveReference(span) : span.Raw);
+    }
+
+    // A sensitive template parameter is always defined on Octopus (empty when unset), but on Squid it is only the
+    // project variable the operator creates. The guard reads as that variable's exact value when it exists (even
+    // "0" or "False" — it compares with "", not truthiness) and as empty instead of the literal #{Name} when not.
+    private static string GuardedSensitiveReference(OctopusTemplateSpan span)
+    {
+        var guarded = $"#{{if {span.SymbolName} != \"\"}}{span.Raw}#{{/if}}";
+
+        return OctopusTemplateSpans.TryParse(guarded, out _) ? guarded : span.Raw;
     }
 
     // Octopus evaluates #{Parameter} in a step-template body to the parameter's value; inlining the

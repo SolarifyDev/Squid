@@ -90,7 +90,9 @@ internal static partial class OctopusScriptCompatibility
         // Resolved Octopus inputs
         public List<TemplateParameter> Parameters { get; set; } = [];
         public Dictionary<string, TemplateParameter> Siblings { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public HashSet<string> SensitiveParameterNames { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         public IReadOnlyList<string> References { get; set; } = [];
+        public bool SubstitutionUnparsable { get; set; }
 
         // Output
         public List<ParameterEntry> Entries { get; } = [];

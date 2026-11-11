@@ -42,6 +42,9 @@ public sealed class PrepareDeploymentCreatorVariablesTests
         { "NullUserName", 5, 0, [User(5, null, null)], "5", "", "" },
         { "DeletedUser", 77, 0, [User(5, "alice", "Alice A")], "77", "", "" },
         { "InternalSystemUser", CurrentUsers.InternalUser.Id, 0, [User(CurrentUsers.InternalUser.Id, CurrentUsers.InternalUser.Name, CurrentUsers.InternalUser.Name, isSystem: true)], "8888", "internal_user", "internal_user" },
+        // A deployment created through an API key carries the key owner's id (ICurrentUser.Id) as DeployedBy.
+        { "ApiKeyOwnerServiceAccount", 12, 0, [User(5, "alice", "Alice A"), User(12, "svc-ci", "CI pipeline")], "12", "svc-ci", "CI pipeline" },
+        { "DisabledUserStillNamed", 13, 0, [User(13, "bob", "Bob B", isDisabled: true)], "13", "bob", "Bob B" },
         { "NoActor", 0, 0, [User(5, "alice", "Alice A")], "", "", "" },
         { "NegativeActor", -1, 0, [User(5, "alice", "Alice A")], "", "", "" }
     };
@@ -110,8 +113,8 @@ public sealed class PrepareDeploymentCreatorVariablesTests
         return matches[0].Value;
     }
 
-    private static UserAccount User(int id, string userName, string displayName, bool isSystem = false)
-        => new() { Id = id, UserName = userName, DisplayName = displayName, IsSystem = isSystem };
+    private static UserAccount User(int id, string userName, string displayName, bool isSystem = false, bool isDisabled = false)
+        => new() { Id = id, UserName = userName, DisplayName = displayName, IsSystem = isSystem, IsDisabled = isDisabled };
 
     private static IRepository Repository(params UserAccount[] users)
     {

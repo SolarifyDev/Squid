@@ -455,6 +455,168 @@ public class OctopusScriptCompatibilityHardeningTests
         run.StdOut.ShouldBe("xN'1y|#{literal} it's|[p][q]|shown");
     }
 
+    // ── A script Squid cannot substitute still runs (block tags never reach the shell) ─────────────
+
+    public static TheoryData<string, string> BlockValuesInUnparsableScripts => new()
+    {
+        { "If", "pre#{if Debug}dbg#{/if}post" },
+        { "Unless", "pre#{unless Debug}dbg#{/unless}post" },
+        { "Each", "pre#{each item in Items}[#{item}]#{/each}post" },
+        { "NestedIfInEach", "pre#{each item in Items}#{if Debug}#{item}#{/if}#{/each}post" }
+    };
+
+    [Theory]
+    [MemberData(nameof(BlockValuesInUnparsableScripts))]
+    public void UnparsableScript_BlockTagsInAValue_AreNeverEmittedIntoThePreamble(string caseName, string value)
+    {
+        foreach (var syntax in new[] { "Bash", "PowerShell" })
+        {
+            var body = syntax == "Bash" ? "echo \"[$(get_octopusvariable Q)]\"\necho 'literal #{ brace'" : "Write-Output \"[$Q]\"\nWrite-Output 'literal #{ brace'";
+            var result = Map(TemplateAction(syntax, body, ("Q", value)), Template(("Q", "", false)));
+            var preamble = ScriptBody(result)[..ScriptBody(result).IndexOf(OctopusScriptCompatibility.PreambleEndMarker, StringComparison.Ordinal)];
+
+            preamble.ShouldNotContain("#{", customMessage: $"{caseName}/{syntax}: Squid will not substitute this script, so any #{{...}} tag left in the preamble reaches the shell");
+            result.Diagnostics.Single(d => d.Code == OctopusImportActionMappingDiagnosticCodes.ScriptVariableSubstitutionUnparsable).Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning, customMessage: caseName);
+        }
+    }
+
+    [Trait("Category", "OctopusImportScriptE2E")]
+    [Theory]
+    [MemberData(nameof(BlockValuesInUnparsableScripts))]
+    public async Task Bash_UnparsableScriptWithBlockValue_StillRunsEveryLine(string caseName, string value)
+    {
+        if (!HasBash) return;
+
+        var body = "echo \"[$(get_octopusvariable Q)][$(get_octopusvariable Plain)]\"\necho 'literal #{ brace'\necho after";
+        var action = TemplateAction("Bash", body, ("Q", value), ("Plain", "p'1"));
+        var script = DeployTimeExpand(ScriptBody(Map(action, Template(("Q", "", false), ("Plain", "", false)))), ("Debug", "True"), ("Items", "a,b"));
+
+        var run = await RunBashAsync(script);
+
+        run.ExitCode.ShouldBe(0, customMessage: $"{caseName}: {run.StdErr}");
+        run.StdErr.ShouldBeEmpty(customMessage: caseName);
+        run.StdOut.ShouldBe("[prepost][p'1]\nliteral #{ brace\nafter\n", customMessage: caseName);
+    }
+
+    [Trait("Category", "OctopusImportScriptE2E")]
+    [Theory]
+    [MemberData(nameof(BlockValuesInUnparsableScripts))]
+    public async Task PowerShell_UnparsableScriptWithBlockValue_StillRunsEveryLine(string caseName, string value)
+    {
+        if (!HasPwsh) return;
+
+        var body = "[Console]::Out.Write(\"[$Q][$Plain]|\")\n[Console]::Out.Write('literal #{ brace|')\n[Console]::Out.Write('after')";
+        var action = TemplateAction("PowerShell", body, ("Q", value), ("Plain", "p'1"));
+        var script = DeployTimeExpand(ScriptBody(Map(action, Template(("Q", "", false), ("Plain", "", false)))), ("Debug", "True"), ("Items", "a,b"));
+
+        var run = await RunPwshAsync(script);
+
+        run.ExitCode.ShouldBe(0, customMessage: $"{caseName}: {run.StdErr}");
+        run.StdErr.ShouldBeEmpty(customMessage: caseName);
+        run.StdOut.ShouldBe("[prepost][p'1]|literal #{ brace|after", customMessage: caseName);
+    }
+
+    // ── Template parameters used through a filter / block in the SCRIPT BODY ──────────────────────
+
+    [Theory]
+    [InlineData("echo \"#{Url | ToUpper}\"")]
+    [InlineData("echo \"#{if Url}set#{/if}\"")]
+    [InlineData("echo \"#{unless Url}unset#{/unless}\"")]
+    [InlineData("echo \"#{each u in Url}[#{u}]#{/each}\"")]
+    [InlineData("echo \"#{if Other}#{Url | ToLower}#{/if}\"")]
+    public void SiblingUsedThroughAFilterOrBlockInTheBody_IsWarned(string body)
+    {
+        var result = Map(TemplateAction("Bash", body, ("Url", "http://x")), Template(("Url", "", false)));
+
+        var warning = result.Diagnostics.Single(d => d.Code == OctopusImportActionMappingDiagnosticCodes.ScriptOctopusValueNotTransportable);
+        warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        warning.Message.ShouldContain("'Url'");
+    }
+
+    [Theory]
+    [InlineData("echo \"#{Url}\"")]
+    [InlineData("echo \"#{if Other}#{Url}#{/if}\"")]
+    [InlineData("echo \"#{NotAParameter | ToUpper}\"")]
+    public void PlainSiblingOrNonParameterInTheBody_IsNotWarned(string body)
+    {
+        var result = Map(TemplateAction("Bash", body, ("Url", "http://x")), Template(("Url", "", false)));
+
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportActionMappingDiagnosticCodes.ScriptOctopusValueNotTransportable);
+    }
+
+    // ── Sensitive template parameter referenced in the SCRIPT BODY ────────────────────────────────
+
+    [Trait("Category", "OctopusImportScriptE2E")]
+    [Theory]
+    [InlineData(null, "[][x?k=]")]
+    [InlineData("k1", "[k1][x?k=k1]")]
+    [InlineData("0", "[0][x?k=0]")]
+    [InlineData("False", "[False][x?k=False]")]
+    [InlineData("no", "[no][x?k=no]")]
+    [InlineData(" ", "[ ][x?k= ]")]
+    public async Task SensitiveParameterReferencedInTheBody_IsEmptyWhenUndefinedAndExactOtherwise(string projectValue, string expected)
+    {
+        if (!HasBash) return;
+
+        var action = TemplateAction("Bash", "printf '[%s][%s]' '#{ApiKey}' '#{Url}'", ("Url", "x?k=#{ApiKey}"));
+        var result = Map(action, Template(("ApiKey", null, true), ("Url", "", false)));
+        var variables = projectValue == null ? Array.Empty<(string, string)>() : [("ApiKey", projectValue)];
+
+        var run = await RunBashAsync(DeployTimeExpand(ScriptBody(result), variables));
+
+        result.HasBlockers.ShouldBeFalse();
+        run.ExitCode.ShouldBe(0, customMessage: run.StdErr);
+        run.StdOut.ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("PowerShell")]
+    [InlineData("Bash")]
+    [InlineData("Python")]
+    public void SensitiveParameterReferencedInTheBody_NeverReachesTheScriptAsALiteralToken(string syntax)
+    {
+        var result = Map(TemplateAction(syntax, "x = '#{ApiKey}'"), Template(("ApiKey", null, true)));
+        var expanded = DeployTimeExpand(ScriptBody(result));
+
+        // The preamble may keep an unresolved '#{ApiKey | ToBase64}' — its decoder skips it; the body must not.
+        expanded.Split(OctopusScriptCompatibility.PreambleEndMarker).Last().TrimStart('\n').ShouldBe("x = ''");
+    }
+
+    // ── Unquoted bash keys end at shell metacharacters ────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("v=$(get_octopusvariable Region;)")]
+    [InlineData("get_octopusvariable Region; echo")]
+    [InlineData("get_octopusvariable Region|tr a-z A-Z")]
+    [InlineData("get_octopusvariable Region&&echo")]
+    [InlineData("get_octopusvariable Region>out.txt")]
+    [InlineData("get_octopusvariable Region<in.txt")]
+    [InlineData("get_octopusvariable Region&")]
+    public void UnquotedBashKey_StopsAtShellMetacharacters(string body)
+    {
+        var result = Map(ScriptAction("Bash", body), null);
+        var script = ScriptBody(result);
+
+        script.ShouldContain("'Region') __squid_octopus_value '#{Region | ToBase64}'");
+        script.ShouldNotContain("'Region;')");
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportActionMappingDiagnosticCodes.ScriptOctopusValueNotTransportable);
+    }
+
+    [Trait("Category", "OctopusImportScriptE2E")]
+    [Fact]
+    public async Task Bash_UnquotedKeyFollowedByMetacharacters_ReadsTheValue()
+    {
+        if (!HasBash) return;
+
+        var body = "get_octopusvariable Region; printf '|'; get_octopusvariable Region|tr a-z A-Z; printf '|'; get_octopusvariable Region&&printf '|ok'";
+        var script = DeployTimeExpand(ScriptBody(Map(ScriptAction("Bash", body), null)), ("Region", "eu"));
+
+        var run = await RunBashAsync(script);
+
+        run.ExitCode.ShouldBe(0, customMessage: run.StdErr);
+        run.StdOut.ShouldBe("eu|EU|eu|ok");
+    }
+
     [Fact]
     public void NewDiagnosticCodes_ArePinned()
     {
