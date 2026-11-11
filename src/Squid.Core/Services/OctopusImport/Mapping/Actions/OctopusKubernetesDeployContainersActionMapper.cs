@@ -122,14 +122,16 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         return new OctopusImportActionMappingResult(model, diagnostics);
     }
 
-    // Octopus "Wait for the deployment to succeed" (DeploymentWait=Wait) is the legacy pre-Step-
-    // Verification switch; when the newer ResourceStatusCheck is present it wins (already mapped).
+    // Octopus "Wait for the deployment to succeed" (DeploymentWait=Wait) wins over ResourceStatusCheck:
+    // Calamari's ResourceStatusReportScriptWrapper.IsEnabled checks DeploymentWait first and skips its
+    // own status check because the legacy rollout wait already runs. Squid has a single status check,
+    // so the legacy wait switches it on whatever ResourceStatusCheck (already mapped) says.
     private static void AddDeploymentWaitStatusCheck(OctopusDeploymentActionDto action, List<ActionPropertyModel> properties, List<OctopusImportDiagnosticDto> diagnostics)
     {
-        if (OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, OctopusImportKubernetesActionMapperSupport.OctopusResourceStatusCheck, out _)) return;
         if (!OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, OctopusDeploymentWait, out var wait)) return;
         if (!string.Equals(wait.Trim(), "Wait", StringComparison.OrdinalIgnoreCase)) return;
 
+        properties.RemoveAll(p => string.Equals(p.PropertyName, KubernetesProperties.ObjectStatusCheck, StringComparison.Ordinal));
         OctopusImportKubernetesActionMapperSupport.AddProperty(properties, KubernetesProperties.ObjectStatusCheck, KubernetesBooleanValues.True);
 
         diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(

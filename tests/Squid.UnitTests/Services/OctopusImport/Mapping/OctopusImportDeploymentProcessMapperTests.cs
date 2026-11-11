@@ -255,6 +255,130 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
+    public void MapToCreateStepCommands_UnmappedOctopusReferences_ReportsOneWarningPerActionListingEachDistinctName()
+    {
+        var customResource = "metadata:\n  name: #{Octopus.Action.KubernetesContainers.DeploymentName}-hpa\n  labels:\n    release: #{Octopus.Release.Number}\nspec:\n  ref: #{Octopus.Action.KubernetesContainers.ComputedConfigMapName | ToLower}\n  secretRef: #{Octopus.Action.KubernetesContainers.ComputedSecretName}\n  again: #{Octopus.Action.KubernetesContainers.DeploymentName}\n  app: #{AppName}\n";
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Unmapped",
+            Name = "Deploy",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Containers",
+                    Name = "Deploy web",
+                    ActionType = "Octopus.KubernetesDeployContainers",
+                    Properties =
+                    {
+                        ["Octopus.Action.EnabledFeatures"] = "Octopus.Features.KubernetesCustomResource",
+                        ["Octopus.Action.KubernetesContainers.CustomResourceYaml"] = customResource
+                    }
+                },
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Script",
+                    Name = "Notify",
+                    ActionType = "Octopus.Script",
+                    Properties =
+                    {
+                        ["Octopus.Action.RunOnServer"] = "true",
+                        ["Octopus.Action.Script.Syntax"] = "Bash",
+                        ["Octopus.Action.Script.ScriptBody"] = "echo #{Octopus.Release.Number} #{Octopus.Web.ServerUri}"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        var warnings = result.Diagnostics.Where(d => d.Code == OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable).ToList();
+        warnings.Count.ShouldBe(2);
+        warnings.ShouldAllBe(d => d.Severity == OctopusImportCompatibilitySeverity.Warning);
+        var containers = warnings.Single(d => d.SourceId == "Actions-Containers");
+        containers.ResourceType.ShouldBe(OctopusResourceKind.DeploymentAction.ToString());
+        containers.Message.ShouldContain("Octopus.Action.KubernetesContainers.ComputedConfigMapName, Octopus.Action.KubernetesContainers.ComputedSecretName, Octopus.Action.KubernetesContainers.DeploymentName that Squid does not provide");
+        containers.Message.ShouldNotContain("Octopus.Release.Number");
+        containers.Message.ShouldNotContain("AppName");
+        warnings.Single(d => d.SourceId == "Actions-Script").Message.ShouldContain("Octopus.Web.ServerUri that");
+        result.HasBlockers.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_UnmappedOctopusReferenceInStepProperty_ReportsAgainstTheStep()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Condition",
+            Name = "Conditional",
+            Properties = { ["Octopus.Step.ConditionExpression"] = "#{if Octopus.Deployment.Error}true#{/if}" },
+            Actions = [ new OctopusDeploymentActionDto { Id = "Actions-1", Name = "Approve", ActionType = "Octopus.Manual" } ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        var warning = result.Diagnostics.Single(d => d.Code == OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable);
+        warning.SourceId.ShouldBe("Steps-Condition");
+        warning.ResourceType.ShouldBe(OctopusResourceKind.DeploymentStep.ToString());
+        warning.Message.ShouldContain("Octopus.Deployment.Error that");
+    }
+
+    [Theory]
+    [InlineData("echo #{Octopus.Release.Number} #{Octopus.Environment.Name} #{AppName}")]
+    [InlineData("echo Octopus.Unknown outside an expression")]
+    [InlineData("echo plain")]
+    public void MapToCreateStepCommands_OnlyMappedOrNonOctopusReferences_ReportsNothing(string scriptBody)
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Clean",
+            Name = "Clean",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Clean",
+                    Name = "Run script",
+                    ActionType = "Octopus.Script",
+                    Properties = { ["Octopus.Action.RunOnServer"] = "true", ["Octopus.Action.Script.Syntax"] = "Bash", ["Octopus.Action.Script.ScriptBody"] = scriptBody }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable);
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_UnmappedReferenceOnlyInDisabledCustomResource_ReportsNothingBecauseItIsNotImported()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Disabled",
+            Name = "Deploy",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Disabled",
+                    Name = "Deploy web",
+                    ActionType = "Octopus.KubernetesDeployContainers",
+                    Properties =
+                    {
+                        ["Octopus.Action.EnabledFeatures"] = "Octopus.Features.KubernetesService",
+                        ["Octopus.Action.KubernetesContainers.CustomResourceYaml"] = "name: #{Octopus.Action.KubernetesContainers.DeploymentName}"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable);
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_PassesExportedStepTemplatesToActionMappers()
     {
         var process = Process(new OctopusDeploymentStepDto

@@ -130,6 +130,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         foreach (var stepProperty in stepProperties)
             stepProperty.PropertyValue = OctopusSystemVariables.RewriteReferences(stepProperty.PropertyValue);
 
+        AddUnmappedOctopusReferenceDiagnostic(stepProperties.Select(p => p.PropertyValue), OctopusResourceKind.DeploymentStep, step.Id, step.Name, diagnostics);
+
         foreach (var targetRole in actions.SelectMany(a => GetTargetRoles(a.SourceAction)))
             AddOrAppendStepProperty(stepProperties, SpecialVariables.Step.TargetRoles, targetRole);
 
@@ -213,6 +215,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         model.CanBeUsedForProjectVersioning = false;
         model.Properties ??= [];
         RewriteOctopusVariableReferences(model.Properties);
+        AddUnmappedOctopusReferenceDiagnostic(model.Properties.Select(p => p?.PropertyValue), OctopusResourceKind.DeploymentAction, action.Id, action.Name, diagnostics);
         model.Environments = MapScopedIds(action, action.Environments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingEnvironmentMapping, "environment", idMap, diagnostics);
         model.ExcludedEnvironments = MapScopedIds(action, action.ExcludedEnvironments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingExcludedEnvironmentMapping, "excluded environment", idMap, diagnostics);
         model.Channels = MapScopedIds(action, action.Channels, OctopusResourceKind.Channel, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingChannelMapping, "channel", idMap, diagnostics);
@@ -226,11 +229,29 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         return new ActionMapping(action, actionIndex, model);
     }
     // #{Octopus.Release.Number} etc. would silently stay unresolved on Squid; rewrite every mapped
-    // built-in reference to its Squid name (unmapped names are left untouched and still reported).
+    // built-in reference to its Squid name. Unmapped names are left untouched and reported by
+    // AddUnmappedOctopusReferenceDiagnostic, which runs on the rewritten values.
     private static void RewriteOctopusVariableReferences(List<ActionPropertyModel> properties)
     {
         foreach (var property in properties.Where(p => p != null))
             property.PropertyValue = OctopusSystemVariables.RewriteReferences(property.PropertyValue);
+    }
+
+    // One Warning per action / step listing every Octopus built-in still referenced after the rewrite:
+    // Squid has no such variable, so the expression stays unresolved at deploy time.
+    private static void AddUnmappedOctopusReferenceDiagnostic(IEnumerable<string> values, OctopusResourceKind kind, string sourceId, string name, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        var unmapped = values.SelectMany(OctopusSystemVariables.FindUnmappedReferences).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (unmapped.Count == 0) return;
+
+        diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable,
+            $"Octopus {kind} '{name}' references Octopus built-in variable(s) {string.Join(", ", unmapped)} that Squid does not provide; they stay unresolved when deploying. Replace them with a project variable or a Squid equivalent.",
+            kind,
+            sourceId,
+            name));
     }
 
     private static int? MapWorkerPool(

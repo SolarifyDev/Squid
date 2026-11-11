@@ -50,10 +50,31 @@ public static partial class OctopusSystemVariables
         return ExpressionPattern().Replace(text, expression => OctopusNamePattern().Replace(expression.Value, ReplaceName));
     }
 
+    /// <summary>
+    /// Lists, distinct and sorted, every <c>Octopus.*</c> name inside a <c>#{...}</c> expression that has
+    /// no Squid equivalent (so <see cref="RewriteReferences"/> leaves it and it stays unresolved on Squid).
+    /// Indexed names such as <c>Octopus.Action[Build].Output.Tag</c> are reported whole.
+    /// </summary>
+    public static IReadOnlyList<string> FindUnmappedReferences(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains("#{", StringComparison.Ordinal)) return [];
+
+        return ExpressionPattern().Matches(text)
+            .SelectMany(expression => OctopusReferencePattern().Matches(expression.Value))
+            .Select(match => match.Value)
+            .Where(name => !TryGetSquidName(name, out _))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private static string ReplaceName(Match match) => TryGetSquidName(match.Value, out var squidName) ? squidName : match.Value;
 
     [GeneratedRegex(@"#\{[^{}]*\}", RegexOptions.CultureInvariant)]
     private static partial Regex ExpressionPattern();
+
+    [GeneratedRegex(@"(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+|\[[^\[\]{}]*\])+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex OctopusReferencePattern();
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+)+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OctopusNamePattern();

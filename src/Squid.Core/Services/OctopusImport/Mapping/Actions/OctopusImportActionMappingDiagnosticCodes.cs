@@ -32,4 +32,5 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string StepTemplateMissingFromExport = "OctopusImport.Action.Script.StepTemplateMissingFromExport";
     public const string SensitiveStepTemplateParameter = "OctopusImport.Action.Script.SensitiveStepTemplateParameter";
     public const string KubernetesYamlFileSelectionUnsupported = "OctopusImport.Action.KubernetesYaml.FileSelectionUnsupported";
+    public const string DisabledFeatureResourceReferenced = "OctopusImport.Action.Kubernetes.DisabledFeatureResourceReferenced";
 }

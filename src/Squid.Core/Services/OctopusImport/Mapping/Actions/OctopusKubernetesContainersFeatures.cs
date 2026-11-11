@@ -31,12 +31,21 @@ internal static class OctopusKubernetesContainersFeatures
         if (action?.Properties == null || !TryGetRawProperty(action.Properties, OctopusPropertyNames.ActionEnabledFeatures, out var rawFeatures)) return action;
 
         var enabled = ParseFeatures(rawFeatures);
+
+        OctopusKubernetesContainersLinkedResources.AddDanglingReferenceDiagnostics(action, enabled, diagnostics);
+
         var disabledKeys = CollectDisabledKeys(action, enabled, diagnostics);
 
         if (disabledKeys.Count == 0) return action;
 
-        return WithProperties(action, action.Properties.Where(p => !disabledKeys.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase));
+        return WithProperties(action, KeepProperties(action.Properties, disabledKeys));
     }
+
+    // Keeps the source dictionary's own comparer: the export DTO is case-sensitive, so two keys that
+    // differ only by case are both legal there and must both survive (re-keying case-insensitively
+    // would throw). Lookups downstream are case-insensitive and take the first match in source order.
+    private static Dictionary<string, string> KeepProperties(Dictionary<string, string> properties, HashSet<string> disabledKeys)
+        => properties.Where(p => !disabledKeys.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value, properties.Comparer);
 
     private static HashSet<string> CollectDisabledKeys(OctopusDeploymentActionDto action, HashSet<string> enabled, List<OctopusImportDiagnosticDto> diagnostics)
     {
