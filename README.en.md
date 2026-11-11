@@ -1,42 +1,29 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
-  <img src="branding/squid-wordmark.png" alt="Squid" width="200">
-</picture>
-
-<br><br>
-
-<picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/hero-en-dark.svg">
-  <img src="branding/readme/hero-en-light.svg" alt="Release, simplified. The free, ready-to-use release platform with enterprise-grade features, for Kubernetes, Linux, Windows, SSH, and AI agents." width="100%">
+  <img src="branding/readme/hero-en-light.svg" alt="Squid — Next-generation release platform. Free, simple, enterprise-grade: one pipeline from release to production." width="100%">
 </picture>
 
-<br><br>
-
-<a href="#quick-start"><b>Quick start</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="#documentation"><b>Docs</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="#migrating-from-octopus"><b>Migrate from Octopus</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="README.md"><b>简体中文</b></a>
-
-<br><br>
-
-[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square)](LICENSE)
+<a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#documentation">Docs</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#migrating-from-octopus">Migrate from Octopus</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="README.md">简体中文</a>
 
 </div>
 
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-en-dark.svg">
-  <img src="branding/readme/features-en-light.svg" alt="Free and self-hosted, ready to use, one release model, cloud native, enterprise governance, extensible" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/orbit-en-dark.svg">
+  <img src="branding/readme/orbit-en-light.svg" alt="One pipeline, every target: Kubernetes, Linux, Windows, SSH, and AI agents" width="100%">
 </picture>
 
 <br><br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-en-dark.svg">
+  <img src="branding/readme/features-en-light.svg" alt="Built for teams, enterprise-grade by default: free and self-hosted, ready to use, one release model, cloud native, enterprise governance, extensible" width="100%">
+</picture>
+
+<br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/free-en-dark.svg">

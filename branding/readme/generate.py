@@ -1,23 +1,30 @@
-"""Generate the README visuals: hero, feature grid, and free card in zh/en x light/dark.
+"""Generate the README visuals (hero, orbit, features, free) in zh/en x light/dark.
 
-Usage: python3 branding/readme/generate.py [output-dir]
-Output defaults to this script's directory. Edit COPY / THEMES, then re-run.
+Usage:
+    python3 branding/readme/generate.py --fonts <dir> [--out <dir>]
+
+Requires `fonttools` and `brotli` (pip install fonttools brotli) and two
+SIL OFL fonts in <dir>, downloaded from https://github.com/google/fonts:
+    Inter.ttf       ofl/inter/Inter[opsz,wght].ttf
+    NotoSansSC.ttf  ofl/notosanssc/NotoSansSC[wght].ttf
+Only the glyphs each SVG uses are embedded (WOFF2), so the visuals render
+identically on every OS. Edit COPY / THEMES, then re-run.
 """
-import os, sys
+import argparse, base64, io, math, os, random
+from fontTools.ttLib import TTFont
+from fontTools.varLib.instancer import instantiateVariableFont
+from fontTools import subset
 
-OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
-os.makedirs(OUT, exist_ok=True)
-
-FONT = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', Helvetica, Arial, sans-serif"
-MONO = "ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
+HERE = os.path.dirname(os.path.abspath(__file__))
+W = 1280
 
 THEMES = {
-    "dark": dict(bg="#05080F", card="#0B1220", stroke="#1C2638", title="#F5F7FA", body="#8B98AD",
-                 faint="#4A5568", pill="#0E1626", glowA="#14B8A6", glowB="#6366F1", glowOp="0.38",
-                 gradA="#FFFFFF", gradB="#9FB3C8", accent="#2DD4BF", iconBg="#0F1D2B"),
-    "light": dict(bg="#F7F9FC", card="#FFFFFF", stroke="#E4E9F0", title="#0A1628", body="#5B6B82",
-                  faint="#A0AEC0", pill="#FFFFFF", glowA="#5EEAD4", glowB="#A5B4FC", glowOp="0.45",
-                  gradA="#0A1628", gradB="#33507A", accent="#0D9488", iconBg="#ECFDF8"),
+    "light": dict(text="#121317", muted="#5F6368", rule="#E3E5E8", wordmark="squid-wordmark.png",
+                  tile="#FFFFFF", card="#FFFFFF", cardOp="0.86", cardRule="#ECEEF1", aurora="0.55",
+                  auroraColors=("#2DD4BF", "#60A5FA", "#A78BFA", "#FCD34D")),
+    "dark": dict(text="#E8EAED", muted="#9AA0A6", rule="#2A2F36", wordmark="squid-wordmark-reverse.png",
+                 tile="#0A0C10", card="#111418", cardOp="0.82", cardRule="#23272E", aurora="0.5",
+                 auroraColors=("#14B8A6", "#3B82F6", "#8B5CF6", "#EC4899")),
 }
 
 ICONS = {
@@ -27,21 +34,18 @@ ICONS = {
     "hex": '<path d="M12 2.5l8.5 4.9v9.2L12 21.5l-8.5-4.9V7.4z"/><circle cx="12" cy="12" r="3.2"/>',
     "shield": '<path d="M12 3l8 3v6c0 4.6-3.4 8.2-8 9-4.6-.8-8-4.4-8-9V6z"/><path d="M8.6 12l2.4 2.4 4.4-4.6"/>',
     "plug": '<rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><path d="M17 13.5v7M13.5 17h7"/>',
-    "k8s": '<path d="M12 2.5l8.5 4.9v9.2L12 21.5l-8.5-4.9V7.4z"/><circle cx="12" cy="12" r="3.2"/>',
-    "linux": '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 10l3 2.5L7 15M12.5 15H17"/>',
-    "windows": '<path d="M3.5 5.5l7-1v7h-7zM12.5 4.2l8-1.2v8.5h-8zM3.5 13h7v7l-7-1zM12.5 13h8v8.5l-8-1.2z"/>',
-    "ssh": '<rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 018 0v3"/>',
-    "ai": '<path d="M12 3l1.9 7.1L21 12l-7.1 1.9L12 21l-1.9-7.1L3 12l7.1-1.9z"/>',
 }
 
 COPY = {
     "zh": dict(
-        eyebrow="SQUID", headline="发布，本该如此简单。",
-        sub="免费、开箱即用的企业级发布平台",
-        flow="一条流水线 · 覆盖所有目标",
-        targets=[("k8s", "Kubernetes"), ("linux", "Linux"), ("windows", "Windows"), ("ssh", "SSH"), ("ai", "AI Agent")],
+        headline="新一代发布平台，开箱即用",
+        sub="免费、简单、企业级。一条流水线，从 Release 到生产。",
+        orbit_caption="一条流水线，覆盖每一个目标",
+        targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
+        heading=["为团队打造的", "企业级发布能力"],
+        intro=["从单个服务到成百上千个目标，", "用同一套模型完成发布、审批与审计。"],
         features=[
-            ("free", "免费自托管", ["不限项目、用户与目标", "无任何授权费用"]),
+            ("free", "免费自托管", ["不限项目、用户与目标", "没有任何授权费用"]),
             ("bolt", "开箱即用", ["一个服务、一个数据库", "Agent 一行命令安装"]),
             ("layers", "统一发布模型", ["环境、生命周期与 Release", "一套概念贯穿所有目标"]),
             ("hex", "云原生", ["Kubernetes Agent 与 API 双模式", "原生 Helm、Kustomize、YAML"]),
@@ -53,119 +57,235 @@ COPY = {
         rows=[("软件费用", "免费", "按档位订阅"), ("项目与用户", "不限", "随档位限制"), ("部署目标", "不限", "按节点计费")],
     ),
     "en": dict(
-        eyebrow="SQUID", headline="Release, simplified.",
-        sub="The free, ready-to-use release platform with enterprise-grade features.",
-        flow="ONE PIPELINE · EVERY TARGET",
-        targets=[("k8s", "Kubernetes"), ("linux", "Linux"), ("windows", "Windows"), ("ssh", "SSH"), ("ai", "AI Agent")],
+        headline="Next-generation release platform",
+        sub="Free, simple, enterprise-grade. One pipeline from release to production.",
+        orbit_caption="One pipeline. Every target.",
+        targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
+        heading=["Built for teams.", "Enterprise-grade by default."],
+        intro=["From one service to thousands of targets,", "one model for releases, approvals, and audit."],
         features=[
-            ("free", "Free &amp; self-hosted", ["Unlimited projects, users,", "and targets. No license fees."]),
+            ("free", "Free and self-hosted", ["Unlimited projects, users,", "and targets. No license fees."]),
             ("bolt", "Ready to use", ["One service, one database.", "Agents install in one command."]),
-            ("layers", "One release model", ["Environments, lifecycles, releases.", "One model for every target."]),
+            ("layers", "One release model", ["Environments, lifecycles,", "releases. One model throughout."]),
             ("hex", "Cloud native", ["Kubernetes Agent and API modes.", "Helm, Kustomize, YAML built in."]),
             ("shield", "Enterprise governance", ["RBAC, approvals, and audit.", "Secrets encrypted and masked."]),
             ("plug", "Extensible", ["New targets and actions plug in", "without touching the pipeline."]),
         ],
         free_title="Free. For good.", free_sub=["MIT-licensed, every feature included.", "Scale up without adding software cost."],
         cols=("Squid", "Commercial platforms"),
-        rows=[("Software cost", "Free", "Tiered subscription"), ("Projects &amp; users", "Unlimited", "Limited by tier"), ("Deployment targets", "Unlimited", "Billed per node")],
+        rows=[("Software cost", "Free", "Tiered subscription"), ("Projects & users", "Unlimited", "Limited by tier"), ("Targets", "Unlimited", "Billed per node")],
     ),
 }
 
 
-def icon(name, x, y, size, color, width=1.7):
+# ── Fonts ────────────────────────────────────────────────────────────────
+
+class Fonts:
+    """Static instances of the variable fonts, subset per SVG and embedded as WOFF2."""
+
+    FACES = {  # family -> (file, axes per weight)
+        "SqDisplay": ("Inter.ttf", lambda w: {"wght": w, "opsz": 32}),
+        "SqText": ("Inter.ttf", lambda w: {"wght": w, "opsz": 14}),
+        "SqCJK": ("NotoSansSC.ttf", lambda w: {"wght": w}),
+    }
+
+    def __init__(self, font_dir, cache_dir):
+        self.font_dir, self.cache_dir, self.metrics = font_dir, cache_dir, {}
+        os.makedirs(cache_dir, exist_ok=True)
+
+    def instance_path(self, family, weight):
+        path = os.path.join(self.cache_dir, f"{family}-{weight}.ttf")
+        if os.path.exists(path): return path
+
+        file, axes = self.FACES[family]
+        inst = instantiateVariableFont(TTFont(os.path.join(self.font_dir, file)), axes(weight))
+        inst.save(path)
+        return path
+
+    def face_css(self, family, weight, chars):
+        font = TTFont(self.instance_path(family, weight))
+        sub = subset.Subsetter(subset.Options(flavor="woff2", layout_features=["kern", "liga", "calt"], name_IDs=[0, 1, 2, 13, 14]))
+        sub.populate(text=chars)
+        sub.subset(font)
+        font.flavor = "woff2"
+        buf = io.BytesIO()
+        font.save(buf)
+        data = base64.b64encode(buf.getvalue()).decode()
+        return f"@font-face{{font-family:{family};font-weight:{weight};src:url(data:font/woff2;base64,{data}) format('woff2')}}"
+
+    def width(self, family, weight, text, size, spacing=0.0):
+        """Approximate advance width (no kerning) — used to assert copy fits its column."""
+        key = (family, weight)
+        if key not in self.metrics:
+            latin, cjk = TTFont(self.instance_path(family, weight)), TTFont(self.instance_path("SqCJK", weight))
+            self.metrics[key] = [(f.getBestCmap(), f["hmtx"].metrics, f["head"].unitsPerEm) for f in (latin, cjk)]
+        total = 0.0
+        for ch in text:
+            for cmap, hmtx, upm in self.metrics[key]:
+                if ord(ch) in cmap:
+                    total += hmtx[cmap[ord(ch)]][0] / upm * size + spacing
+                    break
+        return total
+
+
+class Canvas:
+    """Collects SVG parts and records which glyphs each font face needs."""
+
+    def __init__(self, fonts, theme):
+        self.fonts, self.T, self.parts, self.defs, self.used = fonts, THEMES[theme], [], [], {}
+
+    def text(self, x, y, s, size, family="SqText", weight=400, fill=None, anchor="start", spacing=0, extra=""):
+        self.used.setdefault((family, weight), set()).update(s)
+        self.used.setdefault(("SqCJK", weight), set()).update(s)
+        fill = fill or self.T["text"]
+        self.parts.append(f'<text x="{x:.1f}" y="{y:.1f}" font-family="{family},SqCJK,sans-serif" font-size="{size}" '
+                          f'font-weight="{weight}" letter-spacing="{spacing}" fill="{fill}" text-anchor="{anchor}"{extra}>{esc(s)}</text>')
+
+    def fit(self, s, size, max_width, family="SqText", weight=400, spacing=0):
+        w = self.fonts.width(family, weight, s, size, spacing)
+        assert w <= max_width, f"'{s}' is {w:.0f}px, exceeds {max_width}px"
+
+    def render(self, h, label):
+        css = "".join(self.fonts.face_css(f, w, "".join(sorted(c))) for (f, w), c in sorted(self.used.items()))
+        return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{h}" viewBox="0 0 {W} {h}" fill="none" '
+                f'role="img" aria-label="{esc(label)}"><title>{esc(label)}</title><defs><style>{css}</style>{"".join(self.defs)}</defs>'
+                f'{"".join(self.parts)}</svg>\n')
+
+
+def esc(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def icon(name, x, y, size, color):
     s = size / 24
-    return (f'<g transform="translate({x} {y}) scale({s})" fill="none" stroke="{color}" '
-            f'stroke-width="{width:.2f}" stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</g>')
+    return (f'<g transform="translate({x} {y}) scale({s})" fill="none" stroke="{color}" stroke-width="1.5" '
+            f'stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</g>')
 
 
-def svg(w, h, title, body, defs=""):
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" '
-            f'fill="none" role="img" aria-label="{title}"><title>{title}</title><defs>{defs}</defs>{body}</svg>\n')
+def png_data_uri(name):
+    with open(os.path.join(HERE, "..", name), "rb") as f:
+        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
 
 
-def hero(lang, t):
-    c, T = COPY[lang], THEMES[t]
-    W, H = 1280, 640
-    defs = f'''
-<radialGradient id="g1" cx="0.32" cy="0.05" r="0.6"><stop offset="0" stop-color="{T['glowA']}" stop-opacity="{T['glowOp']}"/><stop offset="1" stop-color="{T['glowA']}" stop-opacity="0"/></radialGradient>
-<radialGradient id="g2" cx="0.72" cy="0.0" r="0.55"><stop offset="0" stop-color="{T['glowB']}" stop-opacity="{T['glowOp']}"/><stop offset="1" stop-color="{T['glowB']}" stop-opacity="0"/></radialGradient>
-<linearGradient id="hl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{T['gradA']}"/><stop offset="1" stop-color="{T['gradB']}"/></linearGradient>
-<linearGradient id="ln" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="{T['accent']}" stop-opacity="0"/><stop offset="0.5" stop-color="{T['accent']}" stop-opacity="0.9"/><stop offset="1" stop-color="{T['accent']}" stop-opacity="0"/></linearGradient>
-<pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" stroke="{T['stroke']}" stroke-width="1" opacity="0.55"/></pattern>
-<linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.9"/><stop offset="0.75" stop-color="#fff" stop-opacity="0"/></linearGradient>
-<mask id="gm"><rect width="{W}" height="{H}" fill="url(#fade)"/></mask>
-<clipPath id="clip"><rect width="{W}" height="{H}" rx="28"/></clipPath>'''
-    hs = 86 if lang == "en" else 80
-    parts = [f'<g clip-path="url(#clip)"><rect width="{W}" height="{H}" fill="{T["bg"]}"/>',
-             f'<rect width="{W}" height="{H}" fill="url(#grid)" mask="url(#gm)"/>',
-             f'<rect width="{W}" height="{H}" fill="url(#g1)"/><rect width="{W}" height="{H}" fill="url(#g2)"/></g>',
-             f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="27.5" stroke="{T["stroke"]}"/>',
-             f'<g font-family="{FONT}" text-anchor="middle">',
-             f'<text x="{W / 2}" y="140" fill="{T["accent"]}" font-size="19" font-weight="600" letter-spacing="5">{c["eyebrow"]}</text>',
-             f'<text x="{W / 2}" y="252" fill="url(#hl)" font-size="{hs}" font-weight="700" letter-spacing="-2">{c["headline"]}</text>',
-             f'<text x="{W / 2}" y="324" fill="{T["body"]}" font-size="29" font-weight="400">{c["sub"]}</text>',
-             f'<text x="{W / 2}" y="416" fill="{T["faint"]}" font-size="17" font-weight="600" letter-spacing="3">{c["flow"]}</text>',
-             '</g>',
-             f'<path d="M150 446H1130" stroke="url(#ln)" stroke-width="1.5"/>']
-    pw, gap = 200, 16
-    x0 = (W - (pw * 5 + gap * 4)) / 2
-    for i, (ic, label) in enumerate(c["targets"]):
-        x = x0 + i * (pw + gap)
-        parts.append(f'<path d="M{x + pw / 2} 446V478" stroke="{T["accent"]}" stroke-opacity="0.45" stroke-width="1.5"/>')
-        parts.append(f'<circle cx="{x + pw / 2}" cy="446" r="3.5" fill="{T["accent"]}"/>')
-        parts.append(f'<rect x="{x}" y="478" width="{pw}" height="78" rx="20" fill="{T["pill"]}" stroke="{T["stroke"]}"/>')
-        parts.append(icon(ic, x + 26, 504, 26, T["accent"]))
-        parts.append(f'<text x="{x + 64}" y="526" fill="{T["title"]}" font-family="{FONT}" font-size="22" font-weight="600">{label}</text>')
-    return svg(W, H, f'Squid — {c["headline"]} {c["sub"]}', "".join(parts), defs)
+# ── Visuals ──────────────────────────────────────────────────────────────
+
+def hero(fonts, lang, theme):
+    c, cv = COPY[lang], Canvas(fonts, theme)
+    H, wm_h = 300, 52
+    wm_w = wm_h * 300 / 76
+    cv.parts.append(f'<image href="{png_data_uri(cv.T["wordmark"])}" x="{(W - wm_w) / 2:.1f}" y="8" width="{wm_w:.1f}" height="{wm_h}"/>')
+    spacing = -1.8 if lang == "en" else -0.6
+    cv.fit(c["headline"], 66, W - 40, "SqDisplay", 400, spacing)
+    cv.text(W / 2, 178, c["headline"], 66, "SqDisplay", 400, anchor="middle", spacing=spacing)
+    cv.fit(c["sub"], 24, W - 80)
+    cv.text(W / 2, 240, c["sub"], 24, fill=cv.T["muted"], anchor="middle")
+    return cv.render(H, f'Squid — {c["headline"]}. {c["sub"]}')
 
 
-def features(lang, t):
-    c, T = COPY[lang], THEMES[t]
-    W, cw, ch = 1280, 405, 256
-    gap = (W - cw * 3) / 2
-    H = ch * 2 + gap
-    parts = []
+def orbit(fonts, lang, theme):
+    c, cv = COPY[lang], Canvas(fonts, theme)
+    H, cx, cy, r = 600, W / 2, 280, 168
+    cv.defs.append('''
+<clipPath id="tile"><rect width="1280" height="600" rx="36"/></clipPath>
+<linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3B82F6"/><stop offset="0.5" stop-color="#14B8A6"/><stop offset="1" stop-color="#6366F1"/></linearGradient>
+<linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#BFDBFE"/><stop offset="0.5" stop-color="#99F6E4"/><stop offset="1" stop-color="#C7D2FE"/></linearGradient>
+<radialGradient id="core"><stop offset="0" stop-color="#000" stop-opacity="1"/><stop offset="0.8" stop-color="#000" stop-opacity="0.9"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>
+<filter id="haze" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="38"/></filter>
+<filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="9"/></filter>
+<filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>''')
+    p = cv.parts
+    p.append('<g clip-path="url(#tile)"><rect width="1280" height="600" fill="#030406"/>')
+    rnd = random.Random(7)
+    for _ in range(90):
+        p.append(f'<circle cx="{rnd.uniform(0, W):.0f}" cy="{rnd.uniform(0, H):.0f}" r="{rnd.uniform(0.6, 1.5):.1f}" fill="#FFFFFF" opacity="{rnd.uniform(0.08, 0.4):.2f}"/>')
+    p.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" stroke="url(#ring)" stroke-width="80" opacity="0.55" filter="url(#haze)"/>')
+    p.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" stroke="url(#ring)" stroke-width="20" opacity="0.9" filter="url(#glow)"/>')
+    p.append(f'<circle cx="{cx}" cy="{cy}" r="{r - 14}" fill="url(#core)"/>')
+    p.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" stroke="url(#edge)" stroke-width="1.6" opacity="0.9"/>')
+    for angle, label in zip((270, 210, 150, 330, 30), c["targets"]):
+        a = math.radians(angle)
+        x, y = cx + r * math.cos(a), cy + r * math.sin(a)
+        p.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="9" fill="#E0F2FE" opacity="0.6" filter="url(#soft)"/><circle cx="{x:.1f}" cy="{y:.1f}" r="3.6" fill="#FFFFFF"/>')
+        lx, ly = cx + (r + 30) * math.cos(a), cy + (r + 30) * math.sin(a) + 7
+        anchor = "middle" if angle == 270 else ("end" if 90 < angle < 270 else "start")
+        cv.text(lx, ly - (10 if angle == 270 else 0), label, 21, fill="#C4C9D1", anchor=anchor)
+    cv.text(cx, cy + 16, "Squid", 50, "SqDisplay", 400, fill="#FFFFFF", anchor="middle", spacing=-1, extra=' opacity="0.55" filter="url(#glow)"')
+    cv.text(cx, cy + 16, "Squid", 50, "SqDisplay", 400, fill="#FFFFFF", anchor="middle", spacing=-1)
+    cv.text(cx, 552, c["orbit_caption"], 20, fill="#8A9099", anchor="middle", spacing=0.2)
+    p.append('</g>')
+    return cv.render(H, f'{c["orbit_caption"]} {", ".join(c["targets"])}')
+
+
+def features(fonts, lang, theme):
+    c, cv = COPY[lang], Canvas(fonts, theme)
+    T, col, gap = cv.T, (W - 2 * 56) / 3, 56
+    for i, line in enumerate(c["heading"]):
+        cv.fit(line, 44, 640, "SqDisplay", 400, -0.9)
+        cv.text(0, 52 + i * 58, line, 44, "SqDisplay", 400, spacing=-0.9)
+    for i, line in enumerate(c["intro"]):
+        cv.fit(line, 20, W - 760)
+        cv.text(760, 46 + i * 32, line, 20, fill=T["muted"])
+    top = 196
     for i, (ic, title, lines) in enumerate(c["features"]):
-        x, y = (i % 3) * (cw + gap), (i // 3) * (ch + gap)
-        parts.append(f'<rect x="{x + 0.5}" y="{y + 0.5}" width="{cw - 1}" height="{ch - 1}" rx="24" fill="{T["card"]}" stroke="{T["stroke"]}"/>')
-        parts.append(f'<rect x="{x + 36}" y="{y + 36}" width="58" height="58" rx="16" fill="{T["iconBg"]}"/>')
-        parts.append(icon(ic, x + 50, y + 50, 30, T["accent"]))
-        parts.append(f'<text x="{x + 36}" y="{y + 148}" fill="{T["title"]}" font-family="{FONT}" font-size="29" font-weight="650" letter-spacing="-0.4">{title}</text>')
+        x, y = (i % 3) * (col + gap), top + (i // 3) * 236
+        cv.parts.append(f'<path d="M{x:.1f} {y}H{x + col:.1f}" stroke="{T["rule"]}"/>')
+        cv.parts.append(icon(ic, x, y + 36, 28, T["text"]))
+        cv.text(x, y + 112, title, 25, weight=500, spacing=-0.3)
         for j, line in enumerate(lines):
-            parts.append(f'<text x="{x + 36}" y="{y + 188 + j * 30}" fill="{T["body"]}" font-family="{FONT}" font-size="20">{line}</text>')
-    alt = "; ".join(f'{ti}: {"".join(l) if lang == "zh" else " ".join(l)}' for _, ti, l in c["features"])
-    return svg(W, int(H), alt, "".join(parts))
+            cv.fit(line, 20, col)
+            cv.text(x, y + 150 + j * 30, line, 20, fill=T["muted"])
+    alt = "; ".join(f'{t}: {"".join(l) if lang == "zh" else " ".join(l)}' for _, t, l in c["features"])
+    return cv.render(top + 236 + 200, f'{" ".join(c["heading"])} {alt}')
 
 
-def free(lang, t):
-    c, T = COPY[lang], THEMES[t]
-    W, H = 1280, 380
-    defs = f'''<radialGradient id="fg" cx="0.12" cy="0.2" r="0.55"><stop offset="0" stop-color="{T['glowA']}" stop-opacity="{float(T['glowOp']) * 0.7}"/><stop offset="1" stop-color="{T['glowA']}" stop-opacity="0"/></radialGradient>
-<linearGradient id="fh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{T['gradA']}"/><stop offset="1" stop-color="{T['gradB']}"/></linearGradient>
-<clipPath id="fc"><rect width="{W}" height="{H}" rx="28"/></clipPath>'''
-    parts = [f'<g clip-path="url(#fc)"><rect width="{W}" height="{H}" fill="{T["card"]}"/><rect width="{W}" height="{H}" fill="url(#fg)"/></g>',
-             f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="27.5" stroke="{T["stroke"]}"/>',
-             f'<g font-family="{FONT}">',
-             f'<text x="64" y="168" fill="url(#fh)" font-size="64" font-weight="700" letter-spacing="-1.5">{c["free_title"]}</text>']
+def free(fonts, lang, theme):
+    c, cv = COPY[lang], Canvas(fonts, theme)
+    T, H, tx = cv.T, 520, 600
+    cv.fit(c["free_title"], 60, 540, "SqDisplay", 400, -1.4)
+    cv.text(0, 236, c["free_title"], 60, "SqDisplay", 400, spacing=-1.4)
     for j, line in enumerate(c["free_sub"]):
-        parts.append(f'<text x="64" y="{226 + j * 34}" fill="{T["body"]}" font-size="22">{line}</text>')
-    tx, c1, c2 = 620, 890, 1100
-    parts.append(f'<text x="{c1}" y="96" fill="{T["accent"]}" font-size="18" font-weight="700" text-anchor="middle" letter-spacing="1">{c["cols"][0]}</text>')
-    parts.append(f'<text x="{c2}" y="96" fill="{T["body"]}" font-size="18" font-weight="600" text-anchor="middle" letter-spacing="0.5">{c["cols"][1]}</text>')
+        cv.fit(line, 21, 540)
+        cv.text(0, 296 + j * 34, line, 21, fill=T["muted"])
+    cv.defs.append(f'''<clipPath id="tile"><rect x="{tx}" width="{W - tx}" height="{H}" rx="36"/></clipPath>
+<filter id="aurora" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="56"/></filter>''')
+    p = cv.parts
+    p.append(f'<g clip-path="url(#tile)"><rect x="{tx}" width="{W - tx}" height="{H}" fill="{T["tile"]}"/>')
+    teal, blue, violet, warm = T["auroraColors"]
+    p.append(f'<g filter="url(#aurora)" opacity="{T["aurora"]}">'
+             f'<ellipse cx="{tx + 40}" cy="70" rx="240" ry="160" fill="{teal}"/>'
+             f'<ellipse cx="{W - 40}" cy="40" rx="260" ry="150" fill="{blue}"/>'
+             f'<ellipse cx="{W - 20}" cy="{H - 30}" rx="240" ry="160" fill="{violet}"/>'
+             f'<ellipse cx="{tx + 60}" cy="{H - 10}" rx="230" ry="140" fill="{warm}"/></g></g>')
+    cx0, cy0, cw, ch = tx + 52, 92, W - tx - 104, 336
+    p.append(f'<rect x="{cx0}" y="{cy0}" width="{cw}" height="{ch}" rx="24" fill="{T["card"]}" fill-opacity="{T["cardOp"]}" stroke="{T["cardRule"]}"/>')
+    lx, c1, c2 = cx0 + 36, cx0 + 280, cx0 + 460
+    cv.text(c1, cy0 + 58, c["cols"][0], 17, weight=500, anchor="middle")
+    cv.text(c2, cy0 + 58, c["cols"][1], 17, fill=T["muted"], anchor="middle")
     for j, (label, a, b) in enumerate(c["rows"]):
-        y = 164 + j * 72
-        parts.append(f'<path d="M{tx} {y - 42}H{W - 64}" stroke="{T["stroke"]}"/>')
-        parts.append(f'<text x="{tx}" y="{y}" fill="{T["body"]}" font-size="21">{label}</text>')
-        parts.append(f'<text x="{c1}" y="{y}" fill="{T["title"]}" font-size="22" font-weight="650" text-anchor="middle">{a}</text>')
-        parts.append(f'<text x="{c2}" y="{y}" fill="{T["body"]}" font-size="20" text-anchor="middle">{b}</text>')
-    parts.append('</g>')
+        y = cy0 + 136 + j * 76
+        p.append(f'<path d="M{lx} {y - 46}H{cx0 + cw - 36}" stroke="{T["cardRule"]}"/>')
+        cv.fit(label, 20, c1 - lx - 72)
+        cv.text(lx, y, label, 20, fill=T["muted"])
+        cv.text(c1, y, a, 21, weight=500, anchor="middle")
+        cv.fit(b, 19, 2 * (cx0 + cw - 20 - c2))
+        cv.text(c2, y, b, 19, fill=T["muted"], anchor="middle")
     alt = f'{c["free_title"]} ' + "; ".join(f"{l}: {a} vs {b}" for l, a, b in c["rows"])
-    return svg(W, H, alt, "".join(parts), defs)
+    return cv.render(H, alt)
 
 
-for lang in COPY:
-    for t in THEMES:
-        for name, fn in (("hero", hero), ("features", features), ("free", free)):
-            with open(os.path.join(OUT, f"{name}-{lang}-{t}.svg"), "w", encoding="utf-8") as f:
-                f.write(fn(lang, t))
-print("ok")
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--fonts", required=True)
+    ap.add_argument("--out", default=HERE)
+    args = ap.parse_args()
+    fonts = Fonts(args.fonts, os.path.join(args.fonts, ".instances"))
+    for lang in COPY:
+        for theme in THEMES:
+            for name, fn in (("hero", hero), ("orbit", orbit), ("features", features), ("free", free)):
+                with open(os.path.join(args.out, f"{name}-{lang}-{theme}.svg"), "w", encoding="utf-8") as f:
+                    f.write(fn(fonts, lang, theme))
+    print("ok")
+
+
+if __name__ == "__main__":
+    main()

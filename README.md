@@ -1,42 +1,29 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
-  <img src="branding/squid-wordmark.png" alt="Squid" width="200">
-</picture>
-
-<br><br>
-
-<picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/hero-zh-dark.svg">
-  <img src="branding/readme/hero-zh-light.svg" alt="发布，本该如此简单。免费、开箱即用的企业级发布平台，覆盖 Kubernetes、Linux、Windows、SSH 与 AI Agent。" width="100%">
+  <img src="branding/readme/hero-zh-light.svg" alt="Squid — 新一代发布平台，开箱即用。免费、简单、企业级，一条流水线从 Release 到生产。" width="100%">
 </picture>
 
-<br><br>
-
-<a href="#快速开始"><b>快速开始</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="#文档"><b>文档</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="#从-octopus-迁移"><b>从 Octopus 迁移</b></a>
-&nbsp;&nbsp;·&nbsp;&nbsp;
-<a href="README.en.md"><b>English</b></a>
-
-<br><br>
-
-[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-2EA44F?style=flat-square)](LICENSE)
+<a href="#快速开始">快速开始</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#文档">文档</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#从-octopus-迁移">从 Octopus 迁移</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="README.en.md">English</a>
 
 </div>
 
 <br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-zh-dark.svg">
-  <img src="branding/readme/features-zh-light.svg" alt="免费自托管、开箱即用、统一发布模型、云原生、企业级治理、可扩展" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/orbit-zh-dark.svg">
+  <img src="branding/readme/orbit-zh-light.svg" alt="一条流水线，覆盖每一个目标：Kubernetes、Linux、Windows、SSH 与 AI Agent" width="100%">
 </picture>
 
 <br><br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-zh-dark.svg">
+  <img src="branding/readme/features-zh-light.svg" alt="为团队打造的企业级发布能力：免费自托管、开箱即用、统一发布模型、云原生、企业级治理、可扩展" width="100%">
+</picture>
+
+<br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/free-zh-dark.svg">
