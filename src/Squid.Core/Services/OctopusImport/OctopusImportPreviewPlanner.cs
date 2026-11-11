@@ -1,5 +1,7 @@
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -14,6 +16,15 @@ public interface IOctopusImportPreviewPlanner : IScopedDependency
 
 public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 {
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+
+    public OctopusImportPreviewPlanner(IOctopusExportSecretsAccessor secretsAccessor = null)
+    {
+        _secretsAccessor = secretsAccessor;
+    }
+
+    private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
+
     public OctopusImportPreviewPlanDto BuildPreviewPlan(
         OctopusImportDependencyPlan dependencyPlan,
         OctopusImportConflictDiscoveryResult conflicts)
@@ -30,17 +41,22 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Select(d => d.SourceId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var resources = dependencyPlan.OrderedResources
+        var nodes = dependencyPlan.OrderedResources
             .Concat(dependencyPlan.OutOfScopeResources)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var resources = nodes
             .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))
             .ToList();
 
+        AddVariableDiagnostics(nodes, resources);
+
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
+            .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
             .ToList();
 
         return new OctopusImportPreviewPlanDto
@@ -54,7 +70,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         };
     }
 
-    private static OctopusImportResourceResultDto BuildResourcePreview(
+    private OctopusImportResourceResultDto BuildResourcePreview(
         OctopusResourceNode resource,
         IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,
         IReadOnlySet<string> blockedSourceIds)
@@ -66,8 +82,6 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             SourceName = resource.Name,
             OutcomeState = OctopusImportResourceOutcomeState.Pending
         };
-
-        AddRequiredInputs(result, resource);
 
         if (blockedSourceIds.Contains(resource.SourceId))
         {
@@ -119,31 +133,133 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         if (!conflictsBySourceId.TryGetValue(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
+            AddTeamDiagnostics(result, resource);
             AddManualConfigurationDiagnostics(result, resource);
             return result;
         }
 
         ApplyConflictAction(result, resource, conflict);
+        AddTeamDiagnostics(result, resource);
         AddManualConfigurationDiagnostics(result, resource);
         return result;
     }
 
-    private static void AddRequiredInputs(
+    // Runs after every resource has its preview action, because whether a variable is written depends on
+    // the action chosen for the library variable set that owns it.
+    private void AddVariableDiagnostics(IReadOnlyList<OctopusResourceNode> nodes, IReadOnlyList<OctopusImportResourceResultDto> previews)
+    {
+        var nodesById = nodes.ToDictionary(n => n.SourceId, StringComparer.OrdinalIgnoreCase);
+        var previewsById = previews.ToDictionary(p => p.SourceId, StringComparer.OrdinalIgnoreCase);
+
+        OctopusResourceNode FindNode(string sourceId) => nodesById.GetValueOrDefault(sourceId);
+        OctopusImportPreviewAction? PreviewAction(string sourceId) => previewsById.GetValueOrDefault(sourceId)?.PreviewAction;
+
+        foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
+        {
+            if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
+                AddRequiredInputs(previewsById[resource.SourceId], resource);
+            else
+                previewsById[resource.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept, "This variable belongs to a library variable set that is reused as-is; the destination keeps its existing value and this source value is not imported.", resource));
+        }
+
+        foreach (var shadow in OctopusImportVariablePrecedence.FindProjectVariablesShadowedByLibraries(nodes, set => OctopusImportVariableOwnership.IsWrittenByImport(set, FindNode, PreviewAction)))
+            previewsById[shadow.ProjectVariable.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable, ShadowMessage(shadow), shadow.ProjectVariable));
+    }
+
+    private static string ShadowMessage(OctopusImportShadowedProjectVariable shadow)
+        => shadow.LibraryReused
+            ? $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and includes library variable set '{shadow.LibraryName}', which is reused as-is. The exported library defines the same name with an equally specific scope; the destination library's existing variables decide at runtime: if it still defines that name, Squid uses the library value where both apply, whereas Octopus used the project value. Check the destination library, and rename or re-scope one of them if the project value must win."
+            : $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and its included library variable set '{shadow.LibraryName}' defines the same name with an equally specific scope. Where both apply, Squid uses the library value, whereas Octopus used the project value. Rename or re-scope one of them if the project value must win.";
+
+    private static void AddTeamDiagnostics(OctopusImportResourceResultDto result, OctopusResourceNode resource)
+    {
+        if (resource.Kind != OctopusResourceKind.Team) return;
+
+        if (result.PreviewAction == OctopusImportPreviewAction.Create && OctopusBuiltInTeams.TryGetSquidEquivalent(resource.SourceId, out var squidTeamName))
+        {
+            BlockMissingBuiltInTeamEquivalent(result, resource, squidTeamName);
+            return;
+        }
+
+        if (!OctopusBuiltInTeams.IsBuiltInWithoutEquivalent(resource.SourceId)) return;
+
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamWithoutEquivalent,
+            $"Octopus built-in team '{resource.Name}' has no Squid equivalent; it is imported as a regular team in this space with no members and no roles. Add members (or rely on the administrator approval override) before manual interventions assigned to it can be actioned.",
+            resource));
+    }
+
+    // Never fall back to creating a namesake: a built-in Octopus team means "the system's built-in team",
+    // so creating a lookalike would silently change who can approve.
+    private static void BlockMissingBuiltInTeamEquivalent(OctopusImportResourceResultDto result, OctopusResourceNode resource, string squidTeamName)
+    {
+        result.PreviewAction = OctopusImportPreviewAction.Blocked;
+        result.OutcomeState = OctopusImportResourceOutcomeState.Blocked;
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Blocker,
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing,
+            $"Octopus built-in team '{resource.Name}' maps to the Squid built-in team '{squidTeamName}', which does not exist in the destination. Restore the Squid built-in team (it is seeded at server start-up) before importing.",
+            resource));
+    }
+
+    private static void AddReusedTeamWarning(OctopusImportResourceResultDto result, OctopusResourceNode resource, OctopusImportDestinationResource destination)
+    {
+        if (IsEveryUserTeam(destination))
+        {
+            AddEveryUserTeamWarning(result, resource, destination);
+            return;
+        }
+
+        result.DestinationMemberCount = destination.MemberCount ?? 0;
+        result.DestinationMemberFingerprint = destination.MemberFingerprint;
+
+        var scope = destination.SpaceId == 0 ? "system-wide" : $"space {destination.SpaceId}";
+
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval,
+            $"Existing team '{destination.Name}' ({scope}, id {destination.Id}) with {result.DestinationMemberCount} member(s) will be reused for Octopus team '{resource.Name}'. Its current members will be able to approve manual interventions assigned to that team.",
+            resource));
+    }
+
+    // Squid adds every new user to the built-in Everyone team, so its membership is "all users", not a snapshot:
+    // nothing is pinned for confirmation (a user created after the preview must not make the plan stale).
+    private static void AddEveryUserTeamWarning(OctopusImportResourceResultDto result, OctopusResourceNode resource, OctopusImportDestinationResource destination)
+    {
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval,
+            $"Octopus team '{resource.Name}' maps to the Squid built-in team '{destination.Name}' (id {destination.Id}), which every user belongs to: every user will be able to approve manual interventions assigned to that team.",
+            resource));
+    }
+
+    private static bool IsEveryUserTeam(OctopusImportDestinationResource destination)
+        => destination.IsBuiltIn && destination.SpaceId == 0 && destination.Name == BuiltInTeamNames.Everyone;
+
+    private void AddRequiredInputs(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
     {
-        if (resource.IsHistorical || resource.Kind != OctopusResourceKind.Variable)
-            return;
-
         var variable = resource.GetSource<OctopusVariableDto>();
         if (!OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
             return;
+
+        if (OctopusImportSensitiveValues.IsResolvable(variable, Secrets))
+        {
+            result.Diagnostics.Add(Diagnostic(
+                OctopusImportCompatibilitySeverity.Info,
+                OctopusImportPreviewDiagnosticCodes.SensitiveVariableValueDecrypted,
+                "The sensitive variable value was decrypted with the export password and will be imported encrypted at rest.",
+                resource));
+            return;
+        }
 
         result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
         result.Diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,
-            "Sensitive variable values cannot be imported in this release. Confirmation is blocked while this required input is unresolved.",
+            OctopusImportPreviewDiagnosticCodes.SensitiveValueUnresolvedMessage,
             resource));
     }
 
@@ -182,6 +298,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             OctopusImportPreviewDiagnosticCodes.ReuseExistingResource,
             $"A compatible destination {resource.Kind} identity was found by {match.MatchKind}.",
             resource));
+
+        if (resource.Kind == OctopusResourceKind.Team)
+            AddReusedTeamWarning(result, resource, match.Destination);
     }
 
     private static OctopusImportDiagnosticDto MapDependencyDiagnostic(OctopusInputExtractionDiagnostic diagnostic)
@@ -211,12 +330,21 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             ResourceName = resource.Name
         });
 
-    private static void AddManualConfigurationDiagnostics(
+    private bool IsResolvedFeedCredentialDiagnostic(OctopusResourceNode resource, OctopusImportDiagnosticDto diagnostic)
+        => resource.Kind == OctopusResourceKind.Feed
+           && diagnostic.Code == OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted
+           && OctopusImportFeedCredentials.IsResolvable(resource.GetSource<OctopusFeedDto>(), Secrets);
+
+    private void AddManualConfigurationDiagnostics(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
     {
         foreach (var diagnostic in OctopusImportManualConfiguration.BuildRequiredConfigurationDiagnostics(resource))
+        {
+            if (IsResolvedFeedCredentialDiagnostic(resource, diagnostic)) continue;
+
             result.Diagnostics.Add(diagnostic);
+        }
     }
 
 }

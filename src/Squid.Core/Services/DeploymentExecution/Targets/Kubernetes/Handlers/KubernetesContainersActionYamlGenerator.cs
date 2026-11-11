@@ -78,6 +78,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         AddResource(result, "configmap.yaml", _configMap, properties, errors);
         AddResource(result, "ingress.yaml", _ingress, properties, errors);
         AddResource(result, "secret.yaml", _secret, properties, errors);
+        AddCustomResource(result, properties);
 
         if (errors.Count > 0)
             throw new ResourceGenerationException(errors);
@@ -192,6 +193,13 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         catch { /* malformed JSON — skip rewriting, parser will handle gracefully */ }
     }
 
+    /// <summary>
+    /// Whether a container envFrom / env valueFrom reference names the step's own ConfigMap or Secret
+    /// (<paramref name="stepResourceName"/>): an exact ordinal match. Any other name is an externally
+    /// managed resource. Shared with the Octopus import so its diagnostics use the same identity rule.
+    /// </summary>
+    internal static bool IsStepResourceReference(string referenceName, string stepResourceName) => !string.IsNullOrWhiteSpace(stepResourceName) && string.Equals(referenceName, stepResourceName, StringComparison.Ordinal);
+
     private static bool RewriteEnvFromNames(JsonNode container, string arrayKey, string baseName, string suffix)
     {
         if (string.IsNullOrWhiteSpace(baseName)) return false;
@@ -207,7 +215,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             if (item == null) continue;
 
             var name = item[KubernetesContainerEnvFromPayloadProperties.Name]?.GetValue<string>();
-            if (!string.Equals(name, baseName, StringComparison.Ordinal)) continue;
+            if (!IsStepResourceReference(name, baseName)) continue;
 
             item[KubernetesContainerEnvFromPayloadProperties.Name] = versionedName;
             modified = true;
@@ -231,7 +239,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             if (item == null) continue;
 
             var sourceName = item[KubernetesContainerEnvVarSourcePayloadProperties.Value]?.GetValue<string>();
-            if (!string.Equals(sourceName, baseName, StringComparison.Ordinal)) continue;
+            if (!IsStepResourceReference(sourceName, baseName)) continue;
 
             item[KubernetesContainerEnvVarSourcePayloadProperties.Value] = versionedName;
             modified = true;
@@ -279,6 +287,17 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
                 properties[KubernetesProperties.CombinedVolumes] = volumes.ToJsonString();
         }
         catch { /* malformed JSON — skip rewriting */ }
+    }
+
+    // Free-form custom resource YAML (Octopus "Custom resource" feature) is applied verbatim after
+    // variable expansion — Squid does not template it, so it is never subject to name suffixing.
+    internal const string CustomResourceFileName = "customresource.yaml";
+
+    private static void AddCustomResource(Dictionary<string, byte[]> result, Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue(SpecialVariables.Action.KubernetesYaml, out var yaml) || string.IsNullOrWhiteSpace(yaml)) return;
+
+        result[CustomResourceFileName] = Encoding.UTF8.GetBytes(yaml);
     }
 
     private static void AddResource(Dictionary<string, byte[]> result, string fileName, IKubernetesResourceGenerator generator, Dictionary<string, string> properties, List<string> errors)

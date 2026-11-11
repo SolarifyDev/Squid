@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -66,11 +67,19 @@ public sealed class ManualInterventionActionHandler(
             await lifecycle.EmitAsync(new ManualInterventionResolvedEvent(new DeploymentEventContext
             {
                 StepDisplayOrder = ctx.StepDisplayOrder, StepName = ctx.Step.Name,
-                ActionName = ctx.Action.Name, GuidedFailureResolution = outcome.Value.ToString()
+                ActionName = ctx.Action.Name, GuidedFailureResolution = outcome.Value.ToString(),
+                InterruptionAdministratorOverrideBy = DescribeAdministratorOverride(existing)
             }), ct).ConfigureAwait(false);
         }
 
         return outcome;
+    }
+
+    private static string DescribeAdministratorOverride(DeploymentInterruption interruption)
+    {
+        if (interruption.AdministratorOverrideUserId is not { } userId) return null;
+
+        return string.IsNullOrWhiteSpace(interruption.AdministratorOverrideUserName) ? $"user {userId}" : $"{interruption.AdministratorOverrideUserName} (user {userId})";
     }
 
     private async Task SuspendForInterruptionAsync(StepActionContext ctx, CancellationToken ct)

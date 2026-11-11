@@ -48,7 +48,7 @@ public sealed class OctopusManualActionMapper : IOctopusImportActionMapper
         OctopusImportActionMappingContext context,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
-        var sourceTeamIds = SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)).ToList();
+        var sourceTeamIds = OctopusReferenceList.Split(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)).ToList();
 
         if (sourceTeamIds.Count == 0)
             return;
@@ -98,16 +98,6 @@ public sealed class OctopusManualActionMapper : IOctopusImportActionMapper
         return source.TryGetValue(name, out var value)
             ? value
             : source.FirstOrDefault(p => string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)).Value;
-    }
-
-    private static IEnumerable<string> SplitReferenceList(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return [];
-
-        return value
-            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v));
     }
 
     private static ActionPropertyModel Property(string name, string value)

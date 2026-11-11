@@ -63,8 +63,14 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         ["Octopus.Action.KubernetesContainers.PodAntiAffinity"] = KubernetesProperties.PodAntiAffinity,
         ["Octopus.Action.KubernetesContainers.PodSecurityImagePullSecrets"] = KubernetesProperties.PodSecurityImagePullSecrets,
         ["Octopus.Action.KubernetesContainers.PodSecuritySysctls"] = KubernetesProperties.PodSecuritySysctls,
-        ["Octopus.Action.KubernetesContainers.DnsConfigOptions"] = KubernetesProperties.DnsConfigOptions
+        ["Octopus.Action.KubernetesContainers.DnsConfigOptions"] = KubernetesProperties.DnsConfigOptions,
+        [OctopusCustomResourceYaml] = SpecialVariables.Action.KubernetesYaml
     };
+
+    private const string OctopusCustomResourceYaml = "Octopus.Action.KubernetesContainers.CustomResourceYaml";
+    private const string OctopusDeploymentWait = "Octopus.Action.KubernetesContainers.DeploymentWait";
+    private const string OctopusPodManagementPolicy = "Octopus.Action.KubernetesContainers.PodManagementPolicy";
+    private const string OctopusDeploymentResourceType = "Octopus.Action.KubernetesContainers.DeploymentResourceType";
 
     private static readonly IReadOnlySet<string> SupportedProperties = new HashSet<string>(
         PropertyMap.Keys
@@ -77,9 +83,11 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
                 "Octopus.Action.KubernetesContainers.IngressTlsCertificates",
                 OctopusImportKubernetesActionMapperSupport.OctopusResourceStatusCheck,
                 OctopusImportKubernetesActionMapperSupport.OctopusDeploymentTimeout,
+                OctopusImportKubernetesActionMapperSupport.OctopusWaitForJobs,
                 "Octopus.Action.Kubernetes.ServerSideApply.Enabled",
                 "Octopus.Action.Kubernetes.ServerSideApply.FieldManager",
-                "Octopus.Action.Kubernetes.ServerSideApply.ForceConflicts"
+                "Octopus.Action.Kubernetes.ServerSideApply.ForceConflicts",
+                OctopusDeploymentWait
             ]),
         StringComparer.OrdinalIgnoreCase);
 
@@ -95,19 +103,66 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
         ArgumentNullException.ThrowIfNull(context);
 
         var diagnostics = new List<OctopusImportDiagnosticDto>();
+
+        action = OctopusKubernetesContainersFeatures.RemoveDisabledFeatureProperties(action, diagnostics);
+
         var model = OctopusImportKubernetesActionMapperSupport.CreateActionModel(action, SquidActionType);
 
         OctopusImportKubernetesActionMapperSupport.AddSimpleMappedProperties(action, model.Properties, PropertyMap);
         OctopusImportKubernetesActionMapperSupport.AddKubernetesExecutionProperties(action, model.Properties);
+        AddDeploymentWaitStatusCheck(action, model.Properties, diagnostics);
+        AddCustomResourceDiagnostics(action, diagnostics);
         AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.ConfigMapValues", KubernetesProperties.ConfigMapValues, diagnoseSensitiveConfigMapValues: true);
         AddNormalizedJsonProperty(action, model.Properties, diagnostics, "Octopus.Action.KubernetesContainers.SecretValues", KubernetesProperties.SecretValues);
         AddNormalizedContainers(action, context, model.Properties, diagnostics);
         OctopusImportKubernetesActionMapperSupport.AddIngressAnnotations(action, model.Properties, diagnostics);
         OctopusImportKubernetesActionMapperSupport.AddIngressRules(action, model.Properties, diagnostics);
         OctopusImportKubernetesActionMapperSupport.AddIngressTlsCertificates(action, model.Properties, diagnostics);
-        OctopusImportKubernetesActionMapperSupport.AddUnsupportedPropertyDiagnostics(action, SupportedProperties, diagnostics);
+        OctopusImportKubernetesActionMapperSupport.AddUnsupportedPropertyDiagnostics(action, SupportedPropertiesFor(action), diagnostics);
 
         return new OctopusImportActionMappingResult(model, diagnostics);
+    }
+
+    // Octopus "Wait for the deployment to succeed" (DeploymentWait=Wait) wins over ResourceStatusCheck:
+    // Calamari's ResourceStatusReportScriptWrapper.IsEnabled checks DeploymentWait first and skips its
+    // own status check because the legacy rollout wait already runs. Squid has a single status check,
+    // so the legacy wait switches it on whatever ResourceStatusCheck (already mapped) says.
+    private static void AddDeploymentWaitStatusCheck(OctopusDeploymentActionDto action, List<ActionPropertyModel> properties, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        if (!OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, OctopusDeploymentWait, out var wait)) return;
+        if (!string.Equals(wait.Trim(), "Wait", StringComparison.OrdinalIgnoreCase)) return;
+
+        properties.RemoveAll(p => string.Equals(p.PropertyName, KubernetesProperties.ObjectStatusCheck, StringComparison.Ordinal));
+        OctopusImportKubernetesActionMapperSupport.AddProperty(properties, KubernetesProperties.ObjectStatusCheck, KubernetesBooleanValues.True);
+
+        diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(
+            OctopusImportCompatibilitySeverity.Info,
+            OctopusImportActionMappingDiagnosticCodes.DeploymentWaitMappedToStatusCheck,
+            $"Octopus action '{action.Name}' waits for the deployment to succeed; Squid will wait for the applied resources to become ready.",
+            action));
+    }
+
+    private static void AddCustomResourceDiagnostics(OctopusDeploymentActionDto action, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        if (!OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, OctopusCustomResourceYaml, out var yaml)) return;
+        if (!yaml.Contains("OctopusParameters", StringComparison.Ordinal)) return;
+
+        diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportActionMappingDiagnosticCodes.CustomResourceUsesOctopusParameters,
+            $"The custom resource YAML of Octopus action '{action.Name}' iterates the Octopus-only 'OctopusParameters' collection, which Squid does not provide. Review the imported YAML before deploying.",
+            action));
+    }
+
+    // PodManagementPolicy only affects StatefulSets; for any other resource type Octopus ignores it,
+    // so reporting it as "unsupported, omitted" would be a false alarm.
+    private static IReadOnlySet<string> SupportedPropertiesFor(OctopusDeploymentActionDto action)
+    {
+        OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, OctopusDeploymentResourceType, out var resourceType);
+
+        if (string.Equals(resourceType?.Trim(), "StatefulSet", StringComparison.OrdinalIgnoreCase)) return SupportedProperties;
+
+        return new HashSet<string>(SupportedProperties.Append(OctopusPodManagementPolicy), StringComparer.OrdinalIgnoreCase);
     }
 
     private static void AddNormalizedJsonProperty(

@@ -14,8 +14,8 @@ public class BuiltInTeamSeeder : IDataSeeder
         var roleProvider = scope.Resolve<IUserRoleDataProvider>();
         var scopedRoleProvider = scope.Resolve<IScopedUserRoleDataProvider>();
 
-        await SeedTeamWithRoleAsync(teamProvider, roleProvider, scopedRoleProvider, "Squid Administrators", "Built-in administrators team", BuiltInRoles.SystemAdministrator.Name).ConfigureAwait(false);
-        await SeedTeamAsync(teamProvider, "Everyone", "All users").ConfigureAwait(false);
+        await SeedTeamWithRoleAsync(teamProvider, roleProvider, scopedRoleProvider, BuiltInTeamNames.Administrators, "Built-in administrators team", BuiltInRoles.SystemAdministrator.Name).ConfigureAwait(false);
+        await SeedTeamAsync(teamProvider, BuiltInTeamNames.Everyone, "All users").ConfigureAwait(false);
 
         Log.Information("Built-in team seeding complete");
     }

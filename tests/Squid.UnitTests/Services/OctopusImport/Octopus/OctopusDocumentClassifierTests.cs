@@ -73,6 +73,8 @@ public class OctopusDocumentClassifierTests
     [InlineData("Deployments-390384-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Deployment, false)]
     [InlineData("ServerTasks-2032665-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.ServerTask, false)]
     [InlineData("WorkerPools-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.WorkerPool, false)]
+    [InlineData("LibraryVariableSets-141-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.LibraryVariableSet, false)]
+    [InlineData("variableset-LibraryVariableSets-141-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.VariableSet, false)]
     [InlineData("Tenants-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Tenant, false)]
     [InlineData("Runbooks-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Runbook, false)]
     [InlineData("runbookprocess-Runbooks-1-D4C63A85E7894C5D8C20D9297FEA1A43.json", OctopusDocumentKind.Runbook, false)]
@@ -85,6 +87,19 @@ public class OctopusDocumentClassifierTests
 
         classification.Kind.ShouldBe(expectedKind);
         classification.IsOutOfScopeHistory.ShouldBe(outOfScope);
+    }
+
+    [Theory]
+    [InlineData("LibraryVariableSet", OctopusDocumentKind.LibraryVariableSet)]
+    [InlineData("LibraryVariables", OctopusDocumentKind.VariableSet)]
+    [InlineData("StaticWorkerPool", OctopusDocumentKind.WorkerPool)]
+    [InlineData("DynamicWorkerPool", OctopusDocumentKind.WorkerPool)]
+    public void Classify_ManifestDocumentTypesFromRealExports_AreRecognised(string documentType, OctopusDocumentKind expectedKind)
+    {
+        var classification = OctopusDocumentClassifier.Classify(new OctopusManifestEntryDto { Id = "Any-1", DocumentType = documentType, DocumentSource = "Any-1.json" });
+
+        classification.Kind.ShouldBe(expectedKind);
+        classification.IsCurrentConfiguration.ShouldBeTrue();
     }
 
     [Fact]

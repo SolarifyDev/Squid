@@ -219,6 +219,17 @@ public class OctopusImportBlockerSummaryBuilderTests
             "The release '0.1.0' references a package feed that is not available in the destination.");
     }
 
+    [Fact]
+    public void Build_UsesDirectMessageForMissingSquidBuiltInTeamEquivalent()
+    {
+        var diagnostic = Diagnostic(OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing, "Octopus built-in team maps to a missing Squid team.", "Team", "teams-administrators");
+        diagnostic.ResourceName = "Octopus Administrators";
+
+        var summary = OctopusImportBlockerSummaryBuilder.Build([diagnostic]);
+
+        summary.BlockingReasons.Single().Message.ShouldBe("The team 'Octopus Administrators' is an Octopus built-in team whose Squid built-in equivalent is missing from the destination.");
+    }
+
     private static OctopusImportDiagnosticDto Diagnostic(
         string code,
         string message,

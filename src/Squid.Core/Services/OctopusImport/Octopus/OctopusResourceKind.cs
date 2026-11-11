@@ -29,5 +29,6 @@ public enum OctopusResourceKind
     WorkerPool,
     Tenant,
     Runbook,
-    Trigger
+    Trigger,
+    LibraryVariableSet
 }

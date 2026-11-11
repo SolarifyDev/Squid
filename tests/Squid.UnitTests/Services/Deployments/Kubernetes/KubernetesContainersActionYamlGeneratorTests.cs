@@ -754,6 +754,21 @@ public class KubernetesContainersActionYamlGeneratorTests
         result.ShouldNotContainKey("configmap.yaml");
     }
 
+    // Identity rule shared with the Octopus import's dangling-reference diagnostic: only an exact ordinal
+    // match is the step's own ConfigMap/Secret (and gets the deployment suffix); anything else is external.
+    [Theory]
+    [InlineData("app-config", "app-config", true)]
+    [InlineData("App-Config", "app-config", false)]
+    [InlineData(" app-config", "app-config", false)]
+    [InlineData("app-config", "", false)]
+    [InlineData("", "", false)]
+    [InlineData(null, null, false)]
+    [InlineData("app-config", null, false)]
+    public void IsStepResourceReference_ExactOrdinalMatchOnly(string referenceName, string stepResourceName, bool expected)
+    {
+        KubernetesContainersActionYamlGenerator.IsStepResourceReference(referenceName, stepResourceName).ShouldBe(expected);
+    }
+
     [Fact]
     public async Task GenerateAsync_WithDeploymentId_EnvFromConfigMapRefRewritten()
     {
@@ -929,6 +944,41 @@ public class KubernetesContainersActionYamlGeneratorTests
     }
 
     // === Helpers ===
+
+    // === Custom resource (Octopus "Custom resource" feature) ===
+
+    [Fact]
+    public async Task GenerateAsync_CustomResourceYaml_IsEmittedVerbatimAlongsideTheWorkload()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        const string yaml = "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\n";
+        AddProperty(action, "Squid.Action.KubernetesContainers.CustomResourceYaml", yaml);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey("deployment.yaml");
+        Encoding.UTF8.GetString(result[KubernetesContainersActionYamlGenerator.CustomResourceFileName]).ShouldBe(yaml);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GenerateAsync_NoCustomResourceYaml_EmitsNoCustomResourceFile(string yaml)
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        if (yaml != null) AddProperty(action, "Squid.Action.KubernetesContainers.CustomResourceYaml", yaml);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldNotContainKey(KubernetesContainersActionYamlGenerator.CustomResourceFileName);
+    }
+
+    [Fact]
+    public void CustomResourceFileName_IsPinned()
+    {
+        KubernetesContainersActionYamlGenerator.CustomResourceFileName.ShouldBe("customresource.yaml");
+    }
 
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateFrontendScenario()
     {

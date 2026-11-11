@@ -3,6 +3,8 @@ using System.Text.Json;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.UnitTests.Services.OctopusImport.Secrets;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 
@@ -294,6 +296,98 @@ public class OctopusImportVariableMapperTests
             IdMap(),
             7));
     }
+
+    [Fact]
+    public void MapToCreateCommand_WithExportSecrets_ImportsDecryptedSensitiveValueAsSensitiveWithoutBlockers()
+    {
+        var mapper = MapperWithSecrets("export-pw");
+        var variableSet = VariableSet(
+            new OctopusVariableDto { Id = "v-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("p@ss'word", "export-pw") },
+            new OctopusVariableDto { Id = "v-2", Name = "Empty:Secret", Type = "Sensitive", Value = null });
+
+        var result = mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.RequiredInputs.ShouldBeEmpty();
+        var secret = result.CreateCommand.Variables.Single(v => v.Name == "Db:Password");
+        secret.Value.ShouldBe("p@ss'word");
+        secret.IsSensitive.ShouldBeTrue();
+        secret.Type.ShouldBe(VariableType.Password);
+        result.CreateCommand.Variables.Single(v => v.Name == "Empty:Secret").Value.ShouldBe(string.Empty);
+        result.Diagnostics.ShouldAllBe(d => !d.Message.Contains("p@ss'word"));
+    }
+
+    [Theory]
+    [InlineData("wrong-pw")]
+    [InlineData(null)]
+    public void MapToCreateCommand_WhenSensitiveValueCannotBeDecrypted_KeepsFailClosedBlocker(string password)
+    {
+        var mapper = MapperWithSecrets(password);
+        var variableSet = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("p@ss", "export-pw") });
+
+        var result = mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted);
+        result.CreateCommand.Variables.Single().Value.ShouldBe(string.Empty);
+        result.RequiredInputs.Single().SourceId.ShouldBe("v-1");
+    }
+
+    [Fact]
+    public void MapToCreateCommand_LibraryVariableSetOwner_MapsOwnerTypeAndLeavesOwnerForServiceToAssign()
+    {
+        var variableSet = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "Shared", Value = "x" });
+        variableSet.Id = "variableset-LibraryVariableSets-1";
+        variableSet.OwnerId = "LibraryVariableSets-1";
+        variableSet.OwnerType = "LibraryVariableSet";
+
+        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7, "Shared Library", "desc");
+
+        result.HasBlockers.ShouldBeFalse();
+        result.CreateCommand.OwnerType.ShouldBe(VariableSetOwnerType.LibraryVariableSet);
+        result.CreateCommand.OwnerId.ShouldBe(0);
+        result.CreateCommand.Name.ShouldBe("Shared Library");
+        result.CreateCommand.Description.ShouldBe("desc");
+    }
+
+    [Fact]
+    public void MapToUpdateCommand_LibraryVariableSetOwner_UsesMappedDestinationLibraryId()
+    {
+        var variableSet = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "Shared", Value = "x" });
+        variableSet.OwnerId = "LibraryVariableSets-1";
+        variableSet.OwnerType = "LibraryVariableSet";
+        var idMap = IdMap();
+        idMap.AddCreated(Resource("LibraryVariableSets-1", OctopusResourceKind.LibraryVariableSet, "Shared", new OctopusLibraryVariableSetDto()), 555);
+
+        var result = _mapper.MapToUpdateCommand(Resource(variableSet), idMap, 900, 7);
+
+        result.UpdateCommand.OwnerType.ShouldBe(VariableSetOwnerType.LibraryVariableSet);
+        result.UpdateCommand.OwnerId.ShouldBe(555);
+    }
+
+    [Fact]
+    public void MapToCreateCommand_UnknownOwnerType_StillBlocks()
+    {
+        var variableSet = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "X", Value = "x" });
+        variableSet.OwnerType = "Tenant";
+
+        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableSetOwnerType);
+    }
+
+    [Fact]
+    public void MapToCreateCommand_RewritesMappedOctopusSystemVariableReferences()
+    {
+        var variableSet = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "Tag", Value = "app:#{Octopus.Release.Number}-#{Octopus.Unknown.Thing}" });
+
+        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+
+        result.CreateCommand.Variables.Single().Value.ShouldBe("app:#{Squid.Release.Number}-#{Octopus.Unknown.Thing}");
+    }
+
+    private static OctopusImportVariableMapper MapperWithSecrets(string password)
+        => new(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword(password) });
 
     private static OctopusVariableSetDto VariableSet(params OctopusVariableDto[] variables)
         => new()

@@ -1,7 +1,8 @@
 using System.Text.Json;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Services.Identity;
-using Squid.Core.Services.Teams;
+using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Json;
 using Squid.Message.Models.Deployments.Interruption;
 using Squid.Message.Requests.Deployments.Interruption;
@@ -10,49 +11,32 @@ namespace Squid.Core.Handlers.RequestHandlers.Deployments.Interruption;
 
 public class GetPendingInterruptionsRequestHandler(
     IDeploymentInterruptionService interruptionService,
-    ITeamDataProvider teamDataProvider,
+    IInterruptionAuthorizationService interruptionAuthorization,
     ICurrentUser currentUser) : IRequestHandler<GetPendingInterruptionsRequest, GetPendingInterruptionsResponse>
 {
     public async Task<GetPendingInterruptionsResponse> Handle(IReceiveContext<GetPendingInterruptionsRequest> context, CancellationToken cancellationToken)
     {
         var interruptions = await interruptionService.GetPendingInterruptionsAsync(context.Message.ServerTaskId, cancellationToken).ConfigureAwait(false);
 
-        var userTeamIds = await LoadCurrentUserTeamIdsAsync(cancellationToken).ConfigureAwait(false);
+        var access = await interruptionAuthorization.GetAccessForEachAsync(interruptions, currentUser.Id, cancellationToken).ConfigureAwait(false);
 
-        var dtos = interruptions.Select(i => new InterruptionDto
-        {
-            Id = i.Id,
-            ServerTaskId = i.ServerTaskId,
-            InterruptionType = i.InterruptionType,
-            StepName = i.StepName,
-            ActionName = i.ActionName,
-            MachineName = i.MachineName,
-            Form = i.FormJson != null ? JsonSerializer.Deserialize<InterruptionForm>(i.FormJson, SquidJsonDefaults.CaseInsensitive) : null,
-            ResponsibleUserId = i.ResponsibleUserId,
-            ResponsibleTeamIds = i.ResponsibleTeamIds,
-            CanTakeResponsibility = CanUserAct(i.ResponsibleTeamIds, userTeamIds),
-            IsPending = i.Resolution == null,
-            CreatedDate = i.CreatedDate
-        }).ToList();
-
-        return new GetPendingInterruptionsResponse { Interruptions = dtos };
+        return new GetPendingInterruptionsResponse { Interruptions = interruptions.Select((interruption, i) => ToDto(interruption, access[i])).ToList() };
     }
 
-    private async Task<HashSet<int>> LoadCurrentUserTeamIdsAsync(CancellationToken ct)
+    private static InterruptionDto ToDto(DeploymentInterruption interruption, InterruptionAccess access) => new()
     {
-        if (!currentUser.Id.HasValue) return new();
-
-        var ids = await teamDataProvider.GetTeamIdsByUserIdAsync(currentUser.Id.Value, ct).ConfigureAwait(false);
-
-        return ids.ToHashSet();
-    }
-
-    private static bool CanUserAct(string responsibleTeamIds, HashSet<int> userTeamIds)
-    {
-        var requiredTeamIds = TeamIdParser.ParseCsv(responsibleTeamIds);
-        if (requiredTeamIds.Count == 0) return true;
-        if (userTeamIds.Count == 0) return false;
-
-        return requiredTeamIds.Any(userTeamIds.Contains);
-    }
+        Id = interruption.Id,
+        ServerTaskId = interruption.ServerTaskId,
+        InterruptionType = interruption.InterruptionType,
+        StepName = interruption.StepName,
+        ActionName = interruption.ActionName,
+        MachineName = interruption.MachineName,
+        Form = interruption.FormJson != null ? JsonSerializer.Deserialize<InterruptionForm>(interruption.FormJson, SquidJsonDefaults.CaseInsensitive) : null,
+        ResponsibleUserId = interruption.ResponsibleUserId,
+        ResponsibleTeamIds = interruption.ResponsibleTeamIds,
+        CanTakeResponsibility = access != InterruptionAccess.Denied,
+        IsAdministratorOverride = access == InterruptionAccess.AdministratorOverride,
+        IsPending = interruption.Resolution == null,
+        CreatedDate = interruption.CreatedDate
+    };
 }

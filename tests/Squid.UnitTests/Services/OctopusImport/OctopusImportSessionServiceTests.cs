@@ -326,6 +326,41 @@ public class OctopusImportSessionServiceTests
             Times.Never);
     }
 
+    [Theory]
+    [InlineData(OctopusImportSessionState.Succeeded)]
+    [InlineData(OctopusImportSessionState.Failed)]
+    public async Task RecordResultAsync_AnyTerminalState_ClearsTheRetainedExportPassword(OctopusImportSessionState terminalState)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Importing);
+        session.ProtectedExportPassword = "v2:protected";
+        string persistedPassword = "not-called";
+
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider
+            .Setup(p => p.UpdateSessionAsync(session, It.IsAny<byte[]>(), true, It.IsAny<CancellationToken>()))
+            .Callback<OctopusImportSession, byte[], bool, CancellationToken>((s, _, _, _) => persistedPassword = s.ProtectedExportPassword)
+            .Returns(Task.CompletedTask);
+
+        await _service.RecordResultAsync(sessionId, 7, terminalState, new OctopusImportSessionResultDto(), CancellationToken.None);
+
+        persistedPassword.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdatePayloadAndTransitionAsync_NonTerminalTransition_KeepsTheRetainedExportPassword()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Previewed);
+        session.ProtectedExportPassword = "v2:protected";
+
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        await _service.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, validatedPlanJson: "{}", ct: CancellationToken.None);
+
+        session.ProtectedExportPassword.ShouldBe("v2:protected");
+    }
+
     [Fact]
     public async Task RecordResultAsync_PersistsTerminalResult()
     {

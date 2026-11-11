@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -11,8 +12,7 @@ public static class OctopusImportRequiredInputBuilder
     public const string RequiredSecretInputPrefix = "required-secret-input";
 
     public static bool IsSensitiveVariable(OctopusVariableDto variable)
-        => variable != null
-           && (variable.IsSensitive || string.Equals(variable.Type?.Trim(), "Sensitive", StringComparison.OrdinalIgnoreCase));
+        => variable != null && OctopusImportSensitiveValues.IsSensitive(variable.IsSensitive, variable.Type);
 
     public static OctopusImportRequiredInputDto ForSensitiveVariable(
         string sourceId,

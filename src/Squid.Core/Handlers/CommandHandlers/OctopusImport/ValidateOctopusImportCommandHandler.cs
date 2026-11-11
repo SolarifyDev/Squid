@@ -6,6 +6,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -17,7 +18,9 @@ public class ValidateOctopusImportCommandHandler(
     IOctopusImportSessionService sessionService,
     ICurrentUser currentUser,
     IOctopusImportPlanningPipeline planningPipeline,
-    IOctopusImportPreviewValidator previewValidator)
+    IOctopusImportPreviewValidator previewValidator,
+    IOctopusImportExportSecretStore secretStore = null,
+    IOctopusExportSecretsAccessor secretsAccessor = null)
     : ICommandHandler<ValidateOctopusImportCommand, ValidateOctopusImportResponse>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -39,6 +42,8 @@ public class ValidateOctopusImportCommandHandler(
 
         if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
             return BadRequest(command, state, command.PreviewPlan, new OctopusImportValidationResultDto(), "Octopus import session does not have an available temporary upload.");
+
+        await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
         OctopusImportPlanningSnapshot snapshot;
         try

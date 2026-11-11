@@ -202,6 +202,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
         if (OctopusImportSessionStateMachine.IsTerminal(newState))
         {
+            session.ProtectedExportPassword = null;
             session.CompletedAt = session.LastStateChangedAt;
             session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(newState, session.LastStateChangedAt);
         }
@@ -255,6 +256,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.CompletedAt = completedAt;
         session.LastStateChangedAt = completedAt;
         session.TemporaryUploadCleanupAfter = GetTerminalUploadCleanupAfter(terminalState, completedAt);
+        session.ProtectedExportPassword = null;
 
         await _dataProvider
             .UpdateSessionAsync(session, session.DataVersion, ct: ct)

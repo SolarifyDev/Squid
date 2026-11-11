@@ -7,6 +7,9 @@ using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.Teams;
+using Squid.Message.Commands.Teams;
+using Squid.Message.Models.Teams;
 using Squid.Message.Commands.Deployments.Environment;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Commands.Deployments.LifeCycle;
@@ -466,6 +469,117 @@ public class OctopusImportConfirmationOrchestratorTests
         harness.TransactionExecutor.ExecuteCalls.ShouldBe(1);
     }
 
+    // ── Library variable set name lock ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ConfirmAsync_LibraryNameTakenAfterPreview_FailsCleanlyAndNeverSendsTheCreate()
+    {
+        var nameLock = new Mock<IOctopusImportLibraryVariableSetNameLock>();
+        nameLock.Setup(l => l.LockNameAndFindExistingAsync(7, "Zeta Lib", It.IsAny<CancellationToken>())).ReturnsAsync(42);
+        var harness = CreateLibraryHarness(nameLock);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Succeeded.ShouldBeFalse();
+
+        var library = result.Result.Resources.Single(r => r.SourceId == "LibraryVariableSets-1");
+        var diagnostic = library.Diagnostics.Single(d => d.Code == OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently);
+
+        library.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+        diagnostic.Message.ShouldContain("'Zeta Lib'");
+        diagnostic.Message.ShouldContain("id 42");
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently);
+        result.Result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceExecutionFailed);
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.IsAny<CreateVariableSetCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_NameStillFree_CreatesEveryPlannedLibrary()
+    {
+        var harness = CreateLibraryHarness(new Mock<IOctopusImportLibraryVariableSetNameLock>());
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.Is<CreateVariableSetCommand>(c => c.Name == "Zeta Lib" || c.Name == "Alpha Lib"), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.Is<CreateVariableSetCommand>(c => c.Name == "Kept Lib"), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Locks taken one library at a time, in dependency order, let two confirmations hold the same names
+    // in opposite order and deadlock. Every created name is locked in ONE call before the first write.
+    [Fact]
+    public async Task ConfirmAsync_LocksEveryCreatedLibraryNameUpFrontBeforeAnyWrite_AndNeverLocksAReusedOne()
+    {
+        var nameLock = new Mock<IOctopusImportLibraryVariableSetNameLock>();
+        TestHarness harness = null;
+        List<string> lockedNames = null;
+        var mediatorCallsWhenLocked = -1;
+
+        nameLock
+            .Setup(l => l.LockNamesAsync(7, It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<int, IEnumerable<string>, CancellationToken>((_, names, _) =>
+            {
+                lockedNames = names.ToList();
+                mediatorCallsWhenLocked = harness.Mediator.Invocations.Count;
+            })
+            .Returns(Task.CompletedTask);
+
+        harness = CreateLibraryHarness(nameLock);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        nameLock.Verify(l => l.LockNamesAsync(7, It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+        lockedNames.ShouldBe(["Zeta Lib", "Alpha Lib"], ignoreOrder: true);
+        mediatorCallsWhenLocked.ShouldBe(0, customMessage: "names must be locked before the import writes anything");
+    }
+
+    [Theory]
+    [InlineData(new[] { "Zeta", "Alpha" }, new[] { "alpha", "zeta" })]
+    [InlineData(new[] { "Alpha", "Zeta" }, new[] { "alpha", "zeta" })]
+    [InlineData(new[] { " Shared ", "shared", "SHARED" }, new[] { "shared" })]
+    [InlineData(new[] { "b", null, "", "a" }, new[] { "", "a", "b" })]
+    [InlineData(new string[0], new string[0])]
+    public void NameLock_LockOrder_IsDistinctNormalisedAndOrdinalSoEverySessionLocksInTheSameOrder(string[] names, string[] expected)
+    {
+        OctopusImportLibraryVariableSetNameLock.LockOrder(names).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_CreatesTeamThroughTeamService_NeverThroughTheSystemScopedCreateTeamCommand()
+    {
+        var nodes = BuildMinimalNodes();
+        var team = Node("Teams-1", OctopusResourceKind.Team, OctopusDocumentKind.Team, "Approvers", new OctopusTeamDto { Id = "Teams-1", Name = "Approvers", Description = null, MemberUserIds = ["Users-1", "Users-2"] }, null);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([team]), BuildPreviewPlan([team]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.TeamService.Verify(s => s.CreateAsync(It.Is<CreateTeamCommand>(c => c.Name == "Approvers" && c.Description == string.Empty && c.SpaceId == nodes.DestinationSpaceId), It.IsAny<CancellationToken>()), Times.Once);
+        harness.Mediator.Verify(m => m.SendAsync<CreateTeamCommand, CreateTeamResponse>(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        var outcome = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == "Teams-1");
+        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
+        outcome.DestinationId.ShouldBe(900);
+        outcome.Diagnostics.Single(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TeamCreatedWithoutMembers).Message.ShouldContain("administrator");
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_WhenTeamServiceReturnsNoId_FailsAndRollsBack()
+    {
+        var nodes = BuildMinimalNodes();
+        var team = Node("Teams-1", OctopusResourceKind.Team, OctopusDocumentKind.Team, "Approvers", new OctopusTeamDto { Id = "Teams-1", Name = "Approvers" }, null);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([team]), BuildPreviewPlan([team]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+        harness.TeamService.Setup(s => s.CreateAsync(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>())).ReturnsAsync(new TeamDto { Id = 0 });
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        harness.SessionService.RecordedResult.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+    }
+
     private static TestHarness CreateMinimalHarness(
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
@@ -483,6 +597,28 @@ public class OctopusImportConfirmationOrchestratorTests
             throwAfterAction,
             withTransactionGate);
     }
+
+    private static TestHarness CreateLibraryHarness(Mock<IOctopusImportLibraryVariableSetNameLock> nameLock)
+    {
+        var nodes = BuildMinimalNodes();
+        var zeta = LibraryNode("LibraryVariableSets-1", "Zeta Lib");
+        var alpha = LibraryNode("LibraryVariableSets-2", "Alpha Lib");
+        var kept = LibraryNode("LibraryVariableSets-3", "Kept Lib");
+        var ordered = new List<OctopusResourceNode> { nodes.ProjectGroup, nodes.Environment, zeta, alpha, kept, nodes.Project };
+        var libraryNodes = nodes with { MinimalOrderedResources = ordered, RichOrderedResources = ordered };
+
+        var harness = CreateHarness(libraryNodes, BuildDependencyPlan(ordered), BuildPreviewPlan(ordered, reusedResources: [kept]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false, nameLock: nameLock.Object);
+
+        harness.Mediator
+            .Setup(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.IsAny<CreateVariableSetCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateVariableSetCommand command, CancellationToken _) => new CreateVariableSetResponse { Data = new CreateVariableSetResponseData { VariableSet = new VariableSetDto { Id = 300 + command.Name.Length, OwnerId = 400 + command.Name.Length, Name = command.Name } } });
+
+        return harness;
+    }
+
+    // A library exported without its variables document: confirmation creates it empty, so no variable mapper is involved.
+    private static OctopusResourceNode LibraryNode(string sourceId, string name)
+        => Node(sourceId, OctopusResourceKind.LibraryVariableSet, OctopusDocumentKind.LibraryVariableSet, name, new OctopusLibraryVariableSetDto { Id = sourceId, Name = name, VariableSetId = $"variableset-{sourceId}", ContentType = "Variables" }, null);
 
     private static TestHarness CreateRichHarness()
     {
@@ -502,7 +638,8 @@ public class OctopusImportConfirmationOrchestratorTests
         OctopusImportPreviewPlanDto previewPlan,
         bool admissionShouldSucceed,
         bool throwAfterAction,
-        bool withTransactionGate)
+        bool withTransactionGate,
+        IOctopusImportLibraryVariableSetNameLock nameLock = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -531,6 +668,11 @@ public class OctopusImportConfirmationOrchestratorTests
         var channelDataProvider = new Mock<IChannelDataProvider>();
         var conflictDiscoveryService = new Mock<IOctopusImportConflictDiscoveryService>();
         var previewValidator = new Mock<IOctopusImportPreviewValidator>();
+        var teamService = new Mock<ITeamService>();
+
+        teamService
+            .Setup(s => s.CreateAsync(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateTeamCommand command, CancellationToken _) => new TeamDto { Id = 900, Name = command.Name, SpaceId = command.SpaceId });
 
         conflictDiscoveryService
             .Setup(s => s.DiscoverAsync(nodes.DestinationSpaceId, It.IsAny<OctopusResourceGraph>(), It.IsAny<CancellationToken>()))
@@ -570,9 +712,11 @@ public class OctopusImportConfirmationOrchestratorTests
             processMapper.Object,
             shellMapper.Object,
             deploymentHistoryImporter.Object,
+            nameLock ?? Mock.Of<IOctopusImportLibraryVariableSetNameLock>(),
             projectDataProvider.Object,
             channelDataProvider.Object,
-            mediator.Object);
+            mediator.Object,
+            teamService.Object);
 
         return new TestHarness(
             orchestrator,
@@ -590,6 +734,7 @@ public class OctopusImportConfirmationOrchestratorTests
             projectDataProvider,
             channelDataProvider,
             previewValidator,
+            teamService,
             nodes,
             dependencyPlan,
             previewPlan,
@@ -711,8 +856,8 @@ public class OctopusImportConfirmationOrchestratorTests
             });
 
         processMapper
-            .Setup(m => m.MapToCreateStepCommands(It.IsAny<OctopusResourceNode>(), It.IsAny<OctopusImportIdMap>(), destinationSpaceId))
-            .Returns((OctopusResourceNode resource, OctopusImportIdMap idMap, int spaceId) =>
+            .Setup(m => m.MapToCreateStepCommands(It.IsAny<OctopusResourceNode>(), It.IsAny<OctopusImportIdMap>(), destinationSpaceId, It.IsAny<IReadOnlyDictionary<string, OctopusActionTemplateDto>>()))
+            .Returns((OctopusResourceNode resource, OctopusImportIdMap idMap, int spaceId, IReadOnlyDictionary<string, OctopusActionTemplateDto> _) =>
             {
                 var source = resource.GetSource<OctopusDeploymentProcessDto>();
                 var step = source.Steps.Single();
@@ -1460,6 +1605,7 @@ public class OctopusImportConfirmationOrchestratorTests
         Mock<IProjectDataProvider> ProjectDataProvider,
         Mock<IChannelDataProvider> ChannelDataProvider,
         Mock<IOctopusImportPreviewValidator> PreviewValidator,
+        Mock<ITeamService> TeamService,
         ScenarioNodes Nodes,
         OctopusImportDependencyPlan DependencyPlan,
         OctopusImportPreviewPlanDto PreviewPlan,

@@ -7,6 +7,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -20,7 +21,9 @@ public class ConfirmOctopusImportCommandHandler(
     ICurrentUser currentUser,
     IAuthorizationService authorizationService,
     IOctopusImportPlanningPipeline planningPipeline,
-    IOctopusImportConfirmationOrchestrator confirmationOrchestrator)
+    IOctopusImportConfirmationOrchestrator confirmationOrchestrator,
+    IOctopusImportExportSecretStore secretStore = null,
+    IOctopusExportSecretsAccessor secretsAccessor = null)
     : ICommandHandler<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -74,6 +77,16 @@ public class ConfirmOctopusImportCommandHandler(
 
         if (validatedPlan?.PreviewPlan == null)
             return BadRequest(command, state, "Octopus import session does not have a validated preview plan.");
+
+        await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
+
+        // An envelope that the current master key cannot read was written under a key that did decrypt it, so the
+        // plan may have been validated with the secrets; confirming without them would import a different result
+        // and end the session terminally. Refuse instead: the session stays Validated, so restoring the master key
+        // and retrying works, and expiry clears the password otherwise. A password that was never retained
+        // (NotRetained) is not refused: it can never become readable and was validated without secrets.
+        if (secretsAccessor?.Secrets.IsUnreadable == true)
+            return BadRequest(command, state, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailableMessage, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable);
 
         OctopusImportPlanningSnapshot snapshot;
         try
@@ -164,6 +177,8 @@ public class ConfirmOctopusImportCommandHandler(
             OctopusResourceKind.Lifecycle => Permission.LifecycleCreate,
             OctopusResourceKind.Feed => Permission.FeedEdit,
             OctopusResourceKind.Account => Permission.AccountCreate,
+            OctopusResourceKind.Team => Permission.TeamCreate,
+            OctopusResourceKind.LibraryVariableSet => Permission.VariableEdit,
             OctopusResourceKind.Channel => ResolveChannelPermission(resource),
             OctopusResourceKind.VariableSet => Permission.VariableEdit,
             OctopusResourceKind.DeploymentProcess => Permission.ProcessEdit,
@@ -206,12 +221,13 @@ public class ConfirmOctopusImportCommandHandler(
     private static ConfirmOctopusImportResponse BadRequest(
         ConfirmOctopusImportCommand command,
         OctopusImportSessionState state,
-        string message)
+        string message,
+        string code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRequiresValidatedSession)
     {
         var diagnostic = new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Blocker,
-            Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRequiresValidatedSession,
+            Code = code,
             Message = message
         };
 

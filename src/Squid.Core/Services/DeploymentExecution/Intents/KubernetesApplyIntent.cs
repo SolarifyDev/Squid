@@ -61,4 +61,10 @@ public sealed record KubernetesApplyIntent : ExecutionIntent
     /// runs in its own subshell; a non-zero exit fails the action. Empty by default.
     /// </summary>
     public IReadOnlyList<DeploymentFile> PostApplyScripts { get; init; } = Array.Empty<DeploymentFile>();
+
+    /// <summary>
+    /// When false, the status check skips Jobs (they are not waited on to complete); rollouts are
+    /// still checked. Ignored when <see cref="ObjectStatusCheck"/> is false. Defaults to <c>true</c>.
+    /// </summary>
+    public bool WaitForJobs { get; init; } = true;
 }

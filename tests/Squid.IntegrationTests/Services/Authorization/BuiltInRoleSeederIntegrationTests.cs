@@ -201,6 +201,30 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
         }).ConfigureAwait(false);
     }
 
+    [Fact]
+    public async Task SeedRoles_ExistingSpaceOwnerRoleFromBeforeTheOverridePermission_IsReconciledToIncludeIt()
+    {
+        // An install upgraded from a version without InterruptionSubmitOverride already has a "Space Owner"
+        // row with the old permission set; startup reconciliation must grant the appended permission.
+        await Run<IUserRoleDataProvider>(async provider =>
+        {
+            var legacy = new UserRole { Name = BuiltInRoles.SpaceOwner.Name, Description = "legacy", IsBuiltIn = true };
+            await provider.AddAsync(legacy).ConfigureAwait(false);
+            await provider.SetPermissionsAsync(legacy.Id, BuiltInRoles.SpaceOwner.Permissions.Where(p => p != Squid.Message.Enums.Permission.InterruptionSubmitOverride).Select(p => p.ToString()).ToList()).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await RunDataSeeders().ConfigureAwait(false);
+
+        await Run<IUserRoleDataProvider>(async provider =>
+        {
+            var spaceOwner = await provider.GetByNameAsync(BuiltInRoles.SpaceOwner.Name).ConfigureAwait(false);
+            (await provider.GetPermissionsAsync(spaceOwner.Id).ConfigureAwait(false)).ShouldContain(nameof(Squid.Message.Enums.Permission.InterruptionSubmitOverride));
+
+            var deployer = await provider.GetByNameAsync(BuiltInRoles.ProjectDeployer.Name).ConfigureAwait(false);
+            (await provider.GetPermissionsAsync(deployer.Id).ConfigureAwait(false)).ShouldNotContain(nameof(Squid.Message.Enums.Permission.InterruptionSubmitOverride));
+        }).ConfigureAwait(false);
+    }
+
     private async Task RunDataSeeders()
     {
         await Run<ILifetimeScope>(async scope =>

@@ -10,6 +10,7 @@ using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -86,6 +87,8 @@ public class ConfirmOctopusImportCommandHandlerTests
     [InlineData(OctopusResourceKind.VariableSet, Permission.VariableEdit, false)]
     [InlineData(OctopusResourceKind.DeploymentProcess, Permission.ProcessEdit, false)]
     [InlineData(OctopusResourceKind.Release, Permission.ReleaseCreate, false)]
+    [InlineData(OctopusResourceKind.Team, Permission.TeamCreate, false)]
+    [InlineData(OctopusResourceKind.LibraryVariableSet, Permission.VariableEdit, false)]
     public async Task Handle_WhenPlanCreatesResource_PreflightsMappedPermission(
         OctopusResourceKind resourceKind,
         Permission expectedPermission,
@@ -190,6 +193,77 @@ public class ConfirmOctopusImportCommandHandlerTests
                 It.IsAny<OctopusImportConfirmationRequest>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_LoadsTheSessionExportSecretsBeforePlanningAndConfirming()
+    {
+        var harness = new Harness();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+        var accessor = new OctopusExportSecretsAccessor();
+        var sut = harness.CreateSut(secretStore.Object, accessor);
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview();
+        var secretsAvailableWhenPlanning = false;
+        var secretsAvailableWhenConfirming = false;
+
+        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
+        harness.PlanningPipeline
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Callback(() => secretsAvailableWhenPlanning = accessor.Secrets.IsAvailable)
+            .ReturnsAsync(Snapshot(preview));
+        harness.ConfirmationOrchestrator
+            .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => secretsAvailableWhenConfirming = accessor.Secrets.IsAvailable)
+            .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
+
+        await sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        secretsAvailableWhenPlanning.ShouldBeTrue();
+        secretsAvailableWhenConfirming.ShouldBeTrue();
+        secretStore.Verify(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("unreadable", false)]
+    [InlineData("none", true)]
+    [InlineData("notretained", true)]
+    public async Task Handle_RetainedExportPasswordUnreadable_RefusesWithoutStartingConfirmation_SoTheSessionStaysRecoverable(string secretsState, bool expectConfirmation)
+    {
+        // The plan was validated WITH the decrypted secrets; confirming without them would silently import a
+        // different result and end the session terminally. Refusing keeps it Validated: restoring the master
+        // key and retrying works, otherwise the session expires (which clears the password).
+        // A password that was never retained (no at-rest key at upload) can never become readable and the plan
+        // was validated without it, so it confirms exactly like a session without a password.
+        var harness = new Harness();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+        var sut = harness.CreateSut(secretStore.Object, new OctopusExportSecretsAccessor());
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview();
+
+        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(secretsState switch { "unreadable" => OctopusExportSecrets.Unreadable, "notretained" => OctopusExportSecrets.NotRetained, _ => OctopusExportSecrets.None });
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
+        harness.ConfirmationOrchestrator
+            .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
+
+        var response = await sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        response.Code.ShouldBe(expectConfirmation ? HttpStatusCode.OK : HttpStatusCode.BadRequest);
+        harness.ConfirmationOrchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), expectConfirmation ? Times.Once() : Times.Never());
+
+        if (expectConfirmation) return;
+
+        response.Data.Session.State.ShouldBe(OctopusImportSessionState.Validated);
+        response.Data.BlockerSummary.BlockingReasons.Select(r => r.Code).ShouldBe([OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable]);
     }
 
     private static OctopusImportPreviewPlanDto Preview(
@@ -307,14 +381,11 @@ public class ConfirmOctopusImportCommandHandlerTests
             AuthorizationService
                 .Setup(a => a.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
-            Sut = new ConfirmOctopusImportCommandHandler(
-                SessionDataProvider.Object,
-                SessionService.Object,
-                CurrentUser.Object,
-                AuthorizationService.Object,
-                PlanningPipeline.Object,
-                ConfirmationOrchestrator.Object);
+            Sut = CreateSut(null, null);
         }
+
+        public ConfirmOctopusImportCommandHandler CreateSut(IOctopusImportExportSecretStore secretStore, IOctopusExportSecretsAccessor accessor)
+            => new(SessionDataProvider.Object, SessionService.Object, CurrentUser.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, secretStore, accessor);
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

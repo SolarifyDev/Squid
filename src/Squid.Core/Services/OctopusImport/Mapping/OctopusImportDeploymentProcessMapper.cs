@@ -1,5 +1,6 @@
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
+using Squid.Core.Services.OctopusImport.Mapping.Scripts;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Constants;
@@ -14,7 +15,8 @@ public interface IOctopusImportDeploymentProcessMapper : IScopedDependency
     OctopusImportDeploymentProcessMappingResult MapToCreateStepCommands(
         OctopusResourceNode deploymentProcessResource,
         OctopusImportIdMap idMap,
-        int destinationSpaceId);
+        int destinationSpaceId,
+        IReadOnlyDictionary<string, OctopusActionTemplateDto> actionTemplates = null);
 }
 
 public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProcessMapper
@@ -39,7 +41,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
     public OctopusImportDeploymentProcessMappingResult MapToCreateStepCommands(
         OctopusResourceNode deploymentProcessResource,
         OctopusImportIdMap idMap,
-        int destinationSpaceId)
+        int destinationSpaceId,
+        IReadOnlyDictionary<string, OctopusActionTemplateDto> actionTemplates = null)
     {
         ArgumentNullException.ThrowIfNull(deploymentProcessResource);
         ArgumentNullException.ThrowIfNull(idMap);
@@ -61,6 +64,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
                 index,
                 destinationProcessId,
                 destinationSpaceId,
+                actionTemplates,
                 idMap,
                 diagnostics,
                 _actionMapperRegistry,
@@ -93,6 +97,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         int stepIndex,
         int destinationProcessId,
         int destinationSpaceId,
+        IReadOnlyDictionary<string, OctopusActionTemplateDto> actionTemplates,
         OctopusImportIdMap idMap,
         List<OctopusImportDiagnosticDto> diagnostics,
         IOctopusImportActionMapperRegistry actionMapperRegistry,
@@ -101,7 +106,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var actionMappingContext = new OctopusImportActionMappingContext(
             idMap,
             destinationSpaceId,
-            OctopusImportUnsupportedActionHandling.DisabledPlaceholder);
+            OctopusImportUnsupportedActionHandling.DisabledPlaceholder,
+            actionTemplates);
 
         var actions = new List<ActionMapping>();
         foreach (var (action, actionIndex) in (step.Actions ?? []).Select((action, actionIndex) => (action, actionIndex)))
@@ -120,6 +126,11 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         }
 
         var stepProperties = MapStepProperties(step, diagnostics);
+
+        foreach (var stepProperty in stepProperties)
+            stepProperty.PropertyValue = OctopusSystemVariables.RewriteReferences(stepProperty.PropertyValue);
+
+        AddUnmappedOctopusReferenceDiagnostic(stepProperties.Select(p => p.PropertyValue), OctopusResourceKind.DeploymentStep, step.Id, step.Name, diagnostics);
 
         foreach (var targetRole in actions.SelectMany(a => GetTargetRoles(a.SourceAction)))
             AddOrAppendStepProperty(stepProperties, SpecialVariables.Step.TargetRoles, targetRole);
@@ -203,6 +214,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         model.WorkerPoolId = MapWorkerPool(action, diagnostics);
         model.CanBeUsedForProjectVersioning = false;
         model.Properties ??= [];
+        RewriteOctopusVariableReferences(model.Properties);
+        AddUnmappedOctopusReferenceDiagnostic(model.Properties.Select(p => p?.PropertyValue), OctopusResourceKind.DeploymentAction, action.Id, action.Name, diagnostics);
         model.Environments = MapScopedIds(action, action.Environments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingEnvironmentMapping, "environment", idMap, diagnostics);
         model.ExcludedEnvironments = MapScopedIds(action, action.ExcludedEnvironments, OctopusResourceKind.Environment, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingExcludedEnvironmentMapping, "excluded environment", idMap, diagnostics);
         model.Channels = MapScopedIds(action, action.Channels, OctopusResourceKind.Channel, OctopusImportDeploymentProcessMappingDiagnosticCodes.MissingChannelMapping, "channel", idMap, diagnostics);
@@ -215,6 +228,29 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
         return new ActionMapping(action, actionIndex, model);
     }
+
+    // #{Octopus.Release.Number} etc. would silently stay unresolved on Squid; rewrite every mapped
+    // built-in reference to its Squid name. Unmapped names are left untouched and reported by
+    // AddUnmappedOctopusReferenceDiagnostic, which runs on the rewritten values.
+    private static void RewriteOctopusVariableReferences(List<ActionPropertyModel> properties)
+    {
+        foreach (var property in properties.Where(p => p != null))
+            property.PropertyValue = OctopusSystemVariables.RewriteReferences(property.PropertyValue);
+    }
+
+    // One Warning per action / step listing every Octopus built-in still referenced after the rewrite:
+    // Squid has no such variable, so the expression stays unresolved at deploy time.
+    private static void AddUnmappedOctopusReferenceDiagnostic(IEnumerable<string> values, OctopusResourceKind kind, string sourceId, string name, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        var unmapped = values.SelectMany(OctopusSystemVariables.FindUnmappedReferences).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase).ToList();
+
+        if (unmapped.Count == 0) return;
+
+        var message = $"Octopus {kind} '{name}' references Octopus built-in variable(s) {string.Join(", ", unmapped)} that Squid does not provide; they stay unresolved when deploying. Replace them with a project variable or a Squid equivalent.";
+
+        diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable, message, kind, sourceId, name));
+    }
+
     private static int? MapWorkerPool(
         OctopusDeploymentActionDto action,
         List<OctopusImportDiagnosticDto> diagnostics)
@@ -245,7 +281,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var properties = new List<StepPropertyModel>();
         var sourceProperties = step.Properties ?? [];
 
-        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTargetRoles, SpecialVariables.Step.TargetRoles);
+        AddTargetRoles(properties, sourceProperties.GetValueOrDefault(OctopusPropertyNames.ActionTargetRoles));
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionRunOnServer, SpecialVariables.Step.RunOnServer);
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionConditionExpression, SpecialVariables.Step.ConditionExpression);
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.StepConditionExpression, SpecialVariables.Step.ConditionExpression);
@@ -253,6 +289,14 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTimeout, SpecialVariables.Step.Timeout);
 
         return properties;
+    }
+
+    // The runtime splits Step.TargetRoles on ',' only, so every role source goes through the shared splitter
+    // and is stored as a comma list — never the raw Octopus value ('web;api' would be one unmatchable role).
+    private static void AddTargetRoles(List<StepPropertyModel> properties, string targetRoles)
+    {
+        foreach (var targetRole in OctopusReferenceList.Split(targetRoles))
+            AddOrAppendStepProperty(properties, SpecialVariables.Step.TargetRoles, targetRole);
     }
 
     private static void AddMappedStepProperty(
@@ -284,8 +328,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             return;
         }
 
-        var values = SplitReferenceList(existing.PropertyValue)
-            .Concat(SplitReferenceList(propertyValue))
+        var values = OctopusReferenceList.Split(existing.PropertyValue)
+            .Concat(OctopusReferenceList.Split(propertyValue))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -412,7 +456,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         if (action.Properties == null || !action.Properties.TryGetValue(OctopusPropertyNames.ActionTargetRoles, out var targetRoles))
             return [];
 
-        return SplitReferenceList(targetRoles);
+        return OctopusReferenceList.Split(targetRoles);
     }
 
     private static bool IsRunOnServer(OctopusDeploymentActionDto action)
@@ -420,16 +464,6 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
            && action.Properties.TryGetValue(OctopusPropertyNames.ActionRunOnServer, out var runOnServer)
            && bool.TryParse(runOnServer, out var parsed)
            && parsed;
-
-    private static IEnumerable<string> SplitReferenceList(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return [];
-
-        return value
-            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v));
-    }
 
     private static OctopusImportDiagnosticDto Diagnostic(
         OctopusImportCompatibilitySeverity severity,

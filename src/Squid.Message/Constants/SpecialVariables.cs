@@ -156,6 +156,9 @@ public static class SpecialVariables
     public static class Deployment
     {
         public const string Id = "Squid.Deployment.Id";
+        public const string CreatedById = "Squid.Deployment.CreatedBy.Id";
+        public const string CreatedByUsername = "Squid.Deployment.CreatedBy.Username";
+        public const string CreatedByDisplayName = "Squid.Deployment.CreatedBy.DisplayName";
     }
 
     public static class Project

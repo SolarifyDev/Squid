@@ -2,6 +2,8 @@ using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.UnitTests.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport.Mapping;
@@ -128,6 +130,66 @@ public class OctopusImportFeedMapperTests
                 false,
                 new OctopusProjectDto()),
             7));
+    }
+
+    [Fact]
+    public void MapToCreateCommand_WithExportSecrets_ImportsDecryptedCredentialsWithoutManualMarker()
+    {
+        var mapper = new OctopusImportFeedMapper(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("export-pw") });
+        var feed = Feed("Docker");
+        feed.Username = "robot";
+        feed.Password = OctopusExportTestCipher.Encrypt("registry-token", "export-pw");
+
+        var result = mapper.MapToCreateCommand(Resource(feed), 7);
+
+        result.CreateCommand.Username.ShouldBe("robot");
+        result.CreateCommand.Password.ShouldBe("registry-token");
+        result.ManualConfigurationMarkers.ShouldBeEmpty();
+        result.CreateCommand.Properties.ShouldNotContainKey(OctopusImportManualConfiguration.RequiredPropertyName);
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportFeedMappingDiagnosticCodes.CredentialsOmitted);
+        result.Diagnostics.ShouldAllBe(d => !d.Message.Contains("registry-token"));
+    }
+
+    [Fact]
+    public void MapToUpdateCommand_WithExportSecrets_SetsPasswordNewValue()
+    {
+        var mapper = new OctopusImportFeedMapper(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("export-pw") });
+        var feed = Feed("Helm");
+        feed.Username = "helm-user";
+        feed.Password = OctopusExportTestCipher.Encrypt("helm-secret", "export-pw");
+
+        var result = mapper.MapToUpdateCommand(Resource(feed), 42, 7);
+
+        result.UpdateCommand.Username.ShouldBe("helm-user");
+        result.UpdateCommand.PasswordNewValue.ShouldBe("helm-secret");
+    }
+
+    [Fact]
+    public void MapToCreateCommand_UsernameWithoutPassword_ImportsUsernameEvenWithoutSecrets()
+    {
+        var feed = Feed("NuGet");
+        feed.Username = "anonymous-reader";
+
+        var result = _mapper.MapToCreateCommand(Resource(feed), 7);
+
+        result.CreateCommand.Username.ShouldBe("anonymous-reader");
+        result.CreateCommand.Password.ShouldBeNull();
+        result.ManualConfigurationMarkers.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void MapToCreateCommand_PasswordEncryptedWithAnotherPassword_DropsBothAndKeepsMarker()
+    {
+        var mapper = new OctopusImportFeedMapper(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("export-pw") });
+        var feed = Feed("Docker");
+        feed.Username = "robot";
+        feed.Password = OctopusExportTestCipher.Encrypt("registry-token", "different");
+
+        var result = mapper.MapToCreateCommand(Resource(feed), 7);
+
+        result.CreateCommand.Username.ShouldBeNull();
+        result.CreateCommand.Password.ShouldBeNull();
+        result.ManualConfigurationMarkers.Single().ReasonCode.ShouldBe(OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted);
     }
 
     private static OctopusFeedDto Feed(string feedType)

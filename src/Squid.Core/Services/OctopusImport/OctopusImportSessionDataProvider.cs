@@ -129,6 +129,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         var now = DateTimeOffset.UtcNow;
         var dataVersion = Guid.NewGuid().ToByteArray();
 
+        session.ProtectedExportPassword = RetainedExportPassword(session.State, session.ProtectedExportPassword);
+
         var rowsAffected = await _repository.ExecuteUpdateAsync<OctopusImportSession>(
             s => s.Id == session.Id &&
                  s.DataVersion == expectedDataVersion,
@@ -146,6 +148,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.TemporaryUploadCleanupAfter, session.TemporaryUploadCleanupAfter)
                 .SetProperty(s => s.TemporaryUploadCleanedAt, session.TemporaryUploadCleanedAt)
                 .SetProperty(s => s.TemporaryUploadCleanupError, session.TemporaryUploadCleanupError)
+                .SetProperty(s => s.ProtectedExportPassword, session.ProtectedExportPassword)
                 .SetProperty(s => s.ExpiresAt, session.ExpiresAt)
                 .SetProperty(s => s.CompletedAt, session.CompletedAt)
                 .SetProperty(s => s.LastStateChangedAt, session.LastStateChangedAt)
@@ -191,7 +194,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
 
         var now = DateTimeOffset.UtcNow;
         var dataVersion = Guid.NewGuid().ToByteArray();
-        var completedAt = OctopusImportSessionStateMachine.IsTerminal(newState) ? now : (DateTimeOffset?)null;
+        var isTerminal = OctopusImportSessionStateMachine.IsTerminal(newState);
+        var completedAt = isTerminal ? now : (DateTimeOffset?)null;
 
         return _repository.ExecuteUpdateAsync<OctopusImportSession>(
             s => s.SessionId == sessionId &&
@@ -204,9 +208,15 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.DataVersion, dataVersion)
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
-                .SetProperty(s => s.CompletedAt, completedAt),
+                .SetProperty(s => s.CompletedAt, completedAt)
+                .SetProperty(s => s.ProtectedExportPassword, s => isTerminal ? null : s.ProtectedExportPassword),
             ct);
     }
+
+    // Single enforcement point for the "export password lives only while the session is active" invariant
+    // on the generic write path: whatever a caller set, a session written in a terminal state never keeps it.
+    private static string RetainedExportPassword(string state, string protectedExportPassword)
+        => Enum.TryParse<OctopusImportSessionState>(state, ignoreCase: true, out var parsed) && OctopusImportSessionStateMachine.IsTerminal(parsed) ? null : protectedExportPassword;
 
     public async Task<bool> TryStartConfirmationAsync(
         Guid sessionId,
@@ -245,7 +255,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, now)
-                .SetProperty(s => s.TemporaryUploadCleanupAfter, now),
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 
@@ -267,7 +278,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, now)
-                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter),
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 
@@ -324,7 +336,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastModifiedDate, cleanedAt)
                 .SetProperty(s => s.TemporaryUploadPath, (string)null)
                 .SetProperty(s => s.TemporaryUploadCleanedAt, cleanedAt)
-                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null),
+                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 

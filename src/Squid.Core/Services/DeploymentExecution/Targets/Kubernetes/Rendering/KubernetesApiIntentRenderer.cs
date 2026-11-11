@@ -87,8 +87,7 @@ public sealed class KubernetesApiIntentRenderer : IIntentRenderer
     {
         var deploymentFiles = new DeploymentFileCollection(intent.YamlFiles);
         var applyScript = KubernetesApplyScriptBuilder.Build(intent);
-        var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
-            deploymentFiles.ToLegacyDictionary(), intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
+        var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(intent);
         var rawScript = KubernetesPostApplyScriptBuilder.Compose(intent, applyScript + waitScript);
         var wrappedScript = WrapApplyBody(rawScript, intent, context);
 

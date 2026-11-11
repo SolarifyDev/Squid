@@ -267,6 +267,31 @@ public class OctopusKubernetesActionMapperTests
         tlsEntry.TryGetProperty("certificateVariableName", out _).ShouldBeFalse();
     }
 
+    // Octopus defaults "Wait for jobs to complete" to off: Calamari reads Octopus.Action.Kubernetes.WaitForJobs
+    // with GetFlag (ResourceStatusReportScriptWrapper.cs) and a Job is Successful at once without it
+    // (ResourceStatus/Resources/Job.cs). Squid's own default is to wait, so the import pins Octopus'
+    // value explicitly on every Kubernetes apply action.
+    [Theory]
+    [InlineData("Octopus.KubernetesDeployRawYaml", null, "False")]
+    [InlineData("Octopus.KubernetesDeployRawYaml", "True", "True")]
+    [InlineData("Octopus.KubernetesDeployRawYaml", "False", "False")]
+    [InlineData("Octopus.KubernetesDeployContainers", null, "False")]
+    [InlineData("Octopus.KubernetesDeployContainers", "True", "True")]
+    [InlineData("Octopus.KubernetesDeployContainers", "False", "False")]
+    [InlineData("Octopus.KubernetesDeployContainers", "#{WaitJobs}", "#{WaitJobs}")]
+    public void KubernetesApplyMappers_WaitForJobs_PinsOctopusValueOrItsFalseDefault(string octopusActionType, string waitForJobs, string expected)
+    {
+        IOctopusImportActionMapper mapper = octopusActionType == "Octopus.KubernetesDeployRawYaml" ? new OctopusKubernetesDeployRawYamlActionMapper() : new OctopusKubernetesDeployContainersActionMapper();
+        var action = new OctopusDeploymentActionDto { Id = "Actions-1", Name = "Apply", ActionType = octopusActionType, Properties = { ["Octopus.Action.Kubernetes.ResourceStatusCheck"] = "True" } };
+
+        if (waitForJobs != null) action.Properties["Octopus.Action.Kubernetes.WaitForJobs"] = waitForJobs;
+
+        var result = mapper.Map(action, new OctopusImportActionMappingContext(new OctopusImportIdMap(), 42));
+
+        result.Action.Properties.Where(p => p.PropertyName == "Squid.Action.Kubernetes.WaitForJobs").Select(p => p.PropertyValue).ShouldBe(new[] { expected });
+        result.Diagnostics.ShouldNotContain(d => d.Message.Contains("WaitForJobs"));
+    }
+
     private static OctopusImportActionMappingContext ContextWithFeedMapping()
     {
         var idMap = new OctopusImportIdMap();

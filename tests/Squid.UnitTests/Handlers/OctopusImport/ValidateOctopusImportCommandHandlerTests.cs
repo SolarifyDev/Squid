@@ -6,6 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -14,6 +15,28 @@ namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class ValidateOctopusImportCommandHandlerTests
 {
+    [Fact]
+    public async Task Handle_LoadsTheSessionExportSecretsBeforePlanningAndValidating()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview();
+        var secretsAvailableWhenPlanning = false;
+        var secretsAvailableWhenValidating = false;
+
+        harness.SecretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).Callback(() => secretsAvailableWhenPlanning = harness.SecretsAccessor.Secrets.IsAvailable).ReturnsAsync(Snapshot(preview));
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback(() => secretsAvailableWhenValidating = harness.SecretsAccessor.Secrets.IsAvailable).Returns(new OctopusImportValidationResultDto());
+        harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
+
+        await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        secretsAvailableWhenPlanning.ShouldBeTrue();
+        secretsAvailableWhenValidating.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task Handle_WhenValidationHasNoBlockers_TransitionsSessionToValidated()
     {
@@ -183,8 +206,14 @@ public class ValidateOctopusImportCommandHandlerTests
                 SessionService.Object,
                 CurrentUser.Object,
                 PlanningPipeline.Object,
-                PreviewValidator.Object);
+                PreviewValidator.Object,
+                SecretStore.Object,
+                SecretsAccessor);
         }
+
+        public Mock<IOctopusImportExportSecretStore> SecretStore { get; } = new();
+
+        public OctopusExportSecretsAccessor SecretsAccessor { get; } = new();
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

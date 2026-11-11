@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -15,7 +17,8 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentVariableResolver variableResolver,
     IDeploymentTargetFinder targetFinder,
     IDeploymentDataProvider deploymentDataProvider,
-    IActionHandlerRegistry actionHandlerRegistry) : IDeploymentPipelinePhase
+    IActionHandlerRegistry actionHandlerRegistry,
+    IRepository repository = null) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -59,6 +62,8 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
+        await AddDeploymentCreatorVariablesAsync(ctx, ct).ConfigureAwait(false);
+
         // Built-in deployment context variables required by package install path planning
         // and variable substitution. These are not stored in project variable sets.
         if (ctx.Project != null)
@@ -82,6 +87,28 @@ public sealed class PrepareDeploymentPhase(
         // which owns that accumulator and has the encryption service needed to protect them.
         if (ctx.RestoredOutputVariables.Count > 0)
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
+    }
+
+    // Who triggered the deployment (Octopus' Octopus.Deployment.CreatedBy.*). Always defined — a script that
+    // reads an undefined name gets the literal #{…} token — and always appended after the resolved variables,
+    // so precedence against a user-defined variable of the same name never depends on whether the user row
+    // still exists. No actor → all empty; deleted user or no repository → the id with empty names.
+    private async Task AddDeploymentCreatorVariablesAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        var userId = ctx.Deployment.DeployedBy > 0 ? ctx.Deployment.DeployedBy : ctx.Deployment.CreatedBy;
+        var user = await FindDeploymentCreatorAsync(userId, ct).ConfigureAwait(false);
+        var userName = user?.UserName ?? string.Empty;
+
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedById, Value = userId > 0 ? userId.ToString() : string.Empty });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByUsername, Value = userName });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByDisplayName, Value = string.IsNullOrWhiteSpace(user?.DisplayName) ? userName : user.DisplayName });
+    }
+
+    private async Task<UserAccount> FindDeploymentCreatorAsync(int userId, CancellationToken ct)
+    {
+        if (repository == null || userId <= 0) return null;
+
+        return await repository.QueryNoTracking<UserAccount>(u => u.Id == userId).Select(u => new UserAccount { Id = u.Id, UserName = u.UserName, DisplayName = u.DisplayName }).FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)

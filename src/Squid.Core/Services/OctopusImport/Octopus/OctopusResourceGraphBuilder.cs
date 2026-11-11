@@ -73,6 +73,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             case OctopusDocumentKind.Feed:
                 AddDocument<OctopusFeedDto>(context, OctopusResourceKind.Feed);
                 break;
+            case OctopusDocumentKind.LibraryVariableSet:
+                AddLibraryVariableSet(context);
+                break;
             case OctopusDocumentKind.Team:
                 AddDocument<OctopusTeamDto>(context, OctopusResourceKind.Team);
                 break;
@@ -95,7 +98,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
                 AddServerTask(context);
                 break;
             case OctopusDocumentKind.ActionTemplate:
-                AddJsonDocument(context, OctopusResourceKind.ActionTemplate);
+                AddActionTemplate(context);
                 break;
             case OctopusDocumentKind.WorkerPool:
                 AddJsonDocument(context, OctopusResourceKind.WorkerPool);
@@ -130,8 +133,20 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         AddReference(context, project.Id, OctopusResourceKind.Project, OctopusResourceReferenceKind.DeploymentProcess, project.DeploymentProcessId, OctopusResourceKind.DeploymentProcess, project.Id, true, false);
         AddReference(context, project.Id, OctopusResourceKind.Project, OctopusResourceReferenceKind.DeploymentSettings, project.DeploymentSettingsId, OctopusResourceKind.DeploymentSettings, project.Id, true, false);
 
-        foreach (var variableSetId in project.IncludedLibraryVariableSetIds)
-            AddReference(context, project.Id, OctopusResourceKind.Project, OctopusResourceReferenceKind.VariableSet, variableSetId, OctopusResourceKind.VariableSet, project.Id, true);
+        foreach (var libraryVariableSetId in project.IncludedLibraryVariableSetIds)
+            AddReference(context, project.Id, OctopusResourceKind.Project, OctopusResourceReferenceKind.LibraryVariableSet, libraryVariableSetId, OctopusResourceKind.LibraryVariableSet, project.Id, true);
+    }
+
+    private static void AddLibraryVariableSet(GraphBuildContext context)
+    {
+        var libraryVariableSet = Deserialize<OctopusLibraryVariableSetDto>(context);
+        if (libraryVariableSet == null)
+            return;
+
+        if (!AddDocumentNode(context, libraryVariableSet, OctopusResourceKind.LibraryVariableSet, libraryVariableSet.Id, libraryVariableSet.Name, null))
+            return;
+
+        AddReference(context, libraryVariableSet.Id, OctopusResourceKind.LibraryVariableSet, OctopusResourceReferenceKind.VariableSet, libraryVariableSet.VariableSetId, OctopusResourceKind.VariableSet, null, true, false);
     }
 
     private static void AddLifecycle(GraphBuildContext context)
@@ -240,10 +255,10 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         foreach (var package in action.Packages)
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Feed, package.FeedId, OctopusResourceKind.Feed, process.OwnerId, true);
 
-        foreach (var targetRole in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionTargetRoles)))
+        foreach (var targetRole in OctopusReferenceList.Split(GetProperty(action.Properties, OctopusPropertyNames.ActionTargetRoles)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.TargetRole, targetRole, null, process.OwnerId, false);
 
-        foreach (var teamId in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)))
+        foreach (var teamId in OctopusReferenceList.Split(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Team, teamId, OctopusResourceKind.Team, process.OwnerId, false);
     }
 
@@ -257,10 +272,16 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             ? OctopusResourceKind.VariableSetSnapshot
             : OctopusResourceKind.VariableSet;
 
-        if (!AddDocumentNode(context, variableSet, kind, variableSet.Id, null, variableSet.OwnerId))
+        var isLibraryOwned = IsLibraryVariableSetOwner(variableSet.OwnerType);
+        var ownerProjectId = isLibraryOwned ? null : variableSet.OwnerId;
+
+        if (!AddNode(context, variableSet.Id, null, kind, context.Classification.Kind, context.Document.SourcePath, ownerProjectId, isLibraryOwned ? variableSet.OwnerId : null, context.Classification.IsOutOfScopeHistory, variableSet))
             return;
 
-        AddReference(context, variableSet.Id, kind, OctopusResourceReferenceKind.Project, variableSet.OwnerId, OctopusResourceKind.Project, variableSet.OwnerId, true);
+        if (isLibraryOwned)
+            AddReference(context, variableSet.Id, kind, OctopusResourceReferenceKind.LibraryVariableSet, variableSet.OwnerId, OctopusResourceKind.LibraryVariableSet, null, true);
+        else
+            AddReference(context, variableSet.Id, kind, OctopusResourceReferenceKind.Project, variableSet.OwnerId, OctopusResourceKind.Project, variableSet.OwnerId, true);
 
         if (kind == OctopusResourceKind.VariableSetSnapshot)
             return;
@@ -272,15 +293,17 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
     private static void AddVariable(GraphBuildContext context, OctopusVariableSetDto variableSet, OctopusResourceKind variableSetKind, OctopusVariableDto variable, int index)
     {
         var sourceId = BuildChildSourceId(variableSet.Id, "variable", variable.Id, index);
-        if (!AddNode(context, sourceId, variable.Name, OctopusResourceKind.Variable, context.Classification.Kind, context.Document.SourcePath, variableSet.OwnerId, variableSet.Id, context.Classification.IsOutOfScopeHistory, variable))
+        var ownerProjectId = IsLibraryVariableSetOwner(variableSet.OwnerType) ? null : variableSet.OwnerId;
+
+        if (!AddNode(context, sourceId, variable.Name, OctopusResourceKind.Variable, context.Classification.Kind, context.Document.SourcePath, ownerProjectId, variableSet.Id, context.Classification.IsOutOfScopeHistory, variable))
             return;
 
-        AddReference(context, sourceId, OctopusResourceKind.Variable, VariableSetReferenceKind(variableSetKind), variableSet.Id, variableSetKind, variableSet.OwnerId, true);
+        AddReference(context, sourceId, OctopusResourceKind.Variable, VariableSetReferenceKind(variableSetKind), variableSet.Id, variableSetKind, ownerProjectId, true);
 
         foreach (var scope in variable.Scope)
         {
             foreach (var scopedValue in scope.Value)
-                AddVariableScopeReference(context, sourceId, variableSet.OwnerId, scope.Key, scopedValue);
+                AddVariableScopeReference(context, sourceId, ownerProjectId, scope.Key, scopedValue);
         }
     }
 
@@ -354,6 +377,30 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
         AddReference(context, task.Id, OctopusResourceKind.ServerTask, OctopusResourceReferenceKind.Project, task.ProjectId, OctopusResourceKind.Project, task.ProjectId, false);
         AddReference(context, task.Id, OctopusResourceKind.ServerTask, OctopusResourceReferenceKind.Environment, task.EnvironmentId, OctopusResourceKind.Environment, task.ProjectId, false);
+    }
+
+    // Step templates are not imported themselves; their parameter definitions only enrich the
+    // steps that use them. A template whose shape we cannot read must therefore never block the
+    // import — it falls back to the raw JSON node exactly as before.
+    private static void AddActionTemplate(GraphBuildContext context)
+    {
+        OctopusActionTemplateDto template = null;
+
+        try
+        {
+            template = context.Document.Root.Deserialize<OctopusActionTemplateDto>(JsonOptions);
+        }
+        catch (JsonException)
+        {
+        }
+
+        if (template == null || string.IsNullOrWhiteSpace(template.Id))
+        {
+            AddJsonDocument(context, OctopusResourceKind.ActionTemplate);
+            return;
+        }
+
+        AddDocumentNode(context, template, OctopusResourceKind.ActionTemplate, template.Id, template.Name, null);
     }
 
     private static void AddJsonDocument(GraphBuildContext context, OctopusResourceKind kind)
@@ -504,6 +551,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             addsDependency));
     }
 
+    internal static bool IsLibraryVariableSetOwner(string ownerType)
+        => string.Equals(ownerType?.Trim(), "LibraryVariableSet", StringComparison.OrdinalIgnoreCase);
+
     private static OctopusResourceReferenceKind ProcessReferenceKind(OctopusResourceKind processKind)
         => processKind == OctopusResourceKind.DeploymentProcessSnapshot
             ? OctopusResourceReferenceKind.DeploymentProcessSnapshot
@@ -524,16 +574,6 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         return properties != null && properties.TryGetValue(key, out var value)
             ? value
             : null;
-    }
-
-    private static IEnumerable<string> SplitReferenceList(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return [];
-
-        return value
-            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v));
     }
 
     private static OctopusInputExtractionDiagnostic Blocker(
