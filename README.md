@@ -1,13 +1,30 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/hero-zh-dark.svg">
-  <img src="branding/readme/hero-zh-light.svg" alt="Squid — 新一代发布平台，开箱即用。免费、简单、企业级，一条流水线从 Release 到生产。" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
+  <img src="branding/squid-wordmark.png" alt="Squid" width="300">
 </picture>
 
-<a href="#快速开始">快速开始</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#文档">文档</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#从-octopus-迁移">从 Octopus 迁移</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="README.en.md">English</a>
+### 免费、简单、开箱即用的新一代发布平台
 
-</div>
+企业级发布能力，覆盖 Kubernetes、Linux、Windows、SSH 与 AI Agent —— 一条流水线，从 Release 到生产。不限项目，不限用户，不限目标。
+
+<br>
+
+[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
+[![Release](https://img.shields.io/github/v/release/SolarifyDev/Squid?sort=semver&label=release&color=0F766E)](https://github.com/SolarifyDev/Squid/releases)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%C2%B7%20Windows%20%C2%B7%20Docker-0B1F3A)](#-快速开始)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-native-326CE5?logo=kubernetes&logoColor=white)](#-快速开始)
+[![.NET 9](https://img.shields.io/badge/.NET-9-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0F766E)](#-许可证)
+
+**简体中文** · [English](README.en.md)
+
+<br>
+
+[![快速开始](https://img.shields.io/badge/%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B-Docker-0B1F3A?style=for-the-badge&logo=docker&logoColor=white)](#-快速开始)
+&nbsp;
+[![下载](https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD-Tentacle%20%C2%B7%20Agent-0F766E?style=for-the-badge&logo=github&logoColor=white)](https://github.com/SolarifyDev/Squid/releases)
 
 <br>
 
@@ -16,14 +33,16 @@
   <img src="branding/readme/orbit-zh-light.svg" alt="一条流水线，覆盖每一个目标：Kubernetes、Linux、Windows、SSH 与 AI Agent" width="100%">
 </picture>
 
-<br><br>
+</div>
+
+---
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-zh-dark.svg">
   <img src="branding/readme/features-zh-light.svg" alt="为团队打造的企业级发布能力：免费自托管、开箱即用、统一发布模型、云原生、企业级治理、可扩展" width="100%">
 </picture>
 
-<br>
+<br><br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/free-zh-dark.svg">
@@ -32,7 +51,7 @@
 
 <br>
 
-## 快速开始
+## 🚀 快速开始
 
 **运行 Server**（需 PostgreSQL 与 Redis）
 
@@ -58,14 +77,10 @@ irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/inst
 
 > 生产环境请通过环境变量或密钥管理系统注入数据库、证书与加密密钥。
 
-## 从 Octopus 迁移
+## 🔄 从 Octopus 迁移
 
 上传 Octopus 导出文件，预览、校验后一键导入项目、环境、变量与部署流程。敏感值不会从导出文件恢复，需在 Squid 中重新填写。
 
-## 文档
+## 📄 许可证
 
-[部署流水线](docs/deployment-pipeline-architecture.md) · [Kubernetes](docs/k8s-deployment-architecture.md) · [Windows Tentacle](docs/windows-tentacle-install.md) · [权限模型](docs/api-key-permissions.md)
-
-<br>
-
-<div align="center"><sub>以 <a href="LICENSE">MIT 协议</a> 开源</sub></div>
+[MIT](LICENSE) © Squid contributors.

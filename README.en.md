@@ -1,13 +1,30 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/readme/hero-en-dark.svg">
-  <img src="branding/readme/hero-en-light.svg" alt="Squid — Next-generation release platform. Free, simple, enterprise-grade: one pipeline from release to production." width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
+  <img src="branding/squid-wordmark.png" alt="Squid" width="300">
 </picture>
 
-<a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#documentation">Docs</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="#migrating-from-octopus">Migrate from Octopus</a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="README.md">简体中文</a>
+### Free, simple, ready-to-use — the next-generation release platform.
 
-</div>
+Enterprise-grade delivery for Kubernetes, Linux, Windows, SSH, and AI agents — one pipeline from release to production. No limits on projects, users, or targets.
+
+<br>
+
+[![CI](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml/badge.svg)](https://github.com/SolarifyDev/Squid/actions/workflows/tests.yml)
+[![Release](https://img.shields.io/github/v/release/SolarifyDev/Squid?sort=semver&label=release&color=0F766E)](https://github.com/SolarifyDev/Squid/releases)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%C2%B7%20Windows%20%C2%B7%20Docker-0B1F3A)](#-quick-start)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-native-326CE5?logo=kubernetes&logoColor=white)](#-quick-start)
+[![.NET 9](https://img.shields.io/badge/.NET-9-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0F766E)](#-license)
+
+[简体中文](README.md) · **English**
+
+<br>
+
+[![Quick start](https://img.shields.io/badge/Quick%20start-Docker-0B1F3A?style=for-the-badge&logo=docker&logoColor=white)](#-quick-start)
+&nbsp;
+[![Download](https://img.shields.io/badge/Download-Tentacle%20%C2%B7%20Agent-0F766E?style=for-the-badge&logo=github&logoColor=white)](https://github.com/SolarifyDev/Squid/releases)
 
 <br>
 
@@ -16,14 +33,16 @@
   <img src="branding/readme/orbit-en-light.svg" alt="One pipeline, every target: Kubernetes, Linux, Windows, SSH, and AI agents" width="100%">
 </picture>
 
-<br><br>
+</div>
+
+---
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/features-en-dark.svg">
   <img src="branding/readme/features-en-light.svg" alt="Built for teams, enterprise-grade by default: free and self-hosted, ready to use, one release model, cloud native, enterprise governance, extensible" width="100%">
 </picture>
 
-<br>
+<br><br>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="branding/readme/free-en-dark.svg">
@@ -32,7 +51,7 @@
 
 <br>
 
-## Quick start
+## 🚀 Quick start
 
 **Run the server** (requires PostgreSQL and Redis)
 
@@ -58,14 +77,10 @@ irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/inst
 
 > In production, inject database, certificate, and encryption-key settings through environment variables or a secret manager.
 
-## Migrating from Octopus
+## 🔄 Migrating from Octopus
 
 Upload an Octopus export, preview and validate it, then import projects, environments, variables, and deployment processes in one step. Sensitive values are never restored from the export and must be re-entered in Squid.
 
-## Documentation
+## 📄 License
 
-[Deployment pipeline](docs/deployment-pipeline-architecture.md) · [Kubernetes](docs/k8s-deployment-architecture.md) · [Windows Tentacle](docs/windows-tentacle-install.md) · [Permissions](docs/api-key-permissions.md)
-
-<br>
-
-<div align="center"><sub>Open source under the <a href="LICENSE">MIT License</a></sub></div>
+[MIT](LICENSE) © Squid contributors.

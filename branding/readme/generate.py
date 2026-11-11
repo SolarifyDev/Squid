@@ -1,4 +1,4 @@
-"""Generate the README visuals (hero, orbit, features, free) in zh/en x light/dark.
+"""Generate the README visuals (orbit, features, free) in zh/en x light/dark.
 
 Usage:
     python3 branding/readme/generate.py --fonts <dir> [--out <dir>]
@@ -19,10 +19,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 W = 1280
 
 THEMES = {
-    "light": dict(text="#121317", muted="#5F6368", rule="#E3E5E8", wordmark="squid-wordmark.png",
+    "light": dict(text="#121317", muted="#5F6368", rule="#E3E5E8",
                   tile="#FFFFFF", card="#FFFFFF", cardOp="0.86", cardRule="#ECEEF1", aurora="0.55",
                   auroraColors=("#2DD4BF", "#60A5FA", "#A78BFA", "#FCD34D")),
-    "dark": dict(text="#E8EAED", muted="#9AA0A6", rule="#2A2F36", wordmark="squid-wordmark-reverse.png",
+    "dark": dict(text="#E8EAED", muted="#9AA0A6", rule="#2A2F36",
                  tile="#0A0C10", card="#111418", cardOp="0.82", cardRule="#23272E", aurora="0.5",
                  auroraColors=("#14B8A6", "#3B82F6", "#8B5CF6", "#EC4899")),
 }
@@ -38,8 +38,6 @@ ICONS = {
 
 COPY = {
     "zh": dict(
-        headline="新一代发布平台，开箱即用",
-        sub="免费、简单、企业级。一条流水线，从 Release 到生产。",
         orbit_caption="一条流水线，覆盖每一个目标",
         targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
         heading=["为团队打造的", "企业级发布能力"],
@@ -57,8 +55,6 @@ COPY = {
         rows=[("软件费用", "免费", "按档位订阅"), ("项目与用户", "不限", "随档位限制"), ("部署目标", "不限", "按节点计费")],
     ),
     "en": dict(
-        headline="Next-generation release platform",
-        sub="Free, simple, enterprise-grade. One pipeline from release to production.",
         orbit_caption="One pipeline. Every target.",
         targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
         heading=["Built for teams.", "Enterprise-grade by default."],
@@ -108,6 +104,8 @@ class Fonts:
         sub.populate(text=chars)
         sub.subset(font)
         font.flavor = "woff2"
+        font.recalcTimestamp = False
+        font["head"].modified = font["head"].created  # deterministic output across runs
         buf = io.BytesIO()
         font.save(buf)
         data = base64.b64encode(buf.getvalue()).decode()
@@ -160,26 +158,6 @@ def icon(name, x, y, size, color):
     s = size / 24
     return (f'<g transform="translate({x} {y}) scale({s})" fill="none" stroke="{color}" stroke-width="1.5" '
             f'stroke-linecap="round" stroke-linejoin="round">{ICONS[name]}</g>')
-
-
-def png_data_uri(name):
-    with open(os.path.join(HERE, "..", name), "rb") as f:
-        return "data:image/png;base64," + base64.b64encode(f.read()).decode()
-
-
-# ── Visuals ──────────────────────────────────────────────────────────────
-
-def hero(fonts, lang, theme):
-    c, cv = COPY[lang], Canvas(fonts, theme)
-    H, wm_h = 300, 52
-    wm_w = wm_h * 300 / 76
-    cv.parts.append(f'<image href="{png_data_uri(cv.T["wordmark"])}" x="{(W - wm_w) / 2:.1f}" y="8" width="{wm_w:.1f}" height="{wm_h}"/>')
-    spacing = -1.8 if lang == "en" else -0.6
-    cv.fit(c["headline"], 66, W - 40, "SqDisplay", 400, spacing)
-    cv.text(W / 2, 178, c["headline"], 66, "SqDisplay", 400, anchor="middle", spacing=spacing)
-    cv.fit(c["sub"], 24, W - 80)
-    cv.text(W / 2, 240, c["sub"], 24, fill=cv.T["muted"], anchor="middle")
-    return cv.render(H, f'Squid — {c["headline"]}. {c["sub"]}')
 
 
 def orbit(fonts, lang, theme):
@@ -281,7 +259,7 @@ def main():
     fonts = Fonts(args.fonts, os.path.join(args.fonts, ".instances"))
     for lang in COPY:
         for theme in THEMES:
-            for name, fn in (("hero", hero), ("orbit", orbit), ("features", features), ("free", free)):
+            for name, fn in (("orbit", orbit), ("features", features), ("free", free)):
                 with open(os.path.join(args.out, f"{name}-{lang}-{theme}.svg"), "w", encoding="utf-8") as f:
                     f.write(fn(fonts, lang, theme))
     print("ok")
