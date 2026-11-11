@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 
@@ -27,9 +26,7 @@ public interface IOctopusExportPasswordValidator : IScopedDependency
         CancellationToken ct = default);
 }
 
-public sealed class OctopusExportPasswordValidator(
-    IOctopusArchiveExtractor archiveExtractor,
-    IOctopusInputExtractor inputExtractor) : IOctopusExportPasswordValidator
+public sealed class OctopusExportPasswordValidator(IOctopusArchiveExtractor archiveExtractor, IOctopusInputExtractor inputExtractor, IOctopusManifestInventoryBuilder inventoryBuilder, IOctopusResourceGraphBuilder graphBuilder) : IOctopusExportPasswordValidator
 {
     private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
 
@@ -53,9 +50,7 @@ public sealed class OctopusExportPasswordValidator(
         {
             content.Position = 0;
             var extraction = await ExtractInputAsync(content, sourcePath, ct).ConfigureAwait(false);
-            var encryptedValues = extraction.Documents
-                .SelectMany(document => FindEncryptedValues(document.Root))
-                .ToList();
+            var encryptedValues = FindImportedEncryptedValues(extraction);
 
             if (encryptedValues.Count == 0)
             {
@@ -137,65 +132,22 @@ public sealed class OctopusExportPasswordValidator(
         return true;
     }
 
-    private static IEnumerable<string> FindEncryptedValues(JsonElement element)
+    // Evidence = exactly the ciphertext the importer decrypts, read off the same graph the import plans from.
+    private List<string> FindImportedEncryptedValues(OctopusInputExtractionResult extraction)
     {
-        switch (element.ValueKind)
-        {
-            case JsonValueKind.Object:
-            {
-                var isSensitiveObject = IsSensitiveObject(element);
+        var inventory = inventoryBuilder.Build(extraction);
+        var graph = graphBuilder.Build(inventory.HasManifest ? inventory : StandaloneInventory(extraction));
 
-                foreach (var property in element.EnumerateObject())
-                {
-                    if (property.Value.ValueKind == JsonValueKind.String &&
-                        IsEncryptedValueProperty(property.Name, isSensitiveObject) &&
-                        IsEncryptedValue(property.Value.GetString()))
-                    {
-                        yield return property.Value.GetString();
-                    }
-
-                    foreach (var nestedValue in FindEncryptedValues(property.Value))
-                        yield return nestedValue;
-                }
-
-                yield break;
-            }
-            case JsonValueKind.Array:
-                foreach (var item in element.EnumerateArray())
-                {
-                    foreach (var nestedValue in FindEncryptedValues(item))
-                        yield return nestedValue;
-                }
-
-                yield break;
-        }
+        return OctopusImportExportPasswordEvidence.EncryptedValues(graph).ToList();
     }
 
-    private static bool IsEncryptedValueProperty(string propertyName, bool isSensitiveObject)
-        => isSensitiveObject && string.Equals(propertyName, "Value", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(propertyName, "Password", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(propertyName, "SensitiveValue", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(propertyName, "Secret", StringComparison.OrdinalIgnoreCase);
+    // Without a manifest the importer plans nothing (it reports manifest_missing), but the password is still
+    // checked against what it would decrypt from each document, classified the way the extractor classified it.
+    private static OctopusManifestInventoryResult StandaloneInventory(OctopusInputExtractionResult extraction)
+        => new(null, extraction.Documents.Select(StandaloneItem).ToList(), [], []);
 
-    // Same rule (and the same case-insensitive property binding) the importer applies to OctopusVariableDto,
-    // so every value the importer will decrypt is one this validator proved the password against.
-    private static bool IsSensitiveObject(JsonElement element)
-        => OctopusImportSensitiveValues.IsSensitive(FindProperty(element, "IsSensitive")?.ValueKind == JsonValueKind.True, FindStringProperty(element, "Type"));
-
-    private static string FindStringProperty(JsonElement element, string propertyName)
-        => FindProperty(element, propertyName) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
-
-    private static JsonElement? FindProperty(JsonElement element, string propertyName)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase)) return property.Value;
-        }
-
-        return null;
-    }
-
-    private static bool IsEncryptedValue(string value) => OctopusExportCipher.IsEncryptedValue(value);
+    private static OctopusManifestInventoryItem StandaloneItem(OctopusExtractedJsonDocument document)
+        => new(new OctopusManifestEntryDto { Id = document.Classification.SourceId, DocumentSource = document.SourcePath }, document, document.Classification, true);
 
     private static bool TryDecrypt(string encryptedValue, byte[] key)
     {

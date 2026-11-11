@@ -80,9 +80,11 @@ public class ConfirmOctopusImportCommandHandler(
 
         await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
-        // The plan was validated with the decrypted secrets; confirming without them would import a different
-        // result and end the session terminally. Refuse instead: the session stays Validated, so restoring the
-        // master key and retrying works, and expiry clears the password otherwise.
+        // An envelope that the current master key cannot read was written under a key that did decrypt it, so the
+        // plan may have been validated with the secrets; confirming without them would import a different result
+        // and end the session terminally. Refuse instead: the session stays Validated, so restoring the master key
+        // and retrying works, and expiry clears the password otherwise. A password that was never retained
+        // (NotRetained) is not refused: it can never become readable and was validated without secrets.
         if (secretsAccessor?.Secrets.IsUnreadable == true)
             return BadRequest(command, state, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailableMessage, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable);
 

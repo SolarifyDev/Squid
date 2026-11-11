@@ -120,17 +120,23 @@ public class OctopusImportExportSecretStoreTests
         built.ShouldBeFalse();
     }
 
-    [Fact]
-    public async Task StoreAsync_AtRestKeyUnavailable_RetainsOnlyTheNotRetainedMarker_AndLoadReportsUnreadable()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StoreAsync_AtRestKeyUnavailable_RetainsOnlyTheNotRetainedMarker_AndLoadReportsNotRetained_EvenOnceAKeyIsConfigured(bool keyConfiguredBeforeLoad)
     {
+        // The marker can never become readable: no envelope was ever written, so no key (original or new)
+        // recovers it. It must load as "not retained" — behaving like no password — and never as "unreadable",
+        // which confirmation refuses in the hope that the original key comes back.
         var session = SetupSession();
-        var store = Store(UnavailableEncryption());
 
-        await store.StoreAsync(session.SessionId, 7, "sjfood-export-pw");
-        var secrets = await store.LoadAsync(session.SessionId, 7);
+        await Store(UnavailableEncryption()).StoreAsync(session.SessionId, 7, "sjfood-export-pw");
+        var secrets = await Store(keyConfiguredBeforeLoad ? null : UnavailableEncryption()).LoadAsync(session.SessionId, 7);
 
         session.ProtectedExportPassword.ShouldBe(OctopusImportExportSecretStore.NotRetainedMarker);
-        secrets.ShouldBeSameAs(OctopusExportSecrets.Unreadable);
+        secrets.ShouldBeSameAs(OctopusExportSecrets.NotRetained);
+        secrets.IsUnreadable.ShouldBeFalse();
+        secrets.IsNotRetained.ShouldBeTrue();
         secrets.IsAvailable.ShouldBeFalse();
     }
 

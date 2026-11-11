@@ -17,6 +17,13 @@ namespace Squid.UnitTests.Handlers.OctopusImport;
 public class UploadOctopusImportCommandHandlerTests
 {
     [Fact]
+    public void ExportPasswordNotRecordedCode_IsPinned()
+    {
+        // Persisted in the failed session's ResultJson and returned to API clients — renaming it is a wire change.
+        OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecorded.ShouldBe("octopus.upload.export_password_not_recorded");
+    }
+
+    [Fact]
     public async Task Handle_CreatesSessionStoresUploadAndReturnsCompletedSourceSummary()
     {
         var sessionService = new Mock<IOctopusImportSessionService>();
@@ -133,7 +140,7 @@ public class UploadOctopusImportCommandHandlerTests
         var actual = await Should.ThrowAsync<Exception>(() => sut.Handle(Context(UploadCommand()), cts.Token));
 
         actual.ShouldBeAssignableTo(thrown.GetType(), "the original failure must surface, not the compensation");
-        sessionService.Verify(s => s.RecordResultAsync(sessionId, 7, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.UploadAbandoned)), It.Is<CancellationToken>(t => !t.IsCancellationRequested)), Times.Once);
+        sessionService.Verify(s => s.RecordResultAsync(sessionId, 7, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Any(d => d.Code == OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecorded)), It.Is<CancellationToken>(t => !t.IsCancellationRequested)), Times.Once);
     }
 
     [Fact]

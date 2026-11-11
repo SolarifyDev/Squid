@@ -229,13 +229,16 @@ public class ConfirmOctopusImportCommandHandlerTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public async Task Handle_RetainedExportPasswordUnreadable_RefusesWithoutStartingConfirmation_SoTheSessionStaysRecoverable(bool unreadable, bool expectConfirmation)
+    [InlineData("unreadable", false)]
+    [InlineData("none", true)]
+    [InlineData("notretained", true)]
+    public async Task Handle_RetainedExportPasswordUnreadable_RefusesWithoutStartingConfirmation_SoTheSessionStaysRecoverable(string secretsState, bool expectConfirmation)
     {
         // The plan was validated WITH the decrypted secrets; confirming without them would silently import a
         // different result and end the session terminally. Refusing keeps it Validated: restoring the master
         // key and retrying works, otherwise the session expires (which clears the password).
+        // A password that was never retained (no at-rest key at upload) can never become readable and the plan
+        // was validated without it, so it confirms exactly like a session without a password.
         var harness = new Harness();
         var secretStore = new Mock<IOctopusImportExportSecretStore>();
         var sut = harness.CreateSut(secretStore.Object, new OctopusExportSecretsAccessor());
@@ -243,7 +246,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         var uploadPath = CreateTempFile();
         var preview = Preview();
 
-        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(unreadable ? OctopusExportSecrets.Unreadable : OctopusExportSecrets.None);
+        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(secretsState switch { "unreadable" => OctopusExportSecrets.Unreadable, "notretained" => OctopusExportSecrets.NotRetained, _ => OctopusExportSecrets.None });
         harness.SessionDataProvider
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));

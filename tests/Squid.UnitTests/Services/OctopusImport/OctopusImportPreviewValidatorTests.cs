@@ -315,6 +315,10 @@ public class OctopusImportPreviewValidatorTests
     [InlineData("password", "unreadable", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
     [InlineData("none", "password", new[] { OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged })]
     [InlineData("unreadable", "password", new[] { OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged })]
+    [InlineData("notretained", "notretained", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("password", "notretained", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("notretained", "password", new[] { OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged })]
+    [InlineData("notretained", "none", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
     public void PreviewAndValidation_WithDifferentExportSecrets_OnlyAcceptWhenBothCouldDecrypt(string previewSecrets, string validationSecrets, string[] expectedValidationBlockers)
     {
         // Preview is built by the REAL planner with one secret state; validation re-runs with another
@@ -328,14 +332,15 @@ public class OctopusImportPreviewValidatorTests
 
         result.Diagnostics.Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().ShouldBe(expectedValidationBlockers);
         (!preview.HasBlockers && !result.HasBlockers).ShouldBe(previewSecrets == "password" && validationSecrets == "password");
-        result.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(validationSecrets == "unreadable");
-        preview.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(previewSecrets == "unreadable");
+        result.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(validationSecrets is "unreadable" or "notretained");
+        preview.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(previewSecrets is "unreadable" or "notretained");
     }
 
     private static OctopusExportSecrets SecretsFor(string kind) => kind switch
     {
         "password" => OctopusExportSecrets.FromPassword("pw"),
         "unreadable" => OctopusExportSecrets.Unreadable,
+        "notretained" => OctopusExportSecrets.NotRetained,
         _ => OctopusExportSecrets.None
     };
 

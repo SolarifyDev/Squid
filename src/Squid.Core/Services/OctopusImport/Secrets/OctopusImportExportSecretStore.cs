@@ -22,8 +22,9 @@ public interface IOctopusImportExportSecretStore : IScopedDependency
 /// empty / weak MasterKey (Strict mode), and every import handler resolves this store, so building it
 /// eagerly would fail every import — even exports without a single secret. It is built only when a
 /// password actually has to be stored or loaded; when it cannot be built, the import degrades to the
-/// no-password behaviour (sensitive values become required inputs) and says so via
-/// <see cref="OctopusExportSecrets.Unreadable"/>.</para>
+/// no-password behaviour (sensitive values become required inputs) and says so: a password that could not be
+/// stored loads as <see cref="OctopusExportSecrets.NotRetained"/>, an envelope that can no longer be decrypted
+/// as <see cref="OctopusExportSecrets.Unreadable"/>.</para>
 /// <para>It deliberately does NOT go through <see cref="IAtRestSecretProtector"/>: that contract is
 /// idempotent (a value that already looks like an envelope is stored unchanged) and read-both (an
 /// unprefixed value is returned verbatim) — both right for migrating legacy columns, both wrong here,
@@ -63,6 +64,9 @@ public sealed class OctopusImportExportSecretStore(IOctopusImportSessionDataProv
 
         if (string.IsNullOrEmpty(session?.ProtectedExportPassword)) return OctopusExportSecrets.None;
 
+        // No envelope was ever written, so no key can recover it: behave like no password, never "unreadable".
+        if (session.ProtectedExportPassword == NotRetainedMarker) return OctopusExportSecrets.NotRetained;
+
         var password = UnprotectOrNull(session.ProtectedExportPassword);
 
         return password == null ? OctopusExportSecrets.Unreadable : OctopusExportSecrets.FromPassword(password);
@@ -79,7 +83,7 @@ public sealed class OctopusImportExportSecretStore(IOctopusImportSessionDataProv
     {
         if (!stored.StartsWith(EnvelopePrefix, StringComparison.Ordinal))
         {
-            if (stored != NotRetainedMarker) Log.Warning("Octopus import export password column does not hold an export-password envelope; sensitive values will require manual input");
+            Log.Warning("Octopus import export password column does not hold an export-password envelope; sensitive values will require manual input");
             return null;
         }
 

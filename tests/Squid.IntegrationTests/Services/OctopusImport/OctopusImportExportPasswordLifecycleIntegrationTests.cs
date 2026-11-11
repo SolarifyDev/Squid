@@ -191,7 +191,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
                 created.ProtectedExportPassword.ShouldBeNull();
                 created.CompletedAt.ShouldNotBeNull();
                 created.TemporaryUploadCleanupAfter.ShouldNotBeNull("the archive must be scheduled for purge");
-                created.ResultJson.ShouldContain(OctopusImportPreviewDiagnosticCodes.UploadAbandoned);
+                created.ResultJson.ShouldContain(OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecorded);
             }, builder => builder.RegisterType<FailingSecretStore>().As<IOctopusImportExportSecretStore>().InstancePerLifetimeScope());
         }
         finally

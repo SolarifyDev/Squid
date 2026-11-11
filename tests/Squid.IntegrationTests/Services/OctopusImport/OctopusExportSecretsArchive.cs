@@ -12,8 +12,9 @@ internal static class OctopusExportSecretsArchive
 {
     /// <param name="projectName">Unique per test: the destination database is shared by the test class.</param>
     /// <param name="sensitiveValue">Plaintext of the project's sensitive variable; <c>null</c> = an export without secrets.</param>
-    /// <param name="exportPassword">Password the sensitive value is encrypted with.</param>
-    public static string Write(string projectName, string sensitiveValue = null, string exportPassword = null)
+    /// <param name="exportPassword">Password the sensitive value (and the feed password) is encrypted with.</param>
+    /// <param name="feedPassword">Plaintext of a Docker feed's password; <c>null</c> = no feed in the export.</param>
+    public static string Write(string projectName, string sensitiveValue = null, string exportPassword = null, string feedPassword = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         string Id(string prefix) => $"{prefix}-{suffix}";
@@ -42,8 +43,8 @@ internal static class OctopusExportSecretsArchive
             }
         };
 
-        return WriteArchive(
-        [
+        var documents = new List<(string Id, string DocumentType, string DocumentSource, string Json)>
+        {
             Doc(Id("ProjectGroups-1"), "ProjectGroup", new { Id = Id("ProjectGroups-1"), Name = $"Group {suffix}", Slug = $"group-{suffix}" }),
             Doc(Id("Environments-1"), "StaticDeploymentEnvironment", new { Id = Id("Environments-1"), Name = $"Env {suffix}", Slug = $"env-{suffix}" }),
             Doc(Id("Lifecycles-1"), "Lifecycle", new { Id = Id("Lifecycles-1"), Name = $"Lifecycle {suffix}", Slug = $"lc-{suffix}", Phases = new[] { new { Id = Id("Phases-1"), Name = "Only", AutomaticDeploymentTargets = new[] { Id("Environments-1") }, OptionalDeploymentTargets = Array.Empty<string>() } } }),
@@ -51,8 +52,15 @@ internal static class OctopusExportSecretsArchive
             Doc(Id("Channels-1"), "Channel", new { Id = Id("Channels-1"), Name = "Default", ProjectId = Id("Projects-1"), LifecycleId = (string)null, IsDefault = true, Slug = "default" }),
             Doc(Id("variableset-Projects-1"), "ProjectVariables", new { Id = Id("variableset-Projects-1"), OwnerId = Id("Projects-1"), OwnerType = "Project", Variables = variables }),
             Doc(Id("deploymentprocess-Projects-1"), "DeploymentProcess", new { Id = Id("deploymentprocess-Projects-1"), OwnerId = Id("Projects-1"), Steps = new[] { step } })
-        ]);
+        };
+
+        if (feedPassword != null)
+            documents.Add(Doc(Id("Feeds-1"), "DockerFeed", new { Id = Id("Feeds-1"), Name = FeedName(projectName), Slug = $"feed-{suffix}", FeedType = "Docker", FeedUri = "https://registry.example.test", ApiVersion = "v2", Username = "robot", Password = Encrypt(feedPassword, exportPassword) }));
+
+        return WriteArchive(documents);
     }
+
+    public static string FeedName(string projectName) => $"Feed {projectName}";
 
     public static string Encrypt(string plaintext, string password)
     {

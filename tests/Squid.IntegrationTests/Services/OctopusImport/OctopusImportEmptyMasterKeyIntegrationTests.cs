@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Authorization;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.Security;
@@ -32,6 +33,7 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
     public async Task ExportWithoutSecrets_UploadsExtractsPreviewsAndValidates_WithoutEverBuildingTheEncryptionService()
     {
         var archivePath = OctopusExportSecretsArchive.Write($"NoSecrets-{Guid.NewGuid():N}");
+        var restoreEnforcement = UseDefaultEnforcement();
 
         try
         {
@@ -66,6 +68,7 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
         }
         finally
         {
+            restoreEnforcement();
             File.Delete(archivePath);
         }
     }
@@ -74,6 +77,7 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
     public async Task ExportWithPassword_DegradesToRequiredInputsWithAnExplicitDiagnostic_InsteadOfFailingTheImport()
     {
         var archivePath = OctopusExportSecretsArchive.Write($"WithSecrets-{Guid.NewGuid():N}", sensitiveValue: "db-p@ss", exportPassword: ExportPassword);
+        var restoreEnforcement = UseDefaultEnforcement();
 
         try
         {
@@ -111,15 +115,93 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
         }
         finally
         {
+            restoreEnforcement();
+            File.Delete(archivePath);
+        }
+    }
+
+    [Fact]
+    public async Task PasswordNotRetainedForWantOfAKey_SessionStillConfirmsLikeOneWithoutPassword_OnceAKeyIsConfigured()
+    {
+        // The export's only secret is a feed password: without it the feed is imported for manual credential
+        // setup (a Warning), so the session previews and validates. The operator then configures a master key
+        // and restarts. The not-retained marker can never become readable, so confirmation must not refuse it
+        // the way it refuses an envelope whose key was rotated — that would strand the session until expiry.
+        var projectName = $"FeedOnly-{Guid.NewGuid():N}";
+        var archivePath = OctopusExportSecretsArchive.Write(projectName, exportPassword: ExportPassword, feedPassword: "registry-token");
+        var restoreEnforcement = UseDefaultEnforcement();
+        var sessionId = Guid.Empty;
+
+        try
+        {
+            await Run<ILifetimeScope>(async scope =>
+            {
+                EnsureStrictEmptyMasterKey(scope);
+
+                var mediator = scope.Resolve<IMediator>();
+                var upload = await OctopusImportHandlerFlow.UploadAsync(mediator, SpaceId, archivePath, ExportPassword);
+                upload.Code.ShouldBe(HttpStatusCode.OK, customMessage: upload.Msg);
+
+                sessionId = upload.Data.Session.SessionId;
+                (await StoredPasswordAsync(scope, sessionId)).ShouldBe(OctopusImportExportSecretStore.NotRetainedMarker);
+                (await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, sessionId)).Code.ShouldBe(HttpStatusCode.OK);
+
+                var preview = await OctopusImportHandlerFlow.PreviewAsync(mediator, SpaceId, sessionId);
+                preview.Data.PreviewPlan.HasBlockers.ShouldBeFalse(OctopusImportHandlerFlow.DescribeBlockers(OctopusImportHandlerFlow.AllDiagnostics(preview.Data.PreviewPlan)));
+                OctopusImportHandlerFlow.AllDiagnostics(preview.Data.PreviewPlan).ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable && d.Message == OctopusImportPreviewDiagnosticCodes.ExportPasswordNotRetainedMessage);
+
+                var validate = await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, preview.Data.PreviewPlan);
+                validate.Code.ShouldBe(HttpStatusCode.OK, customMessage: validate.Msg);
+            });
+
+            await Run<ILifetimeScope>(async scope =>
+            {
+                var confirm = await OctopusImportHandlerFlow.ConfirmAsync(scope.Resolve<IMediator>(), SpaceId, sessionId);
+
+                confirm.Code.ShouldBe(HttpStatusCode.OK, customMessage: confirm.Msg);
+                confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: OctopusImportHandlerFlow.DescribeBlockers(confirm.Data.Session.Result?.Diagnostics ?? []));
+
+                var db = scope.Resolve<SquidDbContext>();
+                var feed = await db.Set<ExternalFeed>().AsNoTracking().SingleAsync(f => f.Name == OctopusExportSecretsArchive.FeedName(projectName));
+                feed.PasswordHasValue.ShouldBeFalse("without a retained password the feed credentials are left for manual setup, exactly as with no password");
+                (await StoredPasswordAsync(scope, sessionId)).ShouldBeNull();
+            }, ConfiguredMasterKeyWithOpenAuthorization);
+        }
+        finally
+        {
+            restoreEnforcement();
             File.Delete(archivePath);
         }
     }
 
     private static void EnsureStrictEmptyMasterKey(ILifetimeScope scope)
     {
-        // Precondition: this container really is the committed-default configuration. If an operator env
-        // var relaxed the enforcement the scenario under test does not exist.
+        // Precondition: this container really is the committed-default configuration (empty key, Strict default
+        // with the enforcement env var unset by UseDefaultEnforcement).
         Should.Throw<Exception>(() => scope.Resolve<IVariableEncryptionService>(), customMessage: $"expected Strict MasterKey enforcement; is {VariableEncryptionService.EnforcementEnvVar} set?");
+    }
+
+    // Hermetic like IntegrationMasterKeyStrictDefault: unset the enforcement override so the committed DEFAULT
+    // (Strict) is what the scenario runs under, whatever the ambient process exports. The service reads the env
+    // var when it is constructed, so it must be set before any resolution and restored afterwards.
+    private static Action UseDefaultEnforcement()
+    {
+        var prior = System.Environment.GetEnvironmentVariable(VariableEncryptionService.EnforcementEnvVar);
+        System.Environment.SetEnvironmentVariable(VariableEncryptionService.EnforcementEnvVar, null);
+
+        return () => System.Environment.SetEnvironmentVariable(VariableEncryptionService.EnforcementEnvVar, prior);
+    }
+
+    // The operator configured a real key and restarted: the integration appsettings' key replaces the empty one.
+    // The confirm handler's permission preflight is covered by its unit tests; it is opened here to reach the
+    // secrets path under test (the integration user has no team roles).
+    private static void ConfiguredMasterKeyWithOpenAuthorization(ContainerBuilder builder)
+    {
+        builder.Register(c => new SecuritySetting(c.Resolve<Microsoft.Extensions.Configuration.IConfiguration>())).AsSelf().SingleInstance();
+
+        var authorization = new Moq.Mock<IAuthorizationService>();
+        authorization.Setup(a => a.EnsurePermissionAsync(Moq.It.IsAny<PermissionCheckRequest>(), Moq.It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        builder.RegisterInstance(authorization.Object).As<IAuthorizationService>();
     }
 
     private static async Task<string> StoredPasswordAsync(ILifetimeScope scope, Guid sessionId)

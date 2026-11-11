@@ -116,16 +116,26 @@ public class UploadOctopusImportCommandHandler(
     // cancelled request still compensates; a failing compensation never masks the original failure.
     private async Task AbandonSessionAsync(Guid sessionId, int destinationSpaceId, Exception cause)
     {
-        var result = new OctopusImportSessionResultDto { Diagnostics = [new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportPreviewDiagnosticCodes.UploadAbandoned, Message = OctopusImportPreviewDiagnosticCodes.UploadAbandonedMessage }] };
-
         try
         {
-            await sessionService.RecordResultAsync(sessionId, destinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None).ConfigureAwait(false);
+            await sessionService.RecordResultAsync(sessionId, destinationSpaceId, OctopusImportSessionState.Failed, ExportPasswordNotRecordedResult(), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             Log.Warning("Octopus import session {SessionId} could not be failed after recording its export password failed ({CauseType}, then {CompensationType}); it will expire instead", sessionId, cause.GetType().Name, ex.GetType().Name);
         }
+    }
+
+    private static OctopusImportSessionResultDto ExportPasswordNotRecordedResult()
+    {
+        var diagnostic = new OctopusImportDiagnosticDto
+        {
+            Severity = OctopusImportCompatibilitySeverity.Blocker,
+            Code = OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecorded,
+            Message = OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecordedMessage
+        };
+
+        return new OctopusImportSessionResultDto { Diagnostics = [diagnostic] };
     }
 
     private static async Task<MemoryStream> BufferContentAsync(

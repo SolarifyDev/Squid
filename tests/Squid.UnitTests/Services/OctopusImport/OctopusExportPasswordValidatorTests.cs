@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -123,6 +124,60 @@ public class OctopusExportPasswordValidatorTests
         (await ValidateZipAsync("wrong-password", ("template.json", template), ("process.json", process))).ShouldBe(OctopusExportPasswordValidationStatus.NotVerifiable);
     }
 
+    public static TheoryData<string, string, string> CiphertextTheImporterNeverDecrypts()
+    {
+        var cipher = Encrypt("never-imported", Password);
+        var templateProperty = (string name) => JsonSerializer.Serialize(new { Id = "deploymentprocess-Projects-1", OwnerId = "Projects-1", Steps = new[] { new { Id = "Steps-1", Name = "Notify", Actions = new[] { new { Id = "Actions-1", Name = "Notify", ActionType = "Octopus.Script", Properties = new Dictionary<string, string> { ["Octopus.Action.Template.Id"] = "ActionTemplates-1", [name] = cipher } } } } } });
+
+        return new TheoryData<string, string, string>
+        {
+            { "step-template parameter named Password", "process.json", templateProperty("Password") },
+            { "step-template parameter named Secret", "process.json", templateProperty("Secret") },
+            { "step-template parameter named SensitiveValue", "process.json", templateProperty("SensitiveValue") },
+            { "account password", "account.json", JsonSerializer.Serialize(new { Id = "Accounts-1", Name = "Azure", AccountType = "UsernamePassword", Username = "svc", Password = cipher }) },
+            { "account secret", "account.json", JsonSerializer.Serialize(new { Id = "Accounts-2", Name = "SP", AccountType = "AzureServicePrincipal", Secret = cipher }) },
+            { "certificate password", "certificate.json", JsonSerializer.Serialize(new { Id = "Certificates-1", Name = "Tls", Password = cipher }) },
+            { "variable-set snapshot of a release", "snapshot.json", $"{{\"Id\":\"variableset-Projects-1-s-1-ABCDE\",\"OwnerId\":\"Projects-1\",\"Variables\":[{VariableJson(true, "Sensitive", cipher)}]}}" },
+            { "Password property on a non-feed document", "project.json", JsonSerializer.Serialize(new { Id = "Projects-1", Name = "P", Password = cipher }) }
+        };
+    }
+
+    [Theory]
+    [MemberData(nameof(CiphertextTheImporterNeverDecrypts))]
+    public async Task ValidateAsync_OnlyCiphertextIsOneTheImporterNeverDecrypts_IsNotVerifiable_SoThePasswordIsNeitherRetainedNorRejected(string location, string entryName, string json)
+    {
+        // Password evidence is exactly what the importer decrypts (sensitive variable values, feed passwords). Ciphertext
+        // anywhere else must neither reject a correct upload nor cause the password to be retained for nothing.
+        (await ValidateZipAsync(Password, (entryName, json))).ShouldBe(OctopusExportPasswordValidationStatus.NotVerifiable, customMessage: location);
+        (await ValidateZipAsync("wrong-password", (entryName, json))).ShouldBe(OctopusExportPasswordValidationStatus.NotVerifiable, customMessage: location);
+    }
+
+    [Theory]
+    [MemberData(nameof(CiphertextTheImporterNeverDecrypts))]
+    public async Task ValidateAsync_UnimportedCiphertextUnderAnotherPassword_DoesNotRejectTheProvenImportedSecret(string location, string entryName, string json)
+    {
+        var variables = $"{{\"Id\":\"variableset-Projects-9\",\"OwnerId\":\"Projects-9\",\"Variables\":[{VariableJson(true, "String", Encrypt(Secret, "password-a"))}]}}";
+
+        // The unimported ciphertext is encrypted with Password, the imported one with password-a.
+        (await ValidateZipAsync("password-a", ("variables.json", variables), (entryName, json))).ShouldBe(OctopusExportPasswordValidationStatus.Valid, customMessage: location);
+        (await ValidateZipAsync(Password, ("variables.json", variables), (entryName, json))).ShouldBe(OctopusExportPasswordValidationStatus.Invalid, customMessage: location);
+    }
+
+    [Theory]
+    [InlineData("password-a", OctopusExportPasswordValidationStatus.Valid)]
+    [InlineData("password-b", OctopusExportPasswordValidationStatus.Invalid)]
+    public async Task ValidateAsync_ManifestExport_ProvesOnlyListedDocuments_ClassifiedByTheManifest(string givenPassword, OctopusExportPasswordValidationStatus expected)
+    {
+        // With a manifest the importer plans only from listed documents and classifies them by the manifest's
+        // DocumentType — the feed below has no "Feeds-" id, and the unlisted variable set is never imported.
+        var listedVariables = $"{{\"Id\":\"variableset-Projects-1\",\"OwnerId\":\"Projects-1\",\"Variables\":[{VariableJson(true, "String", Encrypt(Secret, "password-a"))}]}}";
+        var listedFeed = JsonSerializer.Serialize(new { Id = "custom-registry", Name = "ACR", FeedType = "Docker", Username = "robot", Password = Encrypt("registry-token", "password-a") });
+        var unlisted = $"{{\"Id\":\"variableset-Projects-2\",\"OwnerId\":\"Projects-2\",\"Variables\":[{VariableJson(true, "Sensitive", Encrypt(Secret, "password-b"))}]}}";
+        var manifest = JsonSerializer.Serialize(new { SchemaVersions = Array.Empty<string>(), Entries = new[] { new { Id = "variableset-Projects-1", Name = "variables", DocumentType = "ProjectVariables", DocumentSource = "variables.json" }, new { Id = "custom-registry", Name = "ACR", DocumentType = "DockerFeed", DocumentSource = "feed.json" } } });
+
+        (await ValidateZipAsync(givenPassword, ("manifest.json", manifest), ("variables.json", listedVariables), ("feed.json", listedFeed), ("unlisted.json", unlisted))).ShouldBe(expected);
+    }
+
     [Theory]
     [InlineData("password-a")]
     [InlineData("password-b")]
@@ -182,7 +237,7 @@ public class OctopusExportPasswordValidatorTests
     }
 
     private static OctopusExportPasswordValidator CreateSut()
-        => new(new OctopusArchiveExtractor(), new OctopusInputExtractor());
+        => new(new OctopusArchiveExtractor(), new OctopusInputExtractor(), new OctopusManifestInventoryBuilder(), new OctopusResourceGraphBuilder());
 
     private static string BuildJson(string value)
         => JsonSerializer.Serialize(new
