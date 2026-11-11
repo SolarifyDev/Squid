@@ -17,6 +17,11 @@ public interface IDeploymentActionDataProvider : IScopedDependency
 
     Task<List<DeploymentAction>> GetDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
+    Task<bool> AllBelongToStepAsync(
+        List<int> actionIds,
+        int stepId,
+        CancellationToken cancellationToken = default);
+
     Task<List<DeploymentAction>> GetDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
 
     Task DeleteDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
@@ -91,6 +96,22 @@ public class DeploymentActionDataProvider(
             .Where(a => a.StepId == stepId)
             .OrderBy(a => a.ActionOrder)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> AllBelongToStepAsync(
+        List<int> actionIds,
+        int stepId,
+        CancellationToken cancellationToken = default)
+    {
+        var distinctActionIds = actionIds?.Distinct().ToList() ?? new List<int>();
+        if (distinctActionIds.Count == 0) return true;
+
+        var persistedCount = await repository.Query<DeploymentAction>()
+            .Where(action => action.StepId == stepId && distinctActionIds.Contains(action.Id))
+            .CountAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return persistedCount == distinctActionIds.Count;
     }
 
     public async Task<List<DeploymentAction>> GetDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default)

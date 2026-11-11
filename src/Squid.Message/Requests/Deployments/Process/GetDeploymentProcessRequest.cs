@@ -5,11 +5,12 @@ using Squid.Message.Response;
 
 namespace Squid.Message.Requests.Deployments.Process;
 
-[RequiresPermission(Permission.ProcessView)]
 public class GetDeploymentProcessRequest : IRequest, ISpaceScoped
 {
     public int? SpaceId { get; set; }
     public int Id { get; set; }
+    public int? ProjectId { get; set; }
+    public int? RunbookId { get; set; }
 }
 
 public class GetDeploymentProcessResponse : SquidResponse<GetDeploymentProcessResponseData>

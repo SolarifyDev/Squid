@@ -25,6 +25,10 @@ public enum Permission
     [PermissionScope(PermissionScope.SpaceOnly)] ProcessView,
     [PermissionScope(PermissionScope.SpaceOnly)] ProcessEdit,
 
+    // Runbook
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookView,
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookEdit,
+
     // Variable
     [PermissionScope(PermissionScope.SpaceOnly)] VariableView,
     [PermissionScope(PermissionScope.SpaceOnly)] VariableEdit,

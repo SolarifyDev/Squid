@@ -52,6 +52,21 @@ public class AuditDocumentRegistryTests
     }
 
     [Fact]
+    public void Runbook_MapsToRunbookDocumentWithProjectFeedKey()
+    {
+        _registry.TryDescribe(
+            new Runbook { Id = 11, ProjectId = 5, SpaceId = 2, Name = "Payment Recovery" },
+            out var type,
+            out var keys).ShouldBeTrue();
+
+        type.ShouldBe("Runbook");
+        keys.SpaceId.ShouldBe(2);
+        keys.ProjectId.ShouldBe(5);
+        keys.DocumentId.ShouldBe(11);
+        keys.Name.ShouldBe("Payment Recovery");
+    }
+
+    [Fact]
     public void UnregisteredEntity_IsNotAudited()
     {
         // The registry is a deliberate allowlist of user-facing documents — being IAuditable
@@ -73,7 +88,8 @@ public class AuditDocumentRegistryTests
         AuditDocumentRegistry.RegisteredDocumentTypes.ShouldBe(new[]
         {
             "Project", "Release", "Environment", "Machine", "DeploymentAccount",
-            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate"
+            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate",
+            "Runbook"
         }, ignoreOrder: true);
     }
 }

@@ -8,6 +8,8 @@ public class UpdateDeploymentStepCommandValidator : FluentMessageValidator<Updat
     public UpdateDeploymentStepCommandValidator()
     {
         RuleFor(c => c.Id).GreaterThan(0);
+        RuleFor(c => c.RunbookId).GreaterThan(0).When(c => c.RunbookId.HasValue);
+        RuleFor(c => c.ProjectId).GreaterThan(0).When(c => c.ProjectId.HasValue);
 
         RuleFor(c => c.Step).NotNull();
 

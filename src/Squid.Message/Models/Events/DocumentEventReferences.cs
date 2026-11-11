@@ -9,5 +9,9 @@ public sealed record DocumentEventReferences
 {
     public required string DocumentType { get; init; }
 
+    public int? DocumentId { get; init; }
+
+    public int? ProjectId { get; init; }
+
     public string Name { get; init; }
 }

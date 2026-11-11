@@ -5,11 +5,12 @@ using Squid.Message.Response;
 
 namespace Squid.Message.Commands.Deployments.Process.Step;
 
-[RequiresPermission(Permission.ProcessEdit)]
 public class ReorderDeploymentStepsCommand : ICommand, ISpaceScoped
 {
     public int? SpaceId { get; set; }
     public int ProcessId { get; set; }
+    public int? ProjectId { get; set; }
+    public int? RunbookId { get; set; }
 
     public List<StepOrderItem> StepOrders { get; set; } = new();
 }

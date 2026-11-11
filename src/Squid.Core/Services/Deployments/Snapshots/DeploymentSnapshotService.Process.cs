@@ -1,5 +1,7 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.Core.Services.Deployments.Snapshots;
@@ -27,6 +29,18 @@ public partial class DeploymentSnapshotService
     public async Task<DeploymentProcessSnapshotDto> SnapshotProcessFromIdAsync(int processId, CancellationToken cancellationToken = default)
     {
         var process = await _deploymentProcessDataProvider.GetDeploymentProcessByIdAsync(processId, cancellationToken).ConfigureAwait(false);
+
+        if (process == null)
+        {
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", processId);
+        }
+
+        if (process.ProcessKind != Squid.Message.Enums.DeploymentProcessKind.ProjectDeployment
+            || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {processId} is not a project deployment process.");
+        }
 
         var snapshotData = await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
         

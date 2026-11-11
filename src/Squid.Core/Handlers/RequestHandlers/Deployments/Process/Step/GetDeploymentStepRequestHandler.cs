@@ -14,7 +14,6 @@ public class GetDeploymentStepRequestHandler : IRequestHandler<GetDeploymentStep
 
     public async Task<GetDeploymentStepResponse> Handle(IReceiveContext<GetDeploymentStepRequest> context, CancellationToken cancellationToken)
     {
-        return await _stepService.GetDeploymentStepByIdAsync(context.Message.Id, cancellationToken).ConfigureAwait(false);
+        return await _stepService.GetDeploymentStepAsync(context.Message, cancellationToken).ConfigureAwait(false);
     }
 }
-
