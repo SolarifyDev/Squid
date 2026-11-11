@@ -191,6 +191,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         try
         {
+            await LockCreatedLibraryNamesAsync(execution, ct).ConfigureAwait(false);
+
             foreach (var resource in request.DependencyPlan.OrderedResources)
             {
                 if (execution.IsAlreadyCompleted(resource))
@@ -503,6 +505,22 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         if (variableSetResource != null)
             execution.AddCreated(variableSetResource, created.Id);
+    }
+
+    // Every library name this confirmation will create is locked ONCE, up front and in the lock's canonical
+    // order, before anything is written. Locking per library in dependency order would let two confirmations
+    // hold shared names in opposite order and deadlock; the per-library re-check below then only re-enters.
+    private async Task LockCreatedLibraryNamesAsync(ConfirmationExecutionContext execution, CancellationToken ct)
+    {
+        var names = execution.Request.DependencyPlan.OrderedResources
+            .Where(r => r.Kind == OctopusResourceKind.LibraryVariableSet && !execution.IsAlreadyCompleted(r) && execution.GetPreview(r)?.PreviewAction == OctopusImportPreviewAction.Create)
+            .Select(r => r.GetSource<OctopusLibraryVariableSetDto>()?.Name)
+            .Where(n => n != null)
+            .ToList();
+
+        if (names.Count == 0) return;
+
+        await _libraryNameLock.LockNamesAsync(execution.DestinationSpaceId, names, ct).ConfigureAwait(false);
     }
 
     // Preview planned a CREATE, but another confirmation (or an earlier library in this one) may have created

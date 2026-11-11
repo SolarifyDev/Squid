@@ -159,12 +159,14 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
                 previewsById[resource.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept, "This variable belongs to a library variable set that is reused as-is; the destination keeps its existing value and this source value is not imported.", resource));
         }
 
-        foreach (var shadow in OctopusImportVariablePrecedence.FindProjectVariablesShadowedByLibraries(nodes))
+        foreach (var shadow in OctopusImportVariablePrecedence.FindProjectVariablesShadowedByLibraries(nodes, set => OctopusImportVariableOwnership.IsWrittenByImport(set, FindNode, PreviewAction)))
             previewsById[shadow.ProjectVariable.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable, ShadowMessage(shadow), shadow.ProjectVariable));
     }
 
     private static string ShadowMessage(OctopusImportShadowedProjectVariable shadow)
-        => $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and its included library variable set '{shadow.LibraryName}' defines the same name with an equally specific scope. Where both apply, Squid uses the library value, whereas Octopus used the project value. Rename or re-scope one of them if the project value must win.";
+        => shadow.LibraryReused
+            ? $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and includes library variable set '{shadow.LibraryName}', which is reused as-is. The exported library defines the same name with an equally specific scope; the destination library's existing variables decide at runtime: if it still defines that name, Squid uses the library value where both apply, whereas Octopus used the project value. Check the destination library, and rename or re-scope one of them if the project value must win."
+            : $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and its included library variable set '{shadow.LibraryName}' defines the same name with an equally specific scope. Where both apply, Squid uses the library value, whereas Octopus used the project value. Rename or re-scope one of them if the project value must win.";
 
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,

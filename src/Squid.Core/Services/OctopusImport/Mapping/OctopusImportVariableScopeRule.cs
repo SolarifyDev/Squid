@@ -38,8 +38,9 @@ public static class OctopusImportVariableScopeRule
                 continue;
             }
 
+            // Trimmed here, once, so preview's plan lookup and confirmation's id map see the same identity.
             foreach (var value in entry.Value ?? [])
-                yield return Resolve(entry.Key, scopeType.Value, value, hasDestination);
+                yield return Resolve(entry.Key, scopeType.Value, value?.Trim(), hasDestination);
         }
     }
 

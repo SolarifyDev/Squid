@@ -254,6 +254,93 @@ public class OctopusImportLibraryVariableSetIntegrationTests : TestBase
         });
     }
 
+    // Deterministic deadlock precondition: library L1 (name "B…") is confirmed before L2 (name "A…"). Locking
+    // per library in dependency order would hold B while waiting for A; locking every name up front in name
+    // order waits for A while holding NOTHING, so no other session can be waiting on a name this one holds.
+    [Fact]
+    public async Task Confirmation_WaitingForALibraryName_HoldsNoLaterNameMeanwhile()
+    {
+        var nameA = Unique("A Ordered Lib");
+        var nameB = Unique("B Ordered Lib");
+        var export = new Export().Library("L1", nameB, Var("One", "1")).Library("L2", nameA, Var("Two", "2")).Project("P", Unique("Ordered P"), ["L1", "L2"]);
+        OctopusImportPlanningSnapshot snapshot = null;
+
+        await Run<ILifetimeScope>(async lifetime => snapshot = await PlanAsync(lifetime, export, OctopusExportSecrets.None));
+
+        var holderLocked = new TaskCompletionSource();
+        var releaseHolder = new TaskCompletionSource();
+        var holder = Run<SquidDbContext, IOctopusImportLibraryVariableSetNameLock>(async (db, nameLock) =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync();
+            await nameLock.LockNameAndFindExistingAsync(SpaceId, nameA);
+            holderLocked.SetResult();
+            await releaseHolder.Task;
+        });
+
+        await holderLocked.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        var confirm = Run<ILifetimeScope, OctopusImportSessionDto>(lifetime => ConfirmAsync(lifetime, lifetime.Resolve<SquidDbContext>(), snapshot));
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            confirm.IsCompleted.ShouldBeFalse("the confirmation must wait for the library name another transaction holds");
+
+            var probe = LockInOwnTransactionAsync(SpaceId, nameB);
+            (await Task.WhenAny(probe, Task.Delay(TimeSpan.FromSeconds(10)))).ShouldBe(probe, "while waiting for name A the confirmation must not hold name B — it would deadlock with a session locking B then A (check pg_locks)");
+            (await probe).ShouldBeNull();
+        }
+        finally
+        {
+            releaseHolder.TrySetResult();
+            await holder;
+        }
+
+        var result = await confirm.WaitAsync(TimeSpan.FromSeconds(60));
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(result));
+
+        await Run<SquidDbContext>(async db => (await db.Set<LibraryVariableSet>().CountAsync(l => l.SpaceId == SpaceId && (l.Name == nameA || l.Name == nameB))).ShouldBe(2));
+    }
+
+    // Two exports hold the same two library names in SWAPPED source order. Run concurrently several times:
+    // every round must end with exactly one success and one CLEAN loser — never a deadlock (40P01) surfacing
+    // as a generic execution failure, and never a duplicate library.
+    [Fact]
+    public async Task TwoSessions_HoldingTheSameLibrariesInSwappedOrder_NeverDeadlock_AndTheLoserFailsCleanly()
+    {
+        for (var round = 0; round < 3; round++)
+        {
+            var nameA = Unique("A Swap Lib");
+            var nameB = Unique("B Swap Lib");
+            var exports = new[] { new Export().Library("L1", nameA, Var("One", "1")).Library("L2", nameB, Var("Two", "2")), new Export().Library("L1", nameB, Var("One", "1")).Library("L2", nameA, Var("Two", "2")) };
+            var projectNames = new[] { Unique("Swap A"), Unique("Swap B") };
+            var snapshots = new OctopusImportPlanningSnapshot[2];
+
+            for (var i = 0; i < exports.Length; i++)
+            {
+                var index = i;
+                exports[index].Project("P", projectNames[index], ["L1", "L2"]);
+                await Run<ILifetimeScope>(async lifetime => snapshots[index] = await PlanAsync(lifetime, exports[index], OctopusExportSecrets.None));
+            }
+
+            var results = await Task.WhenAll(Enumerable.Range(0, 2).Select(i => Run<ILifetimeScope, OctopusImportSessionDto>(lifetime => ConfirmAsync(lifetime, lifetime.Resolve<SquidDbContext>(), snapshots[i])))).WaitAsync(TimeSpan.FromMinutes(2));
+
+            results.Count(r => r.State == OctopusImportSessionState.Succeeded).ShouldBe(1, customMessage: $"round {round}: " + string.Join(" | ", results.Select(Describe)));
+
+            var loser = results.Single(r => r.State == OctopusImportSessionState.Failed);
+            loser.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently, customMessage: Describe(loser));
+            loser.Result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceExecutionFailed, customMessage: Describe(loser));
+
+            await Run<SquidDbContext>(async db =>
+            {
+                (await db.Set<LibraryVariableSet>().CountAsync(l => l.SpaceId == SpaceId && l.Name == nameA)).ShouldBe(1);
+                (await db.Set<LibraryVariableSet>().CountAsync(l => l.SpaceId == SpaceId && l.Name == nameB)).ShouldBe(1);
+                (await db.Set<Project>().CountAsync(p => projectNames.Contains(p.Name))).ShouldBe(1);
+            });
+        }
+    }
+
     // ── B7: shared libraries, mixed create/reuse, stale and ambiguous reuse, role scopes ─────────
 
     [Fact]

@@ -263,7 +263,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         var properties = new List<StepPropertyModel>();
         var sourceProperties = step.Properties ?? [];
 
-        AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTargetRoles, SpecialVariables.Step.TargetRoles);
+        AddTargetRoles(properties, sourceProperties.GetValueOrDefault(OctopusPropertyNames.ActionTargetRoles));
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionRunOnServer, SpecialVariables.Step.RunOnServer);
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionConditionExpression, SpecialVariables.Step.ConditionExpression);
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.StepConditionExpression, SpecialVariables.Step.ConditionExpression);
@@ -271,6 +271,14 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         AddMappedStepProperty(properties, sourceProperties, OctopusPropertyNames.ActionTimeout, SpecialVariables.Step.Timeout);
 
         return properties;
+    }
+
+    // The runtime splits Step.TargetRoles on ',' only, so every role source goes through the shared splitter
+    // and is stored as a comma list — never the raw Octopus value ('web;api' would be one unmatchable role).
+    private static void AddTargetRoles(List<StepPropertyModel> properties, string targetRoles)
+    {
+        foreach (var targetRole in OctopusReferenceList.Split(targetRoles))
+            AddOrAppendStepProperty(properties, SpecialVariables.Step.TargetRoles, targetRole);
     }
 
     private static void AddMappedStepProperty(

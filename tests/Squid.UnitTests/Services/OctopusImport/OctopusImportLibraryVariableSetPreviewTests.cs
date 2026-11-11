@@ -150,6 +150,8 @@ public class OctopusImportLibraryVariableSetPreviewTests
     [Theory]
     [InlineData("Environment", "Environments-1")]
     [InlineData("Environment", "Environments-404")]
+    [InlineData("Environment", " Environments-1 ")]
+    [InlineData("Environment", "environments-1")]
     [InlineData("Machine", "Machines-1")]
     [InlineData("TenantTag", "TenantTags/VIP")]
     [InlineData("Role", "web")]
@@ -206,6 +208,83 @@ public class OctopusImportLibraryVariableSetPreviewTests
         warnings.Count.ShouldBe(expectWarning ? 1 : 0);
         warnings.ShouldAllBe(w => w.Severity == OctopusImportCompatibilitySeverity.Warning && w.Message.Contains("'Api'") && w.Message.Contains("'connstr'") && w.Message.Contains("'Shared Lib'") && w.Message.Contains("library value"));
         result.BlocksConfirmation.ShouldBeFalse();
+    }
+
+    // A target carries SEVERAL roles and the runtime matches a Role scope when the target holds ANY listed
+    // role, so a project variable scoped to one role and a library variable scoped to another both apply on
+    // a target holding both — at the same RoleWeight, so the library wins. Roles are attached to targets
+    // after the import too, so whether an exported machine holds both today does not decide it.
+    [Theory]
+    [InlineData("web", "web", null, null, true)]
+    [InlineData("web", "db", null, null, true)]
+    [InlineData("web", "web,db", null, null, true)]
+    [InlineData("web", null, null, null, false)]
+    [InlineData(null, "db", null, null, false)]
+    [InlineData("web", "db", "Environments-1", "Environments-1", true)]
+    [InlineData("web", "db", "Environments-1", "Environments-2", false)]
+    [InlineData("web", "db", "Environments-1", null, false)]
+    public async Task ProjectAndIncludedLibraryScopedByRole_WarnsWheneverOneTargetCanHoldBothRoles(string projectRoles, string libraryRoles, string projectEnvironments, string libraryEnvironments, bool expectWarning)
+    {
+        foreach (var machineHoldsBoth in new[] { true, false })
+        {
+            var scenario = new OctopusImportScenario().Environment("Environments-1", "TEST").Environment("Environments-2", "PRD");
+            scenario = machineHoldsBoth ? scenario.Machine("Machines-1", "app-1", "web", "db") : scenario.Machine("Machines-1", "web-1", "web").Machine("Machines-2", "db-1", "db");
+
+            var result = await scenario
+                .Library(Library, "Shared Lib", Var("Variables-L", "ConnStr", "lib", RoleAndEnvironmentScope(libraryRoles, libraryEnvironments)))
+                .Project(Project, "Api", [Library], [Var("Variables-P", "ConnStr", "proj", RoleAndEnvironmentScope(projectRoles, projectEnvironments))])
+                .PlanAsync();
+
+            result.Resource("Variables-P").Diagnostics.Count(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).ShouldBe(expectWarning ? 1 : 0, customMessage: $"machineHoldsBoth={machineHoldsBoth}");
+            result.BlocksConfirmation.ShouldBeFalse(customMessage: string.Join("; ", result.Blockers.Select(b => $"{b.Code}:{b.SourceId}")));
+        }
+    }
+
+    // A reused library is linked as-is, so the DESTINATION library's variables decide precedence at runtime,
+    // not the exported ones. The warning must not claim the exported variable will be the one used.
+    [Fact]
+    public async Task ReusedLibraryDefiningTheSameName_WarnsThatTheDestinationLibraryDecides()
+    {
+        var result = await new OctopusImportScenario()
+            .Library(Library, "Shared Lib", Var("Variables-L", "ConnStr", "lib"))
+            .Project(Project, "Api", [Library], [Var("Variables-P", "ConnStr", "proj")])
+            .ExistingLibrary(901, "Shared Lib")
+            .PlanAsync();
+
+        var warning = result.Resource("Variables-P").Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable);
+
+        warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        warning.Message.ShouldContain("'Shared Lib'");
+        warning.Message.ShouldContain("reused as-is");
+        warning.Message.ShouldContain("destination library");
+        result.BlocksConfirmation.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CreatedLibraryDefiningTheSameName_WarnsWithoutTheReuseCaveat()
+    {
+        var result = await new OctopusImportScenario()
+            .Library(Library, "Shared Lib", Var("Variables-L", "ConnStr", "lib"))
+            .Project(Project, "Api", [Library], [Var("Variables-P", "ConnStr", "proj")])
+            .PlanAsync();
+
+        result.Resource("Variables-P").Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).Message.ShouldNotContain("reused as-is");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ScopeValueWithSurroundingWhitespace_ResolvesLikeConfirmation_AndDoesNotBlock(bool ownedByProject)
+    {
+        var variable = Var("Variables-X", "Scoped", "v", Scope("Environment", "  Environments-1 "));
+
+        var result = await new OctopusImportScenario()
+            .Environment("Environments-1", "TEST")
+            .Library(Library, "Shared Lib", ownedByProject ? [] : [variable])
+            .Project(Project, "Api", [Library], ownedByProject ? [variable] : [])
+            .PlanAsync();
+
+        result.Blockers.ShouldBeEmpty(customMessage: string.Join("; ", result.Blockers.Select(b => $"{b.Code}:{b.Message}")));
     }
 
     [Fact]
@@ -311,6 +390,16 @@ public class OctopusImportLibraryVariableSetPreviewTests
 
     private static Dictionary<string, string[]> EnvironmentScope(string environments)
         => environments == null ? null : Scope("Environment", environments.Split(','));
+
+    private static Dictionary<string, string[]> RoleAndEnvironmentScope(string roles, string environments)
+    {
+        var scope = new Dictionary<string, string[]>();
+
+        if (roles != null) scope["Role"] = roles.Split(',');
+        if (environments != null) scope["Environment"] = environments.Split(',');
+
+        return scope;
+    }
 
     // Simulates the confirmation order independently of the production rule: walk the REAL dependency
     // order and map every resource confirmation creates or reuses BEFORE the writer node runs.

@@ -466,6 +466,84 @@ public class OctopusImportConfirmationOrchestratorTests
         harness.TransactionExecutor.ExecuteCalls.ShouldBe(1);
     }
 
+    // ── Library variable set name lock ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ConfirmAsync_LibraryNameTakenAfterPreview_FailsCleanlyAndNeverSendsTheCreate()
+    {
+        var nameLock = new Mock<IOctopusImportLibraryVariableSetNameLock>();
+        nameLock.Setup(l => l.LockNameAndFindExistingAsync(7, "Zeta Lib", It.IsAny<CancellationToken>())).ReturnsAsync(42);
+        var harness = CreateLibraryHarness(nameLock);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Succeeded.ShouldBeFalse();
+
+        var library = result.Result.Resources.Single(r => r.SourceId == "LibraryVariableSets-1");
+        var diagnostic = library.Diagnostics.Single(d => d.Code == OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently);
+
+        library.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+        diagnostic.Message.ShouldContain("'Zeta Lib'");
+        diagnostic.Message.ShouldContain("id 42");
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently);
+        result.Result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceExecutionFailed);
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.IsAny<CreateVariableSetCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_NameStillFree_CreatesEveryPlannedLibrary()
+    {
+        var harness = CreateLibraryHarness(new Mock<IOctopusImportLibraryVariableSetNameLock>());
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.Is<CreateVariableSetCommand>(c => c.Name == "Zeta Lib" || c.Name == "Alpha Lib"), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        harness.Mediator.Verify(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.Is<CreateVariableSetCommand>(c => c.Name == "Kept Lib"), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Locks taken one library at a time, in dependency order, let two confirmations hold the same names
+    // in opposite order and deadlock. Every created name is locked in ONE call before the first write.
+    [Fact]
+    public async Task ConfirmAsync_LocksEveryCreatedLibraryNameUpFrontBeforeAnyWrite_AndNeverLocksAReusedOne()
+    {
+        var nameLock = new Mock<IOctopusImportLibraryVariableSetNameLock>();
+        TestHarness harness = null;
+        List<string> lockedNames = null;
+        var mediatorCallsWhenLocked = -1;
+
+        nameLock
+            .Setup(l => l.LockNamesAsync(7, It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<int, IEnumerable<string>, CancellationToken>((_, names, _) =>
+            {
+                lockedNames = names.ToList();
+                mediatorCallsWhenLocked = harness.Mediator.Invocations.Count;
+            })
+            .Returns(Task.CompletedTask);
+
+        harness = CreateLibraryHarness(nameLock);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        nameLock.Verify(l => l.LockNamesAsync(7, It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+        lockedNames.ShouldBe(["Zeta Lib", "Alpha Lib"], ignoreOrder: true);
+        mediatorCallsWhenLocked.ShouldBe(0, customMessage: "names must be locked before the import writes anything");
+    }
+
+    [Theory]
+    [InlineData(new[] { "Zeta", "Alpha" }, new[] { "alpha", "zeta" })]
+    [InlineData(new[] { "Alpha", "Zeta" }, new[] { "alpha", "zeta" })]
+    [InlineData(new[] { " Shared ", "shared", "SHARED" }, new[] { "shared" })]
+    [InlineData(new[] { "b", null, "", "a" }, new[] { "", "a", "b" })]
+    [InlineData(new string[0], new string[0])]
+    public void NameLock_LockOrder_IsDistinctNormalisedAndOrdinalSoEverySessionLocksInTheSameOrder(string[] names, string[] expected)
+    {
+        OctopusImportLibraryVariableSetNameLock.LockOrder(names).ShouldBe(expected);
+    }
+
     private static TestHarness CreateMinimalHarness(
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
@@ -483,6 +561,28 @@ public class OctopusImportConfirmationOrchestratorTests
             throwAfterAction,
             withTransactionGate);
     }
+
+    private static TestHarness CreateLibraryHarness(Mock<IOctopusImportLibraryVariableSetNameLock> nameLock)
+    {
+        var nodes = BuildMinimalNodes();
+        var zeta = LibraryNode("LibraryVariableSets-1", "Zeta Lib");
+        var alpha = LibraryNode("LibraryVariableSets-2", "Alpha Lib");
+        var kept = LibraryNode("LibraryVariableSets-3", "Kept Lib");
+        var ordered = new List<OctopusResourceNode> { nodes.ProjectGroup, nodes.Environment, zeta, alpha, kept, nodes.Project };
+        var libraryNodes = nodes with { MinimalOrderedResources = ordered, RichOrderedResources = ordered };
+
+        var harness = CreateHarness(libraryNodes, BuildDependencyPlan(ordered), BuildPreviewPlan(ordered, reusedResources: [kept]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false, nameLock: nameLock.Object);
+
+        harness.Mediator
+            .Setup(m => m.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(It.IsAny<CreateVariableSetCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateVariableSetCommand command, CancellationToken _) => new CreateVariableSetResponse { Data = new CreateVariableSetResponseData { VariableSet = new VariableSetDto { Id = 300 + command.Name.Length, OwnerId = 400 + command.Name.Length, Name = command.Name } } });
+
+        return harness;
+    }
+
+    // A library exported without its variables document: confirmation creates it empty, so no variable mapper is involved.
+    private static OctopusResourceNode LibraryNode(string sourceId, string name)
+        => Node(sourceId, OctopusResourceKind.LibraryVariableSet, OctopusDocumentKind.LibraryVariableSet, name, new OctopusLibraryVariableSetDto { Id = sourceId, Name = name, VariableSetId = $"variableset-{sourceId}", ContentType = "Variables" }, null);
 
     private static TestHarness CreateRichHarness()
     {
@@ -502,7 +602,8 @@ public class OctopusImportConfirmationOrchestratorTests
         OctopusImportPreviewPlanDto previewPlan,
         bool admissionShouldSucceed,
         bool throwAfterAction,
-        bool withTransactionGate)
+        bool withTransactionGate,
+        IOctopusImportLibraryVariableSetNameLock nameLock = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -570,7 +671,7 @@ public class OctopusImportConfirmationOrchestratorTests
             processMapper.Object,
             shellMapper.Object,
             deploymentHistoryImporter.Object,
-            Mock.Of<IOctopusImportLibraryVariableSetNameLock>(),
+            nameLock ?? Mock.Of<IOctopusImportLibraryVariableSetNameLock>(),
             projectDataProvider.Object,
             channelDataProvider.Object,
             mediator.Object);

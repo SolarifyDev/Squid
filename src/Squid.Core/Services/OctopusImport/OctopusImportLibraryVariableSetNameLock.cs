@@ -11,6 +11,12 @@ public interface IOctopusImportLibraryVariableSetNameLock : IScopedDependency
     /// confirmation, or created earlier in this one), or <c>null</c> when the name is still free.
     /// </summary>
     Task<int?> LockNameAndFindExistingAsync(int spaceId, string name, CancellationToken ct = default);
+
+    /// <summary>
+    /// Locks every name for the rest of the CURRENT transaction in one canonical order (<see cref="OctopusImportLibraryVariableSetNameLock.LockOrder"/>),
+    /// so concurrent confirmations that share names always acquire them in the same order and cannot deadlock.
+    /// </summary>
+    Task LockNamesAsync(int spaceId, IEnumerable<string> names, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -32,6 +38,16 @@ public sealed class OctopusImportLibraryVariableSetNameLock(IRepository reposito
 
         return await FindExistingIdAsync(spaceId, normalizedName, ct).ConfigureAwait(false);
     }
+
+    public async Task LockNamesAsync(int spaceId, IEnumerable<string> names, CancellationToken ct = default)
+    {
+        foreach (var normalizedName in LockOrder(names))
+            await AcquireTransactionLockAsync(spaceId, normalizedName, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Distinct normalised names in ordinal order: the one order every confirmation takes name locks in.</summary>
+    public static IReadOnlyList<string> LockOrder(IEnumerable<string> names)
+        => (names ?? []).Select(Normalize).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
 
     // Same identity rule as conflict discovery (trimmed, case-insensitive), so "Shared" and " shared " contend.
     public static string Normalize(string name) => (name ?? string.Empty).Trim().ToLowerInvariant();

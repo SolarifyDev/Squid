@@ -356,6 +356,33 @@ public class OctopusImportDeploymentProcessMapperTests
             .Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
     }
 
+    // Seam: the runtime (DeploymentTargetFinder.ParseCsvRoles / StepRoleMatcher) splits Step.TargetRoles on
+    // ',' only, so the mapper must normalise EVERY source of target roles — including the standard step-level
+    // property — through the shared OctopusReferenceList, or 'web;api' becomes one role nothing matches.
+    [Theory]
+    [InlineData("web,api", null, new[] { "web", "api" })]
+    [InlineData("web;api", null, new[] { "web", "api" })]
+    [InlineData("web\napi", null, new[] { "web", "api" })]
+    [InlineData("web\r\napi", null, new[] { "web", "api" })]
+    [InlineData(" web ;; api ,", null, new[] { "web", "api" })]
+    [InlineData("web;api", "worker", new[] { "web", "api", "worker" })]
+    [InlineData("web;api", "api;worker", new[] { "web", "api", "worker" })]
+    [InlineData(null, "api\nworker", new[] { "api", "worker" })]
+    public void MapToCreateStepCommands_StepAndActionTargetRoles_AreNormalisedToTheCommaListTheRuntimeParses(string stepRoles, string actionRoles, string[] expectedRoles)
+    {
+        var step = new OctopusDeploymentStepDto { Id = "Steps-Roles", Name = "Run", Actions = [new OctopusDeploymentActionDto { Id = "Actions-Roles", Name = "Run", ActionType = "Octopus.Script", Properties = { ["Octopus.Action.Script.ScriptSource"] = "Inline", ["Octopus.Action.Script.Syntax"] = "Bash", ["Octopus.Action.Script.ScriptBody"] = "echo hi" } }] };
+
+        if (stepRoles != null) step.Properties[OctopusPropertyNames.ActionTargetRoles] = stepRoles;
+        if (actionRoles != null) step.Actions[0].Properties[OctopusPropertyNames.ActionTargetRoles] = actionRoles;
+
+        var result = _mapper.MapToCreateStepCommands(Resource(Process(step)), IdMap(), 7);
+
+        var stored = result.Steps.Single().CreateCommand.Step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.TargetRoles).PropertyValue;
+
+        stored.ShouldBe(string.Join(",", expectedRoles));
+        Squid.Core.Services.DeploymentExecution.Filtering.DeploymentTargetFinder.ParseCsvRoles(stored).ShouldBe(expectedRoles, ignoreOrder: true);
+    }
+
     [Fact]
     public void MapToCreateStepCommands_StepRunOnServerWithWorkerPoolAndTargetRoles_UsesTargetLevelExecution()
     {
