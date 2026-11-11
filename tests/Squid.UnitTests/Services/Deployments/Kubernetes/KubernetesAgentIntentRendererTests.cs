@@ -491,6 +491,41 @@ public class KubernetesAgentIntentRendererTests
         rendered.ScriptBody.ShouldContain("kubectl rollout status \"deployment/api\" -n \"prod\" --timeout=120s");
     }
 
+    // ========== KubernetesApplyIntent: post-apply scripts (blue/green switch) ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_PostApplyScripts_AppendedAfterApplyAndWait()
+    {
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("deployment.yaml", BytesFor("kind: Deployment\nmetadata:\n  name: api\n"))
+        }) with
+        {
+            ObjectStatusCheck = true,
+            PostApplyScripts = new[] { DeploymentFile.Script("bluegreen.sh", BytesFor("echo SWITCH-MARKER\n")) }
+        };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        var apply = rendered.ScriptBody.IndexOf("kubectl apply -f \"./deployment.yaml\"", StringComparison.Ordinal);
+        var wait = rendered.ScriptBody.IndexOf("kubectl rollout status \"deployment/api\"", StringComparison.Ordinal);
+        var marker = rendered.ScriptBody.IndexOf("echo SWITCH-MARKER", StringComparison.Ordinal);
+
+        apply.ShouldBeGreaterThan(-1);
+        wait.ShouldBeGreaterThan(apply);
+        marker.ShouldBeGreaterThan(wait);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_NoPostApplyScripts_ScriptUnchanged()
+    {
+        var intent = NewKubernetesApplyIntent();
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        rendered.ScriptBody.ShouldNotContain("# --- Post-apply script");
+    }
+
     // ========== KubernetesApplyIntent: syntax-specific path separator ==========
 
     [Fact]

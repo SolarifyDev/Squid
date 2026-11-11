@@ -81,7 +81,8 @@ public sealed class KubernetesAgentIntentRenderer : IIntentRenderer
         var applyScript = KubernetesApplyScriptBuilder.Build(intent);
         var waitScript = KubernetesResourceWaitBuilder.BuildWaitScript(
             deploymentFiles.ToLegacyDictionary(), intent.ObjectStatusCheck, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax);
-        var rawScript = applyScript + waitScript;
+        var postApplyScript = KubernetesPostApplyScriptBuilder.Build(intent);
+        var rawScript = applyScript + waitScript + postApplyScript;
         var wrappedScript = WrapBodyWithNamespace(rawScript, intent.Syntax, DefaultNamespace(intent.Namespace));
 
         return new ScriptExecutionRequest

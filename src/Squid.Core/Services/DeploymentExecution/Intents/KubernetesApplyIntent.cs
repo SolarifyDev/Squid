@@ -54,4 +54,11 @@ public sealed record KubernetesApplyIntent : ExecutionIntent
     /// <see cref="ObjectStatusCheck"/> is false. Defaults to <c>300</c>.
     /// </summary>
     public int StatusCheckTimeoutSeconds { get; init; } = 300;
+
+    /// <summary>
+    /// Bash scripts the renderer runs, in path order, after the apply commands and the
+    /// status check — e.g. the blue/green slot switch and old-slot scale-down. Each script
+    /// runs in its own subshell; a non-zero exit fails the action. Empty by default.
+    /// </summary>
+    public IReadOnlyList<DeploymentFile> PostApplyScripts { get; init; } = Array.Empty<DeploymentFile>();
 }
