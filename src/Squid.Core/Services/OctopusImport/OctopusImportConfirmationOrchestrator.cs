@@ -4,6 +4,7 @@ using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Deployments.Account;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Commands.Deployments.Environment;
@@ -55,6 +56,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
     private readonly IMediator _mediator;
+    private readonly ITeamService _teamService;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -72,7 +74,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         IOctopusImportLibraryVariableSetNameLock libraryNameLock,
         IProjectDataProvider projectDataProvider,
         IChannelDataProvider channelDataProvider,
-        IMediator mediator)
+        IMediator mediator,
+        ITeamService teamService)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -90,6 +93,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
         _mediator = mediator;
+        _teamService = teamService;
     }
 
     public async Task<OctopusImportSessionDto> ConfirmAsync(
@@ -467,21 +471,25 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         var team = resource.GetSource<OctopusTeamDto>()
             ?? throw new OctopusImportConfirmationException("Team source payload is missing.");
 
+        // Created through the team service, NOT a nested CreateTeamCommand: that public command is not
+        // ISpaceScoped, so the authorization middleware would check TeamCreate at system scope and reject a
+        // space-scoped importer mid-transaction. ConfirmOctopusImportCommandHandler has already enforced
+        // TeamCreate for the destination space before any row was written, so no authorization is widened.
         var command = new CreateTeamCommand { Name = team.Name, Description = team.Description ?? string.Empty, SpaceId = execution.DestinationSpaceId };
-        var response = await _mediator.SendAsync<CreateTeamCommand, CreateTeamResponse>(command, ct).ConfigureAwait(false);
+        var created = await _teamService.CreateAsync(command, ct).ConfigureAwait(false);
 
-        if (response?.Data?.Id is not > 0)
-            throw new OctopusImportConfirmationException("Create team command did not return a destination team id.");
+        if (created?.Id is not > 0)
+            throw new OctopusImportConfirmationException("Team creation did not return a destination team id.");
 
-        execution.AddCreated(resource, response.Data.Id);
+        execution.AddCreated(resource, created.Id);
 
         // Octopus users are not imported, so the team starts empty. That is deliberately fail-closed:
-        // an approval step restricted to this team stays restricted (nobody can act) instead of
-        // silently widening to "anyone" until an administrator adds the members.
+        // an approval step restricted to this team stays restricted to the team (plus the explicit
+        // administrator override) instead of silently widening to "anyone".
         execution.AddDiagnostic(resource, Diagnostic(
             OctopusImportCompatibilitySeverity.Warning,
             OctopusImportConfirmationDiagnosticCodes.TeamCreatedWithoutMembers,
-            $"Team '{team.Name}' was created without members because Octopus users are not imported ({team.MemberUserIds?.Count ?? 0} source member(s), {team.ExternalSecurityGroups?.Count ?? 0} external group(s)). Add members before manual interventions assigned to this team can be actioned.",
+            $"Team '{team.Name}' was created without members because Octopus users are not imported ({team.MemberUserIds?.Count ?? 0} source member(s), {team.ExternalSecurityGroups?.Count ?? 0} external group(s)). Add members so they can action manual interventions assigned to this team; until then a system administrator, or a user holding the {nameof(Permission.InterruptionSubmitOverride)} permission in this space (granted to Space Owner), can approve on the team's behalf.",
             resource));
     }
 

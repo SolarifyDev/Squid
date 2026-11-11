@@ -72,6 +72,47 @@ public class OctopusImportDestinationDataProviderTests
         resources.All(x => x.SpaceId == 0 || x.SpaceId == 7).ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task GetResourcesAsync_Teams_CarryBuiltInFlagAndCurrentMemberCount()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportDestinationDataProvider(new EfRepository(db));
+
+        db.Set<Team>().AddRange(
+            new Team { Id = 1, SpaceId = 7, Name = "Approvers" },
+            new Team { Id = 2, SpaceId = 0, Name = "Everyone", IsBuiltIn = true },
+            new Team { Id = 3, SpaceId = 7, Name = "Empty" });
+        db.Set<TeamMember>().AddRange(
+            new TeamMember { TeamId = 1, UserId = 10 },
+            new TeamMember { TeamId = 1, UserId = 11 },
+            new TeamMember { TeamId = 2, UserId = 10 },
+            new TeamMember { TeamId = 99, UserId = 10 });
+        await db.SaveChangesAsync();
+
+        var teams = (await provider.GetResourcesAsync(7)).Where(r => r.Kind == OctopusResourceKind.Team).ToDictionary(r => r.Id);
+
+        teams[1].MemberCount.ShouldBe(2);
+        teams[1].IsBuiltIn.ShouldBeFalse();
+        teams[2].MemberCount.ShouldBe(1);
+        teams[2].IsBuiltIn.ShouldBeTrue();
+        teams[3].MemberCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task GetResourcesAsync_NonTeamResources_HaveNoMemberCount()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportDestinationDataProvider(new EfRepository(db));
+
+        db.Set<ProjectGroup>().Add(new ProjectGroup { Id = 3, SpaceId = 7, Name = "Group", Slug = "group" });
+        await db.SaveChangesAsync();
+
+        var group = (await provider.GetResourcesAsync(7)).Single();
+
+        group.MemberCount.ShouldBeNull();
+        group.IsBuiltIn.ShouldBeFalse();
+    }
+
     private static SquidDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<SquidDbContext>()

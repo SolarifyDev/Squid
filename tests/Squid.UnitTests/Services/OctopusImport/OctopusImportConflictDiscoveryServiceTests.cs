@@ -109,6 +109,82 @@ public class OctopusImportConflictDiscoveryServiceTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData("teams-everyone", "Everyone", 2)]
+    [InlineData("TEAMS-EVERYONE", "Renamed everyone", 2)]
+    [InlineData("teams-administrators", "Octopus Administrators", 1)]
+    public async Task DiscoverAsync_BuiltInOctopusTeam_MatchesOnlyTheSystemSquidBuiltInEquivalent(string sourceId, string sourceName, int expectedDestinationId)
+    {
+        SetupDestinations(
+        [
+            TeamDestination(1, 0, "Squid Administrators", isBuiltIn: true),
+            TeamDestination(2, 0, "Everyone", isBuiltIn: true),
+            TeamDestination(3, 7, "Everyone"),
+            TeamDestination(4, 7, "Octopus Administrators"),
+            TeamDestination(5, 7, "Squid Administrators")
+        ]);
+        var service = new OctopusImportConflictDiscoveryService(_dataProvider.Object);
+
+        var result = await service.DiscoverAsync(7, Graph([Node(sourceId, OctopusResourceKind.Team, sourceName, null)]));
+
+        result.Conflicts.Single().Matches.Select(m => m.Destination.Id).ShouldBe([expectedDestinationId]);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_BuiltInOctopusTeamWithEquivalent_WhenSquidBuiltInIsMissing_HasNoConflictEvenIfANamesakeExists()
+    {
+        SetupDestinations([TeamDestination(4, 7, "Octopus Administrators"), TeamDestination(5, 0, "Squid Administrators", isBuiltIn: false)]);
+        var service = new OctopusImportConflictDiscoveryService(_dataProvider.Object);
+
+        var result = await service.DiscoverAsync(7, Graph([Node("teams-administrators", OctopusResourceKind.Team, "Octopus Administrators", null)]));
+
+        result.HasConflicts.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("teams-managers", "Octopus Managers")]
+    [InlineData("teams-spacemanagers-Spaces-1", "Space Managers")]
+    public async Task DiscoverAsync_BuiltInOctopusTeamWithoutEquivalent_MatchesByNameLikeAnyTeam(string sourceId, string sourceName)
+    {
+        SetupDestinations([TeamDestination(4, 7, sourceName), TeamDestination(1, 0, "Squid Administrators", isBuiltIn: true)]);
+        var service = new OctopusImportConflictDiscoveryService(_dataProvider.Object);
+
+        var result = await service.DiscoverAsync(7, Graph([Node(sourceId, OctopusResourceKind.Team, sourceName, null)]));
+
+        result.Conflicts.Single().Matches.Select(m => m.Destination.Id).ShouldBe([4]);
+    }
+
+    [Theory]
+    [InlineData(true, true, new[] { 20 })]
+    [InlineData(false, true, new[] { 10 })]
+    [InlineData(true, false, new[] { 20 })]
+    public async Task DiscoverAsync_TeamNameInBothSystemAndDestinationSpace_PrefersTheDestinationSpace(bool spaceTeamExists, bool globalTeamExists, int[] expectedIds)
+    {
+        var destinations = new List<OctopusImportDestinationResource>();
+        if (globalTeamExists) destinations.Add(TeamDestination(10, 0, "Ops"));
+        if (spaceTeamExists) destinations.Add(TeamDestination(20, 7, "OPS"));
+        SetupDestinations(destinations);
+        var service = new OctopusImportConflictDiscoveryService(_dataProvider.Object);
+
+        var result = await service.DiscoverAsync(7, Graph([Node("Teams-1", OctopusResourceKind.Team, "Ops", null)]));
+
+        result.Conflicts.Single().Matches.Select(m => m.Destination.Id).ShouldBe(expectedIds);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_TwoDestinationSpaceTeamsMatching_StaysAmbiguous()
+    {
+        SetupDestinations([TeamDestination(10, 0, "Ops"), TeamDestination(20, 7, "Ops"), TeamDestination(21, 7, "ops ")]);
+        var service = new OctopusImportConflictDiscoveryService(_dataProvider.Object);
+
+        var result = await service.DiscoverAsync(7, Graph([Node("Teams-1", OctopusResourceKind.Team, "Ops", null)]));
+
+        result.Conflicts.Single().Matches.Select(m => m.Destination.Id).ShouldBe([20, 21]);
+    }
+
+    private static OctopusImportDestinationResource TeamDestination(int id, int spaceId, string name, bool isBuiltIn = false, int memberCount = 0)
+        => new(id, spaceId, OctopusResourceKind.Team, name, null, DateTimeOffset.UtcNow) { IsBuiltIn = isBuiltIn, MemberCount = memberCount };
+
     private void SetupDestinations(IReadOnlyList<OctopusImportDestinationResource> destinations)
     {
         _dataProvider

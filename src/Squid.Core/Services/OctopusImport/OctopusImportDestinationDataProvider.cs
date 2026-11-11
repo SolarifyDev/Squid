@@ -57,11 +57,7 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false));
 
-        resources.AddRange(await repository.QueryNoTracking<Team>(x => x.SpaceId == destinationSpaceId || x.SpaceId == 0)
-            .Select(x => new OctopusImportDestinationResource(
-                x.Id, x.SpaceId, OctopusResourceKind.Team, x.Name, null, x.LastModifiedDate))
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false));
+        resources.AddRange(await LoadTeamsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false));
 
         resources.AddRange(await repository.QueryNoTracking<Machine>(x => x.SpaceId == destinationSpaceId)
             .Select(x => new OctopusImportDestinationResource(
@@ -78,6 +74,23 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
         return resources
             .OrderBy(x => x.Kind)
             .ThenBy(x => x.Id)
+            .ToList();
+    }
+
+    // Teams carry their built-in flag and current member count: reusing a team grants approval rights to its members.
+    private async Task<List<OctopusImportDestinationResource>> LoadTeamsAsync(int destinationSpaceId, CancellationToken ct)
+    {
+        var teams = await repository.QueryNoTracking<Team>(x => x.SpaceId == destinationSpaceId || x.SpaceId == 0).ToListAsync(ct).ConfigureAwait(false);
+        var teamIds = teams.Select(t => t.Id).ToList();
+
+        var memberCounts = await repository.QueryNoTracking<TeamMember>(m => teamIds.Contains(m.TeamId))
+            .GroupBy(m => m.TeamId)
+            .Select(g => new { TeamId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.TeamId, x => x.Count, ct)
+            .ConfigureAwait(false);
+
+        return teams
+            .Select(x => new OctopusImportDestinationResource(x.Id, x.SpaceId, OctopusResourceKind.Team, x.Name, null, x.LastModifiedDate) { IsBuiltIn = x.IsBuiltIn, MemberCount = memberCounts.GetValueOrDefault(x.Id) })
             .ToList();
     }
 }

@@ -408,6 +408,42 @@ public class OctopusResourceGraphBuilderTests
         graph.Diagnostics.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData("Teams-1", new[] { "Teams-1" })]
+    [InlineData("Teams-1,Teams-2", new[] { "Teams-1", "Teams-2" })]
+    [InlineData(" Teams-1 ; teams-everyone ", new[] { "Teams-1", "teams-everyone" })]
+    public async Task Build_ManualActionResponsibleTeamIds_BecomeOptionalTeamReferencesFromTheAction(string responsibleTeamIds, string[] expectedTeamIds)
+    {
+        var processJson = JsonSerializer.Serialize(new
+        {
+            Id = "deploymentprocess-Projects-1",
+            OwnerId = "Projects-1",
+            Steps = new[] { new { Id = "Steps-1", Name = "Approve", Actions = new[] { new { Id = "Actions-1", Name = "Approve", ActionType = "Octopus.Manual", Properties = new Dictionary<string, string> { ["Octopus.Action.Manual.ResponsibleTeamIds"] = responsibleTeamIds } } } } }
+        });
+
+        var inventory = await BuildInventoryAsync(
+            ("deploymentprocess-Projects-1", "DeploymentProcess", "deploymentprocess-Projects-1.json", processJson),
+            ("Projects-1", "Project", "Projects-1.json", """{"Id":"Projects-1","Name":"Project","DeploymentProcessId":"deploymentprocess-Projects-1"}"""));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        var teamReferences = graph.References.Where(r => r.ReferenceKind == OctopusResourceReferenceKind.Team).ToList();
+        teamReferences.Select(r => r.ToSourceId).ShouldBe(expectedTeamIds, ignoreOrder: true);
+        teamReferences.ShouldAllBe(r => r.FromSourceId == "Actions-1" && r.FromKind == OctopusResourceKind.DeploymentAction && r.ToKind == OctopusResourceKind.Team && !r.IsRequired);
+    }
+
+    [Fact]
+    public async Task Build_ManualActionWithoutResponsibleTeams_HasNoTeamReferences()
+    {
+        var processJson = """{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{"Id":"Steps-1","Name":"Approve","Actions":[{"Id":"Actions-1","Name":"Approve","ActionType":"Octopus.Manual","Properties":{"Octopus.Action.Manual.Instructions":"ok"}}]}]}""";
+
+        var inventory = await BuildInventoryAsync(("deploymentprocess-Projects-1", "DeploymentProcess", "deploymentprocess-Projects-1.json", processJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.References.ShouldNotContain(r => r.ReferenceKind == OctopusResourceReferenceKind.Team);
+    }
+
     private async Task<OctopusManifestInventoryResult> BuildInventoryAsync(params (string Id, string DocumentType, string DocumentSource, string Json)[] documents)
     {
         var archiveEntries = new List<OctopusExtractedArchiveEntry>

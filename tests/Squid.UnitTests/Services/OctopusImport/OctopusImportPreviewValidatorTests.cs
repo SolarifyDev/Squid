@@ -188,6 +188,55 @@ public class OctopusImportPreviewValidatorTests
         result.Diagnostics.ShouldBeEmpty();
     }
 
+    [Theory]
+    [InlineData(2, 2, false)]
+    [InlineData(2, 3, true)]
+    [InlineData(2, 1, true)]
+    [InlineData(0, 1, true)]
+    [InlineData(null, 5, false)]
+    public void Validate_ReusedTeamMembershipChangedSincePreview_IsStale(int? previewMemberCount, int currentMemberCount, bool expectStale)
+    {
+        var generatedAt = DateTimeOffset.UtcNow;
+        var team = Node("Teams-1", OctopusResourceKind.Team, "Solar");
+        var preview = Preview([team], generatedAt);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.ReuseExisting;
+        preview.Resources.Single().DestinationId = 200;
+        preview.Resources.Single().DestinationMemberCount = previewMemberCount;
+        var destination = new OctopusImportDestinationResource(200, 7, OctopusResourceKind.Team, "Solar", null, generatedAt.AddMinutes(-1)) { MemberCount = currentMemberCount };
+        var conflicts = new OctopusImportConflictDiscoveryResult([Conflict(team, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]);
+
+        var result = _validator.Validate(Graph([team]), Plan([team]), conflicts, preview);
+
+        if (expectStale)
+        {
+            var diagnostic = result.Diagnostics.Single();
+            diagnostic.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+            diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+            diagnostic.Message.ShouldContain($"now has {currentMemberCount}");
+        }
+        else
+        {
+            result.Diagnostics.ShouldBeEmpty();
+        }
+    }
+
+    [Fact]
+    public void Validate_ReusedTeamModifiedAndMembershipChanged_ReportsOneStaleBlocker()
+    {
+        var generatedAt = DateTimeOffset.UtcNow;
+        var team = Node("Teams-1", OctopusResourceKind.Team, "Solar");
+        var preview = Preview([team], generatedAt);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.ReuseExisting;
+        preview.Resources.Single().DestinationId = 200;
+        preview.Resources.Single().DestinationMemberCount = 1;
+        var destination = new OctopusImportDestinationResource(200, 7, OctopusResourceKind.Team, "Solar", null, generatedAt.AddMinutes(1)) { MemberCount = 4 };
+        var conflicts = new OctopusImportConflictDiscoveryResult([Conflict(team, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]);
+
+        var result = _validator.Validate(Graph([team]), Plan([team]), conflicts, preview);
+
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+    }
+
     [Fact]
     public void Validate_WhenConflictingProjectWasChangedToCreate_AddsRenameBlocker()
     {

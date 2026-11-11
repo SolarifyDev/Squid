@@ -30,5 +30,9 @@ public static class OctopusImportPreviewDiagnosticCodes
 
     public const string SensitiveResolutionChangedMessage = "This sensitive variable was unresolved when the preview plan was built but can now be decrypted with the export password. Refresh the preview before validating.";
 
+    public const string ReusedTeamGrantsApproval = "octopus.preview.reused_team_grants_approval";
+    public const string BuiltInTeamWithoutEquivalent = "octopus.preview.built_in_team_without_equivalent";
+    public const string BuiltInTeamEquivalentMissing = "octopus.preview.built_in_team_equivalent_missing";
+
     public const string SensitiveValueUnresolvedMessage = "The sensitive variable value could not be decrypted with the export password (it may be masked or encrypted with a different password). Confirmation is blocked while this required input is unresolved.";
 }

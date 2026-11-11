@@ -7,6 +7,9 @@ using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.Teams;
+using Squid.Message.Commands.Teams;
+using Squid.Message.Models.Teams;
 using Squid.Message.Commands.Deployments.Environment;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Commands.Deployments.LifeCycle;
@@ -544,6 +547,39 @@ public class OctopusImportConfirmationOrchestratorTests
         OctopusImportLibraryVariableSetNameLock.LockOrder(names).ShouldBe(expected);
     }
 
+    [Fact]
+    public async Task ConfirmAsync_CreatesTeamThroughTeamService_NeverThroughTheSystemScopedCreateTeamCommand()
+    {
+        var nodes = BuildMinimalNodes();
+        var team = Node("Teams-1", OctopusResourceKind.Team, OctopusDocumentKind.Team, "Approvers", new OctopusTeamDto { Id = "Teams-1", Name = "Approvers", Description = null, MemberUserIds = ["Users-1", "Users-2"] }, null);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([team]), BuildPreviewPlan([team]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.TeamService.Verify(s => s.CreateAsync(It.Is<CreateTeamCommand>(c => c.Name == "Approvers" && c.Description == string.Empty && c.SpaceId == nodes.DestinationSpaceId), It.IsAny<CancellationToken>()), Times.Once);
+        harness.Mediator.Verify(m => m.SendAsync<CreateTeamCommand, CreateTeamResponse>(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        var outcome = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == "Teams-1");
+        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
+        outcome.DestinationId.ShouldBe(900);
+        outcome.Diagnostics.Single(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TeamCreatedWithoutMembers).Message.ShouldContain("administrator");
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_WhenTeamServiceReturnsNoId_FailsAndRollsBack()
+    {
+        var nodes = BuildMinimalNodes();
+        var team = Node("Teams-1", OctopusResourceKind.Team, OctopusDocumentKind.Team, "Approvers", new OctopusTeamDto { Id = "Teams-1", Name = "Approvers" }, null);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([team]), BuildPreviewPlan([team]), admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+        harness.TeamService.Setup(s => s.CreateAsync(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>())).ReturnsAsync(new TeamDto { Id = 0 });
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        harness.SessionService.RecordedResult.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+    }
+
     private static TestHarness CreateMinimalHarness(
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
@@ -632,6 +668,11 @@ public class OctopusImportConfirmationOrchestratorTests
         var channelDataProvider = new Mock<IChannelDataProvider>();
         var conflictDiscoveryService = new Mock<IOctopusImportConflictDiscoveryService>();
         var previewValidator = new Mock<IOctopusImportPreviewValidator>();
+        var teamService = new Mock<ITeamService>();
+
+        teamService
+            .Setup(s => s.CreateAsync(It.IsAny<CreateTeamCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateTeamCommand command, CancellationToken _) => new TeamDto { Id = 900, Name = command.Name, SpaceId = command.SpaceId });
 
         conflictDiscoveryService
             .Setup(s => s.DiscoverAsync(nodes.DestinationSpaceId, It.IsAny<OctopusResourceGraph>(), It.IsAny<CancellationToken>()))
@@ -674,7 +715,8 @@ public class OctopusImportConfirmationOrchestratorTests
             nameLock ?? Mock.Of<IOctopusImportLibraryVariableSetNameLock>(),
             projectDataProvider.Object,
             channelDataProvider.Object,
-            mediator.Object);
+            mediator.Object,
+            teamService.Object);
 
         return new TestHarness(
             orchestrator,
@@ -692,6 +734,7 @@ public class OctopusImportConfirmationOrchestratorTests
             projectDataProvider,
             channelDataProvider,
             previewValidator,
+            teamService,
             nodes,
             dependencyPlan,
             previewPlan,
@@ -1562,6 +1605,7 @@ public class OctopusImportConfirmationOrchestratorTests
         Mock<IProjectDataProvider> ProjectDataProvider,
         Mock<IChannelDataProvider> ChannelDataProvider,
         Mock<IOctopusImportPreviewValidator> PreviewValidator,
+        Mock<ITeamService> TeamService,
         ScenarioNodes Nodes,
         OctopusImportDependencyPlan DependencyPlan,
         OctopusImportPreviewPlanDto PreviewPlan,

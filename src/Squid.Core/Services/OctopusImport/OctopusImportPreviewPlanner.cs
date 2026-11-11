@@ -132,11 +132,13 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         if (!conflictsBySourceId.TryGetValue(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
+            AddTeamDiagnostics(result, resource);
             AddManualConfigurationDiagnostics(result, resource);
             return result;
         }
 
         ApplyConflictAction(result, resource, conflict);
+        AddTeamDiagnostics(result, resource);
         AddManualConfigurationDiagnostics(result, resource);
         return result;
     }
@@ -167,6 +169,51 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         => shadow.LibraryReused
             ? $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and includes library variable set '{shadow.LibraryName}', which is reused as-is. The exported library defines the same name with an equally specific scope; the destination library's existing variables decide at runtime: if it still defines that name, Squid uses the library value where both apply, whereas Octopus used the project value. Check the destination library, and rename or re-scope one of them if the project value must win."
             : $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and its included library variable set '{shadow.LibraryName}' defines the same name with an equally specific scope. Where both apply, Squid uses the library value, whereas Octopus used the project value. Rename or re-scope one of them if the project value must win.";
+
+    private static void AddTeamDiagnostics(OctopusImportResourceResultDto result, OctopusResourceNode resource)
+    {
+        if (resource.Kind != OctopusResourceKind.Team) return;
+
+        if (result.PreviewAction == OctopusImportPreviewAction.Create && OctopusBuiltInTeams.TryGetSquidEquivalent(resource.SourceId, out var squidTeamName))
+        {
+            BlockMissingBuiltInTeamEquivalent(result, resource, squidTeamName);
+            return;
+        }
+
+        if (!OctopusBuiltInTeams.IsBuiltInWithoutEquivalent(resource.SourceId)) return;
+
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamWithoutEquivalent,
+            $"Octopus built-in team '{resource.Name}' has no Squid equivalent; it is imported as a regular team in this space with no members and no roles. Add members (or rely on the administrator approval override) before manual interventions assigned to it can be actioned.",
+            resource));
+    }
+
+    // Never fall back to creating a namesake: a built-in Octopus team means "the system's built-in team",
+    // so creating a lookalike would silently change who can approve.
+    private static void BlockMissingBuiltInTeamEquivalent(OctopusImportResourceResultDto result, OctopusResourceNode resource, string squidTeamName)
+    {
+        result.PreviewAction = OctopusImportPreviewAction.Blocked;
+        result.OutcomeState = OctopusImportResourceOutcomeState.Blocked;
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Blocker,
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing,
+            $"Octopus built-in team '{resource.Name}' maps to the Squid built-in team '{squidTeamName}', which does not exist in the destination. Restore the Squid built-in team (it is seeded at server start-up) before importing.",
+            resource));
+    }
+
+    private static void AddReusedTeamWarning(OctopusImportResourceResultDto result, OctopusResourceNode resource, OctopusImportDestinationResource destination)
+    {
+        result.DestinationMemberCount = destination.MemberCount ?? 0;
+
+        var scope = destination.SpaceId == 0 ? "system-wide" : $"space {destination.SpaceId}";
+
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval,
+            $"Existing team '{destination.Name}' ({scope}, id {destination.Id}) with {result.DestinationMemberCount} member(s) will be reused for Octopus team '{resource.Name}'. Its current members will be able to approve manual interventions assigned to that team.",
+            resource));
+    }
 
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,
@@ -229,6 +276,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             OctopusImportPreviewDiagnosticCodes.ReuseExistingResource,
             $"A compatible destination {resource.Kind} identity was found by {match.MatchKind}.",
             resource));
+
+        if (resource.Kind == OctopusResourceKind.Team)
+            AddReusedTeamWarning(result, resource, match.Destination);
     }
 
     private static OctopusImportDiagnosticDto MapDependencyDiagnostic(OctopusInputExtractionDiagnostic diagnostic)

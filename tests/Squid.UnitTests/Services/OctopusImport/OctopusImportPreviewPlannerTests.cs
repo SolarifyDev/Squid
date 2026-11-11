@@ -394,6 +394,91 @@ public class OctopusImportPreviewPlannerTests
         preview.Resources.Single().DestinationId.ShouldBe(77);
     }
 
+    [Theory]
+    [InlineData(0, 0, "system-wide")]
+    [InlineData(7, 4, "space 7")]
+    public void BuildPreviewPlan_ReusedTeam_WarnsThatItsCurrentMembersCanApprove(int spaceId, int memberCount, string expectedScope)
+    {
+        var resource = Node("Teams-1", OctopusResourceKind.Team, "Solar");
+        var destination = new OctopusImportDestinationResource(77, spaceId, OctopusResourceKind.Team, "Solar Squad", null, DateTimeOffset.UtcNow) { MemberCount = memberCount };
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]));
+
+        var team = preview.Resources.Single();
+        team.DestinationMemberCount.ShouldBe(memberCount);
+        var warning = team.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval);
+        warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        warning.Message.ShouldContain("'Solar Squad'");
+        warning.Message.ShouldContain(expectedScope);
+        warning.Message.ShouldContain($"{memberCount} member(s)");
+        preview.HasBlockers.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(OctopusResourceKind.LibraryVariableSet)]
+    [InlineData(OctopusResourceKind.Environment)]
+    public void BuildPreviewPlan_ReusedNonTeamResource_HasNoMembershipWarningOrCount(OctopusResourceKind kind)
+    {
+        var resource = Node("Res-1", kind, "Solar");
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, Match(77, kind, "Solar", null))]));
+
+        preview.Resources.Single().DestinationMemberCount.ShouldBeNull();
+        preview.Resources.Single().Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_CreatedTeam_HasNoMembershipWarning()
+    {
+        var preview = _planner.BuildPreviewPlan(Plan([Node("Teams-1", OctopusResourceKind.Team, "Solar")]), NoConflicts());
+
+        preview.Resources.Single().Diagnostics.ShouldBeEmpty();
+        preview.Resources.Single().DestinationMemberCount.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("teams-everyone")]
+    [InlineData("teams-administrators")]
+    public void BuildPreviewPlan_BuiltInTeamWithEquivalent_WithoutDestinationMatch_IsBlockedNeverCreated(string sourceId)
+    {
+        var preview = _planner.BuildPreviewPlan(Plan([Node(sourceId, OctopusResourceKind.Team, "Built-in")]), NoConflicts());
+
+        var team = preview.Resources.Single();
+        team.PreviewAction.ShouldBe(OctopusImportPreviewAction.Blocked);
+        team.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Blocked);
+        team.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing).Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+        preview.HasBlockers.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_BuiltInTeamWithEquivalent_ReusingTheSquidBuiltIn_IsNotBlocked()
+    {
+        var resource = Node("teams-everyone", OctopusResourceKind.Team, "Everyone");
+        var destination = new OctopusImportDestinationResource(2, 0, OctopusResourceKind.Team, "Everyone", null, DateTimeOffset.UtcNow) { IsBuiltIn = true, MemberCount = 12 };
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]));
+
+        preview.Resources.Single().PreviewAction.ShouldBe(OctopusImportPreviewAction.ReuseExisting);
+        preview.HasBlockers.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("teams-managers", false)]
+    [InlineData("teams-spacemanagers-Spaces-1", false)]
+    [InlineData("teams-managers", true)]
+    public void BuildPreviewPlan_BuiltInTeamWithoutEquivalent_WarnsWhetherCreatedOrReused(string sourceId, bool reused)
+    {
+        var resource = Node(sourceId, OctopusResourceKind.Team, "Managers");
+        var conflicts = reused ? new OctopusImportConflictDiscoveryResult([Conflict(resource, Match(77, OctopusResourceKind.Team, "Managers", null))]) : NoConflicts();
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), conflicts);
+
+        var team = preview.Resources.Single();
+        team.PreviewAction.ShouldBe(reused ? OctopusImportPreviewAction.ReuseExisting : OctopusImportPreviewAction.Create);
+        team.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.BuiltInTeamWithoutEquivalent).Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        preview.HasBlockers.ShouldBeFalse();
+    }
+
     private static OctopusImportDependencyPlan Plan(
         IReadOnlyList<OctopusResourceNode> resources,
         IReadOnlyList<OctopusInputExtractionDiagnostic> diagnostics = null,

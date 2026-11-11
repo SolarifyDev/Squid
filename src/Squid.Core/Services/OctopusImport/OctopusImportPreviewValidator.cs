@@ -330,17 +330,31 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 
             if (previewGeneratedAt != default && match.Destination.LastModifiedDate > previewGeneratedAt)
             {
-                result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
-                {
-                    Severity = OctopusImportCompatibilitySeverity.Blocker,
-                    Code = OctopusImportPreviewDiagnosticCodes.StalePreviewPlan,
-                    Message = $"Destination {match.Destination.Kind} '{match.Destination.Name}' was modified after the Octopus import preview was generated.",
-                    SourceId = previewResource.SourceId,
-                    ResourceType = previewResource.SourceType,
-                    ResourceName = previewResource.SourceName
-                }));
+                AddStalePreviewDiagnostic(result, previewResource, $"Destination {match.Destination.Kind} '{match.Destination.Name}' was modified after the Octopus import preview was generated.");
+                continue;
             }
+
+            if (HasMembershipChanged(previewResource, match))
+                AddStalePreviewDiagnostic(result, previewResource, $"Destination team '{match.Destination.Name}' had {previewResource.DestinationMemberCount} member(s) when the preview was generated and now has {match.Destination.MemberCount ?? 0}; review who will be able to approve before importing again.");
         }
+    }
+
+    // Team membership lives in its own table and does not touch the team row's LastModifiedDate, so the
+    // member count the preview warned about is compared explicitly: reusing a team grants approval rights.
+    private static bool HasMembershipChanged(OctopusImportResourceResultDto previewResource, OctopusImportDestinationMatch match)
+        => previewResource.DestinationMemberCount.HasValue && previewResource.DestinationMemberCount.Value != (match.Destination.MemberCount ?? 0);
+
+    private static void AddStalePreviewDiagnostic(OctopusImportValidationResultDto result, OctopusImportResourceResultDto previewResource, string message)
+    {
+        result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
+        {
+            Severity = OctopusImportCompatibilitySeverity.Blocker,
+            Code = OctopusImportPreviewDiagnosticCodes.StalePreviewPlan,
+            Message = message,
+            SourceId = previewResource.SourceId,
+            ResourceType = previewResource.SourceType,
+            ResourceName = previewResource.SourceName
+        }));
     }
 
     private static bool IsValidReuse(

@@ -36,29 +36,60 @@ public class OctopusImportConflictDiscoveryService(
             .Where(x => !x.IsHistorical && IsDiscoverable(x.Kind))
             .OrderBy(x => x.Kind)
             .ThenBy(x => x.SourceId, StringComparer.OrdinalIgnoreCase)
-            .Select(source => BuildConflict(source, destinationsByKind))
+            .Select(source => BuildConflict(source, destinationsByKind, destinationSpaceId))
             .Where(conflict => conflict != null)
             .ToList();
 
         return new OctopusImportConflictDiscoveryResult(conflicts);
     }
 
-    private static OctopusImportResourceConflict BuildConflict(
-        OctopusResourceNode source,
-        IReadOnlyDictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> destinationsByKind)
+    private static OctopusImportResourceConflict BuildConflict(OctopusResourceNode source, IReadOnlyDictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> destinationsByKind, int destinationSpaceId)
     {
         if (!destinationsByKind.TryGetValue(source.Kind, out var destinations))
             return null;
 
-        var sourceSlug = source.GetSource<OctopusDocumentDto>()?.Slug;
-        var matches = destinations
-            .Select(destination => BuildMatch(source.Name, sourceSlug, destination))
-            .Where(match => match != null)
-            .ToList();
+        var matches = IsBuiltInTeamWithEquivalent(source, out var squidTeamName)
+            ? MatchSquidBuiltInTeam(squidTeamName, destinations)
+            : PreferDestinationSpace(MatchByIdentity(source, destinations), destinationSpaceId);
 
         return matches.Count == 0
             ? null
             : new OctopusImportResourceConflict(source, matches);
+    }
+
+    private static List<OctopusImportDestinationMatch> MatchByIdentity(OctopusResourceNode source, IEnumerable<OctopusImportDestinationResource> destinations)
+    {
+        var sourceSlug = source.GetSource<OctopusDocumentDto>()?.Slug;
+
+        return destinations
+            .Select(destination => BuildMatch(source.Name, sourceSlug, destination))
+            .Where(match => match != null)
+            .ToList();
+    }
+
+    private static bool IsBuiltInTeamWithEquivalent(OctopusResourceNode source, out string squidTeamName)
+    {
+        squidTeamName = null;
+
+        return source.Kind == OctopusResourceKind.Team && OctopusBuiltInTeams.TryGetSquidEquivalent(source.SourceId, out squidTeamName);
+    }
+
+    // A built-in Octopus team (recognised by its fixed id, whatever its display name) maps ONLY onto the
+    // system-wide Squid built-in team of the equivalent name, never onto a same-named custom team.
+    private static List<OctopusImportDestinationMatch> MatchSquidBuiltInTeam(string squidTeamName, IEnumerable<OctopusImportDestinationResource> destinations)
+        => destinations
+            .Where(destination => destination.IsBuiltIn && destination.SpaceId == 0 && IdentityEquals(squidTeamName, destination.Name))
+            .Select(destination => new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))
+            .ToList();
+
+    // Only teams can live at the system scope (SpaceId 0). When the destination space has its own resource
+    // with the same identity, the closest scope wins deterministically; the system-scope resource is reused
+    // only when the destination space has none. (Other kinds are space-only, so this is a no-op for them.)
+    private static List<OctopusImportDestinationMatch> PreferDestinationSpace(List<OctopusImportDestinationMatch> matches, int destinationSpaceId)
+    {
+        var inDestinationSpace = matches.Where(match => match.Destination.SpaceId == destinationSpaceId).ToList();
+
+        return inDestinationSpace.Count > 0 ? inDestinationSpace : matches;
     }
 
     private static OctopusImportDestinationMatch BuildMatch(
