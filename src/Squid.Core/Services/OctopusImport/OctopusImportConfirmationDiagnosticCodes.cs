@@ -19,4 +19,5 @@ public static class OctopusImportConfirmationDiagnosticCodes
     public const string TeamCreatedWithoutMembers = "OctopusImport.Confirmation.TeamCreatedWithoutMembers";
     public const string LibraryVariableSetVariablesMissing = "OctopusImport.Confirmation.LibraryVariableSetVariablesMissing";
     public const string ReusedLibraryVariableSetVariablesKept = "OctopusImport.Confirmation.ReusedLibraryVariableSetVariablesKept";
+    public const string LibraryVariableSetCreatedConcurrently = "OctopusImport.Confirmation.LibraryVariableSetCreatedConcurrently";
 }

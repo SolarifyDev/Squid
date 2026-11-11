@@ -40,14 +40,18 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Select(d => d.SourceId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var resources = dependencyPlan.OrderedResources
+        var nodes = dependencyPlan.OrderedResources
             .Concat(dependencyPlan.OutOfScopeResources)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var resources = nodes
             .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))
             .ToList();
+
+        AddVariableDiagnostics(nodes, resources);
 
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
@@ -77,8 +81,6 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             SourceName = resource.Name,
             OutcomeState = OctopusImportResourceOutcomeState.Pending
         };
-
-        AddRequiredInputs(result, resource);
 
         if (blockedSourceIds.Contains(resource.SourceId))
         {
@@ -139,13 +141,35 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         return result;
     }
 
+    // Runs after every resource has its preview action, because whether a variable is written depends on
+    // the action chosen for the library variable set that owns it.
+    private void AddVariableDiagnostics(IReadOnlyList<OctopusResourceNode> nodes, IReadOnlyList<OctopusImportResourceResultDto> previews)
+    {
+        var nodesById = nodes.ToDictionary(n => n.SourceId, StringComparer.OrdinalIgnoreCase);
+        var previewsById = previews.ToDictionary(p => p.SourceId, StringComparer.OrdinalIgnoreCase);
+
+        OctopusResourceNode FindNode(string sourceId) => nodesById.GetValueOrDefault(sourceId);
+        OctopusImportPreviewAction? PreviewAction(string sourceId) => previewsById.GetValueOrDefault(sourceId)?.PreviewAction;
+
+        foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
+        {
+            if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
+                AddRequiredInputs(previewsById[resource.SourceId], resource);
+            else
+                previewsById[resource.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept, "This variable belongs to a library variable set that is reused as-is; the destination keeps its existing value and this source value is not imported.", resource));
+        }
+
+        foreach (var shadow in OctopusImportVariablePrecedence.FindProjectVariablesShadowedByLibraries(nodes))
+            previewsById[shadow.ProjectVariable.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable, ShadowMessage(shadow), shadow.ProjectVariable));
+    }
+
+    private static string ShadowMessage(OctopusImportShadowedProjectVariable shadow)
+        => $"Project '{shadow.ProjectName}' defines variable '{shadow.VariableName}' and its included library variable set '{shadow.LibraryName}' defines the same name with an equally specific scope. Where both apply, Squid uses the library value, whereas Octopus used the project value. Rename or re-scope one of them if the project value must win.";
+
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
     {
-        if (resource.IsHistorical || resource.Kind != OctopusResourceKind.Variable)
-            return;
-
         var variable = resource.GetSource<OctopusVariableDto>();
         if (!OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
             return;

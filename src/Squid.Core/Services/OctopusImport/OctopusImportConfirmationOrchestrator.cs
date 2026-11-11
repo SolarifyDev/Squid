@@ -51,6 +51,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     private readonly IOctopusImportDeploymentProcessMapper _processMapper;
     private readonly IOctopusImportExternalResourceShellMapper _externalResourceShellMapper;
     private readonly IOctopusImportDeploymentHistoryImporter _deploymentHistoryImporter;
+    private readonly IOctopusImportLibraryVariableSetNameLock _libraryNameLock;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
     private readonly IMediator _mediator;
@@ -68,6 +69,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         IOctopusImportDeploymentProcessMapper processMapper,
         IOctopusImportExternalResourceShellMapper externalResourceShellMapper,
         IOctopusImportDeploymentHistoryImporter deploymentHistoryImporter,
+        IOctopusImportLibraryVariableSetNameLock libraryNameLock,
         IProjectDataProvider projectDataProvider,
         IChannelDataProvider channelDataProvider,
         IMediator mediator)
@@ -84,6 +86,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         _processMapper = processMapper;
         _externalResourceShellMapper = externalResourceShellMapper;
         _deploymentHistoryImporter = deploymentHistoryImporter;
+        _libraryNameLock = libraryNameLock;
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
         _mediator = mediator;
@@ -488,6 +491,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         var variableSetResource = execution.FindResource(library.VariableSetId, OctopusResourceKind.VariableSet);
         var command = BuildLibraryVariableSetCommand(execution, resource, library, variableSetResource);
 
+        await EnsureLibraryNameStillFreeAsync(execution, resource, library, ct).ConfigureAwait(false);
+
         var response = await _mediator.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(command, ct).ConfigureAwait(false);
         var created = response?.Data?.VariableSet;
 
@@ -498,6 +503,22 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         if (variableSetResource != null)
             execution.AddCreated(variableSetResource, created.Id);
+    }
+
+    // Preview planned a CREATE, but another confirmation (or an earlier library in this one) may have created
+    // the same name since. The name lock serialises concurrent creators until commit, and the re-check turns
+    // the loser into a clean, explained failure instead of a duplicate shared library.
+    private async Task EnsureLibraryNameStillFreeAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusLibraryVariableSetDto library, CancellationToken ct)
+    {
+        var existingId = await _libraryNameLock.LockNameAndFindExistingAsync(execution.DestinationSpaceId, library.Name, ct).ConfigureAwait(false);
+
+        if (existingId == null) return;
+
+        var message = $"Library variable set '{library.Name}' was created in the destination space (id {existingId}) after this import was previewed. Nothing was imported; preview the export again to reuse the existing library.";
+
+        execution.MarkFailed(resource, Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently, message, resource));
+
+        throw new OctopusImportConfirmationException(message);
     }
 
     private CreateVariableSetCommand BuildLibraryVariableSetCommand(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusLibraryVariableSetDto library, OctopusResourceNode variableSetResource)
@@ -638,7 +659,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         var source = resource.GetSource<OctopusVariableSetDto>()
             ?? throw new OctopusImportConfirmationException("Variable set source payload is missing.");
 
-        if (OctopusResourceGraphBuilder.IsLibraryVariableSetOwner(source.OwnerType))
+        if (!execution.IsWrittenByImport(resource))
         {
             KeepReusedLibraryVariables(execution, resource, source);
             return;
@@ -664,12 +685,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     }
 
     private static void MarkVariableHandled(ConfirmationExecutionContext execution, OctopusResourceNode resource)
-    {
-        var parent = execution.FindResource(resource.ParentSourceId, OctopusResourceKind.VariableSet);
-        var parentSkipped = parent != null && execution.GetPreview(parent)?.OutcomeState == OctopusImportResourceOutcomeState.Skipped;
-
-        execution.MarkOutcome(resource, parentSkipped ? OctopusImportResourceOutcomeState.Skipped : OctopusImportResourceOutcomeState.Created);
-    }
+        => execution.MarkOutcome(resource, execution.IsWrittenByImport(resource) ? OctopusImportResourceOutcomeState.Created : OctopusImportResourceOutcomeState.Skipped);
 
     private async Task UpdateProjectVariableSetAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusVariableSetDto source, CancellationToken ct)
     {
@@ -1068,6 +1084,9 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public OctopusResourceNode FindResource(string sourceId, OctopusResourceKind kind)
             => _resourcesByKey.TryGetValue(Key(sourceId, kind), out var resource) ? resource : null;
+
+        public bool IsWrittenByImport(OctopusResourceNode resource)
+            => OctopusImportVariableOwnership.IsWrittenByImport(resource, sourceId => FindResource(sourceId, OctopusResourceKind.VariableSet), sourceId => _resultsBySourceId.GetValueOrDefault(sourceId)?.PreviewAction);
 
         public void AddCreatedIfPresent(string sourceId, OctopusResourceKind kind, int destinationId)
         {

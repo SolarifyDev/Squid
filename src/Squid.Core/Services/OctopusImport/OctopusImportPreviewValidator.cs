@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
@@ -65,14 +66,17 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        ValidateReferences(graph, selectedResources, allCurrentResources, result);
+        var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources);
+
+        ValidateReferences(graph, plan, result);
+        ValidateVariableScopes(plan, result);
         ValidateReleasePackageFeeds(graph, selectedResources, previewResources, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         result.RequiredInputs = previewPlan.RequiredInputs
             .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
-            .Concat(BuildRequiredInputs(selectedResources.Values))
-            .Where(input => !IsResolvedSensitiveInput(input, selectedResources))
+            .Concat(BuildRequiredInputs(plan))
+            .Where(input => !IsSatisfiedSensitiveInput(input, plan))
             .GroupBy(input => input.InputKey, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
@@ -122,19 +126,20 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         }
     }
 
-    private bool IsResolvedSensitiveInput(OctopusImportRequiredInputDto input, IReadOnlyDictionary<string, OctopusResourceNode> selectedResources)
+    // A sensitive input is satisfied when the export password decrypts it, or when the variable is never
+    // written because its library is reused as-is (the destination keeps its own value).
+    private bool IsSatisfiedSensitiveInput(OctopusImportRequiredInputDto input, ValidationPlan plan)
     {
         if (input.Kind != OctopusImportRequiredInputKind.SensitiveVariableValue) return false;
-        if (string.IsNullOrWhiteSpace(input.SourceId) || !selectedResources.TryGetValue(input.SourceId, out var resource)) return false;
+        if (string.IsNullOrWhiteSpace(input.SourceId) || !plan.Selected.TryGetValue(input.SourceId, out var resource)) return false;
         if (resource.Kind != OctopusResourceKind.Variable) return false;
 
-        return OctopusImportSensitiveValues.IsResolvable(resource.GetSource<OctopusVariableDto>(), Secrets);
+        return !plan.IsWrittenByImport(resource) || OctopusImportSensitiveValues.IsResolvable(resource.GetSource<OctopusVariableDto>(), Secrets);
     }
 
-    private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(
-        IEnumerable<OctopusResourceNode> selectedResources)
+    private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(ValidationPlan plan)
     {
-        foreach (var resource in selectedResources.Where(resource => resource.Kind == OctopusResourceKind.Variable))
+        foreach (var resource in plan.Selected.Values.Where(resource => resource.Kind == OctopusResourceKind.Variable && plan.IsWrittenByImport(resource)))
         {
             var variable = resource.GetSource<OctopusVariableDto>();
             if (variable != null && OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
@@ -204,12 +209,33 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         }
     }
 
-    private static void ValidateReferences(
-        OctopusResourceGraph graph,
-        IReadOnlyDictionary<string, OctopusResourceNode> selectedResources,
-        IReadOnlyDictionary<string, OctopusResourceNode> allCurrentResources,
-        OctopusImportValidationResultDto result)
+    // Predicts confirmation's scope mapping with the SAME rule the variable mapper uses: a scope target
+    // resolves only if confirmation will have created or reused it before the variable set is written.
+    private static void ValidateVariableScopes(ValidationPlan plan, OctopusImportValidationResultDto result)
     {
+        foreach (var resource in plan.Selected.Values.Where(r => r.Kind == OctopusResourceKind.Variable && !r.IsHistorical && plan.IsWrittenByImport(r)))
+        {
+            var variable = resource.GetSource<OctopusVariableDto>();
+            var writerKind = OctopusImportVariableScopeRule.WriterKind(plan.FindResource(resource.ParentSourceId)?.GetSource<OctopusVariableSetDto>());
+
+            foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable?.Scope, (sourceId, kind) => plan.IsImportedBefore(sourceId, kind, writerKind)).Where(r => r.Blocks))
+                AddReferenceDiagnostic(result, resource, OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope, UnmappableScopeMessage(variable, resolution));
+        }
+    }
+
+    private static string UnmappableScopeMessage(OctopusVariableDto variable, OctopusImportScopeResolution resolution)
+    {
+        var reason = resolution.Outcome == OctopusImportScopeOutcome.UnsupportedType
+            ? $"Squid variables cannot be scoped by {resolution.ScopeKey}"
+            : $"that {resolution.SourceKind} is not created or reused by this import before the variable is written";
+
+        return $"Octopus variable '{variable.Name}' is scoped to {resolution.ScopeKey} '{resolution.ScopeValue}', but {reason}. Squid never widens a variable's scope, so the import is blocked until the scope is removed in Octopus or the scoped resource is imported.";
+    }
+
+    private static void ValidateReferences(OctopusResourceGraph graph, ValidationPlan plan, OctopusImportValidationResultDto result)
+    {
+        var selectedResources = plan.Selected;
+        var allCurrentResources = plan.Current;
         var machineRoles = graph.References
             .Where(r => r.FromKind == OctopusResourceKind.Machine && r.ReferenceKind == OctopusResourceReferenceKind.TargetRole)
             .Select(r => r.ToSourceId)
@@ -218,7 +244,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 
         foreach (var reference in graph.References.OrderBy(r => r.FromSourceId, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.ReferenceKind).ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase))
         {
-            if (!selectedResources.TryGetValue(reference.FromSourceId, out var source))
+            if (!selectedResources.TryGetValue(reference.FromSourceId, out var source) || !plan.IsWrittenByImport(source))
                 continue;
 
             if (reference.ReferenceKind == OctopusResourceReferenceKind.TargetRole)
@@ -348,6 +374,24 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             ResourceType = previewResource.SourceType,
             ResourceName = previewResource.SourceName
         }));
+    }
+
+    private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews)
+    {
+        public OctopusResourceNode FindResource(string sourceId)
+            => sourceId != null && Current.TryGetValue(sourceId, out var resource) ? resource : null;
+
+        public OctopusImportPreviewAction? PreviewAction(string sourceId)
+            => sourceId != null && Previews.TryGetValue(sourceId, out var preview) ? preview.PreviewAction : null;
+
+        public bool IsWrittenByImport(OctopusResourceNode resource)
+            => OctopusImportVariableOwnership.IsWrittenByImport(resource, FindResource, PreviewAction);
+
+        public bool IsImportedBefore(string sourceId, OctopusResourceKind kind, OctopusResourceKind writerKind)
+            => Selected.TryGetValue(sourceId, out var target)
+               && target.Kind == kind
+               && PreviewAction(sourceId) is OctopusImportPreviewAction.Create or OctopusImportPreviewAction.ReuseExisting
+               && OctopusImportVariableScopeRule.IsImportedBefore(kind, writerKind);
     }
 
     private static void AddReferenceDiagnostic(

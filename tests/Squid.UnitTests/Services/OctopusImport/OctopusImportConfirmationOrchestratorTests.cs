@@ -570,6 +570,7 @@ public class OctopusImportConfirmationOrchestratorTests
             processMapper.Object,
             shellMapper.Object,
             deploymentHistoryImporter.Object,
+            Mock.Of<IOctopusImportLibraryVariableSetNameLock>(),
             projectDataProvider.Object,
             channelDataProvider.Object,
             mediator.Object);

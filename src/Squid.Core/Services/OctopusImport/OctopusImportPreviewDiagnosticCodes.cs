@@ -18,6 +18,9 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string IncompatibleSharedResourceReuse = "octopus.validation.incompatible_shared_resource_reuse";
     public const string StalePreviewPlan = "octopus.validation.stale_preview_plan";
     public const string SensitiveVariableValueDecrypted = "octopus.preview.sensitive_variable_value_decrypted";
+    public const string ReusedLibraryVariableKept = "octopus.preview.reused_library_variable_kept";
+    public const string UnmappableVariableScope = "octopus.validation.unmappable_variable_scope";
+    public const string ProjectVariableShadowedByLibraryVariable = "octopus.preview.project_variable_shadowed_by_library_variable";
     public const string ExportPasswordUnavailable = "octopus.preview.export_password_unavailable";
     public const string SensitiveResolutionChanged = "octopus.validation.sensitive_resolution_changed";
 

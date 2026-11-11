@@ -255,10 +255,10 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         foreach (var package in action.Packages)
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Feed, package.FeedId, OctopusResourceKind.Feed, process.OwnerId, true);
 
-        foreach (var targetRole in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionTargetRoles)))
+        foreach (var targetRole in OctopusReferenceList.Split(GetProperty(action.Properties, OctopusPropertyNames.ActionTargetRoles)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.TargetRole, targetRole, null, process.OwnerId, false);
 
-        foreach (var teamId in SplitReferenceList(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)))
+        foreach (var teamId in OctopusReferenceList.Split(GetProperty(action.Properties, OctopusPropertyNames.ActionManualResponsibleTeamIds)))
             AddReference(context, sourceId, OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Team, teamId, OctopusResourceKind.Team, process.OwnerId, false);
     }
 
@@ -574,16 +574,6 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         return properties != null && properties.TryGetValue(key, out var value)
             ? value
             : null;
-    }
-
-    private static IEnumerable<string> SplitReferenceList(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return [];
-
-        return value
-            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v));
     }
 
     private static OctopusInputExtractionDiagnostic Blocker(

@@ -25,31 +25,16 @@ public class OctopusImportVariableReferenceValidator : IOctopusImportVariableRef
         ArgumentNullException.ThrowIfNull(graph);
 
         var result = new OctopusImportValidationResultDto();
-        var variableDefinitions = GetVariableDefinitions(graph);
+        var pools = new VariableDefinitionPools(graph);
         var references = GetReferenceSources(graph)
             .SelectMany(source => ExtractReferences(source.Value).Select(reference => new VariableReference(source, reference)))
             .ToList();
         var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var reference in references.OrderBy(r => r.Source.ResourceKind).ThenBy(r => r.Source.SourceId, StringComparer.OrdinalIgnoreCase).ThenBy(r => r.Name, StringComparer.Ordinal))
-            ValidateReference(reference, variableDefinitions, result, emitted);
+            ValidateReference(reference, pools.For(reference.Source.Owner), result, emitted);
 
         return result;
-    }
-
-    private static VariableDefinitionLookup GetVariableDefinitions(OctopusResourceGraph graph)
-    {
-        var definitions = graph.Resources
-            .Where(r => r.Kind == OctopusResourceKind.VariableSet && !r.IsHistorical)
-            .Select(r => r.GetSource<OctopusVariableSetDto>())
-            .Where(vs => vs != null)
-            .SelectMany(vs => vs.Variables ?? [])
-            .Where(v => !string.IsNullOrWhiteSpace(v.Name))
-            .Select(v => v.Name)
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        return new VariableDefinitionLookup(definitions);
     }
 
     private static IEnumerable<VariableReferenceSource> GetReferenceSources(OctopusResourceGraph graph)
@@ -61,12 +46,14 @@ public class OctopusImportVariableReferenceValidator : IOctopusImportVariableRef
             if (variableSet?.Variables == null)
                 continue;
 
+            var owner = ReferenceOwner.Of(variableSet);
+
             foreach (var variable in variableSet.Variables)
             {
-                yield return new VariableReferenceSource(OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Value", variable.Value);
-                yield return new VariableReferenceSource(OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Description", variable.Description);
-                yield return new VariableReferenceSource(OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Prompt.Label", variable.Prompt?.Label);
-                yield return new VariableReferenceSource(OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Prompt.Description", variable.Prompt?.Description);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Value", variable.Value);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Description", variable.Description);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Prompt.Label", variable.Prompt?.Label);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.Variable, variable.Id, variable.Name, "Variable.Prompt.Description", variable.Prompt?.Description);
             }
         }
 
@@ -77,37 +64,39 @@ public class OctopusImportVariableReferenceValidator : IOctopusImportVariableRef
             if (process?.Steps == null)
                 continue;
 
+            var owner = new ReferenceOwner(process.OwnerId, false);
+
             foreach (var step in process.Steps)
             {
-                yield return new VariableReferenceSource(OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.Condition", step.Condition);
-                yield return new VariableReferenceSource(OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.StartTrigger", step.StartTrigger);
-                yield return new VariableReferenceSource(OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.PackageRequirement", step.PackageRequirement);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.Condition", step.Condition);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.StartTrigger", step.StartTrigger);
+                yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentStep, step.Id, step.Name, "Step.PackageRequirement", step.PackageRequirement);
 
                 foreach (var property in step.Properties ?? [])
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentStep, step.Id, step.Name, $"Step.Properties.{property.Key}", property.Value);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentStep, step.Id, step.Name, $"Step.Properties.{property.Key}", property.Value);
 
                 foreach (var action in step.Actions ?? [])
                 {
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.WorkerPoolVariable", action.WorkerPoolVariable);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.EnvironmentsVariable", action.EnvironmentsVariable);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.ExcludedEnvironmentsVariable", action.ExcludedEnvironmentsVariable);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.ChannelsVariable", action.ChannelsVariable);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.TenantTagsVariable", action.TenantTagsVariable);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Condition", action.Condition);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.Image", action.Container?.Image);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.GitUrl", action.Container?.GitUrl);
-                    yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.Dockerfile", action.Container?.Dockerfile);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.WorkerPoolVariable", action.WorkerPoolVariable);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.EnvironmentsVariable", action.EnvironmentsVariable);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.ExcludedEnvironmentsVariable", action.ExcludedEnvironmentsVariable);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.ChannelsVariable", action.ChannelsVariable);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.TenantTagsVariable", action.TenantTagsVariable);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Condition", action.Condition);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.Image", action.Container?.Image);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.GitUrl", action.Container?.GitUrl);
+                    yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, "Action.Container.Dockerfile", action.Container?.Dockerfile);
 
                     foreach (var property in action.Properties ?? [])
-                        yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Properties.{property.Key}", property.Value);
+                        yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Properties.{property.Key}", property.Value);
 
                     foreach (var package in action.Packages ?? [])
                     {
-                        yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.PackageId", package.PackageId);
-                        yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.Version", package.Version);
+                        yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.PackageId", package.PackageId);
+                        yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.Version", package.Version);
 
                         foreach (var property in package.Properties ?? [])
-                            yield return new VariableReferenceSource(OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.Properties.{property.Key}", property.Value);
+                            yield return new VariableReferenceSource(owner, OctopusResourceKind.DeploymentAction, action.Id, action.Name, $"Action.Packages.{package.Id}.Properties.{property.Key}", property.Value);
                     }
                 }
             }
@@ -293,7 +282,52 @@ public class OctopusImportVariableReferenceValidator : IOctopusImportVariableRef
             => _caseInsensitive.TryGetValue(name, out definedName);
     }
 
+    /// <summary>
+    /// Definition pools keyed by the owner of a reference. A project sees its own variables plus the
+    /// libraries it includes (the same rule runtime uses). A library variable sees its own library plus
+    /// every project that includes it, because it is only ever resolved inside such a project.
+    /// </summary>
+    private sealed class VariableDefinitionPools(OctopusResourceGraph graph)
+    {
+        private readonly List<OctopusResourceNode> _resources = graph.Resources.Where(r => !r.IsHistorical).ToList();
+        private readonly Dictionary<ReferenceOwner, VariableDefinitionLookup> _pools = [];
+
+        public VariableDefinitionLookup For(ReferenceOwner owner)
+        {
+            if (!_pools.TryGetValue(owner, out var pool))
+                _pools[owner] = pool = new VariableDefinitionLookup(VisibleSets(owner).SelectMany(DefinedNames).Distinct(StringComparer.Ordinal));
+
+            return pool;
+        }
+
+        private IEnumerable<OctopusResourceNode> VisibleSets(ReferenceOwner owner)
+            => owner.IsLibrary
+                ? IncludingProjects(owner.Id).SelectMany(VisibleTo).Concat(VisibleTo(new OctopusProjectDto { IncludedLibraryVariableSetIds = [owner.Id] }))
+                : VisibleTo(Project(owner.Id));
+
+        private IEnumerable<OctopusResourceNode> VisibleTo(OctopusProjectDto project) => OctopusImportVariableOwnership.VariableSetsVisibleTo(project, _resources);
+
+        private IEnumerable<OctopusProjectDto> IncludingProjects(string libraryId)
+            => Projects().Where(p => (p.IncludedLibraryVariableSetIds ?? []).Contains(libraryId, StringComparer.OrdinalIgnoreCase));
+
+        // A process or variable set can be exported without its project document; it still sees its own variables.
+        private OctopusProjectDto Project(string projectId)
+            => Projects().FirstOrDefault(p => string.Equals(p.Id, projectId, StringComparison.OrdinalIgnoreCase)) ?? new OctopusProjectDto { Id = projectId };
+
+        private IEnumerable<OctopusProjectDto> Projects()
+            => _resources.Where(r => r.Kind == OctopusResourceKind.Project).Select(r => r.GetSource<OctopusProjectDto>()).Where(p => p != null);
+
+        private static IEnumerable<string> DefinedNames(OctopusResourceNode variableSet)
+            => (variableSet.GetSource<OctopusVariableSetDto>()?.Variables ?? []).Select(v => v.Name).Where(n => !string.IsNullOrWhiteSpace(n));
+    }
+
+    private sealed record ReferenceOwner(string Id, bool IsLibrary)
+    {
+        public static ReferenceOwner Of(OctopusVariableSetDto variableSet) => new(variableSet.OwnerId, OctopusResourceGraphBuilder.IsLibraryVariableSetOwner(variableSet.OwnerType));
+    }
+
     private sealed record VariableReferenceSource(
+        ReferenceOwner Owner,
         OctopusResourceKind ResourceKind,
         string SourceId,
         string ResourceName,

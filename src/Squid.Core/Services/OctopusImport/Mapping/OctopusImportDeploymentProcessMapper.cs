@@ -302,8 +302,8 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
             return;
         }
 
-        var values = SplitReferenceList(existing.PropertyValue)
-            .Concat(SplitReferenceList(propertyValue))
+        var values = OctopusReferenceList.Split(existing.PropertyValue)
+            .Concat(OctopusReferenceList.Split(propertyValue))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -430,7 +430,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
         if (action.Properties == null || !action.Properties.TryGetValue(OctopusPropertyNames.ActionTargetRoles, out var targetRoles))
             return [];
 
-        return SplitReferenceList(targetRoles);
+        return OctopusReferenceList.Split(targetRoles);
     }
 
     private static bool IsRunOnServer(OctopusDeploymentActionDto action)
@@ -438,16 +438,6 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
            && action.Properties.TryGetValue(OctopusPropertyNames.ActionRunOnServer, out var runOnServer)
            && bool.TryParse(runOnServer, out var parsed)
            && parsed;
-
-    private static IEnumerable<string> SplitReferenceList(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return [];
-
-        return value
-            .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(v => !string.IsNullOrWhiteSpace(v));
-    }
 
     private static OctopusImportDiagnosticDto Diagnostic(
         OctopusImportCompatibilitySeverity severity,
