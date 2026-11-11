@@ -143,7 +143,7 @@ public sealed class OctopusExportPasswordValidator(
         {
             case JsonValueKind.Object:
             {
-                var isSensitiveObject = HasStringProperty(element, "Type", "Sensitive");
+                var isSensitiveObject = IsSensitiveObject(element);
 
                 foreach (var property in element.EnumerateObject())
                 {
@@ -177,17 +177,22 @@ public sealed class OctopusExportPasswordValidator(
            || string.Equals(propertyName, "SensitiveValue", StringComparison.OrdinalIgnoreCase)
            || string.Equals(propertyName, "Secret", StringComparison.OrdinalIgnoreCase);
 
-    private static bool HasStringProperty(JsonElement element, string propertyName, string expectedValue)
+    // Same rule (and the same case-insensitive property binding) the importer applies to OctopusVariableDto,
+    // so every value the importer will decrypt is one this validator proved the password against.
+    private static bool IsSensitiveObject(JsonElement element)
+        => OctopusImportSensitiveValues.IsSensitive(FindProperty(element, "IsSensitive")?.ValueKind == JsonValueKind.True, FindStringProperty(element, "Type"));
+
+    private static string FindStringProperty(JsonElement element, string propertyName)
+        => FindProperty(element, propertyName) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+
+    private static JsonElement? FindProperty(JsonElement element, string propertyName)
     {
         foreach (var property in element.EnumerateObject())
         {
-            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase) &&
-                property.Value.ValueKind == JsonValueKind.String &&
-                string.Equals(property.Value.GetString(), expectedValue, StringComparison.OrdinalIgnoreCase))
-                return true;
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase)) return property.Value;
         }
 
-        return false;
+        return null;
     }
 
     private static bool IsEncryptedValue(string value) => OctopusExportCipher.IsEncryptedValue(value);

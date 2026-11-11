@@ -3,6 +3,7 @@ using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Handlers.CommandHandlers.OctopusImport;
@@ -98,7 +99,33 @@ public class UploadOctopusImportCommandHandler(
     {
         if (secretStore == null || validation.Status != OctopusExportPasswordValidationStatus.Valid) return;
 
-        await secretStore.StoreAsync(sessionId, destinationSpaceId, password, ct).ConfigureAwait(false);
+        try
+        {
+            await secretStore.StoreAsync(sessionId, destinationSpaceId, password, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await AbandonSessionAsync(sessionId, destinationSpaceId, ex).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // The session and its archive already exist, but without the proven password it would silently import
+    // every secret as a required input. Fail it (terminal: clears the password column, schedules the archive
+    // purge) rather than leave an importable-looking Uploaded session behind. Runs uncancellable so a
+    // cancelled request still compensates; a failing compensation never masks the original failure.
+    private async Task AbandonSessionAsync(Guid sessionId, int destinationSpaceId, Exception cause)
+    {
+        var result = new OctopusImportSessionResultDto { Diagnostics = [new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportPreviewDiagnosticCodes.UploadAbandoned, Message = OctopusImportPreviewDiagnosticCodes.UploadAbandonedMessage }] };
+
+        try
+        {
+            await sessionService.RecordResultAsync(sessionId, destinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Octopus import session {SessionId} could not be failed after recording its export password failed ({CauseType}, then {CompensationType}); it will expire instead", sessionId, cause.GetType().Name, ex.GetType().Name);
+        }
     }
 
     private static async Task<MemoryStream> BufferContentAsync(

@@ -77,6 +77,8 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .Select(g => g.First())
             .ToList();
         ValidateRequiredInputs(result);
+        ValidateSensitiveResolutionFreshness(previewResources, selectedResources, result);
+        result.Diagnostics.AddRange(OctopusImportExportSecretDiagnostics.Describe(Secrets));
 
         return result;
     }
@@ -139,6 +141,31 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                 yield return OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable);
         }
     }
+
+    // A preview built while the value could not be decrypted still carries its required-input blocker even
+    // though the value now decrypts (the export secrets became readable in between). Say so explicitly instead
+    // of rejecting the plan with a validation result that shows nothing wrong.
+    private void ValidateSensitiveResolutionFreshness(IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources, IReadOnlyDictionary<string, OctopusResourceNode> selectedResources, OctopusImportValidationResultDto result)
+    {
+        foreach (var preview in previewResources.Values.Where(HasUnresolvedSensitiveBlocker))
+        {
+            if (!selectedResources.TryGetValue(preview.SourceId, out var resource) || resource.Kind != OctopusResourceKind.Variable) continue;
+            if (!OctopusImportSensitiveValues.IsResolvable(resource.GetSource<OctopusVariableDto>(), Secrets)) continue;
+
+            result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
+            {
+                Severity = OctopusImportCompatibilitySeverity.Blocker,
+                Code = OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged,
+                Message = OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChangedMessage,
+                SourceId = resource.SourceId,
+                ResourceType = resource.Kind.ToString(),
+                ResourceName = resource.Name
+            }));
+        }
+    }
+
+    private static bool HasUnresolvedSensitiveBlocker(OctopusImportResourceResultDto preview)
+        => preview.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
 
     private static void ValidateRequiredInputs(OctopusImportValidationResultDto result)
     {

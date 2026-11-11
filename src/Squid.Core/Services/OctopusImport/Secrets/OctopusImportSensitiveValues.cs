@@ -11,6 +11,13 @@ namespace Squid.Core.Services.OctopusImport.Secrets;
 /// </summary>
 public static class OctopusImportSensitiveValues
 {
+    /// <summary>
+    /// THE sensitivity rule for an Octopus variable, shared by the upload-time password validator (which
+    /// reads it off raw JSON) and every import-time consumer (which reads it off <see cref="OctopusVariableDto"/>):
+    /// a value the importer will try to decrypt is always one the upload proved the password against.
+    /// </summary>
+    public static bool IsSensitive(bool isSensitive, string type) => isSensitive || string.Equals(type?.Trim(), "Sensitive", StringComparison.OrdinalIgnoreCase);
+
     public static bool IsResolvable(OctopusVariableDto variable, OctopusExportSecrets secrets)
     {
         if (variable == null || secrets == null || !secrets.IsAvailable) return false;

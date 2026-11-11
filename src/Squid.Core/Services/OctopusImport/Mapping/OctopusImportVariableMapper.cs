@@ -234,7 +234,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         OctopusVariableDto variable,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
-        if (variable.IsSensitive || IsType(variable.Type, "Sensitive"))
+        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
             return VariableType.Password;
 
         var type = variable.Type?.Trim();

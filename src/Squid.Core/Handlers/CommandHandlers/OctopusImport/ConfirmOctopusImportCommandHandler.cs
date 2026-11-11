@@ -80,6 +80,12 @@ public class ConfirmOctopusImportCommandHandler(
 
         await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
+        // The plan was validated with the decrypted secrets; confirming without them would import a different
+        // result and end the session terminally. Refuse instead: the session stays Validated, so restoring the
+        // master key and retrying works, and expiry clears the password otherwise.
+        if (secretsAccessor?.Secrets.IsUnreadable == true)
+            return BadRequest(command, state, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailableMessage, OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable);
+
         OctopusImportPlanningSnapshot snapshot;
         try
         {
@@ -213,12 +219,13 @@ public class ConfirmOctopusImportCommandHandler(
     private static ConfirmOctopusImportResponse BadRequest(
         ConfirmOctopusImportCommand command,
         OctopusImportSessionState state,
-        string message)
+        string message,
+        string code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRequiresValidatedSession)
     {
         var diagnostic = new OctopusImportDiagnosticDto
         {
             Severity = OctopusImportCompatibilitySeverity.Blocker,
-            Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRequiresValidatedSession,
+            Code = code,
             Message = message
         };
 

@@ -307,6 +307,38 @@ public class OctopusImportPreviewValidatorTests
         result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
     }
 
+    [Theory]
+    [InlineData("password", "password", new string[0])]
+    [InlineData("none", "none", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("unreadable", "unreadable", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("password", "none", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("password", "unreadable", new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    [InlineData("none", "password", new[] { OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged })]
+    [InlineData("unreadable", "password", new[] { OctopusImportPreviewDiagnosticCodes.SensitiveResolutionChanged })]
+    public void PreviewAndValidation_WithDifferentExportSecrets_OnlyAcceptWhenBothCouldDecrypt(string previewSecrets, string validationSecrets, string[] expectedValidationBlockers)
+    {
+        // Preview is built by the REAL planner with one secret state; validation re-runs with another
+        // (e.g. the master key was fixed or broken in between). The import may only proceed when both
+        // decrypted the value, and a stale preview must say why instead of passing on a mismatched plan.
+        var variable = Node("Variables-1", OctopusResourceKind.Variable, "Db:Password", new OctopusVariableDto { Id = "Variables-1", Name = "Db:Password", IsSensitive = true, Type = "String", Value = OctopusExportTestCipher.Encrypt("secret", "pw") });
+        var preview = new OctopusImportPreviewPlanner(new OctopusExportSecretsAccessor { Secrets = SecretsFor(previewSecrets) }).BuildPreviewPlan(Plan([variable]), NoConflicts());
+        var validator = new OctopusImportPreviewValidator(new OctopusExportSecretsAccessor { Secrets = SecretsFor(validationSecrets) });
+
+        var result = validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), preview);
+
+        result.Diagnostics.Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().ShouldBe(expectedValidationBlockers);
+        (!preview.HasBlockers && !result.HasBlockers).ShouldBe(previewSecrets == "password" && validationSecrets == "password");
+        result.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(validationSecrets == "unreadable");
+        preview.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable).ShouldBe(previewSecrets == "unreadable");
+    }
+
+    private static OctopusExportSecrets SecretsFor(string kind) => kind switch
+    {
+        "password" => OctopusExportSecrets.FromPassword("pw"),
+        "unreadable" => OctopusExportSecrets.Unreadable,
+        _ => OctopusExportSecrets.None
+    };
+
     [Fact]
     public void Validate_ResponsibleTeamMissingFromExport_BlocksBeforeConfirmation()
     {

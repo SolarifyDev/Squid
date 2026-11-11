@@ -51,6 +51,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
+            .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
             .ToList();
 
         return new OctopusImportPreviewPlanDto

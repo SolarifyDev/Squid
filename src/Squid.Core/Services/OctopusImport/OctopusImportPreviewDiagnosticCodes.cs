@@ -18,6 +18,15 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string IncompatibleSharedResourceReuse = "octopus.validation.incompatible_shared_resource_reuse";
     public const string StalePreviewPlan = "octopus.validation.stale_preview_plan";
     public const string SensitiveVariableValueDecrypted = "octopus.preview.sensitive_variable_value_decrypted";
+    public const string ExportPasswordUnavailable = "octopus.preview.export_password_unavailable";
+    public const string SensitiveResolutionChanged = "octopus.validation.sensitive_resolution_changed";
+    public const string UploadAbandoned = "octopus.upload.export_password_not_recorded";
+
+    public const string UploadAbandonedMessage = "The upload could not be completed because recording the export password for this session failed. Upload the export again.";
+
+    public const string ExportPasswordUnavailableMessage = "The export password was accepted at upload but could not be kept or read back with the server's at-rest encryption key (Security:VariableEncryption:MasterKey is missing or has changed). Sensitive values are treated as if no export password had been given. Restore the original master key and retry, or configure a master key and upload the export again.";
+
+    public const string SensitiveResolutionChangedMessage = "This sensitive variable was unresolved when the preview plan was built but can now be decrypted with the export password. Refresh the preview before validating.";
 
     public const string SensitiveValueUnresolvedMessage = "The sensitive variable value could not be decrypted with the export password (it may be masked or encrypted with a different password). Confirmation is blocked while this required input is unresolved.";
 }

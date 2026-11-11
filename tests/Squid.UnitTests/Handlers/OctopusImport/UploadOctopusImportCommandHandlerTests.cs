@@ -1,9 +1,11 @@
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using Mediator.Net.Contracts;
 using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
@@ -110,6 +112,73 @@ public class UploadOctopusImportCommandHandlerTests
         response.Code.ShouldBe(HttpStatusCode.OK);
         secretStore.Verify(s => s.StoreAsync(sessionId, 7, "octopus-password", It.IsAny<CancellationToken>()), retained ? Times.Once() : Times.Never());
     }
+
+    [Theory]
+    [InlineData("concurrency")]
+    [InlineData("database")]
+    [InlineData("cancelled")]
+    public async Task Handle_RetainingThePasswordFails_FailsTheSessionInsteadOfLeavingAnImportableOrphan(string failure)
+    {
+        var sessionId = Guid.NewGuid();
+        var (sessionService, sut, secretStore) = RetentionScenario(sessionId);
+        using var cts = new CancellationTokenSource();
+        Exception thrown = failure switch
+        {
+            "concurrency" => new OctopusImportSessionConcurrencyException(sessionId),
+            "database" => new InvalidOperationException("connection reset"),
+            _ => new OperationCanceledException(cts.Token)
+        };
+        secretStore.Setup(s => s.StoreAsync(sessionId, 7, "octopus-password", It.IsAny<CancellationToken>())).Callback(() => cts.Cancel()).ThrowsAsync(thrown);
+
+        var actual = await Should.ThrowAsync<Exception>(() => sut.Handle(Context(UploadCommand()), cts.Token));
+
+        actual.ShouldBeAssignableTo(thrown.GetType(), "the original failure must surface, not the compensation");
+        sessionService.Verify(s => s.RecordResultAsync(sessionId, 7, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.UploadAbandoned)), It.Is<CancellationToken>(t => !t.IsCancellationRequested)), Times.Once);
+    }
+
+    [Fact]
+    public async Task Handle_RetainingThePasswordFailsAndSoDoesTheCompensation_SurfacesTheOriginalFailure()
+    {
+        var sessionId = Guid.NewGuid();
+        var (sessionService, sut, secretStore) = RetentionScenario(sessionId);
+        var original = new InvalidOperationException("store failed");
+        secretStore.Setup(s => s.StoreAsync(sessionId, 7, "octopus-password", It.IsAny<CancellationToken>())).ThrowsAsync(original);
+        sessionService.Setup(s => s.RecordResultAsync(sessionId, 7, OctopusImportSessionState.Failed, It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db down"));
+
+        var actual = await Should.ThrowAsync<InvalidOperationException>(() => sut.Handle(Context(UploadCommand()), CancellationToken.None));
+
+        actual.ShouldBeSameAs(original);
+    }
+
+    [Fact]
+    public async Task Handle_PasswordRetained_NeverFailsTheSession()
+    {
+        var sessionId = Guid.NewGuid();
+        var (sessionService, sut, _) = RetentionScenario(sessionId);
+
+        var response = await sut.Handle(Context(UploadCommand()), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        sessionService.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportSessionState>(), It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static (Mock<IOctopusImportSessionService> SessionService, UploadOctopusImportCommandHandler Sut, Mock<IOctopusImportExportSecretStore> SecretStore) RetentionScenario(Guid sessionId)
+    {
+        var sessionService = new Mock<IOctopusImportSessionService>();
+        var uploadStore = new Mock<IOctopusImportTemporaryUploadStore>();
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+
+        sessionService.Setup(s => s.CreateSessionAsync(7, It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7 });
+        sessionService.Setup(s => s.RegisterTemporaryUploadAsync(sessionId, 7, It.IsAny<OctopusImportTemporaryUpload>(), It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7 });
+        uploadStore.Setup(s => s.SaveAsync(sessionId, "export.zip", It.IsAny<Stream>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportTemporaryUpload("/tmp/export.zip", 3, "abc"));
+        passwordValidator.Setup(v => v.ValidateAsync(It.IsAny<Stream>(), "export.zip", "octopus-password", It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusExportPasswordValidationResult(OctopusExportPasswordValidationStatus.Valid));
+
+        return (sessionService, new UploadOctopusImportCommandHandler(sessionService.Object, uploadStore.Object, passwordValidator.Object, null, secretStore.Object), secretStore);
+    }
+
+    private static UploadOctopusImportCommand UploadCommand()
+        => new() { SpaceId = 7, Password = "octopus-password", FileName = "export.zip", SizeBytes = 3, Content = new MemoryStream(Encoding.UTF8.GetBytes("zip")) };
 
     [Fact]
     public async Task Handle_WrongPassword_NeverRetainsIt()
