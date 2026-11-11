@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Text;
+using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 
@@ -267,4 +269,56 @@ public class KubernetesResourceWaitBuilderTests
 
         KubernetesResourceWaitBuilder.ExtractResources(files).ShouldBeEmpty();
     }
+
+    // Calamari's Job resource reports Successful straight away unless WaitForJobs is set
+    // (Calamari/Kubernetes/ResourceStatus/Resources/Job.cs), so only the Job wait is gated;
+    // rollouts are always checked. The intent defaults to true so native steps keep waiting.
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void BuildWaitScript_FromIntent_WaitForJobsGatesOnlyTheJobWait(bool waitForJobs, bool expectJobWait)
+    {
+        var yaml = "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  namespace: other\n";
+        var intent = ApplyIntent(yaml) with { WaitForJobs = waitForJobs };
+
+        var result = KubernetesResourceWaitBuilder.BuildWaitScript(intent);
+
+        result.Contains("kubectl wait --for=condition=complete \"job/migrate\" -n \"apps\" --timeout=90s").ShouldBe(expectJobWait);
+        result.ShouldContain("kubectl rollout status \"deployment/web\" -n \"other\" --timeout=90s");
+    }
+
+    [Fact]
+    public void BuildWaitScript_FromIntent_StatusCheckOff_ReturnsEmpty()
+    {
+        var yaml = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n";
+
+        KubernetesResourceWaitBuilder.BuildWaitScript(ApplyIntent(yaml) with { ObjectStatusCheck = false }).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void KubernetesApplyIntent_WaitForJobsDefault_IsTrueSoNativeStepsKeepWaitingOnJobs()
+    {
+        ApplyIntent("kind: Job").WaitForJobs.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("True", true)]
+    [InlineData("true", true)]
+    [InlineData("False", false)]
+    [InlineData("false", false)]
+    public void BuildWaitScript_LegacyActionOverload_HonoursWaitForJobsProperty(string waitForJobs, bool expectJobWait)
+    {
+        var yaml = "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: my-job";
+        var action = CreateAction();
+
+        if (waitForJobs != null) action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Kubernetes.WaitForJobs", PropertyValue = waitForJobs });
+
+        var result = KubernetesResourceWaitBuilder.BuildWaitScript(MakeFiles(yaml), action, "default", ScriptSyntax.Bash);
+
+        result.Contains("kubectl wait --for=condition=complete \"job/my-job\"").ShouldBe(expectJobWait);
+    }
+
+    private static KubernetesApplyIntent ApplyIntent(string yaml)
+        => new() { Name = "k8s-apply", YamlFiles = new[] { DeploymentFile.Asset("deploy.yaml", Encoding.UTF8.GetBytes(yaml)) }, Namespace = "apps", ObjectStatusCheck = true, StatusCheckTimeoutSeconds = 90 };
 }

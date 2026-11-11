@@ -78,7 +78,8 @@ public class KubernetesYamlActionHandler : IActionHandler
             ForceConflicts = forceConflicts,
             ObjectStatusCheck = objectStatusCheck,
             StatusCheckTimeoutSeconds = statusCheckTimeout,
-            PostApplyScripts = postApplyScripts
+            PostApplyScripts = postApplyScripts,
+            WaitForJobs = KubernetesApplyIntentFactory.ReadWaitForJobs(ctx.Action)
         };
     }
 

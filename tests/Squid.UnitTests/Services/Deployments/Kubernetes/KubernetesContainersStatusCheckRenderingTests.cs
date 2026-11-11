@@ -72,16 +72,37 @@ public class KubernetesContainersStatusCheckRenderingTests
     [InlineData(CommunicationStyle.KubernetesApi, "Deployment", "kubectl rollout status \"deployment/web\" -n \"apps\" --timeout=300s")]
     [InlineData(CommunicationStyle.KubernetesApi, "StatefulSet", "kubectl rollout status \"statefulset/web\" -n \"apps\" --timeout=300s")]
     [InlineData(CommunicationStyle.KubernetesApi, "DaemonSet", "kubectl rollout status \"daemonset/web\" -n \"apps\" --timeout=300s")]
-    [InlineData(CommunicationStyle.KubernetesApi, "Job", "kubectl wait --for=condition=complete \"job/web\" -n \"apps\" --timeout=300s")]
     [InlineData(CommunicationStyle.KubernetesAgent, "Deployment", "kubectl rollout status \"deployment/web\" -n \"apps\" --timeout=300s")]
     [InlineData(CommunicationStyle.KubernetesAgent, "StatefulSet", "kubectl rollout status \"statefulset/web\" -n \"apps\" --timeout=300s")]
     [InlineData(CommunicationStyle.KubernetesAgent, "DaemonSet", "kubectl rollout status \"daemonset/web\" -n \"apps\" --timeout=300s")]
-    [InlineData(CommunicationStyle.KubernetesAgent, "Job", "kubectl wait --for=condition=complete \"job/web\" -n \"apps\" --timeout=300s")]
     public async Task ImportedDeploymentWaitStep_EveryWorkloadType_WaitsOnTheWorkloadAndTheCustomResource(CommunicationStyle style, string resourceType, string expectedWorkloadWait)
     {
         var script = await RenderImportedStepAsync(style, resourceType, (P + "CustomResourceYaml", CustomResourceYaml));
 
         script.ShouldContain(expectedWorkloadWait);
+        script.ShouldContain("kubectl rollout status \"deployment/web-exporter\" -n \"monitoring\" --timeout=300s");
+    }
+
+    // Octopus only blocks on Jobs when "Wait for jobs to complete" (Octopus.Action.Kubernetes.WaitForJobs)
+    // is True — Calamari's Job resource is Successful immediately otherwise
+    // (Calamari/Kubernetes/ResourceStatus/Resources/Job.cs). Absent means Octopus' default: do not wait.
+    [Theory]
+    [InlineData(CommunicationStyle.KubernetesApi, null, false)]
+    [InlineData(CommunicationStyle.KubernetesApi, "True", true)]
+    [InlineData(CommunicationStyle.KubernetesApi, "False", false)]
+    [InlineData(CommunicationStyle.KubernetesAgent, null, false)]
+    [InlineData(CommunicationStyle.KubernetesAgent, "True", true)]
+    [InlineData(CommunicationStyle.KubernetesAgent, "False", false)]
+    public async Task ImportedJobStep_WaitForJobs_GatesEveryJobWaitLikeCalamari(CommunicationStyle style, string waitForJobs, bool expectJobWait)
+    {
+        var overrides = new List<(string, string)> { (P + "CustomResourceYaml", CustomResourceYaml + "\n---\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: cr-migrate\n  namespace: jobs\n") };
+
+        if (waitForJobs != null) overrides.Add(("Octopus.Action.Kubernetes.WaitForJobs", waitForJobs));
+
+        var script = await RenderImportedStepAsync(style, "Job", overrides.ToArray());
+
+        script.Contains("kubectl wait --for=condition=complete \"job/web\" -n \"apps\" --timeout=300s").ShouldBe(expectJobWait, script);
+        script.Contains("kubectl wait --for=condition=complete \"job/cr-migrate\" -n \"jobs\" --timeout=300s").ShouldBe(expectJobWait, script);
         script.ShouldContain("kubectl rollout status \"deployment/web-exporter\" -n \"monitoring\" --timeout=300s");
     }
 

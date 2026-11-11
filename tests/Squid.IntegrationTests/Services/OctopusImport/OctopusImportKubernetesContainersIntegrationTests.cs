@@ -95,6 +95,50 @@ public class OctopusImportKubernetesContainersIntegrationTests : TestBase
         }
     }
 
+    // Octopus waits on Jobs only when "Wait for jobs to complete" is on (Calamari ResourceStatus/Resources/Job.cs);
+    // Squid waits by default, so the persisted step must carry Octopus' value — False when the export omits it.
+    [Theory]
+    [InlineData(null, "False")]
+    [InlineData("True", "True")]
+    [InlineData("False", "False")]
+    public async Task JobContainersStep_WaitForJobs_PersistsOctopusValueOrItsFalseDefault(string waitForJobs, string expected)
+    {
+        var source = new Dictionary<string, string>
+        {
+            ["Octopus.Action.EnabledFeatures"] = "Octopus.Features.KubernetesService",
+            [P + "DeploymentResourceType"] = "Job",
+            [P + "DeploymentName"] = "migrate",
+            [P + "Namespace"] = "apps",
+            [P + "DeploymentWait"] = "Wait",
+            [P + "Containers"] = """[{"Name":"migrate","Image":"busybox:1.36"}]"""
+        };
+
+        if (waitForJobs != null) source["Octopus.Action.Kubernetes.WaitForJobs"] = waitForJobs;
+
+        var archivePath = WriteArchive(Documents(source));
+
+        try
+        {
+            await Run<ILifetimeScope>(async scope =>
+            {
+                var db = scope.Resolve<SquidDbContext>();
+                var result = await ImportAsync(scope, db, archivePath);
+
+                result.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: string.Join("; ", result.Result.Diagnostics.Select(d => $"{d.Severity}:{d.Code}:{d.Message}")));
+
+                var properties = await ActionPropertiesAsync(db, "Deploy web");
+
+                properties["Squid.Action.Kubernetes.WaitForJobs"].ShouldBe(expected);
+                properties["Squid.Action.KubernetesContainers.ObjectStatusCheck"].ShouldBe("True");
+                result.Result.Diagnostics.Concat(result.Result.Resources.SelectMany(r => r.Diagnostics)).ShouldNotContain(d => d.Message.Contains("WaitForJobs"));
+            });
+        }
+        finally
+        {
+            File.Delete(archivePath);
+        }
+    }
+
     [Fact]
     public async Task ContainersStep_WithCaseVariantPropertyKeys_ImportsInsteadOfCrashing()
     {

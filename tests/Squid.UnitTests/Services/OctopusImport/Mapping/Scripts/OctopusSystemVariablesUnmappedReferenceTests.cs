@@ -11,6 +11,8 @@ public class OctopusSystemVariablesUnmappedReferenceTests
     [InlineData("#{Octopus.Action[Build image].Output.Tag}", "Octopus.Action[Build image].Output.Tag")]
     [InlineData("#{Octopus.Web.ServerUri} #{octopus.web.serveruri}", "Octopus.Web.ServerUri")]
     [InlineData("#{Octopus.Zeta} #{Octopus.Alpha} #{Octopus.Zeta}", "Octopus.Alpha|Octopus.Zeta")]
+    [InlineData("#{Octopus.Web.ServerUri | Replace \"Octopus.Old\" \"new\"}", "Octopus.Web.ServerUri")]
+    [InlineData("#{Octopus.Action[\"Build\"].Output.Tag}", "Octopus.Action[\"Build\"].Output.Tag")]
     public void FindUnmappedReferences_UnmappedNamesInsideExpressions_AreReportedDistinctAndSorted(string text, string expected)
     {
         OctopusSystemVariables.FindUnmappedReferences(text).ShouldBe(expected.Split('|'));
@@ -22,6 +24,10 @@ public class OctopusSystemVariablesUnmappedReferenceTests
     [InlineData("Octopus.Web.ServerUri outside any expression")]
     [InlineData("$OctopusParameters['Octopus.Web.ServerUri']")]
     [InlineData("#{MyOctopus.Thing} #{each var in OctopusParameters}#{var.Key}#{/each}")]
+    // Octostache string literals are double-quoted (TemplateParser.QuotedText); a name inside one is text, not a lookup.
+    [InlineData("#{Url | Replace \"Octopus.Old\" \"new\"}")]
+    [InlineData("#{if Env == \"Octopus.Web.ServerUri\"}x#{/if}")]
+    [InlineData("#{Url | Replace \"a Octopus.Old b\" \"new\"}")]
     [InlineData("")]
     [InlineData(null)]
     public void FindUnmappedReferences_MappedOrNonOctopusText_ReportsNothing(string text)

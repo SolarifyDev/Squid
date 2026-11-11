@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Serilog;
 using Squid.Core.Extensions;
+using Squid.Core.Services.DeploymentExecution.Intents;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
 using YamlDotNet.Core;
@@ -35,11 +37,25 @@ internal static class KubernetesResourceWaitBuilder
         if (!int.TryParse(timeoutStr, out var timeoutSeconds))
             timeoutSeconds = 300;
 
-        return BuildWaitScript(files, enabled: true, timeoutSeconds, namespace_, syntax);
+        return BuildEnabledWaitScript(files, timeoutSeconds, namespace_, syntax, KubernetesApplyIntentFactory.ReadWaitForJobs(action));
     }
 
     /// <summary>
-    /// Canonical overload — used by the intent renderer path. When <paramref name="enabled"/>
+    /// Renderer entry point — the status check of a <see cref="KubernetesApplyIntent"/>, over its own
+    /// <c>YamlFiles</c>, honouring <see cref="KubernetesApplyIntent.WaitForJobs"/>.
+    /// </summary>
+    internal static string BuildWaitScript(KubernetesApplyIntent intent)
+    {
+        if (!intent.ObjectStatusCheck)
+            return string.Empty;
+
+        var files = new DeploymentFileCollection(intent.YamlFiles).ToLegacyDictionary();
+
+        return BuildEnabledWaitScript(files, intent.StatusCheckTimeoutSeconds, intent.Namespace, intent.Syntax, intent.WaitForJobs);
+    }
+
+    /// <summary>
+    /// Explicit-flag overload (Jobs are always waited on). When <paramref name="enabled"/>
     /// is false, returns an empty string. Otherwise emits <c>kubectl rollout status</c> /
     /// <c>kubectl wait --for=condition=complete</c> per resource parsed from <paramref name="files"/>,
     /// in the namespace each document declares — falling back to <paramref name="namespace_"/>, the
@@ -50,6 +66,13 @@ internal static class KubernetesResourceWaitBuilder
         if (!enabled)
             return string.Empty;
 
+        return BuildEnabledWaitScript(files, timeoutSeconds, namespace_, syntax, waitForJobs: true);
+    }
+
+    // Calamari only blocks on a Job when WaitForJobs is set — its Job resource is Successful at once
+    // otherwise (Calamari/Kubernetes/ResourceStatus/Resources/Job.cs) — so waitForJobs gates the Job wait only.
+    private static string BuildEnabledWaitScript(Dictionary<string, byte[]> files, int timeoutSeconds, string namespace_, ScriptSyntax syntax, bool waitForJobs)
+    {
         var resources = ExtractResources(files);
 
         if (resources.Count == 0)
@@ -64,7 +87,7 @@ internal static class KubernetesResourceWaitBuilder
         {
             if (RolloutKinds.Contains(kind))
                 AppendRolloutStatus(sb, kind, name, resourceNamespace ?? namespace_, timeout, syntax);
-            else if (WaitableKinds.Contains(kind))
+            else if (waitForJobs && WaitableKinds.Contains(kind))
                 AppendWaitForComplete(sb, kind, name, resourceNamespace ?? namespace_, timeout, syntax);
         }
 

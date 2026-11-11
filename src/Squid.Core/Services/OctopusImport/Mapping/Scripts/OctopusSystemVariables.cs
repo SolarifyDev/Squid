@@ -61,21 +61,29 @@ public static partial class OctopusSystemVariables
 
         return ExpressionPattern().Matches(text)
             .SelectMany(expression => OctopusReferencePattern().Matches(expression.Value))
-            .Select(match => match.Value)
+            .Where(IsReference)
+            .Select(match => match.Groups[ReferenceGroup].Value)
             .Where(name => !TryGetSquidName(name, out _))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
+    private const string ReferenceGroup = "reference";
+
+    // Both patterns match a double-quoted Octostache string literal (TemplateParser.QuotedText) as a whole
+    // first, so a name inside a literal — `Replace "Octopus.Old" "x"` — is text: neither rewritten nor reported.
+    private static bool IsReference(Match match) => match.Groups[ReferenceGroup].Success;
+
+    // A quoted-literal match keeps its quotes, so it never equals a mapped name and is returned unchanged.
     private static string ReplaceName(Match match) => TryGetSquidName(match.Value, out var squidName) ? squidName : match.Value;
 
     [GeneratedRegex(@"#\{[^{}]*\}", RegexOptions.CultureInvariant)]
     private static partial Regex ExpressionPattern();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+|\[[^\[\]{}]*\])+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"""[^""]*""|(?<reference>(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+|\[[^\[\]{}]*\])+)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OctopusReferencePattern();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+)+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"""[^""]*""|(?<reference>(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+)+)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OctopusNamePattern();
 }

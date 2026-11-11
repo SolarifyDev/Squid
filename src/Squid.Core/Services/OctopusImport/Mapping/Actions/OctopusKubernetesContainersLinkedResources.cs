@@ -32,7 +32,7 @@ internal static class OctopusKubernetesContainersLinkedResources
     {
         OctopusImportKubernetesActionMapperSupport.TryGetProperty(action, resource.NameProperty, out var name);
 
-        return FindVolumeReferrers(action, resource).Concat(FindContainerReferrers(action, resource, name?.Trim())).ToList();
+        return FindVolumeReferrers(action, resource).Concat(FindContainerReferrers(action, resource, name)).ToList();
     }
 
     private static IEnumerable<string> FindVolumeReferrers(OctopusDeploymentActionDto action, LinkedResource resource)
@@ -42,7 +42,7 @@ internal static class OctopusKubernetesContainersLinkedResources
 
     private static IEnumerable<string> FindContainerReferrers(OctopusDeploymentActionDto action, LinkedResource resource, string name)
     {
-        if (string.IsNullOrEmpty(name)) return [];
+        if (string.IsNullOrWhiteSpace(name)) return [];
 
         return ReadArray(action, Prefix + "Containers")
             .Where(c => ReferencesName(c, resource.EnvFromProperty, KubernetesContainerEnvFromPayloadProperties.Name, name) || ReferencesName(c, resource.EnvVarProperty, KubernetesContainerEnvVarSourcePayloadProperties.Value, name))
@@ -50,19 +50,20 @@ internal static class OctopusKubernetesContainersLinkedResources
     }
 
     private static bool ReferencesName(JsonElement container, string arrayProperty, string nameProperty, string name)
-        => TryGetProperty(container, arrayProperty, out var items) && items.ValueKind == JsonValueKind.Array && items.EnumerateArray().Any(i => Matches(i, nameProperty, name));
+        => TryGetProperty(container, arrayProperty, out var items) && items.ValueKind == JsonValueKind.Array && items.EnumerateArray().Any(i => KubernetesContainersActionYamlGenerator.IsStepResourceReference(GetString(i, nameProperty), name));
 
     private static void AddDiagnostic(OctopusDeploymentActionDto action, LinkedResource resource, List<string> referrers, List<OctopusImportDiagnosticDto> diagnostics)
     {
         if (referrers.Count == 0) return;
 
-        diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(
-            OctopusImportCompatibilitySeverity.Warning,
-            OctopusImportActionMappingDiagnosticCodes.DisabledFeatureResourceReferenced,
-            // Names stay unquoted and no apostrophes are used: redaction blanks any '...' span holding words like secret.
-            $"Octopus action '{action.Name}' does not enable the {resource.DisplayName} feature, so the {resource.DisplayName} of this step is not deployed, yet {string.Join(", ", referrers)} still reference it. Point them at an existing {resource.DisplayName} or enable the feature before deploying.",
-            action));
+        var message = DescribeDanglingReference(action, resource, referrers);
+
+        diagnostics.Add(OctopusImportKubernetesActionMapperSupport.Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportActionMappingDiagnosticCodes.DisabledFeatureResourceReferenced, message, action));
     }
+
+    // Names stay unquoted and no apostrophes are used: redaction blanks any '...' span holding words like secret.
+    private static string DescribeDanglingReference(OctopusDeploymentActionDto action, LinkedResource resource, List<string> referrers)
+        => $"Octopus action '{action.Name}' does not enable the {resource.DisplayName} feature, so the {resource.DisplayName} of this step is not deployed, yet {string.Join(", ", referrers)} still reference it. Point them at an existing {resource.DisplayName} or enable the feature before deploying.";
 
     private static List<JsonElement> ReadArray(OctopusDeploymentActionDto action, string property)
     {
@@ -80,6 +81,7 @@ internal static class OctopusKubernetesContainersLinkedResources
         }
     }
 
+    // Enum-like values (volume Type, ResourceNameMode) only; resource names use the generator's ordinal rule.
     private static bool Matches(JsonElement element, string property, string expected)
         => string.Equals(GetString(element, property)?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
 

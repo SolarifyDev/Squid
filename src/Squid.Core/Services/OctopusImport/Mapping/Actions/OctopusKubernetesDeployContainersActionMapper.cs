@@ -83,6 +83,7 @@ public sealed class OctopusKubernetesDeployContainersActionMapper : IOctopusImpo
                 "Octopus.Action.KubernetesContainers.IngressTlsCertificates",
                 OctopusImportKubernetesActionMapperSupport.OctopusResourceStatusCheck,
                 OctopusImportKubernetesActionMapperSupport.OctopusDeploymentTimeout,
+                OctopusImportKubernetesActionMapperSupport.OctopusWaitForJobs,
                 "Octopus.Action.Kubernetes.ServerSideApply.Enabled",
                 "Octopus.Action.Kubernetes.ServerSideApply.FieldManager",
                 "Octopus.Action.Kubernetes.ServerSideApply.ForceConflicts",

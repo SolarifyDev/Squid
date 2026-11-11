@@ -754,6 +754,21 @@ public class KubernetesContainersActionYamlGeneratorTests
         result.ShouldNotContainKey("configmap.yaml");
     }
 
+    // Identity rule shared with the Octopus import's dangling-reference diagnostic: only an exact ordinal
+    // match is the step's own ConfigMap/Secret (and gets the deployment suffix); anything else is external.
+    [Theory]
+    [InlineData("app-config", "app-config", true)]
+    [InlineData("App-Config", "app-config", false)]
+    [InlineData(" app-config", "app-config", false)]
+    [InlineData("app-config", "", false)]
+    [InlineData("", "", false)]
+    [InlineData(null, null, false)]
+    [InlineData("app-config", null, false)]
+    public void IsStepResourceReference_ExactOrdinalMatchOnly(string referenceName, string stepResourceName, bool expected)
+    {
+        KubernetesContainersActionYamlGenerator.IsStepResourceReference(referenceName, stepResourceName).ShouldBe(expected);
+    }
+
     [Fact]
     public async Task GenerateAsync_WithDeploymentId_EnvFromConfigMapRefRewritten()
     {

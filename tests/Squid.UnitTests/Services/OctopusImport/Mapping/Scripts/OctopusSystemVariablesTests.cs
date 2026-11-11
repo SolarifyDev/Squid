@@ -12,6 +12,7 @@ public class OctopusSystemVariablesTests
     [InlineData("#{octopus.project.name}", "#{Squid.Project.Name}")]
     [InlineData("#{Octopus.Deployment.CreatedBy.DisplayName}", "#{Squid.Deployment.CreatedBy.DisplayName}")]
     [InlineData("#{Octopus.Action.Package.PackageId}", "#{Squid.Action.Package.PackageId}")]
+    [InlineData("#{Octopus.Release.Number | Replace \"Octopus.Release.Number\" \"x\"}", "#{Squid.Release.Number | Replace \"Octopus.Release.Number\" \"x\"}")]
     public void RewriteReferences_MappedBuiltInsInsideExpressions_AreRewritten(string input, string expected)
     {
         OctopusSystemVariables.RewriteReferences(input).ShouldBe(expected);
@@ -24,6 +25,9 @@ public class OctopusSystemVariablesTests
     [InlineData("#{each var in OctopusParameters}#{var.Key}#{/each}")]
     [InlineData("$OctopusParameters[\"Octopus.Release.Number\"]")]
     [InlineData("#{MyOctopus.Release.Number}")]
+    [InlineData("#{Url | Replace \"Octopus.Release.Number\" \"x\"}")]
+    [InlineData("#{if Squid.Environment.Name == \"Octopus.Environment.Name\"}same#{/if}")]
+    [InlineData("#{Url | Replace \"prefix Octopus.Release.Number suffix\" \"x\"}")]
     [InlineData("")]
     [InlineData(null)]
     public void RewriteReferences_UnmappedOrOutsideExpressions_AreLeftByteForByte(string input)

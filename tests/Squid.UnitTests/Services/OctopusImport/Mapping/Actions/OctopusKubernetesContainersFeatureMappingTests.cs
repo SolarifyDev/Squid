@@ -212,6 +212,12 @@ public class OctopusKubernetesContainersFeatureMappingTests
     [InlineData("", """[{"Name":"ext","Type":"ConfigMap","ReferenceName":"external-cm","ResourceNameMode":"CustomResource"}]""", """[{"Name":"web","ConfigMapEnvFromSource":[{"key":"external-cm"}]}]""")]
     [InlineData(null, """[{"Name":"cfg","Type":"ConfigMap","ReferenceName":"","ResourceNameMode":"LinkedResource"}]""", null)]
     [InlineData("", "not json", "{also not json")]
+    // A reference is the step's own resource only when it equals the name ordinally — the identity rule the
+    // YAML generator uses (KubernetesContainersActionYamlGenerator.IsStepResourceReference); anything else is
+    // an externally managed resource, so a case or whitespace variant must not be reported as dangling.
+    [InlineData("", "[]", """[{"Name":"web","ConfigMapEnvFromSource":[{"key":"App-Config"}]}]""")]
+    [InlineData("", "[]", """[{"Name":"web","ConfigMapEnvFromSource":[{"key":" app-config "}]}]""")]
+    [InlineData("", "[]", """[{"Name":"web","ConfigMapEnvironmentVariables":[{"key":"MODE","value":"APP-CONFIG","option":"mode"}]}]""")]
     public void Map_NoDanglingReferenceToADisabledResource_DoesNotWarn(string enabledFeatures, string volumes, string containers)
     {
         var properties = new List<(string Key, string Value)> { (P + "ConfigMapName", "app-config"), (P + "CombinedVolumes", volumes) };

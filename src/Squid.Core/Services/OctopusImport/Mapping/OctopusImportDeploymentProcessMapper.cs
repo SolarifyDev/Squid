@@ -228,6 +228,7 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
         return new ActionMapping(action, actionIndex, model);
     }
+
     // #{Octopus.Release.Number} etc. would silently stay unresolved on Squid; rewrite every mapped
     // built-in reference to its Squid name. Unmapped names are left untouched and reported by
     // AddUnmappedOctopusReferenceDiagnostic, which runs on the rewritten values.
@@ -245,13 +246,9 @@ public class OctopusImportDeploymentProcessMapper : IOctopusImportDeploymentProc
 
         if (unmapped.Count == 0) return;
 
-        diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Warning,
-            OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable,
-            $"Octopus {kind} '{name}' references Octopus built-in variable(s) {string.Join(", ", unmapped)} that Squid does not provide; they stay unresolved when deploying. Replace them with a project variable or a Squid equivalent.",
-            kind,
-            sourceId,
-            name));
+        var message = $"Octopus {kind} '{name}' references Octopus built-in variable(s) {string.Join(", ", unmapped)} that Squid does not provide; they stay unresolved when deploying. Replace them with a project variable or a Squid equivalent.";
+
+        diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportVariableReferenceDiagnosticCodes.UnsupportedOctopusSystemVariable, message, kind, sourceId, name));
     }
 
     private static int? MapWorkerPool(

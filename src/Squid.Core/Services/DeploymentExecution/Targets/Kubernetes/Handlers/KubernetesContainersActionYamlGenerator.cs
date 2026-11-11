@@ -193,6 +193,13 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         catch { /* malformed JSON — skip rewriting, parser will handle gracefully */ }
     }
 
+    /// <summary>
+    /// Whether a container envFrom / env valueFrom reference names the step's own ConfigMap or Secret
+    /// (<paramref name="stepResourceName"/>): an exact ordinal match. Any other name is an externally
+    /// managed resource. Shared with the Octopus import so its diagnostics use the same identity rule.
+    /// </summary>
+    internal static bool IsStepResourceReference(string referenceName, string stepResourceName) => !string.IsNullOrWhiteSpace(stepResourceName) && string.Equals(referenceName, stepResourceName, StringComparison.Ordinal);
+
     private static bool RewriteEnvFromNames(JsonNode container, string arrayKey, string baseName, string suffix)
     {
         if (string.IsNullOrWhiteSpace(baseName)) return false;
@@ -208,7 +215,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             if (item == null) continue;
 
             var name = item[KubernetesContainerEnvFromPayloadProperties.Name]?.GetValue<string>();
-            if (!string.Equals(name, baseName, StringComparison.Ordinal)) continue;
+            if (!IsStepResourceReference(name, baseName)) continue;
 
             item[KubernetesContainerEnvFromPayloadProperties.Name] = versionedName;
             modified = true;
@@ -232,7 +239,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             if (item == null) continue;
 
             var sourceName = item[KubernetesContainerEnvVarSourcePayloadProperties.Value]?.GetValue<string>();
-            if (!string.Equals(sourceName, baseName, StringComparison.Ordinal)) continue;
+            if (!IsStepResourceReference(sourceName, baseName)) continue;
 
             item[KubernetesContainerEnvVarSourcePayloadProperties.Value] = versionedName;
             modified = true;

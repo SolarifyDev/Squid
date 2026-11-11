@@ -17,6 +17,7 @@ internal static class OctopusImportKubernetesActionMapperSupport
     internal const string OctopusResourceStatusCheck = OctopusPropertyNames.ActionKubernetesResourceStatusCheck;
     internal const string OctopusDeploymentTimeout = OctopusPropertyNames.ActionKubernetesDeploymentTimeout;
     internal const string OctopusEnabledFeatures = OctopusPropertyNames.ActionEnabledFeatures;
+    internal const string OctopusWaitForJobs = OctopusKubernetesPrefix + "WaitForJobs";
 
     internal static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -100,6 +101,17 @@ internal static class OctopusImportKubernetesActionMapperSupport
             var destinationName = $"Squid.Action.Kubernetes.{suffix}";
             AddProperty(properties, destinationName, property.Value);
         }
+
+        AddWaitForJobsDefault(action, properties);
+    }
+
+    // Octopus' "Wait for jobs to complete" is off unless set; Squid's own default is to wait on Jobs,
+    // so an Octopus action without the property is pinned to False to keep Octopus' behaviour.
+    private static void AddWaitForJobsDefault(OctopusDeploymentActionDto action, List<ActionPropertyModel> properties)
+    {
+        if (TryGetProperty(action, OctopusWaitForJobs, out _)) return;
+
+        AddProperty(properties, KubernetesProperties.WaitForJobs, KubernetesBooleanValues.False);
     }
 
     internal static void AddIngressAnnotations(
