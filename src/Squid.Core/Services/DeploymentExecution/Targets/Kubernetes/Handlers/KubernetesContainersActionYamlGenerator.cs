@@ -46,7 +46,9 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         var errors = new List<string>();
 
-        if (_blueGreen.CanGenerate(properties))
+        var blueGreen = _blueGreen.CanGenerate(properties);
+
+        if (blueGreen)
         {
             foreach (var kvp in _blueGreen.GenerateAll(properties))
                 result[kvp.Key] = Encoding.UTF8.GetBytes(kvp.Value);
@@ -68,7 +70,11 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
             AddResource(result, "deployment.yaml", _deployment, properties, errors);
         }
 
-        AddResource(result, "service.yaml", _service, properties, errors);
+        // Blue/Green embeds the Service in its script (it owns the slot selector); only report misconfiguration here.
+        if (blueGreen)
+            ReportIfMisconfigured("service.yaml", _service, properties, errors);
+        else
+            AddResource(result, "service.yaml", _service, properties, errors);
         AddResource(result, "configmap.yaml", _configMap, properties, errors);
         AddResource(result, "ingress.yaml", _ingress, properties, errors);
         AddResource(result, "secret.yaml", _secret, properties, errors);
@@ -279,9 +285,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
     {
         if (!generator.CanGenerate(properties))
         {
-            if (generator.IsConfigured(properties))
-                errors.Add($"Resource \"{fileName}\" is configured but could not be generated — verify that its property values are valid JSON");
-
+            ReportIfMisconfigured(fileName, generator, properties, errors);
             return;
         }
 
@@ -289,5 +293,11 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
 
         if (!string.IsNullOrWhiteSpace(yaml))
             result[fileName] = Encoding.UTF8.GetBytes(yaml);
+    }
+
+    private static void ReportIfMisconfigured(string fileName, IKubernetesResourceGenerator generator, Dictionary<string, string> properties, List<string> errors)
+    {
+        if (!generator.CanGenerate(properties) && generator.IsConfigured(properties))
+            errors.Add($"Resource \"{fileName}\" is configured but could not be generated — verify that its property values are valid JSON");
     }
 }

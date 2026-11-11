@@ -4,6 +4,7 @@ using System.Text;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
+using Squid.Core.Services.DeploymentExecution.Script.Files;
 using Squid.Message.Constants;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Process;
@@ -147,6 +148,57 @@ public class KubernetesYamlActionHandlerDescribeIntentTests
 
         intent.YamlFiles.Count.ShouldBe(1);
         intent.YamlFiles[0].RelativePath.ShouldBe("deployment.yaml");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_ShellScripts_CarriedAsPostApplyScripts()
+    {
+        var files = new Dictionary<string, byte[]>
+        {
+            ["service.yaml"] = Encoding.UTF8.GetBytes("apiVersion: v1\n"),
+            ["bluegreen.sh"] = Encoding.UTF8.GetBytes("kubectl patch service web\n")
+        };
+        var handler = CreateHandler(files);
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)handler).DescribeIntentAsync(CreateContext(), CancellationToken.None);
+
+        var script = intent.PostApplyScripts.ShouldHaveSingleItem();
+        script.RelativePath.ShouldBe("bluegreen.sh");
+        script.Kind.ShouldBe(DeploymentFileKind.Script);
+        Encoding.UTF8.GetString(script.Content).ShouldBe("kubectl patch service web\n");
+        intent.YamlFiles.Select(f => f.RelativePath).ShouldNotContain("bluegreen.sh");
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_NoShellScripts_PostApplyScriptsEmpty()
+    {
+        var files = new Dictionary<string, byte[]> { ["deployment.yaml"] = Encoding.UTF8.GetBytes("apiVersion: apps/v1\n") };
+        var handler = CreateHandler(files);
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)handler).DescribeIntentAsync(CreateContext(), CancellationToken.None);
+
+        intent.PostApplyScripts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task DescribeIntentAsync_RealBlueGreenGenerator_SwitchScriptReachesIntent()
+    {
+        // Seam test: the real generator's output must survive the handler's file partitioning.
+        // Before the fix the .sh files were filtered out here and the switch never ran.
+        var action = CreateAction(namespaceValue: "bg-ns");
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.DeploymentName", PropertyValue = "web" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.DeploymentStyle", PropertyValue = "BlueGreen" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.Containers", PropertyValue = """[{"Name":"app","Image":"busybox:latest"}]""" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.ServiceName", PropertyValue = "web-svc" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.ServicePorts", PropertyValue = """[{"name":"http","port":"80","protocol":"TCP"}]""" });
+        var handler = new KubernetesYamlActionHandler(new IActionYamlGenerator[] { new KubernetesContainersActionYamlGenerator() });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        var script = Encoding.UTF8.GetString(intent.PostApplyScripts.ShouldHaveSingleItem().Content);
+        script.ShouldContain("squid_bluegreen_service \"$SQUID_BLUEGREEN_NEW_SLOT\" | kubectl apply");
+        script.ShouldContain("kubectl scale deployment");
+        intent.YamlFiles.ShouldNotContain(f => f.RelativePath == "service.yaml");
     }
 
     [Fact]

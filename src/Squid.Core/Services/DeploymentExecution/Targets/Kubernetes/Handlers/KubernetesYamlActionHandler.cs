@@ -43,7 +43,8 @@ public class KubernetesYamlActionHandler : IActionHandler
     /// semantic name (<c>k8s-apply</c>). YAML generation (container image resolution,
     /// deployment id suffix injection, feed secret injection, generator invocation) is
     /// handled by <see cref="ResolveGeneratedYamlFilesAsync"/>; the intent's
-    /// <c>YamlFiles</c> is filtered to valid YAML entries only.
+    /// <c>YamlFiles</c> is filtered to valid YAML entries only, and generated <c>.sh</c>
+    /// files (e.g. the blue/green switch) are carried as <c>PostApplyScripts</c>.
     /// </summary>
     async Task<ExecutionIntent> IActionHandler.DescribeIntentAsync(ActionExecutionContext ctx, CancellationToken ct)
     {
@@ -57,6 +58,7 @@ public class KubernetesYamlActionHandler : IActionHandler
         var yamlOnly = files.Where(kvp => IsYamlFile(kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         var yamlFiles = DeploymentFileCollection.FromLegacyFiles(yamlOnly).ToList();
+        var postApplyScripts = SelectPostApplyScripts(files);
         var namespace_ = GetNamespaceFromAction(ctx.Action);
 
         var (serverSide, fieldManager, forceConflicts) = KubernetesApplyIntentFactory.ReadServerSideApply(ctx.Action);
@@ -75,7 +77,8 @@ public class KubernetesYamlActionHandler : IActionHandler
             FieldManager = fieldManager,
             ForceConflicts = forceConflicts,
             ObjectStatusCheck = objectStatusCheck,
-            StatusCheckTimeoutSeconds = statusCheckTimeout
+            StatusCheckTimeoutSeconds = statusCheckTimeout,
+            PostApplyScripts = postApplyScripts
         };
     }
 
@@ -95,6 +98,12 @@ public class KubernetesYamlActionHandler : IActionHandler
 
         return files;
     }
+
+    private static List<DeploymentFile> SelectPostApplyScripts(Dictionary<string, byte[]> files)
+        => files.Where(kvp => IsShellScript(kvp.Key)).OrderBy(kvp => kvp.Key, StringComparer.Ordinal).Select(kvp => DeploymentFile.Script(kvp.Key, kvp.Value)).ToList();
+
+    private static bool IsShellScript(string fileName)
+        => fileName.EndsWith(".sh", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsYamlFile(string fileName)
         => fileName.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase)
