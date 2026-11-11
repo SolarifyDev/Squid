@@ -73,6 +73,31 @@ public class DeploymentActivityLoggerHealthCheckTests
         VerifyLogMessage(logWriter, ServerTaskLogCategory.Warning, "Health check completed: 2 healthy, 1 unhealthy");
     }
 
+    [Fact]
+    public async Task ManualInterventionResolved_ViaAdministratorOverride_LogsWhoOverrodeAsWarning()
+    {
+        var (logger, logWriter) = CreateLogger();
+
+        await logger.HandleAsync(new ManualInterventionResolvedEvent(new DeploymentEventContext
+        {
+            StepDisplayOrder = 1, ActionName = "Approve", GuidedFailureResolution = "Proceed", InterruptionAdministratorOverrideBy = "ops-admin (user 42)"
+        }), CancellationToken.None);
+
+        VerifyLogMessage(logWriter, ServerTaskLogCategory.Info, "Manual intervention resolved: Proceed");
+        VerifyLogMessage(logWriter, ServerTaskLogCategory.Warning, "Manual intervention \"Approve\" was resolved via administrator override by ops-admin (user 42) on behalf of its responsible team(s)");
+    }
+
+    [Fact]
+    public async Task ManualInterventionResolved_ByTeamMember_LogsNoOverrideLine()
+    {
+        var (logger, logWriter) = CreateLogger();
+
+        await logger.HandleAsync(new ManualInterventionResolvedEvent(new DeploymentEventContext { StepDisplayOrder = 1, ActionName = "Approve", GuidedFailureResolution = "Proceed" }), CancellationToken.None);
+
+        VerifyLogMessage(logWriter, ServerTaskLogCategory.Info, "Manual intervention resolved: Proceed");
+        logWriter.Verify(x => x.AddLogAsync(It.IsAny<int>(), It.IsAny<long>(), ServerTaskLogCategory.Warning, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<long?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // === Helpers ===
 
     private static (DeploymentActivityLogger Logger, Mock<IDeploymentLogWriter> LogWriter) CreateLogger()

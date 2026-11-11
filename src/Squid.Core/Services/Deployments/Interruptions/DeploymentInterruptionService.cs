@@ -79,7 +79,10 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
         if (currentUser.Id.HasValue)
-            await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false);
+        {
+            var access = await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false);
+            RecordAdministratorOverride(interruption, access, currentUser.Id.Value, currentUser.Name);
+        }
 
         var outcome = InterruptionFormBuilder.ResolveOutcome(interruption.InterruptionType, values);
 
@@ -104,12 +107,32 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
         if (int.TryParse(userId, out var uid))
-            await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
+        {
+            var access = await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
+            LogResponsibilityOverride(interruption, access, uid);
+        }
 
         interruption.ResponsibleUserId = userId;
 
         await repository.UpdateAsync(interruption, ct).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    private static void RecordAdministratorOverride(DeploymentInterruption interruption, InterruptionAccess access, int userId, string userName)
+    {
+        if (access != InterruptionAccess.AdministratorOverride) return;
+
+        interruption.AdministratorOverrideUserId = userId;
+        interruption.AdministratorOverrideUserName = userName;
+
+        Log.Warning("Interruption {InterruptionId} of task {ServerTaskId} ({StepName}) was resolved by user {UserId} via administrator override of responsible teams {ResponsibleTeamIds}", interruption.Id, interruption.ServerTaskId, interruption.StepName, userId, interruption.ResponsibleTeamIds);
+    }
+
+    private static void LogResponsibilityOverride(DeploymentInterruption interruption, InterruptionAccess access, int userId)
+    {
+        if (access != InterruptionAccess.AdministratorOverride) return;
+
+        Log.Warning("User {UserId} took responsibility for interruption {InterruptionId} of task {ServerTaskId} via administrator override of responsible teams {ResponsibleTeamIds}", userId, interruption.Id, interruption.ServerTaskId, interruption.ResponsibleTeamIds);
     }
 
     public async Task<InterruptionOutcome> WaitForInterruptionAsync(int interruptionId, CancellationToken ct)

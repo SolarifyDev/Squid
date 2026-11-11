@@ -191,6 +191,8 @@ public static class OctopusImportBlockerSummaryBuilder
                 BuildResourceMessage(resources, "uses configuration that Squid cannot import."),
             OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler =>
                 BuildResourceMessage(resources, "cannot be imported because Squid does not have a handler to run it."),
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing =>
+                BuildResourceMessage(resources, "is an Octopus built-in team whose Squid built-in equivalent is missing from the destination."),
             OctopusImportActionMappingDiagnosticCodes.MissingResponsibleTeamMapping =>
                 BuildResourceMessage(resources, "references a team that is not available in the destination."),
             OctopusImportActionMappingDiagnosticCodes.MissingFeedMapping or

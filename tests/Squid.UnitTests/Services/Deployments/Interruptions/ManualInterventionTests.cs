@@ -92,6 +92,24 @@ public class ManualInterventionTests
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(42, "ops-admin", "ops-admin (user 42)")]
+    [InlineData(42, null, "user 42")]
+    [InlineData(null, null, null)]
+    public async Task ExecuteStepLevelAsync_Resume_CarriesTheAdministratorOverrideIntoTheResolvedEvent(int? overrideUserId, string overrideUserName, string expectedOverrideBy)
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        interruptionService.Setup(s => s.FindResolvedInterruptionAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentInterruption { Resolution = "Proceed", AdministratorOverrideUserId = overrideUserId, AdministratorOverrideUserName = overrideUserName });
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+
+        var handler = new ManualInterventionActionHandler(interruptionService.Object, new Mock<IServerTaskService>().Object, lifecycle.Object);
+
+        await handler.ExecuteStepLevelAsync(CreateStepActionContext(), CancellationToken.None);
+
+        lifecycle.Verify(l => l.EmitAsync(It.Is<ManualInterventionResolvedEvent>(e => e.Context.GuidedFailureResolution == "Proceed" && e.Context.InterruptionAdministratorOverrideBy == expectedOverrideBy), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task ExecuteStepLevelAsync_ResumeWithAbort_ThrowsDeploymentAbortedException()
     {

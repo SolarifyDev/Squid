@@ -19,6 +19,10 @@ public class DeploymentInterruption : IEntity<int>, IAuditable
     public string ResponsibleTeamIds { get; set; }
     public string Resolution { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
+
+    // Set only when the interruption was resolved by a non-member via the administrator approval override.
+    public int? AdministratorOverrideUserId { get; set; }
+    public string AdministratorOverrideUserName { get; set; }
     public int SpaceId { get; set; }
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }
