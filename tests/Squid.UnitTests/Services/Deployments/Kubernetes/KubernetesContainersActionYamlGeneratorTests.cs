@@ -930,6 +930,41 @@ public class KubernetesContainersActionYamlGeneratorTests
 
     // === Helpers ===
 
+    // === Custom resource (Octopus "Custom resource" feature) ===
+
+    [Fact]
+    public async Task GenerateAsync_CustomResourceYaml_IsEmittedVerbatimAlongsideTheWorkload()
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        const string yaml = "apiVersion: example.com/v1\nkind: Widget\nmetadata:\n  name: w\n";
+        AddProperty(action, "Squid.Action.KubernetesContainers.CustomResourceYaml", yaml);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldContainKey("deployment.yaml");
+        Encoding.UTF8.GetString(result[KubernetesContainersActionYamlGenerator.CustomResourceFileName]).ShouldBe(yaml);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task GenerateAsync_NoCustomResourceYaml_EmitsNoCustomResourceFile(string yaml)
+    {
+        var (step, action) = CreateMinimalDeploymentScenario();
+        if (yaml != null) AddProperty(action, "Squid.Action.KubernetesContainers.CustomResourceYaml", yaml);
+
+        var result = await _generator.GenerateAsync(step, action, CancellationToken.None);
+
+        result.ShouldNotContainKey(KubernetesContainersActionYamlGenerator.CustomResourceFileName);
+    }
+
+    [Fact]
+    public void CustomResourceFileName_IsPinned()
+    {
+        KubernetesContainersActionYamlGenerator.CustomResourceFileName.ShouldBe("customresource.yaml");
+    }
+
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateFrontendScenario()
     {
         var step = new DeploymentStepDto { Id = 1, Name = "Deploy frontend", StepType = "Deploy" };

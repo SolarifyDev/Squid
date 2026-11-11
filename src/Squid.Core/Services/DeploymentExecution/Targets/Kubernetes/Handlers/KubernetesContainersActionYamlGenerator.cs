@@ -78,6 +78,7 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
         AddResource(result, "configmap.yaml", _configMap, properties, errors);
         AddResource(result, "ingress.yaml", _ingress, properties, errors);
         AddResource(result, "secret.yaml", _secret, properties, errors);
+        AddCustomResource(result, properties);
 
         if (errors.Count > 0)
             throw new ResourceGenerationException(errors);
@@ -279,6 +280,17 @@ public class KubernetesContainersActionYamlGenerator : IActionYamlGenerator
                 properties[KubernetesProperties.CombinedVolumes] = volumes.ToJsonString();
         }
         catch { /* malformed JSON — skip rewriting */ }
+    }
+
+    // Free-form custom resource YAML (Octopus "Custom resource" feature) is applied verbatim after
+    // variable expansion — Squid does not template it, so it is never subject to name suffixing.
+    internal const string CustomResourceFileName = "customresource.yaml";
+
+    private static void AddCustomResource(Dictionary<string, byte[]> result, Dictionary<string, string> properties)
+    {
+        if (!properties.TryGetValue(SpecialVariables.Action.KubernetesYaml, out var yaml) || string.IsNullOrWhiteSpace(yaml)) return;
+
+        result[CustomResourceFileName] = Encoding.UTF8.GetBytes(yaml);
     }
 
     private static void AddResource(Dictionary<string, byte[]> result, string fileName, IKubernetesResourceGenerator generator, Dictionary<string, string> properties, List<string> errors)

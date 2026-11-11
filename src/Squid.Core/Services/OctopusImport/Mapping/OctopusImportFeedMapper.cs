@@ -1,5 +1,6 @@
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.Deployments.ExternalFeed;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -20,6 +21,15 @@ public interface IOctopusImportFeedMapper : IScopedDependency
 
 public class OctopusImportFeedMapper : IOctopusImportFeedMapper
 {
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+
+    public OctopusImportFeedMapper(IOctopusExportSecretsAccessor secretsAccessor = null)
+    {
+        _secretsAccessor = secretsAccessor;
+    }
+
+    private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
+
     public OctopusImportFeedMappingResult MapToCreateCommand(
         OctopusResourceNode feedResource,
         int destinationSpaceId)
@@ -32,8 +42,8 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
                 FeedType = mapping.FeedType,
                 Properties = mapping.Properties,
                 FeedUri = mapping.FeedUri,
-                Username = null,
-                Password = null,
+                Username = mapping.Credentials.Username,
+                Password = mapping.Credentials.Password,
                 Name = mapping.Name,
                 Slug = mapping.Slug,
                 PackageAcquisitionLocationOptions = [],
@@ -62,8 +72,8 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
                 FeedType = mapping.FeedType,
                 Properties = mapping.Properties,
                 FeedUri = mapping.FeedUri,
-                Username = null,
-                PasswordNewValue = null,
+                Username = mapping.Credentials.Username,
+                PasswordNewValue = mapping.Credentials.Password,
                 Name = mapping.Name,
                 Slug = mapping.Slug,
                 PackageAcquisitionLocationOptions = [],
@@ -73,7 +83,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             mapping.ManualConfigurationMarkers);
     }
 
-    private static FeedCommandMapping Map(OctopusResourceNode feedResource, int destinationSpaceId)
+    private FeedCommandMapping Map(OctopusResourceNode feedResource, int destinationSpaceId)
     {
         ArgumentNullException.ThrowIfNull(feedResource);
 
@@ -89,8 +99,9 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var markers = new List<OctopusImportManualConfigurationMarker>();
         var mappedFeedType = MapFeedType(feed, feedResource, diagnostics);
+        var credentials = OctopusImportFeedCredentials.Resolve(feed, Secrets);
 
-        if (!string.IsNullOrWhiteSpace(feed.Username) || !string.IsNullOrWhiteSpace(feed.Password))
+        if (!credentials.IsResolved)
         {
             markers.Add(OctopusImportManualConfiguration.CreateMarker(
                 feedResource,
@@ -113,6 +124,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             feed.Name,
             feed.Slug,
             properties,
+            credentials,
             diagnostics,
             markers);
     }
@@ -196,6 +208,7 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
         string Name,
         string Slug,
         Dictionary<string, string> Properties,
+        OctopusImportFeedCredentials Credentials,
         IReadOnlyList<OctopusImportDiagnosticDto> Diagnostics,
         IReadOnlyList<OctopusImportManualConfigurationMarker> ManualConfigurationMarkers);
 }

@@ -356,8 +356,50 @@ public class OctopusFeedDto : OctopusDocumentDto
     public int DownloadRetryBackoffSeconds { get; set; }
 }
 
+public class OctopusLibraryVariableSetDto : OctopusDocumentDto
+{
+    public string Description { get; set; }
+
+    public string VariableSetId { get; set; }
+
+    public string ContentType { get; set; }
+
+    public List<JsonElement> Templates { get; set; } = [];
+}
+
+public class OctopusActionTemplateDto : OctopusDocumentDto
+{
+    public string ActionType { get; set; }
+
+    public int Version { get; set; }
+
+    public Dictionary<string, string> Properties { get; set; } = [];
+
+    public List<OctopusActionTemplateParameterDto> Parameters { get; set; } = [];
+}
+
+public class OctopusActionTemplateParameterDto
+{
+    public string Id { get; set; }
+
+    public string Name { get; set; }
+
+    public string Label { get; set; }
+
+    public JsonElement? DefaultValue { get; set; }
+
+    public Dictionary<string, string> DisplaySettings { get; set; } = [];
+
+    public bool IsSensitive => DisplaySettings != null && DisplaySettings.TryGetValue("Octopus.ControlType", out var controlType) && string.Equals(controlType, "Sensitive", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The plain default (null for sensitive parameters, whose default is an encrypted/structured value).</summary>
+    public string PlainDefaultValue => DefaultValue is { ValueKind: JsonValueKind.String } value && !IsSensitive ? value.GetString() : null;
+}
+
 public class OctopusTeamDto : OctopusDocumentDto
 {
+    public string Description { get; set; }
+
     public List<string> MemberUserIds { get; set; } = [];
 
     public List<string> ExternalSecurityGroups { get; set; } = [];

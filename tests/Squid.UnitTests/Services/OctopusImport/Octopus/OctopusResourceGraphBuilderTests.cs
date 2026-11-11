@@ -340,6 +340,74 @@ public class OctopusResourceGraphBuilderTests
         resource.DocumentKind.ShouldBe(OctopusDocumentKind.WorkerPool);
     }
 
+    [Fact]
+    public async Task Build_LibraryVariableSetExport_LinksProjectLibraryAndOwnedVariablesWithoutProjectOwnership()
+    {
+        var libraryJson = """{"Id":"LibraryVariableSets-1","Name":"Shared","VariableSetId":"variableset-LibraryVariableSets-1","ContentType":"Variables"}""";
+        var libraryVariablesJson = """
+                                   {
+                                       "Id":"variableset-LibraryVariableSets-1",
+                                       "OwnerId":"LibraryVariableSets-1",
+                                       "OwnerType":"LibraryVariableSet",
+                                       "Variables":[{"Id":"lib-var-1","Name":"Shared:Url","Value":"https://x","Scope":{"Environment":["Environments-1"]}}]
+                                   }
+                                   """;
+        var projectJson = """{"Id":"Projects-1","Name":"App","ProjectGroupId":"ProjectGroups-1","LifecycleId":"Lifecycles-1","IncludedLibraryVariableSetIds":["LibraryVariableSets-1"]}""";
+
+        var inventory = await BuildInventoryAsync(
+            ("LibraryVariableSets-1", "LibraryVariableSet", "LibraryVariableSets-1.json", libraryJson),
+            ("variableset-LibraryVariableSets-1", "LibraryVariables", "variableset-LibraryVariableSets-1.json", libraryVariablesJson),
+            ("Projects-1", "Project", "Projects-1.json", projectJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Diagnostics.ShouldNotContain(d => d.Severity == Squid.Message.Enums.OctopusImport.OctopusImportCompatibilitySeverity.Blocker);
+        var library = graph.Resources.Single(r => r.SourceId == "LibraryVariableSets-1");
+        library.Kind.ShouldBe(OctopusResourceKind.LibraryVariableSet);
+        library.GetSource<OctopusLibraryVariableSetDto>().VariableSetId.ShouldBe("variableset-LibraryVariableSets-1");
+
+        var variableSet = graph.Resources.Single(r => r.SourceId == "variableset-LibraryVariableSets-1");
+        variableSet.Kind.ShouldBe(OctopusResourceKind.VariableSet);
+        variableSet.OwnerProjectId.ShouldBeNull();
+        variableSet.ParentSourceId.ShouldBe("LibraryVariableSets-1");
+        graph.Resources.Single(r => r.SourceId == "lib-var-1").OwnerProjectId.ShouldBeNull();
+
+        graph.Dependencies.ShouldContain(new OctopusResourceDependency("Projects-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet));
+        graph.Dependencies.ShouldContain(new OctopusResourceDependency("variableset-LibraryVariableSets-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet));
+        graph.Dependencies.ShouldNotContain(d => d.SourceId == "LibraryVariableSets-1");
+    }
+
+    [Fact]
+    public async Task Build_ActionTemplate_IsTypedAndAMalformedTemplateFallsBackWithoutBlocking()
+    {
+        var templateJson = """{"Id":"ActionTemplates-1","Name":"Notify","ActionType":"Octopus.Script","Version":3,"Parameters":[{"Id":"p1","Name":"BotUrl","DefaultValue":"https://default","DisplaySettings":{"Octopus.ControlType":"SingleLineText"}}]}""";
+        var malformedJson = """{"Id":"ActionTemplates-2","Name":"Odd","Version":"not-a-number","Parameters":{"unexpected":true}}""";
+
+        var inventory = await BuildInventoryAsync(
+            ("ActionTemplates-1", "ActionTemplate", "ActionTemplates-1.json", templateJson),
+            ("ActionTemplates-2", "ActionTemplate", "ActionTemplates-2.json", malformedJson));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Diagnostics.ShouldNotContain(d => d.Severity == Squid.Message.Enums.OctopusImport.OctopusImportCompatibilitySeverity.Blocker);
+        var template = graph.Resources.Single(r => r.SourceId == "ActionTemplates-1").GetSource<OctopusActionTemplateDto>();
+        template.Parameters.Single().PlainDefaultValue.ShouldBe("https://default");
+        graph.Resources.Single(r => r.SourceId == "ActionTemplates-2").Kind.ShouldBe(OctopusResourceKind.ActionTemplate);
+    }
+
+    [Theory]
+    [InlineData("StaticWorkerPool")]
+    [InlineData("DynamicWorkerPool")]
+    public async Task Build_WorkerPoolDocumentTypes_AreClassifiedAsWorkerPool(string documentType)
+    {
+        var inventory = await BuildInventoryAsync(("WorkerPools-1", documentType, "WorkerPools-1.json", """{"Id":"WorkerPools-1","Name":"Default Worker Pool"}"""));
+
+        var graph = _graphBuilder.Build(inventory);
+
+        graph.Resources.Single().Kind.ShouldBe(OctopusResourceKind.WorkerPool);
+        graph.Diagnostics.ShouldBeEmpty();
+    }
+
     private async Task<OctopusManifestInventoryResult> BuildInventoryAsync(params (string Id, string DocumentType, string DocumentSource, string Json)[] documents)
     {
         var archiveEntries = new List<OctopusExtractedArchiveEntry>

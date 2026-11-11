@@ -10,6 +10,7 @@ using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -86,6 +87,8 @@ public class ConfirmOctopusImportCommandHandlerTests
     [InlineData(OctopusResourceKind.VariableSet, Permission.VariableEdit, false)]
     [InlineData(OctopusResourceKind.DeploymentProcess, Permission.ProcessEdit, false)]
     [InlineData(OctopusResourceKind.Release, Permission.ReleaseCreate, false)]
+    [InlineData(OctopusResourceKind.Team, Permission.TeamCreate, false)]
+    [InlineData(OctopusResourceKind.LibraryVariableSet, Permission.VariableEdit, false)]
     public async Task Handle_WhenPlanCreatesResource_PreflightsMappedPermission(
         OctopusResourceKind resourceKind,
         Permission expectedPermission,
@@ -190,6 +193,39 @@ public class ConfirmOctopusImportCommandHandlerTests
                 It.IsAny<OctopusImportConfirmationRequest>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task Handle_LoadsTheSessionExportSecretsBeforePlanningAndConfirming()
+    {
+        var harness = new Harness();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+        var accessor = new OctopusExportSecretsAccessor();
+        var sut = harness.CreateSut(secretStore.Object, accessor);
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview();
+        var secretsAvailableWhenPlanning = false;
+        var secretsAvailableWhenConfirming = false;
+
+        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
+        harness.PlanningPipeline
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Callback(() => secretsAvailableWhenPlanning = accessor.Secrets.IsAvailable)
+            .ReturnsAsync(Snapshot(preview));
+        harness.ConfirmationOrchestrator
+            .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
+            .Callback(() => secretsAvailableWhenConfirming = accessor.Secrets.IsAvailable)
+            .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
+
+        await sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        secretsAvailableWhenPlanning.ShouldBeTrue();
+        secretsAvailableWhenConfirming.ShouldBeTrue();
+        secretStore.Verify(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private static OctopusImportPreviewPlanDto Preview(
@@ -307,14 +343,11 @@ public class ConfirmOctopusImportCommandHandlerTests
             AuthorizationService
                 .Setup(a => a.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
-            Sut = new ConfirmOctopusImportCommandHandler(
-                SessionDataProvider.Object,
-                SessionService.Object,
-                CurrentUser.Object,
-                AuthorizationService.Object,
-                PlanningPipeline.Object,
-                ConfirmationOrchestrator.Object);
+            Sut = CreateSut(null, null);
         }
+
+        public ConfirmOctopusImportCommandHandler CreateSut(IOctopusImportExportSecretStore secretStore, IOctopusExportSecretsAccessor accessor)
+            => new(SessionDataProvider.Object, SessionService.Object, CurrentUser.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, secretStore, accessor);
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

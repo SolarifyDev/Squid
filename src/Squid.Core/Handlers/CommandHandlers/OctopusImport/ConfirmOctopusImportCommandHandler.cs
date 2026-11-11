@@ -7,6 +7,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -20,7 +21,9 @@ public class ConfirmOctopusImportCommandHandler(
     ICurrentUser currentUser,
     IAuthorizationService authorizationService,
     IOctopusImportPlanningPipeline planningPipeline,
-    IOctopusImportConfirmationOrchestrator confirmationOrchestrator)
+    IOctopusImportConfirmationOrchestrator confirmationOrchestrator,
+    IOctopusImportExportSecretStore secretStore = null,
+    IOctopusExportSecretsAccessor secretsAccessor = null)
     : ICommandHandler<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -74,6 +77,8 @@ public class ConfirmOctopusImportCommandHandler(
 
         if (validatedPlan?.PreviewPlan == null)
             return BadRequest(command, state, "Octopus import session does not have a validated preview plan.");
+
+        await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
         OctopusImportPlanningSnapshot snapshot;
         try
@@ -164,6 +169,8 @@ public class ConfirmOctopusImportCommandHandler(
             OctopusResourceKind.Lifecycle => Permission.LifecycleCreate,
             OctopusResourceKind.Feed => Permission.FeedEdit,
             OctopusResourceKind.Account => Permission.AccountCreate,
+            OctopusResourceKind.Team => Permission.TeamCreate,
+            OctopusResourceKind.LibraryVariableSet => Permission.VariableEdit,
             OctopusResourceKind.Channel => ResolveChannelPermission(resource),
             OctopusResourceKind.VariableSet => Permission.VariableEdit,
             OctopusResourceKind.DeploymentProcess => Permission.ProcessEdit,

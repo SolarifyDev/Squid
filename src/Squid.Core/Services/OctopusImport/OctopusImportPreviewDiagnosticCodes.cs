@@ -14,6 +14,10 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string MissingTargetRole = "octopus.validation.missing_target_role";
     public const string MissingMachine = "octopus.validation.missing_machine";
     public const string MissingAccount = "octopus.validation.missing_account";
+    public const string MissingResponsibleTeam = "octopus.validation.missing_responsible_team";
     public const string IncompatibleSharedResourceReuse = "octopus.validation.incompatible_shared_resource_reuse";
     public const string StalePreviewPlan = "octopus.validation.stale_preview_plan";
+    public const string SensitiveVariableValueDecrypted = "octopus.preview.sensitive_variable_value_decrypted";
+
+    public const string SensitiveValueUnresolvedMessage = "The sensitive variable value could not be decrypted with the export password (it may be masked or encrypted with a different password). Confirmation is blocked while this required input is unresolved.";
 }

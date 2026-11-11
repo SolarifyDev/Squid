@@ -97,6 +97,7 @@ public class OctopusImportConflictDiscoveryService(
             or OctopusResourceKind.Lifecycle
             or OctopusResourceKind.Feed
             or OctopusResourceKind.Team
+            or OctopusResourceKind.LibraryVariableSet
             or OctopusResourceKind.Machine
             or OctopusResourceKind.Account;
 }

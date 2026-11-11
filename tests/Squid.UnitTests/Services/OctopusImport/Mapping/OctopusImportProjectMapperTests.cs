@@ -93,23 +93,52 @@ public class OctopusImportProjectMapperTests
     }
 
     [Fact]
-    public void MapToCreateOrUpdateModel_WhenDeferredProjectFeaturesExist_AddsWarnings()
+    public void MapToCreateOrUpdateModel_WhenTenantedModeIsSet_AddsWarningOnly()
     {
         var project = Project();
-        project.IncludedLibraryVariableSetIds.Add("LibraryVariableSets-1");
         project.TenantedDeploymentMode = "TenantedOrUntenanted";
+
+        var result = _mapper.MapToCreateOrUpdateModel(Resource(project.Id, OctopusResourceKind.Project, project.Name, project), MappedGroupAndLifecycle(), 7);
+
+        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportProjectMappingDiagnosticCodes.UnsupportedTenantedDeploymentMode);
+        result.Diagnostics.All(d => d.Severity == OctopusImportCompatibilitySeverity.Warning).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void MapToCreateOrUpdateModel_WhenIncludedLibraryVariableSetsAreMapped_LinksDestinationIdsInOrderWithoutDuplicates()
+    {
+        var project = Project();
+        project.IncludedLibraryVariableSetIds.AddRange(["LibraryVariableSets-1", "LibraryVariableSets-2", "LibraryVariableSets-1"]);
+        var idMap = MappedGroupAndLifecycle();
+        idMap.AddCreated(Resource("LibraryVariableSets-1", OctopusResourceKind.LibraryVariableSet, "Shared", new OctopusLibraryVariableSetDto()), 501);
+        idMap.AddReused(Resource("LibraryVariableSets-2", OctopusResourceKind.LibraryVariableSet, "Other", new OctopusLibraryVariableSetDto()), 502);
+
+        var result = _mapper.MapToCreateOrUpdateModel(Resource(project.Id, OctopusResourceKind.Project, project.Name, project), idMap, 7);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.Project.IncludedLibraryVariableSetIds.ShouldBe([501, 502]);
+        result.Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportProjectMappingDiagnosticCodes.IncludedLibraryVariableSetsDeferred);
+    }
+
+    [Fact]
+    public void MapToCreateOrUpdateModel_WhenIncludedLibraryVariableSetIsNotMapped_Blocks()
+    {
+        var project = Project();
+        project.IncludedLibraryVariableSetIds.Add("LibraryVariableSets-9");
+
+        var result = _mapper.MapToCreateOrUpdateModel(Resource(project.Id, OctopusResourceKind.Project, project.Name, project), MappedGroupAndLifecycle(), 7);
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Code.ShouldBe(OctopusImportProjectMappingDiagnosticCodes.MissingLibraryVariableSetMapping);
+        result.Project.IncludedLibraryVariableSetIds.ShouldBeEmpty();
+    }
+
+    private static OctopusImportIdMap MappedGroupAndLifecycle()
+    {
         var idMap = new OctopusImportIdMap();
         idMap.AddReused(Resource("ProjectGroups-1", OctopusResourceKind.ProjectGroup, "Default", new OctopusProjectGroupDto()), 10);
         idMap.AddReused(Resource("Lifecycles-1", OctopusResourceKind.Lifecycle, "Default", new OctopusLifecycleDto()), 20);
-
-        var result = _mapper.MapToCreateOrUpdateModel(
-            Resource(project.Id, OctopusResourceKind.Project, project.Name, project),
-            idMap,
-            7);
-
-        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportProjectMappingDiagnosticCodes.IncludedLibraryVariableSetsDeferred);
-        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportProjectMappingDiagnosticCodes.UnsupportedTenantedDeploymentMode);
-        result.Diagnostics.All(d => d.Severity == OctopusImportCompatibilitySeverity.Warning).ShouldBeTrue();
+        return idMap;
     }
 
     [Fact]

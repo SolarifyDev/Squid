@@ -5,6 +5,7 @@ using Mediator.Net.Contracts;
 using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -84,6 +85,45 @@ public class UploadOctopusImportCommandHandlerTests
                 summary.DetectedFormat == "Zip" &&
                 summary.Sha256 == "abc123"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(OctopusExportPasswordValidationStatus.Valid, true)]
+    [InlineData(OctopusExportPasswordValidationStatus.NotVerifiable, false)]
+    public async Task Handle_RetainsTheExportPasswordOnlyWhenItWasProvenAgainstTheArchive(OctopusExportPasswordValidationStatus status, bool retained)
+    {
+        var sessionId = Guid.NewGuid();
+        var sessionService = new Mock<IOctopusImportSessionService>();
+        var uploadStore = new Mock<IOctopusImportTemporaryUploadStore>();
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+
+        sessionService.Setup(s => s.CreateSessionAsync(7, It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7 });
+        sessionService.Setup(s => s.RegisterTemporaryUploadAsync(sessionId, 7, It.IsAny<OctopusImportTemporaryUpload>(), It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7 });
+        uploadStore.Setup(s => s.SaveAsync(sessionId, "export.zip", It.IsAny<Stream>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportTemporaryUpload("/tmp/export.zip", 3, "abc"));
+        passwordValidator.Setup(v => v.ValidateAsync(It.IsAny<Stream>(), "export.zip", "octopus-password", It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusExportPasswordValidationResult(status));
+
+        var sut = new UploadOctopusImportCommandHandler(sessionService.Object, uploadStore.Object, passwordValidator.Object, null, secretStore.Object);
+
+        var response = await sut.Handle(Context(new UploadOctopusImportCommand { SpaceId = 7, Password = "octopus-password", FileName = "export.zip", SizeBytes = 3, Content = new MemoryStream(Encoding.UTF8.GetBytes("zip")) }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        secretStore.Verify(s => s.StoreAsync(sessionId, 7, "octopus-password", It.IsAny<CancellationToken>()), retained ? Times.Once() : Times.Never());
+    }
+
+    [Fact]
+    public async Task Handle_WrongPassword_NeverRetainsIt()
+    {
+        var passwordValidator = new Mock<IOctopusExportPasswordValidator>();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+        passwordValidator.Setup(v => v.ValidateAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusExportPasswordValidationResult(OctopusExportPasswordValidationStatus.Invalid));
+
+        var sut = new UploadOctopusImportCommandHandler(Mock.Of<IOctopusImportSessionService>(), Mock.Of<IOctopusImportTemporaryUploadStore>(), passwordValidator.Object, null, secretStore.Object);
+
+        var response = await sut.Handle(Context(new UploadOctopusImportCommand { SpaceId = 7, Password = "wrong", FileName = "export.zip", SizeBytes = 3, Content = new MemoryStream(Encoding.UTF8.GetBytes("zip")) }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        secretStore.VerifyNoOtherCalls();
     }
 
     [Fact]

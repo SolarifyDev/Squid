@@ -74,10 +74,33 @@ public class OctopusImportProjectMapper : IOctopusImportProjectMapper
                 $"Octopus lifecycle '{project.LifecycleId}' has not been mapped to a destination lifecycle.",
                 projectResource));
 
+        model.IncludedLibraryVariableSetIds = MapIncludedLibraryVariableSets(project, idMap, diagnostics, projectResource);
+
         AddDeferredReferenceDiagnostics(project, diagnostics, projectResource);
         model.Json = BuildMetadataJson(project, deploymentSettings, defaultChannel, diagnostics, projectResource);
 
         return new OctopusImportProjectMappingResult(model, diagnostics);
+    }
+
+    private static List<int> MapIncludedLibraryVariableSets(OctopusProjectDto project, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics, OctopusResourceNode projectResource)
+    {
+        var destinationIds = new List<int>();
+
+        foreach (var sourceId in (project.IncludedLibraryVariableSetIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)))
+        {
+            if (idMap.TryGetDestinationId(sourceId, OctopusResourceKind.LibraryVariableSet.ToString(), out var destinationId))
+            {
+                if (!destinationIds.Contains(destinationId)) destinationIds.Add(destinationId);
+                continue;
+            }
+
+            diagnostics.Add(Blocker(
+                OctopusImportProjectMappingDiagnosticCodes.MissingLibraryVariableSetMapping,
+                $"Octopus library variable set '{sourceId}' included by the project has not been mapped to a destination library variable set.",
+                projectResource));
+        }
+
+        return destinationIds;
     }
 
     private static void AddDeferredReferenceDiagnostics(
@@ -85,14 +108,6 @@ public class OctopusImportProjectMapper : IOctopusImportProjectMapper
         List<OctopusImportDiagnosticDto> diagnostics,
         OctopusResourceNode projectResource)
     {
-        if (project.IncludedLibraryVariableSetIds?.Count > 0)
-        {
-            diagnostics.Add(Warning(
-                OctopusImportProjectMappingDiagnosticCodes.IncludedLibraryVariableSetsDeferred,
-                "Octopus included library variable sets are preserved as source metadata and are not mapped to Squid project library variable set ids in this step.",
-                projectResource));
-        }
-
         if (!string.IsNullOrWhiteSpace(project.TenantedDeploymentMode))
         {
             diagnostics.Add(Warning(

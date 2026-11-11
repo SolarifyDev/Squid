@@ -1,6 +1,7 @@
 using System.Net;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -10,7 +11,8 @@ public class UploadOctopusImportCommandHandler(
     IOctopusImportSessionService sessionService,
     IOctopusImportTemporaryUploadStore uploadStore,
     IOctopusExportPasswordValidator passwordValidator,
-    OctopusArchiveExtractionOptions limits = null)
+    OctopusArchiveExtractionOptions limits = null,
+    IOctopusImportExportSecretStore secretStore = null)
     : ICommandHandler<UploadOctopusImportCommand, UploadOctopusImportResponse>
 {
     private readonly OctopusArchiveExtractionOptions _limits = limits ?? OctopusArchiveExtractionOptions.Default;
@@ -71,6 +73,8 @@ public class UploadOctopusImportCommandHandler(
                 .RegisterTemporaryUploadAsync(session.SessionId, destinationSpaceId, upload, completedSummary, cancellationToken)
                 .ConfigureAwait(false);
 
+            await RetainExportPasswordAsync(passwordValidation, session.SessionId, destinationSpaceId, command.Password, cancellationToken).ConfigureAwait(false);
+
             return new UploadOctopusImportResponse
             {
                 Code = HttpStatusCode.OK,
@@ -86,6 +90,15 @@ public class UploadOctopusImportCommandHandler(
             if (bufferedContent != null)
                 await bufferedContent.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    // Only a password PROVEN correct against the archive's own ciphertext is retained — an export
+    // without encrypted values has nothing to decrypt, so there is no reason to keep its password.
+    private async Task RetainExportPasswordAsync(OctopusExportPasswordValidationResult validation, Guid sessionId, int destinationSpaceId, string password, CancellationToken ct)
+    {
+        if (secretStore == null || validation.Status != OctopusExportPasswordValidationStatus.Valid) return;
+
+        await secretStore.StoreAsync(sessionId, destinationSpaceId, password, ct).ConfigureAwait(false);
     }
 
     private static async Task<MemoryStream> BufferContentAsync(

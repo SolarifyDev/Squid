@@ -1,5 +1,6 @@
 using System.Reflection;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Mapping.Scripts;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.VariableSubstitution.Templates;
 using Squid.Message.Constants;
@@ -15,22 +16,7 @@ public interface IOctopusImportVariableReferenceValidator : IScopedDependency
 
 public class OctopusImportVariableReferenceValidator : IOctopusImportVariableReferenceValidator
 {
-    private static readonly IReadOnlyDictionary<string, string> OctopusSystemVariableEquivalents =
-        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["Octopus.Project.Id"] = SpecialVariables.Project.Id,
-            ["Octopus.Project.Name"] = SpecialVariables.Project.Name,
-            ["Octopus.Environment.Id"] = SpecialVariables.Environment.Id,
-            ["Octopus.Environment.Name"] = SpecialVariables.Environment.Name,
-            ["Octopus.Machine.Id"] = SpecialVariables.Machine.Id,
-            ["Octopus.Machine.Name"] = SpecialVariables.Machine.Name,
-            ["Octopus.Machine.Roles"] = SpecialVariables.Machine.Roles,
-            ["Octopus.Deployment.Id"] = SpecialVariables.Deployment.Id,
-            ["Octopus.Release.Number"] = SpecialVariables.Release.Number,
-            [OctopusPropertyNames.ActionPackageId] = SpecialVariables.Action.PackageId,
-            [OctopusPropertyNames.ActionPackageFeedId] = SpecialVariables.Action.PackageFeedId,
-            [OctopusPropertyNames.ActionPackageVersion] = SpecialVariables.Action.PackageVersion
-        };
+    private static readonly IReadOnlyDictionary<string, string> OctopusSystemVariableEquivalents = OctopusSystemVariables.SquidEquivalents;
 
     private static readonly IReadOnlySet<string> SquidSystemVariableNames = BuildSquidSystemVariableNames();
 

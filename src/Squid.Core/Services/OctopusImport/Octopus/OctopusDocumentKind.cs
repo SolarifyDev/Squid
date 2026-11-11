@@ -26,5 +26,6 @@ public enum OctopusDocumentKind
     WorkerPool,
     Tenant,
     Runbook,
-    Trigger
+    Trigger,
+    LibraryVariableSet
 }

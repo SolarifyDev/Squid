@@ -371,7 +371,8 @@ public class OctopusImportSessionDataProviderTests
             nameof(OctopusImportSession.LastStateChangedAt),
             nameof(OctopusImportSession.LastModifiedDate),
             nameof(OctopusImportSession.CompletedAt),
-            nameof(OctopusImportSession.TemporaryUploadCleanupAfter)
+            nameof(OctopusImportSession.TemporaryUploadCleanupAfter),
+            nameof(OctopusImportSession.ProtectedExportPassword)
         ], ignoreOrder: true);
     }
 
@@ -425,6 +426,7 @@ public class OctopusImportSessionDataProviderTests
                 temporary_upload_cleanup_after TEXT NULL,
                 temporary_upload_cleaned_at TEXT NULL,
                 temporary_upload_cleanup_error TEXT NULL,
+                protected_export_password TEXT NULL,
                 data_version BLOB NOT NULL,
                 expires_at TEXT NOT NULL,
                 completed_at TEXT NULL,

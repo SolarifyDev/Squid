@@ -7,6 +7,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
@@ -15,6 +16,25 @@ namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class GetOctopusImportPreviewRequestHandlerTests
 {
+    [Fact]
+    public async Task Handle_LoadsTheSessionExportSecretsBeforeBuildingThePreview()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var secretsAvailableWhenPlanning = false;
+        var preview = new OctopusImportPreviewPlanDto { GeneratedAt = DateTimeOffset.UtcNow, Resources = [] };
+
+        harness.SecretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Extracted));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).Callback(() => secretsAvailableWhenPlanning = harness.SecretsAccessor.Secrets.IsAvailable).ReturnsAsync(Snapshot(preview));
+        harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Extracted, OctopusImportSessionState.Previewed, It.IsAny<string>(), null, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Previewed });
+
+        await harness.Sut.Handle(Context(new GetOctopusImportPreviewRequest { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        secretsAvailableWhenPlanning.ShouldBeTrue();
+    }
+
     [Fact]
     public async Task Handle_WhenSessionIsExtracted_BuildsPreviewAndTransitionsToPreviewed()
     {
@@ -121,8 +141,14 @@ public class GetOctopusImportPreviewRequestHandlerTests
                 SessionDataProvider.Object,
                 SessionService.Object,
                 CurrentUser.Object,
-                PlanningPipeline.Object);
+                PlanningPipeline.Object,
+                SecretStore.Object,
+                SecretsAccessor);
         }
+
+        public Mock<IOctopusImportExportSecretStore> SecretStore { get; } = new();
+
+        public OctopusExportSecretsAccessor SecretsAccessor { get; } = new();
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

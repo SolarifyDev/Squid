@@ -146,6 +146,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.TemporaryUploadCleanupAfter, session.TemporaryUploadCleanupAfter)
                 .SetProperty(s => s.TemporaryUploadCleanedAt, session.TemporaryUploadCleanedAt)
                 .SetProperty(s => s.TemporaryUploadCleanupError, session.TemporaryUploadCleanupError)
+                .SetProperty(s => s.ProtectedExportPassword, session.ProtectedExportPassword)
                 .SetProperty(s => s.ExpiresAt, session.ExpiresAt)
                 .SetProperty(s => s.CompletedAt, session.CompletedAt)
                 .SetProperty(s => s.LastStateChangedAt, session.LastStateChangedAt)
@@ -245,7 +246,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, now)
-                .SetProperty(s => s.TemporaryUploadCleanupAfter, now),
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 
@@ -267,7 +269,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, now)
-                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter),
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 
@@ -324,7 +327,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastModifiedDate, cleanedAt)
                 .SetProperty(s => s.TemporaryUploadPath, (string)null)
                 .SetProperty(s => s.TemporaryUploadCleanedAt, cleanedAt)
-                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null),
+                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }
 

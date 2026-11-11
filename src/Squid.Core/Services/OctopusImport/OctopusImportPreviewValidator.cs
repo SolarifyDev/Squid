@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -23,8 +24,18 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         OctopusResourceKind.Feed,
         OctopusResourceKind.Team,
         OctopusResourceKind.Machine,
-        OctopusResourceKind.Account
+        OctopusResourceKind.Account,
+        OctopusResourceKind.LibraryVariableSet
     ];
+
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+
+    public OctopusImportPreviewValidator(IOctopusExportSecretsAccessor secretsAccessor = null)
+    {
+        _secretsAccessor = secretsAccessor;
+    }
+
+    private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
 
     public OctopusImportValidationResultDto Validate(
         OctopusResourceGraph graph,
@@ -61,6 +72,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         result.RequiredInputs = previewPlan.RequiredInputs
             .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
             .Concat(BuildRequiredInputs(selectedResources.Values))
+            .Where(input => !IsResolvedSensitiveInput(input, selectedResources))
             .GroupBy(input => input.InputKey, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
@@ -108,6 +120,15 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         }
     }
 
+    private bool IsResolvedSensitiveInput(OctopusImportRequiredInputDto input, IReadOnlyDictionary<string, OctopusResourceNode> selectedResources)
+    {
+        if (input.Kind != OctopusImportRequiredInputKind.SensitiveVariableValue) return false;
+        if (string.IsNullOrWhiteSpace(input.SourceId) || !selectedResources.TryGetValue(input.SourceId, out var resource)) return false;
+        if (resource.Kind != OctopusResourceKind.Variable) return false;
+
+        return OctopusImportSensitiveValues.IsResolvable(resource.GetSource<OctopusVariableDto>(), Secrets);
+    }
+
     private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(
         IEnumerable<OctopusResourceNode> selectedResources)
     {
@@ -127,7 +148,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             {
                 Severity = OctopusImportCompatibilitySeverity.Blocker,
                 Code = OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,
-                Message = "Sensitive variable values cannot be imported in this release. Confirmation is blocked while this required input is unresolved.",
+                Message = OctopusImportPreviewDiagnosticCodes.SensitiveValueUnresolvedMessage,
                 SourceId = input.SourceId,
                 ResourceType = input.SourceType,
                 ResourceName = input.Name
@@ -193,6 +214,20 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                         source,
                         OctopusImportPreviewDiagnosticCodes.MissingMachine,
                         $"Octopus machine '{reference.ToSourceId}' is referenced but is missing from the current import graph.");
+
+                continue;
+            }
+
+            if (reference.ReferenceKind == OctopusResourceReferenceKind.Team)
+            {
+                // Dropping a responsible team would WIDEN who can approve the manual intervention,
+                // so an approval team missing from the export blocks before any write is attempted.
+                if (!allCurrentResources.ContainsKey(reference.ToSourceId))
+                    AddReferenceDiagnostic(
+                        result,
+                        source,
+                        OctopusImportPreviewDiagnosticCodes.MissingResponsibleTeam,
+                        $"Octopus responsible team '{reference.ToSourceId}' is referenced by a manual intervention but is missing from the export. Re-export including the team so approval rights are preserved.");
 
                 continue;
             }

@@ -1,5 +1,6 @@
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -14,6 +15,15 @@ public interface IOctopusImportPreviewPlanner : IScopedDependency
 
 public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 {
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+
+    public OctopusImportPreviewPlanner(IOctopusExportSecretsAccessor secretsAccessor = null)
+    {
+        _secretsAccessor = secretsAccessor;
+    }
+
+    private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
+
     public OctopusImportPreviewPlanDto BuildPreviewPlan(
         OctopusImportDependencyPlan dependencyPlan,
         OctopusImportConflictDiscoveryResult conflicts)
@@ -54,7 +64,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         };
     }
 
-    private static OctopusImportResourceResultDto BuildResourcePreview(
+    private OctopusImportResourceResultDto BuildResourcePreview(
         OctopusResourceNode resource,
         IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,
         IReadOnlySet<string> blockedSourceIds)
@@ -128,7 +138,7 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         return result;
     }
 
-    private static void AddRequiredInputs(
+    private void AddRequiredInputs(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
     {
@@ -139,11 +149,21 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         if (!OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
             return;
 
+        if (OctopusImportSensitiveValues.IsResolvable(variable, Secrets))
+        {
+            result.Diagnostics.Add(Diagnostic(
+                OctopusImportCompatibilitySeverity.Info,
+                OctopusImportPreviewDiagnosticCodes.SensitiveVariableValueDecrypted,
+                "The sensitive variable value was decrypted with the export password and will be imported encrypted at rest.",
+                resource));
+            return;
+        }
+
         result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
         result.Diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,
-            "Sensitive variable values cannot be imported in this release. Confirmation is blocked while this required input is unresolved.",
+            OctopusImportPreviewDiagnosticCodes.SensitiveValueUnresolvedMessage,
             resource));
     }
 
@@ -211,12 +231,21 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             ResourceName = resource.Name
         });
 
-    private static void AddManualConfigurationDiagnostics(
+    private bool IsResolvedFeedCredentialDiagnostic(OctopusResourceNode resource, OctopusImportDiagnosticDto diagnostic)
+        => resource.Kind == OctopusResourceKind.Feed
+           && diagnostic.Code == OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted
+           && OctopusImportFeedCredentials.IsResolvable(resource.GetSource<OctopusFeedDto>(), Secrets);
+
+    private void AddManualConfigurationDiagnostics(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
     {
         foreach (var diagnostic in OctopusImportManualConfiguration.BuildRequiredConfigurationDiagnostics(resource))
+        {
+            if (IsResolvedFeedCredentialDiagnostic(resource, diagnostic)) continue;
+
             result.Diagnostics.Add(diagnostic);
+        }
     }
 
 }

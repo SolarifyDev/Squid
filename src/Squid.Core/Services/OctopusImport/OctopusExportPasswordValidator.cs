@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 
 namespace Squid.Core.Services.OctopusImport;
 
@@ -31,12 +31,7 @@ public sealed class OctopusExportPasswordValidator(
     IOctopusArchiveExtractor archiveExtractor,
     IOctopusInputExtractor inputExtractor) : IOctopusExportPasswordValidator
 {
-    private const int KeySizeBytes = 16;
-    private const int IvSizeBytes = 16;
-    private const int Pbkdf2Iterations = 1_000;
-    private const string PasswordSalt = "Octopuss";
     private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
-    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public async Task<OctopusExportPasswordValidationResult> ValidateAsync(
         Stream content,
@@ -69,7 +64,7 @@ public sealed class OctopusExportPasswordValidator(
                 return new OctopusExportPasswordValidationResult(OctopusExportPasswordValidationStatus.NotVerifiable);
             }
 
-            var key = DeriveKey(password);
+            var key = OctopusExportCipher.DeriveKey(password);
 
             try
             {
@@ -182,16 +177,6 @@ public sealed class OctopusExportPasswordValidator(
            || string.Equals(propertyName, "SensitiveValue", StringComparison.OrdinalIgnoreCase)
            || string.Equals(propertyName, "Secret", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsEncryptedValue(string value)
-    {
-        if (!TryGetEncryptedParts(value, out var ciphertext, out var iv))
-            return false;
-
-        CryptographicOperations.ZeroMemory(ciphertext);
-        CryptographicOperations.ZeroMemory(iv);
-        return true;
-    }
-
     private static bool HasStringProperty(JsonElement element, string propertyName, string expectedValue)
     {
         foreach (var property in element.EnumerateObject())
@@ -205,128 +190,14 @@ public sealed class OctopusExportPasswordValidator(
         return false;
     }
 
-    private static byte[] DeriveKey(string password)
-        => Rfc2898DeriveBytes.Pbkdf2(
-            password,
-            Encoding.UTF8.GetBytes(PasswordSalt),
-            Pbkdf2Iterations,
-            HashAlgorithmName.SHA1,
-            KeySizeBytes);
+    private static bool IsEncryptedValue(string value) => OctopusExportCipher.IsEncryptedValue(value);
 
     private static bool TryDecrypt(string encryptedValue, byte[] key)
     {
-        if (!TryGetEncryptedParts(encryptedValue, out var ciphertext, out var iv))
-            return false;
+        // Validate the plaintext bytes without materializing the decrypted value as a managed string.
+        if (!OctopusExportCipher.TryDecryptBytes(encryptedValue, key, out var plaintext)) return false;
 
-        byte[] plaintext = null;
-
-        try
-        {
-            using var aes = Aes.Create();
-            aes.Mode = CipherMode.CBC;
-            aes.Padding = PaddingMode.PKCS7;
-            aes.Key = key;
-            aes.IV = iv;
-
-            using var decryptor = aes.CreateDecryptor();
-            plaintext = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
-
-            // Octopus stores sensitive values as UTF-8 strings. Validate the bytes without
-            // materializing the decrypted value as a managed string.
-            return IsValidUtf8(plaintext);
-        }
-        catch (CryptographicException)
-        {
-            return false;
-        }
-        catch (DecoderFallbackException)
-        {
-            return false;
-        }
-        finally
-        {
-            if (plaintext != null)
-                CryptographicOperations.ZeroMemory(plaintext);
-
-            CryptographicOperations.ZeroMemory(ciphertext);
-            CryptographicOperations.ZeroMemory(iv);
-        }
-    }
-
-    private static bool IsValidUtf8(byte[] bytes)
-    {
-        var decoder = StrictUtf8.GetDecoder();
-        Span<char> chars = stackalloc char[256];
-        var offset = 0;
-
-        while (offset < bytes.Length)
-        {
-            decoder.Convert(
-                bytes.AsSpan(offset),
-                chars,
-                flush: false,
-                out var bytesUsed,
-                out _,
-                out _);
-
-            if (bytesUsed == 0)
-                return false;
-
-            offset += bytesUsed;
-        }
-
-        decoder.Convert(
-            ReadOnlySpan<byte>.Empty,
-            chars,
-            flush: true,
-            out _,
-            out _,
-            out _);
-
-        return true;
-    }
-
-    private static bool TryGetEncryptedParts(
-        string encryptedValue,
-        out byte[] ciphertext,
-        out byte[] iv)
-    {
-        ciphertext = null;
-        iv = null;
-
-        if (string.IsNullOrWhiteSpace(encryptedValue))
-            return false;
-
-        var separatorIndex = encryptedValue.IndexOf('|');
-
-        if (separatorIndex <= 0 || separatorIndex != encryptedValue.LastIndexOf('|'))
-            return false;
-
-        try
-        {
-            ciphertext = Convert.FromBase64String(encryptedValue[..separatorIndex]);
-            iv = Convert.FromBase64String(encryptedValue[(separatorIndex + 1)..]);
-        }
-        catch (FormatException)
-        {
-            if (ciphertext != null)
-                CryptographicOperations.ZeroMemory(ciphertext);
-            if (iv != null)
-                CryptographicOperations.ZeroMemory(iv);
-
-            ciphertext = null;
-            iv = null;
-            return false;
-        }
-
-        if (ciphertext.Length == 0 || ciphertext.Length % 16 != 0 || iv.Length != IvSizeBytes)
-        {
-            CryptographicOperations.ZeroMemory(ciphertext);
-            CryptographicOperations.ZeroMemory(iv);
-            ciphertext = null;
-            iv = null;
-            return false;
-        }
+        CryptographicOperations.ZeroMemory(plaintext);
 
         return true;
     }

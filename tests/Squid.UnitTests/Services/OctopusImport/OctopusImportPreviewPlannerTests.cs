@@ -2,6 +2,8 @@ using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.UnitTests.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
@@ -219,7 +221,6 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Theory]
-    [InlineData(OctopusResourceKind.Team, "Teams-1")]
     [InlineData(OctopusResourceKind.Machine, "Machines-1")]
     [InlineData(OctopusResourceKind.ActionTemplate, "ActionTemplates-1")]
     [InlineData(OctopusResourceKind.Tenant, "Tenants-1")]
@@ -327,6 +328,70 @@ public class OctopusImportPreviewPlannerTests
             "variableset-Projects-1",
             "Variables-1"
         ]);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_SensitiveVariableDecryptableWithExportPassword_IsNotARequiredInput()
+    {
+        var planner = new OctopusImportPreviewPlanner(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("pw") });
+        var variable = Node("Variables-1", OctopusResourceKind.Variable, "Db:Password", source: new OctopusVariableDto { Id = "Variables-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("secret", "pw") });
+
+        var preview = planner.BuildPreviewPlan(Plan([variable]), NoConflicts());
+
+        preview.HasBlockers.ShouldBeFalse();
+        preview.RequiredInputs.ShouldBeEmpty();
+        preview.Resources.Single().Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.SensitiveVariableValueDecrypted);
+        preview.Resources.Single().Diagnostics.Single().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_SensitiveVariableEncryptedWithAnotherPassword_StaysBlocked()
+    {
+        var planner = new OctopusImportPreviewPlanner(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("pw") });
+        var variable = Node("Variables-1", OctopusResourceKind.Variable, "Db:Password", source: new OctopusVariableDto { Id = "Variables-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("secret", "other") });
+
+        var preview = planner.BuildPreviewPlan(Plan([variable]), NoConflicts());
+
+        preview.HasBlockers.ShouldBeTrue();
+        preview.RequiredInputs.Single().SourceId.ShouldBe("Variables-1");
+        preview.Resources.Single().Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
+    }
+
+    [Fact]
+    public void BuildPreviewPlan_FeedCredentialsDecryptable_DoesNotWarnTheyWillBeOmitted()
+    {
+        var feed = new OctopusFeedDto { Id = "Feeds-1", Name = "ACR", FeedType = "Docker", Username = "robot", Password = OctopusExportTestCipher.Encrypt("token", "pw") };
+        var withSecrets = new OctopusImportPreviewPlanner(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("pw") });
+
+        var resolved = withSecrets.BuildPreviewPlan(Plan([Node(feed, OctopusResourceKind.Feed)]), NoConflicts());
+        var unresolved = _planner.BuildPreviewPlan(Plan([Node(feed, OctopusResourceKind.Feed)]), NoConflicts());
+
+        resolved.Resources.Single().Diagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted);
+        unresolved.Resources.Single().Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportRedactionDiagnosticCodes.FeedCredentialsOmitted);
+    }
+
+    [Theory]
+    [InlineData(OctopusResourceKind.Team, "Teams-1")]
+    [InlineData(OctopusResourceKind.LibraryVariableSet, "LibraryVariableSets-1")]
+    public void BuildPreviewPlan_TeamAndLibraryVariableSet_AreCreatedWhenNoDestinationMatches(OctopusResourceKind kind, string sourceId)
+    {
+        var preview = _planner.BuildPreviewPlan(Plan([Node(sourceId, kind, kind.ToString())]), NoConflicts());
+
+        preview.Resources.Single().PreviewAction.ShouldBe(OctopusImportPreviewAction.Create);
+        preview.HasBlockers.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(OctopusResourceKind.Team, "Teams-1")]
+    [InlineData(OctopusResourceKind.LibraryVariableSet, "LibraryVariableSets-1")]
+    public void BuildPreviewPlan_TeamAndLibraryVariableSet_ReuseASingleDestinationMatch(OctopusResourceKind kind, string sourceId)
+    {
+        var resource = Node(sourceId, kind, "Solar");
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, Match(77, kind, "Solar", null))]));
+
+        preview.Resources.Single().PreviewAction.ShouldBe(OctopusImportPreviewAction.ReuseExisting);
+        preview.Resources.Single().DestinationId.ShouldBe(77);
     }
 
     private static OctopusImportDependencyPlan Plan(

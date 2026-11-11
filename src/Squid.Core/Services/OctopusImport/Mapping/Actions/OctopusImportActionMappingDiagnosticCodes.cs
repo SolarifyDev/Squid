@@ -23,5 +23,13 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string SensitiveConfigMapValue = "OctopusImport.Action.Kubernetes.SensitiveConfigMapValue";
     public const string UnsupportedActionSource = "OctopusImport.Action.UnsupportedSource";
     public const string UnsupportedHelmValueSource = "OctopusImport.Action.Helm.UnsupportedValueSource";
+    public const string DisabledFeaturePropertiesOmitted = "OctopusImport.Action.Kubernetes.DisabledFeaturePropertiesOmitted";
+    public const string DeploymentWaitMappedToStatusCheck = "OctopusImport.Action.Kubernetes.DeploymentWaitMappedToStatusCheck";
+    public const string CustomResourceUsesOctopusParameters = "OctopusImport.Action.Kubernetes.CustomResourceUsesOctopusParameters";
+    public const string ScriptOctopusCompatibilityAdded = "OctopusImport.Action.Script.OctopusCompatibilityAdded";
+    public const string ScriptOctopusCompatibilityUnavailable = "OctopusImport.Action.Script.OctopusCompatibilityUnavailable";
+    public const string ScriptUnmappedOctopusVariable = "OctopusImport.Action.Script.UnmappedOctopusVariable";
+    public const string StepTemplateMissingFromExport = "OctopusImport.Action.Script.StepTemplateMissingFromExport";
+    public const string SensitiveStepTemplateParameter = "OctopusImport.Action.Script.SensitiveStepTemplateParameter";
     public const string KubernetesYamlFileSelectionUnsupported = "OctopusImport.Action.KubernetesYaml.FileSelectionUnsupported";
 }

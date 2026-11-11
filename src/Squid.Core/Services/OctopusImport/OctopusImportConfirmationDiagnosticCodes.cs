@@ -16,4 +16,7 @@ public static class OctopusImportConfirmationDiagnosticCodes
     public const string ChannelRulesStoredAsMetadata = "OctopusImport.Confirmation.ChannelRulesStoredAsMetadata";
     public const string DeploymentSettingsStoredAsProjectMetadata = "OctopusImport.Confirmation.DeploymentSettingsStoredAsProjectMetadata";
     public const string MissingReleasePackageFeedMapping = "OctopusImport.Confirmation.MissingReleasePackageFeedMapping";
+    public const string TeamCreatedWithoutMembers = "OctopusImport.Confirmation.TeamCreatedWithoutMembers";
+    public const string LibraryVariableSetVariablesMissing = "OctopusImport.Confirmation.LibraryVariableSetVariablesMissing";
+    public const string ReusedLibraryVariableSetVariablesKept = "OctopusImport.Confirmation.ReusedLibraryVariableSetVariablesKept";
 }

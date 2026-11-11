@@ -206,6 +206,31 @@ public class OctopusImportDependencyPlannerTests
         plan.HasBlockers.ShouldBeTrue();
     }
 
+    [Fact]
+    public void BuildCurrentConfigurationPlan_LibraryVariableSet_IsOrderedAfterEnvironmentsAndBeforeProjectAndItsVariables()
+    {
+        var environment = Node("Environments-1", OctopusResourceKind.Environment);
+        var library = Node("LibraryVariableSets-1", OctopusResourceKind.LibraryVariableSet);
+        var project = Node("Projects-1", OctopusResourceKind.Project);
+        var libraryVariables = Node("variableset-LibraryVariableSets-1", OctopusResourceKind.VariableSet);
+        var team = Node("Teams-1", OctopusResourceKind.Team);
+        var graph = new OctopusResourceGraph(
+            [project, libraryVariables, library, environment, team],
+            [],
+            [
+                Dependency("Projects-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet),
+                Dependency("variableset-LibraryVariableSets-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet)
+            ],
+            []);
+
+        var ordered = _planner.BuildCurrentConfigurationPlan(graph).OrderedResources.Select(r => r.SourceId).ToList();
+
+        ordered.IndexOf("Environments-1").ShouldBeLessThan(ordered.IndexOf("LibraryVariableSets-1"));
+        ordered.IndexOf("Teams-1").ShouldBeLessThan(ordered.IndexOf("Projects-1"));
+        ordered.IndexOf("LibraryVariableSets-1").ShouldBeLessThan(ordered.IndexOf("Projects-1"));
+        ordered.IndexOf("LibraryVariableSets-1").ShouldBeLessThan(ordered.IndexOf("variableset-LibraryVariableSets-1"));
+    }
+
     private static OctopusResourceNode Node(
         string sourceId,
         OctopusResourceKind kind,

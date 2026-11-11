@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -15,7 +17,8 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentVariableResolver variableResolver,
     IDeploymentTargetFinder targetFinder,
     IDeploymentDataProvider deploymentDataProvider,
-    IActionHandlerRegistry actionHandlerRegistry) : IDeploymentPipelinePhase
+    IActionHandlerRegistry actionHandlerRegistry,
+    IRepository repository = null) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -59,6 +62,8 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
+        await AddDeploymentCreatorVariablesAsync(ctx, ct).ConfigureAwait(false);
+
         // Built-in deployment context variables required by package install path planning
         // and variable substitution. These are not stored in project variable sets.
         if (ctx.Project != null)
@@ -82,6 +87,23 @@ public sealed class PrepareDeploymentPhase(
         // which owns that accumulator and has the encryption service needed to protect them.
         if (ctx.RestoredOutputVariables.Count > 0)
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
+    }
+
+    // Who triggered the deployment (Octopus' Octopus.Deployment.CreatedBy.*). Best-effort: a missing
+    // user row or no repository (unit-test composition) simply omits the variables.
+    private async Task AddDeploymentCreatorVariablesAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        var userId = ctx.Deployment.DeployedBy > 0 ? ctx.Deployment.DeployedBy : ctx.Deployment.CreatedBy;
+
+        if (repository == null || userId <= 0) return;
+
+        var user = await repository.QueryNoTracking<UserAccount>(u => u.Id == userId).Select(u => new { u.UserName, u.DisplayName }).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        if (user == null) return;
+
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedById, Value = userId.ToString() });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByUsername, Value = user.UserName ?? string.Empty });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByDisplayName, Value = string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? string.Empty : user.DisplayName });
     }
 
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)

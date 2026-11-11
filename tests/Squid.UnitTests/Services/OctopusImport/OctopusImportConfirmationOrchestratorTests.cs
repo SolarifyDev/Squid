@@ -711,8 +711,8 @@ public class OctopusImportConfirmationOrchestratorTests
             });
 
         processMapper
-            .Setup(m => m.MapToCreateStepCommands(It.IsAny<OctopusResourceNode>(), It.IsAny<OctopusImportIdMap>(), destinationSpaceId))
-            .Returns((OctopusResourceNode resource, OctopusImportIdMap idMap, int spaceId) =>
+            .Setup(m => m.MapToCreateStepCommands(It.IsAny<OctopusResourceNode>(), It.IsAny<OctopusImportIdMap>(), destinationSpaceId, It.IsAny<IReadOnlyDictionary<string, OctopusActionTemplateDto>>()))
+            .Returns((OctopusResourceNode resource, OctopusImportIdMap idMap, int spaceId, IReadOnlyDictionary<string, OctopusActionTemplateDto> _) =>
             {
                 var source = resource.GetSource<OctopusDeploymentProcessDto>();
                 var step = source.Steps.Single();

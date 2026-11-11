@@ -30,6 +30,8 @@ public class OctopusImportSession : IEntity<int>, IAuditable
 
     public string TemporaryUploadCleanupError { get; set; }
 
+    public string ProtectedExportPassword { get; set; }
+
     public byte[] DataVersion { get; set; }
 
     public DateTimeOffset ExpiresAt { get; set; }

@@ -24,6 +24,7 @@ public class OctopusImportSessionConfiguration : IEntityTypeConfiguration<Octopu
         builder.Property(s => s.TemporaryUploadCleanupAfter);
         builder.Property(s => s.TemporaryUploadCleanedAt);
         builder.Property(s => s.TemporaryUploadCleanupError).HasMaxLength(1024);
+        builder.Property(s => s.ProtectedExportPassword);
         builder.Property(s => s.DataVersion).IsConcurrencyToken();
         builder.Property(s => s.ExpiresAt).IsRequired();
         builder.Property(s => s.LastStateChangedAt).IsRequired();

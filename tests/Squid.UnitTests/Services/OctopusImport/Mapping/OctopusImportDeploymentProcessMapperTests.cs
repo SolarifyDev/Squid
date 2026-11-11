@@ -223,6 +223,72 @@ public class OctopusImportDeploymentProcessMapperTests
     }
 
     [Fact]
+    public void MapToCreateStepCommands_RewritesOctopusBuiltInReferencesInActionAndStepProperties()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Rewrite",
+            Name = "Notify",
+            Properties = { ["Octopus.Step.ConditionExpression"] = "#{if Octopus.Environment.Name == \"PRD\"}true#{/if}" },
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Rewrite",
+                    Name = "Run script",
+                    ActionType = "Octopus.Script",
+                    Properties =
+                    {
+                        ["Octopus.Action.RunOnServer"] = "true",
+                        ["Octopus.Action.Script.Syntax"] = "Bash",
+                        ["Octopus.Action.Script.ScriptBody"] = "echo #{Octopus.Release.Number} #{Octopus.Unknown}"
+                    }
+                }
+            ]
+        });
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7);
+
+        var step = result.Steps.Single().CreateCommand.Step;
+        step.Actions.Single().Properties.Single(p => p.PropertyName == SpecialVariables.Action.ScriptBody).PropertyValue.ShouldBe("echo #{Squid.Release.Number} #{Octopus.Unknown}");
+        step.Properties.Single(p => p.PropertyName == SpecialVariables.Step.ConditionExpression).PropertyValue.ShouldBe("#{if Squid.Environment.Name == \"PRD\"}true#{/if}");
+    }
+
+    [Fact]
+    public void MapToCreateStepCommands_PassesExportedStepTemplatesToActionMappers()
+    {
+        var process = Process(new OctopusDeploymentStepDto
+        {
+            Id = "Steps-Template",
+            Name = "Notify",
+            Actions =
+            [
+                new OctopusDeploymentActionDto
+                {
+                    Id = "Actions-Template",
+                    Name = "Notify",
+                    ActionType = "Octopus.Script",
+                    Properties =
+                    {
+                        ["Octopus.Action.RunOnServer"] = "true",
+                        ["Octopus.Action.Script.Syntax"] = "PowerShell",
+                        ["Octopus.Action.Script.ScriptBody"] = "Write-Host $Region",
+                        ["Octopus.Action.Template.Id"] = "ActionTemplates-1"
+                    }
+                }
+            ]
+        });
+        var templates = new Dictionary<string, OctopusActionTemplateDto>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ActionTemplates-1"] = new() { Id = "ActionTemplates-1", Parameters = [new() { Name = "Region", DefaultValue = System.Text.Json.JsonSerializer.SerializeToElement("eu-west-1") }] }
+        };
+
+        var result = _mapper.MapToCreateStepCommands(Resource(process), IdMap(), 7, templates);
+
+        result.Steps.Single().CreateCommand.Step.Actions.Single().Properties.Single(p => p.PropertyName == SpecialVariables.Action.ScriptBody).PropertyValue.ShouldContain("$OctopusParameters['Region'] = 'eu-west-1'");
+    }
+
+    [Fact]
     public void MapToCreateStepCommands_MapsRunOnServerStepProperty()
     {
         var process = Process(new OctopusDeploymentStepDto

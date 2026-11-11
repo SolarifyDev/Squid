@@ -1,6 +1,8 @@
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.UnitTests.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -278,6 +280,68 @@ public class OctopusImportPreviewValidatorTests
         result.HasBlockers.ShouldBeTrue();
         result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
         result.RequiredInputs.Single().Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
+    }
+
+    [Fact]
+    public void Validate_SensitiveInputFromStalePreview_IsDroppedWhenTheValueIsNowDecryptable()
+    {
+        var variable = Node("Variables-1", OctopusResourceKind.Variable, "Db:Password", new OctopusVariableDto { Id = "Variables-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("secret", "pw") });
+        var stalePreview = Preview([variable]);
+        stalePreview.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable("Variables-1", variable.GetSource<OctopusVariableDto>()));
+        var validator = new OctopusImportPreviewValidator(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword("pw") });
+
+        var result = validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), stalePreview);
+
+        result.HasBlockers.ShouldBeFalse();
+        result.RequiredInputs.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void Validate_SensitiveVariableWithoutExportSecrets_StillBlocks()
+    {
+        var variable = Node("Variables-1", OctopusResourceKind.Variable, "Db:Password", new OctopusVariableDto { Id = "Variables-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("secret", "pw") });
+
+        var result = _validator.Validate(Graph([variable]), Plan([variable]), NoConflicts(), Preview([variable]));
+
+        result.HasBlockers.ShouldBeTrue();
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);
+    }
+
+    [Fact]
+    public void Validate_ResponsibleTeamMissingFromExport_BlocksBeforeConfirmation()
+    {
+        var action = Node("Actions-1", OctopusResourceKind.DeploymentAction, "Approve");
+        var reference = Reference("Actions-1", OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Team, "Teams-404", OctopusResourceKind.Team, false);
+
+        var result = _validator.Validate(Graph([action], [reference]), Plan([action]), NoConflicts(), Preview([action]));
+
+        result.Diagnostics.Single().Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.MissingResponsibleTeam);
+        result.HasBlockers.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Validate_ResponsibleTeamPresentInExport_DoesNotBlock()
+    {
+        var action = Node("Actions-1", OctopusResourceKind.DeploymentAction, "Approve");
+        var team = Node("Teams-1", OctopusResourceKind.Team, "Solar", new OctopusTeamDto { Id = "Teams-1", Name = "Solar" });
+        var reference = Reference("Actions-1", OctopusResourceKind.DeploymentAction, OctopusResourceReferenceKind.Team, "Teams-1", OctopusResourceKind.Team, false);
+
+        var result = _validator.Validate(Graph([action, team], [reference]), Plan([action, team]), NoConflicts(), Preview([action, team]));
+
+        result.HasBlockers.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Validate_ReusingASingleLibraryVariableSetMatch_IsAllowed()
+    {
+        var library = Node("LibraryVariableSets-1", OctopusResourceKind.LibraryVariableSet, "Shared", new OctopusLibraryVariableSetDto { Id = "LibraryVariableSets-1", Name = "Shared" });
+        var preview = Preview([library], DateTimeOffset.UtcNow.AddMinutes(1));
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.ReuseExisting;
+        preview.Resources.Single().DestinationId = 31;
+
+        var result = _validator.Validate(Graph([library]), Plan([library]), new OctopusImportConflictDiscoveryResult([Conflict(library, Match(31, OctopusResourceKind.LibraryVariableSet, "Shared"))]), preview);
+
+        result.HasBlockers.ShouldBeFalse();
     }
 
     private static OctopusResourceGraph Graph(

@@ -1,5 +1,6 @@
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Mapping.Scripts;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
@@ -31,7 +32,7 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
 
         AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptSource, SpecialVariables.Action.ScriptSource);
         AddMappedSyntax(properties, action, diagnostics);
-        AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptBody, SpecialVariables.Action.ScriptBody);
+        AddScriptBody(properties, action, context, diagnostics);
         OctopusImportPackageMapperSupport.AddPackageReferenceProperties(
             properties,
             action,
@@ -51,6 +52,32 @@ public sealed class OctopusScriptActionMapper : IOctopusImportActionMapper
         };
 
         return new OctopusImportActionMappingResult(model, diagnostics);
+    }
+
+    private static void AddScriptBody(List<ActionPropertyModel> properties, OctopusDeploymentActionDto action, OctopusImportActionMappingContext context, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        var body = GetProperty(action.Properties, OctopusPropertyNames.ActionScriptBody);
+
+        if (!IsInlineScript(action))
+        {
+            AddMappedProperty(properties, action.Properties, OctopusPropertyNames.ActionScriptBody, SpecialVariables.Action.ScriptBody);
+            return;
+        }
+
+        var template = context.FindActionTemplate(GetProperty(action.Properties, OctopusPropertyNames.ActionTemplateId));
+        var compatibility = OctopusScriptCompatibility.Apply(action, GetProperty(action.Properties, OctopusPropertyNames.ActionScriptSyntax), body ?? string.Empty, template);
+
+        diagnostics.AddRange(compatibility.Diagnostics);
+
+        if (!string.IsNullOrWhiteSpace(compatibility.ScriptBody))
+            properties.Add(Property(SpecialVariables.Action.ScriptBody, compatibility.ScriptBody));
+    }
+
+    private static bool IsInlineScript(OctopusDeploymentActionDto action)
+    {
+        var source = GetProperty(action.Properties, OctopusPropertyNames.ActionScriptSource);
+
+        return string.IsNullOrWhiteSpace(source) || string.Equals(source.Trim(), "Inline", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AddMappedSyntax(
