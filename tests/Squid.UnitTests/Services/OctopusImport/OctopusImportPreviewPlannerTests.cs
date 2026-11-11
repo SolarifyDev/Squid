@@ -400,18 +400,52 @@ public class OctopusImportPreviewPlannerTests
     public void BuildPreviewPlan_ReusedTeam_WarnsThatItsCurrentMembersCanApprove(int spaceId, int memberCount, string expectedScope)
     {
         var resource = Node("Teams-1", OctopusResourceKind.Team, "Solar");
-        var destination = new OctopusImportDestinationResource(77, spaceId, OctopusResourceKind.Team, "Solar Squad", null, DateTimeOffset.UtcNow) { MemberCount = memberCount };
+        var destination = new OctopusImportDestinationResource(77, spaceId, OctopusResourceKind.Team, "Solar Squad", null, DateTimeOffset.UtcNow) { MemberCount = memberCount, MemberFingerprint = "fingerprint-at-preview" };
 
         var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]));
 
         var team = preview.Resources.Single();
         team.DestinationMemberCount.ShouldBe(memberCount);
+        team.DestinationMemberFingerprint.ShouldBe("fingerprint-at-preview");
         var warning = team.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval);
         warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
         warning.Message.ShouldContain("'Solar Squad'");
         warning.Message.ShouldContain(expectedScope);
         warning.Message.ShouldContain($"{memberCount} member(s)");
         preview.HasBlockers.ShouldBeFalse();
+    }
+
+    // Everyone means "every user" (each new account is added to it), so its membership is not a snapshot to
+    // pin: tracking it would block every import whenever a user is created between preview and confirm.
+    [Theory]
+    [InlineData(true, 0, "Everyone", true)]
+    [InlineData(false, 0, "Everyone", false)]   // a hand-made namesake is an ordinary team
+    [InlineData(true, 0, "Squid Administrators", false)]
+    [InlineData(true, 7, "Everyone", false)]
+    public void BuildPreviewPlan_ReusingTheBuiltInEveryoneTeam_WarnsThatAllUsersCanApprove_WithoutPinningMembership(bool isBuiltIn, int spaceId, string name, bool expectAllUsers)
+    {
+        var resource = Node("teams-everyone", OctopusResourceKind.Team, "Everyone");
+        var destination = new OctopusImportDestinationResource(2, spaceId, OctopusResourceKind.Team, name, null, DateTimeOffset.UtcNow) { IsBuiltIn = isBuiltIn, MemberCount = 12, MemberFingerprint = "fp" };
+
+        var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]));
+
+        var team = preview.Resources.Single();
+        var warning = team.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval);
+        warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+
+        if (expectAllUsers)
+        {
+            team.DestinationMemberCount.ShouldBeNull();
+            team.DestinationMemberFingerprint.ShouldBeNull();
+            warning.Message.ShouldContain("every user");
+            warning.Message.ShouldNotContain("member(s)");
+        }
+        else
+        {
+            team.DestinationMemberCount.ShouldBe(12);
+            team.DestinationMemberFingerprint.ShouldBe("fp");
+            warning.Message.ShouldContain("12 member(s)");
+        }
     }
 
     [Theory]
@@ -424,6 +458,7 @@ public class OctopusImportPreviewPlannerTests
         var preview = _planner.BuildPreviewPlan(Plan([resource]), new OctopusImportConflictDiscoveryResult([Conflict(resource, Match(77, kind, "Solar", null))]));
 
         preview.Resources.Single().DestinationMemberCount.ShouldBeNull();
+        preview.Resources.Single().DestinationMemberFingerprint.ShouldBeNull();
         preview.Resources.Single().Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval);
     }
 

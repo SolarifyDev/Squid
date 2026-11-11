@@ -220,6 +220,38 @@ public class OctopusImportPreviewValidatorTests
         }
     }
 
+    [Theory]
+    [InlineData("members-a", "members-a", false)]   // same people → reuse is still what the preview showed
+    [InlineData("members-a", "members-b", true)]    // a member was swapped: same count, different people
+    [InlineData(null, "members-b", false)]          // plan produced before the fingerprint existed → count-only check
+    public void Validate_ReusedTeamWithSameMemberCount_IsStaleWhenTheMembersThemselvesChanged(string previewFingerprint, string currentFingerprint, bool expectStale)
+    {
+        var generatedAt = DateTimeOffset.UtcNow;
+        var team = Node("Teams-1", OctopusResourceKind.Team, "Solar");
+        var preview = Preview([team], generatedAt);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.ReuseExisting;
+        preview.Resources.Single().DestinationId = 200;
+        preview.Resources.Single().DestinationMemberCount = 1;
+        preview.Resources.Single().DestinationMemberFingerprint = previewFingerprint;
+        var destination = new OctopusImportDestinationResource(200, 7, OctopusResourceKind.Team, "Solar", null, generatedAt.AddMinutes(-1)) { MemberCount = 1, MemberFingerprint = currentFingerprint };
+        var conflicts = new OctopusImportConflictDiscoveryResult([Conflict(team, new OctopusImportDestinationMatch(destination, OctopusImportIdentityMatchKind.Name))]);
+
+        var result = _validator.Validate(Graph([team]), Plan([team]), conflicts, preview);
+
+        if (expectStale)
+        {
+            var diagnostic = result.Diagnostics.Single();
+            diagnostic.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+            diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker);
+            diagnostic.Message.ShouldContain("'Solar'");
+            diagnostic.Message.ShouldContain("membership changed");
+        }
+        else
+        {
+            result.Diagnostics.ShouldBeEmpty();
+        }
+    }
+
     [Fact]
     public void Validate_ReusedTeamModifiedAndMembershipChanged_ReportsOneStaleBlocker()
     {

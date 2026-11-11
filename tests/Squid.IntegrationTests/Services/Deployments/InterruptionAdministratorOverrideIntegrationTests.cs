@@ -92,6 +92,42 @@ public class InterruptionAdministratorOverrideIntegrationTests : TestBase
         await AssertStillPendingAsync(interruptionId);
     }
 
+    [Fact]
+    public async Task Submit_TeamMemberAfterAnAdministratorOverride_ReplacesTheDecisionAndClearsTheOverrideAudit()
+    {
+        var (interruptionId, _) = await SeedAsync(teamMembers: [TeamMemberUserId]);
+
+        await SubmitAsAsync(SpaceOwnerUserId, interruptionId);
+        await SubmitAsAsync(TeamMemberUserId, interruptionId, result: nameof(InterruptionOutcome.Abort));
+
+        await Run<SquidDbContext>(async db =>
+        {
+            var interruption = await db.Set<DeploymentInterruption>().AsNoTracking().SingleAsync(i => i.Id == interruptionId);
+            interruption.Resolution.ShouldBe(nameof(InterruptionOutcome.Abort));
+            interruption.AdministratorOverrideUserId.ShouldBeNull(customMessage: "the team member's decision must not be credited to the earlier administrator override");
+            interruption.AdministratorOverrideUserName.ShouldBeNull();
+        });
+    }
+
+    [Theory]
+    [InlineData(SpaceOwnerUserId, true, true)]
+    [InlineData(DeployerUserId, false, false)]
+    public async Task GetPending_SeveralInterruptions_EachReflectsItsOwnAccess(int userId, bool expectCanActOnTeamInterruption, bool expectOverride)
+    {
+        var (_, taskId) = await SeedAsync(teamMembers: []);
+        await AddTeamlessInterruptionAsync(taskId);
+
+        var response = await GetPendingAsAsync(userId, taskId);
+
+        response.Interruptions.Count.ShouldBe(2);
+        var teamRestricted = response.Interruptions.Single(i => i.ResponsibleTeamIds != null);
+        var teamless = response.Interruptions.Single(i => i.ResponsibleTeamIds == null);
+        teamRestricted.CanTakeResponsibility.ShouldBe(expectCanActOnTeamInterruption);
+        teamRestricted.IsAdministratorOverride.ShouldBe(expectOverride);
+        teamless.CanTakeResponsibility.ShouldBeTrue();
+        teamless.IsAdministratorOverride.ShouldBeFalse();
+    }
+
     [Theory]
     [InlineData(SpaceOwnerUserId, true, true)]
     [InlineData(SystemAdminUserId, true, true)]
@@ -101,11 +137,7 @@ public class InterruptionAdministratorOverrideIntegrationTests : TestBase
     {
         var (_, taskId) = await SeedAsync(teamMembers: [TeamMemberUserId]);
 
-        GetPendingInterruptionsResponse response = null;
-
-        await Run<IMediator>(
-            async mediator => response = await mediator.RequestAsync<GetPendingInterruptionsRequest, GetPendingInterruptionsResponse>(new GetPendingInterruptionsRequest { SpaceId = SpaceId, ServerTaskId = taskId }),
-            builder => builder.RegisterInstance<ICurrentUser>(new FixedCurrentUser(userId)).SingleInstance());
+        var response = await GetPendingAsAsync(userId, taskId);
 
         var dto = response.Interruptions.Single();
         dto.CanTakeResponsibility.ShouldBe(expectCanAct);
@@ -149,11 +181,31 @@ public class InterruptionAdministratorOverrideIntegrationTests : TestBase
 
     // ── Drivers ─────────────────────────────────────────────────────────────────────────────────
 
-    private async Task SubmitAsAsync(int userId, int interruptionId, int commandSpaceId = SpaceId)
+    private async Task SubmitAsAsync(int userId, int interruptionId, int commandSpaceId = SpaceId, string result = "Proceed")
     {
         await Run<IMediator>(
-            async mediator => await mediator.SendAsync<SubmitInterruptionCommand, SubmitInterruptionResponse>(new SubmitInterruptionCommand { SpaceId = commandSpaceId, InterruptionId = interruptionId, Values = new Dictionary<string, string> { ["Result"] = "Proceed" } }),
+            async mediator => await mediator.SendAsync<SubmitInterruptionCommand, SubmitInterruptionResponse>(new SubmitInterruptionCommand { SpaceId = commandSpaceId, InterruptionId = interruptionId, Values = new Dictionary<string, string> { ["Result"] = result } }),
             builder => builder.RegisterInstance<ICurrentUser>(new FixedCurrentUser(userId)).SingleInstance());
+    }
+
+    private async Task<GetPendingInterruptionsResponse> GetPendingAsAsync(int userId, int taskId)
+    {
+        GetPendingInterruptionsResponse response = null;
+
+        await Run<IMediator>(
+            async mediator => response = await mediator.RequestAsync<GetPendingInterruptionsRequest, GetPendingInterruptionsResponse>(new GetPendingInterruptionsRequest { SpaceId = SpaceId, ServerTaskId = taskId }),
+            builder => builder.RegisterInstance<ICurrentUser>(new FixedCurrentUser(userId)).SingleInstance());
+
+        return response;
+    }
+
+    private async Task AddTeamlessInterruptionAsync(int taskId)
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            db.Set<DeploymentInterruption>().Add(new DeploymentInterruption { ServerTaskId = taskId, DeploymentId = 0, InterruptionType = InterruptionType.ManualIntervention, StepName = "Second approval", ActionName = "Second approval", SpaceId = SpaceId });
+            await db.SaveChangesAsync();
+        });
     }
 
     private async Task AssertStillPendingAsync(int interruptionId)

@@ -23,6 +23,13 @@ public class OctopusImportResourceResultDto
     /// </summary>
     public int? DestinationMemberCount { get; set; }
 
+    /// <summary>
+    /// Fingerprint of the reused destination team's member set when the preview was generated, so confirmation
+    /// also catches a member being swapped for another (same count, different people). Null for every other
+    /// resource kind, for the built-in Everyone team (it means every user) and for plans produced before it existed.
+    /// </summary>
+    public string DestinationMemberFingerprint { get; set; }
+
     public List<OctopusImportRequiredInputDto> RequiredInputs { get; set; } = [];
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];

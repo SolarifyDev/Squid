@@ -1,3 +1,4 @@
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Secrets;
@@ -204,7 +205,14 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
     private static void AddReusedTeamWarning(OctopusImportResourceResultDto result, OctopusResourceNode resource, OctopusImportDestinationResource destination)
     {
+        if (IsEveryUserTeam(destination))
+        {
+            AddEveryUserTeamWarning(result, resource, destination);
+            return;
+        }
+
         result.DestinationMemberCount = destination.MemberCount ?? 0;
+        result.DestinationMemberFingerprint = destination.MemberFingerprint;
 
         var scope = destination.SpaceId == 0 ? "system-wide" : $"space {destination.SpaceId}";
 
@@ -214,6 +222,20 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             $"Existing team '{destination.Name}' ({scope}, id {destination.Id}) with {result.DestinationMemberCount} member(s) will be reused for Octopus team '{resource.Name}'. Its current members will be able to approve manual interventions assigned to that team.",
             resource));
     }
+
+    // Squid adds every new user to the built-in Everyone team, so its membership is "all users", not a snapshot:
+    // nothing is pinned for confirmation (a user created after the preview must not make the plan stale).
+    private static void AddEveryUserTeamWarning(OctopusImportResourceResultDto result, OctopusResourceNode resource, OctopusImportDestinationResource destination)
+    {
+        result.Diagnostics.Add(Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval,
+            $"Octopus team '{resource.Name}' maps to the Squid built-in team '{destination.Name}' (id {destination.Id}), which every user belongs to: every user will be able to approve manual interventions assigned to that team.",
+            resource));
+    }
+
+    private static bool IsEveryUserTeam(OctopusImportDestinationResource destination)
+        => destination.IsBuiltIn && destination.SpaceId == 0 && destination.Name == BuiltInTeamNames.Everyone;
 
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,

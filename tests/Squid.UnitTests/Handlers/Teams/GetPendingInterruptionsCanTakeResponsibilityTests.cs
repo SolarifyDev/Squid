@@ -31,8 +31,11 @@ public class GetPendingInterruptionsCanTakeResponsibilityTests
         => new(_interruptionService.Object, new InterruptionAuthorizationService(_teamDataProvider.Object, _authorization.Object, new Mock<IDeploymentDataProvider>().Object), _currentUser.Object);
 
     private void SetupUserTeams(params int[] teamIds)
-        => _teamDataProvider.Setup(p => p.IsUserInAnyTeamAsync(42, It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
+    {
+        _teamDataProvider.Setup(p => p.IsUserInAnyTeamAsync(42, It.IsAny<List<int>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((int _, List<int> required, CancellationToken _) => required.Intersect(teamIds).Any());
+        _teamDataProvider.Setup(p => p.GetTeamIdsByUserIdAsync(42, It.IsAny<CancellationToken>())).ReturnsAsync(teamIds.ToList());
+    }
 
     [Fact]
     public async Task NoTeams_CanTakeResponsibility_IsTrue()
@@ -80,6 +83,7 @@ public class GetPendingInterruptionsCanTakeResponsibilityTests
 
         result.Interruptions.Single().CanTakeResponsibility.ShouldBeFalse();
         _teamDataProvider.Verify(p => p.IsUserInAnyTeamAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Never);
+        _teamDataProvider.Verify(p => p.GetTeamIdsByUserIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -118,7 +122,7 @@ public class GetPendingInterruptionsCanTakeResponsibilityTests
     }
 
     [Fact]
-    public async Task MultipleInterruptions_EachDecidedIndependently_AndUnrestrictedOnesNeverHitTheDatabase()
+    public async Task MultipleInterruptions_EachDecidedIndependently_WithOneTeamLookupForTheWholeList()
     {
         SetupInterruptions(
             new DeploymentInterruption { Id = 1, ServerTaskId = 10, ResponsibleTeamIds = "1" },
@@ -135,7 +139,8 @@ public class GetPendingInterruptionsCanTakeResponsibilityTests
         result.Interruptions[2].CanTakeResponsibility.ShouldBeTrue();
         result.Interruptions.ShouldAllBe(i => !i.IsAdministratorOverride);
 
-        _teamDataProvider.Verify(p => p.IsUserInAnyTeamAsync(42, It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _teamDataProvider.Verify(p => p.GetTeamIdsByUserIdAsync(42, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.IsUserInAnyTeamAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

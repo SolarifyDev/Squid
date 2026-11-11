@@ -15,4 +15,7 @@ public sealed record OctopusImportDestinationResource(
 
     /// <summary>Current member count of a destination team (null for every other kind). Reusing a team grants approval to these members.</summary>
     public int? MemberCount { get; init; }
+
+    /// <summary>Fingerprint of WHO the members of a destination team are (null for every other kind); see <see cref="OctopusImportTeamMembership"/>.</summary>
+    public string MemberFingerprint { get; init; }
 }

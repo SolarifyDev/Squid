@@ -272,6 +272,7 @@ public class OctopusImportTeamsIntegrationTests : TestBase
     [Theory]
     [InlineData("member-added")]
     [InlineData("member-removed")]
+    [InlineData("member-swapped")]
     [InlineData("team-edited")]
     [InlineData("team-deleted")]
     public async Task Confirm_WhenReusedTeamChangesBetweenPreviewAndConfirm_IsBlockedAsStaleAndWritesNothing(string change)
@@ -302,6 +303,47 @@ public class OctopusImportTeamsIntegrationTests : TestBase
             });
 
             await AssertNothingImportedAsync(expectedTeams: change == "team-deleted" ? 0 : 1);
+        }
+        finally
+        {
+            File.Delete(archivePath);
+        }
+    }
+
+    [Fact]
+    public async Task Confirm_ReusingTheBuiltInEveryoneTeam_IsNotStaleWhenAUserIsCreatedBetweenPreviewAndConfirm()
+    {
+        var archivePath = WriteArchive(Documents(teams: [("teams-everyone", "Everyone")], manualTeamIds: "teams-everyone", uniqueIds: false));
+
+        try
+        {
+            var everyoneId = (await SeedSquidBuiltInTeamsAsync())[BuiltInTeamNames.Everyone];
+            var sessionId = Guid.NewGuid();
+
+            await Run<ILifetimeScope>(async scope =>
+            {
+                var db = scope.Resolve<SquidDbContext>();
+                db.Set<TeamMember>().Add(new TeamMember { TeamId = everyoneId, UserId = 9001 });
+                db.Set<OctopusImportSession>().Add(Session(sessionId, OctopusImportSessionState.Validated, CurrentUsers.InternalUser.Id));
+                await db.SaveChangesAsync();
+
+                var snapshot = await scope.Resolve<IOctopusImportPlanningPipeline>().BuildPreviewAsync(archivePath, SpaceId);
+                var team = snapshot.PreviewPlan.Resources.Single(r => r.SourceId == "teams-everyone");
+                team.DestinationMemberCount.ShouldBeNull();
+                team.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedTeamGrantsApproval && d.Message.Contains("every user"));
+
+                // AccountService adds every new user to Everyone: that must not invalidate the plan.
+                db.Set<TeamMember>().Add(new TeamMember { TeamId = everyoneId, UserId = 9002 });
+                await db.SaveChangesAsync();
+                db.ChangeTracker.Clear();
+
+                var result = await scope.Resolve<IOctopusImportConfirmationOrchestrator>().ConfirmAsync(new OctopusImportConfirmationRequest(sessionId, SpaceId, snapshot.Graph, snapshot.DependencyPlan, snapshot.PreviewPlan));
+
+                result.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(result));
+                result.Result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+            });
+
+            await Run<SquidDbContext>(async db => (await ManualResponsibleTeamIdsAsync(db)).ShouldBe(everyoneId.ToString()));
         }
         finally
         {
@@ -494,6 +536,10 @@ public class OctopusImportTeamsIntegrationTests : TestBase
                 break;
             case "member-removed":
                 await db.Set<TeamMember>().Where(m => m.TeamId == teamId && m.UserId == 9001).ExecuteDeleteAsync();
+                break;
+            case "member-swapped":
+                await db.Set<TeamMember>().Where(m => m.TeamId == teamId && m.UserId == 9001).ExecuteDeleteAsync();
+                db.Set<TeamMember>().Add(new TeamMember { TeamId = teamId, UserId = 9999 });
                 break;
             case "team-edited":
                 (await db.Set<Team>().SingleAsync(t => t.Id == teamId)).Description = "changed after preview";

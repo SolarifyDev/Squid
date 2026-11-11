@@ -99,6 +99,51 @@ public class OctopusImportDestinationDataProviderTests
     }
 
     [Fact]
+    public async Task GetResourcesAsync_Teams_CarryAMemberFingerprintThatTracksWhoTheMembersAre()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportDestinationDataProvider(new EfRepository(db));
+
+        // Teams 1 and 2 hold the same members inserted in a different order; team 3 has the same COUNT as
+        // team 1 but one member swapped. Only membership (not order, not count) may drive the fingerprint.
+        db.Set<Team>().AddRange(
+            new Team { Id = 1, SpaceId = 7, Name = "Approvers" },
+            new Team { Id = 2, SpaceId = 7, Name = "Same members" },
+            new Team { Id = 3, SpaceId = 7, Name = "Swapped member" },
+            new Team { Id = 4, SpaceId = 7, Name = "Empty" });
+        db.Set<TeamMember>().AddRange(
+            new TeamMember { TeamId = 1, UserId = 10 },
+            new TeamMember { TeamId = 1, UserId = 11 },
+            new TeamMember { TeamId = 2, UserId = 11 },
+            new TeamMember { TeamId = 2, UserId = 10 },
+            new TeamMember { TeamId = 3, UserId = 10 },
+            new TeamMember { TeamId = 3, UserId = 12 });
+        await db.SaveChangesAsync();
+
+        var teams = (await provider.GetResourcesAsync(7)).ToDictionary(r => r.Id);
+
+        teams[1].MemberFingerprint.ShouldNotBeNullOrWhiteSpace();
+        teams[2].MemberFingerprint.ShouldBe(teams[1].MemberFingerprint);
+        teams[3].MemberCount.ShouldBe(teams[1].MemberCount);
+        teams[3].MemberFingerprint.ShouldNotBe(teams[1].MemberFingerprint);
+        teams[4].MemberFingerprint.ShouldBe(OctopusImportTeamMembership.Fingerprint([]));
+        teams[1].MemberFingerprint.ShouldBe(OctopusImportTeamMembership.Fingerprint([11, 10]));
+    }
+
+    [Theory]
+    [InlineData(new[] { 1, 2, 3 }, new[] { 3, 1, 2 }, true)]
+    [InlineData(new[] { 1, 2 }, new[] { 1, 3 }, false)]
+    [InlineData(new[] { 12 }, new[] { 1, 2 }, false)]
+    [InlineData(new int[0], new int[0], true)]
+    [InlineData(new int[0], new[] { 1 }, false)]
+    public void Fingerprint_DependsOnlyOnTheSetOfMembers(int[] left, int[] right, bool expectEqual)
+    {
+        var equal = OctopusImportTeamMembership.Fingerprint(left) == OctopusImportTeamMembership.Fingerprint(right);
+
+        equal.ShouldBe(expectEqual);
+    }
+
+    [Fact]
     public async Task GetResourcesAsync_NonTeamResources_HaveNoMemberCount()
     {
         await using var db = CreateDbContext();
@@ -110,6 +155,7 @@ public class OctopusImportDestinationDataProviderTests
         var group = (await provider.GetResourcesAsync(7)).Single();
 
         group.MemberCount.ShouldBeNull();
+        group.MemberFingerprint.ShouldBeNull();
         group.IsBuiltIn.ShouldBeFalse();
     }
 

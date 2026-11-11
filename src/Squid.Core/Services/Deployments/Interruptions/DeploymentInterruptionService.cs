@@ -78,11 +78,9 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
-        if (currentUser.Id.HasValue)
-        {
-            var access = await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false);
-            RecordAdministratorOverride(interruption, access, currentUser.Id.Value, currentUser.Name);
-        }
+        var access = currentUser.Id.HasValue ? await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false) : (InterruptionAccess?)null;
+
+        RecordAdministratorOverride(interruption, access, currentUser.Id, currentUser.Name);
 
         var outcome = InterruptionFormBuilder.ResolveOutcome(interruption.InterruptionType, values);
 
@@ -118,12 +116,16 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
-    private static void RecordAdministratorOverride(DeploymentInterruption interruption, InterruptionAccess access, int userId, string userName)
+    // Every submission replaces the resolution, so it also replaces the audit fields: a later non-override
+    // decision must not inherit an earlier administrator's name.
+    private static void RecordAdministratorOverride(DeploymentInterruption interruption, InterruptionAccess? access, int? userId, string userName)
     {
-        if (access != InterruptionAccess.AdministratorOverride) return;
+        var isOverride = access == InterruptionAccess.AdministratorOverride;
 
-        interruption.AdministratorOverrideUserId = userId;
-        interruption.AdministratorOverrideUserName = userName;
+        interruption.AdministratorOverrideUserId = isOverride ? userId : null;
+        interruption.AdministratorOverrideUserName = isOverride ? userName : null;
+
+        if (!isOverride) return;
 
         Log.Warning("Interruption {InterruptionId} of task {ServerTaskId} ({StepName}) was resolved by user {UserId} via administrator override of responsible teams {ResponsibleTeamIds}", interruption.Id, interruption.ServerTaskId, interruption.StepName, userId, interruption.ResponsibleTeamIds);
     }

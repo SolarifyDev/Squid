@@ -151,12 +151,105 @@ public class InterruptionAuthorizationServiceTests
     }
 
     [Fact]
-    public void OverridePermission_IsAppendedAfterEveryPreExistingPermission()
+    public void OverridePermission_KeepsFixedOrdinals()
     {
         // Ordinals of pre-existing permissions must not move: the new value is appended at the end.
         ((int)Permission.AdministerSystem).ShouldBe(54);
         ((int)Permission.InterruptionSubmitOverride).ShouldBe(55);
-        Enum.GetValues<Permission>().Max().ShouldBe(Permission.InterruptionSubmitOverride);
+    }
+
+    // ── Operator opt-out (Rule 8) ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AdministratorOverrideEnvVar_ConstantNamePinned()
+    {
+        // Strict-approval installations pin this name to switch the override off; renaming it would
+        // silently re-enable administrator approvals for them.
+        InterruptionAuthorizationService.AdministratorOverrideEnabledEnvVar.ShouldBe("SQUID_INTERRUPTION_ADMINISTRATOR_OVERRIDE_ENABLED");
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("true", true)]
+    [InlineData("garbage", true)]
+    [InlineData("false", false)]
+    [InlineData(" FALSE ", false)]
+    [InlineData("0", false)]
+    [InlineData("no", false)]
+    [InlineData("Off", false)]
+    public void ParseAdministratorOverrideEnabled_DefaultsToEnabled_AndOnlyExplicitFalseyTokensDisable(string raw, bool expected)
+    {
+        InterruptionAuthorizationService.ParseAdministratorOverrideEnabled(raw).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("system-administrator")]
+    [InlineData("space-owner-same-space")]
+    public async Task OverrideDisabled_NonMembersAreDeniedEvenWithTheOverride_AndTeamMembersAreUnaffected(string caller)
+    {
+        ArrangeCaller(caller);
+        var sut = new InterruptionAuthorizationService(_teamDataProvider.Object, new AuthorizationService(_teamDataProvider.Object, _scopedRoles.Object, _roles.Object), _deployments.Object) { AdministratorOverrideEnabled = false };
+
+        (await sut.GetAccessAsync(Interruption(ResponsibleTeamId.ToString()), UserId)).ShouldBe(InterruptionAccess.Denied);
+        (await sut.GetAccessAsync(Interruption(null), UserId)).ShouldBe(InterruptionAccess.Unrestricted);
+        _deployments.Verify(d => d.GetDeploymentByIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        _teamDataProvider.Setup(p => p.IsUserInAnyTeamAsync(UserId, It.IsAny<List<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        (await sut.GetAccessAsync(Interruption(ResponsibleTeamId.ToString()), UserId)).ShouldBe(InterruptionAccess.TeamMember);
+    }
+
+    // ── Listing (one decision per pending interruption) ───────────────────────────────────────
+
+    [Fact]
+    public async Task GetAccessForEach_WithoutAResolvedUser_OffersOnlyTeamlessInterruptions_WithoutAnyLookup()
+    {
+        var access = await _sut.GetAccessForEachAsync([Interruption(null), Interruption("10"), Interruption("abc,,")], null);
+
+        access.ShouldBe([InterruptionAccess.Unrestricted, InterruptionAccess.Denied, InterruptionAccess.Unrestricted]);
+        _teamDataProvider.VerifyNoOtherCalls();
+        _deployments.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("system-administrator", InterruptionAccess.AdministratorOverride)]
+    [InlineData("space-owner-same-space", InterruptionAccess.AdministratorOverride)]
+    [InlineData("space-owner-another-space", InterruptionAccess.Denied)]
+    [InlineData("no-teams", InterruptionAccess.Denied)]
+    public async Task GetAccessForEach_AgreesWithTheSingleDecision_ForEveryInterruption(string caller, InterruptionAccess expectedForNonMemberTeam)
+    {
+        ArrangeCaller(caller);
+        _teamDataProvider.Setup(p => p.IsUserInAnyTeamAsync(UserId, It.Is<List<int>>(ids => ids.Contains(RoleTeamId)), It.IsAny<CancellationToken>())).ReturnsAsync(caller != "no-teams");
+        var interruptions = new List<DeploymentInterruption> { Interruption(ResponsibleTeamId.ToString()), Interruption(RoleTeamId.ToString()), Interruption(null), Interruption($"{ResponsibleTeamId},{RoleTeamId}") };
+
+        var batch = await _sut.GetAccessForEachAsync(interruptions, UserId);
+
+        batch[0].ShouldBe(expectedForNonMemberTeam);
+
+        for (var i = 0; i < interruptions.Count; i++)
+            batch[i].ShouldBe(await _sut.GetAccessAsync(interruptions[i], UserId), customMessage: $"listing and submit disagree for interruption #{i} ({interruptions[i].ResponsibleTeamIds})");
+    }
+
+    [Fact]
+    public async Task GetAccessForEach_LoadsTheUsersTeamsOnce_AndChecksTheOverrideOncePerDeployment()
+    {
+        ArrangeCaller("space-owner-same-space");
+        var authorization = new Mock<IAuthorizationService>();
+        authorization.Setup(a => a.CheckPermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(PermissionCheckResult.Authorized());
+        var sut = new InterruptionAuthorizationService(_teamDataProvider.Object, authorization.Object, _deployments.Object);
+        var otherDeployment = Interruption("11");
+        otherDeployment.DeploymentId = 6;
+
+        var access = await sut.GetAccessForEachAsync([Interruption("10"), Interruption("12"), Interruption("13"), otherDeployment], UserId);
+
+        access.ShouldAllBe(a => a == InterruptionAccess.AdministratorOverride);
+        _teamDataProvider.Verify(p => p.GetTeamIdsByUserIdAsync(UserId, It.IsAny<CancellationToken>()), Times.Once);
+        _teamDataProvider.Verify(p => p.IsUserInAnyTeamAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()), Times.Never);
+        authorization.Verify(a => a.CheckPermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _deployments.Verify(d => d.GetDeploymentByIdAsync(5, It.IsAny<CancellationToken>()), Times.Once);
+        _deployments.Verify(d => d.GetDeploymentByIdAsync(6, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     private void ArrangeCaller(string caller)

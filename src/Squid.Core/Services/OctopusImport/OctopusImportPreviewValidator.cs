@@ -335,14 +335,22 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             }
 
             if (HasMembershipChanged(previewResource, match))
-                AddStalePreviewDiagnostic(result, previewResource, $"Destination team '{match.Destination.Name}' had {previewResource.DestinationMemberCount} member(s) when the preview was generated and now has {match.Destination.MemberCount ?? 0}; review who will be able to approve before importing again.");
+                AddStalePreviewDiagnostic(result, previewResource, $"Destination team '{match.Destination.Name}' membership changed after the preview was generated (it had {previewResource.DestinationMemberCount} member(s) and now has {match.Destination.MemberCount ?? 0}); review who will be able to approve before importing again.");
         }
     }
 
     // Team membership lives in its own table and does not touch the team row's LastModifiedDate, so the
-    // member count the preview warned about is compared explicitly: reusing a team grants approval rights.
+    // membership the preview warned about is compared explicitly: reusing a team grants approval rights.
+    // The count catches additions/removals; the fingerprint also catches a member swapped for another.
+    // Null preview values mean "nothing pinned" (other kinds, the Everyone team, plans predating the field).
     private static bool HasMembershipChanged(OctopusImportResourceResultDto previewResource, OctopusImportDestinationMatch match)
+        => HasMemberCountChanged(previewResource, match) || HasMemberFingerprintChanged(previewResource, match);
+
+    private static bool HasMemberCountChanged(OctopusImportResourceResultDto previewResource, OctopusImportDestinationMatch match)
         => previewResource.DestinationMemberCount.HasValue && previewResource.DestinationMemberCount.Value != (match.Destination.MemberCount ?? 0);
+
+    private static bool HasMemberFingerprintChanged(OctopusImportResourceResultDto previewResource, OctopusImportDestinationMatch match)
+        => previewResource.DestinationMemberFingerprint != null && !string.Equals(previewResource.DestinationMemberFingerprint, match.Destination.MemberFingerprint, StringComparison.Ordinal);
 
     private static void AddStalePreviewDiagnostic(OctopusImportValidationResultDto result, OctopusImportResourceResultDto previewResource, string message)
     {
