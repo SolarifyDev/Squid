@@ -31,6 +31,11 @@ public static class OctopusImportActionMappingDiagnosticCodes
     public const string ScriptUnmappedOctopusVariable = "OctopusImport.Action.Script.UnmappedOctopusVariable";
     public const string StepTemplateMissingFromExport = "OctopusImport.Action.Script.StepTemplateMissingFromExport";
     public const string SensitiveStepTemplateParameter = "OctopusImport.Action.Script.SensitiveStepTemplateParameter";
+    public const string ScriptReservedParameterName = "OctopusImport.Action.Script.ReservedParameterName";
+    public const string ScriptOctopusVariableApiUnsupported = "OctopusImport.Action.Script.OctopusVariableApiUnsupported";
+    public const string ScriptOctopusVariableDynamicAccess = "OctopusImport.Action.Script.OctopusVariableDynamicAccess";
+    public const string ScriptOctopusValueNotTransportable = "OctopusImport.Action.Script.OctopusValueNotTransportable";
+    public const string ScriptVariableSubstitutionUnparsable = "OctopusImport.Action.Script.VariableSubstitutionUnparsable";
     public const string KubernetesYamlFileSelectionUnsupported = "OctopusImport.Action.KubernetesYaml.FileSelectionUnsupported";
     public const string DisabledFeatureResourceReferenced = "OctopusImport.Action.Kubernetes.DisabledFeatureResourceReferenced";
 }

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using Squid.Message.Constants;
 
@@ -40,27 +41,41 @@ public static partial class OctopusSystemVariables
 
     /// <summary>
     /// Rewrites mapped Octopus built-in names that appear INSIDE <c>#{...}</c> expressions (plain
-    /// references, filters, <c>#{if}</c>/<c>#{unless}</c> conditions) to their Squid names. Unmapped
-    /// <c>Octopus.*</c> names and anything outside an expression are left byte-for-byte unchanged.
+    /// references, filters, <c>#{if}</c>/<c>#{unless}</c> conditions, <c>#{each}</c> collections) to their
+    /// Squid names. Expressions are located with Squid's own template parser
+    /// (<see cref="OctopusTemplateSpans"/>), so escaped text (<c>##{Octopus.X}</c>, which evaluates to the
+    /// literal <c>#{Octopus.X}</c>), quoted literals inside an expression, unmapped <c>Octopus.*</c> names,
+    /// anything outside an expression, and text the engine cannot parse at all are left byte-for-byte
+    /// unchanged — the rewrite never changes what the engine evaluates the text to.
     /// </summary>
     public static string RewriteReferences(string text)
     {
         if (string.IsNullOrEmpty(text) || !text.Contains("#{", StringComparison.Ordinal)) return text;
 
-        return ExpressionPattern().Replace(text, expression => OctopusNamePattern().Replace(expression.Value, ReplaceName));
+        if (!OctopusTemplateSpans.TryParse(text, out var spans)) return text;
+
+        var rewritten = new StringBuilder(text.Length);
+
+        AppendRewritten(rewritten, spans);
+
+        return rewritten.ToString();
     }
 
     /// <summary>
     /// Lists, distinct and sorted, every <c>Octopus.*</c> name inside a <c>#{...}</c> expression that has
     /// no Squid equivalent (so <see cref="RewriteReferences"/> leaves it and it stays unresolved on Squid).
-    /// Indexed names such as <c>Octopus.Action[Build].Output.Tag</c> are reported whole.
+    /// Indexed names such as <c>Octopus.Action[Build].Output.Tag</c> are reported whole. Expressions are
+    /// located with the same template parser as the rewriter, so escaped text (<c>##{Octopus.X}</c>) and
+    /// quoted literals are never reported; text the engine cannot parse is scanned as a whole.
     /// </summary>
     public static IReadOnlyList<string> FindUnmappedReferences(string text)
     {
         if (string.IsNullOrEmpty(text) || !text.Contains("#{", StringComparison.Ordinal)) return [];
 
-        return ExpressionPattern().Matches(text)
-            .SelectMany(expression => OctopusReferencePattern().Matches(expression.Value))
+        var expressions = OctopusTemplateSpans.TryParse(text, out var spans) ? CollectExpressions(spans) : [text];
+
+        return expressions
+            .SelectMany(expression => OctopusReferencePattern().Matches(expression))
             .Where(IsReference)
             .Select(match => match.Groups[ReferenceGroup].Value)
             .Where(name => !TryGetSquidName(name, out _))
@@ -71,19 +86,59 @@ public static partial class OctopusSystemVariables
 
     private const string ReferenceGroup = "reference";
 
-    // Both patterns match a double-quoted Octostache string literal (TemplateParser.QuotedText) as a whole
-    // first, so a name inside a literal — `Replace "Octopus.Old" "x"` — is text: neither rewritten nor reported.
+    // The pattern matches a double-quoted Octostache string literal as a whole first, so a name inside a
+    // literal (`Replace "Octopus.Old" "x"`) is text, not a reference.
     private static bool IsReference(Match match) => match.Groups[ReferenceGroup].Success;
 
-    // A quoted-literal match keeps its quotes, so it never equals a mapped name and is returned unchanged.
+    private static List<string> CollectExpressions(IReadOnlyList<OctopusTemplateSpan> spans)
+    {
+        var expressions = new List<string>();
+
+        foreach (var span in spans)
+        {
+            if (span.Kind == OctopusTemplateSpanKind.Substitution) expressions.Add(span.Raw);
+            if (span.Kind != OctopusTemplateSpanKind.Block) continue;
+
+            expressions.Add(span.OpenTag);
+            expressions.AddRange(CollectExpressions(span.Children));
+        }
+
+        return expressions;
+    }
+
+    private static void AppendRewritten(StringBuilder output, IReadOnlyList<OctopusTemplateSpan> spans)
+    {
+        foreach (var span in spans)
+        {
+            switch (span.Kind)
+            {
+                case OctopusTemplateSpanKind.Substitution:
+                    output.Append(RewriteExpression(span.Raw));
+                    break;
+                case OctopusTemplateSpanKind.Block:
+                    output.Append(RewriteExpression(span.OpenTag));
+                    AppendRewritten(output, span.Children);
+                    output.Append(span.CloseTag);
+                    break;
+                default:
+                    output.Append(span.Raw);
+                    break;
+            }
+        }
+    }
+
+    // Quoted option / comparison literals ("…") are data, not variable names.
+    private static string RewriteExpression(string expression)
+        => ExpressionPartPattern().Replace(expression, part => part.Value.StartsWith('"') ? part.Value : OctopusNamePattern().Replace(part.Value, ReplaceName));
+
     private static string ReplaceName(Match match) => TryGetSquidName(match.Value, out var squidName) ? squidName : match.Value;
 
-    [GeneratedRegex(@"#\{[^{}]*\}", RegexOptions.CultureInvariant)]
-    private static partial Regex ExpressionPattern();
+    [GeneratedRegex(@"""[^""]*""?|[^""]+", RegexOptions.CultureInvariant)]
+    private static partial Regex ExpressionPartPattern();
 
     [GeneratedRegex(@"""[^""]*""|(?<reference>(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+|\[[^\[\]{}]*\])+)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OctopusReferencePattern();
 
-    [GeneratedRegex(@"""[^""]*""|(?<reference>(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+)+)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_.])Octopus(?:\.[A-Za-z0-9_]+)+", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex OctopusNamePattern();
 }

@@ -89,21 +89,26 @@ public sealed class PrepareDeploymentPhase(
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
     }
 
-    // Who triggered the deployment (Octopus' Octopus.Deployment.CreatedBy.*). Best-effort: a missing
-    // user row or no repository (unit-test composition) simply omits the variables.
+    // Who triggered the deployment (Octopus' Octopus.Deployment.CreatedBy.*). Always defined — a script that
+    // reads an undefined name gets the literal #{…} token — and always appended after the resolved variables,
+    // so precedence against a user-defined variable of the same name never depends on whether the user row
+    // still exists. No actor → all empty; deleted user or no repository → the id with empty names.
     private async Task AddDeploymentCreatorVariablesAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         var userId = ctx.Deployment.DeployedBy > 0 ? ctx.Deployment.DeployedBy : ctx.Deployment.CreatedBy;
+        var user = await FindDeploymentCreatorAsync(userId, ct).ConfigureAwait(false);
+        var userName = user?.UserName ?? string.Empty;
 
-        if (repository == null || userId <= 0) return;
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedById, Value = userId > 0 ? userId.ToString() : string.Empty });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByUsername, Value = userName });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByDisplayName, Value = string.IsNullOrWhiteSpace(user?.DisplayName) ? userName : user.DisplayName });
+    }
 
-        var user = await repository.QueryNoTracking<UserAccount>(u => u.Id == userId).Select(u => new { u.UserName, u.DisplayName }).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+    private async Task<UserAccount> FindDeploymentCreatorAsync(int userId, CancellationToken ct)
+    {
+        if (repository == null || userId <= 0) return null;
 
-        if (user == null) return;
-
-        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedById, Value = userId.ToString() });
-        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByUsername, Value = user.UserName ?? string.Empty });
-        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByDisplayName, Value = string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName ?? string.Empty : user.DisplayName });
+        return await repository.QueryNoTracking<UserAccount>(u => u.Id == userId).Select(u => new UserAccount { Id = u.Id, UserName = u.UserName, DisplayName = u.DisplayName }).FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)

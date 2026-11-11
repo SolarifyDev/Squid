@@ -13,7 +13,8 @@ namespace Squid.Core.VariableSubstitution.Templates
             {"jsonescape", TextEscapeFunction.JsonEscape },
             {"nowdate", DateFunction.NowDate },
             {"nowdateutc", DateFunction.NowDateUtc },
-            {"format", FormatFunction.Format }
+            {"format", FormatFunction.Format },
+            {"tobase64", Base64Function.ToBase64 }
         };
 
         public static void Register(string name, Func<string, string[], string> implementation)

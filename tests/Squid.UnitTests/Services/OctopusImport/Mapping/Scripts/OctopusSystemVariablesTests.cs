@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Mapping.Scripts;
+using Squid.Core.VariableSubstitution;
 using Squid.Message.Constants;
 
 namespace Squid.UnitTests.Services.OctopusImport.Mapping.Scripts;
@@ -33,6 +34,46 @@ public class OctopusSystemVariablesTests
     public void RewriteReferences_UnmappedOrOutsideExpressions_AreLeftByteForByte(string input)
     {
         OctopusSystemVariables.RewriteReferences(input).ShouldBe(input);
+    }
+
+    [Theory]
+    [InlineData("##{Octopus.Release.Number}", "##{Octopus.Release.Number}")]
+    [InlineData("###{Octopus.Release.Number}", "###{Squid.Release.Number}")]
+    [InlineData("a ##{Octopus.Project.Name} b #{Octopus.Project.Name}", "a ##{Octopus.Project.Name} b #{Squid.Project.Name}")]
+    [InlineData("#{if Octopus.Environment.Name}##{Octopus.Release.Number}#{/if}", "#{if Squid.Environment.Name}##{Octopus.Release.Number}#{/if}")]
+    [InlineData("#{unless Octopus.Release.Number}##{Octopus.Release.Number}#{/unless}", "#{unless Squid.Release.Number}##{Octopus.Release.Number}#{/unless}")]
+    [InlineData("#{each m in Octopus.Machine.Roles}##{Octopus.Machine.Name}#{m}#{/each}", "#{each m in Squid.Machine.Roles}##{Octopus.Machine.Name}#{m}#{/each}")]
+    [InlineData("#{A[#{Octopus.Environment.Name}]}", "#{A[#{Squid.Environment.Name}]}")]
+    [InlineData("#{Octopus.Release.Number", "#{Octopus.Release.Number")]
+    [InlineData("ok #{Octopus.Release.Number} but #{broken", "ok #{Octopus.Release.Number} but #{broken")]
+    public void RewriteReferences_OnlyRewritesExpressionsTheTemplateEngineWouldEvaluate(string input, string expected)
+    {
+        OctopusSystemVariables.RewriteReferences(input).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("##{Octopus.Release.Number}")]
+    [InlineData("###{Octopus.Release.Number}")]
+    [InlineData("####{Octopus.Release.Number}")]
+    [InlineData("#####{Octopus.Release.Number}")]
+    [InlineData("x##{Octopus.Project.Name}y#{Octopus.Project.Name}z")]
+    [InlineData("#{if Octopus.Environment.Name}##{Octopus.Release.Number}|#{Octopus.Release.Number}#{/if}")]
+    [InlineData("#{unless Octopus.Environment.Name}hidden#{/unless}#{Octopus.Machine.Name | ToUpper}")]
+    [InlineData("#{each m in Octopus.Machine.Roles}[#{m}]##{Octopus.Machine.Name}#{/each}")]
+    [InlineData("#{if Octopus.Environment.Name == \"value-of-Octopus.Environment.Name\"}eq#{/if}")]
+    [InlineData("$OctopusParameters['Octopus.Release.Number'] ## #{Octopus.Release.Number | ToUpper}")]
+    [InlineData("#{Octopus.Release.Number")]
+    public void RewriteReferences_NeverChangesWhatTheRealTemplateEngineEvaluatesTo(string input)
+    {
+        var dictionary = new VariableDictionary();
+
+        foreach (var (octopusName, squidName) in OctopusSystemVariables.SquidEquivalents)
+        {
+            dictionary.Set(octopusName, $"value-of-{octopusName}");
+            dictionary.Set(squidName, $"value-of-{octopusName}");
+        }
+
+        dictionary.Evaluate(OctopusSystemVariables.RewriteReferences(input)).ShouldBe(dictionary.Evaluate(input));
     }
 
     [Fact]

@@ -32,10 +32,10 @@ public class OctopusScriptCompatibilityTests
         var script = ScriptBody(result);
         script.ShouldStartWith(OctopusScriptCompatibility.PreambleStartMarker);
         script.ShouldEndWith(body);
-        script.ShouldContain("$OctopusParameters['BotUrl'] = @'\nhttps://bot/#{Squid.Release.Number}\n'@");
-        script.ShouldContain("$OctopusParameters['Octopus.Project.Name'] = @'\n#{Squid.Project.Name}\n'@");
-        script.ShouldContain("$OctopusParameters['Octopus.Deployment.CreatedBy.DisplayName'] = @'\n#{Squid.Deployment.CreatedBy.DisplayName}\n'@");
-        script.ShouldContain("$OctopusParameters['App:Region'] = @'\n#{App:Region}\n'@");
+        script.ShouldContain($"$OctopusParameters['BotUrl'] = __SquidOctopusValue '{Base64("https://bot/")}' '#{{Squid.Release.Number | ToBase64}}'");
+        script.ShouldContain("$OctopusParameters['Octopus.Project.Name'] = __SquidOctopusValue '#{Squid.Project.Name | ToBase64}'");
+        script.ShouldContain("$OctopusParameters['Octopus.Deployment.CreatedBy.DisplayName'] = __SquidOctopusValue '#{Squid.Deployment.CreatedBy.DisplayName | ToBase64}'");
+        script.ShouldContain("$OctopusParameters['App:Region'] = __SquidOctopusValue '#{App:Region | ToBase64}'");
         script.ShouldContain("$BotUrl = $OctopusParameters['BotUrl']");
         result.Diagnostics.Single(d => d.Code == OctopusImportActionMappingDiagnosticCodes.ScriptOctopusCompatibilityAdded).Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info);
     }
@@ -80,7 +80,7 @@ public class OctopusScriptCompatibilityTests
         result.HasBlockers.ShouldBeTrue();
         result.Diagnostics.Single(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Code.ShouldBe(OctopusImportActionMappingDiagnosticCodes.SensitiveStepTemplateParameter);
         ScriptBody(result).ShouldNotContain("ENCRYPTED|VALUE");
-        ScriptBody(result).ShouldContain("$OctopusParameters['ApiKey'] = @'\n#{ApiKey}\n'@");
+        ScriptBody(result).ShouldContain("$OctopusParameters['ApiKey'] = __SquidOctopusValue '#{ApiKey | ToBase64}'");
     }
 
     [Theory]
@@ -103,9 +103,9 @@ public class OctopusScriptCompatibilityTests
         var script = ScriptBody(Map(ScriptAction("Bash", body), null));
 
         script.ShouldContain("get_octopusvariable() {");
-        script.ShouldContain("'Octopus.Project.Name') cat <<'SQUID_OCTOPUS_VALUE'\n#{Squid.Project.Name}\nSQUID_OCTOPUS_VALUE");
-        script.ShouldContain("'App:Region') cat <<'SQUID_OCTOPUS_VALUE'\n#{App:Region}\nSQUID_OCTOPUS_VALUE");
-        script.ShouldContain("'Octopus.Release.Number') cat <<'SQUID_OCTOPUS_VALUE'\n#{Squid.Release.Number}\nSQUID_OCTOPUS_VALUE");
+        script.ShouldContain("'Octopus.Project.Name') __squid_octopus_value '#{Squid.Project.Name | ToBase64}' ;;");
+        script.ShouldContain("'App:Region') __squid_octopus_value '#{App:Region | ToBase64}' ;;");
+        script.ShouldContain("'Octopus.Release.Number') __squid_octopus_value '#{Squid.Release.Number | ToBase64}' ;;");
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public class OctopusScriptCompatibilityTests
         var output = await RunAsync("bash", substituted, ".sh");
 
         output.ExitCode.ShouldBe(0, customMessage: $"bash failed: {output.StdErr}");
-        output.StdOut.ShouldBe("Smarties.Api|it's $(echo pwned) `id` \"q\"|1.2.3|#{Missing.Value}");
+        output.StdOut.ShouldBe("Smarties.Api|it's $(echo pwned) `id` \"q\"|1.2.3|", customMessage: "an undefined variable reads as empty, as in Octopus — never as the literal #{...} token");
     }
 
     [Trait("Category", "OctopusImportScriptE2E")]
@@ -215,6 +215,8 @@ public class OctopusScriptCompatibilityTests
                 DisplaySettings = new() { ["Octopus.ControlType"] = p.Sensitive ? "Sensitive" : "SingleLineText" }
             }).ToList()
         };
+
+    private static string Base64(string value) => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value));
 
     private static string ScriptBody(OctopusImportActionMappingResult result)
         => result.Action.Properties.Single(p => p.PropertyName == SpecialVariables.Action.ScriptBody).PropertyValue;
