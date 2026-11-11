@@ -7,7 +7,7 @@
 
 ### 免费、简单、开箱即用的新一代发布平台
 
-企业级发布能力，覆盖 Kubernetes、Linux、Windows、SSH 与 AI Agent —— 一条流水线，从 Release 到生产。不限项目，不限用户，不限目标。
+企业级发布能力，覆盖 Kubernetes、Linux、Windows、SSH 与 AI Agent。<br>一条流水线，从 Release 到生产 —— 不限项目，不限用户，不限目标。
 
 <br>
 

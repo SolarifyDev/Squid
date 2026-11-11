@@ -7,7 +7,7 @@
 
 ### Free, simple, ready-to-use — the next-generation release platform.
 
-Enterprise-grade delivery for Kubernetes, Linux, Windows, SSH, and AI agents — one pipeline from release to production. No limits on projects, users, or targets.
+Enterprise-grade delivery for Kubernetes, Linux, Windows, SSH, and AI agents.<br>One pipeline from release to production — no limits on projects, users, or targets.
 
 <br>
 
