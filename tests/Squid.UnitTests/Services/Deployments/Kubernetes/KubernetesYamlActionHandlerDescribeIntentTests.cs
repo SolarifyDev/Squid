@@ -189,13 +189,16 @@ public class KubernetesYamlActionHandlerDescribeIntentTests
         action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.DeploymentName", PropertyValue = "web" });
         action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.DeploymentStyle", PropertyValue = "BlueGreen" });
         action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.Containers", PropertyValue = """[{"Name":"app","Image":"busybox:latest"}]""" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.ServiceName", PropertyValue = "web-svc" });
+        action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.KubernetesContainers.ServicePorts", PropertyValue = """[{"name":"http","port":"80","protocol":"TCP"}]""" });
         var handler = new KubernetesYamlActionHandler(new IActionYamlGenerator[] { new KubernetesContainersActionYamlGenerator() });
 
         var intent = (KubernetesApplyIntent)await ((IActionHandler)handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
 
         var script = Encoding.UTF8.GetString(intent.PostApplyScripts.ShouldHaveSingleItem().Content);
-        script.ShouldContain("kubectl patch service");
+        script.ShouldContain("squid_bluegreen_service \"$SQUID_BLUEGREEN_NEW_SLOT\" | kubectl apply");
         script.ShouldContain("kubectl scale deployment");
+        intent.YamlFiles.ShouldNotContain(f => f.RelativePath == "service.yaml");
     }
 
     [Fact]

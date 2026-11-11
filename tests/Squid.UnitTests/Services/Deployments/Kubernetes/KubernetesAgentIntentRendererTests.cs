@@ -517,6 +517,25 @@ public class KubernetesAgentIntentRendererTests
     }
 
     [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_PostApplyScripts_ErrexitBeforeFirstApply()
+    {
+        // The agent wrapper has no errexit of its own: without it a failed manifest apply would
+        // be masked by the post-apply script's exit code, and the switch would run anyway.
+        var intent = NewKubernetesApplyIntent(files: new[] { DeploymentFile.Asset("service.yaml", BytesFor("kind: Service\n")) }) with
+        {
+            PostApplyScripts = new[] { DeploymentFile.Script("bluegreen.sh", BytesFor("echo SWITCH-MARKER\n")) }
+        };
+
+        var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        var errexit = rendered.ScriptBody.IndexOf("set -e\n", StringComparison.Ordinal);
+        var apply = rendered.ScriptBody.IndexOf("kubectl apply -f \"./service.yaml\"", StringComparison.Ordinal);
+
+        errexit.ShouldBeGreaterThan(-1);
+        apply.ShouldBeGreaterThan(errexit);
+    }
+
+    [Fact]
     public async Task RenderAsync_KubernetesApplyIntent_NoPostApplyScripts_ScriptUnchanged()
     {
         var intent = NewKubernetesApplyIntent();
@@ -524,6 +543,7 @@ public class KubernetesAgentIntentRendererTests
         var rendered = await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
 
         rendered.ScriptBody.ShouldNotContain("# --- Post-apply script");
+        rendered.ScriptBody.ShouldNotContain("set -e\n");
     }
 
     // ========== KubernetesApplyIntent: syntax-specific path separator ==========

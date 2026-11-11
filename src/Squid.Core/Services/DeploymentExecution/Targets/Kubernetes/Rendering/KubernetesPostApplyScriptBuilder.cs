@@ -16,6 +16,20 @@ namespace Squid.Core.Services.DeploymentExecution.Kubernetes.Rendering;
 /// </summary>
 internal static class KubernetesPostApplyScriptBuilder
 {
+    /// <summary>
+    /// Appends the post-apply scripts to <paramref name="applyScript"/>. When there are any,
+    /// <c>set -e</c> is prepended so a failed manifest apply or status check stops the run
+    /// before them — the agent wrapper has no errexit of its own, and without it the final
+    /// exit code would come from the post-apply script alone. Without post-apply scripts the
+    /// apply script is returned unchanged.
+    /// </summary>
+    internal static string Compose(KubernetesApplyIntent intent, string applyScript)
+    {
+        if (intent.PostApplyScripts.Count == 0) return applyScript;
+
+        return "set -e\n" + applyScript + Build(intent);
+    }
+
     internal static string Build(KubernetesApplyIntent intent)
     {
         if (intent.PostApplyScripts.Count == 0) return string.Empty;

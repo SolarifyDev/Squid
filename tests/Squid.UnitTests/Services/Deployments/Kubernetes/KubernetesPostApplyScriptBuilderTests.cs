@@ -51,6 +51,28 @@ public class KubernetesPostApplyScriptBuilderTests
         stdout.Contains("TRAILER").ShouldBe(trailerRuns);
     }
 
+    [Fact]
+    public void Compose_NoScripts_ReturnsApplyScriptUnchanged()
+    {
+        KubernetesPostApplyScriptBuilder.Compose(NewIntent(), "kubectl apply -f \"./a.yaml\"\n").ShouldBe("kubectl apply -f \"./a.yaml\"\n");
+    }
+
+    [Theory]
+    [InlineData("true\n", 0, true)]
+    [InlineData("false\necho LATER_APPLY\n", 1, false)]
+    public async Task Compose_WithScripts_EarlierFailureStopsBeforePostApply(string applyScript, int expectedExit, bool postApplyRuns)
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var composed = KubernetesPostApplyScriptBuilder.Compose(NewIntent(("bluegreen.sh", "echo POST_APPLY")), applyScript);
+
+        var (exitCode, stdout) = await RunBashAsync(composed);
+
+        exitCode.ShouldBe(expectedExit);
+        stdout.Contains("POST_APPLY").ShouldBe(postApplyRuns);
+        stdout.Contains("LATER_APPLY").ShouldBeFalse();
+    }
+
     private static KubernetesApplyIntent NewIntent(params (string Path, string Body)[] scripts) => new()
     {
         Name = "k8s-apply",

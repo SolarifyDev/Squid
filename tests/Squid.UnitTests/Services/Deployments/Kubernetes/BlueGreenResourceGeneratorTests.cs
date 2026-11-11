@@ -1,11 +1,17 @@
+using System.IO;
+using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Squid.Core.Services.DeploymentExecution.Kubernetes;
 using Squid.Message.Models.Deployments.Process;
+using YamlDotNet.RepresentationModel;
 
 namespace Squid.UnitTests.Services.Deployments.Kubernetes;
 
 public class BlueGreenResourceGeneratorTests
 {
+    private const string ServicePortsJson = """[{"name":"http","port":"80","protocol":"TCP"}]""";
+
     private readonly KubernetesContainersActionYamlGenerator _compositor = new();
 
     [Theory]
@@ -39,40 +45,74 @@ public class BlueGreenResourceGeneratorTests
     }
 
     [Fact]
-    public async Task Generate_BlueGreen_ScriptCarriesBothSlotManifests()
+    public async Task Generate_BlueGreen_ScriptCarriesBothSlotDeployments()
+    {
+        var manifests = ExtractManifests(await GenerateBlueGreenScriptAsync());
+
+        manifests.Select(m => (Kind(m), Name(m))).ShouldBe(new[] { ("Deployment", "test-deploy-blue"), ("Deployment", "test-deploy-green") }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Generate_BlueGreen_EmptyDeploymentLabels_SelectorStaysSlotOnly_PodsGetAppLabel()
+    {
+        // matchLabels is immutable: it must stay byte-compatible with what earlier releases
+        // created ({slot}), otherwise re-applying an existing slot fails. The app label the
+        // Service selector falls back to lives on the pod template only, which is mutable.
+        var blue = ExtractManifests(await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.DeploymentLabels", "{}"))).Single(m => Name(m) == "test-deploy-blue");
+
+        Map(blue, "spec", "selector", "matchLabels").ShouldBe(new Dictionary<string, string> { ["squid.io/deployment-slot"] = "blue" });
+        Map(blue, "spec", "template", "metadata", "labels").ShouldBe(new Dictionary<string, string> { ["squid.io/deployment-slot"] = "blue", ["app"] = "test-deploy" }, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Generate_BlueGreen_ExplicitDeploymentLabels_PreservedInSelectorAndPods()
+    {
+        var green = ExtractManifests(await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.DeploymentLabels", """{"tier":"web"}"""))).Single(m => Name(m) == "test-deploy-green");
+        var expected = new Dictionary<string, string> { ["tier"] = "web", ["squid.io/deployment-slot"] = "green" };
+
+        Map(green, "spec", "selector", "matchLabels").ShouldBe(expected, ignoreOrder: true);
+        Map(green, "spec", "template", "metadata", "labels").ShouldBe(expected, ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task Generate_BlueGreen_WithService_ServiceEmbeddedPerSlot_NotEmittedAsStaticFile()
+    {
+        // The script owns the Service so its selector is only ever written by the same apply
+        // (same field manager): a separate service.yaml apply would conflict with — or, with
+        // --force-conflicts, wipe — the slot selector under server-side apply.
+        var result = await GenerateBlueGreenAsync(("Squid.Action.KubernetesContainers.ServiceName", "web-svc"), ("Squid.Action.KubernetesContainers.ServicePorts", ServicePortsJson));
+        var services = ExtractManifests(Encoding.UTF8.GetString(result["bluegreen.sh"])).Where(m => Kind(m) == "Service").ToList();
+
+        result.ShouldNotContainKey("service.yaml");
+        services.Count.ShouldBe(2);
+        services.ShouldAllBe(s => Name(s) == "web-svc");
+        services.Select(s => Map(s, "spec", "selector")["squid.io/deployment-slot"]).ShouldBe(new[] { "blue", "green" }, ignoreOrder: true);
+        services.ShouldAllBe(s => Map(s, "spec", "selector")["app"] == "test-deploy");
+    }
+
+    [Fact]
+    public async Task Generate_BlueGreen_MalformedServicePorts_StillReportsConfigurationError()
+    {
+        await Should.ThrowAsync<ResourceGenerationException>(() => GenerateBlueGreenAsync(("Squid.Action.KubernetesContainers.ServiceName", "web-svc"), ("Squid.Action.KubernetesContainers.ServicePorts", "broken json")));
+    }
+
+    [Fact]
+    public async Task Generate_BlueGreen_NoServiceConfigured_NeverTouchesAnyService()
     {
         var script = await GenerateBlueGreenScriptAsync();
 
-        script.ShouldContain("name: \"test-deploy-blue\"");
-        script.ShouldContain("name: \"test-deploy-green\"");
-        script.ShouldContain("\"squid.io/deployment-slot\": \"blue\"");
-        script.ShouldContain("\"squid.io/deployment-slot\": \"green\"");
+        script.ShouldNotContain("kubectl get service");
+        script.ShouldNotContain("kubectl patch");
+        script.ShouldNotContain("kind: Service");
+        script.ShouldNotContain("kubectl scale");
     }
 
     [Fact]
-    public async Task Generate_BlueGreen_EmptyDeploymentLabels_SeedsAppLabelSoServiceSelectorMatches()
+    public async Task Generate_BlueGreen_WithService_DerivesActiveSlotFromServiceSelector()
     {
-        // Service selector falls back to app=<deployment name> when DeploymentLabels is empty.
-        // Pods must carry that label too, otherwise neither slot is ever routable.
-        var script = await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.DeploymentLabels", "{}"));
+        var script = await GenerateWithServiceScriptAsync();
 
-        script.ShouldContain("\"app\": \"test-deploy\"");
-    }
-
-    [Fact]
-    public async Task Generate_BlueGreen_ExplicitDeploymentLabels_Preserved()
-    {
-        var script = await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.DeploymentLabels", """{"tier":"web"}"""));
-
-        script.ShouldContain("\"tier\": \"web\"");
-        script.ShouldNotContain("\"app\": \"test-deploy\"");
-    }
-
-    [Fact]
-    public async Task Generate_BlueGreen_DerivesActiveSlotFromServiceSelector()
-    {
-        var script = await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.ServiceName", "web-svc"));
-
+        script.ShouldContain("kubectl get service \"web-svc\" -n \"test-ns\" --ignore-not-found -o name");
         script.ShouldContain("kubectl get service \"web-svc\" -n \"test-ns\" -o jsonpath='{.spec.selector.squid\\.io/deployment-slot}'");
     }
 
@@ -81,7 +121,7 @@ public class BlueGreenResourceGeneratorTests
     [InlineData("blue", "blue")]
     [InlineData("Green", "green")]
     [InlineData("purple", "")]
-    public async Task Generate_BlueGreen_ActiveSlotPropertyIsFallbackSeed(string? propertyValue, string expectedFallback)
+    public async Task Generate_BlueGreen_ActiveSlotPropertyIsFallbackSeed(string? propertyValue, string expectedSeed)
     {
         var extra = propertyValue == null
             ? Array.Empty<(string, string)>()
@@ -89,25 +129,27 @@ public class BlueGreenResourceGeneratorTests
 
         var script = await GenerateBlueGreenScriptAsync(extra);
 
-        script.ShouldContain($"SQUID_BLUEGREEN_ACTIVE_SLOT=\"{expectedFallback}\"");
+        script.ShouldContain($"SQUID_BLUEGREEN_SEED_SLOT=\"{expectedSeed}\"");
     }
 
     [Fact]
-    public async Task Generate_BlueGreen_PhasesOrdered_Detect_Apply_Rollout_Switch_ScaleDown()
+    public async Task Generate_BlueGreen_PhasesOrdered_Detect_Pin_Apply_Rollout_Switch_ScaleDown()
     {
-        var script = await GenerateBlueGreenScriptAsync(("Squid.Action.KubernetesContainers.ServiceName", "web-svc"));
+        var script = await GenerateWithServiceScriptAsync();
 
         var detect = script.IndexOf("kubectl get service", StringComparison.Ordinal);
-        var apply = script.IndexOf("kubectl apply -f \"-\"", StringComparison.Ordinal);
+        var pin = script.IndexOf("squid_bluegreen_service \"$SQUID_BLUEGREEN_ACTIVE_SLOT\" |", StringComparison.Ordinal);
+        var apply = script.IndexOf("squid_bluegreen_deployment \"$SQUID_BLUEGREEN_NEW_SLOT\" |", StringComparison.Ordinal);
         var rollout = script.IndexOf("kubectl rollout status", StringComparison.Ordinal);
-        var patch = script.IndexOf("kubectl patch service", StringComparison.Ordinal);
+        var switchTraffic = script.IndexOf("squid_bluegreen_service \"$SQUID_BLUEGREEN_NEW_SLOT\" |", StringComparison.Ordinal);
         var scale = script.IndexOf("kubectl scale deployment", StringComparison.Ordinal);
 
         detect.ShouldBeGreaterThan(-1);
-        apply.ShouldBeGreaterThan(detect);
+        pin.ShouldBeGreaterThan(detect);
+        apply.ShouldBeGreaterThan(pin);
         rollout.ShouldBeGreaterThan(apply);
-        patch.ShouldBeGreaterThan(rollout);
-        scale.ShouldBeGreaterThan(patch);
+        switchTraffic.ShouldBeGreaterThan(rollout);
+        scale.ShouldBeGreaterThan(switchTraffic);
     }
 
     [Theory]
@@ -126,50 +168,37 @@ public class BlueGreenResourceGeneratorTests
         script.ShouldContain($"--timeout={expectedSeconds}s");
     }
 
-    [Theory]
-    [InlineData("web-svc", "web-svc")]
-    [InlineData(null, "test-deploy")]
-    public async Task Generate_BlueGreen_SwitchTargetsServiceName_FallingBackToDeploymentName(string? serviceName, string expectedService)
+    [Fact]
+    public async Task Generate_BlueGreen_ServerSideApplyFlagsHonoured_ForEveryApply()
     {
-        var extra = serviceName == null
-            ? Array.Empty<(string, string)>()
-            : new[] { ("Squid.Action.KubernetesContainers.ServiceName", serviceName) };
+        var script = await GenerateWithServiceScriptAsync(("Squid.Action.Kubernetes.ServerSideApply.Enabled", "True"), ("Squid.Action.Kubernetes.ServerSideApply.ForceConflicts", "True"));
+        var applies = Regex.Matches(script, "kubectl apply [^\n]*").Select(m => m.Value).ToList();
 
-        var script = await GenerateBlueGreenScriptAsync(extra);
-
-        script.ShouldContain($"kubectl patch service \"{expectedService}\"");
+        applies.Count.ShouldBe(3);
+        applies.ShouldAllBe(a => a == "kubectl apply -f \"-\" --server-side --field-manager=\"squid-deploy\" --force-conflicts");
     }
 
     [Fact]
-    public async Task Generate_BlueGreen_ServerSideApplyFlagsHonoured()
+    public async Task Generate_BlueGreen_StillGeneratesConfigMap()
     {
-        var script = await GenerateBlueGreenScriptAsync(
-            ("Squid.Action.Kubernetes.ServerSideApply.Enabled", "True"),
-            ("Squid.Action.Kubernetes.ServerSideApply.ForceConflicts", "True"));
+        var result = await GenerateBlueGreenAsync(("Squid.Action.KubernetesContainers.ConfigMapName", "cfg"), ("Squid.Action.KubernetesContainers.ConfigMapValues", """{"k":"v"}"""));
 
-        script.ShouldContain("kubectl apply -f \"-\" --server-side --field-manager=\"squid-deploy\" --force-conflicts");
-    }
-
-    [Fact]
-    public async Task Generate_BlueGreen_StillGeneratesServiceAndConfigMap()
-    {
-        var result = await GenerateBlueGreenAsync(
-            ("Squid.Action.KubernetesContainers.ServiceName", "test-svc"),
-            ("Squid.Action.KubernetesContainers.ServicePorts", """[{"name":"http","port":"80","protocol":"TCP"}]"""));
-
-        result.ShouldContainKey("service.yaml");
+        result.ShouldContainKey("configmap.yaml");
         result.ShouldContainKey("bluegreen.sh");
     }
 
     [Fact]
-    public async Task Generate_NonBlueGreen_DoesNotGenerateBlueGreenFiles()
+    public async Task Generate_NonBlueGreen_DoesNotGenerateBlueGreenFiles_AndKeepsStaticService()
     {
         var (step, action) = CreateMinimal();
         Add(action, "Squid.Action.KubernetesContainers.DeploymentStyle", "RollingUpdate");
+        Add(action, "Squid.Action.KubernetesContainers.ServiceName", "web-svc");
+        Add(action, "Squid.Action.KubernetesContainers.ServicePorts", ServicePortsJson);
 
         var result = await _compositor.GenerateAsync(step, action, CancellationToken.None);
 
         result.ShouldContainKey("deployment.yaml");
+        result.ShouldContainKey("service.yaml");
         result.ShouldNotContainKey("bluegreen.sh");
 
         var yaml = Encoding.UTF8.GetString(result["deployment.yaml"]);
@@ -178,22 +207,32 @@ public class BlueGreenResourceGeneratorTests
         yaml.ShouldNotContain("test-deploy-blue");
     }
 
-    [Fact]
-    public void GenerateSwitchScript_PatchesSelectorToRuntimeNewSlot()
-    {
-        var script = BlueGreenResourceGenerator.GenerateSwitchScript("my-svc", "production");
+    // ── Helpers ─────────────────────────────────────────────────────────────
 
-        script.ShouldContain("kubectl patch service \"my-svc\" -n \"production\"");
-        script.ShouldContain("/spec/selector/squid.io~1deployment-slot");
-        script.ShouldContain("\"value\": \"'\"$SQUID_BLUEGREEN_NEW_SLOT\"'\"");
+    private static List<YamlMappingNode> ExtractManifests(string script)
+    {
+        var bodies = Regex.Matches(script, "<<'SQUID_BLUEGREEN_MANIFEST'\n(.*?)\nSQUID_BLUEGREEN_MANIFEST\n", RegexOptions.Singleline);
+
+        return bodies.Select(m => ParseYaml(m.Groups[1].Value)).ToList();
     }
 
-    [Fact]
-    public void GenerateScaleDownScript_TargetsRuntimeOldSlot()
+    private static YamlMappingNode ParseYaml(string yaml)
     {
-        var script = BlueGreenResourceGenerator.GenerateScaleDownScript("my-deploy", "production");
+        var stream = new YamlStream();
+        stream.Load(new StringReader(yaml));
 
-        script.ShouldContain("kubectl scale deployment \"my-deploy-$SQUID_BLUEGREEN_OLD_SLOT\" -n \"production\" --replicas=0");
+        return (YamlMappingNode)stream.Documents[0].RootNode;
+    }
+
+    private static string Kind(YamlMappingNode manifest) => ((YamlScalarNode)manifest["kind"]).Value!;
+
+    private static string Name(YamlMappingNode manifest) => ((YamlScalarNode)((YamlMappingNode)manifest["metadata"])["name"]).Value!;
+
+    private static Dictionary<string, string> Map(YamlMappingNode manifest, params string[] path)
+    {
+        var node = path.Aggregate(manifest, (current, key) => (YamlMappingNode)current[key]);
+
+        return node.Children.ToDictionary(kvp => ((YamlScalarNode)kvp.Key).Value!, kvp => ((YamlScalarNode)kvp.Value).Value!);
     }
 
     private async Task<Dictionary<string, byte[]>> GenerateBlueGreenAsync(params (string Name, string Value)[] extra)
@@ -213,6 +252,9 @@ public class BlueGreenResourceGeneratorTests
 
         return Encoding.UTF8.GetString(result["bluegreen.sh"]);
     }
+
+    private Task<string> GenerateWithServiceScriptAsync(params (string Name, string Value)[] extra)
+        => GenerateBlueGreenScriptAsync(extra.Concat(new[] { ("Squid.Action.KubernetesContainers.ServiceName", "web-svc"), ("Squid.Action.KubernetesContainers.ServicePorts", ServicePortsJson) }).ToArray());
 
     private static (DeploymentStepDto step, DeploymentActionDto action) CreateMinimal()
     {

@@ -33,7 +33,14 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// release number over HTTP, so after every deploy the test asserts — from inside the cluster —
 /// that the Service selector, its endpoints and the actual HTTP response all point at the new
 /// slot, and that the previous slot was scaled to zero. Slot alternation (green → blue → green)
-/// proves the next deploy derives the live slot and targets the other one.</para>
+/// proves the next deploy derives the live slot and targets the other one. Both client-side and
+/// server-side apply are covered: under server-side apply the Service selector must only ever be
+/// written by the same field manager, otherwise the second deploy conflicts on <c>.spec.selector</c>.</para>
+///
+/// <para>A second scenario starts from the state earlier releases left behind (a <c>web-green</c>
+/// Deployment whose immutable <c>matchLabels</c> carries only the slot, and a Service without a
+/// slot selector) and proves the upgrade path: no immutable-field failure, and the very first
+/// deploy already moves traffic off the legacy slot.</para>
 /// </summary>
 [Collection("KindCluster")]
 [Trait("Category", "E2E")]
@@ -55,9 +62,11 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
     }
 
     [Theory]
-    [InlineData("KubernetesApi")]
-    [InlineData("KubernetesAgent")]
-    public async Task BlueGreen_SuccessiveDeploys_SwitchTrafficAndScaleDownOldSlot(string communicationStyle)
+    [InlineData("KubernetesApi", false)]
+    [InlineData("KubernetesAgent", false)]
+    [InlineData("KubernetesApi", true)]
+    [InlineData("KubernetesAgent", true)]
+    public async Task BlueGreen_SuccessiveDeploys_SwitchTrafficAndScaleDownOldSlot(string communicationStyle, bool serverSideApply)
     {
         var ns = $"squid-bg-{Guid.NewGuid().ToString("N")[..8]}";
 
@@ -66,7 +75,7 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
             await _cluster.KubectlAsync($"create namespace {ns}");
             await StartTrafficProbePodAsync(ns);
 
-            var seed = await SeedProjectAsync(communicationStyle, ns);
+            var seed = await SeedProjectAsync(communicationStyle, ns, serverSideApply);
 
             await DeployAndAssertAsync(seed, ns, release: "1.0.1", expectedSlot: "green", oldSlot: null);
             await DeployAndAssertAsync(seed, ns, release: "1.0.2", expectedSlot: "blue", oldSlot: "green");
@@ -78,7 +87,66 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
         }
     }
 
-    private async Task DeployAndAssertAsync(SeededProject seed, string ns, string release, string expectedSlot, string? oldSlot)
+    [Fact]
+    public async Task BlueGreen_UpgradeFromLegacyState_FirstDeployMovesTrafficOffLegacySlot()
+    {
+        var ns = $"squid-bg-{Guid.NewGuid().ToString("N")[..8]}";
+
+        try
+        {
+            await _cluster.KubectlAsync($"create namespace {ns}");
+            await StartTrafficProbePodAsync(ns);
+            await ApplyLegacyStateAsync(ns);
+
+            var seed = await SeedProjectAsync("KubernetesApi", ns, serverSideApply: false);
+
+            await DeployAndAssertAsync(seed, ns, release: "2.0.1", expectedSlot: "blue", oldSlot: "green");
+            await DeployAndAssertAsync(seed, ns, release: "2.0.2", expectedSlot: "green", oldSlot: "blue");
+        }
+        finally
+        {
+            try { await _cluster.KubectlAsync($"delete namespace {ns} --ignore-not-found --wait=false"); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// Recreates what earlier releases applied for this action: <c>deployment.yaml</c> named
+    /// <c>web-green</c> with only the slot label (in the immutable <c>matchLabels</c> too) and a
+    /// <c>service.yaml</c> whose selector falls back to <c>app: web</c> — no slot label.
+    /// </summary>
+    private async Task ApplyLegacyStateAsync(string ns)
+    {
+        var manifest = $$"""
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata: { name: {{DeploymentName}}-green, namespace: {{ns}}, labels: { {{SlotLabel}}: green } }
+            spec:
+              replicas: 1
+              selector: { matchLabels: { {{SlotLabel}}: green } }
+              template:
+                metadata: { labels: { {{SlotLabel}}: green } }
+                spec: { containers: [ { name: web, image: busybox:latest, imagePullPolicy: IfNotPresent, command: [ sh, -c, "sleep 3600" ] } ] }
+            ---
+            apiVersion: v1
+            kind: Service
+            metadata: { name: {{ServiceName}}, namespace: {{ns}} }
+            spec: { type: ClusterIP, selector: { app: {{DeploymentName}} }, ports: [ { name: http, port: 80, targetPort: 8080 } ] }
+            """;
+        var path = Path.Combine(Path.GetTempPath(), $"squid-bg-legacy-{Guid.NewGuid():N}.yaml");
+        await File.WriteAllTextAsync(path, manifest);
+
+        try
+        {
+            await _cluster.KubectlAsync($"apply -f {path}");
+            await _cluster.KubectlAsync($"-n {ns} rollout status deployment/{DeploymentName}-green --timeout=120s");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private async Task DeployAndAssertAsync(SeededProject seed, string ns, string release, string expectedSlot, string oldSlot)
     {
         var serverTaskId = await SeedReleaseAsync(seed, release);
 
@@ -223,13 +291,13 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
 
     private record SeededProject(string CommunicationStyle, int ProjectId, int ChannelId, int EnvironmentId);
 
-    private async Task<SeededProject> SeedProjectAsync(string communicationStyle, string ns)
+    private async Task<SeededProject> SeedProjectAsync(string communicationStyle, string ns, bool serverSideApply)
     {
         var clusterUrl = (await _cluster.KubectlAsync("config view --minify -o jsonpath='{.clusters[0].cluster.server}'")).Trim('\'').Trim();
         var token = communicationStyle == "KubernetesApi" ? await MintClusterAdminTokenAsync() : string.Empty;
         SeededProject seeded = null!;
 
-        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) => seeded = await SeedProjectGraphAsync(repository, unitOfWork, communicationStyle, ns, clusterUrl, token).ConfigureAwait(false));
+        await _fixture.Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) => seeded = await SeedProjectGraphAsync(repository, unitOfWork, new SeedRequest(communicationStyle, ns, clusterUrl, token, serverSideApply)).ConfigureAwait(false));
 
         return seeded;
     }
@@ -244,8 +312,11 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
         return (await _cluster.KubectlAsync($"create token {sa} -n kube-system --duration=3600s")).Trim();
     }
 
-    private static async Task<SeededProject> SeedProjectGraphAsync(IRepository repository, IUnitOfWork unitOfWork, string communicationStyle, string ns, string clusterUrl, string token)
+    private record SeedRequest(string CommunicationStyle, string Namespace, string ClusterUrl, string Token, bool ServerSideApply);
+
+    private static async Task<SeededProject> SeedProjectGraphAsync(IRepository repository, IUnitOfWork unitOfWork, SeedRequest request)
     {
+        var (communicationStyle, ns, clusterUrl, token, serverSideApply) = request;
         var suffix = Guid.NewGuid().ToString("N")[..6];
         var builder = new TestDataBuilder(repository, unitOfWork);
 
@@ -261,7 +332,7 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
 
         var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Deploy web", actionType: "Squid.KubernetesDeployContainers").ConfigureAwait(false);
         await builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
-        await builder.CreateActionPropertiesAsync(action.Id, BuildBlueGreenActionProperties(ns)).ConfigureAwait(false);
+        await builder.CreateActionPropertiesAsync(action.Id, BuildBlueGreenActionProperties(ns, serverSideApply)).ConfigureAwait(false);
 
         var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
         var environment = await builder.CreateEnvironmentAsync($"E2E BlueGreen Env {suffix}").ConfigureAwait(false);
@@ -272,7 +343,7 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
         return new SeededProject(communicationStyle, project.Id, channel.Id, environment.Id);
     }
 
-    private static (string, string)[] BuildBlueGreenActionProperties(string ns)
+    private static (string, string)[] BuildBlueGreenActionProperties(string ns, bool serverSideApply)
     {
         // Each container serves its release number, so the HTTP body identifies which slot answered.
         var containers = JsonSerializer.Serialize(new object[]
@@ -287,7 +358,7 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
             }
         });
 
-        return new[]
+        var properties = new List<(string, string)>
         {
             ("Squid.Action.KubernetesContainers.DeploymentName", DeploymentName),
             ("Squid.Action.KubernetesContainers.Namespace", ns),
@@ -300,6 +371,11 @@ public class KubernetesBlueGreenRealClusterE2ETests : IClassFixture<DeploymentPi
             ("Squid.Action.KubernetesContainers.ServicePorts", """[{"name":"http","port":"80","targetPort":"8080","protocol":"TCP"}]"""),
             ("Squid.Action.KubernetesContainers.ObjectStatusCheckTimeout", "120")
         };
+
+        if (serverSideApply)
+            properties.Add(("Squid.Action.Kubernetes.ServerSideApply.Enabled", "True"));
+
+        return properties.ToArray();
     }
 
     private static async Task<int> InsertTokenAccountAsync(IRepository repository, IUnitOfWork unitOfWork, string token, string suffix)
