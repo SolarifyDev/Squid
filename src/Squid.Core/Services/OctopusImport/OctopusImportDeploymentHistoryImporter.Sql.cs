@@ -44,7 +44,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
 
     private async Task<int> InsertReturningIdAsync(string sql, object[] values, CancellationToken ct)
     {
-        var result = await _dbContext.Database.SqlQueryRaw<int>(sql, values).ToListAsync(ct).ConfigureAwait(false);
+        var result = await _dbContext.Database.SqlQueryRaw<int>(sql, OctopusImportText.StripNul(values)).ToListAsync(ct).ConfigureAwait(false);
 
         return result.Single();
     }
@@ -55,7 +55,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         {
             var sql = $"INSERT INTO {target} VALUES {string.Join(", ", batch.Select((row, index) => ValuesTuple(index * row.Length, row.Length, casts)))}";
 
-            await _dbContext.Database.ExecuteSqlRawAsync(sql, batch.SelectMany(row => row), ct).ConfigureAwait(false);
+            await _dbContext.Database.ExecuteSqlRawAsync(sql, OctopusImportText.StripNul(batch.SelectMany(row => row)), ct).ConfigureAwait(false);
         }
     }
 

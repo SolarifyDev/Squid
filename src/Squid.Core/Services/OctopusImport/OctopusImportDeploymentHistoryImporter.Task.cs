@@ -14,6 +14,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
     private const int TaskNameMaxLength = 50;
     private const int DeploymentNameMaxLength = 200;
     private const string DetailsJsonSection = "Details";
+    private const string PendingInterruptionsJsonProperty = "PendingInterruptions";
 
     private sealed class HistoryUnitContext
     {
@@ -23,6 +24,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         public bool WritesScalars => IsNewTask || Unit.ExistingDeploymentId == null || Unit.ScalarChanged;
         public bool WritesChildren => IsNewTask || Unit.ReplaceChildren;
         public bool WritesDetails => WritesChildren && Unit.Details != null;
+        public bool RefreshesKeptChildren => WritesScalars && !WritesChildren;
 
         // Task
         public int ActorId { get; init; }
@@ -129,7 +131,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
 
         var json = await BuildTaskJsonAsync(ct).ConfigureAwait(false);
 
-        await _dbContext.Database.ExecuteSqlRawAsync(sql, ServerTaskValues(json).Concat([_ctx.ActorId, taskId]), ct).ConfigureAwait(false);
+        await _dbContext.Database.ExecuteSqlRawAsync(sql, OctopusImportText.StripNul(ServerTaskValues(json).Concat([_ctx.ActorId, taskId])), ct).ConfigureAwait(false);
     }
 
     private object[] ServerTaskValues(string json)
@@ -168,8 +170,22 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         var taskId = _ctx.Unit.ExistingTaskId!.Value;
         var stored = await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId).Select(t => t.JSON).FirstOrDefaultAsync(ct).ConfigureAwait(false);
 
-        return ReadDetailsSection(stored);
+        return DropFinishedPendingInterruptions(ReadDetailsSection(stored));
     }
+
+    // A finished task waits on nothing: interruptions the kept details still list as pending are dropped with it.
+    private JsonNode DropFinishedPendingInterruptions(JsonNode details)
+    {
+        if (!_ctx.State.IsTerminal || details?[PendingInterruptionsJsonProperty] is not JsonArray interruptions) return details;
+
+        foreach (var pending in interruptions.Where(IsPending).ToList())
+            interruptions.Remove(pending);
+
+        return details;
+    }
+
+    private static bool IsPending(JsonNode interruption)
+        => interruption?["IsPending"] is JsonValue value && value.TryGetValue<bool>(out var isPending) && isPending;
 
     private static JsonNode ReadDetailsSection(string json)
     {
@@ -225,7 +241,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
             WHERE id = {10}
             """;
 
-        await _dbContext.Database.ExecuteSqlRawAsync(sql, DeploymentValues(taskId).Append(deploymentId), ct).ConfigureAwait(false);
+        await _dbContext.Database.ExecuteSqlRawAsync(sql, OctopusImportText.StripNul(DeploymentValues(taskId).Append(deploymentId)), ct).ConfigureAwait(false);
     }
 
     private object[] DeploymentValues(int taskId)

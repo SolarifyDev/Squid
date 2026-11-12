@@ -67,6 +67,18 @@ public class OctopusImportHistoryChildMapperTests
         mapped[1].Username.ShouldBe("alice");
     }
 
+    // The category and message are serialized into the jsonb references, where even an escaped U+0000 is rejected.
+    [Fact]
+    public void OctopusEvents_WithNulInCategoryOrMessage_AreStripped()
+    {
+        var events = new List<OctopusEventDto> { new() { Id = "Events-1", Category = "Custom\0Category", Message = "tool\0output", Occurred = Completed } };
+
+        var mapped = OctopusImportHistoryChildMapper.MapEvents(events, OctopusImportTaskStateNormalizer.Normalize("Success"), Completed, "levi.y").ShouldHaveSingleItem();
+
+        mapped.OctopusCategory.ShouldBe("CustomCategory");
+        mapped.Message.ShouldBe("tooloutput");
+    }
+
     [Fact]
     public void ResolvedInterruptions_BecomeRows_PendingAndOtherTypesStayInJson()
     {

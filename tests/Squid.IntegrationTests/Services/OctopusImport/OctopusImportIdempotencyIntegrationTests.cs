@@ -173,6 +173,58 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         (await SingleAsync<ServerTaskEntity>()).HasPendingInterruptions.ShouldBeFalse();
     }
 
+    // PostgreSQL rejects U+0000 in text and jsonb; UTF-16 tool output in an Octopus log carries it.
+    [Fact]
+    public async Task DetailLevel_TextWithNul_ImportsWithoutTheNul()
+    {
+        var sessionDirectory = SessionDirectory();
+        var details = DetailsWithNul();
+        await StoreDetailsAsync(sessionDirectory, details);
+
+        await ConfirmSucceededAsync(Archive(new HistorySpec { ErrorMessage = "warn\0ing", DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+
+        (await SingleAsync<ServerTaskEntity>()).ErrorMessage.ShouldBe("warning");
+        var logs = await ListAsync<ServerTaskLog>();
+        logs.Select(l => l.MessageText).ShouldBe(["Deploying", "Step started", "Step failed once"], ignoreOrder: true);
+        logs.Single(l => l.MessageText == "Deploying").Detail.ShouldBe("WSL output");
+        (await ListAsync<ActivityLog>()).Select(n => n.Name).ShouldContain("Step 1: Deploy");
+        (await SingleAsync<DeploymentInterruption>()).StepName.ShouldBe("Approve deployment");
+        (await EventsAsync()).Single(e => e.Category == EventCategory.ImportedOctopusEvent).ReferencesJson.ShouldContain("something Octopus-specific");
+    }
+
+    // A REST import of a running task keeps its details; a later source without details must not leave them describing a running task.
+    [Fact]
+    public async Task ExecutingWithDetails_ThenSuccessWithoutDetails_RefreshesWhatTheKeptChildrenDeriveFromTheTask()
+    {
+        var sessionDirectory = SessionDirectory();
+        var details = ExecutingDetails();
+        await StoreDetailsAsync(sessionDirectory, details);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { State = "Executing", CompletedTime = null, DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        var running = (await ListAsync<ActivityLog>()).Single(n => n.ParentId == null);
+        running.Status.ShouldBe(DeploymentActivityLogNodeStatus.Running);
+        running.EndedAt.ShouldBeNull();
+        (await SingleAsync<ServerTaskEntity>()).JSON.ShouldContain("Still waiting");
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { ErrorMessage = "done\0" }));
+
+        snapshot.PreviewPlan.Resources.Single(r => r.SourceType == "Deployment").PreviewAction.ShouldBe(OctopusImportPreviewAction.Update);
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        var nodes = await ListAsync<ActivityLog>();
+        nodes.Count.ShouldBe(3);
+        var root = nodes.Single(n => n.ParentId == null);
+        root.Id.ShouldBe(running.Id);
+        root.Status.ShouldBe(DeploymentActivityLogNodeStatus.Success);
+        root.EndedAt.ShouldBe(DateTimeOffset.Parse("2024-07-10T09:48:11Z"));
+        (await EventsAsync()).Select(e => e.Category).ShouldBe([EventCategory.ManualInterventionSubmitted, EventCategory.ImportedOctopusEvent, EventCategory.DeploymentSucceeded], ignoreOrder: true);
+        var task = await SingleAsync<ServerTaskEntity>();
+        task.State.ShouldBe(TaskState.Success);
+        task.ErrorMessage.ShouldBe("done");
+        task.JSON.ShouldNotContain("Still waiting");
+        task.JSON.ShouldContain("Other kind");
+        task.JSON.ShouldContain("deploy.log");
+        (await CountAsync<DeploymentInterruption>()).ShouldBe(1);
+    }
+
     [Fact]
     public async Task BackfilledHistory_ReimportNormalizes_NoDuplicateEvents()
     {
@@ -542,6 +594,32 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
             ],
             Artifacts = [new OctopusArtifactDto { Id = "Artifacts-1", Filename = "deploy.log", Source = "Step 1", Created = DateTimeOffset.Parse("2024-07-10T09:48:00Z") }]
         };
+
+    private static OctopusTaskHistoryDetails DetailsWithNul()
+    {
+        var details = Details();
+        var root = details.ActivityLogs[0];
+
+        root.LogElements[0].MessageText = "Deploy\0ing";
+        root.LogElements[0].Detail = "W\0S\0L\0 output";
+        root.Children[0].Name = "Step 1:\0 Deploy";
+        details.Interruptions[0].Title = "Approve\0 deployment";
+        details.Events[1].Message = "something\0 Octopus-specific";
+
+        return details;
+    }
+
+    // What Octopus returns while the task runs: no terminal event yet, and an interruption still waiting.
+    private static OctopusTaskHistoryDetails ExecutingDetails()
+    {
+        var details = Details();
+
+        details.Events.RemoveAll(e => e.Category == "DeploymentSucceeded");
+        details.Interruptions.Add(new OctopusInterruptionDto { Id = "Interruptions-2", Title = "Still waiting", Type = "ManualIntervention", IsPending = true, Created = DateTimeOffset.Parse("2024-07-10T09:47:45Z") });
+        details.Interruptions.Add(new OctopusInterruptionDto { Id = "Interruptions-3", Title = "Other kind", Type = "SomethingElse", IsPending = false, Created = DateTimeOffset.Parse("2024-07-10T09:47:46Z") });
+
+        return details;
+    }
 
     private const string ConfiguredVariable = """{"Id":"Variables-1","Name":"Imported variable","Value":"imported-value","Type":"String"}""";
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Persistence;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Octopus;
 
 namespace Squid.Core.Services.OctopusImport;
@@ -85,6 +86,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter : IOctopusImp
 
         await WriteCompletionAsync(deploymentId, ct).ConfigureAwait(false);
         await WriteChildrenAsync(deploymentId, taskId, ct).ConfigureAwait(false);
+        await RefreshKeptChildrenAsync(deploymentId, taskId, ct).ConfigureAwait(false);
 
         return new OctopusImportDeploymentHistoryResult(deploymentId, taskId, _ctx.ActorId);
     }
@@ -93,7 +95,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter : IOctopusImp
     {
         if (releaseId <= 0) throw new ArgumentOutOfRangeException(nameof(releaseId));
 
-        await _dbContext.Database.ExecuteSqlRawAsync("UPDATE release SET release_notes = {0}, last_modified_date = now() WHERE id = {1}", new object[] { releaseNotes, releaseId }, ct).ConfigureAwait(false);
+        await _dbContext.Database.ExecuteSqlRawAsync("UPDATE release SET release_notes = {0}, last_modified_date = now() WHERE id = {1}", OctopusImportText.StripNul(new object[] { releaseNotes, releaseId }), ct).ConfigureAwait(false);
     }
 
     /// <summary>The configured per-task log line cap; an unset, unparsable or non-positive value falls back to the default.</summary>

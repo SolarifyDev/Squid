@@ -79,8 +79,9 @@ public static class OctopusImportHistoryChildMapper
     public static IReadOnlyList<object> Artifacts(OctopusTaskHistoryDetails details)
         => (details?.Artifacts ?? []).Select(a => (object)new { a.Filename, a.Source, a.Created }).ToList();
 
+    // The category and message are serialized into jsonb, where even an escaped U+0000 is rejected, so they drop it here.
     private static OctopusImportEventRow MapEvent(OctopusEventDto @event, DateTimeOffset completedAt, string username)
-        => new(MapEventCategory(@event.Category), @event.Occurred ?? completedAt, string.IsNullOrWhiteSpace(@event.Username) ? username : @event.Username.Trim(), @event.Category, @event.Message);
+        => new(MapEventCategory(@event.Category), @event.Occurred ?? completedAt, string.IsNullOrWhiteSpace(@event.Username) ? username : @event.Username.Trim(), OctopusImportText.StripNul(@event.Category), OctopusImportText.StripNul(@event.Message));
 
     private static OctopusImportInterruptionRow MapInterruption(OctopusInterruptionDto interruption, IReadOnlyList<OctopusEventDto> events, Func<string, int?> teamResolver)
     {
