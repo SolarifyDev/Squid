@@ -19,8 +19,7 @@ public sealed record OctopusImportPlanningSnapshot(
     OctopusImportPreviewPlanDto PreviewPlan);
 
 public class OctopusImportPlanningPipeline(
-    IOctopusArchiveExtractor archiveExtractor,
-    IOctopusInputExtractor inputExtractor,
+    IOctopusImportSourceReader sourceReader,
     IOctopusManifestInventoryBuilder inventoryBuilder,
     IOctopusResourceGraphBuilder graphBuilder,
     IOctopusImportDependencyPlanner dependencyPlanner,
@@ -28,7 +27,6 @@ public class OctopusImportPlanningPipeline(
     IOctopusImportPreviewPlanner previewPlanner)
     : IOctopusImportPlanningPipeline
 {
-    private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
     private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
 
     public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
@@ -56,15 +54,18 @@ public class OctopusImportPlanningPipeline(
     private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
     {
         var fileInfo = new FileInfo(temporaryUploadPath);
+        var bundleInfo = new FileInfo(OctopusImportSourceReader.HistoryBundlePath(temporaryUploadPath));
         var cacheKey = new ExtractionCacheKey(
             Path.GetFullPath(temporaryUploadPath),
             fileInfo.Length,
-            fileInfo.LastWriteTimeUtc);
+            fileInfo.LastWriteTimeUtc,
+            bundleInfo.Exists ? bundleInfo.Length : -1,
+            bundleInfo.Exists ? bundleInfo.LastWriteTimeUtc : DateTime.MinValue);
 
         var extraction = _extractions.GetOrAdd(
             cacheKey,
             _ => new Lazy<Task<OctopusInputExtractionResult>>(
-                () => ExtractInputCoreAsync(temporaryUploadPath, CancellationToken.None),
+                () => sourceReader.ReadAsync(temporaryUploadPath, CancellationToken.None),
                 LazyThreadSafetyMode.ExecutionAndPublication));
 
         try
@@ -82,41 +83,6 @@ public class OctopusImportPlanningPipeline(
         }
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputCoreAsync(string temporaryUploadPath, CancellationToken ct)
-    {
-        await using var stream = new FileStream(temporaryUploadPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
-
-        if (await LooksLikeZipAsync(stream, ct).ConfigureAwait(false))
-        {
-            var archive = await archiveExtractor.ExtractZipAsync(stream, ct: ct).ConfigureAwait(false);
-            return await inputExtractor.ExtractJsonEntriesAsync(archive.Entries, ct).ConfigureAwait(false);
-        }
-
-        return await inputExtractor
-            .ExtractStandaloneJsonAsync(stream, Path.GetFileName(temporaryUploadPath), ct: ct)
-            .ConfigureAwait(false);
-    }
-
-    private static async Task<bool> LooksLikeZipAsync(Stream stream, CancellationToken ct)
-    {
-        var header = new byte[ZipMagic.Length];
-        var read = await stream.ReadAsync(header.AsMemory(0, header.Length), ct).ConfigureAwait(false);
-        stream.Position = 0;
-
-        if (read < ZipMagic.Length)
-            return false;
-
-        for (var i = 0; i < ZipMagic.Length; i++)
-        {
-            if (header[i] != ZipMagic[i])
-                return false;
-        }
-
-        return true;
-    }
-
-    private sealed record ExtractionCacheKey(
-        string FullPath,
-        long Length,
-        DateTime LastWriteTimeUtc);
+    // The history bundle beside the main file is part of the input: a finished REST fetch must invalidate the cache.
+    private sealed record ExtractionCacheKey(string FullPath, long Length, DateTime LastWriteTimeUtc, long BundleLength, DateTime BundleLastWriteTimeUtc);
 }

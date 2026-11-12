@@ -1,3 +1,4 @@
+using System.Linq;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -118,6 +119,28 @@ public class ExtractOctopusImportCommandHandlerTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData("{\"historyFetch\":{\"done\":false,\"phase\":\"Deployments\"}}", true)]
+    [InlineData("{\"historyFetch\":{\"done\":true,\"phase\":\"Done\"}}", false)]
+    [InlineData("{}", false)]
+    public async Task Handle_WhileAHistoryFetchIsUnfinished_RefusesWithoutReadingTheSource(string sourceSummaryJson, bool refused)
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var session = Session(sessionId, CreateTempFile("{\"Entries\":[]}"));
+        session.SourceSummaryJson = sourceSummaryJson;
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        harness.InputExtractor.Setup(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<OctopusArchiveExtractionOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusInputExtractionResult([], []));
+        harness.InventoryBuilder.Setup(b => b.Build(It.IsAny<OctopusInputExtractionResult>())).Returns(new OctopusManifestInventoryResult(new OctopusExportManifestDto(), [], [], []));
+        harness.GraphBuilder.Setup(b => b.Build(It.IsAny<OctopusManifestInventoryResult>())).Returns(new OctopusResourceGraph([], [], [], []));
+
+        var response = await harness.Sut.Handle(Context(new ExtractOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        response.Code.ShouldBe(refused ? HttpStatusCode.BadRequest : HttpStatusCode.OK);
+        response.Data.Extraction.Diagnostics.Any(d => d.Code == ExtractOctopusImportCommandHandler.HistoryFetchIncompleteCode).ShouldBe(refused);
+        harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<OctopusArchiveExtractionOptions>(), It.IsAny<CancellationToken>()), refused ? Times.Never() : Times.Once());
+    }
+
     private static string CreateTempFile(string content)
     {
         var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");
@@ -154,8 +177,7 @@ public class ExtractOctopusImportCommandHandlerTests
                 SessionDataProvider.Object,
                 SessionService.Object,
                 CurrentUser.Object,
-                ArchiveExtractor.Object,
-                InputExtractor.Object,
+                new OctopusImportSourceReader(ArchiveExtractor.Object, InputExtractor.Object),
                 InventoryBuilder.Object,
                 GraphBuilder.Object);
         }

@@ -237,7 +237,7 @@ public class OctopusExportPasswordValidatorTests
     }
 
     private static OctopusExportPasswordValidator CreateSut()
-        => new(new OctopusArchiveExtractor(), new OctopusInputExtractor(), new OctopusManifestInventoryBuilder(), new OctopusResourceGraphBuilder());
+        => new(new OctopusImportSourceReader(new OctopusArchiveExtractor(), new OctopusInputExtractor()), new OctopusManifestInventoryBuilder(), new OctopusResourceGraphBuilder());
 
     private static string BuildJson(string value)
         => JsonSerializer.Serialize(new

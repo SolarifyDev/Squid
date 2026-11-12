@@ -50,6 +50,12 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
             };
         }
 
+        if (message is ProbeOctopusServerCommand probe)
+            return new { probe.SpaceId, ServerHost = OctopusImportServerSourceService.ServerHostOf(probe.ServerUrl) };
+
+        if (message is FetchOctopusImportHistoryCommand fetch)
+            return new { fetch.SpaceId, fetch.SessionId, ServerHost = OctopusImportServerSourceService.ServerHostOf(fetch.ServerUrl), fetch.OctopusSpaceId };
+
         return GetSafeValue(message);
     }
 

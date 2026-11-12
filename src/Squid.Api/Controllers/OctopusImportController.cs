@@ -141,6 +141,35 @@ public class OctopusImportController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("history/probe")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ProbeOctopusServerResponse))]
+    public async Task<IActionResult> ProbeServerAsync([FromBody] ProbeOctopusServerCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ProbeOctopusServerCommand, ProbeOctopusServerResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("connect")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ConnectOctopusImportResponse))]
+    public async Task<IActionResult> ConnectAsync([FromBody] ConnectOctopusImportCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{sessionId:guid}/history/fetch")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(FetchOctopusImportHistoryResponse))]
+    public async Task<IActionResult> FetchHistoryAsync([FromRoute] Guid sessionId, [FromBody] FetchOctopusImportHistoryCommand command, CancellationToken cancellationToken)
+    {
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("{sessionId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportStatusResponse))]
     public async Task<IActionResult> StatusAsync(

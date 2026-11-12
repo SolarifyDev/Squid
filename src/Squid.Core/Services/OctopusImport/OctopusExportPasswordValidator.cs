@@ -26,10 +26,8 @@ public interface IOctopusExportPasswordValidator : IScopedDependency
         CancellationToken ct = default);
 }
 
-public sealed class OctopusExportPasswordValidator(IOctopusArchiveExtractor archiveExtractor, IOctopusInputExtractor inputExtractor, IOctopusManifestInventoryBuilder inventoryBuilder, IOctopusResourceGraphBuilder graphBuilder) : IOctopusExportPasswordValidator
+public sealed class OctopusExportPasswordValidator(IOctopusImportSourceReader sourceReader, IOctopusManifestInventoryBuilder inventoryBuilder, IOctopusResourceGraphBuilder graphBuilder) : IOctopusExportPasswordValidator
 {
-    private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
-
     public async Task<OctopusExportPasswordValidationResult> ValidateAsync(
         Stream content,
         string sourcePath,
@@ -84,27 +82,11 @@ public sealed class OctopusExportPasswordValidator(IOctopusArchiveExtractor arch
         }
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputAsync(
-        Stream content,
-        string sourcePath,
-        CancellationToken ct)
+    private async Task<OctopusInputExtractionResult> ExtractInputAsync(Stream content, string sourcePath, CancellationToken ct)
     {
-        if (!await LooksLikeZipAsync(content, ct).ConfigureAwait(false))
-        {
-            return await inputExtractor
-                .ExtractStandaloneJsonAsync(content, sourcePath, ct: ct)
-                .ConfigureAwait(false);
-        }
-
         try
         {
-            var archive = await archiveExtractor
-                .ExtractZipAsync(content, ct: ct)
-                .ConfigureAwait(false);
-
-            return await inputExtractor
-                .ExtractJsonEntriesAsync(archive.Entries, ct)
-                .ConfigureAwait(false);
+            return await sourceReader.ReadStreamAsync(content, sourcePath, ct).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException)
         {
@@ -112,24 +94,6 @@ public sealed class OctopusExportPasswordValidator(IOctopusArchiveExtractor arch
             // Upload password validation is best-effort when no source document can be read.
             return new OctopusInputExtractionResult([], []);
         }
-    }
-
-    private static async Task<bool> LooksLikeZipAsync(Stream stream, CancellationToken ct)
-    {
-        var header = new byte[ZipMagic.Length];
-        var read = await stream.ReadAsync(header.AsMemory(0, header.Length), ct).ConfigureAwait(false);
-        stream.Position = 0;
-
-        if (read < ZipMagic.Length)
-            return false;
-
-        for (var i = 0; i < ZipMagic.Length; i++)
-        {
-            if (header[i] != ZipMagic[i])
-                return false;
-        }
-
-        return true;
     }
 
     // Evidence = exactly the ciphertext the importer decrypts, read off the same graph the import plans from.

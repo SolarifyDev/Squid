@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Squid.Api.Filters;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Response;
 
@@ -45,6 +46,25 @@ public class GlobalExceptionFilterTests
         var context = Execute(exception);
 
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
+    }
+
+    public static IEnumerable<object[]> ServerSourceFailures()
+    {
+        foreach (var kind in Enum.GetValues<OctopusRestErrorKind>())
+            yield return [new OctopusRestException(kind)];
+
+        yield return [new OctopusImportHistoryScopeEmptyException()];
+        yield return [new OctopusImportHistoryServerMismatchException("server")];
+    }
+
+    // A bad Octopus key is the caller's input error, never a Squid authentication failure (401 would sign the user out).
+    [Theory]
+    [MemberData(nameof(ServerSourceFailures))]
+    public void OnException_WhenTheOctopusServerSourceFails_ReturnsBadRequestEnvelope(Exception exception)
+    {
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.BadRequest, exception.Message);
     }
 
     private static ExceptionContext Execute(Exception exception)

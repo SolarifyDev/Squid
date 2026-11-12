@@ -33,6 +33,19 @@ public class OctopusImportTemporaryUploadStoreTests : IDisposable
         Path.GetFileName(upload.Path).ShouldBe("export.zip");
     }
 
+    [Theory]
+    [InlineData("octopus-history.zip", "upload-octopus-history.zip")]
+    [InlineData("OCTOPUS-HISTORY.ZIP", "upload-OCTOPUS-HISTORY.ZIP")]
+    [InlineData("octopus-history-2024.zip", "octopus-history-2024.zip")]
+    public async Task SaveAsync_NeverTakesTheReservedHistoryBundleName(string uploadedName, string storedName)
+    {
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes("export"));
+
+        var upload = await _store.SaveAsync(Guid.NewGuid(), uploadedName, stream, CancellationToken.None);
+
+        Path.GetFileName(upload.Path).ShouldBe(storedName);
+    }
+
     [Fact]
     public async Task SecureDeleteAsync_DeletesUploadFileAndSessionDirectory()
     {

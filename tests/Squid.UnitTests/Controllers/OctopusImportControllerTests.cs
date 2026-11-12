@@ -93,4 +93,47 @@ public class OctopusImportControllerTests
         captured.Password.ShouldBe("octopus-password");
         captured.ContentType.ShouldBe("application/zip");
     }
+
+    [Fact]
+    public async Task FetchHistoryAsync_RouteSessionIdWinsOverTheBody()
+    {
+        var mediator = new Mock<IMediator>();
+        var routeSessionId = Guid.NewGuid();
+        FetchOctopusImportHistoryCommand captured = null;
+        mediator.Setup(m => m.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(It.IsAny<FetchOctopusImportHistoryCommand>(), It.IsAny<CancellationToken>())).Callback<FetchOctopusImportHistoryCommand, CancellationToken>((command, _) => captured = command).ReturnsAsync(new FetchOctopusImportHistoryResponse());
+
+        await new OctopusImportController(mediator.Object).FetchHistoryAsync(routeSessionId, new FetchOctopusImportHistoryCommand { SessionId = Guid.NewGuid(), SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY", OctopusSpaceId = "Spaces-1" }, CancellationToken.None);
+
+        captured.SessionId.ShouldBe(routeSessionId);
+        captured.SpaceId.ShouldBe(7);
+        captured.ApiKey.ShouldBe("API-KEY");
+    }
+
+    [Fact]
+    public async Task ProbeAndConnect_DispatchTheBoundCommand()
+    {
+        var mediator = new Mock<IMediator>();
+        var probe = new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY" };
+        var connect = new ConnectOctopusImportCommand { SpaceId = 7 };
+        mediator.Setup(m => m.SendAsync<ProbeOctopusServerCommand, ProbeOctopusServerResponse>(probe, It.IsAny<CancellationToken>())).ReturnsAsync(new ProbeOctopusServerResponse());
+        mediator.Setup(m => m.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(connect, It.IsAny<CancellationToken>())).ReturnsAsync(new ConnectOctopusImportResponse());
+        var controller = new OctopusImportController(mediator.Object);
+
+        (await controller.ProbeServerAsync(probe, CancellationToken.None)).ShouldBeOfType<OkObjectResult>();
+        (await controller.ConnectAsync(connect, CancellationToken.None)).ShouldBeOfType<OkObjectResult>();
+
+        mediator.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(nameof(OctopusImportController.ProbeServerAsync), "history/probe")]
+    [InlineData(nameof(OctopusImportController.ConnectAsync), "connect")]
+    [InlineData(nameof(OctopusImportController.FetchHistoryAsync), "{sessionId:guid}/history/fetch")]
+    public void ServerSourceActions_ArePostOnly_SoTheApiKeyNeverTravelsInAQueryString(string action, string template)
+    {
+        var method = typeof(OctopusImportController).GetMethod(action)!;
+
+        method.GetCustomAttribute<HttpPostAttribute>().ShouldNotBeNull().Template.ShouldBe(template);
+        method.GetCustomAttribute<HttpGetAttribute>().ShouldBeNull();
+    }
 }

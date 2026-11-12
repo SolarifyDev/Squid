@@ -31,6 +31,25 @@ internal static class OctopusImportHandlerFlow
     public static Task<ConfirmOctopusImportResponse> ConfirmAsync(IMediator mediator, int spaceId, Guid sessionId)
         => mediator.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(new ConfirmOctopusImportCommand { SpaceId = spaceId, SessionId = sessionId });
 
+    public static Task<ConnectOctopusImportResponse> ConnectAsync(IMediator mediator, int spaceId)
+        => mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(new ConnectOctopusImportCommand { SpaceId = spaceId });
+
+    public static Task<FetchOctopusImportHistoryResponse> FetchHistoryAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey)
+        => mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(new FetchOctopusImportHistoryCommand { SpaceId = spaceId, SessionId = sessionId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
+
+    /// <summary>Fetches chunk after chunk, as the UI does, until the server history is complete.</summary>
+    public static async Task<OctopusHistoryFetchProgressDto> FetchHistoryUntilDoneAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey, int maxChunks = 50)
+    {
+        for (var chunk = 0; chunk < maxChunks; chunk++)
+        {
+            var response = await FetchHistoryAsync(mediator, spaceId, sessionId, serverUri, apiKey);
+
+            if (response.Data.Done) return response.Data;
+        }
+
+        throw new InvalidOperationException($"History fetch did not finish within {maxChunks} chunks.");
+    }
+
     public static IEnumerable<OctopusImportDiagnosticDto> AllDiagnostics(OctopusImportPreviewPlanDto plan)
         => (plan?.Diagnostics ?? []).Concat((plan?.Resources ?? []).SelectMany(r => r.Diagnostics));
 

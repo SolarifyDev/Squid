@@ -7,6 +7,7 @@ using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -27,6 +28,9 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
             ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
+            OctopusRestException => HttpStatusCode.BadRequest,
+            OctopusImportHistoryScopeEmptyException => HttpStatusCode.BadRequest,
+            OctopusImportHistoryServerMismatchException => HttpStatusCode.BadRequest,
             _ => HttpStatusCode.InternalServerError
         };
 

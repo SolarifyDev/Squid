@@ -13,4 +13,7 @@ public class OctopusImportSourceSummaryDto
     public string Sha256 { get; set; }
 
     public List<OctopusImportSourceFileSummaryDto> Files { get; set; } = [];
+
+    /// <summary>The REST history fetch into this session, or null when the session has no server source.</summary>
+    public OctopusImportHistoryFetchDto HistoryFetch { get; set; }
 }

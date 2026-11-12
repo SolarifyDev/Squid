@@ -11,6 +11,9 @@ public interface IOctopusImportTemporaryUploadStore : IScopedDependency
     Task<OctopusImportTemporaryUpload> SaveAsync(Guid sessionId, string sourceFileName, Stream content, CancellationToken ct = default);
 
     Task<OctopusImportTemporaryUploadDeleteResult> SecureDeleteAsync(Guid sessionId, string temporaryUploadPath, CancellationToken ct = default);
+
+    /// <summary>The directory that holds every file of the session; secure delete wipes all of it.</summary>
+    string GetSessionDirectory(Guid sessionId);
 }
 
 public sealed class OctopusImportTemporaryUploadStore(
@@ -137,7 +140,7 @@ public sealed class OctopusImportTemporaryUploadStore(
         File.Delete(path);
     }
 
-    private string GetSessionDirectory(Guid sessionId)
+    public string GetSessionDirectory(Guid sessionId)
     {
         var root = Path.GetFullPath(settings.RootPath);
         var directory = Path.Combine(root, sessionId.ToString("N"));
@@ -180,6 +183,9 @@ public sealed class OctopusImportTemporaryUploadStore(
         foreach (var invalid in Path.GetInvalidFileNameChars())
             fileName = fileName.Replace(invalid, '_');
 
-        return string.IsNullOrWhiteSpace(fileName) ? "upload.bin" : fileName;
+        if (string.IsNullOrWhiteSpace(fileName)) return "upload.bin";
+
+        // The history bundle name is reserved for the REST fetch; an upload must never be taken for (or overwritten by) it.
+        return OctopusImportSourceReader.IsHistoryBundle(fileName) ? $"upload-{fileName}" : fileName;
     }
 }

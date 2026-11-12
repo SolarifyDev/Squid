@@ -47,6 +47,13 @@ public interface IOctopusImportSessionService : IScopedDependency
 
     Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Replaces the REST history fetch state of an Uploaded session. <paramref name="expectedChunkId"/> must match the
+    /// stored chunk id and the row's data version must be unchanged, otherwise a concurrent chunk won and this throws
+    /// <see cref="OctopusImportSessionConcurrencyException"/>.
+    /// </summary>
+    Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default);
+
     Task<OctopusImportSessionDto> RecordResultAsync(
         Guid sessionId,
         int destinationSpaceId,
@@ -164,7 +171,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.TemporaryUploadCleanedAt = null;
         session.TemporaryUploadCleanupError = null;
         if (sourceSummary != null)
-            session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(sourceSummary));
+            session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(KeepHistoryFetch(sourceSummary, session.SourceSummaryJson)));
 
         await _dataProvider
             .UpdateSessionAsync(session, session.DataVersion, ct: ct)
@@ -230,6 +237,29 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             ct).ConfigureAwait(false);
     }
 
+    public async Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(historyFetch);
+
+        var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+        var currentState = ParseState(session.State);
+
+        if (currentState != OctopusImportSessionState.Uploaded)
+            throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Uploaded);
+
+        var summary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson) ?? new OctopusImportSourceSummaryDto();
+
+        if (summary.HistoryFetch?.ChunkId != expectedChunkId)
+            throw new OctopusImportSessionConcurrencyException(sessionId);
+
+        summary.HistoryFetch = historyFetch;
+        session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(summary));
+
+        await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
+
+        return Map(session);
+    }
+
     public async Task<OctopusImportSessionDto> RecordResultAsync(
         Guid sessionId,
         int destinationSpaceId,
@@ -278,6 +308,14 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             throw new OctopusImportSessionNotFoundException(sessionId);
 
         return session;
+    }
+
+    // A summary written by upload knows nothing about a history fetch already recorded on the session; keep it.
+    private static OctopusImportSourceSummaryDto KeepHistoryFetch(OctopusImportSourceSummaryDto incoming, string storedJson)
+    {
+        incoming.HistoryFetch ??= Deserialize<OctopusImportSourceSummaryDto>(storedJson)?.HistoryFetch;
+
+        return incoming;
     }
 
     private int GetCurrentUserId()

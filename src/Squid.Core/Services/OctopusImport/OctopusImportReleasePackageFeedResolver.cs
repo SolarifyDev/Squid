@@ -82,9 +82,19 @@ internal static class OctopusImportReleasePackageFeedResolver
                              .Where(action => action != null),
                          selectedPackage);
 
-        if (action == null)
-            return null;
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
 
+    /// <summary>The feed of a release's selected package, read from the release's deployment process snapshot.</summary>
+    public static string GetSourceFeedIdFromProcess(OctopusDeploymentProcessDto process, OctopusSelectedPackageDto selectedPackage)
+    {
+        var action = FindReleaseAction(process?.Steps?.SelectMany(step => step.Actions ?? []) ?? [], selectedPackage);
+
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
+
+    private static string FeedIdOf(OctopusDeploymentActionDto action, OctopusSelectedPackageDto selectedPackage)
+    {
         var package = FindActionPackage(action, selectedPackage.PackageReferenceName);
         if (!string.IsNullOrWhiteSpace(package?.FeedId))
             return package.FeedId;

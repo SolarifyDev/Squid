@@ -86,6 +86,27 @@ public class LoggerSpecificationTests
         rendered.ShouldNotContain(apiKey);
     }
 
+    public static IEnumerable<object[]> ServerSourceCommands()
+    {
+        yield return [new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com:8443/octo?apikey=API-INURL", ApiKey = "API-SECRETKEY123" }];
+        yield return [new FetchOctopusImportHistoryCommand { SpaceId = 7, SessionId = Guid.NewGuid(), ServerUrl = "https://octopus.example.com:8443/octo?apikey=API-INURL", ApiKey = "API-SECRETKEY123", OctopusSpaceId = "Spaces-1" }];
+    }
+
+    [Theory]
+    [MemberData(nameof(ServerSourceCommands))]
+    public async Task ProbeAndFetch_ApiKeyNeverLogged(IMessage command)
+    {
+        var (sink, context, sut) = CreateHarness(command);
+
+        await sut.BeforeExecute(context.Object, CancellationToken.None);
+
+        var rendered = sink.Events.Single().RenderMessage();
+        rendered.ShouldNotContain("API-SECRETKEY123");
+        rendered.ShouldNotContain("API-INURL");
+        rendered.ShouldNotContain("/octo");
+        rendered.ShouldContain("octopus.example.com:8443");
+    }
+
     private static (CollectingSink Sink, Mock<IContext<IMessage>> Context, LoggerSpecification<IContext<IMessage>> Sut)
         CreateHarness(IMessage message)
     {
