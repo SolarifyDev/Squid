@@ -600,43 +600,45 @@ public class OctopusImportConfirmationOrchestratorTests
         result.Result.Diagnostics.ShouldNotContain(d => d.Message == $"Preview action '{action}' is not supported by confirmation.");
     }
 
-    [Fact]
-    public async Task AlreadyImported_ReusesThePriorDestination()
+    [Theory]
+    [InlineData(321)]    // a destination id the source map never recorded (e.g. another space's project)
+    [InlineData(null)]   // no destination and no owner verified as already imported in this confirmation
+    public async Task AlreadyImported_NotBackedBySourceMap_FailsClosed(int? destinationId)
     {
         var nodes = BuildMinimalNodes();
         var ordered = new List<OctopusResourceNode> { nodes.Environment };
         var preview = BuildPreviewPlan(ordered);
         preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
-        preview.Resources.Single().DestinationId = 321;
+        preview.Resources.Single().DestinationId = destinationId;
         var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
-        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
-        var outcome = harness.SessionService.RecordedResult.Resources.Single();
-        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
-        outcome.DestinationId.ShouldBe(321);
-        var mapping = harness.SessionService.RecordedResult.IdMappings.Single();
-        mapping.SourceId.ShouldBe(nodes.Environment.SourceId);
-        mapping.DestinationId.ShouldBe(321);
-        mapping.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
-        harness.Mediator.Invocations.ShouldNotContain(invocation => invocation.Method.Name == nameof(IMediator.SendAsync));
+        AssertRejectedAsNotImportedBefore(result, harness, nodes.Environment.SourceId);
     }
 
     [Fact]
-    public async Task AlreadyImportedInheritedFromOwner_WithoutDestination_IsReusedWithoutAMapping()
+    public async Task AlreadyImportedChild_WhoseOwnerOnlyTheClientMarkedImported_FailsClosed()
     {
         var nodes = BuildMinimalNodes();
-        var ordered = new List<OctopusResourceNode> { nodes.Environment };
-        var preview = BuildPreviewPlan(ordered);
-        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
-        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+        var channel = Node("Channels-1", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "Hotfix", new OctopusChannelDto { Id = "Channels-1", Name = "Hotfix", ProjectId = "Projects-1" }, nodes.Project.SourceId);
+        var preview = BuildPreviewPlan([nodes.Project, channel]);
+        preview.Resources.ForEach(r => r.PreviewAction = OctopusImportPreviewAction.AlreadyImported);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([channel]), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
-        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
-        harness.SessionService.RecordedResult.Resources.Single().OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+        AssertRejectedAsNotImportedBefore(result, harness, channel.SourceId);
+    }
+
+    private static void AssertRejectedAsNotImportedBefore(OctopusImportSessionDto result, TestHarness harness, string sourceId)
+    {
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        var outcome = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == sourceId);
+        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        outcome.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
         harness.SessionService.RecordedResult.IdMappings.ShouldBeEmpty();
+        harness.Mediator.Invocations.ShouldNotContain(invocation => invocation.Method.Name == nameof(IMediator.SendAsync));
     }
 
     [Fact]

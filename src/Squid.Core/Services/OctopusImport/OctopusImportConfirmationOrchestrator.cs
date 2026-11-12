@@ -288,13 +288,25 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     // only inherited "already imported" from its owner has no row of its own, so it is recorded without one.
     private static void ReuseImportedResource(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
     {
-        if (preview.DestinationId is > 0)
-        {
-            execution.AddReused(resource, preview.DestinationId.Value);
-            return;
-        }
+        EnsureBackedBySourceMap(execution, resource, preview);
 
-        execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused);
+        if (preview.DestinationId is > 0)
+            execution.AddReused(resource, preview.DestinationId.Value);
+        else
+            execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused);
+
+        execution.MarkImportedBefore(resource);
+    }
+
+    // The preview plan is posted by the client, so "already imported" and its destination id are trusted only
+    // when the server-side source map backs them; anything else would map Octopus ids onto arbitrary rows.
+    private static void EnsureBackedBySourceMap(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
+    {
+        if (execution.IsBackedBySourceMap(resource, preview.DestinationId)) return;
+
+        execution.MarkFailed(resource, Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.StalePreviewPlan, "This resource is marked as already imported, but no earlier import of it into this destination is recorded. Re-run the preview.", resource));
+
+        throw new OctopusImportConfirmationException("Already-imported resource is not backed by the source map.");
     }
 
     // In-place updates of imported history are not wired yet: every kind is rejected explicitly.
@@ -1095,6 +1107,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         private readonly Dictionary<string, OctopusImportResourceResultDto> _resultsBySourceId;
         private readonly Dictionary<string, OctopusResourceNode> _resourcesByKey;
         private readonly OctopusImportSessionResultDto _result;
+        private readonly HashSet<string> _importedBeforeSourceIds = new(StringComparer.OrdinalIgnoreCase);
 
         public ConfirmationExecutionContext(
             OctopusImportConfirmationRequest request,
@@ -1140,6 +1153,22 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public OctopusResourceNode FindResource(string sourceId, OctopusResourceKind kind)
             => _resourcesByKey.TryGetValue(Key(sourceId, kind), out var resource) ? resource : null;
+
+        /// <summary>
+        /// A destination id must equal the one an earlier confirmation recorded for this resource. A resource without
+        /// one inherited "already imported" from its owner, which must itself have been verified in this confirmation.
+        /// </summary>
+        public bool IsBackedBySourceMap(OctopusResourceNode resource, int? destinationId)
+            => destinationId is > 0 ? IdMap.IsPriorDestination(resource, destinationId.Value) : IsOwnerImportedBefore(resource);
+
+        public void MarkImportedBefore(OctopusResourceNode resource) => _importedBeforeSourceIds.Add(resource.SourceId);
+
+        private bool IsOwnerImportedBefore(OctopusResourceNode resource)
+        {
+            var ownerSourceId = OctopusImportPriorMappingPolicy.OwnerSourceId(resource);
+
+            return !string.IsNullOrWhiteSpace(ownerSourceId) && _importedBeforeSourceIds.Contains(ownerSourceId);
+        }
 
         public bool IsWrittenByImport(OctopusResourceNode resource)
             => OctopusImportVariableOwnership.IsWrittenByImport(resource, sourceId => FindResource(sourceId, OctopusResourceKind.VariableSet), sourceId => _resultsBySourceId.GetValueOrDefault(sourceId)?.PreviewAction);

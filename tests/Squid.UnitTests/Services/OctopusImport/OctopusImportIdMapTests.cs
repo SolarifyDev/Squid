@@ -218,6 +218,29 @@ public class OctopusImportIdMapTests
         map.TryGetDestinationId("Projects-1", "Project", out _).ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData("Project", "Projects-1", 55, true)]    // the source map recorded exactly this destination
+    [InlineData("Project", "Projects-1", 56, false)]   // a different destination id is never trusted
+    [InlineData("Channel", "Projects-1", 55, false)]   // same id, other kind
+    [InlineData("Project", "Projects-2", 55, false)]   // nothing recorded for this resource
+    public void IsPriorDestination_RequiresTheRecordedDestination(string priorKind, string priorSourceId, int destinationId, bool expected)
+    {
+        var map = new OctopusImportIdMap(Prior((priorKind, priorSourceId, 55)));
+
+        map.IsPriorDestination(Resource("Projects-1", OctopusResourceKind.Project, "Project"), destinationId).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void IsPriorDestination_IgnoresSessionEntries()
+    {
+        var map = new OctopusImportIdMap();
+        var project = Resource("Projects-1", OctopusResourceKind.Project, "Project");
+
+        map.AddReused(project, 77);
+
+        map.IsPriorDestination(project, 77).ShouldBeFalse();
+    }
+
     private static OctopusImportPriorMappings Prior(params (string Type, string Id, int DestinationId)[] rows)
         => new(rows.ToDictionary(r => (r.Type, r.Id), r => new OctopusImportPriorMapping(r.DestinationId, "Created", null, null)), null);
 

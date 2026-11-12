@@ -65,6 +65,10 @@ public sealed class OctopusImportIdMap
     public bool ContainsSessionMapping(OctopusResourceNode source)
         => source != null && _mappings.ContainsKey(OctopusImportIdMapKey.Create(source.SourceId, source.Kind.ToString()));
 
+    /// <summary>True only when an earlier confirmation recorded exactly this destination id for the resource; session entries never count.</summary>
+    public bool IsPriorDestination(OctopusResourceNode source, int destinationId)
+        => source != null && TryGetPriorDestinationId(source.SourceId, source.Kind.ToString(), out var prior) && prior == destinationId;
+
     private bool TryGetPriorDestinationId(string sourceId, string sourceType, out int destinationId)
     {
         destinationId = default;
