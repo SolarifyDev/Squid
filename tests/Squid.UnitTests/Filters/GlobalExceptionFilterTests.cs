@@ -1,3 +1,4 @@
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -76,5 +77,15 @@ public class GlobalExceptionFilterTests
         var response = result.Value.ShouldBeOfType<SquidResponse>();
         response.Code.ShouldBe(expectedCode);
         response.Msg.ShouldBe(expectedMessage);
+    }
+
+    [Fact]
+    public void ImportedReadOnly_409()
+    {
+        var exception = new ImportedServerTaskReadOnlyException(42);
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
     }
 }

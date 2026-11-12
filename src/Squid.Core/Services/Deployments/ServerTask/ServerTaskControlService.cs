@@ -27,6 +27,8 @@ public class ServerTaskControlService(
 
     public async Task CancelTaskAsync(int serverTaskId, CancellationToken ct = default)
     {
+        await EnsureNotImportedAsync(serverTaskId, ct).ConfigureAwait(false);
+
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null)
@@ -65,6 +67,8 @@ public class ServerTaskControlService(
     /// </summary>
     public async Task ForceCancelStuckTaskAsync(int serverTaskId, CancellationToken ct = default)
     {
+        await EnsureNotImportedAsync(serverTaskId, ct).ConfigureAwait(false);
+
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null)
@@ -108,6 +112,8 @@ public class ServerTaskControlService(
     /// </summary>
     public async Task ResumeTaskAsync(int serverTaskId, CancellationToken ct = default)
     {
+        await EnsureNotImportedAsync(serverTaskId, ct).ConfigureAwait(false);
+
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null)
@@ -126,6 +132,8 @@ public class ServerTaskControlService(
 
     public async Task TryAutoResumeAsync(int serverTaskId, CancellationToken ct = default)
     {
+        if (await serverTaskDataProvider.IsImportedAsync(serverTaskId, ct).ConfigureAwait(false)) return;
+
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null) return;
@@ -135,6 +143,14 @@ public class ServerTaskControlService(
         var jobId = await EnqueueResumeAsync(task, ct).ConfigureAwait(false);
 
         Log.Information("Auto-resumed task {TaskId} with new job {JobId}", serverTaskId, jobId);
+    }
+
+    // Imported Octopus history is read-only: even a non-terminal imported task (Executing, Pending, Cancelling) is a
+    // record of another server's run, never something Squid may cancel or resume.
+    private async Task EnsureNotImportedAsync(int serverTaskId, CancellationToken ct)
+    {
+        if (await serverTaskDataProvider.IsImportedAsync(serverTaskId, ct).ConfigureAwait(false))
+            throw new ImportedServerTaskReadOnlyException(serverTaskId);
     }
 
     private async Task<string> EnqueueResumeAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)

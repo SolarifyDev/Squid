@@ -30,6 +30,8 @@ public interface IServerTaskService : IScopedDependency
 
     Task SetHasPendingInterruptionsAsync(int serverTaskId, bool hasPending, CancellationToken ct = default);
 
+    Task<bool> IsImportedAsync(int serverTaskId, CancellationToken ct = default);
+
     Task<(int TotalCount, List<ServerTaskSummaryDto> Items)> GetTaskListAsync(int projectId, string state = null, int pageIndex = 1, int pageSize = 30, CancellationToken ct = default);
 }
 

@@ -1,6 +1,8 @@
 using System.Data;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SourceMap;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
@@ -27,6 +29,8 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default);
 
     Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
+
+    Task<bool> IsImportedAsync(int serverTaskId, CancellationToken cancellationToken = default);
 
     Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default);
 }
@@ -224,6 +228,14 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             t => t.ConcurrencyTag == tag && t.Id != excludeId
                  && (t.State == TaskState.Executing || t.State == TaskState.Paused || t.State == TaskState.Cancelling),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    // Imported = the source map recorded this task as Created by an Octopus import. A Reused row never counts.
+    public async Task<bool> IsImportedAsync(int serverTaskId, CancellationToken cancellationToken = default)
+    {
+        var importedTaskIds = OctopusImportSourceMapQueries.CreatedDestinationIds(_repository.QueryNoTracking<Persistence.Entities.Deployments.OctopusImportSourceMap>(), OctopusResourceKind.ServerTask);
+
+        return await importedTaskIds.AnyAsync(id => id == serverTaskId, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default)

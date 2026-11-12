@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Response;
@@ -25,6 +26,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
+            ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError
         };
 
