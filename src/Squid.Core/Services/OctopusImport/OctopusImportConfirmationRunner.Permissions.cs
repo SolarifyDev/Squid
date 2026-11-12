@@ -8,7 +8,7 @@ namespace Squid.Core.Services.OctopusImport;
 
 public sealed partial class OctopusImportConfirmationRunner
 {
-    // Every kind of resource the plan creates needs the owner's create permission in the destination space.
+    // Every resource the plan writes (creates, or updates from an earlier import) needs the owner's matching permission in the destination space.
     private async Task EnsureImportPermissionsAsync(CancellationToken ct)
     {
         foreach (var permission in RequiredPermissions())
@@ -25,7 +25,7 @@ public sealed partial class OctopusImportConfirmationRunner
         var previews = _ctx.ValidatedPlan.PreviewPlan.Resources;
 
         return previews
-            .Where(r => r.PreviewAction == OctopusImportPreviewAction.Create)
+            .Where(r => OctopusImportPreviewActions.WritesDestination(r.PreviewAction))
             .Select(r => ResolvePermission(r, currentResources, previews))
             .Where(permission => permission.HasValue)
             .Select(permission => permission.Value)
@@ -36,6 +36,11 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         if (!currentResources.TryGetValue(previewResource.SourceId, out var resource)) return null;
 
+        return previewResource.PreviewAction == OctopusImportPreviewAction.Update ? ResolveUpdatePermission(resource.Kind) : ResolveCreatePermission(resource, previews);
+    }
+
+    private static Permission? ResolveCreatePermission(OctopusResourceNode resource, IReadOnlyList<OctopusImportResourceResultDto> previews)
+    {
         return resource.Kind switch
         {
             OctopusResourceKind.ProjectGroup or OctopusResourceKind.Project => Permission.ProjectCreate,
@@ -49,9 +54,18 @@ public sealed partial class OctopusImportConfirmationRunner
             OctopusResourceKind.VariableSet => Permission.VariableEdit,
             OctopusResourceKind.DeploymentProcess => Permission.ProcessEdit,
             OctopusResourceKind.Release => Permission.ReleaseCreate,
+            OctopusResourceKind.Deployment or OctopusResourceKind.ServerTask => Permission.DeploymentCreate,
             _ => null
         };
     }
+
+    // Update rewrites what an earlier import wrote: a release's notes, or a deployment + server-task history unit.
+    private static Permission? ResolveUpdatePermission(OctopusResourceKind kind) => kind switch
+    {
+        OctopusResourceKind.Release => Permission.ReleaseEdit,
+        OctopusResourceKind.Deployment or OctopusResourceKind.ServerTask => Permission.DeploymentCreate,
+        _ => null
+    };
 
     // A default channel takes over the default channel created with its project (an edit); under a project imported
     // before, confirmation creates it as a regular channel.
