@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
@@ -10,7 +11,7 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         if (IsUnchangedWithStoredDetails(deployment, task))
         {
-            _ctx.Cursor.Counts.DetailsSkipped++;
+            _ctx.Pending.DetailsSkipped++;
             return;
         }
 
@@ -23,7 +24,7 @@ public sealed partial class OctopusRestHistoryFetcher
         task.DetailLevel = 1;
         task.DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details, OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTask());
 
-        _ctx.Cursor.Counts.DetailsFetched++;
+        _ctx.Pending.DetailsFetched++;
     }
 
     /// <summary>The incremental skip: the source map holds details for this deployment, its imported task row still exists and the task has not changed since.</summary>
@@ -35,7 +36,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private async Task<OctopusTaskHistoryDetails> FetchDetailsAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
     {
-        var taskDetails = await GetOrNullAsync<OctopusRestTaskDetailsDto>(TaskDetailsPath(task.Id), ct).ConfigureAwait(false);
+        var taskDetails = await TaskDetailsOrNullAsync(task.Id, ct).ConfigureAwait(false);
 
         if (taskDetails == null) return null;
 
@@ -47,5 +48,20 @@ public sealed partial class OctopusRestHistoryFetcher
             Events = await _ctx.Client.GetAllPagesAsync<OctopusEventDto>(EventsPath(deployment.Id), ct).ConfigureAwait(false),
             Artifacts = await _ctx.Client.GetAllPagesAsync<OctopusArtifactDto>(ArtifactsPath(task.Id), ct).ConfigureAwait(false)
         };
+    }
+
+    // A task whose log is over the per-response cap even after the tail is imported without details, not fatal.
+    // Only the single-response cap throws TooLarge here; the history byte budget is enforced between items and in lists.
+    private async Task<OctopusRestTaskDetailsDto> TaskDetailsOrNullAsync(string taskId, CancellationToken ct)
+    {
+        try
+        {
+            return await GetOrNullAsync<OctopusRestTaskDetailsDto>(TaskDetailsPath(taskId), ct).ConfigureAwait(false);
+        }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.TooLarge)
+        {
+            _ctx.Pending.DetailsTooLarge++;
+            return null;
+        }
     }
 }

@@ -57,6 +57,8 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public bool HoldReleases { get; set; }
 
+    private readonly Dictionary<string, int> _failures = new(StringComparer.Ordinal);
+
     public Task ReleasesRequested => _releasesRequested.Task;
 
     public static StubOctopusServer Start(string apiKey)
@@ -115,6 +117,28 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public void ReleaseHeldRequests() => _releaseHeld.TrySetResult();
 
+    /// <summary>The next <paramref name="times"/> requests whose path ends with <paramref name="pathSuffix"/> get a 400, which the client does not retry.</summary>
+    public StubOctopusServer FailNext(string pathSuffix, int times = 1)
+    {
+        lock (_failures) _failures[pathSuffix] = times;
+
+        return this;
+    }
+
+    private bool ShouldFail(string path)
+    {
+        lock (_failures)
+        {
+            var suffix = _failures.Keys.FirstOrDefault(k => _failures[k] > 0 && path.EndsWith(k, StringComparison.Ordinal));
+
+            if (suffix == null) return false;
+
+            _failures[suffix]--;
+
+            return true;
+        }
+    }
+
     private async Task ListenLoopAsync()
     {
         while (!_cts.IsCancellationRequested)
@@ -158,6 +182,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query)
     {
+        if (ShouldFail(path)) return (HttpStatusCode.BadRequest, new { });
         if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/spaces/all") return (HttpStatusCode.OK, new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/tasks") return (HttpStatusCode.OK, Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), query));

@@ -18,14 +18,129 @@ public class OctopusRestClientTests
     [Fact]
     public async Task Paging_SkipTake()
     {
-        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(0, PageLength(request)).Select(i => new { Id = $"Releases-{i}" }).ToList(), 250)));
+        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(Skip(request), PageLength(request)).Select(i => new { Id = $"Releases-{i}" }).ToList(), 250)));
         using var client = Client(handler);
 
         var items = await client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/projects/Projects-1/releases", CancellationToken.None);
 
-        items.Count.ShouldBe(250);
+        items.Select(i => i["Id"]).Distinct().Count().ShouldBe(250);
         handler.PathsAndQueries.ShouldBe(["/api/Spaces-1/projects/Projects-1/releases?skip=0&take=100", "/api/Spaces-1/projects/Projects-1/releases?skip=100&take=100", "/api/Spaces-1/projects/Projects-1/releases?skip=200&take=100"]);
         handler.Requests.ShouldAllBe(r => r.ApiKey == ApiKey);
+    }
+
+    // Octopus's interruptions endpoint ignores `take` and returns 30 items a page: a short page is not the end.
+    [Fact]
+    public async Task Paging_ShortPageBelowTotal_KeepsPaging()
+    {
+        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(Skip(request), Math.Min(30, 45 - Skip(request))).Select(i => new { Id = $"Interruptions-{i}" }).ToList(), 45)));
+        using var client = Client(handler);
+
+        var items = await client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/interruptions?regarding=ServerTasks-1", CancellationToken.None);
+
+        items.Select(i => i["Id"]).Distinct().Count().ShouldBe(45);
+        handler.PathsAndQueries.ShouldBe(["/api/Spaces-1/interruptions?regarding=ServerTasks-1&skip=0&take=100", "/api/Spaces-1/interruptions?regarding=ServerTasks-1&skip=30&take=100"]);
+    }
+
+    [Fact]
+    public async Task Paging_EmptyPage_EndsEvenWhenTheTotalSaysMore()
+    {
+        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Skip(request) == 0 ? new[] { new { Id = "Events-1" } } : [], int.MaxValue)));
+        using var client = Client(handler);
+
+        var items = await client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None);
+
+        items.Count.ShouldBe(1);
+        handler.Requests.Count.ShouldBe(2);
+    }
+
+    // A hostile or broken server must not be able to grow a list without bound (SEC: memory exhaustion).
+    [Fact]
+    public async Task Paging_ServerIgnoresSkip_StopsOnTheRepeatedPage()
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(0, 100).Select(i => new { Id = $"Events-{i}" }).ToList(), int.MaxValue)));
+        using var client = Client(handler);
+
+        var items = await client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None);
+
+        items.Count.ShouldBe(100);
+        handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Paging_EndlessDistinctPages_TooLargeAtTheItemCap()
+    {
+        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(Skip(request), 100).Select(i => new { Id = $"Events-{i}" }).ToList(), int.MaxValue)));
+        using var client = Client(handler, new OctopusRestOptions { MaxListItems = 250 });
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        handler.Requests.Count.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Paging_OverTheByteBudget_TooLargeBeforeTheNextPage()
+    {
+        var handler = new OctopusRestStubHandler(request => OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(Skip(request), 100).Select(i => new { Id = $"Events-{i}" }).ToList(), 1000)));
+        using var client = Client(handler);
+        client.ByteBudget = 10;
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        handler.Requests.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task BodyReset_RetriedLikeATransportFailure()
+    {
+        var calls = 0;
+        var handler = new OctopusRestStubHandler(_ => calls++ == 0 ? OctopusRestStubHandler.ResetBody() : OctopusRestStubHandler.Json(OctopusRestStubHandler.Root()));
+        using var client = Client(handler);
+
+        var root = await client.GetRootAsync(CancellationToken.None);
+
+        root.InstallationId.ShouldBe("inst-1");
+        handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task BodyStall_TimesOutPerRequest_ThenUnreachable()
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.StalledBody());
+        using var client = Client(handler, new OctopusRestOptions { RequestTimeout = TimeSpan.FromMilliseconds(200), MaxRetries = 1 });
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetRootAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
+        handler.Requests.Count.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Redirect_HttpToHttpsOnTheSameHost_FollowedAndKeptForLaterRequests()
+    {
+        var handler = new OctopusRestStubHandler(request => request.RequestUri!.Scheme == "http" ? Redirect("https://octopus.example.com" + request.RequestUri.PathAndQuery) : OctopusRestStubHandler.Json(OctopusRestStubHandler.Root()));
+        using var client = new OctopusRestClient("http://octopus.example.com/", ApiKey, new OctopusRestOptions(), handler);
+
+        await client.GetRootAsync(CancellationToken.None);
+        await client.GetRootAsync(CancellationToken.None);
+
+        handler.Requests.Select(r => r.Uri.ToString()).ShouldBe(["http://octopus.example.com/api", "https://octopus.example.com/api", "https://octopus.example.com/api"]);
+        client.BaseUri.ShouldBe(new Uri("https://octopus.example.com/"));
+    }
+
+    [Theory]
+    [InlineData("https://octopus.example.com:8443/api")]
+    [InlineData("https://other.example.com/api")]
+    public async Task Redirect_HttpToHttpsElsewhere_Denied(string location)
+    {
+        var handler = new OctopusRestStubHandler(_ => Redirect(location));
+        using var client = new OctopusRestClient("http://octopus.example.com/", ApiKey, new OctopusRestOptions(), handler);
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetRootAsync(CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.Denied);
+        handler.Requests.ShouldHaveSingleItem();
     }
 
     [Fact]
@@ -300,12 +415,9 @@ public class OctopusRestClientTests
             return Task.CompletedTask;
         });
 
-    private static int PageLength(HttpRequestMessage request)
-    {
-        var skip = int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["skip"]!);
+    private static int Skip(HttpRequestMessage request) => int.Parse(System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["skip"]!);
 
-        return Math.Min(100, 250 - skip);
-    }
+    private static int PageLength(HttpRequestMessage request) => Math.Min(100, 250 - Skip(request));
 
     private static HttpResponseMessage Redirect(string location)
     {

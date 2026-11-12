@@ -156,6 +156,25 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         done.Done.ShouldBeTrue("a failed chunk must release its lease so the corrected key can continue");
     }
 
+    // The frontend resumes a failed fetch by calling it again with the same session: the failed chunk must free the
+    // lease, keep the deployments already written, and not count the one that failed part way a second time.
+    [Fact]
+    public async Task FailedChunk_ReCalledOnTheSameSession_ResumesAndCountsEachDeploymentOnce()
+    {
+        await SeedImportedProjectAsync("Projects-1");
+        await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", DeploymentId, "Releases-1", TaskId).Deployment("Projects-1", "Deployments-2", "Releases-1", "ServerTasks-2").FailNext("/tasks/ServerTasks-2/details");
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+
+        var failed = await Should.ThrowAsync<OctopusRestException>(() => Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey)));
+        var done = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+
+        failed.Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
+        done.Done.ShouldBeTrue();
+        (done.Counts.Releases, done.Counts.Deployments, done.Counts.ServerTasks, done.Counts.DetailsFetched).ShouldBe((1, 2, 2, 2));
+        octopus.Requests.Count(r => r.PathAndQuery.StartsWith($"/api/Spaces-1/tasks/{TaskId}/details")).ShouldBe(1, "a deployment written before the failure is not fetched again");
+        (await SessionStateAsync(sessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
+    }
+
     // ── Full flow ──────────────────────────────────────────────────────────
 
     [Fact]

@@ -25,11 +25,16 @@ internal sealed class FakeOctopusServer
 
     public Dictionary<string, Dictionary<string, object>> Tasks { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Answers a request before the normal routes when it returns a response (a fault, a 404, a huge body).</summary>
+    public Func<HttpRequestMessage, HttpResponseMessage> Override { get; set; }
+
+    public OctopusRestOptions ClientOptions { get; init; } = new();
+
     public OctopusRestStubHandler Handler { get; }
 
-    public FakeOctopusServer() => Handler = new OctopusRestStubHandler(Respond);
+    public FakeOctopusServer() => Handler = new OctopusRestStubHandler(request => Override?.Invoke(request) ?? Respond(request));
 
-    public IOctopusRestClientFactory Factory => new StubFactory(Handler);
+    public IOctopusRestClientFactory Factory => new StubFactory(Handler, ClientOptions);
 
     public IEnumerable<string> Paths => Handler.PathsAndQueries;
 
@@ -92,9 +97,9 @@ internal sealed class FakeOctopusServer
         return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(items.Skip(skip).Take(take).ToList(), items.Count));
     }
 
-    private sealed class StubFactory(OctopusRestStubHandler handler) : IOctopusRestClientFactory
+    private sealed class StubFactory(OctopusRestStubHandler handler, OctopusRestOptions options) : IOctopusRestClientFactory
     {
-        public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, new OctopusRestOptions(), new NonDisposingHandler(handler), (_, _) => Task.CompletedTask);
+        public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, options, new NonDisposingHandler(handler), (_, _) => Task.CompletedTask);
     }
 
     // Each chunk disposes its client; the recorded requests must survive across chunks.

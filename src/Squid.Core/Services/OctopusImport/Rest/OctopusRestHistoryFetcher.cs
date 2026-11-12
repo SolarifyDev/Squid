@@ -32,19 +32,40 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         ArgumentNullException.ThrowIfNull(context);
 
         using var client = clientFactory.Create(context.ServerUrl, context.ApiKey);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
+        deadline.CancelAfter(_options.ChunkDeadline);
         _ctx = new FetchRun(context, client, Stopwatch.StartNew(), context.Cursor.TotalBytes);
+        client.ByteBudget = _options.HistoryMaxBytes - _ctx.BytesBeforeChunk;
 
-        await PinInstallationAsync(ct).ConfigureAwait(false);
-        await ResolveSpaceAsync(ct).ConfigureAwait(false);
-        EnsureScope();
-        await FetchPagesAsync(ct).ConfigureAwait(false);
+        await RunWithinDeadlineAsync(deadline, ct).ConfigureAwait(false);
 
         return Progress(_ctx.Cursor);
     }
 
     public static OctopusHistoryFetchProgressDto Progress(OctopusImportHistoryFetchDto cursor)
         => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
+
+    // A chunk still running past its deadline is abandoned before its lease lapses, so no second chunk can overlap it.
+    private async Task RunWithinDeadlineAsync(CancellationTokenSource deadline, CancellationToken ct)
+    {
+        try
+        {
+            await RunChunkAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
+        {
+            throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
+        }
+    }
+
+    private async Task RunChunkAsync(CancellationToken ct)
+    {
+        await PinInstallationAsync(ct).ConfigureAwait(false);
+        await ResolveSpaceAsync(ct).ConfigureAwait(false);
+        EnsureScope();
+        await FetchPagesAsync(ct).ConfigureAwait(false);
+    }
 
     // Every chunk re-reads /api: a different installation behind the same URL must not be mixed into one bundle.
     private async Task PinInstallationAsync(CancellationToken ct)
@@ -154,5 +175,9 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         // Per-chunk caches
         public Dictionary<string, OctopusDeploymentProcessDto> ProcessSnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> MachineNames { get; set; }
+
+        // The item being written: its counts join the cursor only when it commits
+        public OctopusHistoryFetchCountsDto Pending { get; set; } = new();
+        public int ItemsCommitted { get; set; }
     }
 }

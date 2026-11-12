@@ -33,6 +33,21 @@ public class OctopusRestOptionsTests
         options.PageSize.ShouldBe(100);
         options.MaxRetries.ShouldBe(5);
         options.MaxRedirects.ShouldBe(3);
+        options.MaxListItems.ShouldBe(10_000);
+        options.ChunkOverrun.ShouldBe(TimeSpan.FromMinutes(2));
+    }
+
+    // A chunk that outlives its lease lets a second chunk start against the same session; the hard deadline must end it first.
+    [Theory]
+    [InlineData(0)]
+    [InlineData(20)]
+    [InlineData(600)]
+    public void ChunkDeadline_EndsBeforeTheLeaseExpires(int chunkSeconds)
+    {
+        var options = new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(chunkSeconds) };
+
+        options.ChunkDeadline.ShouldBe(options.ChunkDuration + options.ChunkOverrun);
+        options.ChunkDeadline.ShouldBeLessThan(options.ChunkDuration + OctopusImportServerSourceService.LeaseMargin);
     }
 
     [Fact]

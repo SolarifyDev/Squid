@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
 
@@ -13,17 +14,32 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private async Task FetchReleasePageAsync(CancellationToken ct)
     {
-        var page = await GetPageOrEmptyAsync<OctopusReleaseDto>(ProjectReleasesPath(CurrentProjectId), ct).ConfigureAwait(false);
+        var page = await ReleasePageAsync(ct).ConfigureAwait(false);
 
         foreach (var release in page.Items)
         {
+            if (ChunkBudgetSpent()) return;
+
             await EnrichFeedIdsAsync(release, ct).ConfigureAwait(false);
             await WriteAsync(OctopusResourceKind.Release, release, ct).ConfigureAwait(false);
 
-            _ctx.Cursor.Counts.Releases++;
+            _ctx.Pending.Releases++;
+            CommitItem();
         }
 
         Advance(page, OctopusHistoryFetchPhase.Deployments);
+    }
+
+    // A project the space does not have (deleted in Octopus, or another space chosen) has no history; it is reported.
+    private async Task<OctopusRestPage<OctopusReleaseDto>> ReleasePageAsync(CancellationToken ct)
+    {
+        var page = await GetPageOrNullAsync<OctopusReleaseDto>(ProjectReleasesPath(CurrentProjectId), ct).ConfigureAwait(false);
+
+        if (page != null) return page;
+
+        _ctx.Cursor.Counts.ProjectsNotFound++;
+
+        return new OctopusRestPage<OctopusReleaseDto>();
     }
 
     // The export's release documents carry no feed per package; the importer needs it to create the release.
@@ -58,11 +74,16 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private async Task FetchDeploymentPageAsync(CancellationToken ct)
     {
-        var page = await GetPageOrEmptyAsync<OctopusDeploymentDto>(DeploymentsPath(CurrentProjectId), ct).ConfigureAwait(false);
+        var page = await GetPageOrNullAsync<OctopusDeploymentDto>(DeploymentsPath(CurrentProjectId), ct).ConfigureAwait(false) ?? new OctopusRestPage<OctopusDeploymentDto>();
         var tasks = await TaskSummariesAsync(page.Items, ct).ConfigureAwait(false);
 
         foreach (var deployment in page.Items)
+        {
+            if (ChunkBudgetSpent()) return;
+
             await WriteDeploymentUnitAsync(deployment, tasks.GetValueOrDefault(deployment.TaskId ?? string.Empty), ct).ConfigureAwait(false);
+            CommitItem();
+        }
 
         Advance(page, OctopusHistoryFetchPhase.Releases);
     }
@@ -87,13 +108,13 @@ public sealed partial class OctopusRestHistoryFetcher
             await AttachDetailsAsync(deployment, task, ct).ConfigureAwait(false);
             await WriteAsync(OctopusResourceKind.ServerTask, task, ct).ConfigureAwait(false);
 
-            _ctx.Cursor.Counts.ServerTasks++;
+            _ctx.Pending.ServerTasks++;
         }
 
         await AttachMachineNamesAsync(deployment, ct).ConfigureAwait(false);
         await WriteAsync(OctopusResourceKind.Deployment, deployment, ct).ConfigureAwait(false);
 
-        _ctx.Cursor.Counts.Deployments++;
+        _ctx.Pending.Deployments++;
     }
 
     private static void FillTaskOwners(OctopusServerTaskDto task, OctopusDeploymentDto deployment)
@@ -127,16 +148,38 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private string CurrentProjectId => _ctx.Cursor.ProjectIds[_ctx.Cursor.ProjectIndex];
 
+    // The time budget is checked per item, so one slow page cannot outlast the request; the first item always runs.
+    private bool ChunkBudgetSpent() => _ctx.ItemsCommitted > 0 && _ctx.Clock.Elapsed >= _options.ChunkDuration;
+
+    // An item's counts and its place in the cursor move together, so an item retried after a failure is counted once.
+    private void CommitItem()
+    {
+        AddCounts(_ctx.Cursor.Counts, _ctx.Pending);
+
+        _ctx.Cursor.Skip++;
+        _ctx.ItemsCommitted++;
+        _ctx.Pending = new OctopusHistoryFetchCountsDto();
+
+        TrackBytes();
+    }
+
+    private static void AddCounts(OctopusHistoryFetchCountsDto total, OctopusHistoryFetchCountsDto item)
+    {
+        total.Releases += item.Releases;
+        total.Deployments += item.Deployments;
+        total.ServerTasks += item.ServerTasks;
+        total.DetailsFetched += item.DetailsFetched;
+        total.DetailsSkipped += item.DetailsSkipped;
+        total.DetailsTooLarge += item.DetailsTooLarge;
+        total.ProjectsNotFound += item.ProjectsNotFound;
+    }
+
+    // Skip already counts every item of the page written, so it is where the page ended.
     private void Advance<T>(OctopusRestPage<T> page, OctopusHistoryFetchPhase nextPhase)
     {
         var cursor = _ctx.Cursor;
-        var fetched = cursor.Skip + page.Items.Count;
 
-        if (!_ctx.Client.IsLastPage(page.Items.Count, fetched, page.TotalResults))
-        {
-            cursor.Skip = fetched;
-            return;
-        }
+        if (!OctopusRestClient.IsLastPage(page.Items.Count, cursor.Skip, page.TotalResults)) return;
 
         cursor.Phase = nextPhase;
         cursor.Skip = 0;
@@ -144,8 +187,8 @@ public sealed partial class OctopusRestHistoryFetcher
         if (nextPhase == OctopusHistoryFetchPhase.Releases) cursor.ProjectIndex++;
     }
 
-    // A project deleted in Octopus since it was imported has no history left to fetch.
-    private async Task<OctopusRestPage<T>> GetPageOrEmptyAsync<T>(string path, CancellationToken ct)
+    // Not found is null: a deleted project, or one the chosen space does not have.
+    private async Task<OctopusRestPage<T>> GetPageOrNullAsync<T>(string path, CancellationToken ct)
     {
         try
         {
@@ -153,7 +196,7 @@ public sealed partial class OctopusRestHistoryFetcher
         }
         catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.NotFound)
         {
-            return new OctopusRestPage<T>();
+            return null;
         }
     }
 
@@ -187,7 +230,8 @@ public sealed partial class OctopusRestHistoryFetcher
     private string TasksPath(IReadOnlyCollection<string> ids)
         => $"api/tasks?ids={string.Join(",", ids.Select(Escape))}&skip=0&take={ids.Count}" + (_ctx.Cursor.Spaceless ? string.Empty : $"&spaces={Escape(_ctx.Cursor.OctopusSpaceId)}");
 
-    private string TaskDetailsPath(string taskId) => $"{SpacePrefix}tasks/{Escape(taskId)}/details?verbose=false";
+    // The importer keeps at most MaxLogLinesPerTask lines, so Octopus is asked for no more than that per activity.
+    private string TaskDetailsPath(string taskId) => $"{SpacePrefix}tasks/{Escape(taskId)}/details?verbose=false&tail={OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTask()}";
 
     private string InterruptionsPath(string taskId) => $"{SpacePrefix}interruptions?regarding={Escape(taskId)}";
 

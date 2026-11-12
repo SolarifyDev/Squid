@@ -32,10 +32,14 @@ public sealed class OctopusRestClient : IDisposable
         _http = new HttpClient(handler ?? throw new ArgumentNullException(nameof(handler))) { Timeout = options.RequestTimeout };
     }
 
-    public Uri BaseUri { get; }
+    /// <summary>The server address; a same-host redirect from http to https upgrades it, so later requests go to https directly.</summary>
+    public Uri BaseUri { get; private set; }
 
     /// <summary>Response bytes read by this client so far; the history fetch caps its total on it.</summary>
     public long BytesRead { get; private set; }
+
+    /// <summary>The most bytes a paged list may read in total (<see cref="BytesRead"/> included); the history fetch sets what is left of its budget.</summary>
+    public long ByteBudget { get; set; } = long.MaxValue;
 
     public async Task<OctopusRestRootDto> GetRootAsync(CancellationToken ct)
     {
@@ -51,6 +55,53 @@ public sealed class OctopusRestClient : IDisposable
     {
         var body = await GetBytesAsync(relativePath, ct).ConfigureAwait(false);
 
+        return Deserialize<T>(body);
+    }
+
+    public Task<OctopusRestPage<T>> GetPageAsync<T>(string relativePath, int skip, CancellationToken ct) => GetAsync<OctopusRestPage<T>>(PagePath(relativePath, skip), ct);
+
+    // Bounded against a hostile or broken server: it ends on an empty page or the reported total, on a page that
+    // repeats the previous one byte for byte (skip ignored), and fails past the item cap or the byte budget.
+    public async Task<List<T>> GetAllPagesAsync<T>(string relativePath, CancellationToken ct)
+    {
+        var items = new List<T>();
+        byte[] previous = null;
+
+        while (true)
+        {
+            var body = await GetBytesAsync(PagePath(relativePath, items.Count), ct).ConfigureAwait(false);
+
+            if (previous != null && body.AsSpan().SequenceEqual(previous)) return items;
+
+            var page = Deserialize<OctopusRestPage<T>>(body);
+            var pageItems = page?.Items ?? [];
+
+            items.AddRange(pageItems);
+            EnsureWithinListLimits(items.Count);
+
+            if (IsLastPage(pageItems.Count, items.Count, page?.TotalResults ?? 0)) return items;
+
+            previous = body;
+        }
+    }
+
+    /// <summary>The reported total is authoritative: some Octopus endpoints ignore <c>take</c>, so a short page is not the end.</summary>
+    public static bool IsLastPage(int pageCount, int fetchedSoFar, int totalResults) => pageCount == 0 || fetchedSoFar >= totalResults;
+
+    public static string WithQuery(string relativePath, string query) => relativePath + (relativePath.Contains('?') ? "&" : "?") + query;
+
+    public void Dispose() => _http.Dispose();
+
+    private string PagePath(string relativePath, int skip) => WithQuery(relativePath, $"skip={skip}&take={_options.PageSize}");
+
+    private void EnsureWithinListLimits(int itemCount)
+    {
+        if (itemCount > _options.MaxListItems || BytesRead > ByteBudget)
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge);
+    }
+
+    private static T Deserialize<T>(byte[] body)
+    {
         try
         {
             return JsonSerializer.Deserialize<T>(body, JsonOptions);
@@ -61,70 +112,56 @@ public sealed class OctopusRestClient : IDisposable
         }
     }
 
-    public Task<OctopusRestPage<T>> GetPageAsync<T>(string relativePath, int skip, CancellationToken ct)
-        => GetAsync<OctopusRestPage<T>>(WithQuery(relativePath, $"skip={skip}&take={_options.PageSize}"), ct);
-
-    public async Task<List<T>> GetAllPagesAsync<T>(string relativePath, CancellationToken ct)
-    {
-        var items = new List<T>();
-
-        while (true)
-        {
-            var page = await GetPageAsync<T>(relativePath, items.Count, ct).ConfigureAwait(false);
-            var pageItems = page?.Items ?? [];
-
-            items.AddRange(pageItems);
-
-            if (IsLastPage(pageItems.Count, items.Count, page?.TotalResults ?? 0)) return items;
-        }
-    }
-
-    public bool IsLastPage(int pageCount, int fetchedSoFar, int totalResults) => pageCount < _options.PageSize || fetchedSoFar >= totalResults;
-
-    public static string WithQuery(string relativePath, string query) => relativePath + (relativePath.Contains('?') ? "&" : "?") + query;
-
-    public void Dispose() => _http.Dispose();
-
     private async Task<byte[]> GetBytesAsync(string relativePath, CancellationToken ct)
     {
-        var uri = new Uri(BaseUri, relativePath.TrimStart('/'));
-
         for (var attempt = 0; ; attempt++)
         {
-            using var response = await SendOrNullAsync(uri, ct).ConfigureAwait(false);
+            var (body, retryDelay) = await AttemptAsync(new Uri(BaseUri, relativePath.TrimStart('/')), attempt, ct).ConfigureAwait(false);
 
-            if (IsRetryable(response) && attempt < _options.MaxRetries)
-            {
-                await _delay(RetryDelay(response, attempt), ct).ConfigureAwait(false);
-                continue;
-            }
+            if (body != null) return body;
 
-            EnsureSuccess(response);
-
-            return await ReadBoundedAsync(response, ct).ConfigureAwait(false);
+            await _delay(retryDelay, ct).ConfigureAwait(false);
         }
     }
 
-    // A transport failure (refused, reset, timed out) is reported as a null response so it is retried like a 5xx.
-    private async Task<HttpResponseMessage> SendOrNullAsync(Uri uri, CancellationToken ct)
+    // One request under its own timeout, which covers the body as well as the headers. Returns the body, or the
+    // delay before the next attempt when the failure is transient (a 429/5xx, or a transport failure at any point).
+    private async Task<(byte[] Body, TimeSpan RetryDelay)> AttemptAsync(Uri uri, int attempt, CancellationToken ct)
     {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        timeout.CancelAfter(_options.RequestTimeout);
+
         try
         {
-            return await SendFollowingRedirectsAsync(uri, ct).ConfigureAwait(false);
+            return await SendAndReadAsync(uri, attempt, timeout.Token).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.InnerException is OctopusRestException rest)
         {
             throw new OctopusRestException(rest.Kind);
         }
-        catch (HttpRequestException)
+        catch (Exception ex) when (IsTransportFailure(ex, ct))
         {
-            return null;
-        }
-        catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return null;
+            if (attempt >= _options.MaxRetries)
+                throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
+
+            return (null, RetryDelay(null, attempt));
         }
     }
+
+    private async Task<(byte[] Body, TimeSpan RetryDelay)> SendAndReadAsync(Uri uri, int attempt, CancellationToken ct)
+    {
+        using var response = await SendFollowingRedirectsAsync(uri, ct).ConfigureAwait(false);
+
+        if (IsRetryable(response) && attempt < _options.MaxRetries) return (null, RetryDelay(response, attempt));
+
+        EnsureSuccess(response);
+
+        return (await ReadBoundedAsync(response, ct).ConfigureAwait(false), TimeSpan.Zero);
+    }
+
+    // Refused, reset or timed out, before the headers or part way through the body; the caller's own cancellation is not one.
+    private static bool IsTransportFailure(Exception ex, CancellationToken ct) => ex is HttpRequestException or IOException || (ex is OperationCanceledException && !ct.IsCancellationRequested);
 
     private async Task<HttpResponseMessage> SendFollowingRedirectsAsync(Uri uri, CancellationToken ct)
     {
@@ -137,6 +174,7 @@ public sealed class OctopusRestClient : IDisposable
             var target = RedirectTarget(uri, response);
 
             response.Dispose();
+            UpgradeBaseUriIfSecured(uri, target);
             uri = target;
         }
 
@@ -162,18 +200,30 @@ public sealed class OctopusRestClient : IDisposable
 
         var target = location.IsAbsoluteUri ? location : new Uri(current, location);
 
-        if (!IsSameOrigin(current, target))
+        if (!IsSameOrigin(current, target) && !IsHttpsUpgrade(current, target))
             throw new OctopusRestException(OctopusRestErrorKind.Denied);
 
         return target;
     }
 
-    private static bool IsSameOrigin(Uri a, Uri b)
-        => a.Scheme == b.Scheme && string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase) && a.Port == b.Port;
+    private static bool IsSameOrigin(Uri a, Uri b) => a.Scheme == b.Scheme && IsSameHost(a, b) && a.Port == b.Port;
+
+    // http://host → https://host (same port, or both on their default port) is the server insisting on TLS, not another origin.
+    private static bool IsHttpsUpgrade(Uri from, Uri to)
+        => from.Scheme == Uri.UriSchemeHttp && to.Scheme == Uri.UriSchemeHttps && IsSameHost(from, to) && (from.Port == to.Port || (from.IsDefaultPort && to.IsDefaultPort));
+
+    private static bool IsSameHost(Uri a, Uri b) => string.Equals(a.Host, b.Host, StringComparison.OrdinalIgnoreCase);
+
+    private void UpgradeBaseUriIfSecured(Uri current, Uri target)
+    {
+        if (!IsHttpsUpgrade(current, target) || !IsSameOrigin(BaseUri, current)) return;
+
+        BaseUri = new UriBuilder(BaseUri) { Scheme = Uri.UriSchemeHttps, Port = target.Port }.Uri;
+    }
 
     private static bool IsRedirect(HttpStatusCode status) => (int)status is 301 or 302 or 303 or 307 or 308;
 
-    private static bool IsRetryable(HttpResponseMessage response) => response == null || response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500;
+    private static bool IsRetryable(HttpResponseMessage response) => response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500;
 
     private TimeSpan RetryDelay(HttpResponseMessage response, int attempt)
     {
@@ -187,7 +237,7 @@ public sealed class OctopusRestClient : IDisposable
 
     private static void EnsureSuccess(HttpResponseMessage response)
     {
-        if (response == null || IsRetryable(response))
+        if (IsRetryable(response))
             throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
 
         var kind = response.StatusCode switch

@@ -26,11 +26,17 @@ public sealed class OctopusRestOptions
     public long HistoryMaxBytes { get; init; } = DefaultHistoryMaxBytes;
     public TimeSpan ChunkDuration { get; init; } = TimeSpan.FromSeconds(DefaultChunkSeconds);
 
+    /// <summary>How long one in-flight item may run past <see cref="ChunkDuration"/> before the chunk is abandoned; must stay under the lease margin.</summary>
+    public TimeSpan ChunkOverrun { get; init; } = TimeSpan.FromMinutes(2);
+
+    public TimeSpan ChunkDeadline => ChunkDuration + ChunkOverrun;
+
     // Fixed transport settings
     public TimeSpan RequestTimeout { get; init; } = TimeSpan.FromSeconds(100);
     public int PageSize { get; init; } = 100;
     public int MaxRetries { get; init; } = 5;
     public int MaxRedirects { get; init; } = 3;
+    public int MaxListItems { get; init; } = 10_000;
     public TimeSpan RetryBaseDelay { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan MaxRetryDelay { get; init; } = TimeSpan.FromSeconds(60);
 
