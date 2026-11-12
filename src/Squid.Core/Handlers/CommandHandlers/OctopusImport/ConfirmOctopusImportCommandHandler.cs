@@ -114,7 +114,7 @@ public class ConfirmOctopusImportCommandHandler(
                     destinationSpaceId,
                     snapshot.Graph,
                     snapshot.DependencyPlan,
-                    validatedPlan.PreviewPlan),
+                    validatedPlan.PreviewPlan) { SessionDirectory = Path.GetDirectoryName(session.TemporaryUploadPath) },
                 cancellationToken)
             .ConfigureAwait(false);
 

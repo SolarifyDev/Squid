@@ -5,7 +5,9 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Teams;
@@ -32,7 +34,7 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
 
-public class OctopusImportConfirmationOrchestratorTests
+public partial class OctopusImportConfirmationOrchestratorTests
 {
     [Fact]
     public async Task ConfirmAsync_SucceedsAndCapturesCreatedAndReusedOutcomes()
@@ -737,7 +739,9 @@ public class OctopusImportConfirmationOrchestratorTests
         bool admissionShouldSucceed,
         bool throwAfterAction,
         bool withTransactionGate,
-        IOctopusImportLibraryVariableSetNameLock nameLock = null)
+        IOctopusImportLibraryVariableSetNameLock nameLock = null,
+        IOctopusImportSourceMapDataProvider sourceMap = null,
+        IOctopusImportHistoryDetailsStore detailsStore = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -814,7 +818,9 @@ public class OctopusImportConfirmationOrchestratorTests
             projectDataProvider.Object,
             channelDataProvider.Object,
             mediator.Object,
-            teamService.Object);
+            teamService.Object,
+            sourceMap,
+            detailsStore);
 
         return new TestHarness(
             orchestrator,
