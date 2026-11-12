@@ -25,5 +25,10 @@ public enum EventCategory : short
     DeploymentSucceeded = 16,
     DeploymentFailed = 17,
     DeploymentCanceled = 18,
-    DeploymentTimedOut = 19
+    DeploymentTimedOut = 19,
+
+    // ── Imported history ─────────────────────────────────────────────────────
+    // An Octopus event with no matching Squid category; its original Octopus
+    // category and message are kept in references_json.Octopus.
+    ImportedOctopusEvent = 100
 }

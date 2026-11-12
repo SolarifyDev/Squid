@@ -7,5 +7,9 @@ public enum OctopusImportPreviewAction
     RenameRequired,
     Skip,
     Unsupported,
-    Blocked
+    Blocked,
+
+    // Append-only: the SquidWeb mirror is ordinal.
+    AlreadyImported = 6,
+    Update = 7
 }

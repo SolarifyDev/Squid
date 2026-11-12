@@ -17,6 +17,8 @@ public class ReleaseDto
     public int ChannelId { get; set; }
 
     public int SpaceId { get; set; }
+
+    public string ReleaseNote { get; set; }
     
     public DateTimeOffset LastModifiedDate { get; set; }
 

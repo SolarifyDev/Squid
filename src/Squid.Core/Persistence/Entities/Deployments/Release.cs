@@ -16,6 +16,8 @@ public class Release : IEntity<int>, IAuditable
 
     public int SpaceId { get; set; }
 
+    public string ReleaseNote { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

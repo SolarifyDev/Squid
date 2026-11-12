@@ -8,5 +8,8 @@ public enum OctopusImportResourceOutcomeState
     Skipped,
     Unsupported,
     Blocked,
-    Failed
+    Failed,
+
+    // Append-only: the SquidWeb mirror is ordinal.
+    Updated = 7
 }
