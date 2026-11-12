@@ -123,20 +123,11 @@ public class OctopusImportController : ControllerBase
 
     [HttpPost("{sessionId:guid}/confirm")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ConfirmOctopusImportResponse))]
-    public async Task<IActionResult> ConfirmAsync(
-        Guid sessionId,
-        [FromQuery] int? spaceId,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> ConfirmAsync([FromRoute] Guid sessionId, [FromQuery] ConfirmOctopusImportCommand command, CancellationToken cancellationToken)
     {
-        var response = await _mediator
-            .SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(
-                new ConfirmOctopusImportCommand
-                {
-                    SessionId = sessionId,
-                    SpaceId = spaceId
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(command, cancellationToken).ConfigureAwait(false);
 
         return Ok(response);
     }

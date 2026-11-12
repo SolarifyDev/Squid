@@ -1,5 +1,6 @@
 using System.IO;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,6 +9,7 @@ using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
@@ -266,6 +268,88 @@ public class ConfirmOctopusImportCommandHandlerTests
         response.Data.BlockerSummary.BlockingReasons.Select(r => r.Code).ShouldBe([OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable]);
     }
 
+    [Theory]
+    [InlineData(true)]   // background: queued as the owner, the session is returned still Validated
+    [InlineData(false)]  // default: confirmed inline, exactly as before the flag existed
+    public async Task Confirm_RunInBackground_EnqueuesRunner_ReturnsValidated_OtherwiseRunsSynchronously(bool runInBackground)
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview();
+        Expression<Func<IOctopusImportConfirmationJob, Task>> queued = null;
+
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
+        harness.SessionService.Setup(s => s.GetSessionAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
+        harness.ConfirmationOrchestrator
+            .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
+        harness.BackgroundJobClient
+            .Setup(c => c.Enqueue(It.IsAny<Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()))
+            .Callback<Expression<Func<IOctopusImportConfirmationJob, Task>>, string>((call, _) => queued = call)
+            .Returns("job-1");
+
+        var response = await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7, RunInBackground = runInBackground }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.Session.State.ShouldBe(runInBackground ? OctopusImportSessionState.Validated : OctopusImportSessionState.Succeeded);
+        harness.ConfirmationOrchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), runInBackground ? Times.Never() : Times.Once());
+        harness.PlanningPipeline.Verify(p => p.BuildPreviewAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), runInBackground ? Times.Never() : Times.Once());
+        harness.BackgroundJobClient.Verify(c => c.Enqueue(It.IsAny<Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()), runInBackground ? Times.Once() : Times.Never());
+
+        if (!runInBackground) return;
+
+        var job = new Mock<IOctopusImportConfirmationJob>();
+        await queued.Compile()(job.Object);
+        job.Verify(j => j.RunAsOwnerAsync(sessionId, 7, 42, CancellationToken.None), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("no-upload")]
+    [InlineData("no-plan")]
+    [InlineData("password-unreadable")]
+    [InlineData("not-validated")]
+    public async Task Confirm_RunInBackground_SessionThatCannotBeConfirmed_RefusedAtOnce_NothingQueued(string defect)
+    {
+        var harness = new Harness();
+        var secretStore = new Mock<IOctopusImportExportSecretStore>();
+        var sut = harness.CreateSut(secretStore.Object, new OctopusExportSecretsAccessor());
+        var sessionId = Guid.NewGuid();
+        var plan = defect == "no-plan" ? null : new OctopusImportValidatedPlanDto { PreviewPlan = Preview(), Validation = new OctopusImportValidationResultDto() };
+        var state = defect == "not-validated" ? OctopusImportSessionState.Previewed : OctopusImportSessionState.Validated;
+
+        secretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(defect == "password-unreadable" ? OctopusExportSecrets.Unreadable : OctopusExportSecrets.None);
+        harness.SessionDataProvider
+            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Session(sessionId, defect == "no-upload" ? null : CreateTempFile(), state, plan));
+
+        var response = await sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7, RunInBackground = true }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Data.Session.State.ShouldBe(state);
+        response.Data.BlockerSummary.BlockingReasons.Count.ShouldBe(1);
+        harness.BackgroundJobClient.Verify(c => c.Enqueue(It.IsAny<Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Confirm_RunInBackground_SessionAlreadyImporting_ReturnsItWithoutQueueingAgain()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+
+        harness.SessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, CreateTempFile(), OctopusImportSessionState.Importing));
+        harness.SessionService.Setup(s => s.GetSessionAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Importing });
+
+        var response = await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7, RunInBackground = true }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        response.Data.Session.State.ShouldBe(OctopusImportSessionState.Importing);
+        harness.BackgroundJobClient.Verify(c => c.Enqueue(It.IsAny<Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()), Times.Never);
+    }
+
     private static OctopusImportPreviewPlanDto Preview(
         string sourceId = "Projects-1",
         string sourceType = "Project")
@@ -384,8 +468,14 @@ public class ConfirmOctopusImportCommandHandlerTests
             Sut = CreateSut(null, null);
         }
 
+        // The handler only dispatches; the confirmation behaviour these tests pin lives in the real runner it calls.
         public ConfirmOctopusImportCommandHandler CreateSut(IOctopusImportExportSecretStore secretStore, IOctopusExportSecretsAccessor accessor)
-            => new(SessionDataProvider.Object, SessionService.Object, CurrentUser.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, secretStore, accessor);
+            => new(CurrentUser.Object, CreateRunner(secretStore, accessor));
+
+        public OctopusImportConfirmationRunner CreateRunner(IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor accessor = null)
+            => new(SessionDataProvider.Object, SessionService.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, BackgroundJobClient.Object, secretStore, accessor);
+
+        public Mock<ISquidBackgroundJobClient> BackgroundJobClient { get; } = new();
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

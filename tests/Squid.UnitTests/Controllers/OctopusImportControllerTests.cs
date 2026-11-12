@@ -109,6 +109,24 @@ public class OctopusImportControllerTests
         captured.ApiKey.ShouldBe("API-KEY");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConfirmAsync_DispatchesTheQueryBoundCommand_RouteSessionIdWins(bool runInBackground)
+    {
+        var mediator = new Mock<IMediator>();
+        var routeSessionId = Guid.NewGuid();
+        ConfirmOctopusImportCommand captured = null;
+        mediator.Setup(m => m.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(It.IsAny<ConfirmOctopusImportCommand>(), It.IsAny<CancellationToken>())).Callback<ConfirmOctopusImportCommand, CancellationToken>((command, _) => captured = command).ReturnsAsync(new ConfirmOctopusImportResponse());
+
+        var result = await new OctopusImportController(mediator.Object).ConfirmAsync(routeSessionId, new ConfirmOctopusImportCommand { SessionId = Guid.NewGuid(), SpaceId = 7, RunInBackground = runInBackground }, CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        captured.SessionId.ShouldBe(routeSessionId);
+        captured.SpaceId.ShouldBe(7);
+        captured.RunInBackground.ShouldBe(runInBackground);
+    }
+
     [Fact]
     public async Task ProbeAndConnect_DispatchTheBoundCommand()
     {

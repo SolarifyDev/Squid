@@ -5,6 +5,7 @@ public static class OctopusImportConfirmationDiagnosticCodes
     public const string ConfirmationAlreadyRunning = "OctopusImport.Confirmation.AlreadyRunning";
     public const string ConfirmationAlreadyCompleted = "OctopusImport.Confirmation.AlreadyCompleted";
     public const string ConfirmationRequiresValidatedSession = "OctopusImport.Confirmation.RequiresValidatedSession";
+    public const string BackgroundConfirmationFailed = "OctopusImport.Confirmation.BackgroundFailed";
     public const string ValidationBlockedConfirmation = "OctopusImport.Confirmation.ValidationBlocked";
     public const string MappingBlockedConfirmation = "OctopusImport.Confirmation.MappingBlocked";
     public const string ResourceActionUnsupported = "OctopusImport.Confirmation.ResourceActionUnsupported";

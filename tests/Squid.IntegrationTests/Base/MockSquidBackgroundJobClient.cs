@@ -12,7 +12,15 @@ public class MockSquidBackgroundJobClient : ISquidBackgroundJobClient
 
     public string Enqueue(Expression<Func<Task>> methodCall, string queue = "default") => string.Empty;
 
-    public string Enqueue<T>(Expression<Func<T, Task>> methodCall, string queue = "default") => string.Empty;
+    /// <summary>Jobs queued through <see cref="Enqueue{T}(Expression{Func{T, Task}}, string)"/>, so a test can run one itself.</summary>
+    public List<LambdaExpression> EnqueuedJobs { get; } = new();
+
+    public string Enqueue<T>(Expression<Func<T, Task>> methodCall, string queue = "default")
+    {
+        EnqueuedJobs.Add(methodCall);
+
+        return string.Empty;
+    }
 
     public string Schedule(Expression<Func<Task>> methodCall, TimeSpan delay, string queue = "default") => string.Empty;
 

@@ -28,8 +28,8 @@ internal static class OctopusImportHandlerFlow
     public static Task<ValidateOctopusImportResponse> ValidateAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusImportPreviewPlanDto previewPlan)
         => mediator.SendAsync<ValidateOctopusImportCommand, ValidateOctopusImportResponse>(new ValidateOctopusImportCommand { SpaceId = spaceId, SessionId = sessionId, PreviewPlan = previewPlan });
 
-    public static Task<ConfirmOctopusImportResponse> ConfirmAsync(IMediator mediator, int spaceId, Guid sessionId)
-        => mediator.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(new ConfirmOctopusImportCommand { SpaceId = spaceId, SessionId = sessionId });
+    public static Task<ConfirmOctopusImportResponse> ConfirmAsync(IMediator mediator, int spaceId, Guid sessionId, bool runInBackground = false)
+        => mediator.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(new ConfirmOctopusImportCommand { SpaceId = spaceId, SessionId = sessionId, RunInBackground = runInBackground });
 
     public static Task<ConnectOctopusImportResponse> ConnectAsync(IMediator mediator, int spaceId)
         => mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(new ConnectOctopusImportCommand { SpaceId = spaceId });
