@@ -240,7 +240,8 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
     private string BuildDeploymentJson()
     {
         var deployment = _ctx.Unit.Deployment;
-        var machines = (deployment.DeployedToMachineIds ?? []).Select(id => new { Id = id, Name = _ctx.Unit.MachineNames?.GetValueOrDefault(id) }).ToList();
+        var names = OctopusImportDeploymentMachineNames.Resolve(deployment, _ctx.Unit.MachineNames);
+        var machines = (deployment.DeployedToMachineIds ?? []).Select((id, index) => new { Id = id, Name = names[index] }).ToList();
 
         return JsonSerializer.Serialize(new { Octopus = new { DeployedById = deployment.DeployedById ?? string.Empty, DeployedBy = deployment.DeployedBy ?? string.Empty, Machines = machines } });
     }
