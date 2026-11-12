@@ -58,7 +58,7 @@ COPY = {
         orbit_caption="One pipeline. Every target.",
         targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
         heading=["Built for teams.", "Enterprise-grade by default."],
-        intro=["From one service to thousands of targets,", "one model for releases, approvals, and audit."],
+        intro=["From one service to thousands", "of targets, one model for releases,", "approvals, and audit."],
         features=[
             ("free", "Free and self-hosted", ["Unlimited projects, users,", "and targets. No license fees."]),
             ("bolt", "Ready to use", ["One service, one database.", "Agents install in one command."]),
@@ -197,13 +197,15 @@ def orbit(fonts, lang, theme):
 def features(fonts, lang, theme):
     c, cv = COPY[lang], Canvas(fonts, theme)
     T, col, gap = cv.T, (W - 2 * 56) / 3, 56
+    intro_x = 2 * (col + gap)                         # intro sits on the third grid column
+    baseline = 52 + 58 * (len(c["heading"]) - 1)       # heading and intro share their last baseline
     for i, line in enumerate(c["heading"]):
-        cv.fit(line, 44, 640, "SqDisplay", 400, -0.9)
+        cv.fit(line, 44, intro_x - gap, "SqDisplay", 400, -0.9)
         cv.text(0, 52 + i * 58, line, 44, "SqDisplay", 400, spacing=-0.9)
     for i, line in enumerate(c["intro"]):
-        cv.fit(line, 20, W - 760)
-        cv.text(760, 46 + i * 32, line, 20, fill=T["muted"])
-    top = 196
+        cv.fit(line, 20, col)
+        cv.text(intro_x, baseline - (len(c["intro"]) - 1 - i) * 30, line, 20, fill=T["muted"])
+    top = baseline + 56
     for i, (ic, title, lines) in enumerate(c["features"]):
         x, y = (i % 3) * (col + gap), top + (i // 3) * 236
         cv.parts.append(f'<path d="M{x:.1f} {y}H{x + col:.1f}" stroke="{T["rule"]}"/>')
