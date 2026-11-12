@@ -10,7 +10,8 @@ namespace Squid.IntegrationTests.Helpers;
 
 /// <summary>
 /// A real-socket Octopus REST API on 127.0.0.1 (port from the OS): one space, projects with paged releases and
-/// deployments, tasks with details, interruptions, events and artifacts. Every request is recorded; a request
+/// deployments, tasks with details, interruptions, events, artifacts and machines (all mutable between fetches, so a
+/// test can change history in "Octopus" and re-import it). Every request is recorded; a request
 /// without the expected <c>X-Octopus-ApiKey</c> gets 401. <see cref="HoldReleases"/> parks release requests until
 /// <see cref="ReleaseHeldRequests"/>, so a test can observe a chunk that is still running.
 /// </summary>
@@ -43,6 +44,17 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public Dictionary<string, Dictionary<string, object>> Tasks { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Interruptions per task id. A task without an entry has none.</summary>
+    public Dictionary<string, List<Dictionary<string, object>>> Interruptions { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Events per deployment id. A deployment without an entry gets one default <c>DeploymentSucceeded</c> event.</summary>
+    public Dictionary<string, List<Dictionary<string, object>>> Events { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Artifacts per task id. A task without an entry has none.</summary>
+    public Dictionary<string, List<Dictionary<string, object>>> Artifacts { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public List<Dictionary<string, object>> Machines { get; } = [new() { ["Id"] = "Machines-1", ["Name"] = "web-01" }];
+
     public bool HoldReleases { get; set; }
 
     public Task ReleasesRequested => _releasesRequested.Task;
@@ -66,11 +78,37 @@ public sealed class StubOctopusServer : IAsyncDisposable
         return this;
     }
 
-    public StubOctopusServer Deployment(string projectId, string deploymentId, string releaseId, string taskId)
+    public StubOctopusServer Deployment(string projectId, string deploymentId, string releaseId, string taskId, string[] machineIds = null)
     {
         Deployments.TryAdd(projectId, []);
-        Deployments[projectId].Add(new Dictionary<string, object> { ["Id"] = deploymentId, ["ProjectId"] = projectId, ["ChannelId"] = "Channels-1", ["EnvironmentId"] = "Environments-1", ["ReleaseId"] = releaseId, ["TaskId"] = taskId, ["Name"] = $"Deploy {deploymentId}", ["DeployedToMachineIds"] = new[] { "Machines-1" }, ["Created"] = "2024-01-02T03:04:05Z" });
+        Deployments[projectId].Add(new Dictionary<string, object> { ["Id"] = deploymentId, ["ProjectId"] = projectId, ["ChannelId"] = "Channels-1", ["EnvironmentId"] = "Environments-1", ["ReleaseId"] = releaseId, ["TaskId"] = taskId, ["Name"] = $"Deploy {deploymentId}", ["DeployedToMachineIds"] = machineIds ?? ["Machines-1"], ["Created"] = "2024-01-02T03:04:05Z" });
         Tasks[taskId] = new Dictionary<string, object> { ["Id"] = taskId, ["Name"] = "Deploy", ["Description"] = $"Deploy {deploymentId}", ["State"] = "Success", ["QueueTime"] = "2024-01-02T03:04:05Z", ["StartTime"] = "2024-01-02T03:04:06Z", ["CompletedTime"] = "2024-01-02T03:05:06Z", ["HasWarningsOrErrors"] = false };
+
+        return this;
+    }
+
+    public StubOctopusServer Interruption(string taskId, string interruptionId, string type, bool isPending, string result = null)
+    {
+        var form = result == null ? new Dictionary<string, object>() : new Dictionary<string, object> { ["Result"] = result };
+
+        Interruptions.TryAdd(taskId, []);
+        Interruptions[taskId].Add(new Dictionary<string, object> { ["Id"] = interruptionId, ["Title"] = $"Approve {interruptionId}", ["Type"] = type, ["IsPending"] = isPending, ["TaskId"] = taskId, ["Created"] = "2024-01-02T03:04:30Z", ["Form"] = new Dictionary<string, object> { ["Values"] = form } });
+
+        return this;
+    }
+
+    public StubOctopusServer Event(string deploymentId, string eventId, string category, string message, string occurred)
+    {
+        Events.TryAdd(deploymentId, []);
+        Events[deploymentId].Add(new Dictionary<string, object> { ["Id"] = eventId, ["Category"] = category, ["Message"] = message, ["Occurred"] = occurred, ["Username"] = "levi.y", ["RelatedDocumentIds"] = new[] { deploymentId } });
+
+        return this;
+    }
+
+    public StubOctopusServer Artifact(string taskId, string artifactId, string filename)
+    {
+        Artifacts.TryAdd(taskId, []);
+        Artifacts[taskId].Add(new Dictionary<string, object> { ["Id"] = artifactId, ["Filename"] = filename, ["Source"] = "Step 1", ["ServerTaskId"] = taskId, ["Created"] = "2024-01-02T03:05:00Z" });
 
         return this;
     }
@@ -134,12 +172,16 @@ public sealed class StubOctopusServer : IAsyncDisposable
             ["projects", var projectId, "releases"] => (HttpStatusCode.OK, Page(Releases.GetValueOrDefault(projectId) ?? [], query)),
             ["deployments"] => (HttpStatusCode.OK, Page(Deployments.GetValueOrDefault(query["projects"]!) ?? [], query)),
             ["tasks", var taskId, "details"] => (HttpStatusCode.OK, new { Task = Tasks[taskId], ActivityLogs = new[] { new { Id = "a1", Name = "Deploy", Status = "Success", Children = Array.Empty<object>(), LogElements = new[] { new { Category = "Info", MessageText = $"log of {taskId}" } } } } }),
-            ["interruptions"] or ["artifacts"] => (HttpStatusCode.OK, Page(new List<object>(), query)),
-            ["events"] => (HttpStatusCode.OK, Page(new List<object> { new { Id = "Events-1", Category = "DeploymentSucceeded", Message = "Deployed", RelatedDocumentIds = new[] { query["regarding"] } } }, query)),
-            ["machines", "all"] => (HttpStatusCode.OK, new[] { new { Id = "Machines-1", Name = "web-01" } }),
+            ["interruptions"] => (HttpStatusCode.OK, Page(Interruptions.GetValueOrDefault(query["regarding"]!) ?? [], query)),
+            ["artifacts"] => (HttpStatusCode.OK, Page(Artifacts.GetValueOrDefault(query["regarding"]!) ?? [], query)),
+            ["events"] => (HttpStatusCode.OK, Page(Events.GetValueOrDefault(query["regarding"]!) ?? DefaultEvents(query["regarding"]), query)),
+            ["machines", "all"] => (HttpStatusCode.OK, Machines),
             _ => (HttpStatusCode.NotFound, new { })
         };
     }
+
+    private static List<Dictionary<string, object>> DefaultEvents(string deploymentId)
+        => [new() { ["Id"] = "Events-1", ["Category"] = "DeploymentSucceeded", ["Message"] = "Deployed", ["RelatedDocumentIds"] = new[] { deploymentId } }];
 
     private async Task HoldIfRequestedAsync()
     {

@@ -8,7 +8,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// Drives the Octopus import exactly as the API controller does: every step is a real mediator
 /// message, so handler construction, Autofac resolution and the mediator middleware are all exercised.
 /// </summary>
-internal static class OctopusImportHandlerFlow
+public static class OctopusImportHandlerFlow
 {
     public static async Task<UploadOctopusImportResponse> UploadAsync(IMediator mediator, int spaceId, string archivePath, string password)
     {
@@ -50,9 +50,63 @@ internal static class OctopusImportHandlerFlow
         throw new InvalidOperationException($"History fetch did not finish within {maxChunks} chunks.");
     }
 
+    /// <summary>
+    /// The whole server-source import as the UI drives it: a session (an uploaded export when given, else API-only),
+    /// the history fetch until done, extract, preview, validate (posting the plan without its history rows, which the
+    /// server owns) and a synchronous confirm. Any step that is refused throws with its reason.
+    /// </summary>
+    public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey, string exportPath = null, string exportPassword = null)
+    {
+        var sessionId = exportPath == null ? (await ConnectAsync(mediator, spaceId)).Data.Session.SessionId : await UploadSessionAsync(mediator, spaceId, exportPath, exportPassword);
+        var fetch = await FetchHistoryUntilDoneAsync(mediator, spaceId, sessionId, serverUri, apiKey);
+
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
+    }
+
+    /// <summary>An export-file-only import: upload, extract, preview, validate and a synchronous confirm.</summary>
+    public static async Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
+    {
+        var sessionId = await UploadSessionAsync(mediator, spaceId, exportPath, exportPassword);
+
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, null, plan => plan);
+    }
+
+    private static async Task<Guid> UploadSessionAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
+    {
+        var upload = await UploadAsync(mediator, spaceId, exportPath, exportPassword);
+
+        if (upload.Code != System.Net.HttpStatusCode.OK) throw new InvalidOperationException($"Upload refused: {upload.Msg}");
+
+        return upload.Data.Session.SessionId;
+    }
+
+    private static async Task<OctopusImportFlowResult> ExtractPreviewValidateConfirmAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch, Func<OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto> postedPlan)
+    {
+        var extract = await ExtractAsync(mediator, spaceId, sessionId);
+
+        if (extract.Code != System.Net.HttpStatusCode.OK) throw new InvalidOperationException($"Extract refused: {DescribeBlockers(extract.Data.Extraction.Diagnostics)}");
+
+        var preview = (await PreviewAsync(mediator, spaceId, sessionId)).Data.PreviewPlan;
+
+        if (preview.HasBlockers) throw new InvalidOperationException($"Preview blocked: {DescribeBlockers(AllDiagnostics(preview))}");
+
+        var validate = await ValidateAsync(mediator, spaceId, sessionId, postedPlan(preview));
+
+        if (validate.Code != System.Net.HttpStatusCode.OK) throw new InvalidOperationException($"Validate refused: {validate.Msg} {DescribeBlockers(validate.Data?.Validation?.Diagnostics ?? [])}");
+
+        return new OctopusImportFlowResult(sessionId, fetch, preview, await ConfirmAsync(mediator, spaceId, sessionId));
+    }
+
+    // The UI omits history rows from the validate body; the server replaces them with its own.
+    private static OctopusImportPreviewPlanDto WithoutHistoryRows(OctopusImportPreviewPlanDto plan)
+        => new() { GeneratedAt = plan.GeneratedAt, Diagnostics = plan.Diagnostics, RequiredInputs = plan.RequiredInputs, Resources = plan.Resources.Where(r => r.SourceType is not ("Release" or "Deployment" or "ServerTask")).ToList() };
+
     public static IEnumerable<OctopusImportDiagnosticDto> AllDiagnostics(OctopusImportPreviewPlanDto plan)
         => (plan?.Diagnostics ?? []).Concat((plan?.Resources ?? []).SelectMany(r => r.Diagnostics));
 
     public static string DescribeBlockers(IEnumerable<OctopusImportDiagnosticDto> diagnostics)
         => string.Join("; ", diagnostics.Where(d => d.Severity == Squid.Message.Enums.OctopusImport.OctopusImportCompatibilitySeverity.Blocker).Select(d => $"{d.Code}:{d.SourceId}:{d.Message}"));
 }
+
+/// <summary>What one full import run saw and produced: the fetch progress (server sources only), the preview plan and the confirm response.</summary>
+public sealed record OctopusImportFlowResult(Guid SessionId, OctopusHistoryFetchProgressDto Fetch, OctopusImportPreviewPlanDto PreviewPlan, ConfirmOctopusImportResponse Confirm);
