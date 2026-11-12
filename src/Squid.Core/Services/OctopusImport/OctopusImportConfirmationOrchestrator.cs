@@ -250,6 +250,12 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             case OctopusImportPreviewAction.Create:
                 await CreateResourceAsync(execution, resource, ct).ConfigureAwait(false);
                 return;
+            case OctopusImportPreviewAction.AlreadyImported:
+                ReuseImportedResource(execution, resource, preview);
+                return;
+            case OctopusImportPreviewAction.Update:
+                RejectUpdate(execution, resource);
+                return;
             default:
                 execution.MarkFailed(resource, Diagnostic(
                     OctopusImportCompatibilitySeverity.Blocker,
@@ -276,6 +282,27 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         }
 
         execution.AddReused(resource, preview.DestinationId.Value);
+    }
+
+    // An earlier confirmation already wrote this resource. It maps to its prior destination; a child that
+    // only inherited "already imported" from its owner has no row of its own, so it is recorded without one.
+    private static void ReuseImportedResource(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
+    {
+        if (preview.DestinationId is > 0)
+        {
+            execution.AddReused(resource, preview.DestinationId.Value);
+            return;
+        }
+
+        execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused);
+    }
+
+    // In-place updates of imported history are not wired yet: every kind is rejected explicitly.
+    private static void RejectUpdate(ConfirmationExecutionContext execution, OctopusResourceNode resource)
+    {
+        execution.MarkFailed(resource, Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported, $"Updating an imported Octopus {resource.Kind} is not supported by confirmation.", resource));
+
+        throw new OctopusImportConfirmationException("Unsupported update of an imported resource.");
     }
 
     private async Task CreateResourceAsync(
@@ -1001,11 +1028,13 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             .ToList();
 
         foreach (var resource in result.Resources.Where(r =>
-                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Pending))
+                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.Pending))
         {
-            resource.OutcomeState = OctopusImportResourceOutcomeState.Failed;
-            if (resource.DestinationId.HasValue)
+            // An updated row existed before the import and survives the rollback, so it keeps its id.
+            if (resource.OutcomeState != OctopusImportResourceOutcomeState.Updated)
                 resource.DestinationId = null;
+
+            resource.OutcomeState = OctopusImportResourceOutcomeState.Failed;
 
             resource.Diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Blocker,
@@ -1102,6 +1131,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         {
             var result = GetPreview(resource);
             return result?.OutcomeState is OctopusImportResourceOutcomeState.Created
+                or OctopusImportResourceOutcomeState.Updated
                 or OctopusImportResourceOutcomeState.Skipped
                 or OctopusImportResourceOutcomeState.Unsupported
                 or OctopusImportResourceOutcomeState.Blocked
@@ -1127,13 +1157,13 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 return;
 
             var resource = FindResource(sourceId, kind);
-            if (resource != null && !IdMap.TryGetDestinationId(resource, out _))
+            if (resource != null && !IdMap.ContainsSessionMapping(resource))
                 IdMap.AddCreated(resource, destinationId);
         }
 
         public void AddCreated(OctopusResourceNode resource, int destinationId)
         {
-            if (!IdMap.TryGetDestinationId(resource, out _))
+            if (!IdMap.ContainsSessionMapping(resource))
                 IdMap.AddCreated(resource, destinationId);
 
             MarkOutcome(resource, OctopusImportResourceOutcomeState.Created, destinationId);
@@ -1141,7 +1171,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public void AddReused(OctopusResourceNode resource, int destinationId)
         {
-            if (!IdMap.TryGetDestinationId(resource, out _))
+            if (!IdMap.ContainsSessionMapping(resource))
                 IdMap.AddReused(resource, destinationId);
 
             MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused, destinationId);

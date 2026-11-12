@@ -4,18 +4,30 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
 
+/// <summary>
+/// The Octopus → Squid id mappings of one confirmation. Session entries are the ones this confirmation
+/// created or reused; the read-only prior layer holds what earlier confirmations recorded in the source
+/// map. Lookups see both (session first), but only session entries are ever added, copied or reported.
+/// </summary>
 public sealed class OctopusImportIdMap
 {
     private readonly Dictionary<OctopusImportIdMapKey, OctopusImportIdMappingDto> _mappings;
+    private readonly OctopusImportPriorMappings _prior;
 
     public OctopusImportIdMap()
-        : this([])
+        : this([], OctopusImportPriorMappings.Empty)
     {
     }
 
-    private OctopusImportIdMap(IEnumerable<OctopusImportIdMappingDto> mappings)
+    public OctopusImportIdMap(OctopusImportPriorMappings prior)
+        : this([], prior ?? OctopusImportPriorMappings.Empty)
+    {
+    }
+
+    private OctopusImportIdMap(IEnumerable<OctopusImportIdMappingDto> mappings, OctopusImportPriorMappings prior)
     {
         _mappings = new Dictionary<OctopusImportIdMapKey, OctopusImportIdMappingDto>();
+        _prior = prior;
 
         foreach (var mapping in mappings)
             Add(mapping);
@@ -24,7 +36,7 @@ public sealed class OctopusImportIdMap
     public IReadOnlyCollection<OctopusImportIdMappingDto> Mappings => _mappings.Values;
 
     public static OctopusImportIdMap FromSessionResult(OctopusImportSessionResultDto result)
-        => new(result?.IdMappings ?? []);
+        => new(result?.IdMappings ?? [], OctopusImportPriorMappings.Empty);
 
     public OctopusImportIdMappingDto AddCreated(OctopusResourceNode source, int destinationId, string destinationType = null)
         => Add(source, destinationId, OctopusImportResourceOutcomeState.Created, destinationType);
@@ -46,8 +58,21 @@ public sealed class OctopusImportIdMap
             return true;
         }
 
+        return TryGetPriorDestinationId(sourceId, sourceType, out destinationId);
+    }
+
+    /// <summary>True only when THIS confirmation already mapped the resource; a prior-layer hit never counts, so it never suppresses a session write.</summary>
+    public bool ContainsSessionMapping(OctopusResourceNode source)
+        => source != null && _mappings.ContainsKey(OctopusImportIdMapKey.Create(source.SourceId, source.Kind.ToString()));
+
+    private bool TryGetPriorDestinationId(string sourceId, string sourceType, out int destinationId)
+    {
         destinationId = default;
-        return false;
+
+        if (!_prior.TryGet(sourceType, sourceId, out var prior)) return false;
+
+        destinationId = prior.DestinationId;
+        return true;
     }
 
     public IReadOnlyList<OctopusImportIdMappingDto> ToDto()

@@ -162,6 +162,65 @@ public class OctopusImportIdMapTests
         Should.Throw<ArgumentOutOfRangeException>(() => OctopusImportIdMap.FromSessionResult(result));
     }
 
+    [Fact]
+    public void PriorLayer_ResolvesWithoutAdd()
+    {
+        var map = new OctopusImportIdMap(Prior(("Project", " projects-1 ", 55)));
+        var project = Resource("Projects-1", OctopusResourceKind.Project, "Project");
+
+        map.TryGetDestinationId(project, out var destinationId).ShouldBeTrue();
+        destinationId.ShouldBe(55);
+        map.TryGetDestinationId("PROJECTS-1", "project", out _).ShouldBeTrue();
+        map.ContainsSessionMapping(project).ShouldBeFalse();
+        map.Mappings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void PriorLayer_DoesNotResolveAnotherKindWithTheSameId()
+    {
+        var map = new OctopusImportIdMap(Prior(("Project", "Projects-1", 55)));
+
+        map.TryGetDestinationId("Projects-1", "Channel", out _).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void SessionEntryWins()
+    {
+        var map = new OctopusImportIdMap(Prior(("Project", "Projects-1", 55)));
+        var project = Resource("Projects-1", OctopusResourceKind.Project, "Project");
+
+        map.AddReused(project, 77);
+
+        map.TryGetDestinationId(project, out var destinationId).ShouldBeTrue();
+        destinationId.ShouldBe(77);
+        map.ContainsSessionMapping(project).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void CopyTo_ExcludesPrior()
+    {
+        var map = new OctopusImportIdMap(Prior(("Project", "Projects-1", 55), ("Environment", "Environments-1", 66)));
+        map.AddCreated(Resource("Channels-1", OctopusResourceKind.Channel, "Default"), 88);
+        var result = new OctopusImportSessionResultDto();
+
+        map.CopyTo(result);
+
+        result.IdMappings.Count.ShouldBe(1);
+        result.IdMappings.Single().SourceId.ShouldBe("Channels-1");
+        map.ToDto().Select(m => m.SourceId).ShouldBe(["Channels-1"]);
+    }
+
+    [Fact]
+    public void NullPrior_BehavesLikeAnEmptyMap()
+    {
+        var map = new OctopusImportIdMap((OctopusImportPriorMappings)null);
+
+        map.TryGetDestinationId("Projects-1", "Project", out _).ShouldBeFalse();
+    }
+
+    private static OctopusImportPriorMappings Prior(params (string Type, string Id, int DestinationId)[] rows)
+        => new(rows.ToDictionary(r => (r.Type, r.Id), r => new OctopusImportPriorMapping(r.DestinationId, "Created", null, null)), null);
+
     private static OctopusResourceNode Resource(string sourceId, OctopusResourceKind kind, string name)
         => new(
             sourceId,

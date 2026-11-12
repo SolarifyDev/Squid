@@ -46,9 +46,8 @@ internal static class OctopusImportReleasePackageFeedResolver
         if (!string.Equals(resource.SourceType, OctopusResourceKind.Feed.ToString(), StringComparison.OrdinalIgnoreCase))
             return false;
 
-        return resource.PreviewAction == OctopusImportPreviewAction.Create
-               || resource.PreviewAction == OctopusImportPreviewAction.ReuseExisting
-               && resource.DestinationId is > 0;
+        return OctopusImportPreviewActions.ResolvesToDestination(resource.PreviewAction)
+               && (resource.PreviewAction == OctopusImportPreviewAction.Create || resource.DestinationId is > 0);
     }
 
     private static string GetSourceFeedIdFromAction(

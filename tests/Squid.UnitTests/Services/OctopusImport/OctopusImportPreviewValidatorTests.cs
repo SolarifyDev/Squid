@@ -462,6 +462,73 @@ public class OctopusImportPreviewValidatorTests
         result.HasBlockers.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData(OctopusImportPreviewAction.Create, true)]
+    [InlineData(OctopusImportPreviewAction.AlreadyImported, false)]
+    public void Validate_ConflictingProject_BlocksOnlyWhenThisImportWritesIt(OctopusImportPreviewAction projectAction, bool expectRenameBlocker)
+    {
+        var project = Node("Projects-1", OctopusResourceKind.Project, "App");
+        var preview = Preview([project]);
+        preview.Resources.Single().PreviewAction = projectAction;
+        preview.Resources.Single().DestinationId = projectAction == OctopusImportPreviewAction.AlreadyImported ? 300 : null;
+        var conflicts = new OctopusImportConflictDiscoveryResult([Conflict(project, Match(300, OctopusResourceKind.Project, "App"))]);
+
+        var result = _validator.Validate(Graph([project]), Plan([project]), conflicts, preview);
+
+        result.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.RenameRequiredForProject).ShouldBe(expectRenameBlocker);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportPreviewAction.AlreadyImported, 55, false)]
+    [InlineData(OctopusImportPreviewAction.AlreadyImported, null, true)]
+    [InlineData(OctopusImportPreviewAction.Skip, 55, true)]
+    public void Validate_ReleasePackageFeedAlreadyImported_PassesPreflight(OctopusImportPreviewAction feedAction, int? feedDestinationId, bool expectBlocker)
+    {
+        var feed = Node("Feeds-1", OctopusResourceKind.Feed, "Packages");
+        var action = ReleaseAction(feed.SourceId);
+        var release = Release();
+        var resources = new[] { feed, action, release };
+        var preview = Preview(resources);
+        preview.Resources.Single(r => r.SourceId == feed.SourceId).PreviewAction = feedAction;
+        preview.Resources.Single(r => r.SourceId == feed.SourceId).DestinationId = feedDestinationId;
+
+        var result = _validator.Validate(Graph(resources), Plan(resources), NoConflicts(), preview);
+
+        result.Diagnostics.Any(d => d.Code == OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping).ShouldBe(expectBlocker);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportPreviewAction.AlreadyImported, false)]
+    [InlineData(OctopusImportPreviewAction.Skip, true)]
+    public void Validate_VariableScopedToAnAlreadyImportedEnvironment_IsMappable(OctopusImportPreviewAction environmentAction, bool expectUnmappable)
+    {
+        var environment = Node("Environments-1", OctopusResourceKind.Environment, "Production");
+        var variableSet = new OctopusResourceNode("variableset-Projects-1", null, OctopusResourceKind.VariableSet, OctopusDocumentKind.VariableSet, "vs.json", "Projects-1", null, false, new OctopusVariableSetDto { Id = "variableset-Projects-1", OwnerId = "Projects-1", OwnerType = "Projects" });
+        var variable = new OctopusResourceNode("Variables-1", "ConnectionString", OctopusResourceKind.Variable, OctopusDocumentKind.VariableSet, "vs.json", "Projects-1", variableSet.SourceId, false, new OctopusVariableDto { Id = "Variables-1", Name = "ConnectionString", Value = "x", Scope = new() { ["Environment"] = ["Environments-1"] } });
+        var resources = new[] { environment, variableSet, variable };
+        var preview = Preview(resources);
+        preview.Resources.Single(r => r.SourceId == environment.SourceId).PreviewAction = environmentAction;
+        preview.Resources.Single(r => r.SourceId == environment.SourceId).DestinationId = 5;
+
+        var result = _validator.Validate(Graph(resources), Plan(resources), NoConflicts(), preview);
+
+        result.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope).ShouldBe(expectUnmappable);
+    }
+
+    [Fact]
+    public void Validate_AlreadyImportedResource_ItsReferencesAreNotChecked()
+    {
+        var project = Node("Projects-1", OctopusResourceKind.Project, "Project");
+        var graph = Graph([project], [Reference(project.SourceId, project.Kind, OctopusResourceReferenceKind.Lifecycle, "Lifecycles-Missing", OctopusResourceKind.Lifecycle, isRequired: true)]);
+        var preview = Preview([project]);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
+        preview.Resources.Single().DestinationId = 300;
+
+        var result = _validator.Validate(graph, Plan([project]), NoConflicts(), preview);
+
+        result.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnresolvedReference);
+    }
+
     private static OctopusResourceGraph Graph(
         IReadOnlyList<OctopusResourceNode> resources,
         IReadOnlyList<OctopusResourceReference> references = null)

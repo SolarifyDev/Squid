@@ -23,6 +23,9 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string ProjectVariableShadowedByLibraryVariable = "octopus.preview.project_variable_shadowed_by_library_variable";
     public const string ExportPasswordUnavailable = "octopus.preview.export_password_unavailable";
     public const string SensitiveResolutionChanged = "octopus.validation.sensitive_resolution_changed";
+    public const string ChangedSinceLastImport = "octopus.preview.changed_since_last_import";
+    public const string DefaultChannelNotRemapped = "octopus.preview.default_channel_not_remapped";
+    public const string OctopusInstallationMismatch = "octopus.preview.octopus_installation_mismatch";
 
     public const string ExportPasswordUnavailableMessage = "The export password was accepted at upload but could not be kept or read back with the server's at-rest encryption key (Security:VariableEncryption:MasterKey is missing or has changed). Sensitive values are treated as if no export password had been given. Restore the original master key and retry, or configure a master key and upload the export again.";
 

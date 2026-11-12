@@ -362,6 +362,7 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Succeeded.ShouldBeFalse();
         recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).DestinationId.ShouldBeNull();
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
         recorded.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.Pending);
@@ -578,6 +579,101 @@ public class OctopusImportConfirmationOrchestratorTests
 
         result.State.ShouldBe(OctopusImportSessionState.Failed);
         harness.SessionService.RecordedResult.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+    }
+
+    public static IEnumerable<object[]> EveryPreviewAction()
+        => Enum.GetValues<OctopusImportPreviewAction>().Select(action => new object[] { action });
+
+    [Theory]
+    [MemberData(nameof(EveryPreviewAction))]
+    public async Task EveryPreviewAction_HasExplicitCase(OctopusImportPreviewAction action)
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = action;
+        preview.Resources.Single().DestinationId = 200;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.Result.Diagnostics.ShouldNotContain(d => d.Message == $"Preview action '{action}' is not supported by confirmation.");
+    }
+
+    [Fact]
+    public async Task AlreadyImported_ReusesThePriorDestination()
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
+        preview.Resources.Single().DestinationId = 321;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        var outcome = harness.SessionService.RecordedResult.Resources.Single();
+        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+        outcome.DestinationId.ShouldBe(321);
+        var mapping = harness.SessionService.RecordedResult.IdMappings.Single();
+        mapping.SourceId.ShouldBe(nodes.Environment.SourceId);
+        mapping.DestinationId.ShouldBe(321);
+        mapping.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+        harness.Mediator.Invocations.ShouldNotContain(invocation => invocation.Method.Name == nameof(IMediator.SendAsync));
+    }
+
+    [Fact]
+    public async Task AlreadyImportedInheritedFromOwner_WithoutDestination_IsReusedWithoutAMapping()
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.SessionService.RecordedResult.Resources.Single().OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+        harness.SessionService.RecordedResult.IdMappings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Update_IsRejectedExplicitlyUntilHistoryUpdatesAreWired()
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.Update;
+        preview.Resources.Single().DestinationId = 200;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported && d.Message.Contains("Updating an imported Octopus Environment"));
+    }
+
+    [Fact]
+    public async Task MarkRolledBack_ConvertsUpdated_KeepsItsPreExistingDestination()
+    {
+        var harness = CreateMinimalHarness(throwAfterAction: true);
+        var project = harness.Request.PreviewPlan.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId);
+        project.PreviewAction = OctopusImportPreviewAction.Update;
+        project.OutcomeState = OctopusImportResourceOutcomeState.Updated;
+        project.DestinationId = 1001;
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        var recorded = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId);
+        recorded.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        // The updated row existed before the import and survives the rollback, so its id stays visible.
+        recorded.DestinationId.ShouldBe(1001);
+        recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+        // An already-updated resource is completed: confirmation never runs its action again.
+        recorded.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported);
     }
 
     private static TestHarness CreateMinimalHarness(

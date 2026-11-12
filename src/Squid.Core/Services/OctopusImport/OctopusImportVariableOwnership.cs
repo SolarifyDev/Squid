@@ -5,8 +5,10 @@ namespace Squid.Core.Services.OctopusImport;
 
 /// <summary>
 /// Single source of truth for who owns an imported variable and whether THIS import writes it.
-/// A library variable set that resolves to <see cref="OctopusImportPreviewAction.ReuseExisting"/> is
-/// linked as-is and its variables are never rewritten, so nothing it holds can block the import.
+/// A library variable set that resolves to <see cref="OctopusImportPreviewAction.ReuseExisting"/> or
+/// <see cref="OctopusImportPreviewAction.AlreadyImported"/> is linked as-is and its variables are never
+/// rewritten, and a resource that is itself already imported is never written again, so nothing they
+/// hold can block the import.
 /// The preview planner, preview validator and confirmation orchestrator all ask this one rule.
 /// </summary>
 public static class OctopusImportVariableOwnership
@@ -24,10 +26,16 @@ public static class OctopusImportVariableOwnership
 
     public static bool IsWrittenByImport(OctopusResourceNode resource, Func<string, OctopusResourceNode> findResource, Func<string, OctopusImportPreviewAction?> previewActionOf)
     {
+        if (resource != null && previewActionOf(resource.SourceId) == OctopusImportPreviewAction.AlreadyImported) return false;
+
         var libraryId = FindOwningLibraryId(resource, findResource);
 
-        return string.IsNullOrWhiteSpace(libraryId) || previewActionOf(libraryId) != OctopusImportPreviewAction.ReuseExisting;
+        return string.IsNullOrWhiteSpace(libraryId) || !IsKeptAsIs(previewActionOf(libraryId));
     }
+
+    // A library that is reused or was imported earlier is linked as-is: its variables are never rewritten.
+    private static bool IsKeptAsIs(OctopusImportPreviewAction? libraryAction)
+        => libraryAction is OctopusImportPreviewAction.ReuseExisting or OctopusImportPreviewAction.AlreadyImported;
 
     /// <summary>
     /// The variable sets a project's deployments resolve at runtime: its own set plus the sets of the

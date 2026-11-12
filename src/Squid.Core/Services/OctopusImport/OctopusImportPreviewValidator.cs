@@ -196,7 +196,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         foreach (var conflict in conflictsBySourceId.Values.Where(c => c.Source.Kind == OctopusResourceKind.Project))
         {
             if (previewResources.TryGetValue(conflict.Source.SourceId, out var previewResource)
-                && previewResource.PreviewAction is not (OctopusImportPreviewAction.Create or OctopusImportPreviewAction.ReuseExisting))
+                && !ClaimsProjectName(previewResource.PreviewAction))
             {
                 continue;
             }
@@ -208,6 +208,11 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                 "A project with the same name or slug already exists in the destination space. Project imports are never silently merged.");
         }
     }
+
+    // Only a project this import writes (or a forged reuse) can collide by name. An already-imported
+    // project IS the destination row the conflict found, so it never needs a rename.
+    private static bool ClaimsProjectName(OctopusImportPreviewAction action)
+        => OctopusImportPreviewActions.WritesDestination(action) || action == OctopusImportPreviewAction.ReuseExisting;
 
     // Predicts confirmation's scope mapping with the SAME rule the variable mapper uses: a scope target
     // resolves only if confirmation will have created or reused it before the variable set is written.
@@ -412,7 +417,8 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         public bool IsImportedBefore(string sourceId, OctopusResourceKind kind, OctopusResourceKind writerKind)
             => Selected.TryGetValue(sourceId, out var target)
                && target.Kind == kind
-               && PreviewAction(sourceId) is OctopusImportPreviewAction.Create or OctopusImportPreviewAction.ReuseExisting
+               && PreviewAction(sourceId) is { } action
+               && OctopusImportPreviewActions.ResolvesToDestination(action)
                && OctopusImportVariableScopeRule.IsImportedBefore(kind, writerKind);
     }
 
