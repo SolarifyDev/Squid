@@ -1,4 +1,4 @@
-"""Generate the README visuals (orbit, features, free) in zh/en x light/dark.
+"""Generate the README visuals (orbit, features, free) in en/zh-tw x light/dark.
 
 Usage:
     python3 branding/readme/generate.py --fonts <dir> [--out <dir>]
@@ -6,7 +6,7 @@ Usage:
 Requires `fonttools` and `brotli` (pip install fonttools brotli) and two
 SIL OFL fonts in <dir>, downloaded from https://github.com/google/fonts:
     Inter.ttf       ofl/inter/Inter[opsz,wght].ttf
-    NotoSansSC.ttf  ofl/notosanssc/NotoSansSC[wght].ttf
+    NotoSansTC.ttf  ofl/notosanstc/NotoSansTC[wght].ttf
 Only the glyphs each SVG uses are embedded (WOFF2), so the visuals render
 identically on every OS. Edit COPY / THEMES, then re-run.
 """
@@ -37,23 +37,6 @@ ICONS = {
 }
 
 COPY = {
-    "zh": dict(
-        orbit_caption="一条流水线，覆盖每一个目标",
-        targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
-        heading=["为团队打造的", "企业级发布能力"],
-        intro=["从单个服务到成百上千个目标，", "用同一套模型完成发布、审批与审计。"],
-        features=[
-            ("free", "免费自托管", ["不限项目、用户与目标", "没有任何授权费用"]),
-            ("bolt", "开箱即用", ["一个服务、一个数据库", "Agent 一行命令安装"]),
-            ("layers", "统一发布模型", ["环境、生命周期与 Release", "一套概念贯穿所有目标"]),
-            ("hex", "云原生", ["Kubernetes Agent 与 API 双模式", "原生 Helm、Kustomize、YAML"]),
-            ("shield", "企业级治理", ["RBAC、人工审批与审计", "敏感变量加密与日志脱敏"]),
-            ("plug", "可扩展", ["新目标与新动作独立接入", "无需改动部署流水线"]),
-        ],
-        free_title="永久免费。", free_sub=["MIT 协议开源，全部功能可用。", "规模增长，不增加软件成本。"],
-        cols=("Squid", "商业发布平台"),
-        rows=[("软件费用", "免费", "按档位订阅"), ("项目与用户", "不限", "随档位限制"), ("部署目标", "不限", "按节点计费")],
-    ),
     "en": dict(
         orbit_caption="One pipeline. Every target.",
         targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
@@ -71,6 +54,23 @@ COPY = {
         cols=("Squid", "Commercial platforms"),
         rows=[("Software cost", "Free", "Tiered subscription"), ("Projects & users", "Unlimited", "Limited by tier"), ("Targets", "Unlimited", "Billed per node")],
     ),
+    "zh-tw": dict(
+        orbit_caption="一條流水線，涵蓋每一個目標",
+        targets=["Kubernetes", "Linux", "Windows", "SSH", "AI Agent"],
+        heading=["為團隊打造的", "企業級發布能力"],
+        intro=["從單一服務到成百上千個目標，", "用同一套模型完成發布、審核與稽核。"],
+        features=[
+            ("free", "免費自架", ["不限專案、使用者與目標", "沒有任何授權費用"]),
+            ("bolt", "開箱即用", ["一個服務、一個資料庫", "Agent 一行指令安裝"]),
+            ("layers", "統一發布模型", ["環境、生命週期與 Release", "一套概念貫穿所有目標"]),
+            ("hex", "雲原生", ["Kubernetes Agent 與 API 雙模式", "原生 Helm、Kustomize、YAML"]),
+            ("shield", "企業級治理", ["RBAC、人工審核與稽核", "敏感變數加密與日誌遮罩"]),
+            ("plug", "可擴充", ["新目標與新動作獨立接入", "無需改動部署流水線"]),
+        ],
+        free_title="永久免費。", free_sub=["MIT 授權開源，全部功能可用。", "規模成長，不增加軟體成本。"],
+        cols=("Squid", "商業發布平台"),
+        rows=[("軟體費用", "免費", "按方案訂閱"), ("專案與使用者", "不限", "隨方案限制"), ("部署目標", "不限", "按節點計費")],
+    ),
 }
 
 
@@ -82,7 +82,7 @@ class Fonts:
     FACES = {  # family -> (file, axes per weight)
         "SqDisplay": ("Inter.ttf", lambda w: {"wght": w, "opsz": 32}),
         "SqText": ("Inter.ttf", lambda w: {"wght": w, "opsz": 14}),
-        "SqCJK": ("NotoSansSC.ttf", lambda w: {"wght": w}),
+        "SqCJK": ("NotoSansTC.ttf", lambda w: {"wght": w}),
     }
 
     def __init__(self, font_dir, cache_dir):
@@ -90,10 +90,10 @@ class Fonts:
         os.makedirs(cache_dir, exist_ok=True)
 
     def instance_path(self, family, weight):
-        path = os.path.join(self.cache_dir, f"{family}-{weight}.ttf")
+        file, axes = self.FACES[family]
+        path = os.path.join(self.cache_dir, f"{family}-{os.path.splitext(file)[0]}-{weight}.ttf")
         if os.path.exists(path): return path
 
-        file, axes = self.FACES[family]
         inst = instantiateVariableFont(TTFont(os.path.join(self.font_dir, file)), axes(weight))
         inst.save(path)
         return path
@@ -214,7 +214,7 @@ def features(fonts, lang, theme):
         for j, line in enumerate(lines):
             cv.fit(line, 20, col)
             cv.text(x, y + 150 + j * 30, line, 20, fill=T["muted"])
-    alt = "; ".join(f'{t}: {"".join(l) if lang == "zh" else " ".join(l)}' for _, t, l in c["features"])
+    alt = "; ".join(f'{t}: {"".join(l) if lang.startswith("zh") else " ".join(l)}' for _, t, l in c["features"])
     return cv.render(top + 236 + 200, f'{" ".join(c["heading"])} {alt}')
 
 
