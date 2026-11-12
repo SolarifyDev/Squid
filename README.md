@@ -1,9 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="branding/squid-wordmark-reverse.png">
-  <img src="branding/squid-wordmark.png" alt="Squid" width="300">
-</picture>
+<img src="branding/logo/squid-mark.svg" alt="Squid" width="120">
 
 ### 免费、简单、开箱即用的新一代发布平台
 
