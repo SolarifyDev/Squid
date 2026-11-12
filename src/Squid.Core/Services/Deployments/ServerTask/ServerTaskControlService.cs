@@ -10,6 +10,7 @@ namespace Squid.Core.Services.Deployments.ServerTask;
 public interface IServerTaskControlService : IScopedDependency
 {
     Task CancelTaskAsync(int serverTaskId, CancellationToken ct = default);
+    Task ForceCancelStuckTaskAsync(int serverTaskId, CancellationToken ct = default);
     Task ResumeTaskAsync(int serverTaskId, CancellationToken ct = default);
     Task TryAutoResumeAsync(int serverTaskId, CancellationToken ct = default);
 }
@@ -22,6 +23,8 @@ public class ServerTaskControlService(
     IDeploymentCheckpointService checkpointService,
     ISquidBackgroundJobClient backgroundJobClient) : IServerTaskControlService
 {
+    internal static readonly TimeSpan ForceCancelStuckGracePeriod = TimeSpan.FromSeconds(60);
+
     public async Task CancelTaskAsync(int serverTaskId, CancellationToken ct = default)
     {
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
@@ -51,6 +54,47 @@ public class ServerTaskControlService(
             await CancelPausedTaskAsync(task, ct).ConfigureAwait(false);
             return;
         }
+    }
+
+    /// <summary>
+    /// Escape hatch for a task stuck in <see cref="TaskState.Cancelling"/>. Normal cancellation
+    /// only requests cancellation; if the worker or remote script never completes, Cancelling
+    /// keeps occupying the environment slot forever. This path is deliberately narrow: only
+    /// Cancelling is eligible, and only after the grace period so ordinary cancellation can
+    /// finish first.
+    /// </summary>
+    public async Task ForceCancelStuckTaskAsync(int serverTaskId, CancellationToken ct = default)
+    {
+        var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
+
+        if (task == null)
+            throw new ServerTaskNotFoundException(serverTaskId);
+
+        if (!string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
+            throw new ServerTaskStateTransitionException(task.State, TaskState.Cancelled);
+
+        var age = DateTimeOffset.UtcNow - task.LastModifiedDate;
+        if (age < ForceCancelStuckGracePeriod)
+            throw new InvalidOperationException(
+                $"Task {serverTaskId} has been Cancelling for only {Math.Max(0, (int)age.TotalSeconds)}s; " +
+                $"wait at least {ForceCancelStuckGracePeriod.TotalSeconds:F0}s before forcing completion.");
+
+        await serverTaskService.TransitionStateAsync(
+            task.Id,
+            TaskState.Cancelling,
+            TaskState.Cancelled,
+            ct).ConfigureAwait(false);
+
+        await interruptionService.CancelPendingInterruptionsAsync(task.Id, ct).ConfigureAwait(false);
+        await checkpointService.DeleteAsync(task.Id, ct).ConfigureAwait(false);
+
+        if (!string.IsNullOrEmpty(task.JobId))
+            backgroundJobClient.DeleteJob(task.JobId);
+
+        Log.Warning(
+            "Force-cancelled stuck task {TaskId} after {AgeSeconds}s in Cancelling; released its concurrency slot",
+            task.Id,
+            (long)age.TotalSeconds);
     }
 
     /// <summary>

@@ -83,6 +83,53 @@ public class ServerTaskControlServiceTests
     }
 
     [Fact]
+    public async Task ForceCancelStuckTask_CancellingPastGracePeriod_TransitionsToCancelledAndCleansUp()
+    {
+        var task = new ServerTaskEntity
+        {
+            Id = 1,
+            State = TaskState.Cancelling,
+            LastModifiedDate = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(1),
+            JobId = "stuck-job"
+        };
+        _taskDataProvider.Setup(p => p.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(task);
+
+        await _sut.ForceCancelStuckTaskAsync(1);
+
+        _taskService.Verify(s => s.TransitionStateAsync(1, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
+        _interruptionService.Verify(s => s.CancelPendingInterruptionsAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(s => s.DeleteAsync(1, It.IsAny<CancellationToken>()), Times.Once);
+        _jobClient.Verify(j => j.DeleteJob("stuck-job"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ForceCancelStuckTask_CancellingWithinGracePeriod_IsRejected()
+    {
+        var task = new ServerTaskEntity
+        {
+            Id = 1,
+            State = TaskState.Cancelling,
+            LastModifiedDate = DateTimeOffset.UtcNow
+        };
+        _taskDataProvider.Setup(p => p.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(task);
+
+        await Should.ThrowAsync<InvalidOperationException>(() => _sut.ForceCancelStuckTaskAsync(1));
+
+        _taskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ForceCancelStuckTask_NonCancelling_IsRejected()
+    {
+        var task = new ServerTaskEntity { Id = 1, State = TaskState.Executing };
+        _taskDataProvider.Setup(p => p.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(task);
+
+        await Should.ThrowAsync<ServerTaskStateTransitionException>(() => _sut.ForceCancelStuckTaskAsync(1));
+
+        _taskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task TryAutoResume_PausedAndNoPending_Enqueues()
     {
         var task = new ServerTaskEntity { Id = 1, State = TaskState.Paused, HasPendingInterruptions = false };
