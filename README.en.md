@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="branding/logo/squid-mark.svg" alt="Squid" width="120">
+<img src="branding/squid-logo.png" alt="Squid" width="160">
 
 ### Free, simple, ready-to-use — the next-generation release platform.
 

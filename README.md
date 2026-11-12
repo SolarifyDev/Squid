@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="branding/logo/squid-mark.svg" alt="Squid" width="120">
+<img src="branding/squid-logo.png" alt="Squid" width="160">
 
 ### 免费、简单、开箱即用的新一代发布平台
 
