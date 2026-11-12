@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.OctopusImport.Octopus;
 
 namespace Squid.UnitTests.Services.OctopusImport.Octopus;
@@ -442,6 +443,88 @@ public class OctopusResourceGraphBuilderTests
         var graph = _graphBuilder.Build(inventory);
 
         graph.References.ShouldNotContain(r => r.ReferenceKind == OctopusResourceReferenceKind.Team);
+    }
+
+    [Theory]
+    [InlineData("teams-everyone", true, BuiltInTeamNames.Everyone)]
+    [InlineData("TEAMS-ADMINISTRATORS", true, BuiltInTeamNames.Administrators)]
+    [InlineData("teams-managers", false, null)]
+    [InlineData("Teams-404", false, null)]
+    public async Task BuiltInTeam_Synthesized_Theory(string teamId, bool expectSynthesized, string expectedName)
+    {
+        var graph = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess(teamId)));
+
+        var team = graph.Resources.SingleOrDefault(r => r.Kind == OctopusResourceKind.Team);
+
+        if (!expectSynthesized)
+        {
+            team.ShouldBeNull(customMessage: "only built-in teams with a Squid equivalent are synthesized; the rest still fail closed in validation");
+            return;
+        }
+
+        team.ShouldNotBeNull();
+        team.SourceId.ShouldBe(teamId);
+        team.Name.ShouldBe(expectedName);
+        team.DocumentKind.ShouldBe(OctopusDocumentKind.Team);
+        team.IsHistorical.ShouldBeFalse();
+        team.SourcePath.ShouldBe($"builtin/{teamId}");
+        team.GetSource<OctopusTeamDto>().Id.ShouldBe(teamId);
+        graph.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task BuiltInTeam_ReferencedTwiceOrExported_IsNeverDuplicated()
+    {
+        var teamJson = """{"Id":"teams-everyone","Name":"Everyone","MemberUserIds":[],"ExternalSecurityGroups":[]}""";
+
+        var exported = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess("teams-everyone,Teams-everyone"), ("teams-everyone", "ConfigurableTeam", "teams-everyone.json", teamJson)));
+        var referencedTwice = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess("teams-everyone, TEAMS-EVERYONE")));
+
+        exported.Resources.Single(r => r.Kind == OctopusResourceKind.Team).SourcePath.ShouldBe("teams-everyone.json");
+        referencedTwice.Resources.Count(r => r.Kind == OctopusResourceKind.Team).ShouldBe(1);
+        exported.Diagnostics.ShouldBeEmpty();
+        referencedTwice.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Deployment_HasRequiredChannelReference()
+    {
+        var deploymentJson = """{"Id":"Deployments-1","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedToMachineIds":["Machines-1"]}""";
+
+        var graph = _graphBuilder.Build(await BuildInventoryAsync(("Deployments-1", "Deployment", "Deployments-1.json", deploymentJson)));
+
+        var channel = graph.References.Single(r => r.FromSourceId == "Deployments-1" && r.ReferenceKind == OctopusResourceReferenceKind.Channel);
+        channel.ToSourceId.ShouldBe("Channels-1");
+        channel.ToKind.ShouldBe(OctopusResourceKind.Channel);
+        channel.IsRequired.ShouldBeTrue();
+        channel.CreatesDependency.ShouldBeFalse();
+        graph.References.ShouldNotContain(r => r.FromSourceId == "Deployments-1" && r.ReferenceKind == OctopusResourceReferenceKind.Machine, customMessage: "unmapped machines stay raw data on the deployment");
+    }
+
+    [Theory]
+    [InlineData("8f3e-installation", "8f3e-installation")]
+    [InlineData(null, null)]
+    public async Task Build_ManifestInstallationId_IsCarriedOnTheGraph(string installationId, string expected)
+    {
+        var json = """{"Id":"Environments-1","Name":"Production"}""";
+        var manifest = JsonSerializer.Serialize(new { SchemaVersions = Array.Empty<string>(), InstallationId = installationId, Entries = new[] { new { Id = "Environments-1", Name = "Environments-1", DocumentType = "StaticDeploymentEnvironment", ExportType = "FullDocument", DocumentSource = "Environments-1.json", ParentId = (string)null, Hash = Sha1(json) } } });
+        var extraction = await _inputExtractor.ExtractJsonEntriesAsync([new("manifest.json", Encoding.UTF8.GetBytes(manifest)), new("Environments-1.json", Encoding.UTF8.GetBytes(json))]);
+
+        var graph = _graphBuilder.Build(_inventoryBuilder.Build(extraction));
+
+        graph.InstallationId.ShouldBe(expected);
+    }
+
+    private static (string Id, string DocumentType, string DocumentSource, string Json) ManualProcess(string responsibleTeamIds)
+    {
+        var processJson = JsonSerializer.Serialize(new
+        {
+            Id = "deploymentprocess-Projects-1",
+            OwnerId = "Projects-1",
+            Steps = new[] { new { Id = "Steps-1", Name = "Approve", Actions = new[] { new { Id = "Actions-1", Name = "Approve", ActionType = "Octopus.Manual", Properties = new Dictionary<string, string> { ["Octopus.Action.Manual.ResponsibleTeamIds"] = responsibleTeamIds } } } } }
+        });
+
+        return ("deploymentprocess-Projects-1", "DeploymentProcess", "deploymentprocess-Projects-1.json", processJson);
     }
 
     private async Task<OctopusManifestInventoryResult> BuildInventoryAsync(params (string Id, string DocumentType, string DocumentSource, string Json)[] documents)

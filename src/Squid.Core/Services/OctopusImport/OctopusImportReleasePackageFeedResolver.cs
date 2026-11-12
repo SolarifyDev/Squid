@@ -20,12 +20,17 @@ internal static class OctopusImportReleasePackageFeedResolver
 
     public static bool HasPlannedDestination(
         string sourceFeedId,
-        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources)
+        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources,
+        OctopusImportPriorMappings prior = null)
     {
         if (string.IsNullOrWhiteSpace(sourceFeedId))
             return false;
 
         if (int.TryParse(sourceFeedId, out var destinationFeedId) && destinationFeedId > 0)
+            return true;
+
+        // A feed imported earlier resolves through the source map even when this source no longer carries it.
+        if (prior != null && prior.TryGet(OctopusResourceKind.Feed.ToString(), sourceFeedId, out _))
             return true;
 
         var actionableFeeds = previewResources.Values

@@ -14,7 +14,7 @@ public interface IOctopusImportPreviewPlanner : IScopedDependency
         OctopusImportConflictDiscoveryResult conflicts);
 }
 
-public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
+public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 {
     private readonly IOctopusExportSecretsAccessor _secretsAccessor;
 
@@ -32,15 +32,6 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         ArgumentNullException.ThrowIfNull(dependencyPlan);
         ArgumentNullException.ThrowIfNull(conflicts);
 
-        var conflictsBySourceId = conflicts.Conflicts
-            .GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
-        var blockedSourceIds = dependencyPlan.Diagnostics
-            .Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && !string.IsNullOrWhiteSpace(d.SourceId))
-            .Select(d => d.SourceId)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         var nodes = dependencyPlan.OrderedResources
             .Concat(dependencyPlan.OutOfScopeResources)
             .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
@@ -48,15 +39,15 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var resources = nodes
-            .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))
-            .ToList();
+        var context = new PreviewPlanningContext(dependencyPlan, conflicts, nodes);
+        var resources = BuildResourcePreviews(nodes, context);
 
         AddVariableDiagnostics(nodes, resources);
 
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
+            .Concat(InstallationDiagnostics(conflicts))
             .ToList();
 
         return new OctopusImportPreviewPlanDto
@@ -70,20 +61,38 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         };
     }
 
-    private OctopusImportResourceResultDto BuildResourcePreview(
-        OctopusResourceNode resource,
-        IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,
-        IReadOnlySet<string> blockedSourceIds)
+    // Rank order puts every owner before what it owns (project before channel, process before step,
+    // variable set before variable, release before deployment before task), so each decision can read
+    // the decisions already made for its owners.
+    private List<OctopusImportResourceResultDto> BuildResourcePreviews(IReadOnlyList<OctopusResourceNode> nodes, PreviewPlanningContext context)
+    {
+        var resources = new List<OctopusImportResourceResultDto>();
+
+        foreach (var resource in nodes)
+            resources.Add(context.Record(BuildResourcePreview(resource, context)));
+
+        return resources;
+    }
+
+    private static IEnumerable<OctopusImportDiagnosticDto> InstallationDiagnostics(OctopusImportConflictDiscoveryResult conflicts)
+    {
+        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, conflicts.PriorMappings);
+
+        return mismatch == null ? [] : [mismatch];
+    }
+
+    private OctopusImportResourceResultDto BuildResourcePreview(OctopusResourceNode resource, PreviewPlanningContext context)
     {
         var result = new OctopusImportResourceResultDto
         {
             SourceId = resource.SourceId,
             SourceType = resource.Kind.ToString(),
             SourceName = resource.Name,
+            OwnerProjectSourceId = resource.OwnerProjectId,
             OutcomeState = OctopusImportResourceOutcomeState.Pending
         };
 
-        if (blockedSourceIds.Contains(resource.SourceId))
+        if (context.IsBlocked(resource.SourceId))
         {
             result.PreviewAction = OctopusImportPreviewAction.Blocked;
             result.OutcomeState = OctopusImportResourceOutcomeState.Blocked;
@@ -95,12 +104,9 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (resource.Kind is OctopusResourceKind.Release
-            or OctopusResourceKind.Deployment
-            or OctopusResourceKind.ServerTask)
+        if (IsHistoryKind(resource.Kind))
         {
-            result.PreviewAction = OctopusImportPreviewAction.Create;
-            AddManualConfigurationDiagnostics(result, resource);
+            ApplyDecision(result, DecideHistory(resource, context));
             return result;
         }
 
@@ -130,7 +136,13 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (!conflictsBySourceId.TryGetValue(resource.SourceId, out var conflict))
+        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } priorDecision)
+        {
+            ApplyDecision(result, priorDecision);
+            return result;
+        }
+
+        if (!context.TryGetConflict(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
             AddTeamDiagnostics(result, resource);
@@ -156,6 +168,8 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
         {
+            if (PreviewAction(resource.SourceId) == OctopusImportPreviewAction.AlreadyImported) continue;
+
             if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
                 AddRequiredInputs(previewsById[resource.SourceId], resource);
             else

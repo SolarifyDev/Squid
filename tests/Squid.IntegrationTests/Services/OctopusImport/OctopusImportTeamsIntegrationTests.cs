@@ -150,6 +150,39 @@ public class OctopusImportTeamsIntegrationTests : TestBase
         }
     }
 
+    // A zip export usually omits the built-in teams a manual intervention names: the referenced built-in
+    // is synthesized and reuses the Squid built-in team, on every import, without creating team rows.
+    [Fact]
+    public async Task BuiltInEveryoneReferencedNotExported_ReusesSquidTeam()
+    {
+        var firstArchive = WriteArchive(Documents(teams: [], manualTeamIds: "teams-everyone", uniqueIds: false));
+        var secondArchive = WriteArchive(Documents(teams: [], manualTeamIds: "teams-everyone", uniqueIds: false));
+
+        try
+        {
+            var everyoneId = (await SeedSquidBuiltInTeamsAsync())[BuiltInTeamNames.Everyone];
+
+            var first = await ImportAsInternalUserAsync(firstArchive);
+            var second = await ImportAsInternalUserAsync(secondArchive);
+
+            first.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(first));
+            second.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(second));
+            first.Result.Resources.Single(r => r.SourceId == "teams-everyone").OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
+
+            await Run<SquidDbContext>(async db =>
+            {
+                (await db.Set<Team>().CountAsync()).ShouldBe(2, customMessage: "a referenced built-in team must never create a Squid team row");
+                var teamIds = await db.Set<DeploymentActionProperty>().Where(p => p.PropertyName == SpecialVariables.Action.ManualResponsibleTeamIds).Select(p => p.PropertyValue).ToListAsync();
+                teamIds.ShouldBe([everyoneId.ToString(), everyoneId.ToString()]);
+            });
+        }
+        finally
+        {
+            File.Delete(firstArchive);
+            File.Delete(secondArchive);
+        }
+    }
+
     [Fact]
     public async Task Preview_BuiltInOctopusTeamWithSquidEquivalent_ButSquidBuiltInMissing_BlocksInsteadOfCreatingADuplicate()
     {

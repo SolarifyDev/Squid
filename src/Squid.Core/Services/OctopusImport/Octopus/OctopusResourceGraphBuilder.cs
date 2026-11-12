@@ -31,14 +31,33 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             AddDocumentResource(context);
         }
 
+        AddReferencedBuiltInTeams(resources, references, resourceIndexes);
+
         var dependencies = references
             .Where(r => r.CreatesDependency && !string.IsNullOrWhiteSpace(r.ToSourceId))
             .Select(r => new OctopusResourceDependency(r.FromSourceId, r.ToSourceId, r.ReferenceKind, r.ToKind))
             .Distinct()
             .ToList();
 
-        return new OctopusResourceGraph(resources, references, dependencies, diagnostics);
+        return new OctopusResourceGraph(resources, references, dependencies, diagnostics) { InstallationId = inventory.Manifest?.InstallationId };
     }
+
+    // A zip export usually omits Octopus's built-in teams even when a manual intervention names one. The
+    // built-ins with a Squid equivalent are synthesized so they take the normal reuse path onto the Squid
+    // built-in team; every other missing team (managers, unknown ids) still fails closed in validation.
+    private static void AddReferencedBuiltInTeams(List<OctopusResourceNode> resources, IEnumerable<OctopusResourceReference> references, Dictionary<string, int> resourceIndexes)
+    {
+        foreach (var teamId in references.Where(r => r.ReferenceKind == OctopusResourceReferenceKind.Team).Select(r => r.ToSourceId).ToList())
+        {
+            if (resourceIndexes.ContainsKey(teamId) || !OctopusBuiltInTeams.TryGetSquidEquivalent(teamId, out var squidTeamName)) continue;
+
+            resourceIndexes[teamId] = resources.Count;
+            resources.Add(BuiltInTeamNode(teamId, squidTeamName));
+        }
+    }
+
+    private static OctopusResourceNode BuiltInTeamNode(string teamId, string squidTeamName)
+        => new(teamId, squidTeamName, OctopusResourceKind.Team, OctopusDocumentKind.Team, $"builtin/{teamId}", null, null, false, new OctopusTeamDto { Id = teamId, Name = squidTeamName });
 
     private static void AddDocumentResource(GraphBuildContext context)
     {
@@ -363,6 +382,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Project, deployment.ProjectId, OctopusResourceKind.Project, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Environment, deployment.EnvironmentId, OctopusResourceKind.Environment, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Release, deployment.ReleaseId, OctopusResourceKind.Release, deployment.ProjectId, true);
+        AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Channel, deployment.ChannelId, OctopusResourceKind.Channel, deployment.ProjectId, true, false);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.ServerTask, deployment.TaskId, OctopusResourceKind.ServerTask, deployment.ProjectId, false, true);
     }
 

@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums.OctopusImport;
@@ -249,6 +251,37 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
+    // ── Conflict discovery wiring ────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Discover_FromTheContainer_LoadsPriorMappings_AndReleaseKeysOfPriorMappedProjectsOnly()
+    {
+        await Run<IRepository, IUnitOfWork, ILifetimeScope>(async (repository, unitOfWork, scope) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+            var mapped = await builder.CreateProjectAsync(0);
+            var unmapped = await builder.CreateProjectAsync(0);
+            var channel = await builder.CreateChannelAsync(mapped.Id, name: "Main");
+            var db = scope.Resolve<SquidDbContext>();
+            db.Set<Release>().AddRange(
+                new Release { Version = "1.0.0", ProjectId = mapped.Id, ChannelId = channel.Id, SpaceId = SpaceId },
+                new Release { Version = "2.0.0", ProjectId = unmapped.Id, ChannelId = channel.Id, SpaceId = SpaceId },
+                new Release { Version = "3.0.0", ProjectId = mapped.Id, ChannelId = channel.Id, SpaceId = SpaceId + 1 });
+            await db.SaveChangesAsync();
+
+            await scope.Resolve<IOctopusImportSourceMapDataProvider>().UpsertAsync([Row("Project", "Projects-1", mapped.Id, "Created"), Row("Channel", "Channels-1", channel.Id, "Created")], Guid.NewGuid());
+
+            var graph = new OctopusResourceGraph([ReleaseNode("Releases-1", "Projects-1"), ReleaseNode("Releases-2", "Projects-2")], [], [], []) { InstallationId = "Installation-A" };
+
+            var result = await scope.Resolve<IOctopusImportConflictDiscoveryService>().DiscoverAsync(SpaceId, graph);
+
+            result.PriorMappings.TryGet("Project", "Projects-1", out var project).ShouldBeTrue(customMessage: "the container must inject the source-map provider into conflict discovery");
+            project.DestinationId.ShouldBe(mapped.Id);
+            result.ExistingReleaseKeys.ShouldBe([new OctopusImportReleaseKey(mapped.Id, channel.Id, "1.0.0")]);
+            result.HistoryInstallationId.ShouldBe("Installation-A");
+        });
+    }
+
     // ── Advisory lock ────────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -343,6 +376,9 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             await lifetime.Resolve<IOctopusImportSourceMapDataProvider>().AcquireSpaceLockAsync(spaceId);
             return await db.Set<OctopusImportSourceMap>().CountAsync();
         });
+
+    private static OctopusResourceNode ReleaseNode(string id, string projectId)
+        => new(id, "1.0.0", OctopusResourceKind.Release, OctopusDocumentKind.Release, $"{id}.json", projectId, null, false, new OctopusReleaseDto { Id = id, ProjectId = projectId, Version = "1.0.0" });
 
     private static OctopusImportSourceMapRow Row(string type, string id, int destinationId, string outcome, string fingerprint = null, string detailFingerprint = null, int spaceId = SpaceId)
         => new(spaceId, type, id, destinationId, outcome, fingerprint, detailFingerprint);

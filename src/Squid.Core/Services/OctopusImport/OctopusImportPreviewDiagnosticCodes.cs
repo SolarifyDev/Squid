@@ -26,6 +26,9 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string ChangedSinceLastImport = "octopus.preview.changed_since_last_import";
     public const string DefaultChannelNotRemapped = "octopus.preview.default_channel_not_remapped";
     public const string OctopusInstallationMismatch = "octopus.preview.octopus_installation_mismatch";
+    public const string ReleaseVersionExistsInSquid = "octopus.preview.release_version_exists_in_squid";
+    public const string HistoryOwnerNotImported = "octopus.preview.history_owner_not_imported";
+    public const string DeploymentTaskMissing = "octopus.preview.deployment_task_missing";
 
     public const string ExportPasswordUnavailableMessage = "The export password was accepted at upload but could not be kept or read back with the server's at-rest encryption key (Security:VariableEncryption:MasterKey is missing or has changed). Sensitive values are treated as if no export password had been given. Restore the original master key and retry, or configure a master key and upload the export again.";
 

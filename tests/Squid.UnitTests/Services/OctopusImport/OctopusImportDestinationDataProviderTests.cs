@@ -159,6 +159,25 @@ public class OctopusImportDestinationDataProviderTests
         group.IsBuiltIn.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task GetReleaseKeysAsync_ReturnsOnlyTheRequestedProjectsReleasesInTheSpace()
+    {
+        await using var db = CreateDbContext();
+        var provider = new OctopusImportDestinationDataProvider(new EfRepository(db));
+
+        db.Set<Release>().AddRange(
+            new Release { Id = 1, SpaceId = 7, ProjectId = 10, ChannelId = 20, Version = "1.0.0" },
+            new Release { Id = 2, SpaceId = 7, ProjectId = 10, ChannelId = 21, Version = "1.0.1" },
+            new Release { Id = 3, SpaceId = 7, ProjectId = 11, ChannelId = 22, Version = "2.0.0" },
+            new Release { Id = 4, SpaceId = 8, ProjectId = 10, ChannelId = 20, Version = "9.9.9" });
+        await db.SaveChangesAsync();
+
+        var keys = await provider.GetReleaseKeysAsync(7, [10]);
+
+        keys.ShouldBe([new OctopusImportReleaseKey(10, 20, "1.0.0"), new OctopusImportReleaseKey(10, 21, "1.0.1")], ignoreOrder: true);
+        (await provider.GetReleaseKeysAsync(7, [])).ShouldBeEmpty();
+    }
+
     private static SquidDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<SquidDbContext>()

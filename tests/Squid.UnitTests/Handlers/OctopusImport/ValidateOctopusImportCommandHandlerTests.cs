@@ -1,3 +1,4 @@
+using System.Linq;
 using System.IO;
 using System.Net;
 using Mediator.Net.Contracts;
@@ -144,6 +145,36 @@ public class ValidateOctopusImportCommandHandlerTests
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ClientHistoryRows_ReplacedByServerRows()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var serverPlan = Preview();
+        serverPlan.Resources.Add(Row("Deployments-1", "Deployment", OctopusImportPreviewAction.Create, null));
+        serverPlan.Resources.Add(Row("Releases-1", "Release", OctopusImportPreviewAction.Update, 21));
+        var clientPlan = Preview();
+        clientPlan.Resources[0].PreviewAction = OctopusImportPreviewAction.ReuseExisting;
+        clientPlan.Resources.Add(Row("Deployments-1", "Deployment", OctopusImportPreviewAction.AlreadyImported, 999));
+        clientPlan.Resources.Add(Row("ServerTasks-forged", "ServerTask", OctopusImportPreviewAction.AlreadyImported, 998));
+        OctopusImportPreviewPlanDto validatedPlan = null;
+
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(serverPlan));
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto>((_, _, _, plan) => validatedPlan = plan).Returns(new OctopusImportValidationResultDto());
+        harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
+
+        var response = await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7, PreviewPlan = clientPlan }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.OK);
+        validatedPlan.Resources.Select(r => $"{r.SourceType}|{r.SourceId}|{r.PreviewAction}|{r.DestinationId}").ShouldBe(["Project|Projects-1|ReuseExisting|", "Deployment|Deployments-1|Create|", "Release|Releases-1|Update|21"], customMessage: "configuration rows stay the client's; every history row is the server's and forged history rows disappear");
+        response.Data.PreviewPlan.Resources.ShouldNotContain(r => r.SourceId == "ServerTasks-forged");
+    }
+
+    private static OctopusImportResourceResultDto Row(string sourceId, string sourceType, OctopusImportPreviewAction action, int? destinationId)
+        => new() { SourceId = sourceId, SourceType = sourceType, SourceName = sourceId, PreviewAction = action, DestinationId = destinationId, OutcomeState = OctopusImportResourceOutcomeState.Pending };
 
     private static OctopusImportPreviewPlanDto Preview()
         => new()

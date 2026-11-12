@@ -9,6 +9,9 @@ public sealed record OctopusResourceGraph(
     IReadOnlyList<OctopusInputExtractionDiagnostic> Diagnostics)
 {
     public bool HasBlockers => Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+
+    /// <summary>The Octopus installation the export or history bundle came from (manifest <c>InstallationId</c>); null for exports that do not record it.</summary>
+    public string InstallationId { get; init; }
 }
 
 public sealed record OctopusResourceNode(

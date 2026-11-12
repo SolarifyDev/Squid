@@ -66,11 +66,12 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources);
+        var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources, conflicts.PriorMappings);
 
         ValidateReferences(graph, plan, result);
         ValidateVariableScopes(plan, result);
-        ValidateReleasePackageFeeds(graph, selectedResources, previewResources, result);
+        ValidateReleasePackageFeeds(graph, plan, result);
+        ValidateInstallation(conflicts, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         result.RequiredInputs = previewPlan.RequiredInputs
@@ -87,12 +88,19 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         return result;
     }
 
-    private static void ValidateReleasePackageFeeds(
-        OctopusResourceGraph graph,
-        IReadOnlyDictionary<string, OctopusResourceNode> selectedResources,
-        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources,
-        OctopusImportValidationResultDto result)
+    // The preview shows the mismatch too, but the plan-level diagnostic is client-posted; this one is server-owned.
+    private static void ValidateInstallation(OctopusImportConflictDiscoveryResult conflicts, OctopusImportValidationResultDto result)
     {
+        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, conflicts.PriorMappings);
+
+        if (mismatch != null) result.Diagnostics.Add(mismatch);
+    }
+
+    private static void ValidateReleasePackageFeeds(OctopusResourceGraph graph, ValidationPlan plan, OctopusImportValidationResultDto result)
+    {
+        var selectedResources = plan.Selected;
+        var previewResources = plan.Previews;
+
         foreach (var releaseResource in selectedResources.Values.Where(resource => resource.Kind == OctopusResourceKind.Release))
         {
             if (!previewResources.TryGetValue(releaseResource.SourceId, out var releasePreview)
@@ -114,7 +122,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                     selectedResources.Values,
                     release,
                     selectedPackage);
-                if (OctopusImportReleasePackageFeedResolver.HasPlannedDestination(sourceFeedId, previewResources))
+                if (OctopusImportReleasePackageFeedResolver.HasPlannedDestination(sourceFeedId, previewResources, plan.Prior))
                     continue;
 
                 AddReferenceDiagnostic(
@@ -280,7 +288,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             {
                 // Dropping a responsible team would WIDEN who can approve the manual intervention,
                 // so an approval team missing from the export blocks before any write is attempted.
-                if (!allCurrentResources.ContainsKey(reference.ToSourceId))
+                if (!allCurrentResources.ContainsKey(reference.ToSourceId) && !plan.IsPriorMapped(reference))
                     AddReferenceDiagnostic(
                         result,
                         source,
@@ -292,7 +300,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 
             if (reference.ReferenceKind == OctopusResourceReferenceKind.Account)
             {
-                if (!allCurrentResources.ContainsKey(reference.ToSourceId))
+                if (!allCurrentResources.ContainsKey(reference.ToSourceId) && !plan.IsPriorMapped(reference))
                     AddReferenceDiagnostic(
                         result,
                         source,
@@ -302,7 +310,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                 continue;
             }
 
-            if (reference.IsRequired && !selectedResources.ContainsKey(reference.ToSourceId))
+            if (reference.IsRequired && !selectedResources.ContainsKey(reference.ToSourceId) && !plan.IsPriorMapped(reference))
             {
                 AddReferenceDiagnostic(
                     result,
@@ -403,7 +411,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         }));
     }
 
-    private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews)
+    private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews, OctopusImportPriorMappings Prior)
     {
         public OctopusResourceNode FindResource(string sourceId)
             => sourceId != null && Current.TryGetValue(sourceId, out var resource) ? resource : null;
@@ -411,15 +419,23 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         public OctopusImportPreviewAction? PreviewAction(string sourceId)
             => sourceId != null && Previews.TryGetValue(sourceId, out var preview) ? preview.PreviewAction : null;
 
+        // A skipped resource is not written either (history whose owner is not imported, a default channel
+        // that is never remapped), so nothing it references can block the import.
         public bool IsWrittenByImport(OctopusResourceNode resource)
-            => OctopusImportVariableOwnership.IsWrittenByImport(resource, FindResource, PreviewAction);
+            => PreviewAction(resource?.SourceId) != OctopusImportPreviewAction.Skip && OctopusImportVariableOwnership.IsWrittenByImport(resource, FindResource, PreviewAction);
+
+        // A target recorded by an earlier import maps to its Squid row even when this source does not carry it.
+        public bool IsPriorMapped(OctopusResourceReference reference)
+            => reference.ToKind != null && Prior.TryGet(reference.ToKind.Value.ToString(), reference.ToSourceId, out _);
 
         public bool IsImportedBefore(string sourceId, OctopusResourceKind kind, OctopusResourceKind writerKind)
+            => (IsResolvedByThisPlan(sourceId, kind) || Prior.TryGet(kind.ToString(), sourceId, out _)) && OctopusImportVariableScopeRule.IsImportedBefore(kind, writerKind);
+
+        private bool IsResolvedByThisPlan(string sourceId, OctopusResourceKind kind)
             => Selected.TryGetValue(sourceId, out var target)
                && target.Kind == kind
                && PreviewAction(sourceId) is { } action
-               && OctopusImportPreviewActions.ResolvesToDestination(action)
-               && OctopusImportVariableScopeRule.IsImportedBefore(kind, writerKind);
+               && OctopusImportPreviewActions.ResolvesToDestination(action);
     }
 
     private static void AddReferenceDiagnostic(

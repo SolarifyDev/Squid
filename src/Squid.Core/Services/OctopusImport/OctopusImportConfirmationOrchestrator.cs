@@ -1020,6 +1020,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                         ? OctopusImportResourceOutcomeState.Pending
                         : r.OutcomeState,
                     DestinationId = r.DestinationId,
+                    OwnerProjectSourceId = r.OwnerProjectSourceId,
                     RequiredInputs = r.RequiredInputs.ToList(),
                     Diagnostics = r.Diagnostics.Select(Redact).ToList()
                 })

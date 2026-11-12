@@ -9,6 +9,9 @@ public class OctopusExportManifestDto
 
     public List<OctopusManifestEntryDto> Entries { get; set; } = [];
 
+    /// <summary>Set by Squid's REST history fetch; Octopus's own export does not write it.</summary>
+    public string InstallationId { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
 }
