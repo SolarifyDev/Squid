@@ -49,6 +49,29 @@ public class OctopusImportConfirmationRunnerTests
         _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.SessionId == sessionId && r.DestinationSpaceId == SpaceId && r.SessionDirectory == Path.GetDirectoryName(uploadPath)), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // An Octopus default channel takes over the default channel of a project created by this import (an edit); under a
+    // project imported before it is created as a regular channel, so the owner needs the create permission.
+    [Theory]
+    [InlineData(OctopusImportPreviewAction.Create, Permission.ChannelEdit)]
+    [InlineData(OctopusImportPreviewAction.AlreadyImported, Permission.ChannelCreate)]
+    public async Task Runner_DefaultChannel_RequiresThePermissionOfWhatConfirmationDoes(OctopusImportPreviewAction projectAction, Permission expected)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview(projectAction, new OctopusImportResourceResultDto { SourceId = "Channels-1", SourceType = "Channel", SourceName = "Default", OwnerProjectSourceId = "Projects-1", PreviewAction = OctopusImportPreviewAction.Create, OutcomeState = OctopusImportResourceOutcomeState.Pending });
+        var channel = new OctopusResourceNode("Channels-1", "Default", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "channel.json", null, "Projects-1", false, new OctopusChannelDto { Id = "Channels-1", ProjectId = "Projects-1", IsDefault = true });
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, channel));
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
+
+        await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        var checkedPermissions = _authorization.Invocations.Select(i => ((PermissionCheckRequest)i.Arguments[0]).Permission).ToList();
+        checkedPermissions.ShouldContain(expected);
+        checkedPermissions.ShouldNotContain(expected == Permission.ChannelEdit ? Permission.ChannelCreate : Permission.ChannelEdit);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -110,13 +133,13 @@ public class OctopusImportConfirmationRunnerTests
     private OctopusImportConfirmationRunner CreateRunner()
         => new(_sessionDataProvider.Object, _sessionService.Object, _authorization.Object, _planningPipeline.Object, _orchestrator.Object, _backgroundJobClient.Object);
 
-    private static OctopusImportPreviewPlanDto Preview()
-        => new() { GeneratedAt = DateTimeOffset.UtcNow, Resources = [new OctopusImportResourceResultDto { SourceId = "Projects-1", SourceType = "Project", SourceName = "Project", PreviewAction = OctopusImportPreviewAction.Create, OutcomeState = OctopusImportResourceOutcomeState.Pending }] };
+    private static OctopusImportPreviewPlanDto Preview(OctopusImportPreviewAction projectAction = OctopusImportPreviewAction.Create, params OctopusImportResourceResultDto[] others)
+        => new() { GeneratedAt = DateTimeOffset.UtcNow, Resources = [new OctopusImportResourceResultDto { SourceId = "Projects-1", SourceType = "Project", SourceName = "Project", PreviewAction = projectAction, OutcomeState = OctopusImportResourceOutcomeState.Pending }, .. others] };
 
-    private static OctopusImportPlanningSnapshot Snapshot()
-        => new(new OctopusResourceGraph([new OctopusResourceNode("Projects-1", "Project", OctopusResourceKind.Project, OctopusDocumentKind.Project, "project.json", null, null, false, new object())], [], [], []), new OctopusImportDependencyPlan([], [], [], []), new OctopusImportConflictDiscoveryResult([]), Preview());
+    private static OctopusImportPlanningSnapshot Snapshot(OctopusImportPreviewPlanDto preview = null, params OctopusResourceNode[] others)
+        => new(new OctopusResourceGraph([new OctopusResourceNode("Projects-1", "Project", OctopusResourceKind.Project, OctopusDocumentKind.Project, "project.json", null, null, false, new object()), .. others], [], [], []), new OctopusImportDependencyPlan([], [], [], []), new OctopusImportConflictDiscoveryResult([]), preview ?? Preview());
 
-    private static OctopusImportSession ValidatedSession(Guid sessionId, string uploadPath)
+    private static OctopusImportSession ValidatedSession(Guid sessionId, string uploadPath, OctopusImportPreviewPlanDto preview = null)
         => new()
         {
             SessionId = sessionId,
@@ -125,7 +148,7 @@ public class OctopusImportConfirmationRunnerTests
             State = OctopusImportSessionState.Validated.ToString(),
             TemporaryUploadPath = uploadPath,
             SourceSummaryJson = "{}",
-            ValidatedPlanJson = JsonSerializer.Serialize(new OctopusImportValidatedPlanDto { PreviewPlan = Preview(), Validation = new OctopusImportValidationResultDto() }, JsonOptions),
+            ValidatedPlanJson = JsonSerializer.Serialize(new OctopusImportValidatedPlanDto { PreviewPlan = preview ?? Preview(), Validation = new OctopusImportValidationResultDto() }, JsonOptions),
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             LastStateChangedAt = DateTimeOffset.UtcNow
         };

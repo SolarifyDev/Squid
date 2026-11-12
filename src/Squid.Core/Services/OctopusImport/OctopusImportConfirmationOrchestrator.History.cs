@@ -106,6 +106,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         }
 
         execution.HistoryFingerprints[source.Deployment.SourceId] = (OctopusImportFingerprint.ForTask(source.TaskDto), childrenReplaced ? source.DetailFingerprint : null);
+
+        if (childrenReplaced && source.DetailFingerprint == null) execution.HistoryDetailsCleared.Add(source.Deployment.SourceId);
     }
 
     private async Task<HistoryUnitSource> LoadHistoryUnitSourceAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)

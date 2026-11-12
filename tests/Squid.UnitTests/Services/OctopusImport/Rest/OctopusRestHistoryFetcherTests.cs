@@ -77,7 +77,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         var unchangedTask = JsonSerializer.Deserialize<OctopusServerTaskDto>(JsonSerializer.Serialize(server.Tasks["ServerTasks-1"]));
-        var prior = Prior(("Project", "Projects-1", null, null), ("Deployment", "Deployments-1", OctopusImportFingerprint.ForTask(unchangedTask), "stored-details"));
+        var prior = Prior(("Project", "Projects-1", null, null), ("Deployment", "Deployments-1", OctopusImportFingerprint.ForTask(unchangedTask), "stored-details"), ("ServerTask", "ServerTasks-1", null, null));
         var cursor = new OctopusImportHistoryFetchDto();
 
         var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, prior));
@@ -91,14 +91,16 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     }
 
     [Theory]
-    [InlineData(true, true)]    // task changed in Octopus since the import → details re-fetched
-    [InlineData(false, false)]  // task unchanged but the import stored no details (file import, #542 backfill) → fetched
-    public async Task ChangedTaskOrMissingStoredDetails_FetchesDetails(bool taskChanged, bool detailsStored)
+    [InlineData(true, true, true)]    // task changed in Octopus since the import → details re-fetched
+    [InlineData(false, false, true)]  // task unchanged but the import stored no details (file import, #542 backfill) → fetched
+    [InlineData(false, true, false)]  // task unchanged and details stored, but the imported task row is gone → fetched for the re-created task
+    public async Task ChangedTaskOrMissingStoredDetails_FetchesDetails(bool taskChanged, bool detailsStored, bool taskRowLive)
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1, taskChanged ? "Failed" : "Success");
         var storedTask = JsonSerializer.Deserialize<OctopusServerTaskDto>(JsonSerializer.Serialize(server.Tasks["ServerTasks-1"]));
         storedTask.State = taskChanged ? "Executing" : storedTask.State;
-        var prior = Prior(("Project", "Projects-1", null, null), ("Deployment", "Deployments-1", OctopusImportFingerprint.ForTask(storedTask), detailsStored ? "stored-details" : null));
+        var taskRow = taskRowLive ? ("ServerTask", "ServerTasks-1", (string)null, (string)null) : ("Environment", "Environments-1", null, null);
+        var prior = Prior(("Project", "Projects-1", null, null), ("Deployment", "Deployments-1", OctopusImportFingerprint.ForTask(storedTask), detailsStored ? "stored-details" : null), taskRow);
 
         var progress = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), prior));
 

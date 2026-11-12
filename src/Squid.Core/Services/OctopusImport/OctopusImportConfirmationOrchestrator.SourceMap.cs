@@ -46,8 +46,12 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     {
         var (fingerprint, detailFingerprint) = Fingerprints(execution, mapping);
 
-        return new OctopusImportSourceMapRow(execution.DestinationSpaceId, mapping.SourceType, mapping.SourceId, mapping.DestinationId, mapping.OutcomeState.ToString(), fingerprint, detailFingerprint);
+        return new OctopusImportSourceMapRow(execution.DestinationSpaceId, mapping.SourceType, mapping.SourceId, mapping.DestinationId, mapping.OutcomeState.ToString(), fingerprint, detailFingerprint) { DetailsCleared = IsDetailsCleared(execution, mapping) };
     }
+
+    // A history unit re-created without details: the details its stored fingerprint describes no longer exist.
+    private static bool IsDetailsCleared(ConfirmationExecutionContext execution, OctopusImportIdMappingDto mapping)
+        => mapping.SourceType == nameof(OctopusResourceKind.Deployment) && execution.HistoryDetailsCleared.Contains(mapping.SourceId);
 
     // Only what this confirmation wrote is fingerprinted; a reused row records none, so the stored fingerprints are kept.
     private static (string Fingerprint, string DetailFingerprint) Fingerprints(ConfirmationExecutionContext execution, OctopusImportIdMappingDto mapping)

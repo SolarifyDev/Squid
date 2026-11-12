@@ -131,6 +131,21 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
+    // A history unit whose task was re-created without details no longer holds them: keeping the stored detail
+    // fingerprint would make every later REST fetch skip the details for good.
+    [Fact]
+    public async Task Upsert_DetailsCleared_ClearsStoredDetailFingerprint_KeepsTheRest()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            await provider.UpsertAsync([Row("Deployment", "Deployments-1", 30, "Created", "fp-d", "fp-details"), Row("Deployment", "Deployments-2", 31, "Created", "fp-d2", "fp-details2")], Guid.NewGuid());
+
+            await provider.UpsertAsync([Row("Deployment", " deployments-1 ", 30, "Reused", "fp-new") with { DetailsCleared = true }], Guid.NewGuid());
+
+            Describe(await LoadRawRowsAsync(db)).ShouldBe([$"{SpaceId}|Deployment|DEPLOYMENTS-1|30|Created|fp-new|", $"{SpaceId}|Deployment|DEPLOYMENTS-2|31|Created|fp-d2|fp-details2"], ignoreOrder: true);
+        });
+    }
+
     [Fact]
     public async Task Upsert_NewDestination_ReplacesOutcomeAndFingerprints()
     {
@@ -200,13 +215,17 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         {
             var builder = new TestDataBuilder(repository, unitOfWork);
             var environment = await builder.CreateEnvironmentAsync(Unique("Env"));
-            var release = await builder.CreateReleaseAsync(0, 0, "1.0.0");
+            var project = await builder.CreateProjectAsync(0);
+            var channel = await builder.CreateChannelAsync(project.Id);
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0");
+            var orphanRelease = await builder.CreateReleaseAsync(project.Id + 1000, channel.Id, "2.0.0");
 
             await provider.UpsertAsync([
                 Row("Environment", "Environments-1", environment.Id, "Created", "fp-env"),
                 Row("Environment", "Environments-2", environment.Id + 1000, "Created"),
                 Row("Release", "Releases-1", release.Id, "Created", "fp-rel"),
                 Row("Release", "Releases-2", release.Id + 1000, "Created"),
+                Row("Release", "Releases-3", orphanRelease.Id, "Created"),
                 Row("Certificate", "Certificates-1", environment.Id, "Created"),
                 Row("Release", "Releases-9", release.Id, "Created", spaceId: SpaceId + 1)], Guid.NewGuid());
 
@@ -218,8 +237,34 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             prior.TryGet("Release", "Releases-1", out var releaseMapping).ShouldBeTrue();
             releaseMapping.DestinationId.ShouldBe(release.Id);
             prior.TryGet("Release", "Releases-2", out _).ShouldBeFalse(customMessage: "a row whose destination was deleted must be dropped as stale");
+            prior.TryGet("Release", "Releases-3", out _).ShouldBeFalse(customMessage: "a release whose project was deleted is an orphan, so its row must be dropped as stale");
             prior.TryGet("Certificate", "Certificates-1", out _).ShouldBeFalse(customMessage: "a type with no known table can never be verified, so it is never trusted");
             prior.InstallationId.ShouldBeNull();
+        });
+    }
+
+    // Squid deletes never cascade: when an owner row is deleted, every row it owned survives as an orphan, and a map
+    // row pointing at such an orphan must be stale too, or the re-created owner would be left empty.
+    [Theory]
+    [InlineData("project", "Project", "Channel,VariableSet:project,Variable:project,DeploymentProcess,DeploymentStep,DeploymentAction,Release,Deployment")]
+    [InlineData("library_variable_set", "LibraryVariableSet", "VariableSet:library,Variable:library")]
+    [InlineData("lifecycle", "Lifecycle", "LifecyclePhase")]
+    [InlineData("channel", "Channel", "Release,Deployment")]
+    [InlineData("release", "Release", "Deployment")]
+    [InlineData("environment", "Environment", "Deployment")]
+    public async Task Load_OwnerDeleted_DropsTheRowsItOwned(string ownerTable, string ownerLabel, string expectedStale)
+    {
+        await Run<SquidDbContext, IRepository, IUnitOfWork, IOctopusImportSourceMapDataProvider>(async (db, repository, unitOfWork, provider) =>
+        {
+            var rows = await SeedOwnerGraphAsync(new TestDataBuilder(repository, unitOfWork));
+            await provider.UpsertAsync(rows.Values.ToList(), Guid.NewGuid());
+            (await provider.LoadAsync(SpaceId)).Mappings.Count.ShouldBe(rows.Count, "every row is live while its owners exist");
+
+            await db.Database.ExecuteSqlRawAsync($"DELETE FROM {ownerTable} WHERE id = {{0}}", rows[ownerLabel].DestinationId);
+
+            var prior = await provider.LoadAsync(SpaceId);
+            var stale = rows.Where(pair => pair.Key != ownerLabel && !prior.TryGet(pair.Value.SourceType, pair.Value.SourceId, out _)).Select(pair => pair.Key);
+            stale.ShouldBe(expectedStale.Split(','), ignoreOrder: true);
         });
     }
 
@@ -379,6 +424,43 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
 
     private static OctopusResourceNode ReleaseNode(string id, string projectId)
         => new(id, "1.0.0", OctopusResourceKind.Release, OctopusDocumentKind.Release, $"{id}.json", projectId, null, false, new OctopusReleaseDto { Id = id, ProjectId = projectId, Version = "1.0.0" });
+
+    // Every owned kind with its owners, keyed by a test label.
+    private static async Task<Dictionary<string, OctopusImportSourceMapRow>> SeedOwnerGraphAsync(TestDataBuilder builder)
+    {
+        var projectSet = await builder.CreateVariableSetAsync();
+        var librarySet = await builder.CreateVariableSetAsync(Squid.Message.Enums.VariableSetOwnerType.LibraryVariableSet);
+        var library = await builder.CreateLibraryVariableSetAsync(librarySet.Id, Unique("Library"));
+        var process = await builder.CreateDeploymentProcessAsync();
+        var project = await builder.CreateProjectAsync(projectSet.Id, process.Id);
+        var step = await builder.CreateDeploymentStepAsync(process.Id, 1, "Step");
+        var action = await builder.CreateDeploymentActionAsync(step.Id, 1, "Action");
+        var lifecycle = await builder.CreateLifecycleAsync(Unique("Lifecycle"));
+        var phase = await builder.CreateEmptyLifecyclePhaseAsync(lifecycle.Id);
+        var environment = await builder.CreateEnvironmentAsync(Unique("Env"));
+        var channel = await builder.CreateChannelAsync(project.Id);
+        var release = await builder.CreateReleaseAsync(project.Id, channel.Id);
+        var deployment = await builder.CreateDeploymentAsync(project.Id, environment.Id, release.Id, 0, channel.Id);
+
+        return new Dictionary<string, OctopusImportSourceMapRow>
+        {
+            ["Project"] = Row("Project", "Projects-1", project.Id, "Created"),
+            ["LibraryVariableSet"] = Row("LibraryVariableSet", "LibraryVariableSets-1", library.Id, "Created"),
+            ["Lifecycle"] = Row("Lifecycle", "Lifecycles-1", lifecycle.Id, "Created"),
+            ["Environment"] = Row("Environment", "Environments-1", environment.Id, "Created"),
+            ["Channel"] = Row("Channel", "Channels-1", channel.Id, "Created"),
+            ["VariableSet:project"] = Row("VariableSet", "variableset-Projects-1", projectSet.Id, "Created"),
+            ["Variable:project"] = Row("Variable", "Variables-1", (await builder.CreateVariableAsync(projectSet.Id, "Project", "1")).Id, "Created"),
+            ["VariableSet:library"] = Row("VariableSet", "variableset-LibraryVariableSets-1", librarySet.Id, "Created"),
+            ["Variable:library"] = Row("Variable", "Variables-2", (await builder.CreateVariableAsync(librarySet.Id, "Library", "2")).Id, "Created"),
+            ["DeploymentProcess"] = Row("DeploymentProcess", "deploymentprocess-Projects-1", process.Id, "Created"),
+            ["DeploymentStep"] = Row("DeploymentStep", "Steps-1", step.Id, "Created"),
+            ["DeploymentAction"] = Row("DeploymentAction", "Actions-1", action.Id, "Created"),
+            ["LifecyclePhase"] = Row("LifecyclePhase", "Phases-1", phase.Id, "Created"),
+            ["Release"] = Row("Release", "Releases-1", release.Id, "Created"),
+            ["Deployment"] = Row("Deployment", "Deployments-1", deployment.Id, "Created")
+        };
+    }
 
     private static OctopusImportSourceMapRow Row(string type, string id, int destinationId, string outcome, string fingerprint = null, string detailFingerprint = null, int spaceId = SpaceId)
         => new(spaceId, type, id, destinationId, outcome, fingerprint, detailFingerprint);

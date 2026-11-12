@@ -676,7 +676,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                 resource));
         }
 
-        if (channel.IsDefault)
+        if (channel.IsDefault && !IsProjectImportedBefore(execution, channel.ProjectId))
         {
             var defaultChannel = await _channelDataProvider
                 .GetDefaultChannelByProjectIdAsync(projectId, ct)
@@ -717,6 +717,10 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
         execution.AddCreated(resource, response.Data.Id);
     }
+
+    // A project imported by an earlier confirmation keeps its default channel; only a project created now takes Octopus' default.
+    private static bool IsProjectImportedBefore(ConfirmationExecutionContext execution, string projectSourceId)
+        => execution.Prior.TryGet(OctopusResourceKind.Project.ToString(), projectSourceId, out _);
 
     private static void MarkDeploymentSettingsHandled(
         ConfirmationExecutionContext execution,
@@ -1095,6 +1099,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
         /// <summary>Task and detail fingerprints of the history units this confirmation wrote, keyed by deployment source id.</summary>
         public Dictionary<string, (string Fingerprint, string DetailFingerprint)> HistoryFingerprints { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Deployment source ids whose history unit was rewritten without details, so their stored detail fingerprint is cleared.</summary>
+        public HashSet<string> HistoryDetailsCleared { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public IReadOnlyList<OctopusResourceNode> CurrentResources { get; }
 

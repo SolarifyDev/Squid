@@ -22,16 +22,17 @@ public sealed partial class OctopusImportConfirmationRunner
     private IEnumerable<Permission> RequiredPermissions()
     {
         var currentResources = _ctx.Snapshot.Graph.Resources.GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var previews = _ctx.ValidatedPlan.PreviewPlan.Resources;
 
-        return _ctx.ValidatedPlan.PreviewPlan.Resources
+        return previews
             .Where(r => r.PreviewAction == OctopusImportPreviewAction.Create)
-            .Select(r => ResolvePermission(r, currentResources))
+            .Select(r => ResolvePermission(r, currentResources, previews))
             .Where(permission => permission.HasValue)
             .Select(permission => permission.Value)
             .Distinct();
     }
 
-    private static Permission? ResolvePermission(OctopusImportResourceResultDto previewResource, IReadOnlyDictionary<string, OctopusResourceNode> currentResources)
+    private static Permission? ResolvePermission(OctopusImportResourceResultDto previewResource, IReadOnlyDictionary<string, OctopusResourceNode> currentResources, IReadOnlyList<OctopusImportResourceResultDto> previews)
     {
         if (!currentResources.TryGetValue(previewResource.SourceId, out var resource)) return null;
 
@@ -44,7 +45,7 @@ public sealed partial class OctopusImportConfirmationRunner
             OctopusResourceKind.Account => Permission.AccountCreate,
             OctopusResourceKind.Team => Permission.TeamCreate,
             OctopusResourceKind.LibraryVariableSet => Permission.VariableEdit,
-            OctopusResourceKind.Channel => ResolveChannelPermission(resource),
+            OctopusResourceKind.Channel => ResolveChannelPermission(resource, previews),
             OctopusResourceKind.VariableSet => Permission.VariableEdit,
             OctopusResourceKind.DeploymentProcess => Permission.ProcessEdit,
             OctopusResourceKind.Release => Permission.ReleaseCreate,
@@ -52,6 +53,15 @@ public sealed partial class OctopusImportConfirmationRunner
         };
     }
 
-    private static Permission ResolveChannelPermission(OctopusResourceNode resource)
-        => resource.GetSource<OctopusChannelDto>()?.IsDefault == true ? Permission.ChannelEdit : Permission.ChannelCreate;
+    // A default channel takes over the default channel created with its project (an edit); under a project imported
+    // before, confirmation creates it as a regular channel.
+    private static Permission ResolveChannelPermission(OctopusResourceNode resource, IReadOnlyList<OctopusImportResourceResultDto> previews)
+    {
+        var channel = resource.GetSource<OctopusChannelDto>();
+
+        return channel?.IsDefault == true && !IsProjectAlreadyImported(channel.ProjectId, previews) ? Permission.ChannelEdit : Permission.ChannelCreate;
+    }
+
+    private static bool IsProjectAlreadyImported(string projectSourceId, IReadOnlyList<OctopusImportResourceResultDto> previews)
+        => previews.Any(p => p.SourceType == nameof(OctopusResourceKind.Project) && string.Equals(p.SourceId, projectSourceId, StringComparison.OrdinalIgnoreCase) && p.PreviewAction == OctopusImportPreviewAction.AlreadyImported);
 }

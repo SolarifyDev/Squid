@@ -101,15 +101,16 @@ public static class OctopusImportPriorMappingPolicy
         return !string.IsNullOrWhiteSpace(ownerId) && ownerActionOf?.Invoke(ownerId) == OctopusImportPreviewAction.AlreadyImported;
     }
 
-    // A channel added in Octopus after the first import is created under the existing project. The default
-    // channel is never remapped: creating it would overwrite the existing project's default channel.
+    // A channel added in Octopus after the first import is created under the existing project. The default channel
+    // is never remapped (that would overwrite the project's default channel): confirmation creates it as a regular
+    // channel, so the releases and deployments on Octopus' new default channel are still imported.
     private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node)
     {
         if (node.Kind != OctopusResourceKind.Channel) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
 
-        return node.GetSource<OctopusChannelDto>()?.IsDefault == true
-            ? new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, DefaultChannelNotRemapped(node))
-            : new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null);
+        var isDefault = node.GetSource<OctopusChannelDto>()?.IsDefault == true;
+
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefault ? DefaultChannelNotRemapped(node) : null);
     }
 
     private static bool TryGetPrior(OctopusImportPriorMappings prior, OctopusResourceNode node, out OctopusImportPriorMapping mapping)
@@ -119,7 +120,7 @@ public static class OctopusImportPriorMappingPolicy
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ChangedSinceLastImport, $"This {node.Kind} changed in Octopus since it was imported. Imported configuration is never overwritten; apply the change in Squid if it is still wanted.", node);
 
     private static OctopusImportDiagnosticDto DefaultChannelNotRemapped(OctopusResourceNode node)
-        => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped, "The project was imported before and already has its default channel; this Octopus default channel is not imported again.", node);
+        => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped, "The project was imported before and keeps its default channel; this Octopus default channel is created as a regular channel.", node);
 
     private static OctopusImportDiagnosticDto Diagnostic(OctopusImportCompatibilitySeverity severity, string code, string message, OctopusResourceNode node)
         => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = severity, Code = code, Message = message, SourceId = node?.SourceId, ResourceType = node?.Kind.ToString(), ResourceName = node?.Name });

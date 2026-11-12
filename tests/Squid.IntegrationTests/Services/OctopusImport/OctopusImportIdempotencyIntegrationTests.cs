@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Persistence.Entities.Events;
+using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.History;
@@ -232,6 +233,89 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
     }
 
     [Fact]
+    public async Task TaskRowGone_ReimportWithoutDetails_ClearsTheStoredDetailFingerprint()
+    {
+        var sessionDirectory = SessionDirectory();
+        var details = Details();
+        await StoreDetailsAsync(sessionDirectory, details);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        await DeleteTaskAsync((await SingleAsync<Deployment>()).TaskId ?? 0);
+
+        await ConfirmSucceededAsync(Archive(new HistorySpec()));
+
+        var stored = (await SourceMapAsync()).Single(m => m.SourceType == "Deployment");
+        stored.DetailFingerprint.ShouldBeNull("the re-created task holds no details, so a later REST fetch must fetch them again");
+        stored.Fingerprint.ShouldNotBeNull();
+        (await CountAsync<ActivityLog>()).ShouldBe(1);
+    }
+
+    // Octopus moved the project's default to a channel created after the first import: the project keeps its default
+    // channel, and the new one is created as a regular channel so its releases and deployments still arrive.
+    [Fact]
+    public async Task NewOctopusDefaultChannel_UnderImportedProject_IsCreatedAsRegularChannelWithItsHistory()
+    {
+        await ConfirmSucceededAsync(Archive(new HistorySpec()));
+        var original = await SingleAsync<Channel>();
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { MovedDefaultChannel = true }));
+
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceId is "Channels-9" or "Releases-2" or "Deployments-2" or "ServerTasks-2").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        var channels = await ListAsync<Channel>();
+        channels.Count.ShouldBe(2);
+        channels.Single(c => c.IsDefault).Id.ShouldBe(original.Id);
+        var added = channels.Single(c => c.Id != original.Id);
+        added.Name.ShouldBe("Hotfix");
+        var release = (await ListAsync<Release>()).Single(r => r.Version == "2.0.0");
+        release.ChannelId.ShouldBe(added.Id);
+        (await ListAsync<Deployment>()).Where(d => d.ReleaseId == release.Id).ShouldHaveSingleItem();
+    }
+
+    // Squid deletes never cascade, so the deleted project's channel, variable set, process, releases and history rows
+    // survive as orphans: their map rows must not count as "already imported" under the re-created project.
+    [Fact]
+    public async Task DeletedProject_ReimportRecreatesTheWholeProject()
+    {
+        var archive = Archive(new HistorySpec { WithConfiguration = true });
+        await ConfirmSucceededAsync(archive);
+        var deleted = await SingleAsync<Project>();
+        await Run<IProjectDataProvider>(provider => provider.DeleteProjectsAsync([deleted]));
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(archive);
+
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is not ("ProjectGroup" or "Environment" or "Lifecycle" or "LifecyclePhase")).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        var project = await SingleAsync<Project>();
+        project.Id.ShouldNotBe(deleted.Id);
+        (await ListAsync<Variable>()).Where(v => v.VariableSetId == project.VariableSetId).Select(v => v.Name).ShouldBe(["Imported variable"]);
+        (await ListAsync<DeploymentStep>()).Where(s => s.ProcessId == project.DeploymentProcessId).Select(s => s.Name).ShouldBe(["Imported step"]);
+        var release = (await ListAsync<Release>()).Where(r => r.ProjectId == project.Id).ShouldHaveSingleItem();
+        (await ListAsync<Channel>()).Where(c => c.ProjectId == project.Id).Select(c => c.Id).ShouldContain(release.ChannelId);
+        var deployment = (await ListAsync<Deployment>()).Where(d => d.ProjectId == project.Id).ShouldHaveSingleItem();
+        deployment.ReleaseId.ShouldBe(release.Id);
+        (await SourceMapAsync()).Single(m => m.SourceType == "Release").DestinationId.ShouldBe(release.Id);
+        (await PreviewAsync(archive)).PreviewPlan.Resources.Where(r => r.SourceType is "Variable" or "DeploymentStep" or "Release" or "Deployment").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported);
+    }
+
+    [Fact]
+    public async Task DeletedRelease_ReimportRecreatesTheReleaseWithItsHistory()
+    {
+        var archive = Archive(new HistorySpec());
+        await ConfirmSucceededAsync(archive);
+        var deleted = await SingleAsync<Release>();
+        await Run<SquidDbContext>(db => db.Database.ExecuteSqlRawAsync("DELETE FROM release WHERE id = {0}", deleted.Id));
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(archive);
+
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        var release = await SingleAsync<Release>();
+        release.Id.ShouldNotBe(deleted.Id);
+        (await ListAsync<Deployment>()).Where(d => d.ReleaseId == release.Id).ShouldHaveSingleItem();
+        (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DestinationId.ShouldBe((await ListAsync<Deployment>()).Single(d => d.ReleaseId == release.Id).Id);
+    }
+
+    [Fact]
     public async Task ConcurrentConfirms_SecondFailsStale_NoDuplicates()
     {
         var first = await PreviewAsync(Archive(new HistorySpec()));
@@ -416,6 +500,8 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         public string ErrorMessage { get; init; } = "";
         public string DetailFingerprint { get; init; }
         public string TaskName { get; init; } = "Deploy";
+        public bool WithConfiguration { get; init; }
+        public bool MovedDefaultChannel { get; init; }
     }
 
     private string SessionDirectory()
@@ -457,6 +543,10 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
             Artifacts = [new OctopusArtifactDto { Id = "Artifacts-1", Filename = "deploy.log", Source = "Step 1", Created = DateTimeOffset.Parse("2024-07-10T09:48:00Z") }]
         };
 
+    private const string ConfiguredVariable = """{"Id":"Variables-1","Name":"Imported variable","Value":"imported-value","Type":"String"}""";
+
+    private const string ConfiguredStep = """{"Id":"Steps-1","Name":"Imported step","Condition":"Success","StartTrigger":"StartAfterPrevious","Actions":[{"Id":"Actions-1","Name":"Imported action","ActionType":"Octopus.Script","IsRequired":true,"Properties":{"Octopus.Action.RunOnServer":"true","Octopus.Action.Script.ScriptSource":"Inline","Octopus.Action.Script.Syntax":"Bash","Octopus.Action.Script.ScriptBody":"echo hi"}}]}""";
+
     private string Archive(HistorySpec spec)
     {
         var completed = spec.CompletedTime == null ? "null" : $"\"{spec.CompletedTime}\"";
@@ -467,9 +557,9 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
             Document("Environments-1", "StaticDeploymentEnvironment", """{"Id":"Environments-1","Name":"Idempotent TEST","Slug":"idempotent-test"}"""),
             Document("Lifecycles-1", "Lifecycle", """{"Id":"Lifecycles-1","Name":"Idempotent lifecycle","Slug":"idempotent-lifecycle","Phases":[{"Id":"Phases-1","Name":"TEST","AutomaticDeploymentTargets":["Environments-1"]}]}"""),
             Document("Projects-1", "Project", """{"Id":"Projects-1","Name":"Idempotent project","Slug":"idempotent-project","ProjectGroupId":"ProjectGroups-1","LifecycleId":"Lifecycles-1","VariableSetId":"variableset-Projects-1","DeploymentProcessId":"deploymentprocess-Projects-1"}"""),
-            Document("variableset-Projects-1", "ProjectVariables", """{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[]}"""),
-            Document("deploymentprocess-Projects-1", "DeploymentProcess", """{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[]}"""),
-            Document("Channels-1", "Channel", """{"Id":"Channels-1","Name":"Default","Slug":"default","ProjectId":"Projects-1","IsDefault":true}"""),
+            Document("variableset-Projects-1", "ProjectVariables", $$"""{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{{(spec.WithConfiguration ? ConfiguredVariable : "")}}]}"""),
+            Document("deploymentprocess-Projects-1", "DeploymentProcess", $$"""{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{{(spec.WithConfiguration ? ConfiguredStep : "")}}]}"""),
+            Document("Channels-1", "Channel", $$"""{"Id":"Channels-1","Name":"Default","Slug":"default","ProjectId":"Projects-1","IsDefault":{{(spec.MovedDefaultChannel ? "false" : "true")}}}"""),
             Document("Releases-1", "Release", $$"""{"Id":"Releases-1","ProjectId":"Projects-1","ChannelId":"Channels-1","Version":"1.0.0","ReleaseNotes":{{JsonSerializer.Serialize(spec.ReleaseNotes)}},"Assembled":"2024-07-01T08:00:00+00:00"}"""),
             Document("ServerTasks-1", "ServerTask", $$"""{"Id":"ServerTasks-1","Name":"{{spec.TaskName}}","Description":"Deploy idempotent release","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"{{spec.State}}","QueueTime":"2024-07-10T09:47:02+00:00","StartTime":"2024-07-10T09:47:03+00:00","CompletedTime":{{completed}},"ErrorMessage":{{JsonSerializer.Serialize(spec.ErrorMessage)}},"HasWarningsOrErrors":false,"DurationSeconds":68{{detail}}}"""),
             Document("Deployments-1", "Deployment", """{"Id":"Deployments-1","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":["Machines-1"],"Created":"2024-07-10T09:47:02+00:00"}""")
@@ -478,10 +568,20 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
 
-        WriteArchive(path, documents);
+        WriteArchive(path, spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents);
 
         return path;
     }
+
+    // A channel created in Octopus after the first import and made the project default, with one release deployed on it.
+    private static (string Id, string DocumentType, string Json)[] NewDefaultChannelDocuments()
+        =>
+        [
+            Document("Channels-9", "Channel", """{"Id":"Channels-9","Name":"Hotfix","Slug":"hotfix","ProjectId":"Projects-1","IsDefault":true}"""),
+            Document("Releases-2", "Release", """{"Id":"Releases-2","ProjectId":"Projects-1","ChannelId":"Channels-9","Version":"2.0.0","ReleaseNotes":"","Assembled":"2024-08-01T08:00:00+00:00"}"""),
+            Document("ServerTasks-2", "ServerTask", """{"Id":"ServerTasks-2","Name":"Deploy","Description":"Deploy hotfix release","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"Success","QueueTime":"2024-08-10T09:47:02+00:00","StartTime":"2024-08-10T09:47:03+00:00","CompletedTime":"2024-08-10T09:48:11+00:00","ErrorMessage":"","HasWarningsOrErrors":false,"DurationSeconds":68}"""),
+            Document("Deployments-2", "Deployment", """{"Id":"Deployments-2","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-9","EnvironmentId":"Environments-1","ReleaseId":"Releases-2","TaskId":"ServerTasks-2","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":["Machines-1"],"Created":"2024-08-10T09:47:02+00:00"}""")
+        ];
 
     private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents)
     {

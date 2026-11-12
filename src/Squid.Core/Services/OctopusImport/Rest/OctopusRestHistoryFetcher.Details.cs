@@ -26,9 +26,9 @@ public sealed partial class OctopusRestHistoryFetcher
         _ctx.Cursor.Counts.DetailsFetched++;
     }
 
-    /// <summary>The incremental skip: the source map holds details for this deployment and its task has not changed since.</summary>
+    /// <summary>The incremental skip: the source map holds details for this deployment, its imported task row still exists and the task has not changed since.</summary>
     public static bool IsUnchangedWithStoredDetails(OctopusImportPriorMappings prior, OctopusDeploymentDto deployment, OctopusServerTaskDto task)
-        => prior.TryGet(OctopusResourceKind.Deployment.ToString(), deployment.Id, out var stored) && stored.DetailFingerprint != null && stored.Fingerprint == OctopusImportFingerprint.ForTask(task);
+        => prior.TryGet(OctopusResourceKind.Deployment.ToString(), deployment.Id, out var stored) && stored.DetailFingerprint != null && stored.Fingerprint == OctopusImportFingerprint.ForTask(task) && prior.TryGet(OctopusResourceKind.ServerTask.ToString(), task.Id, out _);
 
     private bool IsUnchangedWithStoredDetails(OctopusDeploymentDto deployment, OctopusServerTaskDto task)
         => IsUnchangedWithStoredDetails(_ctx.Context.PriorMappings ?? OctopusImportPriorMappings.Empty, deployment, task);

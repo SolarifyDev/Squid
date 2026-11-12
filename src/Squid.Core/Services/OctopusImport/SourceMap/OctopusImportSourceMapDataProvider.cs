@@ -24,8 +24,13 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
 
     public async Task UpsertAsync(IReadOnlyList<OctopusImportSourceMapRow> rows, Guid sessionId, CancellationToken ct = default)
     {
-        foreach (var batch in DistinctByKey(rows).Chunk(UpsertBatchSize))
+        var distinct = DistinctByKey(rows).ToList();
+
+        foreach (var batch in distinct.Chunk(UpsertBatchSize))
             await UpsertBatchAsync(batch, sessionId, ct).ConfigureAwait(false);
+
+        foreach (var row in distinct.Where(r => r.DetailsCleared))
+            await ClearDetailFingerprintAsync(row, ct).ConfigureAwait(false);
     }
 
     public async Task AcquireSpaceLockAsync(int spaceId, CancellationToken ct = default)
@@ -38,9 +43,12 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         await repository.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({AdvisoryLockNamespace}, hashtext({key}))", ct).ConfigureAwait(false);
     }
 
-    // One EXISTS-filtered SELECT per known type, combined with UNION ALL: a row survives only while its destination row exists.
+    // One EXISTS-filtered SELECT per known type, combined with UNION ALL: a row survives only while its destination row and that row's owners exist.
     private static string BuildLiveRowsSql()
-        => string.Join("\nUNION ALL\n", OctopusImportSourceMapTables.ByKind.Select(pair => $"SELECT m.* FROM octopus_import_source_map m WHERE m.space_id = {{0}} AND m.source_type = '{pair.Key}' AND EXISTS (SELECT 1 FROM {pair.Value} d WHERE d.id = m.destination_id)"));
+        => string.Join("\nUNION ALL\n", OctopusImportSourceMapTables.ByKind.Select(pair => $"SELECT m.* FROM octopus_import_source_map m WHERE m.space_id = {{0}} AND m.source_type = '{pair.Key}' AND EXISTS (SELECT 1 FROM {pair.Value} d WHERE d.id = m.destination_id{OwnerCondition(pair.Key)})"));
+
+    private static string OwnerCondition(string sourceType)
+        => OctopusImportSourceMapTables.OwnerPredicates.TryGetValue(sourceType, out var predicate) ? $" AND {predicate}" : string.Empty;
 
     private static OctopusImportPriorMappings ToPriorMappings(IReadOnlyList<OctopusImportSourceMap> rows)
     {
@@ -85,6 +93,15 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         var parameters = batch.SelectMany((row, index) => RowParameters(row, index, sessionId)).ToArray();
 
         await repository.Database.ExecuteSqlRawAsync(BuildUpsertSql(batch.Count), parameters, ct).ConfigureAwait(false);
+    }
+
+    // The upsert keeps a stored detail fingerprint when the incoming one is null, so "the details are gone" is its own write.
+    private async Task ClearDetailFingerprintAsync(OctopusImportSourceMapRow row, CancellationToken ct)
+    {
+        var sourceType = row.SourceType.Trim();
+        var sourceId = OctopusImportPriorMappings.Normalize(row.SourceId);
+
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE octopus_import_source_map SET detail_fingerprint = NULL WHERE space_id = {row.SpaceId} AND source_type = {sourceType} AND source_id = {sourceId}", ct).ConfigureAwait(false);
     }
 
     private static IEnumerable<NpgsqlParameter> RowParameters(OctopusImportSourceMapRow row, int index, Guid sessionId)

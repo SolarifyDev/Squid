@@ -60,15 +60,15 @@ public class OctopusImportPriorMappingPolicyTests
     }
 
     [Fact]
-    public void DefaultChannelUnderExistingProject_Skips()
+    public void DefaultChannelUnderExistingProject_IsCreatedAsARegularChannel()
     {
         var channel = Node(OctopusResourceKind.Channel, "Channels-1", parentSourceId: null, ownerProjectId: "Projects-1", source: new OctopusChannelDto { Id = "Channels-1", Name = "Default", IsDefault = true });
 
         var decision = OctopusImportPriorMappingPolicy.Decide(channel, OctopusImportPriorMappings.Empty, id => id == "Projects-1" ? OctopusImportPreviewAction.AlreadyImported : null);
 
-        decision.Action.ShouldBe(OctopusImportPreviewAction.Skip);
+        decision.Action.ShouldBe(OctopusImportPreviewAction.Create, "skipping it would skip every release and deployment on Octopus' new default channel");
         decision.DestinationId.ShouldBeNull();
-        decision.Diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
+        decision.Diagnostic.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info);
         decision.Diagnostic.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped);
         decision.Diagnostic.SourceId.ShouldBe("Channels-1");
     }
@@ -83,7 +83,7 @@ public class OctopusImportPriorMappingPolicyTests
     }
 
     [Fact]
-    public void PriorMappedChannel_WinsOverTheDefaultChannelSkip()
+    public void PriorMappedDefaultChannel_StaysAlreadyImported()
     {
         var channel = Node(OctopusResourceKind.Channel, "Channels-1", parentSourceId: null, ownerProjectId: "Projects-1", source: new OctopusChannelDto { Id = "Channels-1", IsDefault = true });
         var prior = Prior(("Channel", "channels-1", new OctopusImportPriorMapping(42, "Created", null, null)));
