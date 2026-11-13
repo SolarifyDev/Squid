@@ -135,6 +135,52 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         cursor.SkippedItems.ShouldHaveSingleItem().Path.ShouldContain("skip=0&take=100");
     }
 
+    // Only-fill: a task whose details Octopus partly refused gets no details and no detail fingerprint, so neither the
+    // importer nor the next fetch takes the partial set as complete. Once the refusal clears, the next fetch (seeing
+    // what the importer stored: the task, no detail fingerprint) fetches the whole set again.
+    [Theory]
+    [InlineData("/details")]
+    [InlineData("/interruptions")]
+    [InlineData("/events")]
+    [InlineData("/artifacts")]
+    public async Task RejectedDetailRequest_TaskKeptWithoutAnyDetails_FetchedInFullOnceTheRefusalClears(string refusedPath)
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        var refusing = true;
+        server.Override = request => refusing && request.RequestUri!.AbsolutePath.EndsWith(refusedPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
+
+        var refused = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+
+        (refused.Counts.ServerTasks, refused.Counts.DetailsFetched, refused.Counts.ItemsRejected).ShouldBe((1, 0, 1));
+        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull("a partial set must never be stored as the task's details");
+        var task = await BundledTaskAsync("ServerTasks-1");
+        (task.DetailLevel, task.DetailFingerprint, task.DetailsIncomplete).ShouldBe((0, null, true));
+
+        refusing = false;
+        var prior = Prior(("Project", "Projects-1", null, null), ("Deployment", "Deployments-1", OctopusImportFingerprint.ForTask(task), null), ("ServerTask", "ServerTasks-1", null, null));
+        var refilled = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), prior));
+
+        (refilled.Counts.DetailsFetched, refilled.Counts.DetailsSkipped, refilled.Counts.ItemsRejected).ShouldBe((1, 0, 0));
+        var details = await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1");
+        (details.Interruptions.Count, details.Events.Count, details.Artifacts.Count).ShouldBe((1, 1, 1));
+        var complete = await BundledTaskAsync("ServerTasks-1");
+        (complete.DetailFingerprint, complete.DetailsIncomplete).ShouldBe((OctopusImportFingerprint.ForTaskDetails(details), false));
+    }
+
+    // A refusal outside the task's details (the machine names) leaves the details complete.
+    [Fact]
+    public async Task RejectedMachineNames_DetailsStillComplete()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/machines/all", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
+
+        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+
+        var task = await BundledTaskAsync("ServerTasks-1");
+        (task.DetailLevel, task.DetailsIncomplete).ShouldBe((1, false));
+        task.DetailFingerprint.ShouldNotBeNull();
+    }
+
     // A refusal recorded inside an item that then fails is not committed: the retry records it once.
     [Fact]
     public async Task RejectedRequestInAnItemThatFails_CountedOnceAfterTheRetry()
@@ -257,12 +303,16 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         progress.Counts.Deployments.ShouldBe(1);
     }
 
-    // Stuck before reaching an item (the key's identity, the space, the bundle) there is nothing to skip: it always fails.
-    [Fact]
-    public async Task ChunkAbandonedBeforeAnyItem_NeverSkipsAnything()
+    // Stuck outside an item (the key's identity, a page of deployments, the page's task summaries) no item is at fault,
+    // so none is skipped: skipping the first item of the page would drop healthy history. It always fails instead.
+    [Theory]
+    [InlineData("/api/users/me")]
+    [InlineData("/api/Spaces-1/deployments")]
+    [InlineData("/api/tasks")]
+    public async Task ChunkAbandonedOutsideAnItem_NeverSkipsAnything(string stalledPath)
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
-        server.Override = request => request.RequestUri!.AbsolutePath == "/api/users/me" ? OctopusRestStubHandler.StalledBody() : null;
+        server.Override = request => request.RequestUri!.AbsolutePath == stalledPath ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
@@ -271,6 +321,45 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         (cursor.Skip, cursor.Counts.ItemsAbandoned).ShouldBe((0, 0));
         cursor.AbandonCounts.ShouldBeEmpty();
+    }
+
+    // An item committed earlier in the same chunk does not make a later page request count as an item in flight.
+    [Fact]
+    public async Task PageStalledAfterAnItemOfTheSameChunk_NotCountedAgainstAnyItem()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/deployments", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(1), ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+
+        (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
+
+        (cursor.Counts.Releases, cursor.Phase).ShouldBe((1, OctopusHistoryFetchPhase.Deployments));
+        cursor.AbandonCounts.ShouldBeEmpty();
+    }
+
+    // Every read of a deployment unit happens before its first write, so an item abandoned part way (here on the
+    // machine names, after its task details) leaves nothing of itself in the bundle.
+    [Fact]
+    public async Task ItemAbandonedAfterItsDetails_LeavesNoDocumentOfItselfInTheBundle()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
+        var stalls = 0;
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/machines/all", StringComparison.Ordinal) && stalls++ < OctopusRestHistoryFetcher.MaxAbandonments ? OctopusRestStubHandler.StalledBody() : null;
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+
+        for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
+            await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)));
+
+        while (!cursor.Done) await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
+
+        (cursor.Counts.ItemsAbandoned, cursor.Counts.Deployments, cursor.Counts.ServerTasks).ShouldBe((1, 1, 1));
+        var bundled = (await BundleGraphAsync()).Resources.Select(r => r.SourceId).ToList();
+        bundled.ShouldContain("ServerTasks-2");
+        bundled.ShouldNotContain("ServerTasks-1");
+        bundled.ShouldNotContain("Deployments-1");
+        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull();
     }
 
     [Fact]
@@ -560,6 +649,16 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
     private static OctopusImportPriorMappings Prior(string installationId, params (string Type, string Id, string Fingerprint, string DetailFingerprint)[] rows)
         => new(rows.ToDictionary(r => (r.Type, r.Id), r => new OctopusImportPriorMapping(1, "Created", r.Fingerprint, r.DetailFingerprint)), installationId);
+
+    private async Task<OctopusResourceGraph> BundleGraphAsync()
+    {
+        var bundlePath = Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName);
+        var extraction = await new OctopusImportSourceReader(new OctopusArchiveExtractor(), new OctopusInputExtractor()).ReadAsync(bundlePath);
+
+        return new OctopusResourceGraphBuilder().Build(new OctopusManifestInventoryBuilder().Build(extraction));
+    }
+
+    private async Task<OctopusServerTaskDto> BundledTaskAsync(string taskId) => (await BundleGraphAsync()).Resources.Single(r => r.SourceId == taskId).GetSource<OctopusServerTaskDto>();
 
     private OctopusExportManifestDto ReadBundleManifest()
     {

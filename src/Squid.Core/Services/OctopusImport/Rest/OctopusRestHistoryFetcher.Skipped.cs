@@ -15,10 +15,11 @@ public sealed partial class OctopusRestHistoryFetcher
     }
 
     // The abandoned chunk is over, so the skip is committed straight to the cursor that is persisted next. A chunk stuck
-    // before it reached an item (pinning, binding, bundling) has no item to skip and only fails.
+    // outside an item (pinning, binding, a page or its task summaries, bundling) has no item at fault and only fails:
+    // skipping the item the cursor points at would drop healthy history.
     private bool SkipIfAbandonedTooOften()
     {
-        if (!_ctx.FetchingItems || CurrentProjectIdOrNull == null) return false;
+        if (!_ctx.InItem || CurrentProjectIdOrNull == null) return false;
 
         var cursor = _ctx.Cursor;
         var key = CurrentItemKey(cursor);

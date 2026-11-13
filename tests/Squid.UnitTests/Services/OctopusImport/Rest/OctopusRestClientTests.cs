@@ -239,6 +239,8 @@ public class OctopusRestClientTests
     [Theory]
     [InlineData("/api/users/Users-1/apikeys")]
     [InlineData("/api/users/me/x")]
+    [InlineData("/api/users/me?skip=..%2F")]   // same endpoint, but the redirect's own query is not one the allowlist accepts
+    [InlineData("/api/users/me?take")]
     public async Task Redirect_SameOriginToAnotherEndpoint_DeniedKeyNotResent(string location)
     {
         var handler = new OctopusRestStubHandler(_ => Redirect(location));
@@ -300,6 +302,17 @@ public class OctopusRestClientTests
 
         handler.PathsAndQueries.ShouldBe(["/api", "/octopus/api"]);
         handler.Requests.ShouldAllBe(r => r.ApiKey == ApiKey);
+    }
+
+    [Fact]
+    public async Task Redirect_PrefixMoveKeepingAnAllowedQuery_Followed()
+    {
+        var handler = new OctopusRestStubHandler(request => request.RequestUri!.AbsolutePath.StartsWith("/octopus/", StringComparison.Ordinal) ? OctopusRestStubHandler.Json(new { Items = Array.Empty<object>() }) : Redirect("/octopus" + request.RequestUri.PathAndQuery));
+        using var client = Client(handler);
+
+        await client.GetAsync<object>("api/Spaces-1/deployments?projects=Projects-1", CancellationToken.None);
+
+        handler.PathsAndQueries.ShouldBe(["/api/Spaces-1/deployments?projects=Projects-1", "/octopus/api/Spaces-1/deployments?projects=Projects-1"]);
     }
 
     [Fact]

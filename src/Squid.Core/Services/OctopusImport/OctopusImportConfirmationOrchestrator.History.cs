@@ -105,10 +105,15 @@ public sealed partial class OctopusImportConfirmationOrchestrator
             execution.MarkOutcome(source.Task, OctopusImportResourceOutcomeState.Updated);
         }
 
-        execution.HistoryFingerprints[source.Deployment.SourceId] = (OctopusImportFingerprint.ForTask(source.TaskDto), childrenReplaced ? source.DetailFingerprint : null);
+        execution.HistoryFingerprints[source.Deployment.SourceId] = (UpdatedTaskFingerprint(source, childrenReplaced), childrenReplaced ? source.DetailFingerprint : null);
 
         if (childrenReplaced && source.DetailFingerprint == null) execution.HistoryDetailsCleared.Add(source.Deployment.SourceId);
     }
+
+    // Kept children whose refresh Octopus partly refused describe an older task: null keeps the stored task fingerprint,
+    // so the next fetch sees the task as changed and reads its details again instead of skipping them as current.
+    private static string UpdatedTaskFingerprint(HistoryUnitSource source, bool childrenReplaced)
+        => source.TaskDto.DetailsIncomplete && !childrenReplaced ? null : OctopusImportFingerprint.ForTask(source.TaskDto);
 
     private async Task<HistoryUnitSource> LoadHistoryUnitSourceAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
     {

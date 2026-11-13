@@ -534,6 +534,12 @@ public class OctopusServerTaskDto : OctopusDocumentDto
     /// <summary>Fingerprint of the stored details, computed by the REST fetch; null when no details were fetched.</summary>
     public string DetailFingerprint { get; set; }
 
+    /// <summary>
+    /// True when Octopus refused part of the task's details: none are stored, and the import keeps the children already
+    /// imported and does not record the task as current, so the next fetch reads the details again.
+    /// </summary>
+    public bool DetailsIncomplete { get; set; }
+
     public List<OctopusInterruptionDto> Interruptions { get; set; } = [];
 
     public List<OctopusEventDto> Events { get; set; } = [];

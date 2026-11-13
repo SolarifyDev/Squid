@@ -193,6 +193,76 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         skipped.Path.ShouldStartWith($"api/Spaces-1/tasks/{TaskId}/details");
     }
 
+    // Only-fill, first import: a task whose artifacts Octopus refuses is imported without details and no detail
+    // fingerprint is stored, so once the refusal clears the next import fetches and fills the whole set.
+    [Fact]
+    public async Task RejectedDetailList_FirstImport_NoDetailFingerprint_FilledOnceTheRefusalClears()
+    {
+        await ImportConfigurationAsync();
+        await using var octopus = OneDeployment().Artifact(TaskId, "Artifacts-1", "deploy.log").FailNext("/artifacts", times: 100, status: HttpStatusCode.Forbidden);
+
+        var refused = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(refused);
+        (refused.Fetch.Counts.ServerTasks, refused.Fetch.Counts.DetailsFetched, refused.Fetch.Counts.ItemsRejected).ShouldBe((1, 0, 1));
+        (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DetailFingerprint.ShouldBeNull("details read only in part are never recorded as imported");
+        (await LogMessagesAsync()).ShouldNotContain($"log of {TaskId}", "a partial set of details is not imported at all");
+
+        octopus.FailNext("/artifacts", times: 0);
+        var filled = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(filled);
+        filled.Fetch.Counts.DetailsFetched.ShouldBe(1, "a task without stored details is fetched again");
+        (await LogMessagesAsync()).ShouldBe([$"log of {TaskId}"]);
+        Details(await SingleAsync<ServerTaskEntity>())["Artifacts"]!.AsArray().ShouldHaveSingleItem();
+        (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DetailFingerprint.ShouldNotBeNull();
+        (await CountAsync<ServerTaskEntity>()).ShouldBe(1);
+    }
+
+    // Only-fill, re-import: a task that changed in Octopus while its events are refused keeps every child already
+    // imported (never replaced by the partial set); its scalars are updated. Once the refusal clears, the next import
+    // fetches the details again (they were not recorded as current) and fills the new event; a further run is up to date.
+    [Fact]
+    public async Task RejectedDetailList_ChangedTask_KeepsImportedChildren_RefilledOnceTheRefusalClears()
+    {
+        await ImportConfigurationAsync();
+        await using var octopus = OneDeployment().Event(DeploymentId, "Events-11", "DeploymentQueued", "Queued", "2024-01-02T03:04:05Z").Interruption(TaskId, "Interruptions-1", "ManualIntervention", isPending: false, result: "Proceed");
+        SetTaskExecuting(octopus);
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        var importedDetails = (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DetailFingerprint;
+        (await EventsAsync()).Select(e => e.Category).ShouldBe([EventCategory.DeploymentQueued]);
+
+        octopus.Tasks[TaskId]["State"] = "Success";
+        octopus.Tasks[TaskId]["CompletedTime"] = "2024-01-02T03:05:06Z";
+        octopus.Event(DeploymentId, "Events-14", "DeploymentSucceeded", "Succeeded", "2024-01-02T03:05:06Z").FailNext("/events", times: 100, status: HttpStatusCode.Forbidden);
+        var refused = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(refused);
+        (refused.Fetch.Counts.DetailsFetched, refused.Fetch.Counts.ItemsRejected).ShouldBe((0, 1));
+        (await SingleAsync<ServerTaskEntity>()).State.ShouldBe(TaskState.Success);
+        (await EventsAsync()).Select(e => e.Category).ShouldBe([EventCategory.DeploymentQueued, EventCategory.DeploymentSucceeded], ignoreOrder: true, "imported events are kept, never replaced by a partial set; only the new terminal event is added");
+        (await CountAsync<DeploymentInterruption>()).ShouldBe(1);
+        (await LogMessagesAsync()).ShouldBe([$"log of {TaskId}"]);
+        (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DetailFingerprint.ShouldBe(importedDetails);
+
+        octopus.FailNext("/events", times: 0);
+        var refilled = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(refilled);
+        refilled.Fetch.Counts.DetailsFetched.ShouldBe(1, "details recorded against an older task are fetched again");
+        (await EventsAsync()).Select(e => e.Category).ShouldBe([EventCategory.DeploymentQueued, EventCategory.DeploymentSucceeded], ignoreOrder: true);
+        (await CountAsync<DeploymentInterruption>()).ShouldBe(1);
+        (await SourceMapAsync()).Single(m => m.SourceType == "Deployment").DetailFingerprint.ShouldNotBe(importedDetails);
+        var before = await CountRowsAsync();
+
+        var upToDate = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(upToDate);
+        upToDate.Fetch.Counts.DetailsSkipped.ShouldBe(1);
+        HistoryActions(upToDate).ShouldAllBe(a => a == OctopusImportPreviewAction.AlreadyImported, Describe(upToDate.PreviewPlan));
+        (await CountRowsAsync()).ShouldBe(before);
+    }
+
     // D12: the fetch is bound to the Octopus user whose key started it. Another user's key is refused (and frees the
     // lease); the original key carries on. The stored binding is an HMAC, never the key.
     [Fact]

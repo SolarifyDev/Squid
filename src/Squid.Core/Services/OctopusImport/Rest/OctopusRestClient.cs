@@ -231,12 +231,13 @@ public sealed class OctopusRestClient : IDisposable
         return target;
     }
 
-    // A redirect may move the API under a prefix or onto https, never to another endpoint: the requested path must end the target's.
+    // A redirect may move the API under a prefix or onto https, never to another endpoint: the requested path must end the
+    // target's, and the target's own query must pass the same allowlist as a request this client makes.
     private void EnsureSameResource(Uri target)
     {
-        var requested = "/" + OctopusRestPathPolicy.PathOf(LastRequestedPath);
+        var requested = OctopusRestPathPolicy.PathOf(LastRequestedPath);
 
-        if (!target.AbsolutePath.EndsWith(requested, StringComparison.OrdinalIgnoreCase))
+        if (!target.AbsolutePath.EndsWith("/" + requested, StringComparison.OrdinalIgnoreCase) || !OctopusRestPathPolicy.IsAllowed(requested + target.Query))
             throw new OctopusRestException(OctopusRestErrorKind.Denied);
     }
 

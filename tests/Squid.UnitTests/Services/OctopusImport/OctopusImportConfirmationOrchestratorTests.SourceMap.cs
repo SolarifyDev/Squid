@@ -249,6 +249,28 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.Single(r => r.SourceType == "Deployment").DetailFingerprint.ShouldBeNull();
     }
 
+    // Only-fill: a changed task whose details the fetch could only partly read keeps its imported children, and the
+    // stored task fingerprint stays the old one, so the next fetch sees the task as changed and fetches the details
+    // again instead of skipping them as already stored.
+    [Theory]
+    [InlineData(true, null)]          // details incomplete → task fingerprint not advanced (null keeps the stored one)
+    [InlineData(false, "current")]    // a source simply without details (an export file) → task fingerprint advanced as before
+    public async Task HistoryUnitUpdate_KeepingStoredChildren_AdvancesTheTaskFingerprintOnlyWhenTheDetailsWereComplete(bool detailsIncomplete, string expected)
+    {
+        var history = HistoryScenario(storedTaskFingerprint: "changed-in-octopus", storedDetailFingerprint: "stored-details");
+        history.TaskDto.DetailsIncomplete = detailsIncomplete;
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var harness = CreateHistoryHarness(history, OctopusImportPreviewAction.Update, 5001, 6001, upserted, CaptureUnits(out var units));
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        var unit = units.ShouldHaveSingleItem();
+        (unit.ScalarChanged, unit.ReplaceChildren).ShouldBe((true, false));
+        var row = upserted.Single(r => r.SourceType == "Deployment");
+        (row.Fingerprint, row.DetailFingerprint, row.DetailsCleared).ShouldBe((expected == null ? null : OctopusImportFingerprint.ForTask(history.TaskDto), null, false));
+    }
+
     [Fact]
     public async Task UpdateOfAConfigurationKind_IsStillRejected()
     {
@@ -283,7 +305,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
 
     private sealed record HistoryNodes(ScenarioNodes Nodes, OctopusResourceNode Channel, OctopusResourceNode Release, OctopusResourceNode Deployment, OctopusResourceNode Task, OctopusServerTaskDto TaskDto, OctopusImportPriorMappings Prior);
 
-    private static HistoryNodes HistoryScenario(bool storeDeployment = true, bool storeTask = true, string storedTaskFingerprint = null)
+    private static HistoryNodes HistoryScenario(bool storeDeployment = true, bool storeTask = true, string storedTaskFingerprint = null, string storedDetailFingerprint = null)
     {
         var nodes = BuildMinimalNodes();
         var channel = Node("Channels-1", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "Default", new OctopusChannelDto { Id = "Channels-1", Name = "Default", ProjectId = "Projects-1", IsDefault = true }, nodes.Project.SourceId);
@@ -296,7 +318,17 @@ public partial class OctopusImportConfirmationOrchestratorTests
         if (storeDeployment) stored.Add((deployment, 5001, storedTaskFingerprint ?? OctopusImportFingerprint.ForTask(taskDto)));
         if (storeDeployment && storeTask) stored.Add((task, 6001, null));
 
-        return new HistoryNodes(nodes, channel, release, deployment, task, taskDto, Prior(stored.ToArray()));
+        return new HistoryNodes(nodes, channel, release, deployment, task, taskDto, WithStoredDetails(Prior(stored.ToArray()), deployment, storedDetailFingerprint));
+    }
+
+    private static OctopusImportPriorMappings WithStoredDetails(OctopusImportPriorMappings prior, OctopusResourceNode deployment, string detailFingerprint)
+    {
+        if (detailFingerprint == null || !prior.TryGet(deployment.Kind.ToString(), deployment.SourceId, out var stored)) return prior;
+
+        var mappings = prior.Mappings.ToDictionary(kv => kv.Key, kv => kv.Value);
+        mappings[OctopusImportPriorMappings.Key(deployment.Kind.ToString(), deployment.SourceId)] = stored with { DetailFingerprint = detailFingerprint };
+
+        return new OctopusImportPriorMappings(mappings, prior.InstallationId);
     }
 
     private static OctopusImportPriorMappings Prior(params (OctopusResourceNode Node, int DestinationId)[] rows)

@@ -7,16 +7,28 @@ namespace Squid.Core.Services.OctopusImport.Rest;
 public sealed partial class OctopusRestHistoryFetcher
 {
     // Details are fetched unless the source map already holds them for an unchanged task (incremental re-fetch).
-    private async Task AttachDetailsAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
+    // Only reads happen here; the details are written with the task, after every read of the deployment unit.
+    private async Task<OctopusTaskHistoryDetails> ReadDetailsAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
     {
         if (IsUnchangedWithStoredDetails(deployment, task))
         {
             _ctx.Pending.DetailsSkipped++;
-            return;
+            return null;
         }
 
+        var rejectedBefore = _ctx.Pending.ItemsRejected;
         var details = await FetchDetailsAsync(deployment, task, ct).ConfigureAwait(false);
 
+        if (_ctx.Pending.ItemsRejected == rejectedBefore) return details;
+
+        task.DetailsIncomplete = true;
+
+        return null;
+    }
+
+    // A partial set (one list refused) would be taken as the task's complete details, so it is never written.
+    private async Task WriteDetailsAsync(OctopusServerTaskDto task, OctopusTaskHistoryDetails details, CancellationToken ct)
+    {
         if (details == null) return;
 
         await detailsStore.WriteAsync(_ctx.Context.SessionDirectory, task.Id, details, ct).ConfigureAwait(false);

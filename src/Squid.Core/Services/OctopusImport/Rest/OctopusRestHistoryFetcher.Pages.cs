@@ -20,6 +20,7 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             if (ChunkBudgetSpent()) return;
 
+            _ctx.InItem = true;
             await EnrichFeedIdsAsync(release, ct).ConfigureAwait(false);
             await WriteAsync(OctopusResourceKind.Release, release, ct).ConfigureAwait(false);
 
@@ -81,6 +82,7 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             if (ChunkBudgetSpent()) return;
 
+            _ctx.InItem = true;
             await WriteDeploymentUnitAsync(deployment, tasks.GetValueOrDefault(deployment.TaskId ?? string.Empty), ct).ConfigureAwait(false);
             CommitItem();
         }
@@ -99,22 +101,37 @@ public sealed partial class OctopusRestHistoryFetcher
         return (page?.Items ?? []).Where(t => !string.IsNullOrWhiteSpace(t.Id)).DistinctBy(t => t.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
     }
 
-    // A deployment and its task are always written together, so a re-page rewrites both or neither.
+    // A deployment and its task are always written together, so a re-page rewrites both or neither. Every read comes
+    // first: an item abandoned while reading leaves none of its documents in the bundle.
     private async Task WriteDeploymentUnitAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
     {
-        if (task != null)
-        {
-            FillTaskOwners(task, deployment);
-            await AttachDetailsAsync(deployment, task, ct).ConfigureAwait(false);
-            await WriteAsync(OctopusResourceKind.ServerTask, task, ct).ConfigureAwait(false);
-
-            _ctx.Pending.ServerTasks++;
-        }
+        var details = await ReadTaskDetailsAsync(deployment, task, ct).ConfigureAwait(false);
 
         await AttachMachineNamesAsync(deployment, ct).ConfigureAwait(false);
+
+        await WriteTaskAsync(task, details, ct).ConfigureAwait(false);
         await WriteAsync(OctopusResourceKind.Deployment, deployment, ct).ConfigureAwait(false);
 
         _ctx.Pending.Deployments++;
+    }
+
+    private async Task<OctopusTaskHistoryDetails> ReadTaskDetailsAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
+    {
+        if (task == null) return null;
+
+        FillTaskOwners(task, deployment);
+
+        return await ReadDetailsAsync(deployment, task, ct).ConfigureAwait(false);
+    }
+
+    private async Task WriteTaskAsync(OctopusServerTaskDto task, OctopusTaskHistoryDetails details, CancellationToken ct)
+    {
+        if (task == null) return;
+
+        await WriteDetailsAsync(task, details, ct).ConfigureAwait(false);
+        await WriteAsync(OctopusResourceKind.ServerTask, task, ct).ConfigureAwait(false);
+
+        _ctx.Pending.ServerTasks++;
     }
 
     private static void FillTaskOwners(OctopusServerTaskDto task, OctopusDeploymentDto deployment)
@@ -156,6 +173,7 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         CommitPending();
 
+        _ctx.InItem = false;
         _ctx.Cursor.Skip++;
         _ctx.ItemsCommitted++;
 

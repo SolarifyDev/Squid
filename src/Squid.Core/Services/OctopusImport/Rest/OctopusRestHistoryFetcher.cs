@@ -138,8 +138,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
     private async Task FetchPagesAsync(CancellationToken ct)
     {
-        _ctx.FetchingItems = true;
-
         do
         {
             await FetchNextPageAsync(ct).ConfigureAwait(false);
@@ -200,6 +198,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         public OctopusHistoryFetchCountsDto Pending { get; set; } = new();
         public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
         public int ItemsCommitted { get; set; }
-        public bool FetchingItems { get; set; }
+        public bool InItem { get; set; }
     }
 }
