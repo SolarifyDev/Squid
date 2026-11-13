@@ -237,6 +237,83 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         cursor.ClosureReferences.ShouldBeEmpty();
     }
 
+    // An action scoped to an environment, or taking a package from a feed, created after the catalog read its kind: the
+    // process is the only document naming it (the release snapshot's feed is another one), so only the process can bring it in.
+    [Theory]
+    [InlineData("Environments", "environments", "Environments-9")]
+    [InlineData("ExcludedEnvironments", "environments", "Environments-9")]
+    [InlineData("Packages", "feeds", "Feeds-9")]
+    public async Task ProcessActionReferenceCreatedDuringTheFetch_FetchedByIdInTheClosure(string actionMember, string collection, string id)
+    {
+        var server = FixtureSpace();
+        var action = server.Resources["projects/Projects-1/deploymentprocesses"]!["Steps"]!.AsArray().SelectMany(s => s!["Actions"]!.AsArray()).OfType<JsonObject>().Single(a => a["Packages"]!.AsArray().Count > 0);
+        if (actionMember == "Packages") action["Packages"]![0]!["FeedId"] = id;
+        else action[actionMember] = new JsonArray(id);
+        server.Override = request => request.RequestUri!.PathAndQuery.Contains($"/{collection}?ids={id}", StringComparison.Ordinal)
+            ? OctopusRestStubHandler.Json(OctopusRestStubHandler.Page([Resource(id, "created later", ("FeedType", "NuGet"), ("FeedUri", "https://nuget.example.com/"))], 1))
+            : null;
+        var directory = NewSessionDirectory();
+        var cursor = CatalogCursor();
+
+        await FetchUntilDoneAsync(server, directory, cursor);
+
+        BundleManifest(directory).Entries.Select(e => e.Id).ShouldContain(id);
+        cursor.ClosureReferences.ShouldBeEmpty();
+    }
+
+    // A reference recorded before a later project staged it (a deployment naming another project's channel) is not asked for
+    // again: the closure has nothing left to fetch for it.
+    [Fact]
+    public async Task ReferenceStagedLaterInTheFetch_NotRequestedAgainByTheClosure()
+    {
+        var server = FixtureSpace();
+        server.Deployments["Projects-1"][0]["ChannelId"] = "Channels-2";
+        var directory = NewSessionDirectory();
+        var cursor = CatalogCursor();
+
+        await FetchUntilDoneAsync(server, directory, cursor);
+
+        BundleManifest(directory).Entries.Select(e => e.Id).ShouldContain("Channels-2");
+        server.Paths.ShouldNotContain(p => p.Contains("/channels?ids=", StringComparison.Ordinal));
+        cursor.ClosureReferences.ShouldBeEmpty();
+    }
+
+    // Every closure batch is an item of its own: one whose request keeps outliving the deadline is skipped after
+    // MaxAbandonments, counted from zero for each batch (a batch abandoned once and then fetched does not lend its count to
+    // the next), and the fetch still finishes.
+    [Fact]
+    public async Task ClosureBatchAbandonedTooOften_SkippedForTheSpace_OtherBatchesFetched_FetchFinishes()
+    {
+        var server = FixtureSpace();
+        var environment8Requests = 0;
+        server.Override = request => request.RequestUri!.PathAndQuery switch
+        {
+            var p when p.Contains("/environments?ids=Environments-8", StringComparison.Ordinal) => ++environment8Requests == 1 ? OctopusRestStubHandler.StalledBody() : OctopusRestStubHandler.Json(OctopusRestStubHandler.Page([Resource("Environments-8", "created later")], 1)),
+            var p when p.Contains("/environments?ids=Environments-9", StringComparison.Ordinal) => OctopusRestStubHandler.StalledBody(),
+            _ => null
+        };
+        var directory = NewSessionDirectory();
+        var cursor = new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Closure, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", ClosureReferences = [OctopusRestHistoryFetcher.ClosureKey(OctopusResourceKind.Environment, "Environments-8"), OctopusRestHistoryFetcher.ClosureKey(OctopusResourceKind.Environment, "Environments-9")] };
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300), PageSize = 1 });
+        var failures = 0;
+
+        for (var chunk = 0; !cursor.Done && chunk < 20; chunk++)
+        {
+            try { await fetcher.FetchChunkAsync(Context(cursor, directory)).WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch (OctopusRestException e) when (e.Kind == OctopusRestErrorKind.Unreachable) { failures++; }
+        }
+
+        cursor.Done.ShouldBeTrue();
+        failures.ShouldBe(1 + OctopusRestHistoryFetcher.MaxAbandonments - 1, "Environments-8 abandoned once, Environments-9 abandoned until skipped");
+        (cursor.Counts.ItemsAbandoned, cursor.ClosureReferences.Count).ShouldBe((1, 0));
+        var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
+        (skipped.ProjectId, skipped.Reason).ShouldBe(((string)null, OctopusHistoryFetchSkipReason.Abandoned));
+        skipped.Path.ShouldContain("Environments-9");
+        var bundled = BundleManifest(directory).Entries.Select(e => e.Id).ToList();
+        bundled.ShouldContain("Environments-8");
+        bundled.ShouldNotContain("Environments-9");
+    }
+
     // A server that ignores the ids filter returns more than was asked for; only the referenced resources are staged.
     [Fact]
     public async Task ClosureAnswerWithUnrequestedResources_OnlyTheReferencedOnesStaged()

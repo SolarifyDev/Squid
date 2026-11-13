@@ -55,7 +55,9 @@ public sealed partial class OctopusRestHistoryFetcher
         if (!references.Contains(key, StringComparer.OrdinalIgnoreCase)) references.Add(key);
     }
 
-    // One kind per call: its missing references are read by id in batches and staged; then the kind is done.
+    // One batch per call, so the chunk loop checks the time budget between batches. A batch is an item: it is abandoned
+    // and, after MaxAbandonments, skipped like any other, so one stuck `?ids=` request cannot stall the fetch. Its ids leave
+    // the list when it commits, found or not: an id the server no longer has is not asked for again.
     private async Task FetchClosureAsync(CancellationToken ct)
     {
         var collection = ClosureCollections.FirstOrDefault(c => ReferencesOf(c.Kind).Any());
@@ -66,14 +68,21 @@ public sealed partial class OctopusRestHistoryFetcher
             return;
         }
 
-        foreach (var batch in ReferencesOf(collection.Kind).Where(id => !bundleWriter.IsStaged(_ctx.Context.SessionDirectory, collection.Kind, id)).Chunk(_options.PageSize))
-            await StageClosureBatchAsync(collection, batch, ct).ConfigureAwait(false);
+        var batch = ReferencesOf(collection.Kind).Take(_options.PageSize).ToList();
 
-        CommitClosureKind(collection.Kind);
+        _ctx.InItem = true;
+        _ctx.ClosureBatch = batch.Select(id => ClosureKey(collection.Kind, id)).ToList();
+
+        await StageClosureBatchAsync(collection, batch.Where(id => !bundleWriter.IsStaged(_ctx.Context.SessionDirectory, collection.Kind, id)).ToList(), ct).ConfigureAwait(false);
+
+        ForgetClosureBatch();
+        CommitItem();
     }
 
     private async Task StageClosureBatchAsync(OctopusRestCollection collection, IReadOnlyCollection<string> ids, CancellationToken ct)
     {
+        if (ids.Count == 0) return;
+
         var page = await GetOrNullAsync<OctopusRestPage<JsonObject>>(ClosurePath(collection, ids), ct).ConfigureAwait(false);
         var wanted = ids.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -81,15 +90,13 @@ public sealed partial class OctopusRestHistoryFetcher
             await StageAsync(collection.Kind, resource, null, ct).ConfigureAwait(false);
     }
 
-    private void CommitClosureKind(OctopusResourceKind kind)
+    // Committed or skipped, the batch's ids are done with.
+    private void ForgetClosureBatch()
     {
-        var prefix = ClosureKey(kind, string.Empty);
+        var batch = _ctx.ClosureBatch.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        _ctx.Cursor.ClosureReferences.RemoveAll(r => r.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
-
-        CommitPending();
-
-        _ctx.ItemsCommitted++;
+        _ctx.Cursor.ClosureReferences.RemoveAll(batch.Contains);
+        _ctx.ClosureBatch = [];
     }
 
     private IEnumerable<string> ReferencesOf(OctopusResourceKind kind)

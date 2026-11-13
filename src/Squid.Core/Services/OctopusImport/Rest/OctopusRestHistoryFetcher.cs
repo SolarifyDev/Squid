@@ -168,5 +168,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
         public int ItemsCommitted { get; set; }
         public bool InItem { get; set; }
+        public List<string> ClosureBatch { get; set; } = [];
     }
 }

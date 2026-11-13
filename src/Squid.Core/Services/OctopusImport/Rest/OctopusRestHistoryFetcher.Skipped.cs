@@ -15,7 +15,7 @@ public sealed partial class OctopusRestHistoryFetcher
     }
 
     // The abandoned chunk is over, so the skip is committed straight to the cursor that is persisted next. A chunk stuck
-    // outside an item (pinning, binding, a page or its task summaries, the closure, bundling) has no item at fault and only
+    // outside an item (pinning, binding, a page or its task summaries, bundling) has no item at fault and only
     // fails: skipping the item the cursor points at would drop healthy data.
     private bool SkipIfAbandonedTooOften()
     {
@@ -37,17 +37,20 @@ public sealed partial class OctopusRestHistoryFetcher
         return true;
     }
 
-    // A project's configuration is the phase's only item: skipping it moves on to the project's releases.
-    private static void MovePastCurrentItem(OctopusImportHistoryFetchDto cursor)
+    // A project's configuration is the phase's only item: skipping it moves on to the project's releases. A closure batch
+    // leaves the reference list, so the next batch is the next item. Skip counts the items passed, so every item has its own key.
+    private void MovePastCurrentItem(OctopusImportHistoryFetchDto cursor)
     {
-        if (cursor.Phase != OctopusHistoryFetchPhase.ProjectConfiguration)
+        if (cursor.Phase == OctopusHistoryFetchPhase.ProjectConfiguration)
         {
-            cursor.Skip++;
+            cursor.Phase = OctopusHistoryFetchPhase.Releases;
+            cursor.Skip = 0;
             return;
         }
 
-        cursor.Phase = OctopusHistoryFetchPhase.Releases;
-        cursor.Skip = 0;
+        if (cursor.Phase == OctopusHistoryFetchPhase.Closure) ForgetClosureBatch();
+
+        cursor.Skip++;
     }
 
     /// <summary>Where the cursor stands: the same key on consecutive chunks means the same item keeps outliving the deadline.</summary>
