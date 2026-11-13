@@ -245,25 +245,22 @@ public class OctopusImportVariableMapperTests
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType);
     }
 
-    [Fact]
-    public void MapToCreateCommand_WhenPromptDisplaySettingsArePresent_AddsWarning()
+    // Octopus sends DisplaySettings as an object (REST and newer exports); older documents carry JSON text. Both must bind.
+    [Theory]
+    [InlineData("""{"Octopus.ControlType":"Select","Octopus.SelectOptions":"a|A"}""", true)]
+    [InlineData("\"{\\\"Octopus.ControlType\\\":\\\"Select\\\"}\"", true)]
+    [InlineData("{}", false)]
+    [InlineData("\"\"", false)]
+    [InlineData("null", false)]
+    public void MapToCreateCommand_PromptDisplaySettingsShapes_WarnOnlyWhenPresent(string displaySettingsJson, bool expectWarning)
     {
-        var variableSet = VariableSet(new OctopusVariableDto
-        {
-            Id = "Variables-Prompt",
-            Name = "Prompted",
-            Prompt = new OctopusVariablePromptDto
-            {
-                Label = "Choose",
-                DisplaySettings = """{"Octopus.ControlType":"Select"}"""
-            }
-        });
+        var variable = JsonSerializer.Deserialize<OctopusVariableDto>($$$"""{"Id":"Variables-Prompt","Name":"Prompted","Value":"a","Prompt":{"Label":"Choose","Required":true,"DisplaySettings":{{{displaySettingsJson}}}}}""");
 
-        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+        var result = _mapper.MapToCreateCommand(Resource(VariableSet(variable)), IdMap(), 7);
 
         result.HasBlockers.ShouldBeFalse();
         result.CreateCommand.Variables.Single().PromptLabel.ShouldBe("Choose");
-        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.PromptDisplaySettingsOmitted);
+        result.Diagnostics.Any(d => d.Code == OctopusImportVariableMappingDiagnosticCodes.PromptDisplaySettingsOmitted).ShouldBe(expectWarning);
     }
 
     [Fact]

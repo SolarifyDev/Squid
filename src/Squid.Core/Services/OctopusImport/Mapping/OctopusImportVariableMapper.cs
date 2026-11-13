@@ -186,7 +186,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         var isSensitive = OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable);
         var value = OctopusSystemVariables.RewriteReferences(isSensitive ? ResolveSensitiveValue(context, variable, index) : variable.Value);
 
-        if (!string.IsNullOrWhiteSpace(variable.Prompt?.DisplaySettings))
+        if (variable.Prompt?.HasDisplaySettings == true)
         {
             diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Warning,

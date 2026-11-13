@@ -2,13 +2,13 @@ using Squid.Core.Services.OctopusImport.Octopus;
 
 namespace Squid.Core.Services.OctopusImport;
 
-public sealed class OctopusImportSourceReader(IOctopusArchiveExtractor archiveExtractor, IOctopusInputExtractor inputExtractor, OctopusHistoryArchiveExtractionOptions historyLimits = null) : IOctopusImportSourceReader
+public sealed class OctopusImportSourceReader(IOctopusArchiveExtractor archiveExtractor, IOctopusInputExtractor inputExtractor, OctopusImportSizeLimits limits = null) : IOctopusImportSourceReader
 {
     public const string HistoryBundleFileName = "octopus-history.zip";
 
     private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
 
-    private readonly OctopusArchiveExtractionOptions _historyLimits = (historyLimits ?? new OctopusHistoryArchiveExtractionOptions()).Limits;
+    private readonly OctopusArchiveExtractionOptions _historyLimits = (limits ?? OctopusImportSizeLimits.FromEnvironment()).ExtractionOptions;
 
     public async Task<OctopusInputExtractionResult> ReadAsync(string temporaryUploadPath, CancellationToken ct = default)
     {

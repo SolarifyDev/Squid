@@ -152,7 +152,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? EndlessEventsPage(request) : null;
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { HistoryMaxBytes = 50_000 });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 50_000 });
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"])));
 
@@ -337,7 +337,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     public async Task HistoryOverTheByteCap_TooLarge()
     {
         var server = new FakeOctopusServer().Release("Projects-1", 1);
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { HistoryMaxBytes = 64 });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 64 });
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"])));
 

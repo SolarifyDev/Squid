@@ -13,7 +13,16 @@ public sealed class OctopusRestException : InvalidOperationException
         Kind = kind;
     }
 
+    /// <summary>A limit was exceeded; the message names the limit (an operator setting, never request data).</summary>
+    public OctopusRestException(OctopusRestErrorKind kind, string limitName) : base($"{MessageFor(kind)} Limit: {limitName}.")
+    {
+        Kind = kind;
+        LimitName = limitName;
+    }
+
     public OctopusRestErrorKind Kind { get; }
+
+    public string LimitName { get; }
 
     public static string MessageFor(OctopusRestErrorKind kind)
         => kind switch

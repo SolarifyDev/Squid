@@ -7,13 +7,14 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
 
-public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory clientFactory, IOctopusHistoryBundleWriter bundleWriter, IOctopusImportHistoryDetailsStore detailsStore, OctopusRestOptions options = null) : IOctopusRestHistoryFetcher
+public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory clientFactory, IOctopusHistoryBundleWriter bundleWriter, IOctopusImportHistoryDetailsStore detailsStore, OctopusRestOptions options = null, OctopusImportSizeLimits limits = null) : IOctopusRestHistoryFetcher
 {
     private const string ProjectIdPrefix = "PROJECTS-";
 
     private static readonly string PriorProjectType = OctopusImportPriorMappings.Normalize(OctopusResourceKind.Project.ToString());
 
     private readonly OctopusRestOptions _options = options ?? OctopusRestOptions.FromEnvironment();
+    private readonly OctopusImportSizeLimits _limits = limits ?? OctopusImportSizeLimits.FromEnvironment();
 
     private FetchRun _ctx;
 
@@ -36,7 +37,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
         deadline.CancelAfter(_options.ChunkDeadline);
         _ctx = new FetchRun(context, client, Stopwatch.StartNew(), context.Cursor.TotalBytes);
-        client.ByteBudget = _options.HistoryMaxBytes - _ctx.BytesBeforeChunk;
+        client.ByteBudget = _limits.MaxBytes - _ctx.BytesBeforeChunk;
 
         await RunWithinDeadlineAsync(deadline, ct).ConfigureAwait(false);
 
@@ -159,8 +160,8 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     {
         _ctx.Cursor.TotalBytes = _ctx.BytesBeforeChunk + _ctx.Client.BytesRead;
 
-        if (_ctx.Cursor.TotalBytes > _options.HistoryMaxBytes)
-            throw new OctopusRestException(OctopusRestErrorKind.TooLarge);
+        if (_ctx.Cursor.TotalBytes > _limits.MaxBytes)
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusImportSizeLimits.MaxBytesEnvVar);
     }
 
     private sealed class FetchRun(OctopusHistoryFetchContext context, OctopusRestClient client, Stopwatch clock, long bytesBeforeChunk)

@@ -334,7 +334,16 @@ public class OctopusVariablePromptDto
 
     public bool Required { get; set; }
 
-    public string DisplaySettings { get; set; }
+    /// <summary>Octopus sends a string → string object (<c>{"Octopus.ControlType":"Select", …}</c>); older documents carry the same as JSON text.</summary>
+    public JsonElement? DisplaySettings { get; set; }
+
+    [JsonIgnore]
+    public bool HasDisplaySettings => DisplaySettings switch
+    {
+        { ValueKind: JsonValueKind.Object } settings => settings.EnumerateObject().Any(),
+        { ValueKind: JsonValueKind.String } settings => !string.IsNullOrWhiteSpace(settings.GetString()),
+        _ => false
+    };
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];

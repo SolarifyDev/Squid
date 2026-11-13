@@ -9,12 +9,10 @@ public sealed class OctopusRestOptions
     public const string AllowLoopbackEnvVar = "SQUID_OCTOPUS_IMPORT_REST_ALLOW_LOOPBACK";
     public const string AllowedHostsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_ALLOWED_HOSTS";
     public const string MaxResponseBytesEnvVar = "SQUID_OCTOPUS_IMPORT_REST_MAX_RESPONSE_BYTES";
-    public const string HistoryMaxBytesEnvVar = "SQUID_OCTOPUS_IMPORT_HISTORY_MAX_BYTES";
     public const string ChunkSecondsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_CHUNK_SECONDS";
     public const string MaxLogLinesPerTaskEnvVar = OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTaskEnvVar;
 
     public const long DefaultMaxResponseBytes = 50L * 1024 * 1024;
-    public const long DefaultHistoryMaxBytes = 2L * 1024 * 1024 * 1024;
     public const int DefaultChunkSeconds = 20;
 
     // Network policy
@@ -23,7 +21,6 @@ public sealed class OctopusRestOptions
 
     // Limits
     public long MaxResponseBytes { get; init; } = DefaultMaxResponseBytes;
-    public long HistoryMaxBytes { get; init; } = DefaultHistoryMaxBytes;
     public TimeSpan ChunkDuration { get; init; } = TimeSpan.FromSeconds(DefaultChunkSeconds);
 
     /// <summary>How long one in-flight item may run past <see cref="ChunkDuration"/> before the chunk is abandoned; must stay under the lease margin.</summary>
@@ -46,7 +43,6 @@ public sealed class OctopusRestOptions
             AllowLoopback = ReadBool(AllowLoopbackEnvVar),
             AllowedHosts = ReadList(AllowedHostsEnvVar),
             MaxResponseBytes = ReadPositiveLong(MaxResponseBytesEnvVar, DefaultMaxResponseBytes),
-            HistoryMaxBytes = ReadPositiveLong(HistoryMaxBytesEnvVar, DefaultHistoryMaxBytes),
             ChunkDuration = TimeSpan.FromSeconds(ReadPositiveLong(ChunkSecondsEnvVar, DefaultChunkSeconds))
         };
 
