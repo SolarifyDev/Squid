@@ -217,18 +217,25 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         if (OctopusImportSensitiveValues.TryResolve(variable, context.Secrets, out var plaintext)) return plaintext;
 
         var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(context.VariableSet.Id, variable.Id, index);
+        var withheld = OctopusImportSensitiveValues.IsWithheld(variable);
+        var withheldByServer = OctopusImportSecretSeverity.IsWithheldByServer(withheld, context.Secrets);
 
-        context.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable));
+        context.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable, context.Secrets));
         context.Diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
-            OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
-            $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.",
+            OctopusImportSecretSeverity.For(withheld, context.Secrets),
+            withheldByServer ? OctopusImportVariableMappingDiagnosticCodes.SensitiveValueWithheldByServer : OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
+            SensitiveValueMessage(variable, withheldByServer),
             OctopusResourceKind.Variable,
             variableSourceId,
             variable.Name));
 
         return string.Empty;
     }
+
+    private static string SensitiveValueMessage(OctopusVariableDto variable, bool withheldByServer)
+        => withheldByServer
+            ? $"The Octopus server did not return the value of sensitive variable '{variable.Name}'; it was imported empty and is listed as a missing secret."
+            : $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.";
 
     private static VariableType MapVariableType(OctopusVariableDto variable, List<OctopusImportDiagnosticDto> diagnostics)
     {

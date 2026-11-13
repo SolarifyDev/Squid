@@ -92,6 +92,14 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         if (row.DestinationId <= 0)
             throw new ArgumentOutOfRangeException(nameof(row), row.DestinationId, $"Octopus import source-map row '{row.SourceType}:{row.SourceId}' requires a positive destination id.");
 
+        if (OctopusImportSourceMapQueries.SecretSourceTypes.Contains(row.SourceType.Trim()))
+        {
+            if (!OctopusImportSourceMapQueries.SecretOutcomes.Contains(row.OutcomeState ?? string.Empty))
+                throw new ArgumentOutOfRangeException(nameof(row), row.OutcomeState, $"Octopus import secret row '{row.SourceType}:{row.SourceId}' must be Missing, Filled or Superseded.");
+
+            return;
+        }
+
         if (row.OutcomeState is not (OctopusImportSourceMapQueries.CreatedOutcome or OctopusImportSourceMapQueries.ReusedOutcome))
             throw new ArgumentOutOfRangeException(nameof(row), row.OutcomeState, $"Octopus import source-map row '{row.SourceType}:{row.SourceId}' must be Created or Reused.");
     }
@@ -137,7 +145,7 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
             INSERT INTO octopus_import_source_map AS m (space_id, source_type, source_id, destination_id, outcome_state, fingerprint, detail_fingerprint, last_session_id)
             VALUES {values}
             ON CONFLICT (space_id, source_type, source_id) DO UPDATE SET
-                outcome_state = CASE WHEN m.outcome_state = '{OctopusImportSourceMapQueries.CreatedOutcome}' AND m.destination_id = EXCLUDED.destination_id THEN m.outcome_state ELSE EXCLUDED.outcome_state END,
+                outcome_state = CASE WHEN m.outcome_state IN ({StickyOutcomesSql()}) AND m.destination_id = EXCLUDED.destination_id THEN m.outcome_state ELSE EXCLUDED.outcome_state END,
                 fingerprint = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN COALESCE(EXCLUDED.fingerprint, m.fingerprint) ELSE EXCLUDED.fingerprint END,
                 detail_fingerprint = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN COALESCE(EXCLUDED.detail_fingerprint, m.detail_fingerprint) ELSE EXCLUDED.detail_fingerprint END,
                 destination_id = EXCLUDED.destination_id,
@@ -145,6 +153,9 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
                 last_modified_date = now()
             """;
     }
+
+    // Constants only (never user input), so safe to splice into SQL.
+    private static string StickyOutcomesSql() => string.Join(", ", OctopusImportSourceMapQueries.StickyOutcomes.Select(o => $"'{o}'"));
 
     private static string ValuesTuple(int index)
     {

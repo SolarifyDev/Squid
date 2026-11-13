@@ -11,4 +11,7 @@ public class OctopusImportSessionResultDto
     public List<OctopusImportIdMappingDto> IdMappings { get; set; } = [];
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];
+
+    /// <summary>Secrets this import wrote empty because the Octopus server withheld them. Names only, never values.</summary>
+    public List<OctopusImportMissingSensitiveValueDto> MissingSensitiveValues { get; set; } = [];
 }

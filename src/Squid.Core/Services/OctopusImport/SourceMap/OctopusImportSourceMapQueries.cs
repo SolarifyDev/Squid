@@ -19,6 +19,29 @@ public static class OctopusImportSourceMapQueries
 
     public const string ReusedOutcome = nameof(OctopusImportResourceOutcomeState.Reused);
 
+    /// <summary>A sensitive variable value the Octopus server withheld: <c>SourceId</c> = natural key (<see cref="OctopusImportSecretKeys"/>), destination = Squid variable set.</summary>
+    public const string VariableSecretSourceType = "VariableSecret";
+
+    /// <summary>A feed password the Octopus server withheld: <c>SourceId</c> = the feed's source id, destination = Squid external feed.</summary>
+    public const string FeedSecretSourceType = "FeedSecret";
+
+    /// <summary>The secret was imported empty and is still waiting for a value.</summary>
+    public const string MissingOutcome = "Missing";
+
+    /// <summary>A later export-file import supplied the value (or found it empty in Octopus too). Terminal.</summary>
+    public const string FilledOutcome = "Filled";
+
+    /// <summary>The value was set in Squid before any fill could supply it; the import never touches it again. Terminal.</summary>
+    public const string SupersededOutcome = "Superseded";
+
+    public static IReadOnlySet<string> SecretSourceTypes { get; } = new HashSet<string>([VariableSecretSourceType, FeedSecretSourceType], StringComparer.Ordinal);
+
+    /// <summary>The only outcomes a secret row may carry — and only a secret row may carry them.</summary>
+    public static IReadOnlySet<string> SecretOutcomes { get; } = new HashSet<string>([MissingOutcome, FilledOutcome, SupersededOutcome], StringComparer.Ordinal);
+
+    /// <summary>Outcomes a re-recorded row keeps when it still points at the same destination (an import only ever fills).</summary>
+    public static IReadOnlyList<string> StickyOutcomes { get; } = [CreatedOutcome, FilledOutcome, SupersededOutcome];
+
     public static IQueryable<int> CreatedDestinationIds(IQueryable<OctopusImportSourceMap> query, OctopusResourceKind kind)
     {
         var sourceType = kind.ToString();

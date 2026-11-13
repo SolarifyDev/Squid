@@ -23,20 +23,22 @@ internal static partial class OctopusScriptCompatibility
         var definitions = (ctx.Template?.Parameters ?? []).Where(p => !string.IsNullOrWhiteSpace(p.Name)).GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var names = definitions.Keys.Concat(properties.Keys.Where(IsTemplateParameterKey)).Distinct(StringComparer.OrdinalIgnoreCase);
 
-        ctx.Parameters = names.Select(name => ResolveTemplateParameter(name, properties, definitions)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        var withheld = OctopusImportWithheldSecrets.For(ctx.Action.ExtensionData);
+
+        ctx.Parameters = names.Select(name => ResolveTemplateParameter(name, properties, definitions, withheld)).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
         ctx.Siblings = ctx.Parameters.Where(p => !p.IsSensitive).ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
         ctx.SensitiveParameterNames = ctx.Parameters.Where(p => p.IsSensitive).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    // A value Octopus encrypted in the export is a secret whatever the template says — the definition
-    // may be missing from the export or out of date — so it is never treated as plain text.
-    private static TemplateParameter ResolveTemplateParameter(string name, Dictionary<string, string> properties, Dictionary<string, OctopusActionTemplateParameterDto> definitions)
+    // A value Octopus encrypted in the export, or one the Octopus server withheld, is a secret whatever the template
+    // says — the definition may be missing or out of date — so it is never treated as plain text.
+    private static TemplateParameter ResolveTemplateParameter(string name, Dictionary<string, string> properties, Dictionary<string, OctopusActionTemplateParameterDto> definitions, IReadOnlySet<string> withheld)
     {
         definitions.TryGetValue(name, out var definition);
 
         var hasActionValue = TryGetPropertyRaw(properties, name, out var actionValue);
         var value = hasActionValue ? actionValue : definition?.PlainDefaultValue;
-        var isSensitive = definition?.IsSensitive == true || OctopusExportCipher.IsEncryptedValue(value);
+        var isSensitive = definition?.IsSensitive == true || OctopusExportCipher.IsEncryptedValue(value) || withheld.Contains(name);
 
         return new TemplateParameter(definition?.Name ?? name, isSensitive ? value : OctopusSystemVariables.RewriteReferences(value), isSensitive);
     }

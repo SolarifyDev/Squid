@@ -3,6 +3,7 @@ using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
@@ -65,6 +66,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
     private readonly ITeamService _teamService;
     private readonly IOctopusImportSourceMapDataProvider _sourceMapDataProvider;
     private readonly IOctopusImportHistoryDetailsStore _historyDetailsStore;
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -85,7 +87,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         IMediator mediator,
         ITeamService teamService,
         IOctopusImportSourceMapDataProvider sourceMapDataProvider = null,
-        IOctopusImportHistoryDetailsStore historyDetailsStore = null)
+        IOctopusImportHistoryDetailsStore historyDetailsStore = null,
+        IOctopusExportSecretsAccessor secretsAccessor = null)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -106,6 +109,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         _teamService = teamService;
         _sourceMapDataProvider = sourceMapDataProvider;
         _historyDetailsStore = historyDetailsStore;
+        _secretsAccessor = secretsAccessor;
     }
 
     public async Task<OctopusImportSessionDto> ConfirmAsync(
@@ -219,6 +223,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                 execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
 
             await PersistSourceMapAsync(execution, ct).ConfigureAwait(false);
+
+            RecordMissingSensitiveValues(execution);
 
             return result;
         }
@@ -997,6 +1003,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         result.IdMappings = result.IdMappings
             .Where(m => m.OutcomeState == OctopusImportResourceOutcomeState.Reused)
             .ToList();
+        result.MissingSensitiveValues = [];
 
         foreach (var resource in result.Resources.Where(r =>
                      r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.Pending))
@@ -1089,6 +1096,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         }
 
         public OctopusImportConfirmationRequest Request { get; }
+
+        public OctopusImportSessionResultDto Result => _result;
 
         public int DestinationSpaceId => Request.DestinationSpaceId;
 

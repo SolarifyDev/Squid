@@ -32,7 +32,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// connect → fetch → extract → preview → validate → confirm exactly as the UI does, then re-run it (or an export
 /// file) against the same history to prove the source map makes every re-import idempotent.
 /// </summary>
-public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
+public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 {
     private const int SpaceId = 1;
     private const string ApiKey = "API-STUBKEY0000000000000001";
@@ -762,7 +762,10 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 
         if (withHistory) documents.AddRange(ExportedHistory());
 
-        documents.AddRange(extra ?? []);
+        // An extra document with a base document's id replaces it (e.g. a variable set that carries variables).
+        var extraDocuments = (extra ?? []).ToList();
+        documents.RemoveAll(d => extraDocuments.Any(e => e.Id == d.Id));
+        documents.AddRange(extraDocuments);
 
         var path = Path.Combine(Path.GetTempPath(), $"squid-export-{Guid.NewGuid():N}.zip");
         _paths.Add(path);

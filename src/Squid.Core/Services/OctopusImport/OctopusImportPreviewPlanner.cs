@@ -43,12 +43,14 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         var resources = BuildResourcePreviews(nodes, context);
 
         AddVariableDiagnostics(nodes, resources);
+        AddWithheldSecretDiagnostics(nodes, resources);
 
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
             .Concat(InstallationDiagnostics(conflicts))
             .Concat(GroupedScopeDiagnostics(resources))
+            .Concat(WithheldSecretsSummary(resources))
             .ToList();
 
         return new OctopusImportPreviewPlanDto
@@ -287,7 +289,14 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return;
         }
 
-        result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
+        result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable, Secrets));
+
+        if (OctopusImportSensitiveValues.IsWithheldByServer(variable, Secrets))
+        {
+            result.Diagnostics.Add(Diagnostic(OctopusImportSecretSeverity.For(withheld: true, Secrets), OctopusImportPreviewDiagnosticCodes.SecretWithheldByServer, OctopusImportPreviewDiagnosticCodes.VariableValueWithheldMessage, resource));
+            return;
+        }
+
         result.Diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,

@@ -53,6 +53,17 @@ public class EnumOrdinalPinTests
         ((int)reason).ShouldBe(expected);
     }
 
+    [Theory]
+    [InlineData(OctopusImportRequiredInputKind.SensitiveVariableValue, 0)]
+    [InlineData(OctopusImportRequiredInputKind.FeedPassword, 1)]
+    [InlineData(OctopusImportRequiredInputKind.AccountSecret, 2)]
+    [InlineData(OctopusImportRequiredInputKind.CertificatePrivateKey, 3)]
+    [InlineData(OctopusImportRequiredInputKind.SensitiveActionProperty, 4)]
+    public void OctopusImportRequiredInputKind_OrdinalsPinned(OctopusImportRequiredInputKind kind, int expected)
+    {
+        ((int)kind).ShouldBe(expected);
+    }
+
     // Persisted on the session's fetch cursor between chunks: append-only.
     [Theory]
     [InlineData(OctopusHistoryFetchPhase.Releases, 0)]

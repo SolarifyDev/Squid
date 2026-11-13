@@ -74,6 +74,50 @@ internal sealed class OctopusImportScenario
         return Add($"deploymentprocess-{id}", "DeploymentProcess", new { Id = $"deploymentprocess-{id}", OwnerId = id, Steps = steps });
     }
 
+    // ── REST-shaped resources: written through the REAL normaliser, exactly as the server source stages them ──
+
+    /// <summary>A Docker feed as the Octopus API returns it; with <paramref name="hasPassword"/> its password is withheld.</summary>
+    public OctopusImportScenario RestFeed(string id, string name, string username, bool hasPassword)
+        => AddRest(OctopusResourceKind.Feed, "Feed", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), FeedType = "Docker", FeedUri = "https://registry.example.com", Username = username, Password = new { HasValue = hasPassword, NewValue = (string)null, Hint = (string)null } });
+
+    /// <summary>A token account as the Octopus API returns it (secret withheld).</summary>
+    public OctopusImportScenario RestTokenAccount(string id, string name)
+        => AddRest(OctopusResourceKind.Account, "Account", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), AccountType = "Token", EnvironmentIds = Array.Empty<string>(), Token = new { HasValue = true, NewValue = (string)null, Hint = (string)null } });
+
+    public OctopusImportScenario RestLibrary(string id, string name, params object[] variables)
+    {
+        Add(id, "LibraryVariableSet", new { Id = id, Name = name, VariableSetId = LibraryVariableSetId(id), ContentType = "Variables" });
+
+        return AddRest(OctopusResourceKind.VariableSet, "LibraryVariables", new { Id = LibraryVariableSetId(id), OwnerId = id, Variables = variables });
+    }
+
+    /// <summary>A project whose variable set and process come from the Octopus API (no OwnerType, ProjectId instead of OwnerId).</summary>
+    public OctopusImportScenario RestProject(string id, string name, string[] libraryIds, object[] variables, params object[] actions)
+    {
+        Add(id, "Project", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), VariableSetId = ProjectVariableSetId(id), DeploymentProcessId = $"deploymentprocess-{id}", IncludedLibraryVariableSetIds = libraryIds });
+        AddRest(OctopusResourceKind.VariableSet, "ProjectVariables", new { Id = ProjectVariableSetId(id), OwnerId = id, Variables = variables });
+
+        var steps = actions.Select((action, index) => new { Id = $"{id}-step-{index + 1}", Name = $"Step {index + 1}", Condition = "Success", StartTrigger = "StartAfterPrevious", PackageRequirement = "LetOctopusDecide", Properties = new Dictionary<string, string>(), Actions = new[] { action } });
+
+        return AddRest(OctopusResourceKind.DeploymentProcess, "DeploymentProcess", new { Id = $"deploymentprocess-{id}", ProjectId = id, Steps = steps });
+    }
+
+    /// <summary>A sensitive variable as the Octopus API returns it: no value, IsSensitive and Type Sensitive.</summary>
+    public static object RestSecret(string id, string name, Dictionary<string, string[]> scope = null)
+        => new { Id = id, Name = name, Value = (string)null, Type = "Sensitive", IsSensitive = true, IsEditable = true, Prompt = (object)null, Scope = scope ?? new Dictionary<string, string[]>() };
+
+    /// <summary>A script action with one sensitive property whose value the Octopus API withholds.</summary>
+    public static object RestScriptActionWithSecret(string id, string secretPropertyName)
+        => new { Id = id, Name = id, ActionType = "Octopus.Script", Environments = Array.Empty<string>(), ExcludedEnvironments = Array.Empty<string>(), Channels = Array.Empty<string>(), Packages = Array.Empty<object>(), Properties = new Dictionary<string, object> { ["Octopus.Action.Script.ScriptSource"] = "Inline", ["Octopus.Action.Script.Syntax"] = "Bash", ["Octopus.Action.Script.ScriptBody"] = "echo hi", ["Octopus.Action.RunOnServer"] = "true", [secretPropertyName] = new { HasValue = true, NewValue = (string)null } } };
+
+    private OctopusImportScenario AddRest(OctopusResourceKind kind, string documentType, object restDocument)
+    {
+        var normalized = Squid.Core.Services.OctopusImport.Rest.OctopusRestDocumentNormalizer.Normalize(kind, JsonSerializer.SerializeToNode(restDocument)!.AsObject());
+
+        _documents.Add((normalized.Id, documentType, normalized.Document.ToJsonString()));
+        return this;
+    }
+
     public OctopusImportScenario ExistingLibrary(int id, string name, DateTimeOffset? lastModified = null)
     {
         _destination.Add(new OctopusImportDestinationResource(id, SpaceId, OctopusResourceKind.LibraryVariableSet, name, null, lastModified ?? DateTimeOffset.UtcNow.AddDays(-1)));

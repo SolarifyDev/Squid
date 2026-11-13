@@ -84,26 +84,65 @@ public sealed class OctopusRestBundleSeamTests : IDisposable
         variable.Prompt.HasDisplaySettings.ShouldBeTrue();
     }
 
-    // Planning the whole fixture space must not trip over the bundle; the only blockers left are the withheld secrets
-    // and history/scope rules that later work packages own (recorded here so a new blocker cannot slip in silently).
+    // Planning the whole fixture space must not trip over the bundle. In a server session nothing blocks: the withheld
+    // secrets are reported. The same bundle read as a file (a planted marker) keeps the export rule — unresolved values block.
+    [Theory]
+    [InlineData(true, new string[0])]
+    [InlineData(false, new[] { OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing })]
+    public async Task WholeFixtureSpace_Plans(bool serverSession, string[] expectedBlockers)
+    {
+        var (preview, validation) = await PlanAsync(serverSession ? OctopusExportSecrets.WithheldByServer : OctopusExportSecrets.None);
+
+        var blockers = preview.Diagnostics.Concat(preview.Resources.SelectMany(r => r.Diagnostics)).Concat(validation.Diagnostics).Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().Order().ToList();
+
+        string.Join(", ", blockers).ShouldBe(string.Join(", ", expectedBlockers));
+    }
+
+    // Every withheld secret the real REST shapes carry on a resource this import writes is listed — names only.
     [Fact]
-    public async Task WholeFixtureSpace_Plans()
+    public async Task WholeFixtureSpace_ServerSession_ListsEveryWithheldSecretOfWrittenResources()
+    {
+        var (preview, _) = await PlanAsync(OctopusExportSecrets.WithheldByServer);
+
+        var listed = preview.Resources.SelectMany(r => r.RequiredInputs.Select(i => $"{i.Kind}:{r.SourceId}:{i.FieldName}:{i.Fillable}")).Order().ToList();
+
+        listed.ShouldContain("FeedPassword:Feeds-1:Password:True");
+        listed.ShouldNotContain(i => i.Contains(":Feeds-2:"), customMessage: "a feed without a password (HasValue false) has nothing missing");
+        listed.ShouldContain("SensitiveActionProperty:" + WindowsServiceActionId + ":Octopus.Action.WindowsService.CustomAccountPassword:False");
+        listed.ShouldContain(i => i.StartsWith("AccountSecret:Accounts-2:Token:False"));
+        listed.Count(i => i.StartsWith("SensitiveVariableValue:")).ShouldBe(preview.Resources.Count(r => r.SourceType == "Variable" && r.PreviewAction == OctopusImportPreviewAction.Create && r.RequiredInputs.Count > 0));
+        preview.Resources.SelectMany(r => r.RequiredInputs).ShouldAllBe(i => i.WithheldByServer && !i.IsRequired);
+        preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretsWithheldByServer).Message.ShouldContain($"{listed.Count} secret(s)");
+    }
+
+    // A REST feed's username must never be written without its withheld password (half-configured feed).
+    [Theory]
+    [InlineData("Feeds-1", false, null)]
+    [InlineData("Feeds-2", true, null)]
+    public async Task RestFeedCredentials_UsernameOnlyWithItsPassword(string feedId, bool resolved, string username)
+    {
+        var (_, graph) = await BuildGraphAsync();
+
+        var credentials = OctopusImportFeedCredentials.Resolve(graph.Resources.Single(r => r.SourceId == feedId).GetSource<OctopusFeedDto>(), OctopusExportSecrets.WithheldByServer);
+
+        credentials.IsResolved.ShouldBe(resolved);
+        credentials.Username.ShouldBe(username);
+        credentials.Password.ShouldBeNull();
+    }
+
+    private const string WindowsServiceActionId = "4e0f5061-0000-4000-8000-000000000611";
+
+    private async Task<(OctopusImportPreviewPlanDto Preview, OctopusImportValidationResultDto Validation)> PlanAsync(OctopusExportSecrets secrets)
     {
         var (_, graph) = await BuildGraphAsync();
         var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph);
         var conflicts = await new OctopusImportConflictDiscoveryService(EmptyDestination(), EmptySourceMap()).DiscoverAsync(SpaceId, graph);
-        var accessor = new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.None };
+        var accessor = new OctopusExportSecretsAccessor { Secrets = secrets };
 
         var preview = new OctopusImportPreviewPlanner(accessor).BuildPreviewPlan(dependencyPlan, conflicts);
-        var validation = new OctopusImportPreviewValidator(accessor).Validate(graph, dependencyPlan, conflicts, preview);
 
-        var blockers = preview.Diagnostics.Concat(preview.Resources.SelectMany(r => r.Diagnostics)).Concat(validation.Diagnostics).Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().Order().ToList();
-
-        string.Join(", ", blockers).ShouldBe(string.Join(", ", ExpectedBlockersOwnedByLaterWork));
+        return (preview, new OctopusImportPreviewValidator(accessor).Validate(graph, dependencyPlan, conflicts, preview));
     }
-
-    // Withheld sensitive variable values: still a Blocker until the severity SSOT makes server-withheld secrets a Warning.
-    private static readonly string[] ExpectedBlockersOwnedByLaterWork = [OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing];
 
     public void Dispose() => Directory.Delete(_sessionDirectory, recursive: true);
 

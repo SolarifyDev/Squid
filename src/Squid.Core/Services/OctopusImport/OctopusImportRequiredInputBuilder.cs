@@ -14,11 +14,15 @@ public static class OctopusImportRequiredInputBuilder
     public static bool IsSensitiveVariable(OctopusVariableDto variable)
         => variable != null && OctopusImportSensitiveValues.IsSensitive(variable.IsSensitive, variable.Type);
 
+    /// <param name="secrets">The session's export secrets; a value the server withheld in a server session is not required (severity SSOT).</param>
     public static OctopusImportRequiredInputDto ForSensitiveVariable(
         string sourceId,
-        OctopusVariableDto variable)
+        OctopusVariableDto variable,
+        OctopusExportSecrets secrets = null)
     {
         ArgumentNullException.ThrowIfNull(variable);
+
+        var withheld = OctopusImportSensitiveValues.IsWithheld(variable);
 
         return new OctopusImportRequiredInputDto
         {
@@ -30,10 +34,35 @@ public static class OctopusImportRequiredInputBuilder
             FieldName = "Value",
             ValueType = variable.Type,
             HasSourceValue = !string.IsNullOrEmpty(variable.Value),
-            IsRequired = true,
+            IsRequired = OctopusImportSecretSeverity.IsRequired(withheld, secrets),
+            Fillable = IsFillable(OctopusImportRequiredInputKind.SensitiveVariableValue),
+            WithheldByServer = OctopusImportSecretSeverity.IsWithheldByServer(withheld, secrets),
             SourceScopes = CloneScopes(variable.Scope)
         };
     }
+
+    /// <summary>A secret of a resource the import writes that the Octopus server withheld: reported, never required.</summary>
+    public static OctopusImportRequiredInputDto ForWithheldSecret(OctopusImportRequiredInputKind kind, OctopusResourceNode resource, string fieldName)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+
+        return new OctopusImportRequiredInputDto
+        {
+            InputKey = BuildInputKey(kind, resource.SourceId, fieldName),
+            Kind = kind,
+            SourceId = resource.SourceId,
+            SourceType = resource.Kind.ToString(),
+            Name = resource.Name,
+            FieldName = fieldName,
+            HasSourceValue = true,
+            IsRequired = false,
+            Fillable = IsFillable(kind),
+            WithheldByServer = true
+        };
+    }
+
+    /// <summary>Only these secrets can be filled by a later export-file import; the rest must be set in Squid by hand.</summary>
+    public static bool IsFillable(OctopusImportRequiredInputKind kind) => kind is OctopusImportRequiredInputKind.SensitiveVariableValue or OctopusImportRequiredInputKind.FeedPassword;
 
     public static string BuildVariableSourceId(string variableSetSourceId, string variableSourceId, int index)
         => string.IsNullOrWhiteSpace(variableSourceId)

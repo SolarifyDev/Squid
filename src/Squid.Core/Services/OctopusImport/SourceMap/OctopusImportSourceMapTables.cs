@@ -31,7 +31,9 @@ public static class OctopusImportSourceMapTables
         [nameof(OctopusResourceKind.Deployment)] = "deployment",
         [nameof(OctopusResourceKind.ServerTask)] = "server_task",
         [OctopusImportSourceMapQueries.InstallationSourceType] = "space",
-        [OctopusImportSourceMapQueries.ExportSourceSourceType] = "space"
+        [OctopusImportSourceMapQueries.ExportSourceSourceType] = "space",
+        [OctopusImportSourceMapQueries.VariableSecretSourceType] = "variable_set",
+        [OctopusImportSourceMapQueries.FeedSecretSourceType] = "external_feed"
     };
 
     /// <summary>
@@ -44,6 +46,7 @@ public static class OctopusImportSourceMapTables
         [nameof(OctopusResourceKind.LifecyclePhase)] = "EXISTS (SELECT 1 FROM lifecycle ol WHERE ol.id = d.lifecycle_id)",
         [nameof(OctopusResourceKind.Channel)] = ProjectExists("d.project_id"),
         [nameof(OctopusResourceKind.VariableSet)] = VariableSetOwned("d"),
+        [OctopusImportSourceMapQueries.VariableSecretSourceType] = VariableSetOwned("d"),
         [nameof(OctopusResourceKind.Variable)] = $"EXISTS (SELECT 1 FROM variable_set vs WHERE vs.id = d.variable_set_id AND {VariableSetOwned("vs")})",
         [nameof(OctopusResourceKind.DeploymentProcess)] = ProcessOwned("d"),
         [nameof(OctopusResourceKind.DeploymentStep)] = $"EXISTS (SELECT 1 FROM deployment_process dp WHERE dp.id = d.process_id AND {ProcessOwned("dp")})",

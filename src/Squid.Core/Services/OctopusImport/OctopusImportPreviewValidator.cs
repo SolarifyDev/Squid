@@ -74,9 +74,10 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         ValidateInstallation(conflicts, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
-        result.RequiredInputs = previewPlan.RequiredInputs
+        // Server-built inputs come first so their severity (not a client-posted IsRequired) wins the de-duplication.
+        result.RequiredInputs = BuildRequiredInputs(plan)
+            .Concat(previewPlan.RequiredInputs)
             .Concat(previewResources.Values.SelectMany(r => r.RequiredInputs))
-            .Concat(BuildRequiredInputs(plan))
             .Where(input => !IsSatisfiedSensitiveInput(input, plan))
             .GroupBy(input => input.InputKey, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
@@ -148,13 +149,13 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         return !plan.IsWrittenByImport(resource) || OctopusImportSensitiveValues.IsResolvable(resource.GetSource<OctopusVariableDto>(), Secrets);
     }
 
-    private static IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(ValidationPlan plan)
+    private IEnumerable<OctopusImportRequiredInputDto> BuildRequiredInputs(ValidationPlan plan)
     {
         foreach (var resource in plan.Selected.Values.Where(resource => resource.Kind == OctopusResourceKind.Variable && plan.IsWrittenByImport(resource)))
         {
             var variable = resource.GetSource<OctopusVariableDto>();
             if (variable != null && OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
-                yield return OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable);
+                yield return OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable, Secrets);
         }
     }
 

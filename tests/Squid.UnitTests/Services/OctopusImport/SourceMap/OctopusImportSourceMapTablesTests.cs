@@ -33,7 +33,9 @@ public class OctopusImportSourceMapTablesTests
         nameof(OctopusResourceKind.Deployment),
         nameof(OctopusResourceKind.ServerTask),
         OctopusImportSourceMapQueries.InstallationSourceType,
-        OctopusImportSourceMapQueries.ExportSourceSourceType
+        OctopusImportSourceMapQueries.ExportSourceSourceType,
+        OctopusImportSourceMapQueries.VariableSecretSourceType,
+        OctopusImportSourceMapQueries.FeedSecretSourceType
     };
 
     [Theory]
@@ -53,6 +55,18 @@ public class OctopusImportSourceMapTablesTests
 
         foreach (var (kind, table) in OctopusImportSourceMapTables.ByKind)
             tables.ShouldContain(table, customMessage: $"source type '{kind}' points at unknown table '{table}'");
+    }
+
+    // A secret row lives exactly as long as the Squid row holding the secret, and a variable set only while its owner points at it.
+    [Theory]
+    [InlineData("VariableSecret", "variable_set", true)]
+    [InlineData("FeedSecret", "external_feed", false)]
+    public void SecretRows_PointAtTheRowHoldingTheSecret(string sourceType, string table, bool ownedThroughItsOwner)
+    {
+        OctopusImportSourceMapTables.ByKind[sourceType].ShouldBe(table);
+        OctopusImportSourceMapTables.OwnerPredicates.ContainsKey(sourceType).ShouldBe(ownedThroughItsOwner);
+
+        if (ownedThroughItsOwner) OctopusImportSourceMapTables.OwnerPredicates[sourceType].ShouldBe(OctopusImportSourceMapTables.OwnerPredicates[nameof(OctopusResourceKind.VariableSet)]);
     }
 
     [Fact]

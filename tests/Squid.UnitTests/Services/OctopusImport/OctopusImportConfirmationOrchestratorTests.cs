@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.SourceMap;
@@ -741,7 +742,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         bool withTransactionGate,
         IOctopusImportLibraryVariableSetNameLock nameLock = null,
         IOctopusImportSourceMapDataProvider sourceMap = null,
-        IOctopusImportHistoryDetailsStore detailsStore = null)
+        IOctopusImportHistoryDetailsStore detailsStore = null,
+        IOctopusExportSecretsAccessor secretsAccessor = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -820,7 +822,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
             mediator.Object,
             teamService.Object,
             sourceMap,
-            detailsStore);
+            detailsStore,
+            secretsAccessor);
 
         return new TestHarness(
             orchestrator,
@@ -1858,7 +1861,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
                     CompletedAt = result.CompletedAt,
                     Resources = result.Resources.Select(CloneResource).ToList(),
                     IdMappings = result.IdMappings.Select(CloneMapping).ToList(),
-                    Diagnostics = result.Diagnostics.Select(CloneDiagnostic).ToList()
+                    Diagnostics = result.Diagnostics.Select(CloneDiagnostic).ToList(),
+                    MissingSensitiveValues = result.MissingSensitiveValues.ToList()
                 };
 
         private static OctopusImportResourceResultDto CloneResource(OctopusImportResourceResultDto resource)

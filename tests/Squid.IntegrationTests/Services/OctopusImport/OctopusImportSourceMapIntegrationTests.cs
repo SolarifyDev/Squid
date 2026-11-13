@@ -295,6 +295,9 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
     [InlineData("Release", "Releases-1", 20, "Updated")]
     [InlineData("Release", " ", 20, "Created")]
     [InlineData("", "Releases-1", 20, "Created")]
+    [InlineData("Release", "Releases-1", 20, "Missing")]
+    [InlineData("VariableSecret", "vs:abc", 20, "Created")]
+    [InlineData("FeedSecret", "Feeds-1", 20, "Reused")]
     public async Task Upsert_InvalidRow_ThrowsBeforeWriting(string type, string id, int destinationId, string outcome)
     {
         await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
@@ -302,6 +305,28 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             await Should.ThrowAsync<ArgumentException>(() => provider.UpsertAsync([Row("Project", "Projects-1", 10, "Created"), Row(type, id, destinationId, outcome)], Guid.NewGuid()));
 
             (await LoadRawRowsAsync(db)).ShouldBeEmpty();
+        });
+    }
+
+    // A filled or superseded secret is final for its destination: a later import that would record it Missing again (the
+    // same Squid row) never undoes it. Missing → Filled is the one move a fill makes; a new destination starts over.
+    [Theory]
+    [InlineData("Filled")]
+    [InlineData("Superseded")]
+    public async Task Upsert_SecretRow_TerminalOutcomeNeverRegressesToMissing_OnTheSameDestination(string terminal)
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, "Missing"), Row("FeedSecret", "Feeds-1", 50, "Missing")], Guid.NewGuid());
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, terminal)], Guid.NewGuid());
+
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, "Missing"), Row("FeedSecret", "Feeds-1", 50, "Missing")], Guid.NewGuid());
+
+            Describe(await LoadRawRowsAsync(db)).ShouldBe([$"{SpaceId}|VariableSecret|VS:ABC|40|{terminal}||", $"{SpaceId}|FeedSecret|FEEDS-1|50|Missing||"], ignoreOrder: true);
+
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 41, "Missing")], Guid.NewGuid());
+
+            Describe(await LoadRawRowsAsync(db)).ShouldContain($"{SpaceId}|VariableSecret|VS:ABC|41|Missing||");
         });
     }
 
@@ -345,8 +370,8 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
     // Squid deletes never cascade: when an owner row is deleted, every row it owned survives as an orphan, and a map
     // row pointing at such an orphan must be stale too, or the re-created owner would be left empty.
     [Theory]
-    [InlineData("project", "Project", "Channel,VariableSet:project,Variable:project,DeploymentProcess,DeploymentStep,DeploymentAction,Release,Deployment")]
-    [InlineData("library_variable_set", "LibraryVariableSet", "VariableSet:library,Variable:library")]
+    [InlineData("project", "Project", "Channel,VariableSet:project,Variable:project,VariableSecret:project,DeploymentProcess,DeploymentStep,DeploymentAction,Release,Deployment")]
+    [InlineData("library_variable_set", "LibraryVariableSet", "VariableSet:library,Variable:library,VariableSecret:library")]
     [InlineData("lifecycle", "Lifecycle", "LifecyclePhase")]
     [InlineData("channel", "Channel", "Release,Deployment")]
     [InlineData("release", "Release", "Deployment")]
@@ -552,6 +577,8 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             ["Variable:project"] = Row("Variable", "Variables-1", (await builder.CreateVariableAsync(projectSet.Id, "Project", "1")).Id, "Created"),
             ["VariableSet:library"] = Row("VariableSet", "variableset-LibraryVariableSets-1", librarySet.Id, "Created"),
             ["Variable:library"] = Row("Variable", "Variables-2", (await builder.CreateVariableAsync(librarySet.Id, "Library", "2")).Id, "Created"),
+            ["VariableSecret:project"] = Row("VariableSecret", "vs:project-secret", projectSet.Id, "Missing"),
+            ["VariableSecret:library"] = Row("VariableSecret", "vs:library-secret", librarySet.Id, "Missing"),
             ["DeploymentProcess"] = Row("DeploymentProcess", "deploymentprocess-Projects-1", process.Id, "Created"),
             ["DeploymentStep"] = Row("DeploymentStep", "Steps-1", step.Id, "Created"),
             ["DeploymentAction"] = Row("DeploymentAction", "Actions-1", action.Id, "Created"),

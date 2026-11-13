@@ -36,6 +36,8 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string UnsupportedResourcesDetected = "octopus.preview.unsupported_resources_detected";
     public const string BuiltInFeedExcluded = "octopus.preview.built_in_feed_excluded";
     public const string BuiltInFeedReferenced = "octopus.preview.built_in_feed_referenced";
+    public const string SecretWithheldByServer = "octopus.preview.secret_withheld_by_server";
+    public const string SecretsWithheldByServer = "octopus.preview.secrets_withheld_by_server";
 
     public const string ExportPasswordUnavailableMessage = "The export password was accepted at upload but could not be kept or read back with the server's at-rest encryption key (Security:VariableEncryption:MasterKey is missing or has changed). Sensitive values are treated as if no export password had been given. Restore the original master key and retry, or configure a master key and upload the export again.";
 
@@ -46,6 +48,12 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string ReusedTeamGrantsApproval = "octopus.preview.reused_team_grants_approval";
     public const string BuiltInTeamWithoutEquivalent = "octopus.preview.built_in_team_without_equivalent";
     public const string BuiltInTeamEquivalentMissing = "octopus.preview.built_in_team_equivalent_missing";
+
+    public const string VariableValueWithheldMessage = "The Octopus server API does not return sensitive values. This variable is imported with an empty value and listed as a missing secret; set it in Squid, or import the Octopus export file later to fill it. Deployments that use it fail until it is set.";
+
+    public const string FeedPasswordWithheldMessage = "The Octopus server API does not return feed passwords. The feed is imported without credentials and listed as a missing secret; set them in Squid, or import the Octopus export file later to fill them.";
+
+    public const string NotFillableSecretWithheldMessage = "The Octopus server API does not return this secret and the Octopus export file cannot supply it either. It is imported empty and listed as a missing secret; set it in Squid after the import.";
 
     public const string SensitiveValueUnresolvedMessage = "The sensitive variable value could not be decrypted with the export password (it may be masked or encrypted with a different password). Confirmation is blocked while this required input is unresolved.";
 }

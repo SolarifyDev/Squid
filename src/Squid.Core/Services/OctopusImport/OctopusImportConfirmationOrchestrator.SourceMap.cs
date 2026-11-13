@@ -31,9 +31,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         await _sourceMapDataProvider.UpsertAsync(rows, execution.Request.SessionId, ct).ConfigureAwait(false);
     }
 
-    private static List<OctopusImportSourceMapRow> BuildSourceMapRows(ConfirmationExecutionContext execution)
+    private List<OctopusImportSourceMapRow> BuildSourceMapRows(ConfirmationExecutionContext execution)
     {
-        var rows = execution.IdMap.Mappings.Select(mapping => SourceMapRow(execution, mapping)).ToList();
+        var rows = execution.IdMap.Mappings.Select(mapping => SourceMapRow(execution, mapping)).Concat(SecretRows(execution)).ToList();
 
         AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.InstallationSourceType, execution.Request.Graph.InstallationId);
         AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.ExportSourceSourceType, execution.Request.Graph.ExportSourceId);
