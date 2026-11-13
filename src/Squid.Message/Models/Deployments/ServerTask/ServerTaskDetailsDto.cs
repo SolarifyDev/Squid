@@ -35,6 +35,12 @@ public class ServerTaskSummaryDto
     public int DurationSeconds { get; set; }
 
     public bool IsCompleted { get; set; }
+
+    /// <summary>
+    /// True when the task was imported from Octopus: it is read-only history, so the UI stops polling and hides
+    /// cancel / resume / interruption controls. Filled on the task-details read only; false elsewhere.
+    /// </summary>
+    public bool IsImported { get; set; }
 }
 
 public class ServerTaskProgressDto

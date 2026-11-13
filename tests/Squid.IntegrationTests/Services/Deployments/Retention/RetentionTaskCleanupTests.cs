@@ -4,9 +4,11 @@ using System.Threading.Tasks;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Base;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums.Deployments;
+using Squid.Message.Models.OctopusImport;
 using ProjectEntity = Squid.Core.Persistence.Entities.Deployments.Project;
 
 namespace Squid.IntegrationTests.Services.Deployments.Retention;
@@ -109,6 +111,46 @@ public class RetentionTaskCleanupTests : TestBase
             customMessage: "An aged deployment with no task (TaskId null) must still be pruned, with no task-data delete attempted.");
     }
 
+    [Fact]
+    public async Task ImportedDeployments_NotPruned()
+    {
+        // Imported Octopus history is the only copy of that history; a 30-day window must never delete it or its task data.
+        var graph = await SeedGraphAsync().ConfigureAwait(false);
+        var imported = await SeedAgedDeploymentAsync(graph, ageDays: 40).ConfigureAwait(false);
+        var native = await SeedAgedDeploymentAsync(graph, ageDays: 40).ConfigureAwait(false);
+
+        await RecordSourceMapAsync("Deployment", imported.DeploymentId, "Created").ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await DeploymentExistsAsync(imported.DeploymentId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "An imported deployment is exempt from retention.");
+        (await TaskExistsAsync(imported.TaskId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "An imported deployment keeps its task.");
+        (await LogCountAsync(imported.TaskId).ConfigureAwait(false)).ShouldBe(1);
+        (await ActivityCountAsync(imported.TaskId).ConfigureAwait(false)).ShouldBe(1);
+        (await InterruptionCountAsync(imported.TaskId).ConfigureAwait(false)).ShouldBe(1);
+
+        (await DeploymentExistsAsync(native.DeploymentId).ConfigureAwait(false)).ShouldBeFalse(customMessage: "A native deployment of the same age is still pruned.");
+        (await TaskExistsAsync(native.TaskId).ConfigureAwait(false)).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("Deployment", "Reused")]
+    [InlineData("ServerTask", "Created")]
+    public async Task ReusedMapRows_NotExempt(string sourceType, string outcome)
+    {
+        // Only a Created Deployment row exempts a deployment: a Reused row is a native resource an import pointed at,
+        // and a row of another kind that happens to carry the same id says nothing about this deployment.
+        var graph = await SeedGraphAsync().ConfigureAwait(false);
+        var (deploymentId, taskId) = await SeedAgedDeploymentAsync(graph, ageDays: 40).ConfigureAwait(false);
+
+        await RecordSourceMapAsync(sourceType, deploymentId, outcome).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await DeploymentExistsAsync(deploymentId).ConfigureAwait(false)).ShouldBeFalse(customMessage: $"A {sourceType}/{outcome} source-map row must not exempt deployment {deploymentId} from retention.");
+        (await TaskExistsAsync(taskId).ConfigureAwait(false)).ShouldBeFalse();
+    }
+
     // ── enforce / assertion helpers ──
 
     private Task EnforceAsync(int projectId)
@@ -133,6 +175,10 @@ public class RetentionTaskCleanupTests : TestBase
         => Run<IRepository, int>(repo => repo.CountAsync<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == taskId, CancellationToken.None));
 
     // ── seeding helpers ──
+
+    // Dashed GUID: "Releases-<32 hex>" would read as an export id suffix and canonicalise to one shared key.
+    private Task RecordSourceMapAsync(string sourceType, int destinationId, string outcome)
+        => Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync([new OctopusImportSourceMapRow(1, sourceType, $"{sourceType}s-{Guid.NewGuid():D}", destinationId, outcome)], Guid.NewGuid(), CancellationToken.None));
 
     private async Task<(int ProjectId, int EnvironmentId, int ChannelId)> SeedGraphAsync()
     {

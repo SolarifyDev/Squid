@@ -42,7 +42,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources);
+        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources) { ReferenceScope = OctopusImportReferenceScope.Build(graph) };
     }
 
     private static IReadOnlyList<OrderingEdge> BuildOrderingEdges(OctopusResourceGraph graph, Dictionary<string, OctopusResourceNode> resources)

@@ -62,6 +62,9 @@ public sealed class OctopusImportExportSecretStore(IOctopusImportSessionDataProv
     {
         var session = await dataProvider.GetSessionNoTrackingAsync(sessionId, GetCurrentUserId(), destinationSpaceId, ct).ConfigureAwait(false);
 
+        // An Octopus server session has no export password; its withheld secrets are reported instead of blocking.
+        if (IsServerSession(session)) return OctopusExportSecrets.WithheldByServer;
+
         if (string.IsNullOrEmpty(session?.ProtectedExportPassword)) return OctopusExportSecrets.None;
 
         // No envelope was ever written, so no key can recover it: behave like no password, never "unreadable".
@@ -71,6 +74,9 @@ public sealed class OctopusImportExportSecretStore(IOctopusImportSessionDataProv
 
         return password == null ? OctopusExportSecrets.Unreadable : OctopusExportSecrets.FromPassword(password);
     }
+
+    private static bool IsServerSession(Persistence.Entities.Deployments.OctopusImportSession session)
+        => session != null && string.Equals(OctopusImportSourceSummaries.Parse(session.SourceSummaryJson)?.DetectedFormat, OctopusImportServerSourceService.ServerSourceFormat, StringComparison.Ordinal);
 
     private string ProtectOrMarker(string password)
     {

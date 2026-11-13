@@ -1,0 +1,118 @@
+[
+  {
+    "FeedType": "Docker",
+    "DownloadAttempts": 5,
+    "DownloadRetryBackoffSeconds": 10,
+    "ApiVersion": "v2",
+    "RegistryPath": null,
+    "FeedUri": "https://registry.example.com",
+    "Username": "registry-user",
+    "Password": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Name": "Sample Registry",
+    "Slug": "sample-registry",
+    "PackageAcquisitionLocationOptions": [
+      "ExecutionTarget",
+      "NotAcquired"
+    ],
+    "SpaceId": "Spaces-1",
+    "Id": "Feeds-1",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/feeds/Feeds-1"
+    }
+  },
+  {
+    "FeedType": "NuGet",
+    "DownloadAttempts": 5,
+    "DownloadRetryBackoffSeconds": 10,
+    "EnhancedMode": false,
+    "FeedUri": "https://nuget.example.com/v3/index.json",
+    "Username": null,
+    "Password": {
+      "HasValue": false,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Name": "Public NuGet",
+    "Slug": "public-nuget",
+    "PackageAcquisitionLocationOptions": [
+      "Server",
+      "ExecutionTarget"
+    ],
+    "SpaceId": "Spaces-1",
+    "Id": "Feeds-2",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/feeds/Feeds-2"
+    }
+  },
+  {
+    "FeedType": "Docker",
+    "DownloadAttempts": 5,
+    "DownloadRetryBackoffSeconds": 10,
+    "ApiVersion": null,
+    "RegistryPath": null,
+    "FeedUri": "https://index.docker.io",
+    "Username": "hub-user",
+    "Password": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Name": "Docker Hub",
+    "Slug": "docker-hub",
+    "PackageAcquisitionLocationOptions": [
+      "ExecutionTarget",
+      "NotAcquired"
+    ],
+    "SpaceId": "Spaces-1",
+    "Id": "feeds-docker-hub",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/feeds/feeds-docker-hub"
+    }
+  },
+  {
+    "FeedType": "BuiltIn",
+    "DownloadAttempts": 5,
+    "DownloadRetryBackoffSeconds": 10,
+    "IsBuiltInRepoSyncEnabled": false,
+    "DeleteUnreleasedPackagesAfterDays": 0,
+    "DeletePackagesAssociatedWithReleases": false,
+    "Name": "Octopus Server (built-in)",
+    "Slug": "octopus-server-built-in",
+    "PackageAcquisitionLocationOptions": [
+      "Server",
+      "ExecutionTarget"
+    ],
+    "SpaceId": "Spaces-1",
+    "Id": "feeds-builtin",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/feeds/feeds-builtin"
+    }
+  },
+  {
+    "FeedType": "OctopusProject",
+    "Name": "Octopus Server Releases (built-in)",
+    "Slug": "octopus-server-releases-built-in",
+    "PackageAcquisitionLocationOptions": [
+      "NotAcquired"
+    ],
+    "SpaceId": "Spaces-1",
+    "Id": "feeds-builtin-releases",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/feeds/feeds-builtin-releases"
+    }
+  }
+]

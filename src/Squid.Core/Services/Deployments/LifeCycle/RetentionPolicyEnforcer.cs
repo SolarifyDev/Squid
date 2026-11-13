@@ -5,6 +5,8 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Events;
+using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.Deployments;
 using TaskState = Squid.Core.Services.Deployments.ServerTask.TaskState;
 
@@ -65,6 +67,7 @@ public class RetentionPolicyEnforcer(
         var phaseEnvironments = await lifeCycleDataProvider.GetPhaseEnvironmentsByPhaseIdsAsync(phaseIds, cancellationToken).ConfigureAwait(false);
 
         var currentlyDeployedReleaseIds = await GetCurrentlyDeployedReleaseIdsAsync(projectId, cancellationToken).ConfigureAwait(false);
+        var imported = await LoadImportedHistoryAsync(projectId, cancellationToken).ConfigureAwait(false);
 
         var envsByPhase = phaseEnvironments.GroupBy(pe => pe.PhaseId).ToDictionary(g => g.Key, g => g.Select(e => e.EnvironmentId).ToList());
 
@@ -80,14 +83,35 @@ public class RetentionPolicyEnforcer(
             var environmentIds = envsByPhase.GetValueOrDefault(phase.Id) ?? new List<int>();
 
             await EnforceForEnvironmentsAsync(
-                projectId, environmentIds, effectiveUnit, effectiveQuantity,
-                currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
+                projectId, environmentIds, new RetentionWindow(effectiveUnit, effectiveQuantity),
+                currentlyDeployedReleaseIds, imported, cancellationToken).ConfigureAwait(false);
         }
 
-        await PruneExpiredReleasesAsync(projectId, lifecycle.ReleaseRetentionKeepForever, lifecycle.ReleaseRetentionUnit, lifecycle.ReleaseRetentionQuantity, currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
+        await PruneExpiredReleasesAsync(projectId, lifecycle, currentlyDeployedReleaseIds, imported, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task EnforceForEnvironmentsAsync(int projectId, List<int> environmentIds, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
+    private sealed record RetentionWindow(RetentionPolicyUnit Unit, int Quantity);
+
+    // Octopus history this Squid created (source-map Created rows only — a Reused row is a native resource the import
+    // merely pointed at). It is never pruned and never counts against a keep window: it is the only copy of that history.
+    private sealed record ImportedHistory(HashSet<int> ReleaseIds, HashSet<int> DeploymentIds);
+
+    private async Task<ImportedHistory> LoadImportedHistoryAsync(int projectId, CancellationToken cancellationToken)
+    {
+        var sourceMap = repository.QueryNoTracking<OctopusImportSourceMap>();
+        var importedReleaseIds = OctopusImportSourceMapQueries.CreatedDestinationIds(sourceMap, OctopusResourceKind.Release);
+        var importedDeploymentIds = OctopusImportSourceMapQueries.CreatedDestinationIds(sourceMap, OctopusResourceKind.Deployment);
+
+        var releaseIds = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => r.ProjectId == projectId && importedReleaseIds.Contains(r.Id))
+            .Select(r => r.Id).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var deploymentIds = await repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId && importedDeploymentIds.Contains(d.Id))
+            .Select(d => d.Id).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return new ImportedHistory(releaseIds.ToHashSet(), deploymentIds.ToHashSet());
+    }
+
+    private async Task EnforceForEnvironmentsAsync(int projectId, List<int> environmentIds, RetentionWindow window, HashSet<int> currentlyDeployedReleaseIds, ImportedHistory imported, CancellationToken cancellationToken)
     {
         foreach (var environmentId in environmentIds)
         {
@@ -96,7 +120,9 @@ public class RetentionPolicyEnforcer(
                 .OrderByDescending(d => d.CreatedDate)
                 .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-            var deploymentsToDelete = GetDeploymentsExceedingRetention(deployments, unit, quantity, currentlyDeployedReleaseIds);
+            deployments.RemoveAll(d => imported.DeploymentIds.Contains(d.Id));
+
+            var deploymentsToDelete = GetDeploymentsExceedingRetention(deployments, window.Unit, window.Quantity, currentlyDeployedReleaseIds);
 
             if (deploymentsToDelete.Count == 0) continue;
 
@@ -126,23 +152,32 @@ public class RetentionPolicyEnforcer(
         await repository.ExecuteDeleteAsync<Persistence.Entities.Deployments.ServerTask>(t => taskIds.Contains(t.Id), cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task PruneExpiredReleasesAsync(int projectId, bool keepForever, RetentionPolicyUnit unit, int quantity, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
+    private async Task PruneExpiredReleasesAsync(int projectId, Lifecycle lifecycle, HashSet<int> currentlyDeployedReleaseIds, ImportedHistory imported, CancellationToken cancellationToken)
     {
-        if (keepForever) return;
+        if (lifecycle.ReleaseRetentionKeepForever) return;
 
-        if (unit == RetentionPolicyUnit.Items)
-            await PruneReleasesByCountAsync(projectId, quantity, currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
+        if (lifecycle.ReleaseRetentionUnit == RetentionPolicyUnit.Items)
+            await PruneReleasesByCountAsync(projectId, lifecycle.ReleaseRetentionQuantity, currentlyDeployedReleaseIds, imported, cancellationToken).ConfigureAwait(false);
         else
-            await PruneReleasesByAgeAsync(projectId, CalculateCutoff(unit, quantity), currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
+            await PruneReleasesByAgeAsync(projectId, CalculateCutoff(lifecycle.ReleaseRetentionUnit, lifecycle.ReleaseRetentionQuantity), currentlyDeployedReleaseIds, imported, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<List<Persistence.Entities.Deployments.Release>> LoadNativeReleasesAsync(int projectId, ImportedHistory imported, CancellationToken cancellationToken)
+    {
+        var releases = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => r.ProjectId == projectId)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        releases.RemoveAll(r => imported.ReleaseIds.Contains(r.Id));
+
+        return releases;
     }
 
     // Age-based pruning is conservative: it only removes releases that were NEVER deployed and are
     // past the window. A release that has ever had a deployment is kept (its deployment history is
     // untouched). Currently-deployed releases are always preserved.
-    private async Task PruneReleasesByAgeAsync(int projectId, DateTimeOffset cutoff, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
+    private async Task PruneReleasesByAgeAsync(int projectId, DateTimeOffset cutoff, HashSet<int> currentlyDeployedReleaseIds, ImportedHistory imported, CancellationToken cancellationToken)
     {
-        var releases = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => r.ProjectId == projectId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var releases = await LoadNativeReleasesAsync(projectId, imported, cancellationToken).ConfigureAwait(false);
 
         var releaseIdsWithDeployments = (await repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId)
             .Select(d => d.ReleaseId).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false)).ToHashSet();
@@ -166,12 +201,11 @@ public class RetentionPolicyEnforcer(
     // including each pruned release's deployments + task data + completions + packages, then
     // ref-count-GCs its snapshots. Currently-deployed releases and releases with an in-progress
     // deployment are always preserved, never counting against (or consuming) the keep window.
-    private async Task PruneReleasesByCountAsync(int projectId, int keepCount, HashSet<int> currentlyDeployedReleaseIds, CancellationToken cancellationToken)
+    private async Task PruneReleasesByCountAsync(int projectId, int keepCount, HashSet<int> currentlyDeployedReleaseIds, ImportedHistory imported, CancellationToken cancellationToken)
     {
         if (keepCount <= 0) return;
 
-        var releases = await repository.QueryNoTracking<Persistence.Entities.Deployments.Release>(r => r.ProjectId == projectId)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+        var releases = await LoadNativeReleasesAsync(projectId, imported, cancellationToken).ConfigureAwait(false);
 
         var preservedReleaseIds = await GetPreservedReleaseIdsAsync(projectId, currentlyDeployedReleaseIds, cancellationToken).ConfigureAwait(false);
 

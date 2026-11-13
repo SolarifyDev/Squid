@@ -1,0 +1,148 @@
+[
+  {
+    "Id": "Projects-1",
+    "SpaceId": "Spaces-1",
+    "VariableSetId": "variableset-Projects-1",
+    "DeploymentProcessId": "deploymentprocess-Projects-1",
+    "ClonedFromProjectId": null,
+    "DiscreteChannelRelease": false,
+    "IncludedLibraryVariableSetIds": [
+      "LibraryVariableSets-1"
+    ],
+    "DefaultToSkipIfAlreadyInstalled": false,
+    "TenantedDeploymentMode": "Untenanted",
+    "DefaultGuidedFailureMode": "EnvironmentDefault",
+    "VersioningStrategy": {
+      "Template": "#{Octopus.Version.LastMajor}.#{Octopus.Version.LastMinor}.#{Octopus.Version.NextPatch}",
+      "DonorPackage": null
+    },
+    "ReleaseCreationStrategy": {
+      "ChannelId": null,
+      "ReleaseCreationPackage": null,
+      "ReleaseCreationPackageStepId": null
+    },
+    "Templates": [],
+    "AutoDeployReleaseOverrides": [],
+    "ReleaseNotesTemplate": null,
+    "DeploymentChangesTemplate": null,
+    "ForcePackageDownload": false,
+    "Icon": null,
+    "AllowIgnoreChannelRules": true,
+    "ExecuteDeploymentsOnResilientPipeline": null,
+    "ProvisioningRunbookId": null,
+    "DeprovisioningRunbookId": null,
+    "CombineHealthAndSyncStatusInDashboardLiveStatus": false,
+    "DefaultPowerShellEdition": null,
+    "ProjectTags": [],
+    "ExtensionSettings": [],
+    "Name": "Web App",
+    "Slug": "web-app",
+    "Description": "",
+    "IsDisabled": false,
+    "ProjectGroupId": "ProjectGroups-1",
+    "LifecycleId": "Lifecycles-1",
+    "AutoCreateRelease": false,
+    "IsVersionControlled": false,
+    "PersistenceSettings": {
+      "Type": "Database"
+    },
+    "ProjectTemplateDetails": null,
+    "ProjectConnectivityPolicy": {
+      "SkipMachineBehavior": "None",
+      "TargetRoles": [],
+      "AllowDeploymentsToNoTargets": false,
+      "ExcludeUnhealthyTargets": false
+    },
+    "Links": {
+      "Self": "/api/Spaces-1/projects/Projects-1",
+      "Variables": "/api/Spaces-1/projects/Projects-1/variables",
+      "Releases": "/api/Spaces-1/projects/Projects-1/releases{/version}{?skip,take,searchByVersion}",
+      "Channels": "/api/Spaces-1/projects/Projects-1/channels{/id}{?skip,take,partialName}",
+      "Triggers": "/api/Spaces-1/projects/Projects-1/triggers{?skip,take,partialName}",
+      "DeploymentProcess": "/api/Spaces-1/projects/Projects-1/deploymentprocesses",
+      "DeploymentSettings": "/api/Spaces-1/projects/Projects-1/deploymentsettings",
+      "Runbooks": "/api/Spaces-1/projects/Projects-1/runbooks{?skip,take,partialName}"
+    }
+  },
+  {
+    "Id": "Projects-2",
+    "SpaceId": "Spaces-1",
+    "VariableSetId": "variableset-Projects-2",
+    "DeploymentProcessId": "deploymentprocess-Projects-2",
+    "ClonedFromProjectId": null,
+    "DiscreteChannelRelease": false,
+    "IncludedLibraryVariableSetIds": [
+      "LibraryVariableSets-1",
+      "LibraryVariableSets-2"
+    ],
+    "DefaultToSkipIfAlreadyInstalled": false,
+    "TenantedDeploymentMode": "Untenanted",
+    "DefaultGuidedFailureMode": "EnvironmentDefault",
+    "VersioningStrategy": {
+      "Template": "#{Octopus.Version.LastMajor}.#{Octopus.Version.LastMinor}.#{Octopus.Version.NextPatch}",
+      "DonorPackage": null
+    },
+    "ReleaseCreationStrategy": {
+      "ChannelId": null,
+      "ReleaseCreationPackage": null,
+      "ReleaseCreationPackageStepId": null
+    },
+    "Templates": [
+      {
+        "Id": "3d9e4f50-0000-4000-8000-000000000401",
+        "Name": "Tenant.DbPassword",
+        "Label": "Tenant database password",
+        "HelpText": null,
+        "DefaultValue": {
+          "HasValue": true,
+          "NewValue": null,
+          "Hint": null
+        },
+        "DisplaySettings": {
+          "Octopus.ControlType": "Sensitive"
+        }
+      }
+    ],
+    "AutoDeployReleaseOverrides": [],
+    "ReleaseNotesTemplate": null,
+    "DeploymentChangesTemplate": null,
+    "ForcePackageDownload": false,
+    "Icon": null,
+    "AllowIgnoreChannelRules": true,
+    "ExecuteDeploymentsOnResilientPipeline": null,
+    "ProvisioningRunbookId": null,
+    "DeprovisioningRunbookId": null,
+    "CombineHealthAndSyncStatusInDashboardLiveStatus": false,
+    "DefaultPowerShellEdition": null,
+    "ProjectTags": [],
+    "ExtensionSettings": [],
+    "Name": "Worker Service",
+    "Slug": "worker-service",
+    "Description": "",
+    "IsDisabled": false,
+    "ProjectGroupId": "ProjectGroups-1",
+    "LifecycleId": "Lifecycles-1",
+    "AutoCreateRelease": false,
+    "IsVersionControlled": false,
+    "PersistenceSettings": {
+      "Type": "Database"
+    },
+    "ProjectTemplateDetails": null,
+    "ProjectConnectivityPolicy": {
+      "SkipMachineBehavior": "None",
+      "TargetRoles": [],
+      "AllowDeploymentsToNoTargets": false,
+      "ExcludeUnhealthyTargets": false
+    },
+    "Links": {
+      "Self": "/api/Spaces-1/projects/Projects-2",
+      "Variables": "/api/Spaces-1/projects/Projects-2/variables",
+      "Releases": "/api/Spaces-1/projects/Projects-2/releases{/version}{?skip,take,searchByVersion}",
+      "Channels": "/api/Spaces-1/projects/Projects-2/channels{/id}{?skip,take,partialName}",
+      "Triggers": "/api/Spaces-1/projects/Projects-2/triggers{?skip,take,partialName}",
+      "DeploymentProcess": "/api/Spaces-1/projects/Projects-2/deploymentprocesses",
+      "DeploymentSettings": "/api/Spaces-1/projects/Projects-2/deploymentsettings",
+      "Runbooks": "/api/Spaces-1/projects/Projects-2/runbooks{?skip,take,partialName}"
+    }
+  }
+]

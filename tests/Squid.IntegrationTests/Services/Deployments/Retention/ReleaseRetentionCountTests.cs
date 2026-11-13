@@ -4,9 +4,11 @@ using System.Threading.Tasks;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Base;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums.Deployments;
+using Squid.Message.Models.OctopusImport;
 using ProjectEntity = Squid.Core.Persistence.Entities.Deployments.Project;
 using TaskState = Squid.Core.Services.Deployments.ServerTask.TaskState;
 
@@ -364,6 +366,36 @@ public class ReleaseRetentionCountTests : TestBase
         (await VariableSnapshotExistsAsync(sharedSnap.VariableSnapshotId).ConfigureAwait(false)).ShouldBeTrue();
     }
 
+    // Imported Octopus releases (source-map Created) are the only copy of that history: never pruned by count or by age,
+    // and never counted against the keep window, so native releases keep exactly the slots they had. A Reused row is a
+    // native release the import merely pointed at and gets no exemption.
+    [Theory]
+    [InlineData(RetentionPolicyUnit.Items, "Created", true)]
+    [InlineData(RetentionPolicyUnit.Items, "Reused", false)]
+    [InlineData(RetentionPolicyUnit.Items, null, false)]
+    [InlineData(RetentionPolicyUnit.Days, "Created", true)]
+    [InlineData(RetentionPolicyUnit.Days, "Reused", false)]
+    [InlineData(RetentionPolicyUnit.Days, null, false)]
+    public async Task ImportedReleases_ExemptAndDoNotConsumeSlots_Theory(RetentionPolicyUnit unit, string outcome, bool expectKept)
+    {
+        var graph = await SeedGraphAsync(keepCount: unit == RetentionPolicyUnit.Items ? 1 : 5, unit: unit).ConfigureAwait(false);
+
+        var importedNewest = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 1).ConfigureAwait(false);
+        var nativeNewest = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 3).ConfigureAwait(false);
+        var candidate = await SeedReleaseWithOwnSnapshotsAsync(graph, graph.ChannelId, ageDays: 9).ConfigureAwait(false);
+
+        await RecordSourceMapAsync("Release", importedNewest.ReleaseId, "Created").ConfigureAwait(false);
+
+        if (outcome != null) await RecordSourceMapAsync("Release", candidate.ReleaseId, outcome).ConfigureAwait(false);
+
+        await EnforceAsync(graph.ProjectId).ConfigureAwait(false);
+
+        (await ReleaseExistsAsync(importedNewest.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "An imported release is never pruned.");
+        (await ReleaseExistsAsync(nativeNewest.ReleaseId).ConfigureAwait(false)).ShouldBeTrue(customMessage: "The newer imported release must not use up the native release's keep slot.");
+        (await ReleaseExistsAsync(candidate.ReleaseId).ConfigureAwait(false)).ShouldBe(expectKept, customMessage: $"A release beyond the {unit} window with source-map outcome '{outcome ?? "none"}' must be {(expectKept ? "kept (imported)" : "pruned (native)")}.");
+        (await PackageCountAsync(candidate.ReleaseId).ConfigureAwait(false)).ShouldBe(expectKept ? 1 : 0);
+    }
+
     // ── enforce / assertion helpers ──
 
     private Task EnforceAsync(int projectId)
@@ -404,7 +436,11 @@ public class ReleaseRetentionCountTests : TestBase
 
     // ── seeding helpers ──
 
-    private async Task<(int ProjectId, int EnvironmentId, int ChannelId, int LifecycleId)> SeedGraphAsync(int keepCount, bool keepForever = false)
+    // Dashed GUID: "Releases-<32 hex>" would read as an export id suffix and canonicalise to one shared key.
+    private Task RecordSourceMapAsync(string sourceType, int destinationId, string outcome)
+        => Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync([new OctopusImportSourceMapRow(1, sourceType, $"{sourceType}s-{Guid.NewGuid():D}", destinationId, outcome)], Guid.NewGuid(), CancellationToken.None));
+
+    private async Task<(int ProjectId, int EnvironmentId, int ChannelId, int LifecycleId)> SeedGraphAsync(int keepCount, bool keepForever = false, RetentionPolicyUnit unit = RetentionPolicyUnit.Items)
     {
         var graph = (ProjectId: 0, EnvironmentId: 0, ChannelId: 0, LifecycleId: 0);
 
@@ -421,7 +457,7 @@ public class ReleaseRetentionCountTests : TestBase
                 SpaceId = 1,
                 Slug = $"lifecycle-{suffix}",
                 ReleaseRetentionKeepForever = keepForever,
-                ReleaseRetentionUnit = RetentionPolicyUnit.Items,
+                ReleaseRetentionUnit = unit,
                 ReleaseRetentionQuantity = keepCount,
                 TentacleRetentionKeepForever = true
             };

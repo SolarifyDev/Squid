@@ -1,0 +1,18 @@
+[
+  {
+    "WorkerPoolType": "StaticWorkerPool",
+    "Name": "Default Worker Pool",
+    "Description": "",
+    "IsDefault": true,
+    "SortOrder": 1,
+    "SpaceId": "Spaces-1",
+    "Slug": "default-worker-pool",
+    "CanAddWorkers": true,
+    "Id": "WorkerPools-1",
+    "LastModifiedOn": null,
+    "LastModifiedBy": null,
+    "Links": {
+      "Self": "/api/Spaces-1/workerpools/WorkerPools-1"
+    }
+  }
+]

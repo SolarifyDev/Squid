@@ -1,0 +1,47 @@
+[
+  {
+    "Id": "Environments-1",
+    "SpaceId": "Spaces-1",
+    "Slug": "dev",
+    "Name": "Dev",
+    "Description": "",
+    "SortOrder": 1,
+    "UseGuidedFailure": false,
+    "AllowDynamicInfrastructure": false,
+    "EnvironmentTags": [],
+    "ExtensionSettings": [],
+    "Links": {
+      "Self": "/api/Spaces-1/environments/Environments-1"
+    }
+  },
+  {
+    "Id": "Environments-2",
+    "SpaceId": "Spaces-1",
+    "Slug": "test",
+    "Name": "Test",
+    "Description": "",
+    "SortOrder": 2,
+    "UseGuidedFailure": false,
+    "AllowDynamicInfrastructure": false,
+    "EnvironmentTags": [],
+    "ExtensionSettings": [],
+    "Links": {
+      "Self": "/api/Spaces-1/environments/Environments-2"
+    }
+  },
+  {
+    "Id": "Environments-3",
+    "SpaceId": "Spaces-1",
+    "Slug": "prod",
+    "Name": "Prod",
+    "Description": "",
+    "SortOrder": 3,
+    "UseGuidedFailure": false,
+    "AllowDynamicInfrastructure": false,
+    "EnvironmentTags": [],
+    "ExtensionSettings": [],
+    "Links": {
+      "Self": "/api/Spaces-1/environments/Environments-3"
+    }
+  }
+]

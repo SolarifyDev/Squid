@@ -5,7 +5,10 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Teams;
@@ -32,7 +35,7 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
 
-public class OctopusImportConfirmationOrchestratorTests
+public partial class OctopusImportConfirmationOrchestratorTests
 {
     [Fact]
     public async Task ConfirmAsync_SucceedsAndCapturesCreatedAndReusedOutcomes()
@@ -362,6 +365,7 @@ public class OctopusImportConfirmationOrchestratorTests
         recorded.Succeeded.ShouldBeFalse();
         recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        recorded.Resources.Single(r => r.SourceId == harness.Nodes.ProjectGroup.SourceId).DestinationId.ShouldBeNull();
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Environment.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused);
         recorded.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
         recorded.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.Pending);
@@ -580,6 +584,103 @@ public class OctopusImportConfirmationOrchestratorTests
         harness.SessionService.RecordedResult.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
     }
 
+    public static IEnumerable<object[]> EveryPreviewAction()
+        => Enum.GetValues<OctopusImportPreviewAction>().Select(action => new object[] { action });
+
+    [Theory]
+    [MemberData(nameof(EveryPreviewAction))]
+    public async Task EveryPreviewAction_HasExplicitCase(OctopusImportPreviewAction action)
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = action;
+        preview.Resources.Single().DestinationId = 200;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.Result.Diagnostics.ShouldNotContain(d => d.Message == $"Preview action '{action}' is not supported by confirmation.");
+    }
+
+    [Theory]
+    [InlineData(321)]    // a destination id the source map never recorded (e.g. another space's project)
+    [InlineData(null)]   // no destination and no owner verified as already imported in this confirmation
+    public async Task AlreadyImported_NotBackedBySourceMap_FailsClosed(int? destinationId)
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.AlreadyImported;
+        preview.Resources.Single().DestinationId = destinationId;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        AssertRejectedAsNotImportedBefore(result, harness, nodes.Environment.SourceId);
+    }
+
+    [Fact]
+    public async Task AlreadyImportedChild_WhoseOwnerOnlyTheClientMarkedImported_FailsClosed()
+    {
+        var nodes = BuildMinimalNodes();
+        var channel = Node("Channels-1", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "Hotfix", new OctopusChannelDto { Id = "Channels-1", Name = "Hotfix", ProjectId = "Projects-1" }, nodes.Project.SourceId);
+        var preview = BuildPreviewPlan([nodes.Project, channel]);
+        preview.Resources.ForEach(r => r.PreviewAction = OctopusImportPreviewAction.AlreadyImported);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([channel]), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        AssertRejectedAsNotImportedBefore(result, harness, channel.SourceId);
+    }
+
+    private static void AssertRejectedAsNotImportedBefore(OctopusImportSessionDto result, TestHarness harness, string sourceId)
+    {
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        var outcome = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == sourceId);
+        outcome.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        outcome.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+        harness.SessionService.RecordedResult.IdMappings.ShouldBeEmpty();
+        harness.Mediator.Invocations.ShouldNotContain(invocation => invocation.Method.Name == nameof(IMediator.SendAsync));
+    }
+
+    [Fact]
+    public async Task Update_IsRejectedExplicitlyUntilHistoryUpdatesAreWired()
+    {
+        var nodes = BuildMinimalNodes();
+        var ordered = new List<OctopusResourceNode> { nodes.Environment };
+        var preview = BuildPreviewPlan(ordered);
+        preview.Resources.Single().PreviewAction = OctopusImportPreviewAction.Update;
+        preview.Resources.Single().DestinationId = 200;
+        var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), preview, admissionShouldSucceed: true, throwAfterAction: false, withTransactionGate: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported && d.Message.Contains("Updating an imported Octopus Environment"));
+    }
+
+    [Fact]
+    public async Task MarkRolledBack_ConvertsUpdated_KeepsItsPreExistingDestination()
+    {
+        var harness = CreateMinimalHarness(throwAfterAction: true);
+        var project = harness.Request.PreviewPlan.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId);
+        project.PreviewAction = OctopusImportPreviewAction.Update;
+        project.OutcomeState = OctopusImportResourceOutcomeState.Updated;
+        project.DestinationId = 1001;
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        var recorded = harness.SessionService.RecordedResult.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId);
+        recorded.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Failed);
+        // The updated row existed before the import and survives the rollback, so its id stays visible.
+        recorded.DestinationId.ShouldBe(1001);
+        recorded.Diagnostics.ShouldContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.TransactionRolledBack);
+        // An already-updated resource is completed: confirmation never runs its action again.
+        recorded.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported);
+    }
+
     private static TestHarness CreateMinimalHarness(
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
@@ -639,7 +740,10 @@ public class OctopusImportConfirmationOrchestratorTests
         bool admissionShouldSucceed,
         bool throwAfterAction,
         bool withTransactionGate,
-        IOctopusImportLibraryVariableSetNameLock nameLock = null)
+        IOctopusImportLibraryVariableSetNameLock nameLock = null,
+        IOctopusImportSourceMapDataProvider sourceMap = null,
+        IOctopusImportHistoryDetailsStore detailsStore = null,
+        IOctopusExportSecretsAccessor secretsAccessor = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -716,7 +820,10 @@ public class OctopusImportConfirmationOrchestratorTests
             projectDataProvider.Object,
             channelDataProvider.Object,
             mediator.Object,
-            teamService.Object);
+            teamService.Object,
+            sourceMap,
+            detailsStore,
+            secretsAccessor);
 
         return new TestHarness(
             orchestrator,
@@ -1685,6 +1792,9 @@ public class OctopusImportConfirmationOrchestratorTests
         public Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
         public Task<OctopusImportSessionDto> GetSessionAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
         {
             GetSessionCalls++;
@@ -1751,7 +1861,8 @@ public class OctopusImportConfirmationOrchestratorTests
                     CompletedAt = result.CompletedAt,
                     Resources = result.Resources.Select(CloneResource).ToList(),
                     IdMappings = result.IdMappings.Select(CloneMapping).ToList(),
-                    Diagnostics = result.Diagnostics.Select(CloneDiagnostic).ToList()
+                    Diagnostics = result.Diagnostics.Select(CloneDiagnostic).ToList(),
+                    MissingSensitiveValues = result.MissingSensitiveValues.ToList()
                 };
 
         private static OctopusImportResourceResultDto CloneResource(OctopusImportResourceResultDto resource)

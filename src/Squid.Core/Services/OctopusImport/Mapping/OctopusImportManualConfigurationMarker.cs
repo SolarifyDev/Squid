@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -123,7 +124,7 @@ public static class OctopusImportManualConfiguration
         => endpoint is { } value && HasEndpointSecret(value, null);
 
     private static bool FeedHasCredentials(OctopusFeedDto feed)
-        => !string.IsNullOrWhiteSpace(feed?.Username) || !string.IsNullOrWhiteSpace(feed?.Password);
+        => !string.IsNullOrWhiteSpace(feed?.Username) || !string.IsNullOrWhiteSpace(feed?.Password) || OctopusImportFeedCredentials.IsPasswordWithheld(feed);
 
     private static bool CertificateHasPrivateMaterial(OctopusCertificateDto certificate)
         => certificate is { HasPrivateKey: true } || HasJsonPayload(certificate?.CertificateData);

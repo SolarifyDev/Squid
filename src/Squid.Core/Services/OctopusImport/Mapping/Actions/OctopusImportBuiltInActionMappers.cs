@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Tentacle.Handlers;
 using Squid.Core.Services.OctopusImport;
@@ -177,6 +178,7 @@ internal static class OctopusImportActionMapperHelper
         var mapped = new List<ActionPropertyModel>();
         var omittedPropertyNames = new List<string>();
         var omittedSensitivePropertyNames = new List<string>();
+        var withheld = OctopusImportWithheldSecrets.For(action.ExtensionData);
 
         foreach (var (sourceName, sourceValue) in action.Properties ?? [])
         {
@@ -190,7 +192,8 @@ internal static class OctopusImportActionMapperHelper
                 continue;
             }
 
-            if (sensitiveProperties.Contains(destinationName))
+            // A value the Octopus server withheld is a secret whatever this mapper thinks of the property.
+            if (sensitiveProperties.Contains(destinationName) || withheld.Contains(sourceName))
             {
                 omittedSensitivePropertyNames.Add(sourceName);
                 continue;

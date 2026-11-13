@@ -121,4 +121,18 @@ public class ServerTaskControlServiceResumeTests
         _jobClient.Verify(AnyEnqueue(), Times.Once);
         task.JobId.ShouldBe("auto-job-1");
     }
+
+    [Fact]
+    public async Task ImportedTask_Throws409Exception()
+    {
+        // A paused imported task looks resumable, but resuming would run another server's deployment here.
+        var task = new ServerTaskEntity { Id = 7, State = TaskState.Paused, HasPendingInterruptions = false };
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(task);
+        _dataProvider.Setup(d => d.IsImportedAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await Should.ThrowAsync<ImportedServerTaskReadOnlyException>(() => _sut.ResumeTaskAsync(7, CancellationToken.None));
+
+        _jobClient.Verify(AnyEnqueue(), Times.Never);
+        _dataProvider.Verify(d => d.UpdateServerTaskStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

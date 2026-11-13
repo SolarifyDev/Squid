@@ -20,12 +20,17 @@ internal static class OctopusImportReleasePackageFeedResolver
 
     public static bool HasPlannedDestination(
         string sourceFeedId,
-        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources)
+        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources,
+        OctopusImportPriorMappings prior = null)
     {
         if (string.IsNullOrWhiteSpace(sourceFeedId))
             return false;
 
         if (int.TryParse(sourceFeedId, out var destinationFeedId) && destinationFeedId > 0)
+            return true;
+
+        // A feed imported earlier resolves through the source map even when this source no longer carries it.
+        if (prior != null && prior.TryGet(OctopusResourceKind.Feed.ToString(), sourceFeedId, out _))
             return true;
 
         var actionableFeeds = previewResources.Values
@@ -46,9 +51,8 @@ internal static class OctopusImportReleasePackageFeedResolver
         if (!string.Equals(resource.SourceType, OctopusResourceKind.Feed.ToString(), StringComparison.OrdinalIgnoreCase))
             return false;
 
-        return resource.PreviewAction == OctopusImportPreviewAction.Create
-               || resource.PreviewAction == OctopusImportPreviewAction.ReuseExisting
-               && resource.DestinationId is > 0;
+        return OctopusImportPreviewActions.ResolvesToDestination(resource.PreviewAction)
+               && (resource.PreviewAction == OctopusImportPreviewAction.Create || resource.DestinationId is > 0);
     }
 
     private static string GetSourceFeedIdFromAction(
@@ -78,9 +82,19 @@ internal static class OctopusImportReleasePackageFeedResolver
                              .Where(action => action != null),
                          selectedPackage);
 
-        if (action == null)
-            return null;
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
 
+    /// <summary>The feed of a release's selected package, read from the release's deployment process snapshot.</summary>
+    public static string GetSourceFeedIdFromProcess(OctopusDeploymentProcessDto process, OctopusSelectedPackageDto selectedPackage)
+    {
+        var action = FindReleaseAction(process?.Steps?.SelectMany(step => step.Actions ?? []) ?? [], selectedPackage);
+
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
+
+    private static string FeedIdOf(OctopusDeploymentActionDto action, OctopusSelectedPackageDto selectedPackage)
+    {
         var package = FindActionPackage(action, selectedPackage.PackageReferenceName);
         if (!string.IsNullOrWhiteSpace(package?.FeedId))
             return package.FeedId;

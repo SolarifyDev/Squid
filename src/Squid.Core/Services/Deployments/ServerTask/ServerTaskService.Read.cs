@@ -38,11 +38,23 @@ public partial class ServerTaskService
 
         return new ServerTaskDetailsDto
         {
-            Task = MapTask(task),
+            Task = await MapTaskWithImportFlagAsync(task, ct).ConfigureAwait(false),
             ActivityLogs = BuildTree(flatNodes, logs, tailPerNode),
             PhysicalLogSize = await _serverTaskLogDataProvider.GetLogCountByTaskIdAsync(taskId, ct).ConfigureAwait(false),
             Progress = BuildProgress(task, flatNodes)
         };
+    }
+
+    public Task<bool> IsImportedAsync(int serverTaskId, CancellationToken ct = default) => _serverTaskDataProvider.IsImportedAsync(serverTaskId, ct);
+
+    // The details read is what the deployment page polls, so it carries the read-only marker that hides task controls.
+    private async Task<ServerTaskSummaryDto> MapTaskWithImportFlagAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+    {
+        var dto = MapTask(task);
+
+        dto.IsImported = await IsImportedAsync(task.Id, ct).ConfigureAwait(false);
+
+        return dto;
     }
 
     public async Task<ServerTaskLogPageDto> GetTaskLogsAsync(int taskId, long? afterSequenceNumber = null, int? take = null, CancellationToken ct = default)

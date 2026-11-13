@@ -11,6 +11,9 @@ public interface IOctopusImportDestinationDataProvider : IScopedDependency
     Task<IReadOnlyList<OctopusImportDestinationResource>> GetResourcesAsync(
         int destinationSpaceId,
         CancellationToken cancellationToken = default);
+
+    /// <summary>The release identities that exist under the given destination projects.</summary>
+    Task<IReadOnlyList<OctopusImportReleaseKey>> GetReleaseKeysAsync(int destinationSpaceId, IReadOnlyCollection<int> projectIds, CancellationToken cancellationToken = default);
 }
 
 public class OctopusImportDestinationDataProvider(IRepository repository) : IOctopusImportDestinationDataProvider
@@ -75,6 +78,13 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
             .OrderBy(x => x.Kind)
             .ThenBy(x => x.Id)
             .ToList();
+    }
+
+    public async Task<IReadOnlyList<OctopusImportReleaseKey>> GetReleaseKeysAsync(int destinationSpaceId, IReadOnlyCollection<int> projectIds, CancellationToken cancellationToken = default)
+    {
+        if (projectIds == null || projectIds.Count == 0) return [];
+
+        return await repository.QueryNoTracking<Release>(x => x.SpaceId == destinationSpaceId && projectIds.Contains(x.ProjectId)).Select(x => new OctopusImportReleaseKey(x.ProjectId, x.ChannelId, x.Version)).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // Teams carry their built-in flag, current member count and member fingerprint: reusing a team grants approval rights to its members.

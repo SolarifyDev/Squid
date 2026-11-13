@@ -186,7 +186,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         var isSensitive = OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable);
         var value = OctopusSystemVariables.RewriteReferences(isSensitive ? ResolveSensitiveValue(context, variable, index) : variable.Value);
 
-        if (!string.IsNullOrWhiteSpace(variable.Prompt?.DisplaySettings))
+        if (variable.Prompt?.HasDisplaySettings == true)
         {
             diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Warning,
@@ -217,12 +217,14 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         if (OctopusImportSensitiveValues.TryResolve(variable, context.Secrets, out var plaintext)) return plaintext;
 
         var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(context.VariableSet.Id, variable.Id, index);
+        var withheld = OctopusImportSensitiveValues.IsWithheld(variable);
+        var withheldByServer = OctopusImportSecretSeverity.IsWithheldByServer(withheld, context.Secrets);
 
-        context.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable));
+        context.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable, context.Secrets));
         context.Diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
-            OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
-            $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.",
+            OctopusImportSecretSeverity.For(withheld, context.Secrets),
+            withheldByServer ? OctopusImportVariableMappingDiagnosticCodes.SensitiveValueWithheldByServer : OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
+            SensitiveValueMessage(variable, withheldByServer),
             OctopusResourceKind.Variable,
             variableSourceId,
             variable.Name));
@@ -230,43 +232,49 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         return string.Empty;
     }
 
-    private static VariableType MapVariableType(
-        OctopusVariableDto variable,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    private static string SensitiveValueMessage(OctopusVariableDto variable, bool withheldByServer)
+        => withheldByServer
+            ? $"The Octopus server did not return the value of sensitive variable '{variable.Name}'; it was imported empty and is listed as a missing secret."
+            : $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.";
+
+    private static VariableType MapVariableType(OctopusVariableDto variable, List<OctopusImportDiagnosticDto> diagnostics)
     {
-        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
-            return VariableType.Password;
-
-        var type = variable.Type?.Trim();
-
-        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String"))
-            return VariableType.String;
-
-        if (IsType(type, "Certificate"))
-            return VariableType.Certificate;
-
-        if (IsType(type, "Boolean"))
-            return VariableType.Boolean;
-
-        if (IsType(type, "Integer") || IsType(type, "Number"))
-            return VariableType.Number;
-
-        if (IsType(type, "MultiLineText"))
-            return VariableType.MultiLineText;
-
-        if (IsType(type, "SelectList") || IsType(type, "Select"))
-            return VariableType.SelectList;
+        if (SquidVariableType(variable) is { } mapped) return mapped;
 
         diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType,
-            $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.",
+            UnsupportedVariableTypeMessage(variable),
             OctopusResourceKind.Variable,
             variable.Id,
             variable.Name));
 
         return VariableType.String;
     }
+
+    /// <summary>
+    /// The Squid type an Octopus variable is written as, or null when Squid has no such type (account, worker-pool,
+    /// certificate-like types it cannot hold). Preview asks the same rule, so it blocks or skips exactly what this
+    /// mapper would refuse.
+    /// </summary>
+    public static VariableType? SquidVariableType(OctopusVariableDto variable)
+    {
+        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable)) return VariableType.Password;
+
+        var type = variable.Type?.Trim();
+
+        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String")) return VariableType.String;
+        if (IsType(type, "Certificate")) return VariableType.Certificate;
+        if (IsType(type, "Boolean")) return VariableType.Boolean;
+        if (IsType(type, "Integer") || IsType(type, "Number")) return VariableType.Number;
+        if (IsType(type, "MultiLineText")) return VariableType.MultiLineText;
+        if (IsType(type, "SelectList") || IsType(type, "Select")) return VariableType.SelectList;
+
+        return null;
+    }
+
+    public static string UnsupportedVariableTypeMessage(OctopusVariableDto variable)
+        => $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.";
 
     private static List<VariableScopeModel> MapScopes(OctopusVariableDto variable, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics)
     {

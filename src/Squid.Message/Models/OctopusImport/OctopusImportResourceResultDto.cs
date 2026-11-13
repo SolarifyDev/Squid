@@ -16,6 +16,9 @@ public class OctopusImportResourceResultDto
 
     public int? DestinationId { get; set; }
 
+    /// <summary>The Octopus project the resource belongs to (the project itself for a project), so a client can group history per project. Null for shared resources.</summary>
+    public string OwnerProjectSourceId { get; set; }
+
     /// <summary>
     /// Member count of a reused destination team when the preview was generated. Reusing a team grants
     /// manual-intervention approval to its members, so confirmation treats any change of this count as a

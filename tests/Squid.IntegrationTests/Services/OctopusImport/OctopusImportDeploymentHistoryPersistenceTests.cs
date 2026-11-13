@@ -168,10 +168,11 @@ public class OctopusImportDeploymentHistoryPersistenceTests : TestBase
                 unmatchedTask.CompletedTime.ShouldBe(DateTimeOffset.Parse("2024-07-11T09:48:11Z"));
                 unmatchedTask.DurationSeconds.ShouldBe(68);
 
-                completions.Count.ShouldBe(1);
-                completions.Single().DeploymentId.ShouldBe(matched.DeploymentId);
-                completions.Single().State.ShouldBe(TaskState.Success);
-                completions.Single().CompletedTime.ShouldBe(DateTimeOffset.Parse("2024-07-10T09:48:11Z"));
+                // A failed deployment now records a Failed completion, exactly like a normal deploy does.
+                completions.Count.ShouldBe(2);
+                completions.Single(c => c.DeploymentId == matched.DeploymentId).State.ShouldBe(TaskState.Success);
+                completions.Single(c => c.DeploymentId == matched.DeploymentId).CompletedTime.ShouldBe(DateTimeOffset.Parse("2024-07-10T09:48:11Z"));
+                completions.Single(c => c.DeploymentId == unmatched.DeploymentId).State.ShouldBe(TaskState.Failed);
 
                 logs.Count.ShouldBe(2);
                 logs.Single(log => log.ServerTaskId == unmatched.TaskId).Category.ShouldBe(ServerTaskLogCategory.Error);

@@ -24,6 +24,13 @@ public class CreateReleaseCommand : ICommand, ISpaceScoped
 
     [JsonIgnore]
     public DateTimeOffset? HistoricalCreatedDate { get; set; }
+
+    /// <summary>
+    /// Set only by the Octopus history import: a historical release already passed Octopus's channel rules when it
+    /// was created, so today's rules are not applied again. Never bound from the API.
+    /// </summary>
+    [JsonIgnore]
+    public bool IsHistoricalImport { get; set; }
 }
 
 public class CreateReleaseResponse : SquidResponse<ReleaseDto>

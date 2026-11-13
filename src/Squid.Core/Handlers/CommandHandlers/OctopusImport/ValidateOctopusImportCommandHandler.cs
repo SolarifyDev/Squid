@@ -57,7 +57,7 @@ public class ValidateOctopusImportCommandHandler(
             return BadRequest(command, state, command.PreviewPlan, new OctopusImportValidationResultDto(), ex.Message);
         }
 
-        var previewPlan = OctopusImportRedaction.RedactDto(command.PreviewPlan ?? snapshot.PreviewPlan);
+        var previewPlan = OctopusImportRedaction.RedactDto(OctopusImportServerOwnedRows.MergeServerOwnedHistoryRows(command.PreviewPlan, snapshot.PreviewPlan));
         var validation = OctopusImportRedaction.RedactDto(previewValidator.Validate(
             snapshot.Graph,
             snapshot.DependencyPlan,

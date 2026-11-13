@@ -9,6 +9,9 @@ public class OctopusExportManifestDto
 
     public List<OctopusManifestEntryDto> Entries { get; set; } = [];
 
+    /// <summary>Set by Squid's REST history fetch; Octopus's own export does not write it.</summary>
+    public string InstallationId { get; set; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
 }
@@ -331,7 +334,16 @@ public class OctopusVariablePromptDto
 
     public bool Required { get; set; }
 
-    public string DisplaySettings { get; set; }
+    /// <summary>Octopus sends a string → string object (<c>{"Octopus.ControlType":"Select", …}</c>); older documents carry the same as JSON text.</summary>
+    public JsonElement? DisplaySettings { get; set; }
+
+    [JsonIgnore]
+    public bool HasDisplaySettings => DisplaySettings switch
+    {
+        { ValueKind: JsonValueKind.Object } settings => settings.EnumerateObject().Any(),
+        { ValueKind: JsonValueKind.String } settings => !string.IsNullOrWhiteSpace(settings.GetString()),
+        _ => false
+    };
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
@@ -515,4 +527,144 @@ public class OctopusServerTaskDto : OctopusDocumentDto
     public string ProjectId { get; set; }
 
     public string EnvironmentId { get; set; }
+
+    /// <summary>0 = summary only (export file); 1 = the REST fetch also stored the task's details.</summary>
+    public int DetailLevel { get; set; }
+
+    /// <summary>Fingerprint of the stored details, computed by the REST fetch; null when no details were fetched.</summary>
+    public string DetailFingerprint { get; set; }
+
+    /// <summary>
+    /// True when Octopus refused part of the task's details: none are stored, and the import keeps the children already
+    /// imported and does not record the task as current, so the next fetch reads the details again.
+    /// </summary>
+    public bool DetailsIncomplete { get; set; }
+
+    public List<OctopusInterruptionDto> Interruptions { get; set; } = [];
+
+    public List<OctopusEventDto> Events { get; set; } = [];
+
+    public List<OctopusArtifactDto> Artifacts { get; set; } = [];
+}
+
+/// <summary>
+/// One task's history details: the Octopus <c>tasks/{id}/details</c> activity tree plus the interruptions,
+/// events and artifacts that refer to it. Octopus before 3.4 returned a single root <c>ActivityLog</c>.
+/// </summary>
+public class OctopusTaskHistoryDetails
+{
+    public List<OctopusActivityLogDto> ActivityLogs { get; set; } = [];
+
+    public OctopusActivityLogDto ActivityLog { get; set; }
+
+    public List<OctopusInterruptionDto> Interruptions { get; set; } = [];
+
+    public List<OctopusEventDto> Events { get; set; } = [];
+
+    public List<OctopusArtifactDto> Artifacts { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+
+    /// <summary>The root activity elements, whichever shape the server returned.</summary>
+    [JsonIgnore]
+    public IReadOnlyList<OctopusActivityLogDto> RootActivities => ActivityLogs is { Count: > 0 } ? ActivityLogs : ActivityLog == null ? [] : [ActivityLog];
+}
+
+public class OctopusActivityLogDto
+{
+    public string Id { get; set; }
+
+    public string Name { get; set; }
+
+    public string Status { get; set; }
+
+    public DateTimeOffset? Started { get; set; }
+
+    public DateTimeOffset? Ended { get; set; }
+
+    public List<OctopusActivityLogDto> Children { get; set; } = [];
+
+    public List<OctopusLogElementDto> LogElements { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+}
+
+public class OctopusLogElementDto
+{
+    public string Category { get; set; }
+
+    public string MessageText { get; set; }
+
+    public string Detail { get; set; }
+
+    public DateTimeOffset? OccurredAt { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+}
+
+public class OctopusInterruptionDto
+{
+    public string Id { get; set; }
+
+    public string Title { get; set; }
+
+    public string Type { get; set; }
+
+    public bool IsPending { get; set; }
+
+    public DateTimeOffset? Created { get; set; }
+
+    public string TaskId { get; set; }
+
+    public List<string> ResponsibleTeamIds { get; set; } = [];
+
+    public string ResponsibleUserId { get; set; }
+
+    public OctopusInterruptionFormDto Form { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+}
+
+public class OctopusInterruptionFormDto
+{
+    public Dictionary<string, string> Values { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+}
+
+public class OctopusEventDto
+{
+    public string Id { get; set; }
+
+    public string Category { get; set; }
+
+    public string Message { get; set; }
+
+    public DateTimeOffset? Occurred { get; set; }
+
+    public string Username { get; set; }
+
+    public List<string> RelatedDocumentIds { get; set; } = [];
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
+}
+
+public class OctopusArtifactDto
+{
+    public string Id { get; set; }
+
+    public string Filename { get; set; }
+
+    public string Source { get; set; }
+
+    public DateTimeOffset? Created { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement> ExtensionData { get; set; } = [];
 }

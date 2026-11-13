@@ -18,6 +18,14 @@ public static class OctopusImportSensitiveValues
     /// </summary>
     public static bool IsSensitive(bool isSensitive, string type) => isSensitive || string.Equals(type?.Trim(), "Sensitive", StringComparison.OrdinalIgnoreCase);
 
+    public const string ValueMember = "Value";
+
+    /// <summary>The Octopus server withheld this variable's value (REST marker on the variable).</summary>
+    public static bool IsWithheld(OctopusVariableDto variable) => variable != null && OctopusImportWithheldSecrets.IsWithheld(variable.ExtensionData, ValueMember);
+
+    /// <summary>A withheld value in a server session: imported empty and reported, never a blocker.</summary>
+    public static bool IsWithheldByServer(OctopusVariableDto variable, OctopusExportSecrets secrets) => OctopusImportSecretSeverity.IsWithheldByServer(IsWithheld(variable), secrets);
+
     public static bool IsResolvable(OctopusVariableDto variable, OctopusExportSecrets secrets)
     {
         if (variable == null || secrets == null || !secrets.IsAvailable) return false;

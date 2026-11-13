@@ -226,6 +226,22 @@ public class OctopusImportExportSecretStoreTests
         _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // A server session has no export password: every emitter must see "withheld by the server", never "no password".
+    [Theory]
+    [InlineData("{\"detectedFormat\":\"OctopusServer\"}", true)]
+    [InlineData("{\"detectedFormat\":\"OctopusExportZip\"}", false)]
+    [InlineData(null, false)]
+    public async Task LoadAsync_ServerSession_IsWithheldByServer(string sourceSummaryJson, bool expected)
+    {
+        var session = SetupSession();
+        session.SourceSummaryJson = sourceSummaryJson;
+
+        var secrets = await Store().LoadAsync(session.SessionId, 7);
+
+        secrets.IsWithheldByServer.ShouldBe(expected);
+        secrets.IsAvailable.ShouldBeFalse();
+    }
+
     private OctopusImportSession SetupSession()
     {
         var session = Session();

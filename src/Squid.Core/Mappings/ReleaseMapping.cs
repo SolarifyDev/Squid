@@ -28,6 +28,8 @@ public class ReleaseMapping : Profile
             .ForMember(dest => dest.ProjectDeploymentProcessSnapshotId, opt => opt.Ignore())
             .ForMember(dest => dest.ChannelId, opt => opt.Ignore())
             .ForMember(dest => dest.SpaceId, opt => opt.Ignore())
+            // An older client that posts only {version} must not wipe the stored notes.
+            .ForMember(dest => dest.ReleaseNote, opt => opt.Condition(src => src.ReleaseNote != null))
             .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
             .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
             .ForMember(dest => dest.LastModifiedDate, opt => opt.Ignore())

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
 
@@ -183,5 +184,62 @@ public class OctopusTransportDtoTests
         feed.Username.ShouldBe("sjdistributor");
         feed.Password.ShouldBe("encrypted-value");
         feed.FeedUri.ShouldBe("https://index.docker.io");
+    }
+
+    [Fact]
+    public void TaskHistoryDetails_DeserializesTheRestDetailsShape()
+    {
+        const string json = """
+        {
+          "Task": { "Id": "ServerTasks-1" },
+          "ActivityLogs": [
+            {
+              "Id": "ServerTasks-1", "Name": "Deploy", "Status": "SuccessWithWarning", "Started": "2024-03-01T10:00:00Z", "Ended": "2024-03-01T10:00:05Z",
+              "Children": [
+                { "Id": "ServerTasks-1_step", "Name": "Step 1", "Status": "Success", "Children": [],
+                  "LogElements": [ { "Category": "Warning", "MessageText": "careful", "Detail": "stack", "OccurredAt": "2024-03-01T10:00:02Z" } ] }
+              ],
+              "LogElements": [], "ShowAtSummaryLevel": true
+            }
+          ],
+          "Interruptions": [ { "Id": "Interruptions-1", "Title": "Approve", "Type": "ManualIntervention", "IsPending": false, "TaskId": "ServerTasks-1", "ResponsibleTeamIds": [ "Teams-1" ], "Form": { "Values": { "Result": "Proceed" }, "Elements": [] } } ],
+          "Events": [ { "Id": "Events-1", "Category": "DeploymentSucceeded", "Message": "done", "Occurred": "2024-03-01T10:00:05Z", "RelatedDocumentIds": [ "Deployments-1" ] } ],
+          "Artifacts": [ { "Id": "Artifacts-1", "Filename": "report.txt", "Source": "Step 1", "Created": "2024-03-01T10:00:04Z" } ]
+        }
+        """;
+
+        var details = JsonSerializer.Deserialize<OctopusTaskHistoryDetails>(json, JsonOptions);
+
+        details.RootActivities.Single().Children.Single().LogElements.Single().MessageText.ShouldBe("careful");
+        details.RootActivities.Single().Status.ShouldBe("SuccessWithWarning");
+        details.Interruptions.Single().Form.Values["Result"].ShouldBe("Proceed");
+        details.Interruptions.Single().ResponsibleTeamIds.ShouldBe(["Teams-1"]);
+        details.Events.Single().RelatedDocumentIds.ShouldBe(["Deployments-1"]);
+        details.Artifacts.Single().Filename.ShouldBe("report.txt");
+        details.ExtensionData.Keys.ShouldContain("Task");
+    }
+
+    [Fact]
+    public void TaskHistoryDetails_PreThreeFourSingleActivityLog_IsTheOnlyRoot()
+    {
+        const string json = """{ "ActivityLog": { "Id": "ServerTasks-1", "Name": "Deploy", "Status": "Failed", "Children": [] } }""";
+
+        var details = JsonSerializer.Deserialize<OctopusTaskHistoryDetails>(json, JsonOptions);
+
+        details.RootActivities.Single().Status.ShouldBe("Failed");
+    }
+
+    [Fact]
+    public void ServerTaskDto_ExportShapeWithoutDetailFields_DefaultsToSummaryLevel()
+    {
+        const string json = """{ "Id": "ServerTasks-1", "State": "Success" }""";
+
+        var task = JsonSerializer.Deserialize<OctopusServerTaskDto>(json, JsonOptions);
+
+        task.DetailLevel.ShouldBe(0);
+        task.DetailFingerprint.ShouldBeNull();
+        task.Interruptions.ShouldBeEmpty();
+        task.Events.ShouldBeEmpty();
+        task.Artifacts.ShouldBeEmpty();
     }
 }

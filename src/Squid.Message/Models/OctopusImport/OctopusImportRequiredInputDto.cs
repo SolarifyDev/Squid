@@ -22,5 +22,11 @@ public class OctopusImportRequiredInputDto
 
     public bool IsRequired { get; set; }
 
+    /// <summary>A later import of the Octopus export file can supply this value (sensitive variable values and feed passwords only).</summary>
+    public bool Fillable { get; set; }
+
+    /// <summary>The Octopus server API never returns this secret; it is imported empty and listed as missing.</summary>
+    public bool WithheldByServer { get; set; }
+
     public Dictionary<string, List<string>> SourceScopes { get; set; } = [];
 }

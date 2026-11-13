@@ -137,6 +137,33 @@ public class OctopusImportPlanningPipelineTests
         }
     }
 
+    // One source per session: a bundle beside an uploaded export is not part of it, so the cached extraction stands.
+    [Fact]
+    public async Task BuildPreviewAsync_WhenAHistoryBundleAppearsBesideTheUpload_NeitherReadsItNorExtractsAgain()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"squid-pipeline-{Guid.NewGuid():N}")).FullName;
+        var path = Path.Combine(directory, "export.json");
+        File.WriteAllText(path, "{}");
+        var harness = new Harness();
+        harness.InputExtractor.Setup(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), It.IsAny<string>(), null, It.IsAny<CancellationToken>())).ReturnsAsync(ExtractionResult());
+
+        try
+        {
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+            File.WriteAllText(Path.Combine(directory, OctopusImportSourceReader.HistoryBundleFileName), "{}");
+
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), "export.json", null, It.IsAny<CancellationToken>()), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), OctopusImportSourceReader.HistoryBundleFileName, null, It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     private static string CreateTempFile()
     {
         var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");
@@ -175,8 +202,7 @@ public class OctopusImportPlanningPipelineTests
                 .Returns(new OctopusImportPreviewPlanDto());
 
             Pipeline = new OctopusImportPlanningPipeline(
-                ArchiveExtractor.Object,
-                InputExtractor.Object,
+                new OctopusImportSourceReader(ArchiveExtractor.Object, InputExtractor.Object),
                 InventoryBuilder.Object,
                 GraphBuilder.Object,
                 DependencyPlanner.Object,

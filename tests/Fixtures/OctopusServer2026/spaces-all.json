@@ -1,0 +1,40 @@
+[
+  {
+    "Id": "Spaces-1",
+    "Name": "Default",
+    "Slug": "default",
+    "Description": null,
+    "IsDefault": true,
+    "IsPrivate": false,
+    "TaskQueueStopped": false,
+    "SpaceManagersTeams": [
+      "teams-spacemanagers-Spaces-1"
+    ],
+    "SpaceManagersTeamMembers": [],
+    "Icon": null,
+    "ExtensionSettings": [],
+    "LastModifiedOn": "2025-01-01T00:00:00.000+00:00",
+    "Links": {
+      "Self": "/api/spaces/Spaces-1"
+    }
+  },
+  {
+    "Id": "Spaces-2",
+    "Name": "Sandbox",
+    "Slug": "sandbox",
+    "Description": null,
+    "IsDefault": false,
+    "IsPrivate": false,
+    "TaskQueueStopped": false,
+    "SpaceManagersTeams": [
+      "teams-spacemanagers-Spaces-2"
+    ],
+    "SpaceManagersTeamMembers": [],
+    "Icon": null,
+    "ExtensionSettings": [],
+    "LastModifiedOn": "2025-01-01T00:00:00.000+00:00",
+    "Links": {
+      "Self": "/api/spaces/Spaces-2"
+    }
+  }
+]

@@ -101,15 +101,7 @@ public partial class ReleaseService : IReleaseService
         if (channel.SpaceId != project.SpaceId)
             throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
 
-        if (command.IgnoreChannelRules)
-        {
-            if (!project.AllowIgnoreChannelRules)
-                throw new ChannelRulesCannotBeIgnoredException(project.Id);
-        }
-        else
-        {
-            await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
-        }
+        await EnsureChannelRulesAsync(command, project, cancellationToken).ConfigureAwait(false);
 
         var existingRelease = await _releaseDataProvider
             .GetReleaseByVersionAsync(command.ProjectId, command.ChannelId, command.Version, cancellationToken).ConfigureAwait(false);
@@ -148,6 +140,21 @@ public partial class ReleaseService : IReleaseService
         {
             Release = _mapper.Map<ReleaseDto>(release)
         };
+    }
+
+    // A historical import bypasses both today's channel rules and the project's ignore-rules permission.
+    private async Task EnsureChannelRulesAsync(CreateReleaseCommand command, Persistence.Entities.Deployments.Project project, CancellationToken cancellationToken)
+    {
+        if (command.IsHistoricalImport) return;
+
+        if (!command.IgnoreChannelRules)
+        {
+            await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!project.AllowIgnoreChannelRules)
+            throw new ChannelRulesCannotBeIgnoredException(project.Id);
     }
 
     public async Task<ReleaseUpdatedEvent> UpdateReleaseAsync(UpdateReleaseCommand command, CancellationToken cancellationToken = default)
