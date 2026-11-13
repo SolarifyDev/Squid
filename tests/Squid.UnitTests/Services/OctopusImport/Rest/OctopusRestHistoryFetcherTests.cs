@@ -276,12 +276,15 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     // ── Abandoned items (D14) ─────────────────────────────────────────────
 
     // One item that keeps outliving the chunk deadline fails its chunks until the limit, then is skipped so the fetch moves on.
-    [Fact]
-    public async Task ItemAbandonedByTheDeadline_FailsUntilTheLimit_ThenSkippedAndRecorded()
+    // A release item reads its own process snapshot (for package feeds), so it is in flight just like a deployment item.
+    [Theory]
+    [InlineData(OctopusHistoryFetchPhase.Releases, "/deploymentprocesses/deploymentprocess-Projects-1-s-1")]
+    [InlineData(OctopusHistoryFetchPhase.Deployments, "/events?regarding=Deployments-1")]
+    public async Task ItemAbandonedByTheDeadline_FailsUntilTheLimit_ThenSkippedAndRecorded(OctopusHistoryFetchPhase phase, string stalledPath)
     {
-        var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
-        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) && request.RequestUri.Query.Contains("Deployments-1") ? OctopusRestStubHandler.StalledBody() : null;
-        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1).Deployment("Projects-1", 2);
+        server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains(stalledPath, StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = phase, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
@@ -292,15 +295,17 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
 
-        (cursor.Skip, cursor.Counts.ItemsAbandoned, cursor.Counts.Deployments).ShouldBe((1, 1, 0));
+        (cursor.Skip, cursor.Counts.ItemsAbandoned, cursor.Counts.Releases, cursor.Counts.Deployments).ShouldBe((1, 1, 0, 0));
         cursor.AbandonCounts.ShouldBeEmpty();
         var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
         (skipped.ProjectId, skipped.Reason).ShouldBe(("Projects-1", OctopusHistoryFetchSkipReason.Abandoned));
-        skipped.Path.ShouldContain("events?regarding=Deployments-1");
+        Uri.UnescapeDataString(skipped.Path).ShouldContain(stalledPath.TrimStart('/'));
 
-        var progress = await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
+        await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
 
-        progress.Counts.Deployments.ShouldBe(1);
+        // The next chunk moves past the skipped item's page instead of stalling on it again.
+        cursor.Phase.ShouldNotBe(phase);
+        cursor.SkippedItems.ShouldHaveSingleItem();
     }
 
     // Stuck outside an item (the key's identity, a page of deployments, the page's task summaries) no item is at fault,

@@ -251,13 +251,15 @@ public partial class OctopusImportConfirmationOrchestratorTests
 
     // Only-fill: a changed task whose details the fetch could only partly read keeps its imported children, and the
     // stored task fingerprint stays the old one, so the next fetch sees the task as changed and fetches the details
-    // again instead of skipping them as already stored.
+    // again instead of skipping them as already stored. A summary-level unit (no stored details) has its children
+    // replaced at summary level, so its task fingerprint advances; otherwise it would preview as Update on every run.
     [Theory]
-    [InlineData(true, null)]          // details incomplete → task fingerprint not advanced (null keeps the stored one)
-    [InlineData(false, "current")]    // a source simply without details (an export file) → task fingerprint advanced as before
-    public async Task HistoryUnitUpdate_KeepingStoredChildren_AdvancesTheTaskFingerprintOnlyWhenTheDetailsWereComplete(bool detailsIncomplete, string expected)
+    [InlineData("stored-details", true, false, false)]   // details incomplete, children kept → task fingerprint not advanced (null keeps the stored one)
+    [InlineData("stored-details", false, false, true)]   // a source simply without details (an export file) → task fingerprint advanced as before
+    [InlineData(null, true, true, true)]                 // summary-level unit, details incomplete → children replaced at summary level, fingerprint advanced
+    public async Task HistoryUnitUpdate_AdvancesTheTaskFingerprintUnlessIncompleteDetailsKeptTheStoredChildren(string storedDetailFingerprint, bool detailsIncomplete, bool expectedReplaceChildren, bool expectedAdvanced)
     {
-        var history = HistoryScenario(storedTaskFingerprint: "changed-in-octopus", storedDetailFingerprint: "stored-details");
+        var history = HistoryScenario(storedTaskFingerprint: "changed-in-octopus", storedDetailFingerprint: storedDetailFingerprint);
         history.TaskDto.DetailsIncomplete = detailsIncomplete;
         var upserted = new List<OctopusImportSourceMapRow>();
         var harness = CreateHistoryHarness(history, OctopusImportPreviewAction.Update, 5001, 6001, upserted, CaptureUnits(out var units));
@@ -266,9 +268,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
 
         result.State.ShouldBe(OctopusImportSessionState.Succeeded);
         var unit = units.ShouldHaveSingleItem();
-        (unit.ScalarChanged, unit.ReplaceChildren).ShouldBe((true, false));
+        (unit.ScalarChanged, unit.ReplaceChildren).ShouldBe((true, expectedReplaceChildren));
         var row = upserted.Single(r => r.SourceType == "Deployment");
-        (row.Fingerprint, row.DetailFingerprint, row.DetailsCleared).ShouldBe((expected == null ? null : OctopusImportFingerprint.ForTask(history.TaskDto), null, false));
+        (row.Fingerprint, row.DetailFingerprint, row.DetailsCleared).ShouldBe((expectedAdvanced ? OctopusImportFingerprint.ForTask(history.TaskDto) : null, null, expectedReplaceChildren));
     }
 
     [Fact]
