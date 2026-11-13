@@ -62,3 +62,26 @@ public class OctopusRestTaskDetailsDto
 
     public OctopusActivityLogDto ActivityLog { get; set; }
 }
+
+/// <summary>The <c>users/{id}/permissions</c> resource: every space permission the user holds, each with the grants that give it.</summary>
+public class OctopusRestUserPermissionsDto
+{
+    public Dictionary<string, List<OctopusRestPermissionGrantDto>> SpacePermissions { get; set; } = [];
+
+    /// <summary>False when Octopus could not work the full set out; older servers omit it.</summary>
+    public bool? IsPermissionsComplete { get; set; }
+}
+
+/// <summary>One grant of a permission: the space it applies in and what it is limited to (ids, or the <c>{dimension}-all</c> / <c>{dimension}-unrelated</c> sentinels).</summary>
+public class OctopusRestPermissionGrantDto
+{
+    public string SpaceId { get; set; }
+
+    public List<string> RestrictedToProjectIds { get; set; }
+
+    public List<string> RestrictedToEnvironmentIds { get; set; }
+
+    public List<string> RestrictedToTenantIds { get; set; }
+
+    public List<string> RestrictedToProjectGroupIds { get; set; }
+}

@@ -26,6 +26,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
     private readonly ConcurrentDictionary<string, string> _keyUsers = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string[]> _keyRestrictions = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _heldRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _releaseHeld = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -145,6 +146,14 @@ public sealed class StubOctopusServer : IAsyncDisposable
         return this;
     }
 
+    /// <summary>The key's <c>users/{id}/permissions</c> limits these permissions to project Projects-1; every other key reads the whole space.</summary>
+    public StubOctopusServer RestrictKey(string apiKey, params string[] permissions)
+    {
+        _keyRestrictions[apiKey] = permissions;
+
+        return this;
+    }
+
     /// <summary>
     /// The next <paramref name="times"/> requests whose path ends with <paramref name="pathSuffix"/> get <paramref name="status"/>.
     /// The default 405 is a failure the client neither retries nor tolerates; 400/403/409/422 refuse one item, which the fetch skips.
@@ -204,7 +213,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
                 return;
             }
 
-            var (status, body) = await RouteAsync(context.Request.Url.AbsolutePath.TrimEnd('/'), HttpUtility.ParseQueryString(context.Request.Url.Query), userId).ConfigureAwait(false);
+            var (status, body) = await RouteAsync(context.Request.Url.AbsolutePath.TrimEnd('/'), HttpUtility.ParseQueryString(context.Request.Url.Query), userId, apiKey).ConfigureAwait(false);
             Write(context, status, body);
         }
         catch
@@ -213,10 +222,11 @@ public sealed class StubOctopusServer : IAsyncDisposable
         }
     }
 
-    private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query, string userId)
+    private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query, string userId, string apiKey)
     {
         if (FailureFor(path) is { } failure) return (failure, new { });
         if (path == "/api/users/me") return (HttpStatusCode.OK, new { Id = userId, Username = "importer", IsService = true });
+        if (path == $"/api/users/{userId}/permissions") return (HttpStatusCode.OK, Permissions(_keyRestrictions.GetValueOrDefault(apiKey) ?? []));
         if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/spaces/all") return (HttpStatusCode.OK, new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/teams") return Serve("teams", query);
@@ -283,6 +293,16 @@ public sealed class StubOctopusServer : IAsyncDisposable
         listener.Start();
 
         return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    // The shape of a 2026.1 users/{id}/permissions answer: every permission the import reads, granted in Spaces-1.
+    private static object Permissions(string[] restricted)
+    {
+        var permissions = new[] { "ProjectView", "ProcessView", "VariableView", "LibraryVariableSetView", "EnvironmentView", "FeedView", "AccountView", "TeamView", "CertificateView", "ReleaseView", "DeploymentView", "TaskView", "LifecycleView", "ProjectGroupView" };
+
+        object Grant(string permission) => new { SpaceId = "Spaces-1", RestrictedToProjectIds = new[] { restricted.Contains(permission) ? "Projects-1" : "projects-all" }, RestrictedToEnvironmentIds = new[] { "environments-all" }, RestrictedToTenantIds = new[] { "tenants-all" }, RestrictedToProjectGroupIds = new[] { "projectgroups-unrelated" } };
+
+        return new { Id = "permissions", SpacePermissions = permissions.ToDictionary(p => p, p => new[] { Grant(p) }), SystemPermissions = new[] { "SpaceView" }, IsPermissionsComplete = true };
     }
 
     public async ValueTask DisposeAsync()

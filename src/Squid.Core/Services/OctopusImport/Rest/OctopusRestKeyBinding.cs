@@ -36,6 +36,14 @@ public static class OctopusRestKeyBinding
         return Convert.TryFromBase64String(masterKey.Trim(), buffer, out var written) ? buffer[..written] : Encoding.UTF8.GetBytes(masterKey);
     }
 
+    /// <summary>Whether the key is not the one bound before (true when none is bound yet). Changes nothing; a key of another user is refused.</summary>
+    public static bool IsNewKey(OctopusImportHistoryFetchDto cursor, string octopusUserId, string keyFingerprint)
+    {
+        EnsureSameUser(cursor, octopusUserId);
+
+        return !SameFingerprint(cursor.KeyHmac, keyFingerprint);
+    }
+
     /// <summary>Pins the user on the first chunk and returns whether the key differs from the one bound before (true on the first chunk too).</summary>
     public static bool Bind(OctopusImportHistoryFetchDto cursor, string octopusUserId, string keyFingerprint)
     {

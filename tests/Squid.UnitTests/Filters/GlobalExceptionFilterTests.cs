@@ -10,6 +10,7 @@ using Squid.Api.Filters;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 using Squid.Message.Response;
 
 namespace Squid.UnitTests.Filters;
@@ -55,6 +56,7 @@ public class GlobalExceptionFilterTests
 
         yield return [new OctopusImportSessionNotServerSourceException(Guid.NewGuid())];
         yield return [new OctopusImportHistoryServerMismatchException("server")];
+        yield return [new OctopusImportApiKeyRestrictedException(new OctopusServerPermissionsDto { OctopusSpaceId = "Spaces-1", Restricted = ["VariableView"] })];
     }
 
     // A bad Octopus key is the caller's input error, never a Squid authentication failure (401 would sign the user out).

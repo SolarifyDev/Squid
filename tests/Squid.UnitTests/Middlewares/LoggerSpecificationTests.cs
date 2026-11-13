@@ -89,6 +89,7 @@ public class LoggerSpecificationTests
     public static IEnumerable<object[]> ServerSourceCommands()
     {
         yield return [new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com:8443/octo?apikey=API-INURL", ApiKey = "API-SECRETKEY123" }];
+        yield return [new ConnectOctopusImportCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com:8443/octo?apikey=API-INURL", ApiKey = "API-SECRETKEY123", OctopusSpaceId = "Spaces-1" }];
         yield return [new FetchOctopusImportHistoryCommand { SpaceId = 7, SessionId = Guid.NewGuid(), ServerUrl = "https://octopus.example.com:8443/octo?apikey=API-INURL", ApiKey = "API-SECRETKEY123", OctopusSpaceId = "Spaces-1" }];
     }
 

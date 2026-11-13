@@ -12,9 +12,10 @@ namespace Squid.Core.Services.OctopusImport;
 /// <summary>The Octopus server (REST API) as an import source: probe a server, open a session for it, fetch its history.</summary>
 public interface IOctopusImportServerSourceService : IScopedDependency
 {
-    Task<OctopusServerProbeDto> ProbeAsync(string serverUrl, string apiKey, CancellationToken ct = default);
+    Task<OctopusServerProbeDto> ProbeAsync(OctopusServerConnection connection, CancellationToken ct = default);
 
-    Task<OctopusImportSessionDto> ConnectAsync(int destinationSpaceId, CancellationToken ct = default);
+    /// <summary>Opens a server session. With a connection the key is checked first and no session is created for a key that cannot read the whole space.</summary>
+    Task<OctopusImportSessionDto> ConnectAsync(int destinationSpaceId, OctopusServerConnection connection, CancellationToken ct = default);
 
     Task<OctopusHistoryFetchProgressDto> FetchHistoryAsync(OctopusHistoryFetchRequest request, CancellationToken ct = default);
 }
@@ -28,11 +29,12 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
 
     private readonly OctopusRestOptions _options = options ?? OctopusRestOptions.FromEnvironment();
 
-    public Task<OctopusServerProbeDto> ProbeAsync(string serverUrl, string apiKey, CancellationToken ct = default) => fetcher.ProbeAsync(serverUrl, apiKey, ct);
+    public Task<OctopusServerProbeDto> ProbeAsync(OctopusServerConnection connection, CancellationToken ct = default) => fetcher.ProbeAsync(connection, ct);
 
-    public async Task<OctopusImportSessionDto> ConnectAsync(int destinationSpaceId, CancellationToken ct = default)
+    public async Task<OctopusImportSessionDto> ConnectAsync(int destinationSpaceId, OctopusServerConnection connection, CancellationToken ct = default)
     {
-        var summary = new OctopusImportSourceSummaryDto { FileName = OctopusImportSourceReader.HistoryBundleFileName, ContentType = "application/zip", DetectedFormat = ServerSourceFormat, HistoryFetch = new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog } };
+        var cursor = await AuthorizeConnectionAsync(connection, ct).ConfigureAwait(false);
+        var summary = new OctopusImportSourceSummaryDto { FileName = OctopusImportSourceReader.HistoryBundleFileName, ContentType = "application/zip", DetectedFormat = ServerSourceFormat, HistoryFetch = cursor };
         var session = await sessionService.CreateSessionAsync(destinationSpaceId, summary, ct).ConfigureAwait(false);
         var directory = uploadStore.GetSessionDirectory(session.SessionId);
 
@@ -43,6 +45,19 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
         var upload = new OctopusImportTemporaryUpload(Path.Combine(directory, OctopusImportSourceReader.HistoryBundleFileName), 0);
 
         return await sessionService.RegisterTemporaryUploadAsync(session.SessionId, destinationSpaceId, upload, ct).ConfigureAwait(false);
+    }
+
+    // Without a connection the session starts unpinned and its first chunk checks the key; with one, the key is checked
+    // now and the cursor starts pinned to it, so a later chunk with the same key needs no second check.
+    private async Task<OctopusImportHistoryFetchDto> AuthorizeConnectionAsync(OctopusServerConnection connection, CancellationToken ct)
+    {
+        if (connection == null) return new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog };
+
+        var cursor = await fetcher.AuthorizeAsync(connection, ct).ConfigureAwait(false);
+
+        cursor.ServerHost = ServerHostOf(connection.ServerUrl);
+
+        return cursor;
     }
 
     public async Task<OctopusHistoryFetchProgressDto> FetchHistoryAsync(OctopusHistoryFetchRequest request, CancellationToken ct = default)

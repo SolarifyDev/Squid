@@ -20,16 +20,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
     private FetchRun _ctx;
 
-    public async Task<OctopusServerProbeDto> ProbeAsync(string serverUrl, string apiKey, CancellationToken ct = default)
-    {
-        using var client = clientFactory.Create(serverUrl, apiKey);
-
-        var root = await client.GetRootAsync(ct).ConfigureAwait(false);
-        var spaces = root.Spaceless ? [] : await client.GetAsync<List<OctopusRestSpaceDto>>("api/spaces/all", ct).ConfigureAwait(false) ?? [];
-
-        return new OctopusServerProbeDto { OctopusVersion = root.Version, InstallationId = root.InstallationId, Spaceless = root.Spaceless, Spaces = spaces.Select(s => new OctopusServerSpaceDto { Id = s.Id, Name = s.Name, IsDefault = s.IsDefault }).ToList() };
-    }
-
     public async Task<OctopusHistoryFetchProgressDto> FetchChunkAsync(OctopusHistoryFetchContext context, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -67,8 +57,9 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     private async Task RunChunkAsync(CancellationToken ct)
     {
         await PinInstallationAsync(ct).ConfigureAwait(false);
-        await BindKeyAsync(ct).ConfigureAwait(false);
+        await IdentifyKeyAsync(ct).ConfigureAwait(false);
         await ResolveSpaceAsync(ct).ConfigureAwait(false);
+        await BindKeyAsync(ct).ConfigureAwait(false);
         await FetchPagesAsync(ct).ConfigureAwait(false);
     }
 
@@ -87,23 +78,13 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         cursor.StartedAt ??= DateTimeOffset.UtcNow;
     }
 
-    // Every chunk asks Octopus whose key this is: a key of another user cannot continue a fetch it did not start.
-    private async Task BindKeyAsync(CancellationToken ct)
-    {
-        var user = await _ctx.Client.GetCurrentUserAsync(ct).ConfigureAwait(false);
-
-        OctopusRestKeyBinding.Bind(_ctx.Cursor, user.Id, _ctx.Client.KeyFingerprint);
-    }
-
     private async Task ResolveSpaceAsync(CancellationToken ct)
     {
         var cursor = _ctx.Cursor;
 
         if (cursor.Spaceless || !string.IsNullOrWhiteSpace(cursor.OctopusSpaceId)) return;
 
-        var spaces = await _ctx.Client.GetAsync<List<OctopusRestSpaceDto>>("api/spaces/all", ct).ConfigureAwait(false) ?? [];
-
-        cursor.OctopusSpaceId = spaces.FirstOrDefault(s => s.IsDefault)?.Id ?? throw new OctopusRestException(OctopusRestErrorKind.NotFound);
+        cursor.OctopusSpaceId = await ResolveSpaceIdAsync(_ctx.Client, cursor.Spaceless, null, ct).ConfigureAwait(false);
     }
 
     private async Task FetchPagesAsync(CancellationToken ct)
@@ -168,6 +149,8 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
         public int ItemsCommitted { get; set; }
         public bool InItem { get; set; }
+        public string OctopusUserId { get; set; }
+        public bool KeyIsNew { get; set; }
         public List<string> ClosureBatch { get; set; } = [];
     }
 }

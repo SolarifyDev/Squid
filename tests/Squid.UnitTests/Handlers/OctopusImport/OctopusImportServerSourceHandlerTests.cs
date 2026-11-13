@@ -2,6 +2,7 @@ using System.Net;
 using Mediator.Net.Contracts;
 using Squid.Core.Handlers.CommandHandlers.OctopusImport;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -15,21 +16,26 @@ public class OctopusImportServerSourceHandlerTests
     public async Task Probe_DelegatesToTheService()
     {
         var probe = new OctopusServerProbeDto { InstallationId = "inst-1" };
-        _serverSource.Setup(s => s.ProbeAsync("https://octopus.example.com", "API-KEY", It.IsAny<CancellationToken>())).ReturnsAsync(probe);
+        _serverSource.Setup(s => s.ProbeAsync(new OctopusServerConnection("https://octopus.example.com", "API-KEY", "Spaces-2"), It.IsAny<CancellationToken>())).ReturnsAsync(probe);
 
-        var response = await new ProbeOctopusServerCommandHandler(_serverSource.Object).Handle(Context(new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY" }), CancellationToken.None);
+        var response = await new ProbeOctopusServerCommandHandler(_serverSource.Object).Handle(Context(new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY", OctopusSpaceId = "Spaces-2" }), CancellationToken.None);
 
         response.Code.ShouldBe(HttpStatusCode.OK);
         response.Data.ShouldBeSameAs(probe);
     }
 
-    [Fact]
-    public async Task Connect_DelegatesToTheService()
+    [Theory]
+    [InlineData(null, null, null, false)]
+    [InlineData("", " ", "Spaces-1", false)]
+    [InlineData("https://octopus.example.com", "API-KEY", "Spaces-2", true)]
+    [InlineData("https://octopus.example.com", null, null, true)]
+    public async Task Connect_PassesTheServerConnectionOnlyWhenOneIsGiven(string serverUrl, string apiKey, string octopusSpaceId, bool connectionPassed)
     {
         var session = new OctopusImportSessionDto { SessionId = Guid.NewGuid() };
-        _serverSource.Setup(s => s.ConnectAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        var expected = connectionPassed ? new OctopusServerConnection(serverUrl, apiKey, octopusSpaceId) : null;
+        _serverSource.Setup(s => s.ConnectAsync(7, expected, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
-        var response = await new ConnectOctopusImportCommandHandler(_serverSource.Object).Handle(Context(new ConnectOctopusImportCommand { SpaceId = 7 }), CancellationToken.None);
+        var response = await new ConnectOctopusImportCommandHandler(_serverSource.Object).Handle(Context(new ConnectOctopusImportCommand { SpaceId = 7, ServerUrl = serverUrl, ApiKey = apiKey, OctopusSpaceId = octopusSpaceId }), CancellationToken.None);
 
         response.Data.Session.ShouldBeSameAs(session);
     }

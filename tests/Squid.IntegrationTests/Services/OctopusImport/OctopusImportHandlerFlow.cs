@@ -34,6 +34,10 @@ public static class OctopusImportHandlerFlow
     public static Task<ConnectOctopusImportResponse> ConnectAsync(IMediator mediator, int spaceId)
         => mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(new ConnectOctopusImportCommand { SpaceId = spaceId });
 
+    /// <summary>Connects with the server and key, as the UI does: the key is checked before the session exists.</summary>
+    public static Task<ConnectOctopusImportResponse> ConnectAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
+        => mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(new ConnectOctopusImportCommand { SpaceId = spaceId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
+
     public static Task<FetchOctopusImportHistoryResponse> FetchHistoryAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey)
         => mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(new FetchOctopusImportHistoryCommand { SpaceId = spaceId, SessionId = sessionId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
 
@@ -57,7 +61,7 @@ public static class OctopusImportHandlerFlow
     /// </summary>
     public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
     {
-        var sessionId = (await ConnectAsync(mediator, spaceId)).Data.Session.SessionId;
+        var sessionId = (await ConnectAsync(mediator, spaceId, serverUri, apiKey)).Data.Session.SessionId;
         var fetch = await FetchHistoryUntilDoneAsync(mediator, spaceId, sessionId, serverUri, apiKey);
 
         return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);

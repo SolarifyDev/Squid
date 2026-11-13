@@ -191,7 +191,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
 
         try
         {
-            var session = await _service.ConnectAsync(7);
+            var session = await _service.ConnectAsync(7, null);
 
             session.State.ShouldBe(OctopusImportSessionState.Uploaded);
             summary.DetectedFormat.ShouldBe(OctopusImportServerSourceService.ServerSourceFormat);
@@ -204,6 +204,42 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task Connect_WithAConnection_StartsTheCursorPinnedToTheCheckedKey()
+    {
+        var sessionId = Guid.NewGuid();
+        var directory = Path.Combine(Path.GetTempPath(), $"squid-connect-{sessionId:N}");
+        var connection = new OctopusServerConnection("https://Octopus.Example.com:443/", "API-KEY", null);
+        OctopusImportSourceSummaryDto summary = null;
+        _fetcher.Setup(f => f.AuthorizeAsync(connection, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", UserId = "Users-7", KeyHmac = "fp" });
+        _sessionService.Setup(s => s.CreateSessionAsync(7, It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).Callback((int _, OctopusImportSourceSummaryDto s, CancellationToken _) => summary = s).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId });
+        _uploadStore.Setup(s => s.GetSessionDirectory(sessionId)).Returns(directory);
+        _directories.Add(directory);
+
+        await _service.ConnectAsync(7, connection);
+
+        summary.HistoryFetch.ServerHost.ShouldBe("octopus.example.com");
+        summary.HistoryFetch.OctopusSpaceId.ShouldBe("Spaces-1");
+        summary.HistoryFetch.InstallationId.ShouldBe("inst-1");
+        summary.HistoryFetch.UserId.ShouldBe("Users-7");
+        summary.HistoryFetch.KeyHmac.ShouldBe("fp");
+        summary.HistoryFetch.Phase.ShouldBe(OctopusHistoryFetchPhase.Catalog);
+    }
+
+    [Fact]
+    public async Task Connect_RestrictedKey_RefusedBeforeAnySessionExists()
+    {
+        var connection = new OctopusServerConnection(ServerUrl, "API-KEY", "Spaces-1");
+        var permissions = new OctopusServerPermissionsDto { OctopusSpaceId = "Spaces-1", Restricted = ["VariableView"] };
+        _fetcher.Setup(f => f.AuthorizeAsync(connection, It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusImportApiKeyRestrictedException(permissions));
+
+        var ex = await Should.ThrowAsync<OctopusImportApiKeyRestrictedException>(() => _service.ConnectAsync(7, connection));
+
+        ex.Permissions.Restricted.ShouldBe(["VariableView"]);
+        _sessionService.Verify(s => s.CreateSessionAsync(It.IsAny<int>(), It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>()), Times.Never);
+        _sessionService.Verify(s => s.RegisterTemporaryUploadAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportTemporaryUpload>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     public void Dispose()

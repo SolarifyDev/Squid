@@ -24,6 +24,9 @@ internal sealed class FakeOctopusServer
     /// <summary>The Octopus user each API key belongs to; a key not listed is answered as <see cref="UserId"/>.</summary>
     public Dictionary<string, string> KeyUsers { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>The <c>users/{id}/permissions</c> answer per API key; a key not listed gets the unrestricted 2026.1 fixture.</summary>
+    public Dictionary<string, JsonNode> KeyPermissions { get; } = new(StringComparer.Ordinal);
+
     public bool Spaceless { get; init; }
 
     public string InstallationId { get; init; } = "inst-1";
@@ -106,6 +109,7 @@ internal sealed class FakeOctopusServer
 
         if (path == "/api") return OctopusRestStubHandler.Json(new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = Spaceless ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/users/me") return OctopusRestStubHandler.Json(new { Id = KeyUsers.GetValueOrDefault(KeyOf(request)) ?? UserId, Username = "importer", IsService = true });
+        if (path.StartsWith("/api/users/", StringComparison.Ordinal) && path.EndsWith("/permissions", StringComparison.Ordinal)) return OctopusRestStubHandler.Json(KeyPermissions.GetValueOrDefault(KeyOf(request) ?? string.Empty) ?? OctopusServer2026Fixtures.Node("users-permissions-unrestricted"));
         if (path == "/api/spaces/all") return OctopusRestStubHandler.Json(new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/teams") return Serve("teams", query) ?? OctopusRestStubHandler.Status(HttpStatusCode.NotFound);
         if (path == "/api/tasks") return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), 0));
