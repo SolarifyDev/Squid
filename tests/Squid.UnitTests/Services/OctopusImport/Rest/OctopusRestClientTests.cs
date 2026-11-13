@@ -194,6 +194,87 @@ public class OctopusRestClientTests
         _delays.ShouldBeEmpty();
     }
 
+    // D14: 403 on anything but the key's own identity, and 400/409/422, refuse one item; only 401 (anywhere) or 403 on
+    // the identity paths means the key itself. Neither is retried.
+    [Theory]
+    [InlineData("api", HttpStatusCode.Forbidden, OctopusRestErrorKind.Unauthorized)]
+    [InlineData("api/users/me", HttpStatusCode.Forbidden, OctopusRestErrorKind.Unauthorized)]
+    [InlineData("api/users/me", HttpStatusCode.BadRequest, OctopusRestErrorKind.Unreachable)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.Unauthorized, OctopusRestErrorKind.Unauthorized)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.Forbidden, OctopusRestErrorKind.Rejected)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.BadRequest, OctopusRestErrorKind.Rejected)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.Conflict, OctopusRestErrorKind.Rejected)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.UnprocessableEntity, OctopusRestErrorKind.Rejected)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.NotFound, OctopusRestErrorKind.NotFound)]
+    [InlineData("api/Spaces-1/variables/variableset-Projects-1", HttpStatusCode.MethodNotAllowed, OctopusRestErrorKind.Unreachable)]
+    public async Task ClientError_TypedByPath_AndNeverRetried(string path, HttpStatusCode status, OctopusRestErrorKind expected)
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Status(status));
+        using var client = Client(handler);
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAsync<Dictionary<string, string>>(path, CancellationToken.None));
+
+        ex.Kind.ShouldBe(expected);
+        handler.Requests.Count.ShouldBe(1);
+        _delays.ShouldBeEmpty();
+    }
+
+    // D13: a path outside the allowlist is refused before anything is sent, so the key never reaches that endpoint.
+    [Theory]
+    [InlineData("api/users/Users-1/apikeys")]
+    [InlineData("api/Spaces-1/machines/discover?host=10.0.0.1")]
+    [InlineData("api/Spaces-1/projects/../users/Users-1/apikeys")]
+    public async Task PathOutsideTheAllowlist_DeniedWithoutARequest(string path)
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(new { }));
+        using var client = Client(handler);
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAsync<Dictionary<string, string>>(path, CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.Denied);
+        handler.Requests.ShouldBeEmpty();
+    }
+
+    // A same-origin redirect may move the API (under a prefix), never to another endpoint the allowlist would refuse.
+    [Theory]
+    [InlineData("/api/users/Users-1/apikeys")]
+    [InlineData("/api/users/me/x")]
+    public async Task Redirect_SameOriginToAnotherEndpoint_DeniedKeyNotResent(string location)
+    {
+        var handler = new OctopusRestStubHandler(_ => Redirect(location));
+        using var client = Client(handler);
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetCurrentUserAsync(CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.Denied);
+        handler.Requests.ShouldHaveSingleItem();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"Id\":\"\"}")]
+    public async Task CurrentUser_WithoutAnId_NotOctopus(string body)
+    {
+        var handler = new OctopusRestStubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+        using var client = Client(handler);
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetCurrentUserAsync(CancellationToken.None));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.NotOctopus);
+        handler.PathsAndQueries.ShouldBe(["/api/users/me"]);
+    }
+
+    [Fact]
+    public async Task LastRequestedPath_NamesTheRelativeRequest()
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(new { Id = "Users-7" }));
+        using var client = Client(handler);
+
+        (await client.GetCurrentUserAsync(CancellationToken.None)).Id.ShouldBe("Users-7");
+
+        client.LastRequestedPath.ShouldBe("api/users/me");
+    }
+
     [Theory]
     [InlineData("https://evil.example.net/api")]
     [InlineData("http://octopus.example.com/api")]

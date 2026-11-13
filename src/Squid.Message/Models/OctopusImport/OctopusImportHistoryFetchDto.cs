@@ -17,14 +17,24 @@ public class OctopusImportHistoryFetchDto
     public string OctopusVersion { get; set; }
     public bool Spaceless { get; set; }
 
+    // Key binding: the Octopus user the API key belongs to, and an HMAC of the key under the server's master key (never the key)
+    public string UserId { get; set; }
+    public string KeyHmac { get; set; }
+
     // Cursor
     public List<string> ProjectIds { get; set; } = [];
     public int ProjectIndex { get; set; }
     public OctopusHistoryFetchPhase Phase { get; set; }
     public int Skip { get; set; }
 
+    /// <summary>How often the chunk deadline abandoned the item at a cursor position; the item is skipped at the limit.</summary>
+    public Dictionary<string, int> AbandonCounts { get; set; } = [];
+
     // Progress
     public OctopusHistoryFetchCountsDto Counts { get; set; } = new();
+
+    /// <summary>The items left out, oldest first; the list is capped, the counts are not.</summary>
+    public List<OctopusHistoryFetchSkippedItemDto> SkippedItems { get; set; } = [];
     public long TotalBytes { get; set; }
     public bool Done { get; set; }
     public DateTimeOffset? StartedAt { get; set; }

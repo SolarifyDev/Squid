@@ -44,9 +44,9 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             ActivityLogs = taskDetails.ActivityLogs ?? [],
             ActivityLog = taskDetails.ActivityLog,
-            Interruptions = await _ctx.Client.GetAllPagesAsync<OctopusInterruptionDto>(InterruptionsPath(task.Id), ct).ConfigureAwait(false),
-            Events = await _ctx.Client.GetAllPagesAsync<OctopusEventDto>(EventsPath(deployment.Id), ct).ConfigureAwait(false),
-            Artifacts = await _ctx.Client.GetAllPagesAsync<OctopusArtifactDto>(ArtifactsPath(task.Id), ct).ConfigureAwait(false)
+            Interruptions = await GetAllPagesOrEmptyAsync<OctopusInterruptionDto>(InterruptionsPath(task.Id), ct).ConfigureAwait(false),
+            Events = await GetAllPagesOrEmptyAsync<OctopusEventDto>(EventsPath(deployment.Id), ct).ConfigureAwait(false),
+            Artifacts = await GetAllPagesOrEmptyAsync<OctopusArtifactDto>(ArtifactsPath(task.Id), ct).ConfigureAwait(false)
         };
     }
 

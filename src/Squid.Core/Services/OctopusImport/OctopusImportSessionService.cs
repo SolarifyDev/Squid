@@ -337,12 +337,20 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             DestinationSpaceId = session.DestinationSpaceId,
             OwnerUserId = session.OwnerUserId,
             State = ParseState(session.State),
-            SourceSummary = OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson)),
+            SourceSummary = WithoutKeyBinding(OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson))),
             Result = OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSessionResultDto>(session.ResultJson)),
             ExpiresAt = session.ExpiresAt,
             CompletedAt = session.CompletedAt,
             LastStateChangedAt = session.LastStateChangedAt
         };
+    }
+
+    // The key fingerprint only binds chunks server-side; no response needs it.
+    private static OctopusImportSourceSummaryDto WithoutKeyBinding(OctopusImportSourceSummaryDto summary)
+    {
+        if (summary?.HistoryFetch != null) summary.HistoryFetch.KeyHmac = null;
+
+        return summary;
     }
 
     private static OctopusImportSessionState ParseState(string state)

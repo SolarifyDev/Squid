@@ -94,7 +94,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         if (ids.Count == 0) return new Dictionary<string, OctopusServerTaskDto>(StringComparer.OrdinalIgnoreCase);
 
-        var page = await _ctx.Client.GetAsync<OctopusRestPage<OctopusServerTaskDto>>(TasksPath(ids), ct).ConfigureAwait(false);
+        var page = await GetOrNullAsync<OctopusRestPage<OctopusServerTaskDto>>(TasksPath(ids), ct, tolerateNotFound: false).ConfigureAwait(false);
 
         return (page?.Items ?? []).Where(t => !string.IsNullOrWhiteSpace(t.Id)).DistinctBy(t => t.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
     }
@@ -154,13 +154,21 @@ public sealed partial class OctopusRestHistoryFetcher
     // An item's counts and its place in the cursor move together, so an item retried after a failure is counted once.
     private void CommitItem()
     {
-        AddCounts(_ctx.Cursor.Counts, _ctx.Pending);
+        CommitPending();
 
         _ctx.Cursor.Skip++;
         _ctx.ItemsCommitted++;
-        _ctx.Pending = new OctopusHistoryFetchCountsDto();
 
         TrackBytes();
+    }
+
+    private void CommitPending()
+    {
+        AddCounts(_ctx.Cursor.Counts, _ctx.Pending);
+        AddSkipped(_ctx.Cursor, _ctx.PendingSkipped);
+
+        _ctx.Pending = new OctopusHistoryFetchCountsDto();
+        _ctx.PendingSkipped = [];
     }
 
     private static void AddCounts(OctopusHistoryFetchCountsDto total, OctopusHistoryFetchCountsDto item)
@@ -172,12 +180,16 @@ public sealed partial class OctopusRestHistoryFetcher
         total.DetailsSkipped += item.DetailsSkipped;
         total.DetailsTooLarge += item.DetailsTooLarge;
         total.ProjectsNotFound += item.ProjectsNotFound;
+        total.ItemsRejected += item.ItemsRejected;
+        total.ItemsAbandoned += item.ItemsAbandoned;
     }
 
-    // Skip already counts every item of the page written, so it is where the page ended.
+    // Skip already counts every item of the page written, so it is where the page ended. A refused page commits its record here.
     private void Advance<T>(OctopusRestPage<T> page, OctopusHistoryFetchPhase nextPhase)
     {
         var cursor = _ctx.Cursor;
+
+        CommitPending();
 
         if (!OctopusRestClient.IsLastPage(page.Items.Count, cursor.Skip, page.TotalResults)) return;
 
@@ -187,7 +199,7 @@ public sealed partial class OctopusRestHistoryFetcher
         if (nextPhase == OctopusHistoryFetchPhase.Releases) cursor.ProjectIndex++;
     }
 
-    // Not found is null: a deleted project, or one the chosen space does not have.
+    // Not found is null: a deleted project, or one the chosen space does not have. A refused page is an empty page, recorded.
     private async Task<OctopusRestPage<T>> GetPageOrNullAsync<T>(string path, CancellationToken ct)
     {
         try
@@ -198,17 +210,40 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             return null;
         }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
+        {
+            RecordRejected(_ctx.Client.LastRequestedPath);
+            return new OctopusRestPage<T>();
+        }
     }
 
-    private async Task<T> GetOrNullAsync<T>(string path, CancellationToken ct) where T : class
+    private async Task<T> GetOrNullAsync<T>(string path, CancellationToken ct, bool tolerateNotFound = true) where T : class
     {
         try
         {
             return await _ctx.Client.GetAsync<T>(path, ct).ConfigureAwait(false);
         }
-        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.NotFound)
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.NotFound && tolerateNotFound)
         {
             return null;
+        }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
+        {
+            RecordRejected(path);
+            return null;
+        }
+    }
+
+    private async Task<List<T>> GetAllPagesOrEmptyAsync<T>(string path, CancellationToken ct)
+    {
+        try
+        {
+            return await _ctx.Client.GetAllPagesAsync<T>(path, ct).ConfigureAwait(false);
+        }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
+        {
+            RecordRejected(path);
+            return [];
         }
     }
 

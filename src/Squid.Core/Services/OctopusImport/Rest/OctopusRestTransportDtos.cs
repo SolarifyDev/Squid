@@ -45,6 +45,14 @@ public class OctopusRestSpaceDto
     public bool IsDefault { get; set; }
 }
 
+/// <summary>The <c>users/me</c> resource: the Octopus user an API key belongs to.</summary>
+public class OctopusRestUserDto
+{
+    public string Id { get; set; }
+
+    public bool IsService { get; set; }
+}
+
 public class OctopusRestMachineDto
 {
     public string Id { get; set; }

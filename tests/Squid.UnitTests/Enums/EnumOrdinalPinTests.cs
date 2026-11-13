@@ -32,6 +32,27 @@ public class EnumOrdinalPinTests
         ((int)state).ShouldBe(expected);
     }
 
+    [Theory]
+    [InlineData(OctopusRestErrorKind.Unauthorized, 0)]
+    [InlineData(OctopusRestErrorKind.NotOctopus, 1)]
+    [InlineData(OctopusRestErrorKind.Unreachable, 2)]
+    [InlineData(OctopusRestErrorKind.TooLarge, 3)]
+    [InlineData(OctopusRestErrorKind.Denied, 4)]
+    [InlineData(OctopusRestErrorKind.NotFound, 5)]
+    [InlineData(OctopusRestErrorKind.Rejected, 6)]
+    public void OctopusRestErrorKind_OrdinalsPinned(OctopusRestErrorKind kind, int expected)
+    {
+        ((int)kind).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(OctopusHistoryFetchSkipReason.Rejected, 0)]
+    [InlineData(OctopusHistoryFetchSkipReason.Abandoned, 1)]
+    public void OctopusHistoryFetchSkipReason_OrdinalsPinned(OctopusHistoryFetchSkipReason reason, int expected)
+    {
+        ((int)reason).ShouldBe(expected);
+    }
+
     [Fact]
     public void ImportedOctopusEvent_Is100()
     {

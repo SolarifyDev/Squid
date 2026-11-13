@@ -5,8 +5,9 @@ using Squid.Message.Enums.OctopusImport;
 namespace Squid.Core.Services.OctopusImport.Rest;
 
 /// <summary>
-/// GET-only client for one Octopus server. Redirects are followed by hand and only within the same origin, so
-/// the API key header is never sent to another host. Bodies are bounded, never logged, and every failure is an
+/// GET-only client for one Octopus server. Only paths <see cref="OctopusRestPathPolicy"/> allows are requested.
+/// Redirects are followed by hand, only within the same origin and only to the same resource, so the API key header
+/// is never sent to another host or another endpoint. Bodies are bounded, never logged, and every failure is an
 /// <see cref="OctopusRestException"/> with a fixed message.
 /// </summary>
 public sealed class OctopusRestClient : IDisposable
@@ -38,6 +39,12 @@ public sealed class OctopusRestClient : IDisposable
     /// <summary>Response bytes read by this client so far; the history fetch caps its total on it.</summary>
     public long BytesRead { get; private set; }
 
+    /// <summary>The key as <see cref="OctopusRestKeyBinding.Fingerprint"/> sees it; set by the factory, so the key never has to leave the client.</summary>
+    public string KeyFingerprint { get; init; }
+
+    /// <summary>The last path requested (relative, with its query); names the request a chunk was waiting on when it was abandoned.</summary>
+    public string LastRequestedPath { get; private set; }
+
     /// <summary>The most bytes a paged list may read in total (<see cref="BytesRead"/> included); the history fetch sets what is left of its budget.</summary>
     public long ByteBudget { get; set; } = long.MaxValue;
 
@@ -49,6 +56,17 @@ public sealed class OctopusRestClient : IDisposable
             throw new OctopusRestException(OctopusRestErrorKind.NotOctopus);
 
         return root;
+    }
+
+    /// <summary>The Octopus user the API key belongs to.</summary>
+    public async Task<OctopusRestUserDto> GetCurrentUserAsync(CancellationToken ct)
+    {
+        var user = await GetAsync<OctopusRestUserDto>("api/users/me", ct).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(user?.Id))
+            throw new OctopusRestException(OctopusRestErrorKind.NotOctopus);
+
+        return user;
     }
 
     public async Task<T> GetAsync<T>(string relativePath, CancellationToken ct)
@@ -112,11 +130,16 @@ public sealed class OctopusRestClient : IDisposable
         }
     }
 
+    // The path is checked before it is combined with the base address, which would collapse "." and ".." segments.
     private async Task<byte[]> GetBytesAsync(string relativePath, CancellationToken ct)
     {
+        OctopusRestPathPolicy.EnsureAllowed(relativePath);
+
+        LastRequestedPath = relativePath.TrimStart('/');
+
         for (var attempt = 0; ; attempt++)
         {
-            var (body, retryDelay) = await AttemptAsync(new Uri(BaseUri, relativePath.TrimStart('/')), attempt, ct).ConfigureAwait(false);
+            var (body, retryDelay) = await AttemptAsync(new Uri(BaseUri, LastRequestedPath), attempt, ct).ConfigureAwait(false);
 
             if (body != null) return body;
 
@@ -155,7 +178,7 @@ public sealed class OctopusRestClient : IDisposable
 
         if (IsRetryable(response) && attempt < _options.MaxRetries) return (null, RetryDelay(response, attempt));
 
-        EnsureSuccess(response);
+        EnsureSuccess(response, LastRequestedPath);
 
         return (await ReadBoundedAsync(response, ct).ConfigureAwait(false), TimeSpan.Zero);
     }
@@ -172,6 +195,8 @@ public sealed class OctopusRestClient : IDisposable
             if (!IsRedirect(response.StatusCode)) return response;
 
             var target = RedirectTarget(uri, response);
+
+            EnsureSameResource(target);
 
             response.Dispose();
             UpgradeBaseUriIfSecured(uri, target);
@@ -206,6 +231,15 @@ public sealed class OctopusRestClient : IDisposable
         return target;
     }
 
+    // A redirect may move the API under a prefix or onto https, never to another endpoint: the requested path must end the target's.
+    private void EnsureSameResource(Uri target)
+    {
+        var requested = "/" + OctopusRestPathPolicy.PathOf(LastRequestedPath);
+
+        if (!target.AbsolutePath.EndsWith(requested, StringComparison.OrdinalIgnoreCase))
+            throw new OctopusRestException(OctopusRestErrorKind.Denied);
+    }
+
     private static bool IsSameOrigin(Uri a, Uri b) => a.Scheme == b.Scheme && IsSameHost(a, b) && a.Port == b.Port;
 
     // http://host → https://host (same port, or both on their default port) is the server insisting on TLS, not another origin.
@@ -235,22 +269,28 @@ public sealed class OctopusRestClient : IDisposable
         return delay > _options.MaxRetryDelay ? _options.MaxRetryDelay : delay;
     }
 
-    private static void EnsureSuccess(HttpResponseMessage response)
+    private static void EnsureSuccess(HttpResponseMessage response, string relativePath)
     {
         if (IsRetryable(response))
             throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
 
-        var kind = response.StatusCode switch
-        {
-            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => OctopusRestErrorKind.Unauthorized,
-            HttpStatusCode.NotFound => OctopusRestErrorKind.NotFound,
-            _ when response.IsSuccessStatusCode => (OctopusRestErrorKind?)null,
-            _ => OctopusRestErrorKind.Unreachable
-        };
+        var kind = FailureKind(response, OctopusRestPathPolicy.IsIdentityPath(relativePath));
 
         if (kind != null)
             throw new OctopusRestException(kind.Value);
     }
+
+    // 401 always means the key; 403 means the key only on its own identity, elsewhere that one item is refused (as are 400/409/422).
+    private static OctopusRestErrorKind? FailureKind(HttpResponseMessage response, bool identityPath)
+        => response.StatusCode switch
+        {
+            _ when response.IsSuccessStatusCode => null,
+            HttpStatusCode.Unauthorized => OctopusRestErrorKind.Unauthorized,
+            HttpStatusCode.Forbidden => identityPath ? OctopusRestErrorKind.Unauthorized : OctopusRestErrorKind.Rejected,
+            HttpStatusCode.NotFound => OctopusRestErrorKind.NotFound,
+            HttpStatusCode.BadRequest or HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity when !identityPath => OctopusRestErrorKind.Rejected,
+            _ => OctopusRestErrorKind.Unreachable
+        };
 
     private async Task<byte[]> ReadBoundedAsync(HttpResponseMessage response, CancellationToken ct)
     {

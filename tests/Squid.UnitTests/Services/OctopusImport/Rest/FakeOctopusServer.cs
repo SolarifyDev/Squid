@@ -14,6 +14,13 @@ internal sealed class FakeOctopusServer
 {
     public const string Url = "https://octopus.example.com/";
     public const string ApiKey = "API-FAKE0000000000000000";
+    public const string UserId = "Users-7";
+
+    /// <summary>The master key the stub factory fingerprints keys with, as the production factory does with the configured one.</summary>
+    public static readonly byte[] MasterKey = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
+    /// <summary>The Octopus user each API key belongs to; a key not listed is answered as <see cref="UserId"/>.</summary>
+    public Dictionary<string, string> KeyUsers { get; } = new(StringComparer.Ordinal);
 
     public bool Spaceless { get; init; }
 
@@ -64,6 +71,7 @@ internal sealed class FakeOctopusServer
         var prefix = Spaceless ? "/api" : "/api/Spaces-1";
 
         if (path == "/api") return OctopusRestStubHandler.Json(new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = Spaceless ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
+        if (path == "/api/users/me") return OctopusRestStubHandler.Json(new { Id = KeyUsers.GetValueOrDefault(KeyOf(request)) ?? UserId, Username = "importer", IsService = true });
         if (path == "/api/spaces/all") return OctopusRestStubHandler.Json(new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/tasks") return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), 0));
         if (!path.StartsWith(prefix + "/", StringComparison.Ordinal)) return OctopusRestStubHandler.Status(HttpStatusCode.NotFound);
@@ -89,6 +97,8 @@ internal sealed class FakeOctopusServer
         };
     }
 
+    private static string KeyOf(HttpRequestMessage request) => request.Headers.TryGetValues(OctopusRestClient.ApiKeyHeader, out var values) ? values.Single() : null;
+
     private static HttpResponseMessage Paged<T>(List<T> items, System.Collections.Specialized.NameValueCollection query)
     {
         var skip = int.Parse(query["skip"] ?? "0");
@@ -99,7 +109,7 @@ internal sealed class FakeOctopusServer
 
     private sealed class StubFactory(OctopusRestStubHandler handler, OctopusRestOptions options) : IOctopusRestClientFactory
     {
-        public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, options, new NonDisposingHandler(handler), (_, _) => Task.CompletedTask);
+        public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, options, new NonDisposingHandler(handler), (_, _) => Task.CompletedTask) { KeyFingerprint = OctopusRestKeyBinding.Fingerprint(MasterKey, apiKey) };
     }
 
     // Each chunk disposes its client; the recorded requests must survive across chunks.

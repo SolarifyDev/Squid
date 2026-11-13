@@ -11,6 +11,12 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 {
     private const string ProjectIdPrefix = "PROJECTS-";
 
+    /// <summary>How often the chunk deadline may abandon the same item before it is skipped.</summary>
+    public const int MaxAbandonments = 3;
+
+    /// <summary>The most skipped items the cursor lists; further ones are only counted.</summary>
+    public const int MaxRecordedSkippedItems = 500;
+
     private static readonly string PriorProjectType = OctopusImportPriorMappings.Normalize(OctopusResourceKind.Project.ToString());
 
     private readonly OctopusRestOptions _options = options ?? OctopusRestOptions.FromEnvironment();
@@ -48,6 +54,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
 
     // A chunk still running past its deadline is abandoned before its lease lapses, so no second chunk can overlap it.
+    // The item it was on is skipped once it has been abandoned MaxAbandonments times, so one stuck item cannot stall the fetch.
     private async Task RunWithinDeadlineAsync(CancellationTokenSource deadline, CancellationToken ct)
     {
         try
@@ -56,13 +63,15 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
+            if (!SkipIfAbandonedTooOften())
+                throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
         }
     }
 
     private async Task RunChunkAsync(CancellationToken ct)
     {
         await PinInstallationAsync(ct).ConfigureAwait(false);
+        await BindKeyAsync(ct).ConfigureAwait(false);
         await ResolveSpaceAsync(ct).ConfigureAwait(false);
         EnsureScope();
         await FetchPagesAsync(ct).ConfigureAwait(false);
@@ -81,6 +90,14 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         cursor.OctopusVersion = root.Version;
         cursor.Spaceless = root.Spaceless;
         cursor.StartedAt ??= DateTimeOffset.UtcNow;
+    }
+
+    // Every chunk asks Octopus whose key this is: a key of another user cannot continue a fetch it did not start.
+    private async Task BindKeyAsync(CancellationToken ct)
+    {
+        var user = await _ctx.Client.GetCurrentUserAsync(ct).ConfigureAwait(false);
+
+        OctopusRestKeyBinding.Bind(_ctx.Cursor, user.Id, _ctx.Client.KeyFingerprint);
     }
 
     private async Task ResolveSpaceAsync(CancellationToken ct)
@@ -121,6 +138,8 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
     private async Task FetchPagesAsync(CancellationToken ct)
     {
+        _ctx.FetchingItems = true;
+
         do
         {
             await FetchNextPageAsync(ct).ConfigureAwait(false);
@@ -177,8 +196,10 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         public Dictionary<string, OctopusDeploymentProcessDto> ProcessSnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, string> MachineNames { get; set; }
 
-        // The item being written: its counts join the cursor only when it commits
+        // The item being written: its counts and skipped requests join the cursor only when it commits
         public OctopusHistoryFetchCountsDto Pending { get; set; } = new();
+        public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
         public int ItemsCommitted { get; set; }
+        public bool FetchingItems { get; set; }
     }
 }

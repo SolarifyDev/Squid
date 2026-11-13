@@ -12,24 +12,25 @@ namespace Squid.IntegrationTests.Helpers;
 /// A real-socket Octopus REST API on 127.0.0.1 (port from the OS): one space, projects with paged releases and
 /// deployments, tasks with details, interruptions, events, artifacts and machines (all mutable between fetches, so a
 /// test can change history in "Octopus" and re-import it). Every request is recorded; a request
-/// without the expected <c>X-Octopus-ApiKey</c> gets 401. <see cref="HoldReleases"/> parks release requests until
+/// without an accepted <c>X-Octopus-ApiKey</c> gets 401, and <c>users/me</c> answers the user the key belongs to. <see cref="HoldReleases"/> parks release requests until
 /// <see cref="ReleaseHeldRequests"/>, so a test can observe a chunk that is still running.
 /// </summary>
 public sealed class StubOctopusServer : IAsyncDisposable
 {
     public const string InstallationId = "8a6f2b3c-0000-4000-8000-000000000001";
+    public const string DefaultUserId = "Users-1";
 
     private readonly HttpListener _listener;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
-    private readonly string _apiKey;
+    private readonly ConcurrentDictionary<string, string> _keyUsers = new(StringComparer.Ordinal);
     private readonly TaskCompletionSource _releasesRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _releaseHeld = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private StubOctopusServer(HttpListener listener, int port, string apiKey)
     {
         _listener = listener;
-        _apiKey = apiKey;
+        _keyUsers[apiKey] = DefaultUserId;
         BaseUri = new Uri($"http://127.0.0.1:{port}/");
         _loop = Task.Run(ListenLoopAsync);
     }
@@ -57,7 +58,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public bool HoldReleases { get; set; }
 
-    private readonly Dictionary<string, int> _failures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Times, HttpStatusCode Status)> _failures = new(StringComparer.Ordinal);
 
     public Task ReleasesRequested => _releasesRequested.Task;
 
@@ -117,25 +118,38 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public void ReleaseHeldRequests() => _releaseHeld.TrySetResult();
 
-    /// <summary>The next <paramref name="times"/> requests whose path ends with <paramref name="pathSuffix"/> get a 400, which the client does not retry.</summary>
-    public StubOctopusServer FailNext(string pathSuffix, int times = 1)
+    /// <summary>Accepts another API key, belonging to <paramref name="userId"/>.</summary>
+    public StubOctopusServer AcceptKey(string apiKey, string userId)
     {
-        lock (_failures) _failures[pathSuffix] = times;
+        _keyUsers[apiKey] = userId;
 
         return this;
     }
 
-    private bool ShouldFail(string path)
+    /// <summary>
+    /// The next <paramref name="times"/> requests whose path ends with <paramref name="pathSuffix"/> get <paramref name="status"/>.
+    /// The default 405 is a failure the client neither retries nor tolerates; 400/403/409/422 refuse one item, which the fetch skips.
+    /// </summary>
+    public StubOctopusServer FailNext(string pathSuffix, int times = 1, HttpStatusCode status = HttpStatusCode.MethodNotAllowed)
+    {
+        lock (_failures) _failures[pathSuffix] = (times, status);
+
+        return this;
+    }
+
+    private HttpStatusCode? FailureFor(string path)
     {
         lock (_failures)
         {
-            var suffix = _failures.Keys.FirstOrDefault(k => _failures[k] > 0 && path.EndsWith(k, StringComparison.Ordinal));
+            var suffix = _failures.Keys.FirstOrDefault(k => _failures[k].Times > 0 && path.EndsWith(k, StringComparison.Ordinal));
 
-            if (suffix == null) return false;
+            if (suffix == null) return null;
 
-            _failures[suffix]--;
+            var (times, status) = _failures[suffix];
 
-            return true;
+            _failures[suffix] = (times - 1, status);
+
+            return status;
         }
     }
 
@@ -165,13 +179,13 @@ public sealed class StubOctopusServer : IAsyncDisposable
             var apiKey = context.Request.Headers["X-Octopus-ApiKey"];
             Requests.Enqueue((context.Request.Url!.PathAndQuery, apiKey));
 
-            if (apiKey != _apiKey)
+            if (apiKey == null || !_keyUsers.TryGetValue(apiKey, out var userId))
             {
                 Write(context, HttpStatusCode.Unauthorized, new { ErrorMessage = "Invalid API key" });
                 return;
             }
 
-            var (status, body) = await RouteAsync(context.Request.Url.AbsolutePath.TrimEnd('/'), HttpUtility.ParseQueryString(context.Request.Url.Query)).ConfigureAwait(false);
+            var (status, body) = await RouteAsync(context.Request.Url.AbsolutePath.TrimEnd('/'), HttpUtility.ParseQueryString(context.Request.Url.Query), userId).ConfigureAwait(false);
             Write(context, status, body);
         }
         catch
@@ -180,9 +194,10 @@ public sealed class StubOctopusServer : IAsyncDisposable
         }
     }
 
-    private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query)
+    private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query, string userId)
     {
-        if (ShouldFail(path)) return (HttpStatusCode.BadRequest, new { });
+        if (FailureFor(path) is { } failure) return (failure, new { });
+        if (path == "/api/users/me") return (HttpStatusCode.OK, new { Id = userId, Username = "importer", IsService = true });
         if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/spaces/all") return (HttpStatusCode.OK, new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/tasks") return (HttpStatusCode.OK, Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), query));

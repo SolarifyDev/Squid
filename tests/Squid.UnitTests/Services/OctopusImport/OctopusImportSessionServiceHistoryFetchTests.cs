@@ -49,6 +49,20 @@ public class OctopusImportSessionServiceHistoryFetchTests
         _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // The key fingerprint is stored for the next chunk's binding check but never handed back in a session response.
+    [Fact]
+    public async Task UpdateHistoryFetch_StoresTheKeyBinding_ButNeverReturnsTheFingerprint()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+
+        var dto = await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), UserId = "Users-7", KeyHmac = "0123abcd" }, previous);
+
+        dto.SourceSummary.HistoryFetch.UserId.ShouldBe("Users-7");
+        dto.SourceSummary.HistoryFetch.KeyHmac.ShouldBeNull();
+        session.SourceSummaryJson.ShouldContain("\"keyHmac\":\"0123abcd\"");
+    }
+
     [Fact]
     public async Task UpdateHistoryFetch_SessionAlreadyExtracted_Rejected()
     {

@@ -31,8 +31,9 @@ public sealed class OctopusRestException : InvalidOperationException
             OctopusRestErrorKind.NotOctopus => "The server did not answer like an Octopus Deploy server. Check the server URL.",
             OctopusRestErrorKind.Unreachable => "The Octopus server could not be reached or kept failing. Try again later.",
             OctopusRestErrorKind.TooLarge => "The Octopus server returned more data than the configured limit allows.",
-            OctopusRestErrorKind.Denied => "The Octopus server address is not allowed by this Squid server's network policy.",
+            OctopusRestErrorKind.Denied => "The Octopus server address or request is not allowed by this Squid server's policy.",
             OctopusRestErrorKind.NotFound => "The Octopus server does not have the requested item.",
+            OctopusRestErrorKind.Rejected => "The Octopus server refused to return an item; it was skipped.",
             _ => "The Octopus server request failed."
         };
 }

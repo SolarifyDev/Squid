@@ -70,6 +70,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     }
 
     // A unit that fails part way is neither counted nor skipped: the retry fetches it again and counts it once.
+    // 405 is a failure the client neither retries nor tolerates as one refused item (that is 400/403/409/422).
     [Theory]
     [InlineData("/details")]
     [InlineData("/events")]
@@ -78,7 +79,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         var failures = 0;
-        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) && failures++ == 0 ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.BadRequest) : null;
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) && failures++ == 0 ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.MethodNotAllowed) : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
         var fetcher = Fetcher(server);
 
@@ -90,6 +91,192 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         cursor.Done.ShouldBeTrue();
         (cursor.Counts.Deployments, cursor.Counts.ServerTasks, cursor.Counts.DetailsFetched).ShouldBe((1, 1, 1));
+    }
+
+    // D14: a request Octopus refuses (400/403/409/422) skips that one item, is counted once and listed with its
+    // project; the deployment it belongs to is still written and the fetch finishes.
+    [Theory]
+    [InlineData("/details", System.Net.HttpStatusCode.BadRequest)]
+    [InlineData("/events", System.Net.HttpStatusCode.Forbidden)]
+    [InlineData("/interruptions", System.Net.HttpStatusCode.Conflict)]
+    [InlineData("/artifacts", System.Net.HttpStatusCode.UnprocessableEntity)]
+    [InlineData("/machines/all", System.Net.HttpStatusCode.Forbidden)]
+    [InlineData("/api/tasks", System.Net.HttpStatusCode.Forbidden)]
+    [InlineData("/deploymentprocesses/deploymentprocess-Projects-1-s-1", System.Net.HttpStatusCode.Forbidden)]
+    public async Task RejectedRequestInsideAnItem_ItemSkippedCountedOnce_FetchCompletes(string failingPath, System.Net.HttpStatusCode status)
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(status) : null;
+        var cursor = new OctopusImportHistoryFetchDto();
+
+        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+
+        progress.Done.ShouldBeTrue();
+        (progress.Counts.Releases, progress.Counts.Deployments, progress.Counts.ItemsRejected).ShouldBe((1, 1, 1));
+        var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
+        (skipped.ProjectId, skipped.Reason).ShouldBe(("Projects-1", OctopusHistoryFetchSkipReason.Rejected));
+        ("/" + skipped.Path).ShouldContain(failingPath);
+    }
+
+    // A refused page (all releases, or all deployments, of a project) is skipped as a whole and the project still finishes.
+    [Theory]
+    [InlineData("/releases")]
+    [InlineData("/deployments")]
+    public async Task RejectedPage_SkippedAndRecorded_NotReportedAsAMissingProject(string failingPath)
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
+        var cursor = new OctopusImportHistoryFetchDto();
+
+        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+
+        progress.Done.ShouldBeTrue();
+        (progress.Counts.ItemsRejected, progress.Counts.ProjectsNotFound).ShouldBe((1, 0));
+        cursor.SkippedItems.ShouldHaveSingleItem().Path.ShouldContain("skip=0&take=100");
+    }
+
+    // A refusal recorded inside an item that then fails is not committed: the retry records it once.
+    [Fact]
+    public async Task RejectedRequestInAnItemThatFails_CountedOnceAfterTheRetry()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        var eventFailures = 0;
+        server.Override = request => request.RequestUri!.AbsolutePath switch
+        {
+            var p when p.EndsWith("/interruptions", StringComparison.Ordinal) => OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden),
+            var p when p.EndsWith("/events", StringComparison.Ordinal) && eventFailures++ == 0 => OctopusRestStubHandler.Status(System.Net.HttpStatusCode.MethodNotAllowed),
+            _ => null
+        };
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server);
+
+        await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)));
+
+        (cursor.Counts.ItemsRejected, cursor.SkippedItems.Count).ShouldBe((0, 0));
+
+        await fetcher.FetchChunkAsync(Context(cursor));
+
+        (cursor.Counts.ItemsRejected, cursor.SkippedItems.Count, cursor.Counts.Deployments).ShouldBe((1, 1, 1));
+    }
+
+    [Fact]
+    public async Task SkippedItems_ListCapped_CountsNot()
+    {
+        var server = new FakeOctopusServer();
+        foreach (var n in Enumerable.Range(1, 3)) server.Deployment("Projects-1", n);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
+        var cursor = new OctopusImportHistoryFetchDto { SkippedItems = Enumerable.Range(0, OctopusRestHistoryFetcher.MaxRecordedSkippedItems - 1).Select(_ => new OctopusHistoryFetchSkippedItemDto()).ToList() };
+
+        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+
+        cursor.Counts.ItemsRejected.ShouldBe(3);
+        cursor.SkippedItems.Count.ShouldBe(OctopusRestHistoryFetcher.MaxRecordedSkippedItems);
+    }
+
+    // ── Key binding (D12) ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task FirstChunk_BindsTheKeysUserAndFingerprint_NeverTheKey()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1);
+        var cursor = new OctopusImportHistoryFetchDto();
+
+        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+
+        cursor.UserId.ShouldBe(FakeOctopusServer.UserId);
+        cursor.KeyHmac.ShouldBe(OctopusRestKeyBinding.Fingerprint(FakeOctopusServer.MasterKey, FakeOctopusServer.ApiKey));
+        JsonSerializer.Serialize(cursor).ShouldNotContain(FakeOctopusServer.ApiKey);
+    }
+
+    [Fact]
+    public async Task LaterChunk_KeyOfAnotherOctopusUser_RefusedBeforeAnyHistoryIsRead()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1);
+        server.KeyUsers["API-TEST-OTHER-USER-1"] = "Users-8";
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", UserId = FakeOctopusServer.UserId, KeyHmac = "bound" };
+
+        var ex = await Should.ThrowAsync<OctopusImportHistoryServerMismatchException>(() => Fetcher(server).FetchChunkAsync(Context(cursor, apiKey: "API-TEST-OTHER-USER-1")));
+
+        ex.PinnedField.ShouldBe(OctopusRestKeyBinding.UserPinnedField);
+        server.Paths.ShouldBe(["/api", "/api/users/me"]);
+        (cursor.UserId, cursor.KeyHmac).ShouldBe((FakeOctopusServer.UserId, "bound"));
+    }
+
+    [Fact]
+    public async Task LaterChunk_AnotherKeyOfTheSameUser_ContinuesAndRebinds()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", UserId = FakeOctopusServer.UserId, KeyHmac = "old-key" };
+
+        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, apiKey: "API-TEST-ROTATED-1"));
+
+        progress.Done.ShouldBeTrue();
+        cursor.KeyHmac.ShouldBe(OctopusRestKeyBinding.Fingerprint(FakeOctopusServer.MasterKey, "API-TEST-ROTATED-1"));
+    }
+
+    [Fact]
+    public async Task UsersMeRefused_Unauthorized()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath == "/api/users/me" ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
+        var cursor = new OctopusImportHistoryFetchDto();
+
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"])));
+
+        ex.Kind.ShouldBe(OctopusRestErrorKind.Unauthorized);
+        cursor.UserId.ShouldBeNull();
+    }
+
+    // ── Abandoned items (D14) ─────────────────────────────────────────────
+
+    // One item that keeps outliving the chunk deadline fails its chunks until the limit, then is skipped so the fetch moves on.
+    [Fact]
+    public async Task ItemAbandonedByTheDeadline_FailsUntilTheLimit_ThenSkippedAndRecorded()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
+        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) && request.RequestUri.Query.Contains("Deployments-1") ? OctopusRestStubHandler.StalledBody() : null;
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+
+        for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
+        {
+            (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
+            cursor.AbandonCounts[OctopusRestHistoryFetcher.CurrentItemKey(cursor)].ShouldBe(attempt);
+        }
+
+        await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
+
+        (cursor.Skip, cursor.Counts.ItemsAbandoned, cursor.Counts.Deployments).ShouldBe((1, 1, 0));
+        cursor.AbandonCounts.ShouldBeEmpty();
+        var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
+        (skipped.ProjectId, skipped.Reason).ShouldBe(("Projects-1", OctopusHistoryFetchSkipReason.Abandoned));
+        skipped.Path.ShouldContain("events?regarding=Deployments-1");
+
+        var progress = await fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30));
+
+        progress.Counts.Deployments.ShouldBe(1);
+    }
+
+    // Stuck before reaching an item (the key's identity, the space, the bundle) there is nothing to skip: it always fails.
+    [Fact]
+    public async Task ChunkAbandonedBeforeAnyItem_NeverSkipsAnything()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        server.Override = request => request.RequestUri!.AbsolutePath == "/api/users/me" ? OctopusRestStubHandler.StalledBody() : null;
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+
+        for (var attempt = 0; attempt <= OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
+            (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
+
+        (cursor.Skip, cursor.Counts.ItemsAbandoned).ShouldBe((0, 0));
+        cursor.AbandonCounts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void AbandonmentLimits_Pinned()
+    {
+        (OctopusRestHistoryFetcher.MaxAbandonments, OctopusRestHistoryFetcher.MaxRecordedSkippedItems).ShouldBe((3, 500));
     }
 
     [Fact]
@@ -366,8 +553,8 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(skip, 100).Select(i => new { Id = $"Events-{i}", Category = "DeploymentSucceeded" }).ToList(), int.MaxValue));
     }
 
-    private OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, OctopusImportPriorMappings prior = null, IReadOnlyList<string> exportProjectIds = null)
-        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty, ExportProjectIds = exportProjectIds ?? [] };
+    private OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, OctopusImportPriorMappings prior = null, IReadOnlyList<string> exportProjectIds = null, string apiKey = FakeOctopusServer.ApiKey)
+        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty, ExportProjectIds = exportProjectIds ?? [] };
 
     private static OctopusImportPriorMappings Prior(params (string Type, string Id, string Fingerprint, string DetailFingerprint)[] rows) => Prior("inst-1", rows);
 

@@ -17,4 +17,10 @@ public class OctopusHistoryFetchCountsDto
 
     /// <summary>Scoped projects the Octopus space does not have (deleted there, or another space was chosen).</summary>
     public int ProjectsNotFound { get; set; }
+
+    /// <summary>Requests the Octopus server refused; each item is skipped and listed in the cursor's skipped items.</summary>
+    public int ItemsRejected { get; set; }
+
+    /// <summary>Items skipped after outliving the chunk deadline too many times.</summary>
+    public int ItemsAbandoned { get; set; }
 }

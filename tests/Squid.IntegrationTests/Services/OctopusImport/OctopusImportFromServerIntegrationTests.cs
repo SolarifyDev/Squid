@@ -175,6 +175,66 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         (await SessionStateAsync(sessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
     }
 
+    // D14: a task whose details Octopus refuses is imported without them; the refusal is counted and persisted on the
+    // session's cursor with its project, and the fetch finishes instead of failing on every retry.
+    [Fact]
+    public async Task RejectedItem_SkippedRecordedOnTheCursor_FetchFinishes()
+    {
+        await SeedImportedProjectAsync("Projects-1");
+        await using var octopus = OneDeployment().FailNext($"/tasks/{TaskId}/details", times: 100, status: HttpStatusCode.Forbidden);
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+
+        var done = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+
+        done.Done.ShouldBeTrue();
+        (done.Counts.Deployments, done.Counts.ServerTasks, done.Counts.DetailsFetched, done.Counts.ItemsRejected).ShouldBe((1, 1, 0, 1));
+        var skipped = (await StoredCursorAsync(sessionId)).SkippedItems.ShouldHaveSingleItem();
+        (skipped.ProjectId, skipped.Reason).ShouldBe(("Projects-1", OctopusHistoryFetchSkipReason.Rejected));
+        skipped.Path.ShouldStartWith($"api/Spaces-1/tasks/{TaskId}/details");
+    }
+
+    // D12: the fetch is bound to the Octopus user whose key started it. Another user's key is refused (and frees the
+    // lease); the original key carries on. The stored binding is an HMAC, never the key.
+    [Fact]
+    public async Task KeyOfAnotherOctopusUser_RefusedLeaseReleased_OriginalKeyContinues()
+    {
+        const string otherUsersKey = "API-TEST-OTHER-USER-1";
+        await SeedImportedProjectAsync("Projects-1");
+        await using var octopus = OneDeployment().AcceptKey(otherUsersKey, "Users-2");
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+
+        await Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+        var requestsBefore = octopus.Requests.Count;
+
+        var ex = await Should.ThrowAsync<OctopusImportHistoryServerMismatchException>(() => Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, otherUsersKey)));
+        var done = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+
+        ex.PinnedField.ShouldBe(OctopusRestKeyBinding.UserPinnedField);
+        octopus.Requests.Skip(requestsBefore).TakeWhile(r => r.ApiKey == otherUsersKey).Select(r => r.PathAndQuery).ShouldBe(["/api", "/api/users/me"]);
+        done.Done.ShouldBeTrue();
+        (await StoredCursorAsync(sessionId)).UserId.ShouldBe(StubOctopusServer.DefaultUserId);
+    }
+
+    [Fact]
+    public async Task AnotherKeyOfTheSameUser_Continues_StoredBindingIsAFingerprintNeverAKey()
+    {
+        const string secondKey = "API-TEST-SECOND-KEY-1";
+        await SeedImportedProjectAsync("Projects-1");
+        await using var octopus = OneDeployment().AcceptKey(secondKey, StubOctopusServer.DefaultUserId);
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+
+        await Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+        var firstBinding = (await StoredCursorAsync(sessionId)).KeyHmac;
+        var done = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, secondKey));
+        var json = await StoredSummaryJsonAsync(sessionId);
+
+        done.Done.ShouldBeTrue();
+        firstBinding.ShouldNotBeNullOrWhiteSpace();
+        (await StoredCursorAsync(sessionId)).KeyHmac.ShouldNotBe(firstBinding);
+        json.ShouldNotContain(ApiKey);
+        json.ShouldNotContain(secondKey);
+    }
+
     // ── Full flow ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -363,6 +423,11 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 
     private Task<string> SessionDirectoryAsync(Guid sessionId)
         => Run<SquidDbContext, string>(async db => Path.GetDirectoryName((await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).TemporaryUploadPath));
+
+    private Task<string> StoredSummaryJsonAsync(Guid sessionId)
+        => Run<SquidDbContext, string>(async db => (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).SourceSummaryJson);
+
+    private async Task<OctopusImportHistoryFetchDto> StoredCursorAsync(Guid sessionId) => OctopusImportSourceSummaries.Parse(await StoredSummaryJsonAsync(sessionId)).HistoryFetch;
 
     private Task<OctopusImportSessionState> SessionStateAsync(Guid sessionId)
         => Run<SquidDbContext, OctopusImportSessionState>(async db => Enum.Parse<OctopusImportSessionState>((await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).State));

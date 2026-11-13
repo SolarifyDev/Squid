@@ -8,5 +8,8 @@ public enum OctopusRestErrorKind
     Unreachable = 2,
     TooLarge = 3,
     Denied = 4,
-    NotFound = 5
+    NotFound = 5,
+
+    /// <summary>The server refused one item (400/409/422, or 403 on anything but the key's own identity); the item is skipped, the fetch goes on.</summary>
+    Rejected = 6
 }
