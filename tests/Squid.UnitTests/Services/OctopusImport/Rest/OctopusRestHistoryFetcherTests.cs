@@ -62,7 +62,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         foreach (var n in Enumerable.Range(1, 150)) server.Release("Projects-1", n);
         var cursor = new OctopusImportHistoryFetchDto();
 
-        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         cursor.Counts.Releases.ShouldBe(150);
         server.Paths.ShouldContain("/api/Spaces-1/projects/Projects-1/releases?skip=0&take=100");
@@ -74,7 +74,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     [Theory]
     [InlineData("/details")]
     [InlineData("/events")]
-    [InlineData("/machines/all")]
+    [InlineData("/artifacts")]
     public async Task FailedUnit_RetriedOnTheSameCursor_CountedOnce(string failingPath)
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
@@ -100,7 +100,6 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     [InlineData("/events", System.Net.HttpStatusCode.Forbidden)]
     [InlineData("/interruptions", System.Net.HttpStatusCode.Conflict)]
     [InlineData("/artifacts", System.Net.HttpStatusCode.UnprocessableEntity)]
-    [InlineData("/machines/all", System.Net.HttpStatusCode.Forbidden)]
     [InlineData("/api/tasks", System.Net.HttpStatusCode.Forbidden)]
     [InlineData("/deploymentprocesses/deploymentprocess-Projects-1-s-1", System.Net.HttpStatusCode.Forbidden)]
     public async Task RejectedRequestInsideAnItem_ItemSkippedCountedOnce_FetchCompletes(string failingPath, System.Net.HttpStatusCode status)
@@ -109,7 +108,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(status) : null;
         var cursor = new OctopusImportHistoryFetchDto();
 
-        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         progress.Done.ShouldBeTrue();
         (progress.Counts.Releases, progress.Counts.Deployments, progress.Counts.ItemsRejected).ShouldBe((1, 1, 1));
@@ -128,7 +127,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith(failingPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
         var cursor = new OctopusImportHistoryFetchDto();
 
-        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        var progress = await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         progress.Done.ShouldBeTrue();
         (progress.Counts.ItemsRejected, progress.Counts.ProjectsNotFound).ShouldBe((1, 0));
@@ -149,7 +148,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var refusing = true;
         server.Override = request => refusing && request.RequestUri!.AbsolutePath.EndsWith(refusedPath, StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
 
-        var refused = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+        var refused = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"]));
 
         (refused.Counts.ServerTasks, refused.Counts.DetailsFetched, refused.Counts.ItemsRejected).ShouldBe((1, 0, 1));
         (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull("a partial set must never be stored as the task's details");
@@ -165,20 +164,6 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         (details.Interruptions.Count, details.Events.Count, details.Artifacts.Count).ShouldBe((1, 1, 1));
         var complete = await BundledTaskAsync("ServerTasks-1");
         (complete.DetailFingerprint, complete.DetailsIncomplete).ShouldBe((OctopusImportFingerprint.ForTaskDetails(details), false));
-    }
-
-    // A refusal outside the task's details (the machine names) leaves the details complete.
-    [Fact]
-    public async Task RejectedMachineNames_DetailsStillComplete()
-    {
-        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
-        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/machines/all", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
-
-        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
-
-        var task = await BundledTaskAsync("ServerTasks-1");
-        (task.DetailLevel, task.DetailsIncomplete).ShouldBe((1, false));
-        task.DetailFingerprint.ShouldNotBeNull();
     }
 
     // A refusal recorded inside an item that then fails is not committed: the retry records it once.
@@ -213,7 +198,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
         var cursor = new OctopusImportHistoryFetchDto { SkippedItems = Enumerable.Range(0, OctopusRestHistoryFetcher.MaxRecordedSkippedItems - 1).Select(_ => new OctopusHistoryFetchSkippedItemDto()).ToList() };
 
-        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         cursor.Counts.ItemsRejected.ShouldBe(3);
         cursor.SkippedItems.Count.ShouldBe(OctopusRestHistoryFetcher.MaxRecordedSkippedItems);
@@ -227,7 +212,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1);
         var cursor = new OctopusImportHistoryFetchDto();
 
-        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         cursor.UserId.ShouldBe(FakeOctopusServer.UserId);
         cursor.KeyHmac.ShouldBe(OctopusRestKeyBinding.Fingerprint(FakeOctopusServer.MasterKey, FakeOctopusServer.ApiKey));
@@ -267,7 +252,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath == "/api/users/me" ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.Forbidden) : null;
         var cursor = new OctopusImportHistoryFetchDto();
 
-        var ex = await Should.ThrowAsync<OctopusRestException>(() => Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"])));
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"])));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.Unauthorized);
         cursor.UserId.ShouldBeNull();
@@ -343,14 +328,14 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         cursor.AbandonCounts.ShouldBeEmpty();
     }
 
-    // Every read of a deployment unit happens before its first write, so an item abandoned part way (here on the
-    // machine names, after its task details) leaves nothing of itself in the bundle.
+    // Every read of a deployment unit happens before its first write, so an item abandoned part way (here on its last
+    // detail list, after its task details) leaves nothing of itself in the bundle.
     [Fact]
     public async Task ItemAbandonedAfterItsDetails_LeavesNoDocumentOfItselfInTheBundle()
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         var stalls = 0;
-        server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/machines/all", StringComparison.Ordinal) && stalls++ < OctopusRestHistoryFetcher.MaxAbandonments ? OctopusRestStubHandler.StalledBody() : null;
+        server.Override = request => request.RequestUri!.Query.Contains("regarding=ServerTasks-1", StringComparison.Ordinal) && request.RequestUri.AbsolutePath.EndsWith("/artifacts", StringComparison.Ordinal) && stalls++ < OctopusRestHistoryFetcher.MaxAbandonments ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
@@ -378,7 +363,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
 
-        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"]));
 
         server.Paths.ShouldContain($"/api/Spaces-1/tasks/ServerTasks-1/details?verbose=false&tail={OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTask()}");
     }
@@ -390,7 +375,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("ServerTasks-1/details", StringComparison.Ordinal) ? DeclaredTooLarge() : null;
 
-        var progress = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+        var progress = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"]));
 
         progress.Done.ShouldBeTrue();
         (progress.Counts.Deployments, progress.Counts.ServerTasks, progress.Counts.DetailsFetched, progress.Counts.DetailsTooLarge).ShouldBe((2, 2, 1, 1));
@@ -406,7 +391,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath.Contains("/projects/Projects-9/", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(System.Net.HttpStatusCode.NotFound) : null;
 
-        var progress = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1", "Projects-9"]));
+        var progress = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1", "Projects-9"]));
 
         progress.Done.ShouldBeTrue();
         progress.Counts.ProjectsNotFound.ShouldBe(1);
@@ -435,7 +420,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? EndlessEventsPage(request) : null;
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 50_000 });
 
-        var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"])));
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
         server.Paths.Count(p => p.Contains("/events")).ShouldBeLessThan(50);
@@ -451,11 +436,13 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         while (!cursor.Done && phases.Count < 10)
         {
-            await fetcher.FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+            await fetcher.FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
             phases.Add((cursor.Phase, cursor.ProjectIndex));
         }
 
-        phases.ShouldBe([(OctopusHistoryFetchPhase.Deployments, 0), (OctopusHistoryFetchPhase.Releases, 1), (OctopusHistoryFetchPhase.Done, 1)]);
+        // After the last project: the closure, one kind per chunk (the environment, the package feed and the channel the
+        // history names, none staged here), then the bundle.
+        phases.ShouldBe([(OctopusHistoryFetchPhase.Deployments, 0), (OctopusHistoryFetchPhase.Closure, 1), (OctopusHistoryFetchPhase.Closure, 1), (OctopusHistoryFetchPhase.Closure, 1), (OctopusHistoryFetchPhase.Closure, 1), (OctopusHistoryFetchPhase.Done, 1)]);
         File.Exists(Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName)).ShouldBeTrue();
     }
 
@@ -503,7 +490,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var fetcher = Fetcher(server, oneItemPerChunk: true);
         var cursor = new OctopusImportHistoryFetchDto();
 
-        await fetcher.FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await fetcher.FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
         cursor.Phase = OctopusHistoryFetchPhase.Releases;
         cursor.Skip = 0;
 
@@ -520,7 +507,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer { Spaceless = true }.Release("Projects-1", 1).Deployment("Projects-1", 1);
         var cursor = new OctopusImportHistoryFetchDto();
 
-        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         cursor.Done.ShouldBeTrue();
         cursor.Spaceless.ShouldBeTrue();
@@ -536,42 +523,11 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1);
         var cursor = new OctopusImportHistoryFetchDto();
 
-        await Fetcher(server).FetchChunkAsync(Context(cursor, exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
         cursor.OctopusSpaceId.ShouldBe("Spaces-1");
         server.Paths.ShouldContain("/api/Spaces-1/projects/Projects-1/releases?skip=0&take=100");
         server.Paths.ShouldContain(p => p.StartsWith("/api/tasks?") || p.StartsWith("/api/Spaces-1/deployments"));
-    }
-
-    [Fact]
-    public async Task EmptyScope_Error()
-    {
-        var server = new FakeOctopusServer();
-        var otherInstallation = Prior("inst-other", ("Project", "Projects-1", null, null));
-
-        await Should.ThrowAsync<OctopusImportHistoryScopeEmptyException>(() => Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), otherInstallation)));
-
-        server.Paths.ShouldNotContain(p => p.Contains("projects/") || p.Contains("deployments"));
-    }
-
-    [Theory]
-    [InlineData(new[] { "Projects-2" }, null, new[] { "Projects-1", "Projects-2" })]
-    [InlineData(new string[0], "inst-1", new[] { "Projects-1" })]
-    [InlineData(new[] { "Projects-1" }, null, new[] { "Projects-1" })]
-    public void ScopeProjectIds_ExportPlusPriorFromTheSameInstallation(string[] exportIds, string priorInstallation, string[] expected)
-    {
-        var context = new OctopusHistoryFetchContext { ExportProjectIds = exportIds, PriorMappings = Prior(priorInstallation, ("Project", "Projects-1", null, null), ("Release", "Releases-1", null, null)) };
-
-        OctopusRestHistoryFetcher.ScopeProjectIds(context, "inst-1").ShouldBe(expected);
-    }
-
-    // Export project ids carry the export's 32-hex suffix; REST paths need the bare id, and the prior row is the same project.
-    [Fact]
-    public void ScopeProjectIds_ExportSuffixedIds_AreFetchedByTheirRestId()
-    {
-        var context = new OctopusHistoryFetchContext { ExportProjectIds = ["Projects-2-0123456789ABCDEF0123456789ABCDEF", "Projects-1-0123456789abcdef0123456789abcdef"], PriorMappings = Prior("inst-1", ("Project", "Projects-1", null, null)) };
-
-        OctopusRestHistoryFetcher.ScopeProjectIds(context, "inst-1").ShouldBe(["Projects-1", "Projects-2"]);
     }
 
     [Fact]
@@ -591,7 +547,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
 
-        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"]));
+        await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"]));
 
         var bundlePath = Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName);
         var extraction = await new OctopusImportSourceReader(new OctopusArchiveExtractor(), new OctopusInputExtractor()).ReadAsync(bundlePath);
@@ -611,7 +567,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var release = graph.Resources.Single(r => r.SourceId == "Releases-1").GetSource<OctopusReleaseDto>();
         release.SelectedPackages.Single().ExtensionData[OctopusRestHistoryFetcher.FeedIdProperty].GetString().ShouldBe("Feeds-7");
         var deployment = graph.Resources.Single(r => r.SourceId == "Deployments-1").GetSource<OctopusDeploymentDto>();
-        deployment.ExtensionData[OctopusRestHistoryFetcher.DeployedToMachineNamesProperty].Deserialize<string[]>().ShouldBe(["web-01", "Machines-9"]);
+        deployment.ExtensionData[OctopusRestHistoryFetcher.DeployedToMachineNamesProperty].Deserialize<string[]>().ShouldBe(["Machines-1", "Machines-9"], "no machine document was staged, so each machine keeps its id as its name");
     }
 
     [Fact]
@@ -620,7 +576,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1);
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 64 });
 
-        var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), exportProjectIds: ["Projects-1"])));
+        var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
     }
@@ -647,8 +603,14 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(Enumerable.Range(skip, 100).Select(i => new { Id = $"Events-{i}", Category = "DeploymentSucceeded" }).ToList(), int.MaxValue));
     }
 
-    private OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, OctopusImportPriorMappings prior = null, IReadOnlyList<string> exportProjectIds = null, string apiKey = FakeOctopusServer.ApiKey)
-        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty, ExportProjectIds = exportProjectIds ?? [] };
+    // These tests start past the catalog and the project's configuration: a cursor without projects is given Projects-1
+    // (or the projects named), at the releases phase.
+    private OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, OctopusImportPriorMappings prior = null, IReadOnlyList<string> projects = null, string apiKey = FakeOctopusServer.ApiKey)
+    {
+        if (cursor.ProjectIds.Count == 0) cursor.ProjectIds = [.. projects ?? ["Projects-1"]];
+
+        return new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty };
+    }
 
     private static OctopusImportPriorMappings Prior(params (string Type, string Id, string Fingerprint, string DetailFingerprint)[] rows) => Prior("inst-1", rows);
 

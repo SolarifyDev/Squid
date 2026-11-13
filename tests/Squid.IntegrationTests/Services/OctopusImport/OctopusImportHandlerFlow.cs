@@ -37,8 +37,8 @@ public static class OctopusImportHandlerFlow
     public static Task<FetchOctopusImportHistoryResponse> FetchHistoryAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey)
         => mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(new FetchOctopusImportHistoryCommand { SpaceId = spaceId, SessionId = sessionId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
 
-    /// <summary>Fetches chunk after chunk, as the UI does, until the server history is complete.</summary>
-    public static async Task<OctopusHistoryFetchProgressDto> FetchHistoryUntilDoneAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey, int maxChunks = 50)
+    /// <summary>Fetches chunk after chunk, as the UI does, until the server fetch (configuration and history) is complete.</summary>
+    public static async Task<OctopusHistoryFetchProgressDto> FetchHistoryUntilDoneAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey, int maxChunks = 200)
     {
         for (var chunk = 0; chunk < maxChunks; chunk++)
         {
@@ -51,13 +51,13 @@ public static class OctopusImportHandlerFlow
     }
 
     /// <summary>
-    /// The whole server-source import as the UI drives it: a session (an uploaded export when given, else API-only),
-    /// the history fetch until done, extract, preview, validate (posting the plan without its history rows, which the
-    /// server owns) and a synchronous confirm. Any step that is refused throws with its reason.
+    /// The whole server-source import as the UI drives it: connect, the fetch until done, extract, preview, validate
+    /// (posting the plan without its history rows, which the server owns) and a synchronous confirm. Any step that is
+    /// refused throws with its reason.
     /// </summary>
-    public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey, string exportPath = null, string exportPassword = null)
+    public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
     {
-        var sessionId = exportPath == null ? (await ConnectAsync(mediator, spaceId)).Data.Session.SessionId : await UploadSessionAsync(mediator, spaceId, exportPath, exportPassword);
+        var sessionId = (await ConnectAsync(mediator, spaceId)).Data.Session.SessionId;
         var fetch = await FetchHistoryUntilDoneAsync(mediator, spaceId, sessionId, serverUri, apiKey);
 
         return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);

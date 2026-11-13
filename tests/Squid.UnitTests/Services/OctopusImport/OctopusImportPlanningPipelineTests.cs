@@ -137,9 +137,9 @@ public class OctopusImportPlanningPipelineTests
         }
     }
 
-    // A finished REST fetch drops octopus-history.zip beside the upload; the cached extraction must not hide it.
+    // One source per session: a bundle beside an uploaded export is not part of it, so the cached extraction stands.
     [Fact]
-    public async Task BuildPreviewAsync_WhenAHistoryBundleAppearsBesideTheUpload_ExtractsAgainWithIt()
+    public async Task BuildPreviewAsync_WhenAHistoryBundleAppearsBesideTheUpload_NeitherReadsItNorExtractsAgain()
     {
         var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"squid-pipeline-{Guid.NewGuid():N}")).FullName;
         var path = Path.Combine(directory, "export.json");
@@ -155,8 +155,8 @@ public class OctopusImportPlanningPipelineTests
             await harness.Pipeline.BuildPreviewAsync(path, 7);
             await harness.Pipeline.BuildPreviewAsync(path, 7);
 
-            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), "export.json", null, It.IsAny<CancellationToken>()), Times.Exactly(2));
-            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), OctopusImportSourceReader.HistoryBundleFileName, null, It.IsAny<CancellationToken>()), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), "export.json", null, It.IsAny<CancellationToken>()), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), OctopusImportSourceReader.HistoryBundleFileName, null, It.IsAny<CancellationToken>()), Times.Never);
         }
         finally
         {

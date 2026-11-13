@@ -10,18 +10,9 @@ public sealed class OctopusImportSourceReader(IOctopusArchiveExtractor archiveEx
 
     private readonly OctopusArchiveExtractionOptions _historyLimits = (limits ?? OctopusImportSizeLimits.FromEnvironment()).ExtractionOptions;
 
-    public async Task<OctopusInputExtractionResult> ReadAsync(string temporaryUploadPath, CancellationToken ct = default)
-    {
-        var mainIsBundle = IsHistoryBundle(temporaryUploadPath);
-        var main = await ReadFileAsync(temporaryUploadPath, mainIsBundle ? _historyLimits : null, ct).ConfigureAwait(false);
-        var bundlePath = HistoryBundlePath(temporaryUploadPath);
-
-        if (mainIsBundle || !File.Exists(bundlePath)) return main;
-
-        var history = await ReadFileAsync(bundlePath, _historyLimits, ct).ConfigureAwait(false);
-
-        return OctopusImportSourceMerge.Merge(main, history);
-    }
+    // A session has one source: its export file, or the bundle a server fetch wrote (read under the fetch's own limits).
+    public Task<OctopusInputExtractionResult> ReadAsync(string temporaryUploadPath, CancellationToken ct = default)
+        => ReadFileAsync(temporaryUploadPath, IsHistoryBundle(temporaryUploadPath) ? _historyLimits : null, ct);
 
     public async Task<OctopusInputExtractionResult> ReadStreamAsync(Stream content, string sourcePath, CancellationToken ct = default)
     {
@@ -29,9 +20,6 @@ public sealed class OctopusImportSourceReader(IOctopusArchiveExtractor archiveEx
 
         return await ReadAsync(content, sourcePath, null, ct).ConfigureAwait(false);
     }
-
-    /// <summary>The bundle path beside a session's main file.</summary>
-    public static string HistoryBundlePath(string temporaryUploadPath) => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(temporaryUploadPath))!, HistoryBundleFileName);
 
     public static bool IsHistoryBundle(string path) => string.Equals(Path.GetFileName(path), HistoryBundleFileName, StringComparison.OrdinalIgnoreCase);
 

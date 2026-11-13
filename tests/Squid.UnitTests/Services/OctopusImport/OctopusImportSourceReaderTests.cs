@@ -15,27 +15,18 @@ public sealed class OctopusImportSourceReaderTests : IDisposable
 {
     private readonly string _sessionDirectory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"squid-source-reader-{Guid.NewGuid():N}")).FullName;
 
+    // One source per session: a bundle lying beside an uploaded export (a session of an older build) is never merged in.
     [Fact]
-    public async Task Merge_HistoryOverridesExportSameId_ManifestsMerged()
+    public async Task BundleBesideAnExport_NotRead()
     {
-        var exportPath = WriteZip("export.zip", ("Projects/Projects-1.json", new { Id = "Projects-1", Name = "Web" }, "Project"), ("Releases/Releases-1.json", new { Id = "Releases-1", ProjectId = "Projects-1", Version = "1.0.0", ReleaseNotes = "from the export" }, "Release"));
+        var exportPath = WriteZip("export.zip", ("Projects/Projects-1.json", new { Id = "Projects-1", Name = "Web" }, "Project"));
         var writer = new OctopusHistoryBundleWriter();
-        await writer.WriteDocumentAsync(_sessionDirectory, OctopusResourceKind.Release, new OctopusReleaseDto { Id = "Releases-1", ProjectId = "Projects-1", Version = "1.0.0", ReleaseNotes = "from the server" });
-        await writer.WriteDocumentAsync(_sessionDirectory, OctopusResourceKind.Deployment, new OctopusDeploymentDto { Id = "Deployments-1", ProjectId = "Projects-1", ReleaseId = "Releases-1" });
+        await writer.WriteDocumentAsync(_sessionDirectory, OctopusResourceKind.Release, new OctopusReleaseDto { Id = "Releases-1", ProjectId = "Projects-1", Version = "1.0.0" });
         await writer.BuildBundleAsync(_sessionDirectory, "inst-1");
 
         var extraction = await Reader().ReadAsync(exportPath);
-        var inventory = new OctopusManifestInventoryBuilder().Build(extraction);
-        var graph = new OctopusResourceGraphBuilder().Build(inventory);
 
-        inventory.Diagnostics.ShouldBeEmpty();
-        inventory.Manifest.InstallationId.ShouldBe("inst-1");
-        inventory.Items.Select(i => i.ManifestEntry.Id).ShouldBe(["Releases-1", "Deployments-1", "Projects-1"], ignoreOrder: true);
-        extraction.Documents.Count(d => d.Classification.Kind == OctopusDocumentKind.Manifest).ShouldBe(1);
-        extraction.Documents.Count(d => d.Classification.SourceId == "Releases-1").ShouldBe(1);
-        graph.Resources.Single(r => r.SourceId == "Releases-1").GetSource<OctopusReleaseDto>().ReleaseNotes.ShouldBe("from the server");
-        graph.Resources.ShouldContain(r => r.SourceId == "Projects-1");
-        inventory.Items.Where(i => i.Classification.Kind != OctopusDocumentKind.Project).ShouldAllBe(i => i.ManifestEntry.DocumentSource.StartsWith(OctopusImportSourceMerge.BundlePathPrefix));
+        extraction.Documents.Select(d => d.SourcePath).ShouldBe(["manifest.json", "Projects/Projects-1.json"], ignoreOrder: true);
     }
 
     [Fact]
@@ -66,14 +57,14 @@ public sealed class OctopusImportSourceReaderTests : IDisposable
     [InlineData("history/../../escape.json")]
     public async Task TraversalInHistoryBundle_Rejected(string hostileEntry)
     {
-        var exportPath = WriteZip("export.zip", ("Projects/Projects-1.json", new { Id = "Projects-1" }, "Project"));
-        using (var zip = ZipFile.Open(Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName), ZipArchiveMode.Create))
+        var bundlePath = Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName);
+        using (var zip = ZipFile.Open(bundlePath, ZipArchiveMode.Create))
         {
             using var entry = new StreamWriter(zip.CreateEntry(hostileEntry).Open());
             entry.Write("{\"Id\":\"Releases-1\"}");
         }
 
-        var ex = await Should.ThrowAsync<OctopusArchiveExtractionException>(() => Reader().ReadAsync(exportPath));
+        var ex = await Should.ThrowAsync<OctopusArchiveExtractionException>(() => Reader().ReadAsync(bundlePath));
 
         ex.Code.ShouldBe(OctopusArchiveExtractionErrorCodes.EntryPathUnsafe);
     }

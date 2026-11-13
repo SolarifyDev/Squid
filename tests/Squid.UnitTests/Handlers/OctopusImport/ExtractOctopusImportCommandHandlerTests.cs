@@ -141,6 +141,22 @@ public class ExtractOctopusImportCommandHandlerTests
         harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<OctopusArchiveExtractionOptions>(), It.IsAny<CancellationToken>()), refused ? Times.Never() : Times.Once());
     }
 
+    // A server session's bundle does not exist until its fetch finishes: the unfinished fetch is the reason given.
+    [Fact]
+    public async Task Handle_ServerSessionMidFetch_NoBundleYet_RefusedAsUnfinishedFetch()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var session = Session(sessionId, Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}", "octopus-history.zip"));
+        session.SourceSummaryJson = "{\"detectedFormat\":\"OctopusServer\",\"historyFetch\":{\"done\":false,\"phase\":\"Catalog\"}}";
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var response = await harness.Sut.Handle(Context(new ExtractOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        response.Code.ShouldBe(HttpStatusCode.BadRequest);
+        response.Data.Extraction.Diagnostics.Select(d => d.Code).ShouldBe([ExtractOctopusImportCommandHandler.HistoryFetchIncompleteCode]);
+    }
+
     private static string CreateTempFile(string content)
     {
         var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");

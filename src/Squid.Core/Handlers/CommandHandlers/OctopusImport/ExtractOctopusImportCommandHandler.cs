@@ -42,6 +42,10 @@ public class ExtractOctopusImportCommandHandler(
         if (state != OctopusImportSessionState.Uploaded)
             throw new OctopusImportSessionStateTransitionException(state, OctopusImportSessionState.Extracted);
 
+        // A server session has no file until its fetch finishes, so an unfinished fetch is the reason to report first.
+        if (IsHistoryFetchIncomplete(session))
+            return BadRequest(command, HistoryFetchIncompleteMessage, [Diagnostic(OctopusImportCompatibilitySeverity.Blocker, HistoryFetchIncompleteCode, HistoryFetchIncompleteMessage)]);
+
         if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
             return BadRequest(command, "Octopus import session does not have an available temporary upload.", [
                 Diagnostic(
@@ -49,9 +53,6 @@ public class ExtractOctopusImportCommandHandler(
                     "OctopusImport.Extraction.TemporaryUploadMissing",
                     "Octopus import session does not have an available temporary upload.")
             ]);
-
-        if (IsHistoryFetchIncomplete(session))
-            return BadRequest(command, HistoryFetchIncompleteMessage, [Diagnostic(OctopusImportCompatibilitySeverity.Blocker, HistoryFetchIncompleteCode, HistoryFetchIncompleteMessage)]);
 
         OctopusInputExtractionResult extraction;
 

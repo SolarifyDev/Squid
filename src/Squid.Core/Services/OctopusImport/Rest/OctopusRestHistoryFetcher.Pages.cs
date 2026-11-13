@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -23,6 +24,7 @@ public sealed partial class OctopusRestHistoryFetcher
             _ctx.InItem = true;
             await EnrichFeedIdsAsync(release, ct).ConfigureAwait(false);
             await WriteAsync(OctopusResourceKind.Release, release, ct).ConfigureAwait(false);
+            RecordReference(OctopusResourceKind.Channel, release.ChannelId);
 
             _ctx.Pending.Releases++;
             CommitItem();
@@ -52,6 +54,8 @@ public sealed partial class OctopusRestHistoryFetcher
             var feedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedIdFromProcess(process, package);
 
             if (feedId == null) continue;
+
+            RecordReference(OctopusResourceKind.Feed, feedId);
 
             package.ExtensionData ??= [];
             package.ExtensionData[FeedIdProperty] = JsonSerializer.SerializeToElement(feedId);
@@ -87,7 +91,7 @@ public sealed partial class OctopusRestHistoryFetcher
             CommitItem();
         }
 
-        Advance(page, OctopusHistoryFetchPhase.Releases);
+        Advance(page, OctopusHistoryFetchPhase.ProjectConfiguration);
     }
 
     private async Task<Dictionary<string, OctopusServerTaskDto>> TaskSummariesAsync(IReadOnlyCollection<OctopusDeploymentDto> deployments, CancellationToken ct)
@@ -111,6 +115,9 @@ public sealed partial class OctopusRestHistoryFetcher
 
         await WriteTaskAsync(task, details, ct).ConfigureAwait(false);
         await WriteAsync(OctopusResourceKind.Deployment, deployment, ct).ConfigureAwait(false);
+
+        RecordReference(OctopusResourceKind.Environment, deployment.EnvironmentId);
+        RecordReference(OctopusResourceKind.Channel, deployment.ChannelId);
 
         _ctx.Pending.Deployments++;
     }
@@ -140,25 +147,32 @@ public sealed partial class OctopusRestHistoryFetcher
         task.EnvironmentId ??= deployment.EnvironmentId;
     }
 
+    // Names come from the machine documents the catalog staged; a machine Octopus no longer has keeps its id as its name.
     private async Task AttachMachineNamesAsync(OctopusDeploymentDto deployment, CancellationToken ct)
     {
         if (deployment.DeployedToMachineIds is not { Count: > 0 }) return;
 
-        var names = await MachineNamesAsync(ct).ConfigureAwait(false);
+        var names = new List<string>();
+
+        foreach (var machineId in deployment.DeployedToMachineIds)
+            names.Add(await StagedMachineNameAsync(machineId, ct).ConfigureAwait(false) ?? machineId);
 
         deployment.ExtensionData ??= [];
-        deployment.ExtensionData[DeployedToMachineNamesProperty] = JsonSerializer.SerializeToElement(deployment.DeployedToMachineIds.Select(id => names.GetValueOrDefault(id) ?? id).ToList());
+        deployment.ExtensionData[DeployedToMachineNamesProperty] = JsonSerializer.SerializeToElement(names);
     }
 
-    private async Task<Dictionary<string, string>> MachineNamesAsync(CancellationToken ct)
+    private async Task<string> StagedMachineNameAsync(string machineId, CancellationToken ct)
     {
-        if (_ctx.MachineNames != null) return _ctx.MachineNames;
+        if (string.IsNullOrWhiteSpace(machineId)) return null;
 
-        var machines = await GetOrNullAsync<List<OctopusRestMachineDto>>($"{SpacePrefix}machines/all", ct).ConfigureAwait(false) ?? [];
+        if (_ctx.MachineNames.TryGetValue(machineId, out var cached)) return cached;
 
-        _ctx.MachineNames = machines.Where(m => !string.IsNullOrWhiteSpace(m.Id)).DistinctBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
+        var machine = await bundleWriter.ReadStagedAsync(_ctx.Context.SessionDirectory, OctopusResourceKind.Machine, machineId, ct).ConfigureAwait(false);
+        var name = machine?["Name"] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text : null;
 
-        return _ctx.MachineNames;
+        _ctx.MachineNames[machineId] = name;
+
+        return name;
     }
 
     // ── Paging ─────────────────────────────────────────────────────────────
@@ -178,6 +192,13 @@ public sealed partial class OctopusRestHistoryFetcher
         _ctx.ItemsCommitted++;
 
         TrackBytes();
+    }
+
+    // A kind restarted from its first page reads its items again; what the abandoned pass recorded is read again too.
+    private void DiscardPending()
+    {
+        _ctx.Pending = new OctopusHistoryFetchCountsDto();
+        _ctx.PendingSkipped = [];
     }
 
     private void CommitPending()
@@ -200,9 +221,12 @@ public sealed partial class OctopusRestHistoryFetcher
         total.ProjectsNotFound += item.ProjectsNotFound;
         total.ItemsRejected += item.ItemsRejected;
         total.ItemsAbandoned += item.ItemsAbandoned;
+        total.ConfigurationDocuments += item.ConfigurationDocuments;
+        total.SecretsWithheld += item.SecretsWithheld;
     }
 
     // Skip already counts every item of the page written, so it is where the page ended. A refused page commits its record here.
+    // The last deployment page of a project moves on to the next project's configuration.
     private void Advance<T>(OctopusRestPage<T> page, OctopusHistoryFetchPhase nextPhase)
     {
         var cursor = _ctx.Cursor;
@@ -214,7 +238,11 @@ public sealed partial class OctopusRestHistoryFetcher
         cursor.Phase = nextPhase;
         cursor.Skip = 0;
 
-        if (nextPhase == OctopusHistoryFetchPhase.Releases) cursor.ProjectIndex++;
+        if (nextPhase != OctopusHistoryFetchPhase.ProjectConfiguration) return;
+
+        cursor.ProjectIndex++;
+
+        if (!HasCurrentProject) cursor.Phase = OctopusHistoryFetchPhase.Closure;
     }
 
     // Not found is null: a deleted project, or one the chosen space does not have. A refused page is an empty page, recorded.
@@ -252,11 +280,16 @@ public sealed partial class OctopusRestHistoryFetcher
         }
     }
 
-    private async Task<List<T>> GetAllPagesOrEmptyAsync<T>(string path, CancellationToken ct)
+    // Not found is an empty list only when the caller says so: a task's detail list Octopus does not have is not "none".
+    private async Task<List<T>> GetAllPagesOrEmptyAsync<T>(string path, CancellationToken ct, bool tolerateNotFound = false)
     {
         try
         {
             return await _ctx.Client.GetAllPagesAsync<T>(path, ct).ConfigureAwait(false);
+        }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.NotFound && tolerateNotFound)
+        {
+            return [];
         }
         catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
         {

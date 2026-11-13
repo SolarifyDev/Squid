@@ -1,9 +1,6 @@
 namespace Squid.Message.Models.OctopusImport;
 
-/// <summary>
-/// Everything one REST history chunk needs. <see cref="Cursor"/> is advanced in place; the caller persists it.
-/// <see cref="ExportProjectIds"/> are the Octopus project ids of an export uploaded into the same session.
-/// </summary>
+/// <summary>Everything one Octopus server fetch chunk needs. <see cref="Cursor"/> is advanced in place; the caller persists it.</summary>
 public sealed class OctopusHistoryFetchContext
 {
     public string ServerUrl { get; init; }
@@ -15,6 +12,4 @@ public sealed class OctopusHistoryFetchContext
     public OctopusImportHistoryFetchDto Cursor { get; init; } = new();
 
     public OctopusImportPriorMappings PriorMappings { get; init; } = OctopusImportPriorMappings.Empty;
-
-    public IReadOnlyList<string> ExportProjectIds { get; init; } = [];
 }

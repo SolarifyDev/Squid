@@ -53,7 +53,7 @@ public class GlobalExceptionFilterTests
         foreach (var kind in Enum.GetValues<OctopusRestErrorKind>())
             yield return [new OctopusRestException(kind)];
 
-        yield return [new OctopusImportHistoryScopeEmptyException()];
+        yield return [new OctopusImportSessionNotServerSourceException(Guid.NewGuid())];
         yield return [new OctopusImportHistoryServerMismatchException("server")];
     }
 

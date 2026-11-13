@@ -9,15 +9,11 @@ namespace Squid.Core.Services.OctopusImport.Rest;
 
 public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory clientFactory, IOctopusHistoryBundleWriter bundleWriter, IOctopusImportHistoryDetailsStore detailsStore, OctopusRestOptions options = null, OctopusImportSizeLimits limits = null) : IOctopusRestHistoryFetcher
 {
-    private const string ProjectIdPrefix = "PROJECTS-";
-
     /// <summary>How often the chunk deadline may abandon the same item before it is skipped.</summary>
     public const int MaxAbandonments = 3;
 
     /// <summary>The most skipped items the cursor lists; further ones are only counted.</summary>
     public const int MaxRecordedSkippedItems = 500;
-
-    private static readonly string PriorProjectType = OctopusImportPriorMappings.Normalize(OctopusResourceKind.Project.ToString());
 
     private readonly OctopusRestOptions _options = options ?? OctopusRestOptions.FromEnvironment();
     private readonly OctopusImportSizeLimits _limits = limits ?? OctopusImportSizeLimits.FromEnvironment();
@@ -51,7 +47,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     }
 
     public static OctopusHistoryFetchProgressDto Progress(OctopusImportHistoryFetchDto cursor)
-        => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
+        => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, CatalogIndex = cursor.CatalogIndex, CatalogKindCount = CatalogCollections.Count, Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
 
     // A chunk still running past its deadline is abandoned before its lease lapses, so no second chunk can overlap it.
     // The item it was on is skipped once it has been abandoned MaxAbandonments times, so one stuck item cannot stall the fetch.
@@ -73,7 +69,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         await PinInstallationAsync(ct).ConfigureAwait(false);
         await BindKeyAsync(ct).ConfigureAwait(false);
         await ResolveSpaceAsync(ct).ConfigureAwait(false);
-        EnsureScope();
         await FetchPagesAsync(ct).ConfigureAwait(false);
     }
 
@@ -111,31 +106,6 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         cursor.OctopusSpaceId = spaces.FirstOrDefault(s => s.IsDefault)?.Id ?? throw new OctopusRestException(OctopusRestErrorKind.NotFound);
     }
 
-    private void EnsureScope()
-    {
-        var cursor = _ctx.Cursor;
-
-        if (cursor.ProjectIds.Count == 0) cursor.ProjectIds = ScopeProjectIds(_ctx.Context, cursor.InstallationId);
-
-        if (cursor.ProjectIds.Count == 0)
-            throw new OctopusImportHistoryScopeEmptyException();
-    }
-
-    /// <summary>The projects whose history is fetched: those in an uploaded export plus those imported before from this installation.</summary>
-    public static List<string> ScopeProjectIds(OctopusHistoryFetchContext context, string installationId)
-    {
-        var prior = context.PriorMappings ?? OctopusImportPriorMappings.Empty;
-        var priorProjects = IsSameInstallation(prior.InstallationId, installationId) ? prior.Mappings.Keys.Where(k => k.Type == PriorProjectType).Select(k => OctopusProjectId(k.Id)) : [];
-
-        return (context.ExportProjectIds ?? []).Select(OctopusImportSourceIds.StripExportSuffix).Concat(priorProjects).Where(id => !string.IsNullOrWhiteSpace(id)).DistinctBy(OctopusImportPriorMappings.Normalize).OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    // The source map stores ids upper-cased; Octopus project ids are "Projects-{n}", so restore that spelling for the URL.
-    private static string OctopusProjectId(string normalizedId)
-        => normalizedId.StartsWith(ProjectIdPrefix, StringComparison.OrdinalIgnoreCase) ? "Projects-" + normalizedId[ProjectIdPrefix.Length..] : normalizedId;
-
-    private static bool IsSameInstallation(string prior, string current) => string.IsNullOrWhiteSpace(prior) || OctopusImportPriorMappings.Normalize(prior) == OctopusImportPriorMappings.Normalize(current);
-
     private async Task FetchPagesAsync(CancellationToken ct)
     {
         do
@@ -146,21 +116,20 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         while (!_ctx.Cursor.Done && _ctx.Clock.Elapsed < _options.ChunkDuration);
     }
 
-    private async Task FetchNextPageAsync(CancellationToken ct)
-    {
-        var cursor = _ctx.Cursor;
-
-        if (cursor.ProjectIndex >= cursor.ProjectIds.Count)
+    // The phase decides first; a project index past the end only means the per-project phases are over.
+    private Task FetchNextPageAsync(CancellationToken ct)
+        => _ctx.Cursor.Phase switch
         {
-            await CompleteAsync(ct).ConfigureAwait(false);
-            return;
-        }
+            OctopusHistoryFetchPhase.Catalog => FetchCatalogPageAsync(ct),
+            OctopusHistoryFetchPhase.ProjectConfiguration when HasCurrentProject => FetchProjectConfigurationAsync(ct),
+            OctopusHistoryFetchPhase.Releases when HasCurrentProject => FetchReleasePageAsync(ct),
+            OctopusHistoryFetchPhase.Deployments when HasCurrentProject => FetchDeploymentPageAsync(ct),
+            OctopusHistoryFetchPhase.Closure => FetchClosureAsync(ct),
+            OctopusHistoryFetchPhase.Done => CompleteAsync(ct),
+            _ => EnterClosureAsync()
+        };
 
-        if (cursor.Phase == OctopusHistoryFetchPhase.Deployments)
-            await FetchDeploymentPageAsync(ct).ConfigureAwait(false);
-        else
-            await FetchReleasePageAsync(ct).ConfigureAwait(false);
-    }
+    private bool HasCurrentProject => _ctx.Cursor.ProjectIndex < _ctx.Cursor.ProjectIds.Count;
 
     private async Task CompleteAsync(CancellationToken ct)
     {
@@ -192,7 +161,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
         // Per-chunk caches
         public Dictionary<string, OctopusDeploymentProcessDto> ProcessSnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, string> MachineNames { get; set; }
+        public Dictionary<string, string> MachineNames { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         // The item being written: its counts and skipped requests join the cursor only when it commits
         public OctopusHistoryFetchCountsDto Pending { get; set; } = new();

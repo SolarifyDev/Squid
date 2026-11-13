@@ -23,4 +23,10 @@ public class OctopusHistoryFetchCountsDto
 
     /// <summary>Items skipped after outliving the chunk deadline too many times.</summary>
     public int ItemsAbandoned { get; set; }
+
+    /// <summary>Configuration documents staged (everything but releases, deployments and tasks).</summary>
+    public int ConfigurationDocuments { get; set; }
+
+    /// <summary>Secret values the server did not return (sensitive variables, feed passwords, account keys, ...); imported as "value missing".</summary>
+    public int SecretsWithheld { get; set; }
 }

@@ -9,10 +9,12 @@ using System.Web;
 namespace Squid.IntegrationTests.Helpers;
 
 /// <summary>
-/// A real-socket Octopus REST API on 127.0.0.1 (port from the OS): one space, projects with paged releases and
-/// deployments, tasks with details, interruptions, events, artifacts and machines (all mutable between fetches, so a
-/// test can change history in "Octopus" and re-import it). Every request is recorded; a request
-/// without an accepted <c>X-Octopus-ApiKey</c> gets 401, and <c>users/me</c> answers the user the key belongs to. <see cref="HoldReleases"/> parks release requests until
+/// A real-socket Octopus REST API on 127.0.0.1 (port from the OS): one space whose configuration (<see cref="Resources"/>:
+/// a project group, an environment, a lifecycle, project Projects-1 with its channel, process and variables) matches the
+/// minimal export the import tests build, projects with paged releases and deployments, tasks with details,
+/// interruptions, events, artifacts and machines (all mutable between fetches, so a test can change Octopus and
+/// re-import it). Every request is recorded; a request without an accepted <c>X-Octopus-ApiKey</c> gets 401, and
+/// <c>users/me</c> answers the user the key belongs to. <see cref="HoldPath"/> parks requests to one path until
 /// <see cref="ReleaseHeldRequests"/>, so a test can observe a chunk that is still running.
 /// </summary>
 public sealed class StubOctopusServer : IAsyncDisposable
@@ -24,7 +26,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
     private readonly ConcurrentDictionary<string, string> _keyUsers = new(StringComparer.Ordinal);
-    private readonly TaskCompletionSource _releasesRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _heldRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _releaseHeld = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private StubOctopusServer(HttpListener listener, int port, string apiKey)
@@ -56,11 +58,28 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public List<Dictionary<string, object>> Machines { get; } = [new() { ["Id"] = "Machines-1", ["Name"] = "web-01" }];
 
-    public bool HoldReleases { get; set; }
+    /// <summary>
+    /// Configuration by path below the space (<c>teams</c> below <c>api/</c>): a list is served as pages, anything else as it
+    /// is; a path not listed is 404. The defaults are the configuration of the tests' minimal export, field for field.
+    /// </summary>
+    public Dictionary<string, object> Resources { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["projectgroups"] = new List<Dictionary<string, object>> { new() { ["Id"] = "ProjectGroups-1", ["Name"] = "Server group", ["Slug"] = "server-group" } },
+        ["environments"] = new List<Dictionary<string, object>> { new() { ["Id"] = "Environments-1", ["Name"] = "Server TEST", ["Slug"] = "server-test" } },
+        ["lifecycles"] = new List<Dictionary<string, object>> { new() { ["Id"] = "Lifecycles-1", ["Name"] = "Server lifecycle", ["Slug"] = "server-lifecycle", ["Phases"] = new[] { new Dictionary<string, object> { ["Id"] = "Phases-1", ["Name"] = "TEST", ["AutomaticDeploymentTargets"] = new[] { "Environments-1" } } } } },
+        ["projects"] = new List<Dictionary<string, object>> { new() { ["Id"] = "Projects-1", ["Name"] = "Server project", ["Slug"] = "server-project", ["ProjectGroupId"] = "ProjectGroups-1", ["LifecycleId"] = "Lifecycles-1", ["VariableSetId"] = "variableset-Projects-1", ["DeploymentProcessId"] = "deploymentprocess-Projects-1" } },
+        ["projects/Projects-1/channels"] = new List<Dictionary<string, object>> { new() { ["Id"] = "Channels-1", ["Name"] = "Default", ["Slug"] = "default", ["ProjectId"] = "Projects-1", ["IsDefault"] = true } },
+        ["projects/Projects-1/deploymentprocesses"] = new Dictionary<string, object> { ["Id"] = "deploymentprocess-Projects-1", ["ProjectId"] = "Projects-1", ["Steps"] = Array.Empty<object>() },
+        ["projects/Projects-1/variables"] = new Dictionary<string, object> { ["Id"] = "variableset-Projects-1", ["OwnerId"] = "Projects-1", ["Variables"] = Array.Empty<object>() }
+    };
+
+    /// <summary>Requests whose path ends with this are held until <see cref="ReleaseHeldRequests"/>.</summary>
+    public string HoldPath { get; set; }
 
     private readonly Dictionary<string, (int Times, HttpStatusCode Status)> _failures = new(StringComparer.Ordinal);
 
-    public Task ReleasesRequested => _releasesRequested.Task;
+    /// <summary>Completes when a request to <see cref="HoldPath"/> arrives.</summary>
+    public Task HeldPathRequested => _heldRequested.Task;
 
     public static StubOctopusServer Start(string apiKey)
     {
@@ -200,12 +219,13 @@ public sealed class StubOctopusServer : IAsyncDisposable
         if (path == "/api/users/me") return (HttpStatusCode.OK, new { Id = userId, Username = "importer", IsService = true });
         if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/spaces/all") return (HttpStatusCode.OK, new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
+        if (path == "/api/teams") return Serve("teams", query);
         if (path == "/api/tasks") return (HttpStatusCode.OK, Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), query));
         if (!path.StartsWith("/api/Spaces-1/", StringComparison.Ordinal)) return (HttpStatusCode.NotFound, new { });
 
         var segments = path["/api/Spaces-1/".Length..].Split('/');
 
-        if (segments is ["projects", _, "releases"]) await HoldIfRequestedAsync().ConfigureAwait(false);
+        if (HoldPath != null && path.EndsWith(HoldPath, StringComparison.Ordinal)) await HoldAsync().ConfigureAwait(false);
 
         return segments switch
         {
@@ -215,19 +235,26 @@ public sealed class StubOctopusServer : IAsyncDisposable
             ["interruptions"] => (HttpStatusCode.OK, Page(Interruptions.GetValueOrDefault(query["regarding"]!) ?? [], query)),
             ["artifacts"] => (HttpStatusCode.OK, Page(Artifacts.GetValueOrDefault(query["regarding"]!) ?? [], query)),
             ["events"] => (HttpStatusCode.OK, Page(Events.GetValueOrDefault(query["regarding"]!) ?? DefaultEvents(query["regarding"]), query)),
-            ["machines", "all"] => (HttpStatusCode.OK, Machines),
-            _ => (HttpStatusCode.NotFound, new { })
+            ["machines"] => (HttpStatusCode.OK, Page(Machines, query)),
+            _ => Serve(string.Join('/', segments), query)
         };
+    }
+
+    private (HttpStatusCode, object) Serve(string path, NameValueCollection query)
+    {
+        if (!Resources.TryGetValue(path, out var resource)) return (HttpStatusCode.NotFound, new { });
+
+        return resource is List<Dictionary<string, object>> items ? (HttpStatusCode.OK, Page(items.Where(i => query["ids"] == null || query["ids"].Split(',').Contains((string)i["Id"])).ToList(), query)) : (HttpStatusCode.OK, resource);
     }
 
     private static List<Dictionary<string, object>> DefaultEvents(string deploymentId)
         => [new() { ["Id"] = "Events-1", ["Category"] = "DeploymentSucceeded", ["Message"] = "Deployed", ["RelatedDocumentIds"] = new[] { deploymentId } }];
 
-    private async Task HoldIfRequestedAsync()
+    private async Task HoldAsync()
     {
-        _releasesRequested.TrySetResult();
+        _heldRequested.TrySetResult();
 
-        if (HoldReleases) await _releaseHeld.Task.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        await _releaseHeld.Task.WaitAsync(TimeSpan.FromSeconds(60)).ConfigureAwait(false);
     }
 
     private static object Page<T>(List<T> items, NameValueCollection query)

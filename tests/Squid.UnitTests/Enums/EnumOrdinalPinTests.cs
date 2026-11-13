@@ -53,6 +53,19 @@ public class EnumOrdinalPinTests
         ((int)reason).ShouldBe(expected);
     }
 
+    // Persisted on the session's fetch cursor between chunks: append-only.
+    [Theory]
+    [InlineData(OctopusHistoryFetchPhase.Releases, 0)]
+    [InlineData(OctopusHistoryFetchPhase.Deployments, 1)]
+    [InlineData(OctopusHistoryFetchPhase.Done, 2)]
+    [InlineData(OctopusHistoryFetchPhase.Catalog, 3)]
+    [InlineData(OctopusHistoryFetchPhase.ProjectConfiguration, 4)]
+    [InlineData(OctopusHistoryFetchPhase.Closure, 5)]
+    public void OctopusHistoryFetchPhase_OrdinalsPinned(OctopusHistoryFetchPhase phase, int expected)
+    {
+        ((int)phase).ShouldBe(expected);
+    }
+
     [Fact]
     public void ImportedOctopusEvent_Is100()
     {

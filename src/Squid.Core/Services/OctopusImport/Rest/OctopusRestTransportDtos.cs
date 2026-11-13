@@ -53,13 +53,6 @@ public class OctopusRestUserDto
     public bool IsService { get; set; }
 }
 
-public class OctopusRestMachineDto
-{
-    public string Id { get; set; }
-
-    public string Name { get; set; }
-}
-
 /// <summary>The <c>tasks/{id}/details</c> resource: the task summary and its activity tree.</summary>
 public class OctopusRestTaskDetailsDto
 {

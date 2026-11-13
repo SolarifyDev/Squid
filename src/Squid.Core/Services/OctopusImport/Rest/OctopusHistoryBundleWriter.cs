@@ -16,6 +16,12 @@ public interface IOctopusHistoryBundleWriter : IScopedDependency
     /// <summary>Stages one export-shaped JSON document (the output of <see cref="OctopusRestDocumentNormalizer"/>); same overwrite rule.</summary>
     Task<long> WriteJsonAsync(string sessionDirectory, OctopusResourceKind kind, JsonObject document, CancellationToken ct = default);
 
+    /// <summary>Whether a document of this kind and id is staged.</summary>
+    bool IsStaged(string sessionDirectory, OctopusResourceKind kind, string sourceId);
+
+    /// <summary>A staged document, or null when none is staged under this kind and id.</summary>
+    Task<JsonObject> ReadStagedAsync(string sessionDirectory, OctopusResourceKind kind, string sourceId, CancellationToken ct = default);
+
     /// <summary>Packs every staged document into <c>octopus-history.zip</c> with a manifest and returns the path.</summary>
     Task<string> BuildBundleAsync(string sessionDirectory, string installationId, CancellationToken ct = default);
 }
@@ -83,6 +89,16 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
         ArgumentNullException.ThrowIfNull(document);
 
         return StageAsync(sessionDirectory, kind, ReadId(document), JsonSerializer.SerializeToUtf8Bytes(document, DocumentOptions), ct);
+    }
+
+    public bool IsStaged(string sessionDirectory, OctopusResourceKind kind, string sourceId)
+        => !string.IsNullOrWhiteSpace(sourceId) && ManifestDocumentTypes.ContainsKey(kind) && File.Exists(StagedPath(sessionDirectory, kind, sourceId));
+
+    public async Task<JsonObject> ReadStagedAsync(string sessionDirectory, OctopusResourceKind kind, string sourceId, CancellationToken ct = default)
+    {
+        if (!IsStaged(sessionDirectory, kind, sourceId)) return null;
+
+        return JsonNode.Parse(await File.ReadAllBytesAsync(StagedPath(sessionDirectory, kind, sourceId), ct).ConfigureAwait(false)) as JsonObject;
     }
 
     public async Task<string> BuildBundleAsync(string sessionDirectory, string installationId, CancellationToken ct = default)

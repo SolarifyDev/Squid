@@ -29,7 +29,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
             ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
             OctopusRestException => HttpStatusCode.BadRequest,
-            OctopusImportHistoryScopeEmptyException => HttpStatusCode.BadRequest,
+            OctopusImportSessionNotServerSourceException => HttpStatusCode.BadRequest,
             OctopusImportHistoryServerMismatchException => HttpStatusCode.BadRequest,
             _ => HttpStatusCode.InternalServerError
         };

@@ -54,13 +54,7 @@ public class OctopusImportPlanningPipeline(
     private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
     {
         var fileInfo = new FileInfo(temporaryUploadPath);
-        var bundleInfo = new FileInfo(OctopusImportSourceReader.HistoryBundlePath(temporaryUploadPath));
-        var cacheKey = new ExtractionCacheKey(
-            Path.GetFullPath(temporaryUploadPath),
-            fileInfo.Length,
-            fileInfo.LastWriteTimeUtc,
-            bundleInfo.Exists ? bundleInfo.Length : -1,
-            bundleInfo.Exists ? bundleInfo.LastWriteTimeUtc : DateTime.MinValue);
+        var cacheKey = new ExtractionCacheKey(Path.GetFullPath(temporaryUploadPath), fileInfo.Length, fileInfo.LastWriteTimeUtc);
 
         var extraction = _extractions.GetOrAdd(
             cacheKey,
@@ -84,5 +78,5 @@ public class OctopusImportPlanningPipeline(
     }
 
     // The history bundle beside the main file is part of the input: a finished REST fetch must invalidate the cache.
-    private sealed record ExtractionCacheKey(string FullPath, long Length, DateTime LastWriteTimeUtc, long BundleLength, DateTime BundleLastWriteTimeUtc);
+    private sealed record ExtractionCacheKey(string FullPath, long Length, DateTime LastWriteTimeUtc);
 }

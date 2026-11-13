@@ -1,5 +1,4 @@
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
@@ -32,19 +31,8 @@ public sealed partial class OctopusImportServerSourceService
             ApiKey = request.ApiKey,
             SessionDirectory = Path.GetDirectoryName(Path.GetFullPath(session.TemporaryUploadPath)),
             Cursor = cursor,
-            PriorMappings = await sourceMap.LoadAsync(request.SpaceId, ct).ConfigureAwait(false),
-            ExportProjectIds = cursor.ProjectIds.Count == 0 ? await ExportProjectIdsAsync(session.TemporaryUploadPath, ct).ConfigureAwait(false) : []
+            PriorMappings = await sourceMap.LoadAsync(request.SpaceId, ct).ConfigureAwait(false)
         };
-
-    // Only the first chunk needs the uploaded export: it decides the project scope, which the cursor then keeps.
-    private async Task<IReadOnlyList<string>> ExportProjectIdsAsync(string temporaryUploadPath, CancellationToken ct)
-    {
-        if (OctopusImportSourceReader.IsHistoryBundle(temporaryUploadPath) || !File.Exists(temporaryUploadPath)) return [];
-
-        var extraction = await sourceReader.ReadAsync(temporaryUploadPath, ct).ConfigureAwait(false);
-
-        return extraction.Documents.Where(d => d.Classification.Kind == OctopusDocumentKind.Project && !d.Classification.IsHistoricalSnapshot).Select(d => d.Classification.SourceId).Where(id => !string.IsNullOrWhiteSpace(id)).ToList();
-    }
 
     private async Task ReleaseChunkAsync(OctopusHistoryFetchRequest request, OctopusImportHistoryFetchDto cursor, CancellationToken ct)
     {

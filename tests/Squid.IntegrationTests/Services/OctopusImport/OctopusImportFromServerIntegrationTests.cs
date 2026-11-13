@@ -56,7 +56,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     [Fact]
     public async Task Connect_Fetch_Expire_SecureDeletesSessionDir()
     {
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", "Deployments-1", "Releases-1", "ServerTasks-1");
         string sessionDirectory = null;
 
@@ -85,13 +84,12 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     [Fact]
     public async Task ConcurrentFetchChunks_409()
     {
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0");
-        octopus.HoldReleases = true;
+        octopus.HoldPath = "/projectgroups";
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
         var first = Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
-        await octopus.ReleasesRequested.WaitAsync(TimeSpan.FromSeconds(30));
+        await octopus.HeldPathRequested.WaitAsync(TimeSpan.FromSeconds(30));
 
         var second = await Should.ThrowAsync<OctopusImportSessionConcurrencyException>(() => Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey)));
 
@@ -99,8 +97,8 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         var firstProgress = (await first.WaitAsync(TimeSpan.FromSeconds(60))).Data;
 
         second.SessionId.ShouldBe(sessionId);
-        firstProgress.Counts.Releases.ShouldBe(1);
-        octopus.Requests.Count(r => r.PathAndQuery.Contains("/releases")).ShouldBe(1, "the refused chunk must not have called the server");
+        firstProgress.Counts.ConfigurationDocuments.ShouldBe(1, "the first chunk staged the project group it was held on");
+        octopus.Requests.Count(r => r.PathAndQuery.Contains("/projectgroups")).ShouldBe(1, "the refused chunk must not have called the server");
         var resumed = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
         resumed.Done.ShouldBeTrue("once the first chunk released its lease the fetch continues");
     }
@@ -108,43 +106,74 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     [Fact]
     public async Task ExtractRefusedWhileFetchIncomplete()
     {
-        await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", "Deployments-1", "Releases-1", "ServerTasks-1");
-        var exportPath = WriteExportArchive();
+        await using var octopus = OneDeployment();
 
-        try
+        await Run<IMediator>(async mediator =>
         {
-            await Run<IMediator>(async mediator =>
-            {
-                var session = (await OctopusImportHandlerFlow.UploadAsync(mediator, SpaceId, exportPath, "export-password")).Data.Session;
+            var session = (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session;
 
-                var partial = await OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, session.SessionId, octopus.BaseUri, ApiKey);
-                var refused = await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, session.SessionId);
+            var partial = await OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, session.SessionId, octopus.BaseUri, ApiKey);
+            var refused = await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, session.SessionId);
 
-                partial.Data.Done.ShouldBeFalse();
-                refused.Code.ShouldBe(HttpStatusCode.BadRequest);
-                refused.Data.Extraction.Diagnostics.ShouldContain(d => d.Code == ExtractOctopusImportCommandHandler.HistoryFetchIncompleteCode);
-                (await SessionStateAsync(session.SessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
+            partial.Data.Done.ShouldBeFalse();
+            refused.Code.ShouldBe(HttpStatusCode.BadRequest);
+            refused.Data.Extraction.Diagnostics.ShouldContain(d => d.Code == ExtractOctopusImportCommandHandler.HistoryFetchIncompleteCode);
+            (await SessionStateAsync(session.SessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
 
-                await OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, session.SessionId, octopus.BaseUri, ApiKey);
-                var extracted = await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, session.SessionId);
+            await OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, session.SessionId, octopus.BaseUri, ApiKey);
+            var extracted = await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, session.SessionId);
 
-                extracted.Code.ShouldBe(HttpStatusCode.OK, OctopusImportHandlerFlow.DescribeBlockers(extracted.Data.Extraction.Diagnostics));
-                extracted.Data.Extraction.Counts.ShouldContain(c => c.DocumentType == "Deployment" && c.Count == 1);
-                extracted.Data.Extraction.Counts.ShouldContain(c => c.DocumentType == "Project" && c.Count == 1);
-            });
+            extracted.Code.ShouldBe(HttpStatusCode.OK, OctopusImportHandlerFlow.DescribeBlockers(extracted.Data.Extraction.Diagnostics));
+            extracted.Data.Extraction.Counts.ShouldContain(c => c.DocumentType == "Deployment" && c.Count == 1);
+            extracted.Data.Extraction.Counts.ShouldContain(c => c.DocumentType == "Project" && c.Count == 1);
+        });
 
-            octopus.Requests.ShouldContain(r => r.PathAndQuery.StartsWith("/api/Spaces-1/projects/Projects-1/releases"), "the fetch scope comes from the uploaded export");
-        }
-        finally
+        octopus.Requests.ShouldContain(r => r.PathAndQuery.StartsWith("/api/Spaces-1/projects?"), "the projects to fetch come from the space itself");
+    }
+
+    // D1: one source per session. An uploaded export's session never reads from a server and never gets a bundle beside it.
+    [Fact]
+    public async Task SessionOpenedFromAnExportFile_ServerFetchRefused_NothingRequested()
+    {
+        await using var octopus = OneDeployment();
+
+        var ex = await Should.ThrowAsync<OctopusImportSessionNotServerSourceException>(() => Run<IMediator, FetchOctopusImportHistoryResponse>(async mediator =>
         {
-            File.Delete(exportPath);
-        }
+            var upload = await OctopusImportHandlerFlow.UploadAsync(mediator, SpaceId, ExportArchive(), ExportPassword);
+
+            return await OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, upload.Data.Session.SessionId, octopus.BaseUri, ApiKey);
+        }));
+
+        ex.Message.ShouldContain("export file");
+        octopus.Requests.ShouldBeEmpty();
+    }
+
+    // The API source imports the whole space by itself: no export and nothing imported before. A second run finds every
+    // resource already imported and writes nothing.
+    [Fact]
+    public async Task ServerOnly_ImportsConfigurationAndHistory_ReRunAllAlreadyImported()
+    {
+        await using var octopus = OneDeployment();
+
+        var first = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(first);
+        ActionOf(first, "Project").ShouldBe(OctopusImportPreviewAction.Create, Describe(first.PreviewPlan));
+        HistoryActions(first).ShouldAllBe(a => a == OctopusImportPreviewAction.Create, Describe(first.PreviewPlan));
+        (await SingleAsync<Project>()).Name.ShouldBe("Server project");
+        (await SingleAsync<Deployment>()).ProjectId.ShouldBe((await SingleAsync<Project>()).Id);
+        var before = await CountRowsAsync();
+
+        var second = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(second);
+        second.PreviewPlan.Resources.Where(r => r.PreviewAction is not (OctopusImportPreviewAction.Skip or OctopusImportPreviewAction.Unsupported)).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported, Describe(second.PreviewPlan));
+        (await CountRowsAsync()).ShouldBe(before);
     }
 
     [Fact]
     public async Task WrongApiKey_TypedUnauthorized_LeaseReleased()
     {
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0");
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
@@ -161,7 +190,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     [Fact]
     public async Task FailedChunk_ReCalledOnTheSameSession_ResumesAndCountsEachDeploymentOnce()
     {
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", DeploymentId, "Releases-1", TaskId).Deployment("Projects-1", "Deployments-2", "Releases-1", "ServerTasks-2").FailNext("/tasks/ServerTasks-2/details");
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
@@ -180,7 +208,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     [Fact]
     public async Task RejectedItem_SkippedRecordedOnTheCursor_FetchFinishes()
     {
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = OneDeployment().FailNext($"/tasks/{TaskId}/details", times: 100, status: HttpStatusCode.Forbidden);
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
@@ -269,7 +296,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     public async Task KeyOfAnotherOctopusUser_RefusedLeaseReleased_OriginalKeyContinues()
     {
         const string otherUsersKey = "API-TEST-OTHER-USER-1";
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = OneDeployment().AcceptKey(otherUsersKey, "Users-2");
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
@@ -289,7 +315,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     public async Task AnotherKeyOfTheSameUser_Continues_StoredBindingIsAFingerprintNeverAKey()
     {
         const string secondKey = "API-TEST-SECOND-KEY-1";
-        await SeedImportedProjectAsync("Projects-1");
         await using var octopus = OneDeployment().AcceptKey(secondKey, StubOctopusServer.DefaultUserId);
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
 
@@ -303,6 +328,48 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         (await StoredCursorAsync(sessionId)).KeyHmac.ShouldNotBe(firstBinding);
         json.ShouldNotContain(ApiKey);
         json.ShouldNotContain(secondKey);
+    }
+
+    // H5: a fetch that fails at the first request of every phase and is called again (as the UI does) stages exactly what an
+    // uninterrupted fetch stages: the two bundles are byte-identical and every count is the same.
+    [Fact]
+    public async Task FetchFailingAtEveryPhaseBoundary_Resumed_SameBundleBytesAndCountsAsAnUninterruptedFetch()
+    {
+        await using var octopus = OneDeployment();
+        var cleanSession = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+        var clean = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, cleanSession, octopus.BaseUri, ApiKey));
+        string[] boundaries = ["/projectgroups", "/projects/Projects-1/deploymentprocesses", "/projects/Projects-1/releases", "/Spaces-1/deployments"];
+        foreach (var boundary in boundaries) octopus.FailNext(boundary);
+        var resumedSession = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+        var failures = 0;
+        OctopusHistoryFetchProgressDto resumed = null;
+
+        for (var chunk = 0; resumed is not { Done: true } && chunk < 200; chunk++)
+        {
+            try { resumed = (await Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, resumedSession, octopus.BaseUri, ApiKey))).Data; }
+            catch (OctopusRestException) { failures++; }
+        }
+
+        failures.ShouldBe(boundaries.Length);
+        resumed.ShouldNotBeNull().Done.ShouldBeTrue();
+        JsonSerializer.Serialize(resumed.Counts).ShouldBe(JsonSerializer.Serialize(clean.Counts));
+        (await BundleBytesAsync(resumedSession)).ShouldBe(await BundleBytesAsync(cleanSession), "a resumed fetch must stage exactly what an uninterrupted one does");
+    }
+
+    // A space without projects is still imported: its catalog is the bundle.
+    [Fact]
+    public async Task SpaceWithoutProjects_ImportsItsCatalog()
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey);
+        octopus.Resources["projects"] = new List<Dictionary<string, object>>();
+
+        var import = await ImportFromServerAsync(octopus);
+
+        ShouldHaveSucceeded(import);
+        import.Fetch.ProjectCount.ShouldBe(0);
+        ActionOf(import, "Environment").ShouldBe(OctopusImportPreviewAction.Create, Describe(import.PreviewPlan));
+        (await CountAsync<Project>()).ShouldBe(0);
+        octopus.Requests.ShouldNotContain(r => r.PathAndQuery.Contains("/projects/"));
     }
 
     // ── Full flow ──────────────────────────────────────────────────────────
@@ -326,8 +393,8 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         var second = await ImportFromServerAsync(octopus);
 
         ShouldHaveSucceeded(second);
-        second.PreviewPlan.Resources.Count.ShouldBe(3, Describe(second.PreviewPlan));
-        second.PreviewPlan.Resources.ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported, Describe(second.PreviewPlan));
+        HistoryActions(second).Count().ShouldBe(3, Describe(second.PreviewPlan));
+        second.PreviewPlan.Resources.Where(r => r.PreviewAction is not (OctopusImportPreviewAction.Skip or OctopusImportPreviewAction.Unsupported)).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported, Describe(second.PreviewPlan));
         second.Fetch.Counts.DetailsSkipped.ShouldBe(1, "an unchanged task whose details are already stored is not fetched again");
         second.Fetch.Counts.DetailsFetched.ShouldBe(0);
         (await CountRowsAsync()).ShouldBe(before);
@@ -377,7 +444,7 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     {
         await using var octopus = OneDeployment();
         SetTaskExecuting(octopus);
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, ExportArchive()));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
         var executing = await SingleAsync<ServerTaskEntity>();
         var release = await SingleAsync<Release>();
         executing.State.ShouldBe(TaskState.Executing);
@@ -408,7 +475,7 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         await using var octopus = OneDeployment().Interruption(TaskId, "Interruptions-1", "ManualIntervention", isPending: false, result: "Proceed").Interruption(TaskId, "Interruptions-2", "ManualIntervention", isPending: true);
         SetTaskExecuting(octopus);
 
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, ExportArchive()));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
 
         var interruption = await SingleAsync<DeploymentInterruption>();
         interruption.Resolution.ShouldBe("Proceed", "only the resolved interruption becomes a row");
@@ -446,7 +513,7 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     {
         await using var octopus = OneDeployment().Artifact(TaskId, "Artifacts-1", "deploy.log");
 
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, ExportArchive()));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
 
         var artifacts = Details(await SingleAsync<ServerTaskEntity>())["Artifacts"]!.AsArray();
         artifacts.ShouldHaveSingleItem();
@@ -459,7 +526,7 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     {
         await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", DeploymentId, "Releases-1", TaskId, ["Machines-1", "Machines-404"]);
 
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, ExportArchive()));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
 
         var deployment = await SingleAsync<Deployment>();
         JsonSerializer.Deserialize<string[]>(deployment.DeployedToMachineIds).ShouldBe(["Machines-1", "Machines-404"]);
@@ -477,22 +544,10 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         return Task.CompletedTask;
     }
 
-    private async Task SeedImportedProjectAsync(string octopusProjectId)
-    {
-        var projectId = 0;
-
-        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
-        {
-            var builder = new TestDataBuilder(repository, unitOfWork);
-            var variableSet = await builder.CreateVariableSetAsync();
-            projectId = (await builder.CreateProjectAsync(variableSet.Id)).Id;
-        });
-
-        await Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync([new OctopusImportSourceMapRow(SpaceId, "Project", octopusProjectId, projectId, "Created")], Guid.NewGuid()));
-    }
-
     private Task<string> SessionDirectoryAsync(Guid sessionId)
         => Run<SquidDbContext, string>(async db => Path.GetDirectoryName((await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).TemporaryUploadPath));
+
+    private async Task<byte[]> BundleBytesAsync(Guid sessionId) => await File.ReadAllBytesAsync(Path.Combine(await SessionDirectoryAsync(sessionId), OctopusImportSourceReader.HistoryBundleFileName));
 
     private Task<string> StoredSummaryJsonAsync(Guid sessionId)
         => Run<SquidDbContext, string>(async db => (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).SourceSummaryJson);
@@ -515,8 +570,8 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         builder.RegisterInstance(authorization.Object).As<IAuthorizationService>();
     }
 
-    private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus, string exportPath = null)
-        => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, SpaceId, octopus.BaseUri, ApiKey, exportPath, ExportPassword), OpenAuthorization);
+    private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus)
+        => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, SpaceId, octopus.BaseUri, ApiKey), OpenAuthorization);
 
     private Task<OctopusImportFlowResult> ImportFromFileAsync(string exportPath)
         => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromFileAsync(mediator, SpaceId, exportPath, ExportPassword), OpenAuthorization);
@@ -637,20 +692,6 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 
         foreach (var document in documents)
             Add(zip, $"{document.Id}.json", Encoding.UTF8.GetBytes(document.Json));
-    }
-
-    // A minimal Octopus export: a manifest and one project, so the fetch scope comes from the upload itself.
-    private static string WriteExportArchive()
-    {
-        var path = Path.Combine(Path.GetTempPath(), $"squid-export-{Guid.NewGuid():N}.zip");
-        var project = JsonSerializer.SerializeToUtf8Bytes(new { Id = "Projects-1", Name = "Web", Slug = "web" });
-        var manifest = JsonSerializer.SerializeToUtf8Bytes(new { SchemaVersions = new[] { "Script0700" }, Entries = new[] { new { Id = "Projects-1", Name = "Web", DocumentType = "Project", ExportType = "FullDocument", DocumentSource = "Projects/Projects-1.json", Hash = Convert.ToHexString(SHA1.HashData(project)).ToLowerInvariant() } } });
-
-        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
-        Add(zip, "manifest.json", manifest);
-        Add(zip, "Projects/Projects-1.json", project);
-
-        return path;
     }
 
     private static void Add(ZipArchive zip, string entryPath, byte[] content)

@@ -23,7 +23,6 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
     private readonly Mock<IOctopusImportSessionService> _sessionService = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
     private readonly Mock<IOctopusImportTemporaryUploadStore> _uploadStore = new();
-    private readonly Mock<IOctopusImportSourceReader> _sourceReader = new();
     private readonly Mock<IOctopusRestHistoryFetcher> _fetcher = new();
     private readonly Mock<IOctopusImportSourceMapDataProvider> _sourceMap = new();
     private readonly List<(OctopusImportHistoryFetchDto Saved, Guid? Expected)> _updates = [];
@@ -37,7 +36,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
             .Callback((Guid _, int _, OctopusImportHistoryFetchDto dto, Guid? expected, CancellationToken _) => _updates.Add((Snapshot(dto), expected)))
             .ReturnsAsync(new OctopusImportSessionDto());
         _fetcher.Setup(f => f.FetchChunkAsync(It.IsAny<OctopusHistoryFetchContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusHistoryFetchProgressDto());
-        _service = new OctopusImportServerSourceService(_dataProvider.Object, _sessionService.Object, _currentUser.Object, _uploadStore.Object, _sourceReader.Object, _fetcher.Object, _sourceMap.Object, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(20) });
+        _service = new OctopusImportServerSourceService(_dataProvider.Object, _sessionService.Object, _currentUser.Object, _uploadStore.Object, _fetcher.Object, _sourceMap.Object, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(20) });
     }
 
     [Theory]
@@ -153,27 +152,31 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         _updates.ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task FetchHistory_FirstChunkOfAnUploadedExport_ScopesFromItsProjects()
+    // D1: one source per session. A session opened from an export file never reads from a server, whatever it is asked.
+    [Theory]
+    [InlineData("Zip")]
+    [InlineData("Json")]
+    [InlineData(null)]
+    public async Task FetchHistory_SessionOpenedFromAFile_RefusedBeforeAnyRequest(string detectedFormat)
     {
-        var session = Session(null, mainFile: "export.zip");
-        _sourceReader.Setup(r => r.ReadAsync(session.TemporaryUploadPath, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusInputExtractionResult([Document("Projects-1", OctopusDocumentKind.Project), Document("Releases-1", OctopusDocumentKind.Release)], []));
+        var session = Session(null, mainFile: "export.zip", detectedFormat: detectedFormat);
 
-        await _service.FetchHistoryAsync(Request(session));
+        var ex = await Should.ThrowAsync<OctopusImportSessionNotServerSourceException>(() => _service.FetchHistoryAsync(Request(session)));
 
-        _fetcher.Verify(f => f.FetchChunkAsync(It.Is<OctopusHistoryFetchContext>(c => c.ExportProjectIds.SequenceEqual(new[] { "Projects-1" })), It.IsAny<CancellationToken>()), Times.Once);
+        ex.SessionId.ShouldBe(session.SessionId);
+        _updates.ShouldBeEmpty();
+        _fetcher.Verify(f => f.FetchChunkAsync(It.IsAny<OctopusHistoryFetchContext>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task FetchHistory_ScopeAlreadyKnownOrServerOnlySession_NeverReadsTheUpload(bool scopeKnown)
+    // A server session's cursor always exists; a missing one still starts with the space's catalog, never with history.
+    [Fact]
+    public async Task FetchHistory_ServerSessionWithoutACursor_StartsWithTheCatalog()
     {
-        var session = Session(new OctopusImportHistoryFetchDto { ProjectIds = scopeKnown ? ["Projects-1"] : [] }, mainFile: scopeKnown ? "export.zip" : OctopusImportSourceReader.HistoryBundleFileName);
+        var session = Session(null);
 
         await _service.FetchHistoryAsync(Request(session));
 
-        _sourceReader.Verify(r => r.ReadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _fetcher.Verify(f => f.FetchChunkAsync(It.Is<OctopusHistoryFetchContext>(c => c.Cursor.Phase == OctopusHistoryFetchPhase.Catalog), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -193,6 +196,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
             session.State.ShouldBe(OctopusImportSessionState.Uploaded);
             summary.DetectedFormat.ShouldBe(OctopusImportServerSourceService.ServerSourceFormat);
             summary.HistoryFetch.ShouldNotBeNull().Done.ShouldBeFalse();
+            summary.HistoryFetch.Phase.ShouldBe(OctopusHistoryFetchPhase.Catalog, "a server session reads the whole space, starting with its catalog");
             Directory.Exists(directory).ShouldBeTrue();
             _sessionService.Verify(s => s.RegisterTemporaryUploadAsync(sessionId, 7, It.Is<OctopusImportTemporaryUpload>(u => u.Path == Path.Combine(directory, OctopusImportSourceReader.HistoryBundleFileName) && u.SizeBytes == 0), It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -207,7 +211,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         foreach (var directory in _directories) Directory.Delete(directory, recursive: true);
     }
 
-    private OctopusImportSession Session(OctopusImportHistoryFetchDto historyFetch, OctopusImportSessionState state = OctopusImportSessionState.Uploaded, string mainFile = OctopusImportSourceReader.HistoryBundleFileName)
+    private OctopusImportSession Session(OctopusImportHistoryFetchDto historyFetch, OctopusImportSessionState state = OctopusImportSessionState.Uploaded, string mainFile = OctopusImportSourceReader.HistoryBundleFileName, string detectedFormat = OctopusImportServerSourceService.ServerSourceFormat)
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter() } };
         var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"squid-server-source-{Guid.NewGuid():N}")).FullName;
@@ -216,7 +220,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
 
         if (mainFile != OctopusImportSourceReader.HistoryBundleFileName) File.WriteAllText(mainPath, "{}");
 
-        var session = new OctopusImportSession { SessionId = Guid.NewGuid(), OwnerUserId = 42, DestinationSpaceId = 7, State = state.ToString(), TemporaryUploadPath = mainPath, SourceSummaryJson = JsonSerializer.Serialize(new OctopusImportSourceSummaryDto { HistoryFetch = historyFetch }, options) };
+        var session = new OctopusImportSession { SessionId = Guid.NewGuid(), OwnerUserId = 42, DestinationSpaceId = 7, State = state.ToString(), TemporaryUploadPath = mainPath, SourceSummaryJson = JsonSerializer.Serialize(new OctopusImportSourceSummaryDto { DetectedFormat = detectedFormat, HistoryFetch = historyFetch }, options) };
 
         _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
@@ -224,9 +228,6 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
     }
 
     private static OctopusHistoryFetchRequest Request(OctopusImportSession session, string serverUrl = ServerUrl, string octopusSpaceId = "Spaces-1") => new(session.SessionId, 7, serverUrl, "API-KEY", octopusSpaceId);
-
-    private static OctopusExtractedJsonDocument Document(string id, OctopusDocumentKind kind)
-        => new($"{id}.json", new OctopusDocumentClassification(kind, $"{id}.json", id, null, false, false), JsonDocument.Parse("{}").RootElement, 2, "sha");
 
     private static OctopusImportHistoryFetchDto Snapshot(OctopusImportHistoryFetchDto dto) => JsonSerializer.Deserialize<OctopusImportHistoryFetchDto>(JsonSerializer.Serialize(dto));
 }

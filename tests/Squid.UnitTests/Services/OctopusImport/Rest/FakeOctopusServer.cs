@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text.Json.Nodes;
 using System.Web;
 using Squid.Core.Services.OctopusImport.Rest;
 
@@ -8,7 +9,8 @@ namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
 /// A small in-memory Octopus REST API: one space, projects with paged releases and deployments, tasks with
-/// details, interruptions, events and artifacts. Paths follow the real server (space-prefixed unless spaceless).
+/// details, interruptions, events and artifacts, plus any configuration resource put in <see cref="Resources"/>
+/// (<see cref="WithFixtureSpace"/> loads the 2026.1 fixtures). Paths follow the real server (space-prefixed unless spaceless).
 /// </summary>
 internal sealed class FakeOctopusServer
 {
@@ -32,10 +34,42 @@ internal sealed class FakeOctopusServer
 
     public Dictionary<string, Dictionary<string, object>> Tasks { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Configuration resources by path below the space (root resources such as <c>teams</c> by path below <c>api/</c>). An
+    /// array, or a page's <c>Items</c>, is served paged and filtered by <c>ids</c>; any other object is served as it is.
+    /// </summary>
+    public Dictionary<string, JsonNode> Resources { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Serves every configuration fixture of <see cref="OctopusServer2026Fixtures"/> at the path a 2026.1 server serves it.</summary>
+    public FakeOctopusServer WithFixtureSpace()
+    {
+        foreach (var name in OctopusServer2026Fixtures.Names)
+            if (FixturePath(name) is { } path) Resources[path] = OctopusServer2026Fixtures.Node(name);
+
+        foreach (var projectId in new[] { "Projects-1", "Projects-2" })
+            Resources[$"projects/{projectId}/variables"] = OctopusServer2026Fixtures.Node($"variables-variableset-{projectId}");
+
+        return this;
+    }
+
+    // "environments-all" → "environments"; "projects-Projects-1-channels" → "projects/Projects-1/channels"; history fixtures are not configuration.
+    private static string FixturePath(string fixture)
+    {
+        if (fixture.EndsWith("-all", StringComparison.Ordinal) && fixture != "spaces-all") return fixture[..^"-all".Length];
+        if (fixture.StartsWith("variables-", StringComparison.Ordinal)) return "variables/" + fixture["variables-".Length..];
+
+        var parts = fixture.Split('-');
+
+        return parts is ["projects", "Projects", var n, var child] && child != "releases" ? $"projects/Projects-{n}/{child}" : null;
+    }
+
     /// <summary>Answers a request before the normal routes when it returns a response (a fault, a 404, a huge body).</summary>
     public Func<HttpRequestMessage, HttpResponseMessage> Override { get; set; }
 
     public OctopusRestOptions ClientOptions { get; init; } = new();
+
+    /// <summary>The feed the release process snapshot's package comes from.</summary>
+    public string SnapshotFeedId { get; set; } = "Feeds-7";
 
     public OctopusRestStubHandler Handler { get; }
 
@@ -73,6 +107,7 @@ internal sealed class FakeOctopusServer
         if (path == "/api") return OctopusRestStubHandler.Json(new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = Spaceless ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/users/me") return OctopusRestStubHandler.Json(new { Id = KeyUsers.GetValueOrDefault(KeyOf(request)) ?? UserId, Username = "importer", IsService = true });
         if (path == "/api/spaces/all") return OctopusRestStubHandler.Json(new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
+        if (path == "/api/teams") return Serve("teams", query) ?? OctopusRestStubHandler.Status(HttpStatusCode.NotFound);
         if (path == "/api/tasks") return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), 0));
         if (!path.StartsWith(prefix + "/", StringComparison.Ordinal)) return OctopusRestStubHandler.Status(HttpStatusCode.NotFound);
 
@@ -91,10 +126,35 @@ internal sealed class FakeOctopusServer
             ["interruptions"] => Paged(new List<object> { new { Id = "Interruptions-1", Title = "Approve", Type = "ManualIntervention", IsPending = false, TaskId = query["regarding"] } }, query),
             ["events"] => Paged(new List<object> { new { Id = "Events-1", Category = "DeploymentSucceeded", Message = "ok", RelatedDocumentIds = new[] { query["regarding"] } } }, query),
             ["artifacts"] => Paged(new List<object> { new { Id = "Artifacts-1", Filename = "report.txt", Source = "Octopus" } }, query),
-            ["deploymentprocesses", _] => OctopusRestStubHandler.Json(new { Id = "deploymentprocess-Projects-1-s-1", Steps = new[] { new { Id = "s1", Name = "Deploy web", Actions = new[] { new { Id = "a1", Name = "Deploy web", Packages = new[] { new { Id = "p1", Name = "", PackageId = "web", FeedId = "Feeds-7" } } } } } } }),
-            ["machines", "all"] => OctopusRestStubHandler.Json(new[] { new { Id = "Machines-1", Name = "web-01" } }),
-            _ => OctopusRestStubHandler.Status(HttpStatusCode.NotFound)
+            ["deploymentprocesses", _] => OctopusRestStubHandler.Json(new { Id = "deploymentprocess-Projects-1-s-1", Steps = new[] { new { Id = "s1", Name = "Deploy web", Actions = new[] { new { Id = "a1", Name = "Deploy web", Packages = new[] { new { Id = "p1", Name = "", PackageId = "web", FeedId = SnapshotFeedId } } } } } } }),
+            _ => Serve(path.Trim('/'), query) ?? OctopusRestStubHandler.Status(HttpStatusCode.NotFound)
         };
+    }
+
+    private HttpResponseMessage Serve(string path, System.Collections.Specialized.NameValueCollection query)
+    {
+        if (!Resources.TryGetValue(path, out var node)) return null;
+
+        var items = node switch
+        {
+            JsonArray array => array,
+            JsonObject page when page["Items"] is JsonArray pageItems => pageItems,
+            _ => null
+        };
+
+        if (items == null) return OctopusRestStubHandler.Json(node);
+
+        return Paged(items.OfType<JsonObject>().Where(i => Requested(i, query)).ToList(), query);
+    }
+
+    // ids= picks those ids; includeSystem=false leaves out Octopus's system teams ("teams-…"), as the real server does.
+    private static bool Requested(JsonObject item, System.Collections.Specialized.NameValueCollection query)
+    {
+        var id = item["Id"]?.GetValue<string>() ?? string.Empty;
+
+        if (query["ids"] is { } ids && !ids.Split(',').Contains(id, StringComparer.OrdinalIgnoreCase)) return false;
+
+        return query["includeSystem"] != "false" || !id.StartsWith("teams-", StringComparison.Ordinal);
     }
 
     private static string KeyOf(HttpRequestMessage request) => request.Headers.TryGetValues(OctopusRestClient.ApiKeyHeader, out var values) ? values.Single() : null;

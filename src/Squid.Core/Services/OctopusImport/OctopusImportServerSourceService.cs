@@ -19,7 +19,7 @@ public interface IOctopusImportServerSourceService : IScopedDependency
     Task<OctopusHistoryFetchProgressDto> FetchHistoryAsync(OctopusHistoryFetchRequest request, CancellationToken ct = default);
 }
 
-public sealed partial class OctopusImportServerSourceService(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, ICurrentUser currentUser, IOctopusImportTemporaryUploadStore uploadStore, IOctopusImportSourceReader sourceReader, IOctopusRestHistoryFetcher fetcher, IOctopusImportSourceMapDataProvider sourceMap, OctopusRestOptions options = null) : IOctopusImportServerSourceService
+public sealed partial class OctopusImportServerSourceService(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, ICurrentUser currentUser, IOctopusImportTemporaryUploadStore uploadStore, IOctopusRestHistoryFetcher fetcher, IOctopusImportSourceMapDataProvider sourceMap, OctopusRestOptions options = null) : IOctopusImportServerSourceService
 {
     public const string ServerSourceFormat = "OctopusServer";
 
@@ -32,7 +32,7 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
 
     public async Task<OctopusImportSessionDto> ConnectAsync(int destinationSpaceId, CancellationToken ct = default)
     {
-        var summary = new OctopusImportSourceSummaryDto { FileName = OctopusImportSourceReader.HistoryBundleFileName, ContentType = "application/zip", DetectedFormat = ServerSourceFormat, HistoryFetch = new OctopusImportHistoryFetchDto() };
+        var summary = new OctopusImportSourceSummaryDto { FileName = OctopusImportSourceReader.HistoryBundleFileName, ContentType = "application/zip", DetectedFormat = ServerSourceFormat, HistoryFetch = new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog } };
         var session = await sessionService.CreateSessionAsync(destinationSpaceId, summary, ct).ConfigureAwait(false);
         var directory = uploadStore.GetSessionDirectory(session.SessionId);
 
@@ -50,7 +50,11 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
         ArgumentNullException.ThrowIfNull(request);
 
         var session = await LoadUploadedSessionAsync(request, ct).ConfigureAwait(false);
-        var cursor = OctopusImportSourceSummaries.Parse(session.SourceSummaryJson)?.HistoryFetch ?? new OctopusImportHistoryFetchDto();
+        var summary = OctopusImportSourceSummaries.Parse(session.SourceSummaryJson);
+
+        EnsureServerSession(summary, request.SessionId);
+
+        var cursor = summary.HistoryFetch ?? new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog };
 
         if (cursor.Done) return OctopusRestHistoryFetcher.Progress(cursor);
 
@@ -77,6 +81,13 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
             throw new OctopusImportSessionNotFoundException(request.SessionId);
 
         return session;
+    }
+
+    // One session, one source: a session opened from an export file never reads from an Octopus server.
+    public static void EnsureServerSession(OctopusImportSourceSummaryDto summary, Guid sessionId)
+    {
+        if (!string.Equals(summary?.DetectedFormat, ServerSourceFormat, StringComparison.Ordinal))
+            throw new OctopusImportSessionNotServerSourceException(sessionId);
     }
 
     // The first chunk pins the server and the Octopus space; a later chunk naming another one is refused.

@@ -3,8 +3,9 @@ using Squid.Message.Models.OctopusImport;
 namespace Squid.Core.Services.OctopusImport.Rest;
 
 /// <summary>
-/// Reads deployment history from an Octopus server, one time-bounded chunk per call. Each chunk advances
-/// <see cref="OctopusHistoryFetchContext.Cursor"/>; the chunk that reaches the end builds the history bundle.
+/// Reads a whole Octopus space (its catalog, each project's configuration, releases and deployments, then whatever they
+/// reference that was not staged) one time-bounded chunk per call. Each chunk advances
+/// <see cref="OctopusHistoryFetchContext.Cursor"/>; the chunk that reaches the end builds the session's bundle.
 /// </summary>
 public interface IOctopusRestHistoryFetcher : IScopedDependency
 {

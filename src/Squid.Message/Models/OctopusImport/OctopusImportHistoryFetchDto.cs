@@ -27,6 +27,15 @@ public class OctopusImportHistoryFetchDto
     public OctopusHistoryFetchPhase Phase { get; set; }
     public int Skip { get; set; }
 
+    /// <summary>The catalog kind being paged (an index into the fetcher's fixed kind list) while <see cref="Phase"/> is Catalog.</summary>
+    public int CatalogIndex { get; set; }
+
+    /// <summary>The total the current catalog kind reported on its first page; a smaller total later restarts the kind.</summary>
+    public int? CatalogTotalResults { get; set; }
+
+    /// <summary>Resources referenced by fetched documents but not staged yet (<c>Kind|Id</c>); the Closure phase fetches them.</summary>
+    public List<string> ClosureReferences { get; set; } = [];
+
     /// <summary>How often the chunk deadline abandoned the item at a cursor position; the item is skipped at the limit.</summary>
     public Dictionary<string, int> AbandonCounts { get; set; } = [];
 
