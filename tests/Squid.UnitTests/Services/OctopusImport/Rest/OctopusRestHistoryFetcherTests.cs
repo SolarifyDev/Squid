@@ -284,6 +284,15 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         OctopusRestHistoryFetcher.ScopeProjectIds(context, "inst-1").ShouldBe(expected);
     }
 
+    // Export project ids carry the export's 32-hex suffix; REST paths need the bare id, and the prior row is the same project.
+    [Fact]
+    public void ScopeProjectIds_ExportSuffixedIds_AreFetchedByTheirRestId()
+    {
+        var context = new OctopusHistoryFetchContext { ExportProjectIds = ["Projects-2-0123456789ABCDEF0123456789ABCDEF", "Projects-1-0123456789abcdef0123456789abcdef"], PriorMappings = Prior("inst-1", ("Project", "Projects-1", null, null)) };
+
+        OctopusRestHistoryFetcher.ScopeProjectIds(context, "inst-1").ShouldBe(["Projects-1", "Projects-2"]);
+    }
+
     [Fact]
     public async Task InstallationChangedBehindTheSameUrl_Rejected()
     {

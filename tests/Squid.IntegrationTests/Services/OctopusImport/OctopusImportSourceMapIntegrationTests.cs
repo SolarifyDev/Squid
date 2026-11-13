@@ -21,6 +21,11 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
 {
     private const int SpaceId = 7;
     private const string MigrationFile = "20261113_add_octopus_import_source_map.sql";
+    private const string CanonicaliseMigrationFile = "20261113_canonicalise_octopus_import_source_ids.sql";
+
+    // Synthetic export id suffixes (a real export carries one constant 32-hex value on every id).
+    private const string Sfx = "0123456789ABCDEF0123456789ABCDEF";
+    private const string OtherSfx = "FEDCBA9876543210FEDCBA9876543210";
 
     // Same shape OctopusImportSessionService writes into result_json (camelCase, string enums).
     private static readonly JsonSerializerOptions ResultJsonOptions = new()
@@ -87,6 +92,100 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             await RunMigrationAsync(db);
 
             (await LoadRawRowsAsync(db)).Single().Fingerprint.ShouldBe("fp-1");
+        });
+    }
+
+    // ── Canonical source ids ─────────────────────────────────────────────────────────────────────
+
+    // Rows backfilled from 1.9.x file sessions carry the export suffix; a later confirm (canonical key) may already have
+    // written the twin. After the migration exactly one canonical row per resource remains (newest wins), the stripped
+    // suffix is kept as the space's export-source fingerprint, and the loader resolves both spellings.
+    [Fact]
+    public async Task CanonicaliseMigration_SuffixedBackfill_CollapsesToCanonicalRows_NewestWins_KeepsExportSource()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            var environmentId = await CreateEnvironmentRowAsync(db, spaceId);
+            await InsertSessionAsync(db, spaceId, "Succeeded", DateTimeOffset.UtcNow.AddDays(-3),
+                Mapping($"Environments-1-{Sfx}", "Environment", environmentId, "Created", "Production"),
+                Mapping($"Projects-1-{Sfx}", "Project", 10, "Created", "Web"),
+                Mapping($"deploymentprocess-Projects-1-{Sfx}/step-0", "DeploymentStep", 11, "Created", "Step"),
+                Mapping("8f2b6c1e-3a4d-4e5f-9a0b-1c2d3e4f5a6b", "Variable", 12, "Created", "Var"));
+            await RunMigrationAsync(db, MigrationFile);
+            await InsertRawRowAsync(db, spaceId, "Project", "PROJECTS-1", 99, DateTimeOffset.UtcNow);
+            await InsertRawRowAsync(db, spaceId, "Release", $"RELEASES-1-{OtherSfx}", 30, DateTimeOffset.UtcNow.AddDays(-1));
+            await InsertRawRowAsync(db, spaceId, "Release", "RELEASES-1", 31, DateTimeOffset.UtcNow.AddDays(-2));
+
+            await RunMigrationAsync(db, CanonicaliseMigrationFile);
+            var once = Describe(await LoadRawRowsAsync(db));
+            await RunMigrationAsync(db, CanonicaliseMigrationFile);
+
+            Describe(await LoadRawRowsAsync(db)).ShouldBe(once, "the migration must be re-runnable");
+            (await LoadRawRowsAsync(db)).Select(r => $"{r.SourceType}|{r.SourceId}|{r.DestinationId}").ShouldBe([
+                $"Environment|ENVIRONMENTS-1|{environmentId}",
+                "Project|PROJECTS-1|99",
+                "DeploymentStep|DEPLOYMENTPROCESS-PROJECTS-1/STEP-0|11",
+                "Variable|8F2B6C1E-3A4D-4E5F-9A0B-1C2D3E4F5A6B|12",
+                "Release|RELEASES-1|30",
+                $"{OctopusImportSourceMapQueries.ExportSourceSourceType}|{Sfx}|{spaceId}",
+                $"{OctopusImportSourceMapQueries.ExportSourceSourceType}|{OtherSfx}|{spaceId}"], ignoreOrder: true);
+
+            var prior = await provider.LoadAsync(spaceId);
+            prior.TryGet("Environment", $"Environments-1-{Sfx}", out var bySuffixed).ShouldBeTrue();
+            prior.TryGet("Environment", "Environments-1", out var byRest).ShouldBeTrue();
+            bySuffixed.ShouldBe(byRest);
+            prior.ExportSourceIds.ShouldBe([Sfx, OtherSfx], ignoreOrder: true);
+        });
+    }
+
+    [Fact]
+    public async Task Upsert_SuffixedExportId_StoresTheCanonicalId_SoARestLookupHits()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            var environmentId = await CreateEnvironmentRowAsync(db, spaceId);
+
+            await provider.UpsertAsync([Row("Environment", $"Environments-1-{Sfx}", environmentId, "Created", spaceId: spaceId)], Guid.NewGuid());
+            await provider.UpsertAsync([Row("Environment", "environments-1", environmentId, "Reused", spaceId: spaceId)], Guid.NewGuid());
+
+            var stored = (await LoadRawRowsAsync(db)).ShouldHaveSingleItem();
+            $"{stored.SourceId}|{stored.OutcomeState}".ShouldBe("ENVIRONMENTS-1|Created");
+            (await provider.LoadAsync(spaceId)).TryGet("Environment", "Environments-1", out _).ShouldBeTrue();
+        });
+    }
+
+    // A row that escaped the migration must not take the whole space's preview down: the newest row wins.
+    [Fact]
+    public async Task Load_SuffixedAndCanonicalTwin_DoesNotThrow_NewestWins()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            var older = await CreateEnvironmentRowAsync(db, spaceId);
+            var newer = await CreateEnvironmentRowAsync(db, spaceId);
+            await InsertRawRowAsync(db, spaceId, "Environment", $"ENVIRONMENTS-1-{Sfx}", newer, DateTimeOffset.UtcNow);
+            await InsertRawRowAsync(db, spaceId, "Environment", "ENVIRONMENTS-1", older, DateTimeOffset.UtcNow.AddDays(-1));
+
+            var prior = await provider.LoadAsync(spaceId);
+
+            prior.TryGet("Environment", "Environments-1", out var mapping).ShouldBeTrue();
+            mapping.DestinationId.ShouldBe(newer);
+        });
+    }
+
+    [Fact]
+    public async Task Load_ExportSourceRows_ExposedOldestFirst()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            await InsertRawRowAsync(db, spaceId, OctopusImportSourceMapQueries.ExportSourceSourceType, OtherSfx, spaceId, DateTimeOffset.UtcNow);
+            await InsertRawRowAsync(db, spaceId, OctopusImportSourceMapQueries.ExportSourceSourceType, Sfx, spaceId, DateTimeOffset.UtcNow.AddDays(-1));
+
+            (await provider.LoadAsync(spaceId)).ExportSourceIds.ShouldBe([Sfx, OtherSfx]);
+            (await provider.LoadAsync(spaceId + 100000)).ExportSourceIds.ShouldBeEmpty();
         });
     }
 
@@ -479,9 +578,9 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
     }
 
     // Re-runs the real migration file: proves the backfill and that the whole script is safely re-runnable.
-    private static async Task RunMigrationAsync(SquidDbContext db)
+    private static async Task RunMigrationAsync(SquidDbContext db, string file = MigrationFile)
     {
-        var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, MigrationFile));
+        var sql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, file));
         var connection = db.Database.GetDbConnection();
 
         if (connection.State != System.Data.ConnectionState.Open)
@@ -491,6 +590,29 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         command.CommandText = sql;
         await command.ExecuteNonQueryAsync();
     }
+
+    private static async Task<int> CreateSpaceAsync(SquidDbContext db)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var space = new Space { Name = $"Imp {suffix}", Slug = $"imp-{suffix}" };
+        db.Set<Space>().Add(space);
+        await db.SaveChangesAsync();
+
+        return space.Id;
+    }
+
+    private static async Task<int> CreateEnvironmentRowAsync(SquidDbContext db, int spaceId)
+    {
+        var environment = new Squid.Core.Persistence.Entities.Deployments.Environment { Name = Unique("Env"), Slug = $"env-{Guid.NewGuid():N}", SpaceId = spaceId };
+        db.Set<Squid.Core.Persistence.Entities.Deployments.Environment>().Add(environment);
+        await db.SaveChangesAsync();
+
+        return environment.Id;
+    }
+
+    // Bypasses the provider (which canonicalises) to plant rows as earlier code or the backfill left them.
+    private static Task InsertRawRowAsync(SquidDbContext db, int spaceId, string type, string id, int destinationId, DateTimeOffset modified)
+        => db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO octopus_import_source_map (space_id, source_type, source_id, destination_id, outcome_state, created_date, last_modified_date) VALUES ({spaceId}, {type}, {id}, {destinationId}, 'Created', {modified}, {modified})");
 
     private static Task<List<OctopusImportSourceMap>> LoadRawRowsAsync(SquidDbContext db)
         => db.Set<OctopusImportSourceMap>().AsNoTracking().ToListAsync();

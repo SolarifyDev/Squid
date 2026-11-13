@@ -52,10 +52,18 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
 
     private static OctopusImportPriorMappings ToPriorMappings(IReadOnlyList<OctopusImportSourceMap> rows)
     {
-        var mappings = rows.ToDictionary(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId), r => new OctopusImportPriorMapping(r.DestinationId, r.OutcomeState, r.Fingerprint, r.DetailFingerprint));
+        var mappings = NewestPerKey(rows).ToDictionary(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId), r => new OctopusImportPriorMapping(r.DestinationId, r.OutcomeState, r.Fingerprint, r.DetailFingerprint));
 
-        return new OctopusImportPriorMappings(mappings, LatestInstallationId(rows));
+        return new OctopusImportPriorMappings(mappings, LatestInstallationId(rows), ExportSourceIds(rows));
     }
+
+    // Two stored ids can share one canonical key only if a row escaped the canonicalising migration; the newest wins
+    // (the migration's rule) instead of failing every preview of the space.
+    private static IEnumerable<OctopusImportSourceMap> NewestPerKey(IEnumerable<OctopusImportSourceMap> rows)
+        => rows.GroupBy(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId)).Select(g => g.OrderByDescending(r => r.LastModifiedDate).ThenByDescending(r => r.Id).First());
+
+    private static List<string> ExportSourceIds(IEnumerable<OctopusImportSourceMap> rows)
+        => rows.Where(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).OrderBy(r => r.CreatedDate).ThenBy(r => r.Id).Select(r => r.SourceId).ToList();
 
     private static string LatestInstallationId(IEnumerable<OctopusImportSourceMap> rows)
         => rows.Where(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType).OrderByDescending(r => r.LastModifiedDate).ThenByDescending(r => r.Id).Select(r => r.SourceId).FirstOrDefault();

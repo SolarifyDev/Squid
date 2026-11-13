@@ -26,6 +26,7 @@ public class OctopusImportSourceMapQueriesTests
     {
         // Persisted values: renaming any of them orphans every existing source-map row.
         OctopusImportSourceMapQueries.InstallationSourceType.ShouldBe("OctopusInstallation");
+        OctopusImportSourceMapQueries.ExportSourceSourceType.ShouldBe("OctopusExportSource");
         OctopusImportSourceMapQueries.CreatedOutcome.ShouldBe("Created");
         OctopusImportSourceMapQueries.ReusedOutcome.ShouldBe("Reused");
     }

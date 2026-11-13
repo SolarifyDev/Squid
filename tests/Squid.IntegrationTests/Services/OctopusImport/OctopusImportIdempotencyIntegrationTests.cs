@@ -28,6 +28,7 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
 {
     private const int SpaceId = 1;
     private const string InstallationId = "6c9b6a52-1d7e-4f4b-9a54-6f0a2b9e3c11";
+    private const string ExportSuffix = "0123456789ABCDEF0123456789ABCDEF";
 
     private static readonly string[] CountedTables =
     [
@@ -59,6 +60,32 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         before["deployment"].ShouldBe(1);
         before["activity_log"].ShouldBe(1);
         (await SourceMapAsync()).ShouldContain(m => m.SourceType == OctopusImportSourceMapQueries.InstallationSourceType && m.SourceId == InstallationId.ToUpperInvariant() && m.DestinationId == SpaceId);
+    }
+
+    // An Octopus export suffixes every id ("Projects-1-<sfx>"); the API (and an export-shaped bundle built from it) does
+    // not. Whichever source comes first, the second import of the same resources must land on the same rows: nothing is
+    // created again, every row count stays, and the stored source ids are canonical.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SuffixedExportAndBareIds_EitherOrder_SecondImportCreatesNothing(bool suffixedFirst)
+    {
+        var suffixed = Archive(new HistorySpec { ExportSuffix = ExportSuffix });
+        var bare = Archive(new HistorySpec());
+
+        await ConfirmSucceededAsync(suffixedFirst ? suffixed : bare);
+        var before = await CountRowsAsync();
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(suffixedFirst ? bare : suffixed);
+
+        snapshot.PreviewPlan.Resources.ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported || r.PreviewAction == OctopusImportPreviewAction.Skip, Describe(snapshot.PreviewPlan));
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        var after = await CountRowsAsync();
+        after.Where(pair => pair.Key != "octopus_import_source_map").ShouldBe(before.Where(pair => pair.Key != "octopus_import_source_map"));
+        var map = await SourceMapAsync();
+        map.Where(m => m.SourceType != OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldAllBe(m => !m.SourceId.Contains(ExportSuffix));
+        map.ShouldContain(m => m.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType && m.SourceId == ExportSuffix && m.DestinationId == SpaceId);
+        map.Count.ShouldBe(before["octopus_import_source_map"] + (suffixedFirst ? 0 : 1), "only the export-source fingerprint may be added by the second import");
     }
 
     [Fact]
@@ -554,6 +581,7 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         public string TaskName { get; init; } = "Deploy";
         public bool WithConfiguration { get; init; }
         public bool MovedDefaultChannel { get; init; }
+        public string ExportSuffix { get; init; }
     }
 
     private string SessionDirectory()
@@ -646,7 +674,7 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
 
-        WriteArchive(path, spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents);
+        WriteArchive(path, Suffixed(spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents, spec.ExportSuffix));
 
         return path;
     }
@@ -680,6 +708,17 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
     }
 
     private static (string Id, string DocumentType, string Json) Document(string id, string documentType, string json) => (id, documentType, json);
+
+    // What an Octopus export does to ids: one constant suffix on every resource id and embedded reference, plus a
+    // suffixed SpaceId. Child GUID-style ids (phases, steps, actions, variables) stay bare, as on a real export.
+    private static (string Id, string DocumentType, string Json)[] Suffixed(IReadOnlyList<(string Id, string DocumentType, string Json)> documents, string suffix)
+    {
+        if (suffix == null) return documents.ToArray();
+
+        string Apply(string text) => System.Text.RegularExpressions.Regex.Replace(text, @"\b(ProjectGroups|Environments|Lifecycles|Projects|Channels|Releases|ServerTasks|Deployments|Machines|Users)-[0-9]+\b", match => $"{match.Value}-{suffix}");
+
+        return documents.Select(d => (Apply(d.Id), d.DocumentType, $"{{\"SpaceId\":\"Spaces-1-{suffix}\",{Apply(d.Json)[1..]}")).ToArray();
+    }
 
     private static void WriteEntry(ZipArchive archive, string path, string content)
     {

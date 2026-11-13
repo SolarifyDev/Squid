@@ -109,7 +109,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         var prior = context.PriorMappings ?? OctopusImportPriorMappings.Empty;
         var priorProjects = IsSameInstallation(prior.InstallationId, installationId) ? prior.Mappings.Keys.Where(k => k.Type == PriorProjectType).Select(k => OctopusProjectId(k.Id)) : [];
 
-        return (context.ExportProjectIds ?? []).Concat(priorProjects).Where(id => !string.IsNullOrWhiteSpace(id)).DistinctBy(OctopusImportPriorMappings.Normalize).OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
+        return (context.ExportProjectIds ?? []).Select(OctopusImportSourceIds.StripExportSuffix).Concat(priorProjects).Where(id => !string.IsNullOrWhiteSpace(id)).DistinctBy(OctopusImportPriorMappings.Normalize).OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     // The source map stores ids upper-cased; Octopus project ids are "Projects-{n}", so restore that spelling for the URL.

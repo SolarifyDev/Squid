@@ -34,12 +34,19 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     private static List<OctopusImportSourceMapRow> BuildSourceMapRows(ConfirmationExecutionContext execution)
     {
         var rows = execution.IdMap.Mappings.Select(mapping => SourceMapRow(execution, mapping)).ToList();
-        var installationId = execution.Request.Graph.InstallationId;
 
-        if (!string.IsNullOrWhiteSpace(installationId))
-            rows.Add(new OctopusImportSourceMapRow(execution.DestinationSpaceId, OctopusImportSourceMapQueries.InstallationSourceType, installationId, execution.DestinationSpaceId, OctopusImportSourceMapQueries.ReusedOutcome));
+        AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.InstallationSourceType, execution.Request.Graph.InstallationId);
+        AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.ExportSourceSourceType, execution.Request.Graph.ExportSourceId);
 
         return rows;
+    }
+
+    // A row describing where the space's import came from (installation, export fingerprint); it points at the space itself.
+    private static void AddSpaceRow(List<OctopusImportSourceMapRow> rows, ConfirmationExecutionContext execution, string sourceType, string sourceId)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId)) return;
+
+        rows.Add(new OctopusImportSourceMapRow(execution.DestinationSpaceId, sourceType, sourceId, execution.DestinationSpaceId, OctopusImportSourceMapQueries.ReusedOutcome));
     }
 
     private static OctopusImportSourceMapRow SourceMapRow(ConfirmationExecutionContext execution, OctopusImportIdMappingDto mapping)

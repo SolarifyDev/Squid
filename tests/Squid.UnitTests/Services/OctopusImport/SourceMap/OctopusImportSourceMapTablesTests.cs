@@ -32,7 +32,8 @@ public class OctopusImportSourceMapTablesTests
         nameof(OctopusResourceKind.Release),
         nameof(OctopusResourceKind.Deployment),
         nameof(OctopusResourceKind.ServerTask),
-        OctopusImportSourceMapQueries.InstallationSourceType
+        OctopusImportSourceMapQueries.InstallationSourceType,
+        OctopusImportSourceMapQueries.ExportSourceSourceType
     };
 
     [Theory]

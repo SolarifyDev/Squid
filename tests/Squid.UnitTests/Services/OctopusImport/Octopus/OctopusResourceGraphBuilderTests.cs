@@ -515,6 +515,23 @@ public class OctopusResourceGraphBuilderTests
         graph.InstallationId.ShouldBe(expected);
     }
 
+    // The export's id suffix is recorded as an export-source fingerprint only when the documents' SpaceId carries it;
+    // REST-shaped documents (bare "Spaces-1") and files mixing two suffixes record none.
+    [Theory]
+    [InlineData("Spaces-1-0123456789abcdef0123456789abcdef", "Spaces-1-0123456789ABCDEF0123456789ABCDEF", "0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("Spaces-1-0123456789ABCDEF0123456789ABCDEF", null, "0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("Spaces-1", "Spaces-1", null)]
+    [InlineData(null, null, null)]
+    [InlineData("Spaces-1-0123456789ABCDEF0123456789ABCDEF", "Spaces-1-FEDCBA9876543210FEDCBA9876543210", null)]
+    public async Task Build_ExportSourceId_IsTheSpaceIdSuffix(string firstSpaceId, string secondSpaceId, string expected)
+    {
+        var inventory = await BuildInventoryAsync(
+            ("Environments-1", "StaticDeploymentEnvironment", "Environments-1.json", JsonSerializer.Serialize(new { Id = "Environments-1", Name = "Production", SpaceId = firstSpaceId })),
+            ("Environments-2", "StaticDeploymentEnvironment", "Environments-2.json", JsonSerializer.Serialize(new { Id = "Environments-2", Name = "Staging", SpaceId = secondSpaceId })));
+
+        _graphBuilder.Build(inventory).ExportSourceId.ShouldBe(expected);
+    }
+
     private static (string Id, string DocumentType, string DocumentSource, string Json) ManualProcess(string responsibleTeamIds)
     {
         var processJson = JsonSerializer.Serialize(new

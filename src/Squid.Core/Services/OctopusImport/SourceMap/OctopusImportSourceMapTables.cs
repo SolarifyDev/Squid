@@ -30,7 +30,8 @@ public static class OctopusImportSourceMapTables
         [nameof(OctopusResourceKind.Release)] = "release",
         [nameof(OctopusResourceKind.Deployment)] = "deployment",
         [nameof(OctopusResourceKind.ServerTask)] = "server_task",
-        [OctopusImportSourceMapQueries.InstallationSourceType] = "space"
+        [OctopusImportSourceMapQueries.InstallationSourceType] = "space",
+        [OctopusImportSourceMapQueries.ExportSourceSourceType] = "space"
     };
 
     /// <summary>

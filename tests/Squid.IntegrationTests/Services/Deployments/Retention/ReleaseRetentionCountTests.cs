@@ -436,8 +436,9 @@ public class ReleaseRetentionCountTests : TestBase
 
     // ── seeding helpers ──
 
+    // Dashed GUID: "Releases-<32 hex>" would read as an export id suffix and canonicalise to one shared key.
     private Task RecordSourceMapAsync(string sourceType, int destinationId, string outcome)
-        => Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync([new OctopusImportSourceMapRow(1, sourceType, $"{sourceType}s-{Guid.NewGuid():N}", destinationId, outcome)], Guid.NewGuid(), CancellationToken.None));
+        => Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync([new OctopusImportSourceMapRow(1, sourceType, $"{sourceType}s-{Guid.NewGuid():D}", destinationId, outcome)], Guid.NewGuid(), CancellationToken.None));
 
     private async Task<(int ProjectId, int EnvironmentId, int ChannelId, int LifecycleId)> SeedGraphAsync(int keepCount, bool keepForever = false, RetentionPolicyUnit unit = RetentionPolicyUnit.Items)
     {

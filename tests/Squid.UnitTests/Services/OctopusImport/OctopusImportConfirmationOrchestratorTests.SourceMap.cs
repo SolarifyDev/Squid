@@ -90,6 +90,24 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.ShouldAllBe(r => r.SpaceId == nodes.DestinationSpaceId);
     }
 
+    // The export's id suffix is kept as the space's export-source fingerprint (cross-server evidence for later fills).
+    [Theory]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF", true)]
+    [InlineData(null, false)]
+    public async Task SourceMap_RecordsTheExportSourceFingerprint_OnlyForSuffixedFiles(string exportSourceId, bool expected)
+    {
+        var nodes = BuildMinimalNodes();
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.ReuseExisting, 200)), true, false, false, sourceMap: SourceMap(OctopusImportPriorMappings.Empty, upserted: upserted).Object);
+        var request = harness.Request with { Graph = harness.Request.Graph with { ExportSourceId = exportSourceId } };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        upserted.Any(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType && r.SourceId == exportSourceId && r.DestinationId == nodes.DestinationSpaceId && r.OutcomeState == "Reused").ShouldBe(expected);
+        upserted.Count(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldBe(expected ? 1 : 0);
+    }
+
     [Fact]
     public async Task SourceMap_IsNotWrittenWhenTheConfirmationFails()
     {

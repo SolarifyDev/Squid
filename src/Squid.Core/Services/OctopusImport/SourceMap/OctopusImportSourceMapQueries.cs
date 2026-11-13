@@ -12,6 +12,9 @@ public static class OctopusImportSourceMapQueries
 {
     public const string InstallationSourceType = "OctopusInstallation";
 
+    /// <summary>One row per export id suffix a file import of this space carried: <c>SourceId</c> = the suffix, destination = the space.</summary>
+    public const string ExportSourceSourceType = "OctopusExportSource";
+
     public const string CreatedOutcome = nameof(OctopusImportResourceOutcomeState.Created);
 
     public const string ReusedOutcome = nameof(OctopusImportResourceOutcomeState.Reused);

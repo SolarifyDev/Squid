@@ -38,7 +38,7 @@ public class OctopusImportedHistoryReadOnlyIntegrationTests : TestBase
 
         await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) => taskId = (await new TestDataBuilder(repository, unitOfWork).CreateServerTaskAsync(TaskState.Executing)).Id);
 
-        if (sourceType != null) await RecordAsync(sourceType, $"Source-{Guid.NewGuid():N}", taskId, outcome);
+        if (sourceType != null) await RecordAsync(sourceType, $"Source-{Guid.NewGuid():D}", taskId, outcome);
 
         (await Run<IServerTaskDataProvider, bool>(provider => provider.IsImportedAsync(taskId))).ShouldBe(expected);
     }
@@ -126,7 +126,7 @@ public class OctopusImportedHistoryReadOnlyIntegrationTests : TestBase
     private async Task<OctopusImportDeploymentHistoryResult> ImportAsync(Scenario scenario, int releaseId, string state, DateTimeOffset queued)
     {
         var completed = TaskState.IsTerminal(state) ? queued.AddMinutes(2) : (DateTimeOffset?)null;
-        var deploymentSourceId = $"Deployments-{Guid.NewGuid():N}";
+        var deploymentSourceId = $"Deployments-{Guid.NewGuid():D}";
 
         var request = new OctopusImportDeploymentHistoryRequest(SpaceId, scenario.ProjectId, scenario.ChannelId, releaseId, scenario.EnvironmentId, deploymentSourceId, "{}", "alice", "Users-1", """["Machines-1"]""", queued, "Deploy", $"Deploy {deploymentSourceId}", queued, queued.AddSeconds(1), completed, state, string.Empty, false, 0);
 

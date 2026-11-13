@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Octopus;
 
@@ -39,7 +40,15 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             .Distinct()
             .ToList();
 
-        return new OctopusResourceGraph(resources, references, dependencies, diagnostics) { InstallationId = inventory.Manifest?.InstallationId };
+        return new OctopusResourceGraph(resources, references, dependencies, diagnostics) { InstallationId = inventory.Manifest?.InstallationId, ExportSourceId = ExportSourceId(resources) };
+    }
+
+    // Every document of one export shares one suffixed SpaceId; anything else (REST ids, mixed suffixes) records none.
+    private static string ExportSourceId(IEnumerable<OctopusResourceNode> resources)
+    {
+        var suffixes = resources.Select(r => OctopusImportSourceIds.ExportSuffixOf(r.GetSource<OctopusDocumentDto>()?.SpaceId)).Where(s => s != null).Distinct().Take(2).ToList();
+
+        return suffixes.Count == 1 ? suffixes[0] : null;
     }
 
     // A zip export usually omits Octopus's built-in teams even when a manual intervention names one. The
