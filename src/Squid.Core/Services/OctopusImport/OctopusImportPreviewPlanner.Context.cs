@@ -18,6 +18,8 @@ public partial class OctopusImportPreviewPlanner
         private readonly Dictionary<string, OctopusResourceNode> _nodesById;
         private readonly Dictionary<string, OctopusImportResourceResultDto> _previewsById = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, OctopusImportPreviewAction> _historyUnitActionsByTaskId = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _scopeSkippedIds = new(StringComparer.OrdinalIgnoreCase);
+        private readonly OctopusImportReferenceScope _referenceScope;
 
         public PreviewPlanningContext(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, IReadOnlyList<OctopusResourceNode> nodes)
         {
@@ -25,6 +27,7 @@ public partial class OctopusImportPreviewPlanner
             _blockedSourceIds = dependencyPlan.Diagnostics.Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && !string.IsNullOrWhiteSpace(d.SourceId)).Select(d => d.SourceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             _existingReleaseKeys = conflicts.ExistingReleaseKeys;
             _nodesById = nodes.ToDictionary(n => n.SourceId, StringComparer.OrdinalIgnoreCase);
+            _referenceScope = dependencyPlan.ReferenceScope ?? OctopusImportReferenceScope.Everything;
             Prior = conflicts.PriorMappings;
         }
 
@@ -37,6 +40,17 @@ public partial class OctopusImportPreviewPlanner
         }
 
         public bool IsBlocked(string sourceId) => _blockedSourceIds.Contains(sourceId);
+
+        public bool IsReferenced(string sourceId) => _referenceScope.IsReferenced(sourceId);
+
+        public IReadOnlyList<string> TargetsOf(string sourceId) => _referenceScope.TargetsOf(sourceId);
+
+        /// <summary>Skipped by the whole-space scope rule: what it owns is skipped with it, and an unreferenced resource that uses it too.</summary>
+        public void MarkScopeSkipped(string sourceId) => _scopeSkippedIds.Add(sourceId);
+
+        public bool IsScopeSkipped(string sourceId) => sourceId != null && _scopeSkippedIds.Contains(sourceId);
+
+        public OctopusResourceNode FindNode(string sourceId) => !string.IsNullOrWhiteSpace(sourceId) ? _nodesById.GetValueOrDefault(sourceId) : null;
 
         public bool TryGetConflict(string sourceId, out OctopusImportResourceConflict conflict) => _conflictsBySourceId.TryGetValue(sourceId, out conflict);
 

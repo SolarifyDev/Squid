@@ -34,6 +34,24 @@ internal sealed class OctopusImportScenario
     public OctopusImportScenario Channel(string id, string projectId, string name)
         => Add(id, "Channel", new { Id = id, Name = name, ProjectId = projectId, IsDefault = false, Slug = name.ToLowerInvariant() });
 
+    public OctopusImportScenario Feed(string id, string name, string feedType)
+        => Add(id, "Feed", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), FeedType = feedType, FeedUri = "https://packages.example.com" });
+
+    public OctopusImportScenario Account(string id, string name, string accountType, params string[] environmentIds)
+        => Add(id, "Account", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), AccountType = accountType, EnvironmentIds = environmentIds });
+
+    public OctopusImportScenario Lifecycle(string id, string name, params string[] environmentIds)
+        => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = new[] { new { Id = $"{id}-phase", Name = "Phase", AutomaticDeploymentTargets = environmentIds, OptionalDeploymentTargets = Array.Empty<string>() } } });
+
+    /// <summary>A project with no variables and no steps that deploys through <paramref name="lifecycleId"/>.</summary>
+    public OctopusImportScenario ProjectOnLifecycle(string id, string name, string lifecycleId)
+    {
+        Add(id, "Project", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), LifecycleId = lifecycleId, VariableSetId = ProjectVariableSetId(id), DeploymentProcessId = $"deploymentprocess-{id}", IncludedLibraryVariableSetIds = Array.Empty<string>() });
+        Add(ProjectVariableSetId(id), "ProjectVariables", new { Id = ProjectVariableSetId(id), OwnerId = id, OwnerType = "Project", Variables = Array.Empty<object>() });
+
+        return Add($"deploymentprocess-{id}", "DeploymentProcess", new { Id = $"deploymentprocess-{id}", OwnerId = id, Steps = Array.Empty<object>() });
+    }
+
     public OctopusImportScenario Team(string id, string name)
         => Add(id, "ConfigurableTeam", new { Id = id, Name = name, MemberUserIds = Array.Empty<string>(), ExternalSecurityGroups = Array.Empty<string>() });
 
@@ -68,6 +86,12 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    public OctopusImportScenario Existing(OctopusResourceKind kind, int id, string name)
+    {
+        _destination.Add(new OctopusImportDestinationResource(id, SpaceId, kind, name, name.ToLowerInvariant(), DateTimeOffset.UtcNow.AddDays(-1)));
+        return this;
+    }
+
     public OctopusImportScenario ExistingProject(int id, string name)
     {
         _destination.Add(new OctopusImportDestinationResource(id, SpaceId, OctopusResourceKind.Project, name, name.ToLowerInvariant(), DateTimeOffset.UtcNow.AddDays(-1)));
@@ -76,6 +100,10 @@ internal sealed class OctopusImportScenario
 
     public OctopusImportScenario Release(string id, string projectId, string channelId, string version, string notes = null)
         => Add(id, "Release", new { Id = id, ProjectId = projectId, ChannelId = channelId, Version = version, ReleaseNotes = notes, SelectedPackages = Array.Empty<object>() });
+
+    /// <summary>A release whose one selected package names its feed directly (the shape the REST source writes).</summary>
+    public OctopusImportScenario ReleaseWithPackage(string id, string projectId, string channelId, string version, string actionName, string feedId)
+        => Add(id, "Release", new { Id = id, ProjectId = projectId, ChannelId = channelId, Version = version, SelectedPackages = new[] { new { ActionName = actionName, Version = "1.0.0", FeedId = feedId } } });
 
     public OctopusImportScenario Deployment(string id, string projectId, string channelId, string environmentId, string releaseId, string taskId)
         => Add(id, "Deployment", new { Id = id, Name = $"Deploy {id}", ProjectId = projectId, ChannelId = channelId, EnvironmentId = environmentId, ReleaseId = releaseId, TaskId = taskId, DeployedToMachineIds = Array.Empty<string>() });
@@ -166,6 +194,13 @@ internal sealed class OctopusImportScenario
 
         return new { Id = id, Name = id, ActionType = "Octopus.Script", Environments = Array.Empty<string>(), ExcludedEnvironments = Array.Empty<string>(), Channels = Array.Empty<string>(), Packages = Array.Empty<object>(), Properties = properties };
     }
+
+    /// <summary>A script step that pulls one package from <paramref name="feedId"/>.</summary>
+    public static object PackageScriptAction(string id, string feedId)
+        => new { Id = id, Name = id, ActionType = "Octopus.Script", Environments = Array.Empty<string>(), ExcludedEnvironments = Array.Empty<string>(), Channels = Array.Empty<string>(), Packages = new[] { new { Id = $"{id}-package", Name = "", PackageId = "App", FeedId = feedId, AcquisitionLocation = "Server" } }, Properties = new Dictionary<string, string> { ["Octopus.Action.Script.ScriptSource"] = "Inline", ["Octopus.Action.Script.Syntax"] = "Bash", ["Octopus.Action.Script.ScriptBody"] = "echo hi", ["Octopus.Action.RunOnServer"] = "true" } };
+
+    public static object TypedVar(string id, string name, string type, string value, Dictionary<string, string[]> scope = null)
+        => new { Id = id, Name = name, Value = value, Type = type, Scope = scope ?? new Dictionary<string, string[]>() };
 
     public static object ManualAction(string id, string responsibleTeamIds)
         => new { Id = id, Name = id, ActionType = "Octopus.Manual", Environments = Array.Empty<string>(), ExcludedEnvironments = Array.Empty<string>(), Channels = Array.Empty<string>(), Packages = Array.Empty<object>(), Properties = new Dictionary<string, string> { ["Octopus.Action.Manual.Instructions"] = "Approve", ["Octopus.Action.Manual.ResponsibleTeamIds"] = responsibleTeamIds, ["Octopus.Action.RunOnServer"] = "true" } };

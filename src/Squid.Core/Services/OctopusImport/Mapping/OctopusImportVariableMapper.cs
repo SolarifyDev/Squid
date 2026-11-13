@@ -230,43 +230,44 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         return string.Empty;
     }
 
-    private static VariableType MapVariableType(
-        OctopusVariableDto variable,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    private static VariableType MapVariableType(OctopusVariableDto variable, List<OctopusImportDiagnosticDto> diagnostics)
     {
-        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable))
-            return VariableType.Password;
-
-        var type = variable.Type?.Trim();
-
-        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String"))
-            return VariableType.String;
-
-        if (IsType(type, "Certificate"))
-            return VariableType.Certificate;
-
-        if (IsType(type, "Boolean"))
-            return VariableType.Boolean;
-
-        if (IsType(type, "Integer") || IsType(type, "Number"))
-            return VariableType.Number;
-
-        if (IsType(type, "MultiLineText"))
-            return VariableType.MultiLineText;
-
-        if (IsType(type, "SelectList") || IsType(type, "Select"))
-            return VariableType.SelectList;
+        if (SquidVariableType(variable) is { } mapped) return mapped;
 
         diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType,
-            $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.",
+            UnsupportedVariableTypeMessage(variable),
             OctopusResourceKind.Variable,
             variable.Id,
             variable.Name));
 
         return VariableType.String;
     }
+
+    /// <summary>
+    /// The Squid type an Octopus variable is written as, or null when Squid has no such type (account, worker-pool,
+    /// certificate-like types it cannot hold). Preview asks the same rule, so it blocks or skips exactly what this
+    /// mapper would refuse.
+    /// </summary>
+    public static VariableType? SquidVariableType(OctopusVariableDto variable)
+    {
+        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable)) return VariableType.Password;
+
+        var type = variable.Type?.Trim();
+
+        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String")) return VariableType.String;
+        if (IsType(type, "Certificate")) return VariableType.Certificate;
+        if (IsType(type, "Boolean")) return VariableType.Boolean;
+        if (IsType(type, "Integer") || IsType(type, "Number")) return VariableType.Number;
+        if (IsType(type, "MultiLineText")) return VariableType.MultiLineText;
+        if (IsType(type, "SelectList") || IsType(type, "Select")) return VariableType.SelectList;
+
+        return null;
+    }
+
+    public static string UnsupportedVariableTypeMessage(OctopusVariableDto variable)
+        => $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.";
 
     private static List<VariableScopeModel> MapScopes(OctopusVariableDto variable, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics)
     {

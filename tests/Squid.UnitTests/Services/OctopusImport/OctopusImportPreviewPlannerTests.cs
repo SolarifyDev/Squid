@@ -247,6 +247,7 @@ public class OctopusImportPreviewPlannerTests
         {
             Id = "Feeds-1",
             Name = "Docker",
+            FeedType = "Docker",
             Username = "feed-user",
             Password = "feed-source-secret"
         }, OctopusResourceKind.Feed);
@@ -254,6 +255,7 @@ public class OctopusImportPreviewPlannerTests
         {
             Id = "Accounts-1",
             Name = "AWS",
+            AccountType = "AmazonWebServicesAccount",
             Credentials = Json("""{ "SecretKey": "account-source-secret" }""")
         }, OctopusResourceKind.Account);
         var certificate = Node(new OctopusCertificateDto

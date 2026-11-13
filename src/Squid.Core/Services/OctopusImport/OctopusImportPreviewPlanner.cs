@@ -48,6 +48,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
             .Concat(InstallationDiagnostics(conflicts))
+            .Concat(GroupedScopeDiagnostics(resources))
             .ToList();
 
         return new OctopusImportPreviewPlanDto
@@ -142,6 +143,12 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
+        if (DecideScope(resource, context) is { } scopeDecision)
+        {
+            ApplyScopeDecision(result, scopeDecision, context);
+            return result;
+        }
+
         if (!context.TryGetConflict(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
@@ -168,10 +175,10 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
         {
-            if (PreviewAction(resource.SourceId) == OctopusImportPreviewAction.AlreadyImported) continue;
+            if (PreviewAction(resource.SourceId) is OctopusImportPreviewAction.AlreadyImported or OctopusImportPreviewAction.Skip) continue;
 
             if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
-                AddRequiredInputs(previewsById[resource.SourceId], resource);
+                AddWrittenVariableDiagnostics(previewsById[resource.SourceId], resource);
             else
                 previewsById[resource.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept, "This variable belongs to a library variable set that is reused as-is; the destination keeps its existing value and this source value is not imported.", resource));
         }
@@ -250,6 +257,17 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
     private static bool IsEveryUserTeam(OctopusImportDestinationResource destination)
         => destination.IsBuiltIn && destination.SpaceId == 0 && destination.Name == BuiltInTeamNames.Everyone;
+
+    // A variable this import writes: Squid must be able to hold its type (the mapper's rule), and its value must resolve.
+    private void AddWrittenVariableDiagnostics(OctopusImportResourceResultDto result, OctopusResourceNode resource)
+    {
+        var variable = resource.GetSource<OctopusVariableDto>();
+
+        if (variable != null && OctopusImportVariableMapper.SquidVariableType(variable) == null)
+            result.Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType, OctopusImportVariableMapper.UnsupportedVariableTypeMessage(variable), resource));
+
+        AddRequiredInputs(result, resource);
+    }
 
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,

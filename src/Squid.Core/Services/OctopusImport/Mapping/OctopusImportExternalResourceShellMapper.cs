@@ -27,6 +27,8 @@ public interface IOctopusImportExternalResourceShellMapper : IScopedDependency
 
 public sealed class OctopusImportExternalResourceShellMapper : IOctopusImportExternalResourceShellMapper
 {
+    public const string UnsupportedAccountTypeCode = "OctopusImport.Account.UnsupportedAccountType";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -196,18 +198,32 @@ public sealed class OctopusImportExternalResourceShellMapper : IOctopusImportExt
         return new OctopusImportTargetShellMappingResult(shell, diagnostics, markers);
     }
 
-    private static AccountType? MapAccountType(
-        string sourceAccountType,
-        OctopusResourceNode accountResource,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    private static AccountType? MapAccountType(string sourceAccountType, OctopusResourceNode accountResource, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        if (SquidAccountType(sourceAccountType) is { } mapped) return mapped;
+
+        diagnostics.Add(OctopusImportManualConfiguration.Diagnostic(
+            OctopusImportCompatibilitySeverity.Blocker,
+            UnsupportedAccountTypeCode,
+            UnsupportedAccountTypeMessage(sourceAccountType),
+            accountResource));
+
+        return null;
+    }
+
+    /// <summary>
+    /// The Squid account type an Octopus account is created as, or null when Squid has none (e.g. the legacy Azure
+    /// management-certificate <c>AzureSubscription</c>). Preview asks the same rule, so it blocks or skips exactly
+    /// what this mapper refuses.
+    /// </summary>
+    public static AccountType? SquidAccountType(string sourceAccountType)
     {
         if (Enum.TryParse<AccountType>(sourceAccountType?.Trim(), ignoreCase: true, out var direct)
             && direct != AccountType.None
             && direct != AccountType.AzureSubscription)
             return direct;
 
-        var normalized = Normalize(sourceAccountType);
-        var mapped = normalized switch
+        return Normalize(sourceAccountType) switch
         {
             "usernamepassword" or "usernamepasswordaccount" => AccountType.UsernamePassword,
             "sshkeypair" or "sshkeypairaccount" => AccountType.SshKeyPair,
@@ -220,20 +236,12 @@ public sealed class OctopusImportExternalResourceShellMapper : IOctopusImportExt
             "clientcertificate" or "clientcertificateaccount" => AccountType.ClientCertificate,
             "googlecloudaccount" or "gcpaccount" => AccountType.GoogleCloudAccount,
             "openclawgateway" or "openclawgatewayaccount" => AccountType.OpenClawGateway,
-            _ => (AccountType?)null
+            _ => null
         };
-
-        if (mapped != null)
-            return mapped.Value;
-
-        diagnostics.Add(OctopusImportManualConfiguration.Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
-            "OctopusImport.Account.UnsupportedAccountType",
-            $"Octopus account type '{sourceAccountType}' is not supported by the current Squid import account shell mapper.",
-            accountResource));
-
-        return null;
     }
+
+    public static string UnsupportedAccountTypeMessage(string sourceAccountType)
+        => $"Octopus account type '{sourceAccountType}' is not supported by the current Squid import account shell mapper.";
 
     private static List<int> MapEnvironmentIds(
         IEnumerable<string> sourceEnvironmentIds,

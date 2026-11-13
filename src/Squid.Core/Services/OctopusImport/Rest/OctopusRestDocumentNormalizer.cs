@@ -34,7 +34,7 @@ public static partial class OctopusRestDocumentNormalizer
 
     public static IReadOnlyList<string> ServerOnlyMembers { get; } = ["Links", "LastModifiedOn", "LastModifiedBy", "LastModified", "DataVersion"];
 
-    public static IReadOnlyList<string> BuiltInFeedTypes { get; } = ["BuiltIn", "OctopusProject"];
+    public static IReadOnlyList<string> BuiltInFeedTypes => OctopusBuiltInFeeds.FeedTypes;
 
     private static readonly HashSet<string> SensitiveValueMembers = new(["HasValue", "NewValue", "Hint"], StringComparer.Ordinal);
 
@@ -56,7 +56,7 @@ public static partial class OctopusRestDocumentNormalizer
     }
 
     public static bool IsExcluded(OctopusResourceKind kind, JsonObject resource)
-        => kind == OctopusResourceKind.Feed && BuiltInFeedTypes.Contains(ReadString(resource, "FeedType"), StringComparer.OrdinalIgnoreCase);
+        => kind == OctopusResourceKind.Feed && OctopusBuiltInFeeds.IsBuiltInType(ReadString(resource, "FeedType"));
 
     // ── Strip ───────────────────────────────────────────────────────────────
 

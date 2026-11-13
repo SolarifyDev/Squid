@@ -125,11 +125,14 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                 if (OctopusImportReleasePackageFeedResolver.HasPlannedDestination(sourceFeedId, previewResources, plan.Prior))
                     continue;
 
-                AddReferenceDiagnostic(
-                    result,
-                    releaseResource,
-                    OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping,
-                    $"Octopus release package selection for action '{selectedPackage.ActionName}' references a package feed that cannot be mapped to a destination Squid feed.");
+                if (OctopusBuiltInFeeds.IsBuiltInId(sourceFeedId))
+                    AddReferenceDiagnostic(result, releaseResource, OctopusImportPreviewDiagnosticCodes.BuiltInFeedReferenced, OctopusBuiltInFeeds.ReferencedMessage);
+                else
+                    AddReferenceDiagnostic(
+                        result,
+                        releaseResource,
+                        OctopusImportConfirmationDiagnosticCodes.MissingReleasePackageFeedMapping,
+                        $"Octopus release package selection for action '{selectedPackage.ActionName}' references a package feed that cannot be mapped to a destination Squid feed.");
             }
         }
     }
@@ -310,6 +313,12 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
                 continue;
             }
 
+            if (IsMissingBuiltInFeed(reference, plan))
+            {
+                AddReferenceDiagnostic(result, source, OctopusImportPreviewDiagnosticCodes.BuiltInFeedReferenced, OctopusBuiltInFeeds.ReferencedMessage);
+                continue;
+            }
+
             if (reference.IsRequired && !selectedResources.ContainsKey(reference.ToSourceId) && !plan.IsPriorMapped(reference))
             {
                 AddReferenceDiagnostic(
@@ -320,6 +329,10 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             }
         }
     }
+
+    // The REST source never carries Octopus's built-in repository, so a step that uses it is named for what it is.
+    private static bool IsMissingBuiltInFeed(OctopusResourceReference reference, ValidationPlan plan)
+        => reference.ReferenceKind == OctopusResourceReferenceKind.Feed && OctopusBuiltInFeeds.IsBuiltInId(reference.ToSourceId) && !plan.Selected.ContainsKey(reference.ToSourceId) && !plan.IsPriorMapped(reference);
 
     private static void ValidateReuse(
         IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,

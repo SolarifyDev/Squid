@@ -14,6 +14,7 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.History;
+using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Helpers;
@@ -372,6 +373,70 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         octopus.Requests.ShouldNotContain(r => r.PathAndQuery.Contains("/projects/"));
     }
 
+    // ── Whole-space scope ──────────────────────────────────────────────────
+
+    // The whole space is imported from either source; what no project uses and Squid cannot import (a Maven feed, a
+    // legacy Azure account, a library scoped to tenant tags, Octopus's built-in repository) is skipped instead of
+    // failing confirmation, and an unused feed Squid can import is still created. Each later import — the other
+    // source, then the first again — skips the same resources and writes nothing.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WholeSpace_UnusedResourcesSquidCannotImport_SkippedFromEitherSource_RepeatImportsWriteNothing(bool serverFirst)
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey).WithUnusedResourcesSquidCannotImport();
+        var archive = ExportArchive(extra: OctopusWholeSpaceResources.UnusedDocuments());
+
+        var first = serverFirst ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(archive);
+
+        ShouldHaveSucceeded(first);
+        ShouldSkipTheUnusedResources(first);
+        ActionOfId(first, OctopusWholeSpaceResources.SpareFeedId).ShouldBe(OctopusImportPreviewAction.Create, Describe(first.PreviewPlan));
+        (await NamesAsync<ExternalFeed>(f => f.Name)).ShouldBe([OctopusWholeSpaceResources.SpareFeedName]);
+        (await CountAsync<DeploymentAccount>()).ShouldBe(0);
+        (await CountAsync<LibraryVariableSet>()).ShouldBe(0);
+        var before = await CountRowsAsync(ScopeTables);
+
+        foreach (var repeat in new[] { !serverFirst, serverFirst })
+        {
+            var again = repeat ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(ExportArchive(extra: OctopusWholeSpaceResources.UnusedDocuments()));
+
+            ShouldHaveSucceeded(again);
+            ShouldSkipTheUnusedResources(again);
+            ActionOfId(again, OctopusWholeSpaceResources.SpareFeedId).ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(again.PreviewPlan));
+            (await CountRowsAsync(ScopeTables)).ShouldBe(before, $"a repeat import ({(repeat ? "API" : "file")}) must not write anything");
+        }
+    }
+
+    // A feed Squid cannot import that a project's step uses blocks in the preview, before anything is written.
+    [Fact]
+    public async Task UsedUnsupportedFeed_PreviewBlocked_NothingWritten()
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey).WithUnusedResourcesSquidCannotImport();
+        octopus.Resources["projects/Projects-1/deploymentprocesses"] = ProcessUsingFeed("Feeds-9");
+
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromServerAsync(octopus));
+
+        refused.Message.ShouldStartWith("Preview blocked");
+        refused.Message.ShouldContain($"{OctopusImportFeedMappingDiagnosticCodes.UnsupportedFeedType}:Feeds-9");
+        (await CountAsync<Project>()).ShouldBe(0);
+        (await CountAsync<ExternalFeed>()).ShouldBe(0);
+    }
+
+    // The API never serves Octopus's built-in repository, so a step that pulls from it is refused by name.
+    [Fact]
+    public async Task StepUsingTheBuiltInRepository_RefusedByName_NothingWritten()
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey).WithUnusedResourcesSquidCannotImport();
+        octopus.Resources["projects/Projects-1/deploymentprocesses"] = ProcessUsingFeed("feeds-builtin");
+
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromServerAsync(octopus));
+
+        refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.BuiltInFeedReferenced);
+        refused.Message.ShouldNotContain(OctopusImportPreviewDiagnosticCodes.UnresolvedReference);
+        (await CountAsync<Project>()).ShouldBe(0);
+    }
+
     // ── Full flow ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -614,15 +679,46 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
     private static string Describe(OctopusImportSessionResultDto result)
         => result == null ? "no result" : string.Join(System.Environment.NewLine, result.Diagnostics.Concat(result.Resources.SelectMany(r => r.Diagnostics)).Select(d => $"{d.Severity} {d.Code} [{d.SourceId}] {d.Message}"));
 
+    private static readonly string[] ScopeTables = ["project", "environment", "lifecycle", "external_feed", "deployment_account", "library_variable_set", "variable_set", "variable", "octopus_import_source_map"];
+
+    private static void ShouldSkipTheUnusedResources(OctopusImportFlowResult result)
+    {
+        foreach (var sourceId in OctopusWholeSpaceResources.SkippedIds)
+            ActionOfId(result, sourceId).ShouldBe(OctopusImportPreviewAction.Skip, Describe(result.PreviewPlan));
+
+        result.PreviewPlan.Diagnostics.Where(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnreferencedResourcesSkipped).Select(d => d.ResourceType).ShouldBe(["Account", "Feed", "LibraryVariableSet"], ignoreOrder: true);
+        result.Confirm.Data.Session.Result.Resources.Where(r => OctopusWholeSpaceResources.SkippedIds.Contains(r.SourceId)).ShouldAllBe(r => r.OutcomeState == OctopusImportResourceOutcomeState.Skipped);
+    }
+
+    private static OctopusImportPreviewAction ActionOfId(OctopusImportFlowResult result, string sourceId)
+        => result.PreviewPlan.Resources.Single(r => r.SourceId == sourceId).PreviewAction;
+
+    private static Dictionary<string, object> ProcessUsingFeed(string feedId)
+        => new()
+        {
+            ["Id"] = "deploymentprocess-Projects-1",
+            ["ProjectId"] = "Projects-1",
+            ["Steps"] = new[]
+            {
+                new
+                {
+                    Id = "8d3c1b20-0000-4000-8000-000000000001", Name = "Deploy", Condition = "Success", StartTrigger = "StartAfterPrevious", PackageRequirement = "LetOctopusDecide", Properties = new Dictionary<string, string>(),
+                    Actions = new[] { new { Id = "8d3c1b20-0000-4000-8000-000000000002", Name = "Deploy", ActionType = "Octopus.Script", Environments = Array.Empty<string>(), ExcludedEnvironments = Array.Empty<string>(), Channels = Array.Empty<string>(), Packages = new[] { new { Id = "8d3c1b20-0000-4000-8000-000000000003", Name = "", PackageId = "App", FeedId = feedId, AcquisitionLocation = "Server" } }, Properties = new Dictionary<string, string> { ["Octopus.Action.Script.ScriptSource"] = "Inline", ["Octopus.Action.Script.Syntax"] = "Bash", ["Octopus.Action.Script.ScriptBody"] = "echo hi", ["Octopus.Action.RunOnServer"] = "true" } } }
+                }
+            }
+        };
+
     // ── Queries ────────────────────────────────────────────────────────────
 
-    private async Task<Dictionary<string, int>> CountRowsAsync()
+    private Task<Dictionary<string, int>> CountRowsAsync() => CountRowsAsync(CountedTables);
+
+    private async Task<Dictionary<string, int>> CountRowsAsync(IEnumerable<string> tables)
     {
         var counts = new Dictionary<string, int>();
 
         await Run<SquidDbContext>(async db =>
         {
-            foreach (var table in CountedTables)
+            foreach (var table in tables)
                 counts[table] = await db.Database.SqlQueryRaw<int>($"SELECT count(*)::int AS \"Value\" FROM {table}").SingleAsync();
         });
 
@@ -631,6 +727,9 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 
     private Task<T> SingleAsync<T>() where T : class
         => Run<SquidDbContext, T>(db => db.Set<T>().AsNoTracking().SingleAsync());
+
+    private Task<List<string>> NamesAsync<T>(System.Linq.Expressions.Expression<Func<T, string>> name) where T : class
+        => Run<SquidDbContext, List<string>>(db => db.Set<T>().AsNoTracking().Select(name).ToListAsync());
 
     private Task<int> CountAsync<T>() where T : class
         => Run<SquidDbContext, int>(db => db.Set<T>().CountAsync());
@@ -648,7 +747,7 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
 
     // The export of the same Octopus installation the stub serves: configuration, plus (optionally) the history the
     // stub also serves, as an export carries it — without task details.
-    private string ExportArchive(bool withHistory = false)
+    private string ExportArchive(bool withHistory = false, IEnumerable<(string Id, string DocumentType, string Json)> extra = null)
     {
         var documents = new List<(string Id, string DocumentType, string Json)>
         {
@@ -662,6 +761,8 @@ public class OctopusImportFromServerIntegrationTests : TestBase, IAsyncLifetime
         };
 
         if (withHistory) documents.AddRange(ExportedHistory());
+
+        documents.AddRange(extra ?? []);
 
         var path = Path.Combine(Path.GetTempPath(), $"squid-export-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
