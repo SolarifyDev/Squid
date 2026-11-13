@@ -1,0 +1,41 @@
+[
+  {
+    "Id": "Workers-1",
+    "SpaceId": "Spaces-1",
+    "WorkerPoolIds": [
+      "WorkerPools-1"
+    ],
+    "Name": "linux-worker",
+    "Thumbprint": null,
+    "Uri": null,
+    "IsDisabled": false,
+    "MachinePolicyId": "MachinePolicies-1",
+    "HealthStatus": "Healthy",
+    "HasLatestCalamari": true,
+    "StatusSummary": "Healthy",
+    "IsInProcess": false,
+    "Endpoint": {
+      "CommunicationStyle": "Ssh",
+      "AccountId": "Accounts-1",
+      "Host": "worker.example.com",
+      "Port": 22,
+      "Fingerprint": "00:00:00:00",
+      "HostKeyAlgorithm": "ssh-ed25519",
+      "Uri": "ssh://worker.example.com:22/",
+      "ProxyId": null,
+      "DotNetCorePlatform": "linux-x64",
+      "Id": null,
+      "LastModifiedOn": null,
+      "LastModifiedBy": null
+    },
+    "OperatingSystem": "Linux",
+    "ShellName": "Bash",
+    "ShellVersion": "5",
+    "Architecture": "x64",
+    "Slug": "linux-worker",
+    "SkipInitialHealthCheck": false,
+    "Links": {
+      "Self": "/api/Spaces-1/workers/Workers-1"
+    }
+  }
+]

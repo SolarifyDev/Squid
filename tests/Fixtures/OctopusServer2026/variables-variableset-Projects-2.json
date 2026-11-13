@@ -1,0 +1,50 @@
+{
+  "Id": "variableset-Projects-2",
+  "OwnerId": "Projects-2",
+  "Version": 2,
+  "Variables": [
+    {
+      "Id": "6a217283-0000-4000-8000-000000000801",
+      "Name": "Worker.Mode",
+      "Value": "fast",
+      "Description": null,
+      "Scope": {},
+      "IsEditable": true,
+      "Prompt": {
+        "Label": "Worker mode",
+        "Description": "",
+        "Required": true,
+        "DisplaySettings": {
+          "Octopus.ControlType": "Select",
+          "Octopus.SelectOptions": "fast|Fast\nsafe|Safe"
+        }
+      },
+      "Type": "String",
+      "IsSensitive": false
+    },
+    {
+      "Id": "6a217283-0000-4000-8000-000000000802",
+      "Name": "Worker.Secret",
+      "Value": null,
+      "Description": null,
+      "Scope": {},
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "Sensitive",
+      "IsSensitive": true
+    }
+  ],
+  "ScopeValues": {
+    "Environments": [],
+    "Machines": [],
+    "Actions": [],
+    "Roles": [],
+    "Channels": [],
+    "TenantTags": [],
+    "Processes": []
+  },
+  "SpaceId": "Spaces-1",
+  "Links": {
+    "Self": "/api/Spaces-1/variables/variableset-Projects-2"
+  }
+}

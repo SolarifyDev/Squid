@@ -1,0 +1,24 @@
+{
+  "Id": "deploymentsettings-Projects-2",
+  "ProjectId": "Projects-2",
+  "SpaceId": "Spaces-1",
+  "ConnectivityPolicy": {
+    "SkipMachineBehavior": "None",
+    "TargetRoles": [],
+    "AllowDeploymentsToNoTargets": false,
+    "ExcludeUnhealthyTargets": false
+  },
+  "DefaultGuidedFailureMode": "EnvironmentDefault",
+  "DefaultToSkipIfAlreadyInstalled": false,
+  "DeploymentChangesTemplate": null,
+  "FailTargetDiscovery": false,
+  "ForcePackageDownload": false,
+  "ReleaseNotesTemplate": null,
+  "VersioningStrategy": {
+    "Template": "#{Octopus.Version.LastMajor}.#{Octopus.Version.LastMinor}.#{Octopus.Version.NextPatch}",
+    "DonorPackage": null
+  },
+  "Links": {
+    "Self": "/api/Spaces-1/projects/Projects-2/deploymentsettings"
+  }
+}

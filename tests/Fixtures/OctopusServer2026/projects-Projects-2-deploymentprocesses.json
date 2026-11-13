@@ -1,0 +1,117 @@
+{
+  "Id": "deploymentprocess-Projects-2",
+  "SpaceId": "Spaces-1",
+  "ProjectId": "Projects-2",
+  "Version": 2,
+  "Steps": [
+    {
+      "Type": "Step",
+      "PackageRequirement": "LetOctopusDecide",
+      "Properties": {
+        "Octopus.Action.TargetRoles": "worker"
+      },
+      "Condition": "Success",
+      "StartTrigger": "StartAfterPrevious",
+      "Name": "Install service",
+      "Id": "4e0f5061-0000-4000-8000-000000000601",
+      "Slug": "install-service",
+      "Actions": [
+        {
+          "Id": "4e0f5061-0000-4000-8000-000000000611",
+          "Name": "Install service",
+          "Slug": "install-service",
+          "ActionType": "Octopus.WindowsService",
+          "Notes": null,
+          "IsDisabled": false,
+          "CanBeUsedForProjectVersioning": false,
+          "IsRequired": false,
+          "WorkerPoolId": null,
+          "Container": {
+            "Image": null,
+            "FeedId": null,
+            "GitUrl": null,
+            "Dockerfile": null
+          },
+          "WorkerPoolVariable": "",
+          "Environments": [],
+          "EnvironmentsVariable": null,
+          "ExcludedEnvironments": [],
+          "ExcludedEnvironmentsVariable": null,
+          "Channels": [],
+          "ChannelsVariable": null,
+          "TenantTags": [],
+          "TenantTagsVariable": null,
+          "Packages": [],
+          "GitDependencies": [],
+          "Condition": "Success",
+          "Properties": {
+            "Octopus.Action.WindowsService.ServiceName": "SampleWorker",
+            "Octopus.Action.WindowsService.ServiceAccount": "_CUSTOM",
+            "Octopus.Action.WindowsService.CustomAccountName": "svc-worker",
+            "Octopus.Action.WindowsService.CustomAccountPassword": {
+              "HasValue": true,
+              "NewValue": null,
+              "Hint": null
+            },
+            "Octopus.Action.Package.FeedId": "feeds-builtin",
+            "Octopus.Action.Package.PackageId": "SampleWorker"
+          },
+          "Links": {}
+        }
+      ]
+    },
+    {
+      "Type": "Step",
+      "PackageRequirement": "LetOctopusDecide",
+      "Properties": {
+        "Octopus.Action.TargetRoles": ""
+      },
+      "Condition": "Success",
+      "StartTrigger": "StartAfterPrevious",
+      "Name": "Approve",
+      "Id": "4e0f5061-0000-4000-8000-000000000602",
+      "Slug": "approve",
+      "Actions": [
+        {
+          "Id": "4e0f5061-0000-4000-8000-000000000612",
+          "Name": "Approve",
+          "Slug": "approve",
+          "ActionType": "Octopus.Manual",
+          "Notes": null,
+          "IsDisabled": false,
+          "CanBeUsedForProjectVersioning": false,
+          "IsRequired": false,
+          "WorkerPoolId": null,
+          "Container": {
+            "Image": null,
+            "FeedId": null,
+            "GitUrl": null,
+            "Dockerfile": null
+          },
+          "WorkerPoolVariable": "",
+          "Environments": [],
+          "EnvironmentsVariable": null,
+          "ExcludedEnvironments": [],
+          "ExcludedEnvironmentsVariable": null,
+          "Channels": [],
+          "ChannelsVariable": null,
+          "TenantTags": [],
+          "TenantTagsVariable": null,
+          "Packages": [],
+          "GitDependencies": [],
+          "Condition": "Success",
+          "Properties": {
+            "Octopus.Action.Manual.Instructions": "Approve the release",
+            "Octopus.Action.Manual.ResponsibleTeamIds": "Teams-1,teams-everyone",
+            "Octopus.Action.RunOnServer": "true"
+          },
+          "Links": {}
+        }
+      ]
+    }
+  ],
+  "LastSnapshotId": null,
+  "Links": {
+    "Self": "/api/Spaces-1/projects/Projects-2/deploymentprocesses"
+  }
+}

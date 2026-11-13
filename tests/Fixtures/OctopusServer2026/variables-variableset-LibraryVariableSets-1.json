@@ -1,0 +1,59 @@
+{
+  "Id": "variableset-LibraryVariableSets-1",
+  "OwnerId": "LibraryVariableSets-1",
+  "Version": 3,
+  "Variables": [
+    {
+      "Id": "1b7c2d3e-0000-4000-8000-000000000101",
+      "Name": "Shared.ApiUrl",
+      "Value": "https://api.example.com",
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-1"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "String",
+      "IsSensitive": false
+    },
+    {
+      "Id": "1b7c2d3e-0000-4000-8000-000000000102",
+      "Name": "Shared.ApiKey",
+      "Value": null,
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-3"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "Sensitive",
+      "IsSensitive": true
+    }
+  ],
+  "ScopeValues": {
+    "Environments": [
+      {
+        "Id": "Environments-1",
+        "Name": "Dev"
+      },
+      {
+        "Id": "Environments-3",
+        "Name": "Prod"
+      }
+    ],
+    "Machines": [],
+    "Actions": [],
+    "Roles": [],
+    "Channels": [],
+    "TenantTags": [],
+    "Processes": []
+  },
+  "SpaceId": "Spaces-1",
+  "Links": {
+    "Self": "/api/Spaces-1/variables/variableset-LibraryVariableSets-1"
+  }
+}

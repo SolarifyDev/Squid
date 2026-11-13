@@ -1,0 +1,17 @@
+{
+  "Id": "Users-7",
+  "Username": "import-reader",
+  "DisplayName": "Import Reader",
+  "IsActive": true,
+  "IsService": true,
+  "EmailAddress": null,
+  "CanPasswordBeEdited": false,
+  "IsRequestor": true,
+  "Identities": [],
+  "Created": "2025-01-01T00:00:00.000+00:00",
+  "Links": {
+    "Self": "/api/users/Users-7",
+    "Permissions": "/api/users/Users-7/permissions{?spaces,includeSystem}",
+    "ApiKeys": "/api/users/Users-7/apikeys{/id}{?skip,take}"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "Id": "ServerTasks-1",
+  "SpaceId": "Spaces-1",
+  "EstimatedRemainingQueueDurationSeconds": 0,
+  "Name": "Deploy",
+  "Description": "Deploy Web App release 1.0.1 to Dev",
+  "Arguments": {
+    "DeploymentId": "Deployments-1"
+  },
+  "State": "Success",
+  "Completed": "Thursday, 02 January 2025 3:06:00 AM +00:00",
+  "QueueTime": "2025-01-02T03:05:00.000+00:00",
+  "QueueTimeExpiry": null,
+  "StartTime": "2025-01-02T03:05:01.000+00:00",
+  "LastUpdatedTime": "2025-01-02T03:06:00.000+00:00",
+  "CompletedTime": "2025-01-02T03:06:00.000+00:00",
+  "ServerNode": "OctopusServerNodes-node1",
+  "Duration": "59 seconds",
+  "ErrorMessage": "",
+  "HasBeenPickedUpByProcessor": true,
+  "IsCompleted": true,
+  "FinishedSuccessfully": true,
+  "HasPendingInterruptions": false,
+  "CanRerun": false,
+  "HasWarningsOrErrors": false,
+  "UnmetPreconditions": null,
+  "ProjectId": "Projects-1",
+  "PendingInterruptionTypes": [],
+  "Links": {
+    "Self": "/api/tasks/ServerTasks-1"
+  }
+}

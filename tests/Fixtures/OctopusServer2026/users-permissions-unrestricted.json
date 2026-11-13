@@ -1,0 +1,349 @@
+{
+  "Id": "Users-7",
+  "SpacePermissions": {
+    "ProjectView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "ProcessView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "ReleaseView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "VariableViewUnscoped": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "EnvironmentView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "AccountView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "CertificateView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "MachineView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "LibraryVariableSetView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "FeedView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "TeamView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "LifecycleView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "WorkerView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "ActionTemplateView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "ProjectGroupView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-unrelated"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-unrelated"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-unrelated"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "VariableView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "DeploymentView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "TaskView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ],
+    "TenantView": [
+      {
+        "RestrictedToProjectIds": [
+          "projects-all"
+        ],
+        "RestrictedToEnvironmentIds": [
+          "environments-all"
+        ],
+        "RestrictedToTenantIds": [
+          "tenants-all"
+        ],
+        "RestrictedToProjectGroupIds": [
+          "projectgroups-unrelated"
+        ],
+        "SpaceId": "Spaces-1"
+      }
+    ]
+  },
+  "SystemPermissions": [
+    "SpaceView",
+    "UserView",
+    "TeamView"
+  ],
+  "Teams": [
+    {
+      "IsDirectlyAssigned": true,
+      "ExternalSecurityGroups": [],
+      "SpaceId": "Spaces-1",
+      "Id": "Teams-2",
+      "Name": "Import readers"
+    }
+  ],
+  "IsTeamsComplete": true,
+  "IsPermissionsComplete": true,
+  "Links": {
+    "Self": "/api/users/Users-7/permissions{?spaces,includeSystem}",
+    "Export": "/api/users/Users-7/permissions/export{?spaces,includeSystem}",
+    "User": "/api/users/Users-7"
+  }
+}

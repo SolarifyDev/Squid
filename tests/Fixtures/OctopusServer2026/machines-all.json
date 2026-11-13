@@ -1,0 +1,57 @@
+[
+  {
+    "Id": "Machines-1",
+    "EnvironmentIds": [
+      "Environments-1"
+    ],
+    "Roles": [
+      "web"
+    ],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Name": "dev-cluster",
+    "Thumbprint": null,
+    "Uri": null,
+    "IsDisabled": false,
+    "MachinePolicyId": "MachinePolicies-1",
+    "HealthStatus": "Healthy",
+    "HasLatestCalamari": true,
+    "StatusSummary": "Healthy",
+    "IsInProcess": false,
+    "Endpoint": {
+      "CommunicationStyle": "Kubernetes",
+      "ClusterCertificate": null,
+      "ClusterCertificatePath": null,
+      "ClusterUrl": "https://k8s.example.com",
+      "Namespace": null,
+      "SkipTlsVerification": "True",
+      "ProxyId": null,
+      "DefaultWorkerPoolId": null,
+      "ContainerOptions": null,
+      "Container": {
+        "Image": null,
+        "FeedId": null,
+        "GitUrl": null,
+        "Dockerfile": null
+      },
+      "Authentication": {
+        "AccountId": "Accounts-2",
+        "AuthenticationType": "KubernetesStandard"
+      },
+      "Id": null,
+      "LastModifiedOn": null,
+      "LastModifiedBy": null
+    },
+    "OperatingSystem": "Unknown",
+    "ShellName": "Unknown",
+    "ShellVersion": "Unknown",
+    "Architecture": "Unknown",
+    "Slug": "dev-cluster",
+    "SkipInitialHealthCheck": false,
+    "Links": {
+      "Self": "/api/Spaces-1/machines/Machines-1"
+    }
+  }
+]

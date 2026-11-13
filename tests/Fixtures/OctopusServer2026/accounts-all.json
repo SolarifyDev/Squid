@@ -1,0 +1,116 @@
+[
+  {
+    "Id": "Accounts-1",
+    "Name": "Cluster Login",
+    "Description": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Slug": "cluster-login",
+    "AccountType": "UsernamePassword",
+    "Links": {
+      "Self": "/api/Spaces-1/accounts/Accounts-1"
+    },
+    "Username": "deployer",
+    "Password": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    }
+  },
+  {
+    "Id": "Accounts-2",
+    "Name": "Cluster Token",
+    "Description": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Slug": "cluster-token",
+    "AccountType": "Token",
+    "Links": {
+      "Self": "/api/Spaces-1/accounts/Accounts-2"
+    },
+    "Token": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    }
+  },
+  {
+    "Id": "Accounts-3",
+    "Name": "Cloud Keys",
+    "Description": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Slug": "cloud-keys",
+    "AccountType": "AmazonWebServicesAccount",
+    "Links": {
+      "Self": "/api/Spaces-1/accounts/Accounts-3"
+    },
+    "AccessKey": "AKIAEXAMPLEEXAMPLE00",
+    "SecretKey": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Region": null
+  },
+  {
+    "Id": "Accounts-4",
+    "Name": "Azure Principal",
+    "Description": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Slug": "azure-principal",
+    "AccountType": "AzureServicePrincipal",
+    "Links": {
+      "Self": "/api/Spaces-1/accounts/Accounts-4"
+    },
+    "SubscriptionNumber": "00000000-0000-4000-8000-0000000000a1",
+    "ClientId": "00000000-0000-4000-8000-0000000000a2",
+    "TenantId": "00000000-0000-4000-8000-0000000000a3",
+    "Password": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "AzureEnvironment": "",
+    "ResourceManagementEndpointBaseUri": "",
+    "ActiveDirectoryEndpointBaseUri": ""
+  },
+  {
+    "Id": "Accounts-5",
+    "Name": "Azure Management Cert",
+    "Description": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "SpaceId": "Spaces-1",
+    "Slug": "azure-management-cert",
+    "AccountType": "AzureSubscription",
+    "Links": {
+      "Self": "/api/Spaces-1/accounts/Accounts-5"
+    },
+    "SubscriptionNumber": "00000000-0000-4000-8000-0000000000b1",
+    "CertificateBytes": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "CertificateThumbprint": "0000000000000000000000000000000000000000",
+    "AzureEnvironment": "",
+    "ServiceManagementEndpointBaseUri": "",
+    "ServiceManagementEndpointSuffix": ""
+  }
+]

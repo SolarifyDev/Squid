@@ -1,0 +1,38 @@
+{
+  "ItemType": "Channel",
+  "TotalResults": 1,
+  "ItemsPerPage": 30,
+  "NumberOfPages": 1,
+  "LastPageNumber": 0,
+  "Items": [
+    {
+      "Id": "Channels-1",
+      "Name": "Default",
+      "Type": "Lifecycle",
+      "EphemeralEnvironmentNameTemplate": null,
+      "AutomaticEphemeralEnvironmentDeployments": null,
+      "Description": null,
+      "ProjectId": "Projects-1",
+      "LifecycleId": null,
+      "ParentEnvironmentId": null,
+      "IsDefault": true,
+      "Rules": [],
+      "TenantTags": [],
+      "SpaceId": "Spaces-1",
+      "Slug": "default",
+      "GitReferenceRules": [],
+      "GitResourceRules": [],
+      "CustomFieldDefinitions": [],
+      "Links": {
+        "Self": "/api/Spaces-1/channels/Channels-1"
+      }
+    }
+  ],
+  "Links": {
+    "Self": "/api/Spaces-1/projects/Projects-1/channels?skip=0&take=30",
+    "Template": "/api/Spaces-1/projects/Projects-1/channels{?skip,take}",
+    "Page.All": "/api/Spaces-1/projects/Projects-1/channels?skip=0&take=2147483647",
+    "Page.Current": "/api/Spaces-1/projects/Projects-1/channels?skip=0&take=30",
+    "Page.Last": "/api/Spaces-1/projects/Projects-1/channels?skip=0&take=30"
+  }
+}

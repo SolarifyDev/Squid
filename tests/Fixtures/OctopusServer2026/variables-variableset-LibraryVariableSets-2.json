@@ -1,0 +1,42 @@
+{
+  "Id": "variableset-LibraryVariableSets-2",
+  "OwnerId": "LibraryVariableSets-2",
+  "Version": 1,
+  "Variables": [
+    {
+      "Id": "1b7c2d3e-0000-4000-8000-000000000201",
+      "Name": "Octopus.Script.Module[Deploy Helpers]",
+      "Value": "function Write-Hello { 'hello' }",
+      "Description": null,
+      "Scope": {},
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "String",
+      "IsSensitive": false
+    },
+    {
+      "Id": "1b7c2d3e-0000-4000-8000-000000000202",
+      "Name": "Octopus.Script.Module.Language[Deploy Helpers]",
+      "Value": "PowerShell",
+      "Description": null,
+      "Scope": {},
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "String",
+      "IsSensitive": false
+    }
+  ],
+  "ScopeValues": {
+    "Environments": [],
+    "Machines": [],
+    "Actions": [],
+    "Roles": [],
+    "Channels": [],
+    "TenantTags": [],
+    "Processes": []
+  },
+  "SpaceId": "Spaces-1",
+  "Links": {
+    "Self": "/api/Spaces-1/variables/variableset-LibraryVariableSets-2"
+  }
+}
