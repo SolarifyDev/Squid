@@ -22,6 +22,7 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
     private const int SpaceId = 7;
     private const string MigrationFile = "20261113_add_octopus_import_source_map.sql";
     private const string CanonicaliseMigrationFile = "20261113_canonicalise_octopus_import_source_ids.sql";
+    private const string CreatedOriginMigrationFile = "20261115_add_octopus_import_source_map_created_origin.sql";
 
     // Synthetic export id suffixes (a real export carries one constant 32-hex value on every id).
     private const string Sfx = "0123456789ABCDEF0123456789ABCDEF";
@@ -136,6 +137,58 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             prior.TryGet("Environment", "Environments-1", out var byRest).ShouldBeTrue();
             bySuffixed.ShouldBe(byRest);
             prior.ExportSourceIds.ShouldBe([Sfx, OtherSfx], ignoreOrder: true);
+        });
+    }
+
+    // Rows backfilled from earlier export-file sessions name the export they came from: the suffix their own session's mapping carried.
+    // Two exports in one space (non-colliding ids) are told apart per row; a row with a recorded creator, or whose session mapping has
+    // no suffix, is left as it is. Re-runnable.
+    [Fact]
+    public async Task CreatedOriginMigration_BackfillsEachRowsExportFromItsSession_ReRunnable()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            await InsertSessionAsync(db, spaceId, "Succeeded", DateTimeOffset.UtcNow.AddDays(-3), Mapping($"Projects-1-{Sfx}", "Project", 10, "Created", "Web"), Mapping($"deploymentprocess-Projects-1-{Sfx}/step-0", "DeploymentStep", 11, "Created", "Step"));
+            await InsertSessionAsync(db, spaceId, "Succeeded", DateTimeOffset.UtcNow.AddDays(-2), Mapping($"Projects-2-{OtherSfx}", "Project", 20, "Created", "Api"), Mapping("Feeds-1", "Feed", 30, "Created", "Bare id"));
+            await RunMigrationAsync(db, MigrationFile);
+            await RunMigrationAsync(db, CanonicaliseMigrationFile);
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE octopus_import_source_map SET created_installation_id = 'INST-KEPT' WHERE space_id = {spaceId} AND source_id = 'PROJECTS-2'");
+
+            await RunMigrationAsync(db, CreatedOriginMigrationFile);
+            var once = DescribeCreators(await LoadRawRowsAsync(db), spaceId);
+            await RunMigrationAsync(db, CreatedOriginMigrationFile);
+
+            DescribeCreators(await LoadRawRowsAsync(db), spaceId).ShouldBe(once, "the migration must be re-runnable");
+            once.ShouldBe([
+                "DeploymentStep|DEPLOYMENTPROCESS-PROJECTS-1/STEP-0||" + Sfx,
+                "Feed|FEEDS-1||",
+                "Project|PROJECTS-1||" + Sfx,
+                "Project|PROJECTS-2|INST-KEPT|"], ignoreOrder: true);
+        });
+    }
+
+    // The creator is the import that created (or re-pointed) the row: a later import mapping the same destination keeps it, so a source
+    // can tell its own rows from the space origin's; a re-pointed row (its destination re-created) names the new import.
+    [Fact]
+    public async Task Upsert_KeepsTheCreatingOrigin_UnlessTheRowIsRePointed()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            var environmentId = await CreateEnvironmentRowAsync(db, spaceId);
+            var recreatedId = await CreateEnvironmentRowAsync(db, spaceId);
+
+            await provider.UpsertAsync([Row("Environment", "Environments-1", environmentId, "Created", spaceId: spaceId) with { CreatedExportSourceId = Sfx.ToLowerInvariant() }], Guid.NewGuid());
+            await provider.UpsertAsync([Row("Environment", "Environments-1", environmentId, "Reused", spaceId: spaceId) with { CreatedInstallationId = "inst-x" }], Guid.NewGuid());
+
+            (await provider.LoadAsync(spaceId)).TryGet("Environment", "Environments-1", out var kept).ShouldBeTrue();
+            (kept.CreatedInstallationId, kept.CreatedExportSourceId).ShouldBe((null, Sfx));
+
+            await provider.UpsertAsync([Row("Environment", "Environments-1", recreatedId, "Created", spaceId: spaceId) with { CreatedInstallationId = "inst-x" }], Guid.NewGuid());
+
+            (await provider.LoadAsync(spaceId)).TryGet("Environment", "Environments-1", out var rePointed).ShouldBeTrue();
+            (rePointed.CreatedInstallationId, rePointed.CreatedExportSourceId).ShouldBe(("INST-X", null));
         });
     }
 
@@ -708,6 +761,9 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
 
     private static List<string> Describe(IEnumerable<OctopusImportSourceMap> rows)
         => rows.Select(r => $"{r.SpaceId}|{r.SourceType}|{r.SourceId}|{r.DestinationId}|{r.OutcomeState}|{r.Fingerprint}|{r.DetailFingerprint}").Order().ToList();
+
+    private static List<string> DescribeCreators(IEnumerable<OctopusImportSourceMap> rows, int spaceId)
+        => rows.Where(r => r.SpaceId == spaceId && r.SourceType != OctopusImportSourceMapQueries.ExportSourceSourceType).Select(r => $"{r.SourceType}|{r.SourceId}|{r.CreatedInstallationId}|{r.CreatedExportSourceId}").Order().ToList();
 
     private static string Unique(string value) => $"{value} {Guid.NewGuid():N}";
 }

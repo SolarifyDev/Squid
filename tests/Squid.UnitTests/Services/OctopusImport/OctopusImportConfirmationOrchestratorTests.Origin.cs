@@ -24,7 +24,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
     [InlineData(null, OriginFingerprint, "inst-x", null, false, true, false)]                 // a confirmation without matching GUIDs proves nothing
     [InlineData(null, OriginFingerprint, null, "FEDCBA9876543210FEDCBA9876543210", false, false, true)] // another fingerprint degrades, never refuses
     [InlineData("inst-a", null, "inst-a", null, false, false, true)]                         // proven by installation
-    [InlineData(null, null, "inst-x", null, false, false, true)]                             // no origin recorded: nothing to contradict
+    [InlineData(null, null, "inst-x", null, false, false, false)]                            // no origin recorded, rows of unknown origin: no evidence
+    [InlineData(null, null, "inst-x", null, true, false, false)]                             // ... matching GUIDs still need the confirmation
+    [InlineData(null, null, "inst-x", null, true, true, true)]                               // ... and are imported once it is confirmed
     public async Task Origin_ReCheckedUnderTheSpaceLock(string recordedInstallation, string recordedFingerprint, string sourceInstallation, string sourceFingerprint, bool structureMatches, bool confirmed, bool expectSucceeded)
     {
         var nodes = BuildMinimalNodes();
@@ -44,19 +46,24 @@ public partial class OctopusImportConfirmationOrchestratorTests
     }
 
     // No id of the source is in the space, so nothing needs proof — but the installation is recorded only where it cannot vouch for
-    // rows another origin created: in a space with no recorded origin, or when it is that origin. Recorded next to another server's
-    // fingerprint, it would prove that server's later imports by installation, and a later colliding id (its Environments-21 against
-    // the file's Environments-21) would link without any check. Another installation recorded since validation is refused under the lock.
+    // rows another origin created: in an empty space, or when it is the space's origin. Recorded next to another server's fingerprint
+    // (or over rows of unknown origin), it would prove that server's later imports by installation, and a later colliding id (its
+    // Environments-99 against the file's Environments-99) would link without any check. Another installation recorded since validation
+    // is refused under the lock.
     [Theory]
-    [InlineData(null, null, "inst-x", true, true)]               // no origin recorded: the first one is
-    [InlineData("inst-x", null, "inst-x", true, true)]           // the recorded installation itself
-    [InlineData(null, OriginFingerprint, "inst-x", true, false)] // a file space: imported, but the server is not its origin
-    [InlineData("inst-a", null, "inst-b", false, false)]         // another installation recorded between validation and the lock
-    public async Task Origin_NoIdInCommon_InstallationRecordedOnlyWhereItIsTheOrigin(string recordedInstallation, string recordedFingerprint, string sourceInstallation, bool expectSucceeded, bool expectRecorded)
+    [InlineData(null, null, "inst-x", false, true, true)]               // an empty space: the first import is its origin
+    [InlineData(null, null, "inst-x", true, true, false)]               // rows of unknown origin: imported, but not adopted
+    [InlineData("inst-x", null, "inst-x", true, true, true)]            // the recorded installation itself
+    [InlineData(null, OriginFingerprint, "inst-x", true, true, false)]  // a file space: imported, but the server is not its origin
+    [InlineData("inst-a", null, "inst-b", true, false, false)]          // another installation recorded between validation and the lock
+    public async Task Origin_NoIdInCommon_InstallationRecordedOnlyWhereItIsTheOrigin(string recordedInstallation, string recordedFingerprint, string sourceInstallation, bool spaceHasRows, bool expectSucceeded, bool expectRecorded)
     {
         var nodes = BuildMinimalNodes();
         var upserted = new List<OctopusImportSourceMapRow>();
-        var unrelated = new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [OctopusImportPriorMappings.Key(nameof(OctopusResourceKind.Environment), "Environments-99")] = new(99, "Created", null, null) };
+        var unrelated = new Dictionary<(string Type, string Id), OctopusImportPriorMapping>();
+
+        if (spaceHasRows) unrelated[OctopusImportPriorMappings.Key(nameof(OctopusResourceKind.Environment), "Environments-99")] = new(99, "Created", null, null);
+
         var prior = new OctopusImportPriorMappings(unrelated, recordedInstallation, recordedFingerprint == null ? [] : [recordedFingerprint]);
         var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.ReuseExisting, 200)), true, false, false, sourceMap: SourceMap(prior, upserted: upserted).Object);
         var request = harness.Request with { Graph = harness.Request.Graph with { InstallationId = sourceInstallation } };
@@ -82,6 +89,49 @@ public partial class OctopusImportConfirmationOrchestratorTests
         (await harness.Sut.ConfirmAsync(request, CancellationToken.None)).State.ShouldBe(OctopusImportSessionState.Succeeded);
 
         upserted.ShouldContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType && r.SourceId == "inst-x");
+    }
+
+    // Every row a confirmation writes names its origin, so a later import can tell its own rows from another origin's.
+    [Fact]
+    public async Task EveryWrittenRow_NamesTheImportsOrigin()
+    {
+        var nodes = BuildMinimalNodes();
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.ReuseExisting, 200)), true, false, false, sourceMap: SourceMap(OctopusImportPriorMappings.Empty, upserted: upserted).Object);
+        var request = harness.Request with { Graph = harness.Request.Graph with { InstallationId = "inst-x", ExportSourceId = OriginFingerprint } };
+
+        (await harness.Sut.ConfirmAsync(request, CancellationToken.None)).State.ShouldBe(OctopusImportSessionState.Succeeded);
+
+        upserted.ShouldNotBeEmpty();
+        upserted.ShouldAllBe(r => r.CreatedInstallationId == "inst-x" && r.CreatedExportSourceId == OriginFingerprint);
+    }
+
+    // The space's origin is a file (Y); server X was imported earlier with no id in common, so its rows name X and X is not the origin.
+    // X re-imported meets only its own rows: no proof needed. X meeting a row of Y's needs a pairing backed by Y's structure rows — its
+    // own GUIDs prove nothing, so a confirmation backed only by them is refused (it would make X the origin of Y's rows).
+    [Theory]
+    [InlineData(false, false, true)]  // only X's own rows
+    [InlineData(true, true, false)]   // a colliding id of Y's, "confirmed" with X's own GUIDs only
+    [InlineData(true, false, false)]
+    public async Task Origin_RowsTheSourceCreatedItself_LinkFreely_NeverBackAPairing(bool hitsOriginRow, bool confirmed, bool expectSucceeded)
+    {
+        var nodes = BuildMinimalNodes();
+        var action = new OctopusResourceNode(OriginActionGuid, "Run", OctopusResourceKind.DeploymentAction, OctopusDocumentKind.DeploymentProcess, "process.json", null, null, false, new object());
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var rows = new Dictionary<(string Type, string Id), OctopusImportPriorMapping>
+        {
+            [OctopusImportPriorMappings.Key(nodes.Environment.Kind.ToString(), nodes.Environment.SourceId)] = new(321, "Created", null, null, hitsOriginRow ? null : "inst-x", hitsOriginRow ? OriginFingerprint : null),
+            [OctopusImportPriorMappings.Key(action.Kind.ToString(), action.SourceId)] = new(701, "Created", null, null, "inst-x")
+        };
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.AlreadyImported, 321)), true, false, false, sourceMap: SourceMap(new OctopusImportPriorMappings(rows, null, [OriginFingerprint]), upserted: upserted).Object);
+        var request = harness.Request with { Graph = new OctopusResourceGraph([nodes.Environment, action], [], [], []) { InstallationId = "inst-x" } };
+
+        if (confirmed) request.PreviewPlan.FillPairing = new OctopusImportFillPairingDto { Required = true, Confirmed = true };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(expectSucceeded ? OctopusImportSessionState.Succeeded : OctopusImportSessionState.Failed);
+        upserted.ShouldNotContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType, "X is never adopted as the origin of Y's space");
     }
 
     private static OctopusImportPriorMappings OriginPrior(OctopusResourceNode environment, OctopusResourceNode action, string installationId, string fingerprint, bool structureMatches)

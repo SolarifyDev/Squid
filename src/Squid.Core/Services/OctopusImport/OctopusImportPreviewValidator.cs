@@ -105,12 +105,12 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             return;
         }
 
-        if (!OctopusImportFillEvidences.NeedsOriginProof(graph.Resources, prior)) return;
+        if (!OctopusImportFillEvidences.NeedsOriginProof(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, prior)) return;
 
         var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, prior, previewPlan.FillPairing?.Confirmed == true);
 
         if (OctopusImportFillEvidences.RefusesLinking(evidence))
-            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Unproven(evidence.MatchingStructureIds, OctopusImportOriginMessages.Source(conflicts.HistoryInstallationId, conflicts.ExportSourceId, conflicts.SourceOrigin), OctopusImportOriginMessages.Recorded(prior, conflicts.InstallationOrigin))));
+            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(evidence, OctopusImportOriginMessages.Source(conflicts.HistoryInstallationId, conflicts.ExportSourceId, conflicts.SourceOrigin), OctopusImportOriginMessages.Recorded(prior, conflicts.InstallationOrigin))));
         else if (evidence.State == OctopusImportFillEvidenceState.PairingRequired)
             result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed, OctopusImportOriginMessages.PairingUnconfirmed));
     }

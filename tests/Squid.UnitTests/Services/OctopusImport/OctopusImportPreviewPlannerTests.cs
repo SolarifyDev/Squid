@@ -540,6 +540,7 @@ public class OctopusImportPreviewPlannerTests
     {
         var result = await new OctopusImportScenario()
             .Project("Projects-1", "Web", [], [])
+            .ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId)
             .ExistingProject(500, "Web")
             .ExistingMapping(OctopusResourceKind.Project, "Projects-1", 500)
             .PlanAsync();
@@ -557,6 +558,7 @@ public class OctopusImportPreviewPlannerTests
         var result = await new OctopusImportScenario()
             .Project("Projects-1", "Web", [], [OctopusImportScenario.Var("Variables-new", "Added", "later")])
             .Channel("Channels-new", "Projects-1", "Hotfix")
+            .ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId)
             .ExistingMapping(OctopusResourceKind.Project, "Projects-1", 500)
             .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), 501)
             .PlanAsync();
@@ -772,7 +774,8 @@ public class OctopusImportPreviewPlannerTests
             .Channel("Channels-1", "Projects-1", "Main")
             .Release("Releases-1", "Projects-1", "Channels-1", "1.0.0", notes)
             .Deployment("Deployments-1", "Projects-1", "Channels-1", "Environments-1", "Releases-1", "ServerTasks-1")
-            .ServerTask("ServerTasks-1", detailFingerprint: detailFingerprint);
+            .ServerTask("ServerTasks-1", detailFingerprint: detailFingerprint)
+            .ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId);
 
         return deployment is { } d ? scenario.Deployment(d.Id, d.ProjectId, d.ChannelId, d.EnvironmentId, d.ReleaseId, d.TaskId) : scenario;
     }

@@ -134,7 +134,8 @@ public class OctopusImportWithheldSecretsPreviewTests
         var scenario = new OctopusImportScenario()
             .Environment("Environments-1", "Production")
             .RestFeed("Feeds-1", "Registry", "robot", hasPassword: true)
-            .RestProject("Projects-1", "Web", [], [OctopusImportScenario.RestSecret(VariableId, "Db.Password")], OctopusImportScenario.RestScriptActionWithSecret("Actions-1", "Notify.ApiKey"));
+            .RestProject("Projects-1", "Web", [], [OctopusImportScenario.RestSecret(VariableId, "Db.Password")], OctopusImportScenario.RestScriptActionWithSecret("Actions-1", "Notify.ApiKey"))
+            .Installation("inst-1");
         var first = await scenario.PlanAsync(OctopusExportSecrets.WithheldByServer);
 
         var repeat = await scenario.ImportedAs(first).PlanAsync(OctopusExportSecrets.WithheldByServer);

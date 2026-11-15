@@ -12,7 +12,9 @@ namespace Squid.Core.Services.OctopusImport.Secrets;
 /// (two different ones refuse outright); the export fingerprint (id suffix) the space's FIRST export-file import recorded (any other
 /// fingerprint is another export source: its history is skipped and it fills nothing); otherwise process step / action / lifecycle
 /// phase GUIDs (random per installation, identical in the API and the export) that an earlier import of this space created — and then
-/// only with the user's explicit confirmation of the pairing.
+/// only with the user's explicit confirmation of the pairing. Every row remembers the origin of the import that created it, so an
+/// import links freely only to its own rows; a row of the recorded origin (or of unknown origin) needs that proof, and a row a third
+/// origin created is never linked — however the source is proven.
 /// </summary>
 public static class OctopusImportFillEvidences
 {
@@ -30,10 +32,23 @@ public static class OctopusImportFillEvidences
     /// <summary>Why an evidence is <c>Unproven</c> whatever else matches: the source's installation id differs from the recorded one.</summary>
     public const string InstallationMismatchBasis = "installation-mismatch";
 
+    /// <summary>Why an evidence is <c>Unproven</c> whatever else matches: the source would link to rows a third origin created.</summary>
+    public const string OtherOriginRowsBasis = "other-origin-rows";
+
     public static OctopusImportFillEvidence Evaluate(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior, bool pairingConfirmed)
     {
         prior ??= OctopusImportPriorMappings.Empty;
 
+        var evidence = EvaluateSource(sourceInstallationId, fileExportSourceId, nodes, prior, pairingConfirmed);
+
+        if (evidence.State == OctopusImportFillEvidenceState.Unproven || !HitsRowsOfAnotherOrigin(sourceInstallationId, fileExportSourceId, nodes, prior)) return evidence;
+
+        return evidence with { State = OctopusImportFillEvidenceState.Unproven, Basis = OtherOriginRowsBasis };
+    }
+
+    // Is the source the space's recorded origin? By id, by fingerprint, or by a confirmed pairing backed by the origin's structure ids.
+    private static OctopusImportFillEvidence EvaluateSource(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior, bool pairingConfirmed)
+    {
         var matches = MatchingStructureIds(nodes, prior);
 
         if (SameId(sourceInstallationId, prior.InstallationId)) return new OctopusImportFillEvidence(OctopusImportFillEvidenceState.Proven, matches, InstallationBasis);
@@ -64,18 +79,17 @@ public static class OctopusImportFillEvidences
         => HasId(sourceInstallationId) && HasId(prior?.InstallationId) && !SameId(sourceInstallationId, prior.InstallationId);
 
     /// <summary>
-    /// The source would link to rows an earlier import of a RECORDED origin created, so it must prove it reads the same Octopus. A first
-    /// import, a source with no id in common, and a space with no recorded origin (every import records one) need no proof.
+    /// The source would link to a row an import of another (or an unknown) origin created, so it must prove it reads the same Octopus.
+    /// A first import, a source with no id in common, and a source that only meets rows it created itself need no proof.
     /// </summary>
-    public static bool NeedsOriginProof(IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
-        => HasRecordedOrigin(prior) && HitsEarlierImport(nodes, prior);
+    public static bool NeedsOriginProof(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
+        => HitRows(nodes, prior).Any(row => !IsCreatedBy(row, sourceInstallationId, fileExportSourceId));
 
     /// <summary>
-    /// Some resource of the source has a live source-map row of its kind: the import would treat it as already imported and link to it.
-    /// Octopus's built-in teams carry the same id on every installation by design, so they link nothing server-specific.
+    /// The space has rows whose creating origin is unknown and no recorded origin to attribute them to: a source with no id in common
+    /// cannot become the origin there, or it would later be proven by id for rows it never created.
     /// </summary>
-    public static bool HitsEarlierImport(IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
-        => (nodes ?? []).Any(n => !IsSameOnEveryInstallation(n) && (prior ?? OctopusImportPriorMappings.Empty).TryGet(n.Kind.ToString(), n.SourceId, out _));
+    public static bool HasRowsOfUnknownOrigin(OctopusImportPriorMappings prior) => (prior?.Mappings.Values ?? []).Any(IsOfUnknownOrigin);
 
     /// <summary>
     /// An origin that is not proven refuses linking to earlier rows — except another export fingerprint of a file, which degrades
@@ -87,16 +101,41 @@ public static class OctopusImportFillEvidences
     /// <summary>The fingerprint pinned for the space: the one its first export-file import recorded.</summary>
     public static string RecordedExportSourceId(OctopusImportPriorMappings prior) => prior?.ExportSourceIds.FirstOrDefault();
 
-    /// <summary>Distinct GUID ids of the source's current steps, actions and lifecycle phases that an earlier import of this space created.</summary>
+    /// <summary>
+    /// Distinct GUID ids of the source's current steps, actions and lifecycle phases that an earlier import of the space's recorded
+    /// origin created. Rows another origin created (the source's own included) prove nothing about the recorded one.
+    /// </summary>
     public static int MatchingStructureIds(IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
         => (nodes ?? []).Where(n => StructureKinds.Contains(n.Kind) && !n.IsHistorical && Guid.TryParse(n.SourceId, out _))
-            .Where(n => prior.TryGet(n.Kind.ToString(), n.SourceId, out var mapping) && mapping.OutcomeState == OctopusImportSourceMapQueries.CreatedOutcome)
+            .Where(n => prior.TryGet(n.Kind.ToString(), n.SourceId, out var mapping) && mapping.OutcomeState == OctopusImportSourceMapQueries.CreatedOutcome && IsOfRecordedOrigin(mapping, prior))
             .Select(n => OctopusImportPriorMappings.Normalize(n.SourceId))
             .Distinct(StringComparer.Ordinal)
             .Count();
 
     /// <summary>The space records where its imports came from: an installation id or a pinned export fingerprint.</summary>
     public static bool HasRecordedOrigin(OctopusImportPriorMappings prior) => HasId(prior?.InstallationId) || prior?.ExportSourceIds.Count > 0;
+
+    // The live rows the source would link to. Octopus's built-in teams carry the same id on every installation by design, so they link
+    // nothing server-specific.
+    private static IEnumerable<OctopusImportPriorMapping> HitRows(IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
+    {
+        prior ??= OctopusImportPriorMappings.Empty;
+
+        foreach (var node in (nodes ?? []).Where(n => !IsSameOnEveryInstallation(n)))
+            if (prior.TryGet(node.Kind.ToString(), node.SourceId, out var row)) yield return row;
+    }
+
+    private static bool HitsRowsOfAnotherOrigin(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
+        => HitRows(nodes, prior).Any(row => !IsCreatedBy(row, sourceInstallationId, fileExportSourceId) && !IsOfRecordedOrigin(row, prior));
+
+    private static bool IsCreatedBy(OctopusImportPriorMapping row, string installationId, string exportSourceId)
+        => SameId(installationId, row.CreatedInstallationId) || SameId(exportSourceId, row.CreatedExportSourceId);
+
+    // A row of unknown origin predates per-row origins: it is attributed to the space's recorded origin.
+    private static bool IsOfRecordedOrigin(OctopusImportPriorMapping row, OctopusImportPriorMappings prior)
+        => IsOfUnknownOrigin(row) || IsCreatedBy(row, prior.InstallationId, RecordedExportSourceId(prior));
+
+    private static bool IsOfUnknownOrigin(OctopusImportPriorMapping row) => !HasId(row.CreatedInstallationId) && !HasId(row.CreatedExportSourceId);
 
     private static bool IsSameOnEveryInstallation(OctopusResourceNode node) => node.Kind == OctopusResourceKind.Team && OctopusBuiltInTeams.IsBuiltIn(node.SourceId);
 

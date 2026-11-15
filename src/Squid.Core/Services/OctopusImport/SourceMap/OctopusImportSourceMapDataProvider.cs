@@ -13,7 +13,7 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
 
     public const int UpsertBatchSize = 500;
 
-    private const int ParametersPerRow = 8;
+    private const int ParametersPerRow = 10;
 
     public async Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default)
     {
@@ -62,7 +62,7 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
 
     private static OctopusImportPriorMappings ToPriorMappings(IReadOnlyList<OctopusImportSourceMap> rows)
     {
-        var mappings = NewestPerKey(rows).ToDictionary(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId), r => new OctopusImportPriorMapping(r.DestinationId, r.OutcomeState, r.Fingerprint, r.DetailFingerprint));
+        var mappings = NewestPerKey(rows).ToDictionary(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId), r => new OctopusImportPriorMapping(r.DestinationId, r.OutcomeState, r.Fingerprint, r.DetailFingerprint, r.CreatedInstallationId, r.CreatedExportSourceId));
 
         return new OctopusImportPriorMappings(mappings, LatestInstallationId(rows), ExportSourceIds(rows));
     }
@@ -142,7 +142,11 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         yield return Parameter(offset + 5, NpgsqlDbType.Varchar, row.Fingerprint);
         yield return Parameter(offset + 6, NpgsqlDbType.Varchar, row.DetailFingerprint);
         yield return Parameter(offset + 7, NpgsqlDbType.Uuid, sessionId);
+        yield return Parameter(offset + 8, NpgsqlDbType.Varchar, OriginId(row.CreatedInstallationId));
+        yield return Parameter(offset + 9, NpgsqlDbType.Varchar, OriginId(row.CreatedExportSourceId));
     }
+
+    private static string OriginId(string id) => string.IsNullOrWhiteSpace(id) ? null : OctopusImportPriorMappings.Normalize(id);
 
     private static NpgsqlParameter Parameter(int ordinal, NpgsqlDbType type, object value)
         => new($"p{ordinal}", type) { Value = value ?? DBNull.Value };
@@ -152,12 +156,14 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         var values = string.Join(", ", Enumerable.Range(0, rowCount).Select(ValuesTuple));
 
         return $"""
-            INSERT INTO octopus_import_source_map AS m (space_id, source_type, source_id, destination_id, outcome_state, fingerprint, detail_fingerprint, last_session_id)
+            INSERT INTO octopus_import_source_map AS m (space_id, source_type, source_id, destination_id, outcome_state, fingerprint, detail_fingerprint, last_session_id, created_installation_id, created_export_source_id)
             VALUES {values}
             ON CONFLICT (space_id, source_type, source_id) DO UPDATE SET
                 outcome_state = CASE WHEN m.outcome_state IN ({StickyOutcomesSql()}) AND m.destination_id = EXCLUDED.destination_id THEN m.outcome_state ELSE EXCLUDED.outcome_state END,
                 fingerprint = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN COALESCE(EXCLUDED.fingerprint, m.fingerprint) ELSE EXCLUDED.fingerprint END,
                 detail_fingerprint = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN COALESCE(EXCLUDED.detail_fingerprint, m.detail_fingerprint) ELSE EXCLUDED.detail_fingerprint END,
+                created_installation_id = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN m.created_installation_id ELSE EXCLUDED.created_installation_id END,
+                created_export_source_id = CASE WHEN m.destination_id = EXCLUDED.destination_id THEN m.created_export_source_id ELSE EXCLUDED.created_export_source_id END,
                 destination_id = EXCLUDED.destination_id,
                 last_session_id = EXCLUDED.last_session_id,
                 last_modified_date = now()

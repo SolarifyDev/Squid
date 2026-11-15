@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.EntityFrameworkCore;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Helpers;
@@ -162,6 +163,67 @@ public partial class OctopusImportFromServerIntegrationTests
         refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
         (await CountRowsAsync(ScopeTables)).ShouldBe(before, "nothing of the other server is linked to the file's Environments-1");
     }
+
+    // file(Y) → API(X) with no id in common, where X has its own lifecycle phase GUID. Every row X created names X, so: re-running X meets
+    // only its own rows and imports without asking (never refused for good), still without becoming the space's origin; and once X has an
+    // id that collides with Y's, X's own GUIDs back no pairing — refused even with the pairing "confirmed", X's installation never
+    // recorded, nothing of X linked to Y's rows.
+    [Fact]
+    public async Task ServerWithItsOwnStructureRows_RepeatsFreely_ButItsOwnGuidsNeverPairItWithTheFile()
+    {
+        await (await WithheldSecretsServerAsync()).DisposeAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false)));
+        await using var other = ServerWithEnvironments(("Environments-21", "Other STAGING"));
+        other.Installation = "0be1d2c3-0000-4000-8000-0000000000ff";
+        other.Resources["lifecycles"] = new List<Dictionary<string, object>> { new() { ["Id"] = "Lifecycles-77", ["Name"] = "Other lifecycle", ["Slug"] = "other-lifecycle", ["Phases"] = new[] { new Dictionary<string, object> { ["Id"] = OtherServerPhaseGuid, ["Name"] = "STAGING", ["AutomaticDeploymentTargets"] = new[] { "Environments-21" } } } } };
+
+        ShouldHaveSucceeded(await ImportFromServerAsync(other));
+        (await SourceMapAsync()).Where(r => r.SourceType == "LifecyclePhase").Select(r => $"{r.CreatedInstallationId}|{r.CreatedExportSourceId}").Distinct().ShouldBe([$"|{OriginFingerprint}", $"{other.Installation.ToUpperInvariant()}|"], ignoreOrder: true);
+
+        var repeat = await ImportFromServerAsync(other);
+
+        ShouldHaveSucceeded(repeat);
+        repeat.PreviewPlan.FillPairing.ShouldBeNull("only its own rows: nothing to prove");
+        OctopusImportHandlerFlow.AllDiagnostics(repeat.PreviewPlan).ShouldNotContain(d => d.Code.Contains("import_origin"));
+        (await SourceMapAsync()).ShouldNotContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType, "the other server is still not the origin of the file's rows");
+
+        ((List<Dictionary<string, object>>)other.Resources["environments"]).Add(new() { ["Id"] = "Environments-1", ["Name"] = "Other PROD", ["Slug"] = "other-prod" });
+        var before = await CountRowsAsync(ScopeTables);
+
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromServerAsync(other, confirmPairing: true));
+
+        refused.Message.ShouldStartWith("Preview blocked");
+        refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
+        (await CountRowsAsync(ScopeTables)).ShouldBe(before, "nothing of the other server is linked to the file's Environments-1");
+        (await SourceMapAsync()).ShouldNotContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType);
+    }
+
+    // A space with no recorded origin whose rows predate per-row origins (as the backfill can leave a legacy space) is still checked:
+    // the same server's process GUIDs ask for the pairing, an unconfirmed plan is refused, and the confirmed import links and makes the
+    // server the space's origin.
+    [Fact]
+    public async Task NoRecordedOrigin_RowsOfUnknownOrigin_PairingRequiredThenRecorded()
+    {
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(OriginFingerprint)));
+        await Run<SquidDbContext>(db => db.Database.ExecuteSqlRawAsync($"UPDATE octopus_import_source_map SET created_installation_id = NULL, created_export_source_id = NULL; DELETE FROM octopus_import_source_map WHERE source_type IN ('{OctopusImportSourceMapQueries.InstallationSourceType}', '{OctopusImportSourceMapQueries.ExportSourceSourceType}')"));
+        var before = await CountRowsAsync(LinkedTables);
+
+        var (sessionId, preview) = await ServerPreviewAsync(octopus);
+
+        preview.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, Describe(preview));
+        preview.FillPairing.ShouldNotBeNull().MatchingStructureIds.ShouldBe(2);
+        (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK, "rows of unknown origin are never linked unasked");
+
+        preview.FillPairing.Confirmed = true;
+        (await ValidateAsync(sessionId, preview)).Code.ShouldBe(HttpStatusCode.OK);
+        (await ConfirmAsync(sessionId)).Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded);
+
+        (await CountRowsAsync(LinkedTables)).ShouldBe(before, "linked to the file's resources, nothing duplicated");
+        (await SourceMapAsync()).ShouldContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType && r.SourceId.ToUpper() == StubOctopusServer.InstallationId.ToUpper());
+    }
+
+    private const string OtherServerPhaseGuid = "9c1e5a77-0000-4000-8000-0000000000c7";
 
     // A server whose space holds only these environments: no project, group or lifecycle id in common with the tests' export.
     private static StubOctopusServer ServerWithEnvironments(params (string Id, string Name)[] environments)

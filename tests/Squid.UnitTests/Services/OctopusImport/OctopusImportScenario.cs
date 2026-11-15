@@ -38,6 +38,7 @@ internal sealed class OctopusImportScenario
     private OctopusImportHistoryFetchDto _priorImportSession;
     private OctopusImportHistoryFetchDto _sourceImportSession;
     private string _exportSpaceId;
+    private bool _rowsOfUnknownOrigin;
 
     public OctopusImportScenario Environment(string id, string name)
         => Add(id, "StaticDeploymentEnvironment", new { Id = id, Name = name, Slug = name.ToLowerInvariant() });
@@ -183,6 +184,13 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>A source-map row an earlier import of the named origin created (installation id and / or export fingerprint).</summary>
+    public OctopusImportScenario ExistingMappingCreatedBy(OctopusResourceKind kind, string sourceId, int destinationId, string createdInstallationId, string createdExportSourceId = null)
+    {
+        _prior[(kind.ToString(), sourceId)] = new OctopusImportPriorMapping(destinationId, "Created", null, null, createdInstallationId, createdExportSourceId);
+        return this;
+    }
+
     public OctopusImportScenario WithoutMapping(OctopusResourceKind kind, string sourceId)
     {
         _prior.Remove((kind.ToString(), sourceId));
@@ -200,6 +208,19 @@ internal sealed class OctopusImportScenario
     public OctopusImportScenario Installation(string installationId)
     {
         _installationId = installationId;
+        return this;
+    }
+
+    /// <summary>A real export's suffixed space id: every document carries it, so the graph has an export fingerprint (a re-importable source).</summary>
+    public const string SuffixedExportSpaceId = "Spaces-1-00112233445566778899AABBCCDDEEFF";
+
+    /// <summary>
+    /// Source-map rows added without a creating origin stay of unknown origin (recorded before origins were kept per row). Otherwise
+    /// they are created by the space's recorded origin, or — with none recorded — by the incoming source itself (its earlier import).
+    /// </summary>
+    public OctopusImportScenario RowsOfUnknownOrigin()
+    {
+        _rowsOfUnknownOrigin = true;
         return this;
     }
 
@@ -414,7 +435,7 @@ internal sealed class OctopusImportScenario
         destination.Setup(d => d.GetStoredHistoryAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken _) => StoredHistory(releaseIds, taskIds));
 
         var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
-        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(_prior), _priorInstallationId, _priorExportSourceIds));
+        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(PriorRows(graph), _priorInstallationId, _priorExportSourceIds));
 
         var variables = new Mock<IVariableService>();
         variables.Setup(v => v.GetSensitiveVariableSlotsAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyCollection<int> ids, CancellationToken _) => _squidVariables.Where(v => ids.Contains(v.VariableSetId)).ToList());
@@ -427,6 +448,18 @@ internal sealed class OctopusImportScenario
 
         return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, new Lazy<IVariableService>(() => variables.Object), new Lazy<IExternalFeedService>(() => feeds.Object), sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
     }
+
+    private Dictionary<(string Type, string Id), OctopusImportPriorMapping> PriorRows(OctopusResourceGraph graph)
+        => _prior.ToDictionary(pair => pair.Key, pair => _rowsOfUnknownOrigin || HasCreator(pair.Value) ? pair.Value : WithDefaultCreator(pair.Value, graph));
+
+    private OctopusImportPriorMapping WithDefaultCreator(OctopusImportPriorMapping row, OctopusResourceGraph graph)
+    {
+        var recorded = _priorInstallationId != null || _priorExportSourceIds.Count > 0;
+
+        return recorded ? row with { CreatedInstallationId = _priorInstallationId, CreatedExportSourceId = _priorExportSourceIds.FirstOrDefault() } : row with { CreatedInstallationId = graph.InstallationId, CreatedExportSourceId = graph.ExportSourceId };
+    }
+
+    private static bool HasCreator(OctopusImportPriorMapping row) => row.CreatedInstallationId != null || row.CreatedExportSourceId != null;
 
     private OctopusImportStoredHistory StoredHistory(IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds)
     {

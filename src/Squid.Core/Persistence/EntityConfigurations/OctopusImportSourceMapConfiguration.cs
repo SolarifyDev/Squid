@@ -18,6 +18,8 @@ public class OctopusImportSourceMapConfiguration : IEntityTypeConfiguration<Octo
         builder.Property(m => m.OutcomeState).HasMaxLength(16).IsRequired();
         builder.Property(m => m.Fingerprint).HasMaxLength(64);
         builder.Property(m => m.DetailFingerprint).HasMaxLength(64);
+        builder.Property(m => m.CreatedInstallationId).HasMaxLength(200);
+        builder.Property(m => m.CreatedExportSourceId).HasMaxLength(200);
 
         builder.HasIndex(m => new { m.SpaceId, m.SourceType, m.SourceId }).IsUnique();
         builder.HasIndex(m => new { m.SourceType, m.DestinationId });

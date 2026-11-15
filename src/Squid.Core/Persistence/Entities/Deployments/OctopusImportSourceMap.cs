@@ -25,6 +25,10 @@ public class OctopusImportSourceMap : IEntity<long>
 
     public Guid? LastSessionId { get; set; }
 
+    public string CreatedInstallationId { get; set; }
+
+    public string CreatedExportSourceId { get; set; }
+
     public DateTimeOffset CreatedDate { get; set; }
 
     public int CreatedBy { get; set; }

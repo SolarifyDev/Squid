@@ -223,7 +223,7 @@ public class OctopusImportWholeSpaceScopeTests
     [InlineData(UnwritableCase.LibraryWithTenantTagScope, "LibraryVariableSets-9")]
     public async Task RepeatImport_SkippedAgainSameReason_EverythingElseAlreadyImported(UnwritableCase unwritable, string sourceId)
     {
-        var scenario = Unwritable(unwritable, used: false);
+        var scenario = Unwritable(unwritable, used: false).ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId);
         var first = await scenario.PlanAsync();
 
         var second = await scenario.ImportedAs(first).PlanAsync();

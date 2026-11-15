@@ -6,8 +6,9 @@ namespace Squid.Core.Services.OctopusImport;
 
 /// <summary>
 /// The origin of the whole import. Ids like <c>Projects-1</c> repeat across Octopus servers, so a source that would link to rows an
-/// earlier import created must come from the Octopus the space was imported from (<see cref="OctopusImportFillEvidences"/>): another
-/// installation, or no process id in common, refuses the import; matching process ids ask the user to confirm the pairing.
+/// import of another origin created must come from the Octopus the space was imported from (<see cref="OctopusImportFillEvidences"/>):
+/// another installation, no process id in common, or rows a third origin created refuse the import; matching process ids ask the user
+/// to confirm the pairing.
 /// </summary>
 public partial class OctopusImportPreviewPlanner
 {
@@ -20,7 +21,7 @@ public partial class OctopusImportPreviewPlanner
 
         if (!context.NeedsOriginProof) return [];
 
-        if (OctopusImportFillEvidences.RefusesLinking(context.FillEvidence)) return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Unproven(context.FillEvidence.MatchingStructureIds, SourceText(context), RecordedText(context)))];
+        if (OctopusImportFillEvidences.RefusesLinking(context.FillEvidence)) return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(context.FillEvidence, SourceText(context), RecordedText(context)))];
 
         // A fill's own pairing warning already asks for the same confirmation.
         if (context.FillEvidence.State != OctopusImportFillEvidenceState.PairingRequired || FillsNeedPairing(context)) return [];

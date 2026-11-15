@@ -78,13 +78,14 @@ public class OctopusImportOriginPreviewTests
             m => m.ShouldContain("inst-a (server octopus-a.example.test, space Spaces-1, Octopus 2025.4.0)"));
     }
 
-    // Proven by id, a first import, nothing in common, nothing recorded, or another export fingerprint (degrades, see the history
-    // tests): no origin diagnostic at all.
+    // Proven by id, a first import, nothing in common, only rows the source itself created, or another export fingerprint (degrades,
+    // see the history tests): no origin diagnostic at all.
     [Theory]
     [InlineData("same-installation")]
     [InlineData("same-fingerprint")]
     [InlineData("no-overlap")]
     [InlineData("no-recorded-origin")]
+    [InlineData("own-rows-in-another-origins-space")]
     [InlineData("another-fingerprint")]
     public async Task NoProofNeededOrProvenById_NoOriginDiagnostic(string situation)
     {
@@ -94,6 +95,7 @@ public class OctopusImportOriginPreviewTests
             "same-fingerprint" => ImportedSpace(Origin.FileOf, structureMatches: false).ExportedFromSpace($"Spaces-1-{Fingerprint}"),
             "no-overlap" => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorExportSource(Fingerprint).Installation("inst-x"),
             "no-recorded-origin" => ImportedSpace(Origin.ServerOf, structureMatches: false).PriorInstallation(null).ExportedFromSpace($"Spaces-1-{Fingerprint}"),
+            "own-rows-in-another-origins-space" => new OctopusImportScenario().Environment("Environments-7", "Test").ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-7", 307, "inst-x").PriorExportSource(Fingerprint).Installation("inst-x"),
             _ => ImportedSpace(Origin.FileOf, structureMatches: false).ExportedFromSpace($"Spaces-1-{OtherFingerprint}")
         };
 
@@ -102,6 +104,47 @@ public class OctopusImportOriginPreviewTests
         plan.AllDiagnostics.Select(d => d.Code).ShouldNotContain(code => code.Contains("import_origin") || code == OctopusImportPreviewDiagnosticCodes.OctopusInstallationMismatch, Codes(plan));
         plan.Preview.FillPairing.ShouldBeNull();
         plan.BlocksConfirmation.ShouldBeFalse(Codes(plan));
+    }
+
+    // A space with no recorded origin whose rows' creator is unknown (recorded before origins were kept per row) is still checked:
+    // matching GUIDs ask for the pairing, none refuse.
+    [Theory]
+    [InlineData(true, false, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, true)]
+    [InlineData(true, true, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, false)]
+    [InlineData(false, true, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, true)]
+    public async Task NoRecordedOrigin_RowsOfUnknownOrigin_StillNeedProof(bool structureMatches, bool confirmed, string expectedPreviewCode, bool expectBlocked)
+    {
+        var plan = await ImportedSpace(Origin.ServerOf, structureMatches).PriorInstallation(null).RowsOfUnknownOrigin().Installation("inst-x").PlanAsync(pairingConfirmed: confirmed);
+
+        plan.Preview.Diagnostics.ShouldContain(d => d.Code == expectedPreviewCode, Codes(plan));
+        plan.BlocksConfirmation.ShouldBe(expectBlocked, Codes(plan));
+    }
+
+    // Server X, imported earlier into file Y's space with no id in common, created its own process GUIDs there. Those prove nothing
+    // about Y: X meeting Y's rows is refused even with the pairing "confirmed", and no pairing is offered.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SourcesOwnStructureRows_NeverBackAPairingWithTheRecordedOrigin(bool confirmed)
+    {
+        var plan = await ImportedSpace(Origin.FileOf, structureMatches: false).ExistingMappingCreatedBy(OctopusResourceKind.DeploymentAction, ActionGuid, 701, "inst-x").Incoming(Origin.ServerOf).PlanAsync(pairingConfirmed: confirmed);
+
+        plan.Preview.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker, Codes(plan));
+        plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, Codes(plan));
+        plan.Preview.FillPairing.ShouldBeNull();
+    }
+
+    // Even the recorded installation itself never links to a row a third origin created in the space.
+    [Fact]
+    public async Task ProvenSource_RowOfAThirdOrigin_RefusedNamingIt()
+    {
+        var plan = await ImportedSpace(Origin.ServerOf, structureMatches: false).ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-1", 301, "inst-third").Installation("inst-a").PlanAsync(pairingConfirmed: true);
+
+        plan.Preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).ShouldSatisfyAllConditions(
+            d => d.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker),
+            d => d.Message.ShouldContain("another Octopus source"),
+            d => d.Message.ShouldContain("nothing is linked or written"));
+        plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, Codes(plan));
     }
 
     // ── Scenario ───────────────────────────────────────────────────────────

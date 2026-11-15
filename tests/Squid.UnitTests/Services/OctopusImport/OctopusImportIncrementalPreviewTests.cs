@@ -112,6 +112,7 @@ public class OctopusImportIncrementalPreviewTests
             .Environment("Environments-1", "Production")
             .Project("Projects-1", "Web", [], [OctopusImportScenario.Var("Variables-1", "Greeting", "hello"), OctopusImportScenario.Secret("Variables-2", "Api.Key", null)], OctopusImportScenario.ScriptAction("Actions-1", "echo hello"), OctopusImportScenario.ScriptAction("Actions-2", "echo added"))
             .Channel("Channels-1", "Projects-1", "Main")
+            .ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId)
             .ImportedAs(first);
 
         var plan = await scenario.PlanAsync();
@@ -182,7 +183,7 @@ public class OctopusImportIncrementalPreviewTests
         var first = await History(notes: "first notes", state: "Executing", finished: false).PlanAsync();
         var scenario = History(notes: "edited in Octopus").ImportedAs(first).PriorExportSource(PinnedFingerprint);
 
-        if (fileFingerprint != null) scenario.ExportedFromSpace($"Spaces-1-{fileFingerprint}");
+        scenario.ExportedFromSpace(fileFingerprint == null ? null : $"Spaces-1-{fileFingerprint}");
 
         var plan = await scenario.PlanAsync();
 
@@ -346,7 +347,8 @@ public class OctopusImportIncrementalPreviewTests
             .Channel("Channels-1", "Projects-1", "Main")
             .Release("Releases-1", "Projects-1", "Channels-1", "1.0.0", notes)
             .Deployment("Deployments-1", "Projects-1", "Channels-1", "Environments-1", "Releases-1", "ServerTasks-1")
-            .ServerTaskDocument(task);
+            .ServerTaskDocument(task)
+            .ExportedFromSpace(OctopusImportScenario.SuffixedExportSpaceId);
     }
 
     // The same space shaped as an export file, or as the server source stages it (variables and process through the real normaliser).

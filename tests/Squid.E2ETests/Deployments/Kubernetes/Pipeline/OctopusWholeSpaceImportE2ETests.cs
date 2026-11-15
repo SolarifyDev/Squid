@@ -127,12 +127,13 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
         return (nativeTaskId, seeded);
     }
 
+    // Rows an earlier import of the same Octopus server created (they name its installation, as every confirmation does).
     private Task RecordImportedBeforeAsync(int projectId, int channelId, int environmentId)
         => _fixture.Run<IOctopusImportSourceMapDataProvider>(provider => provider.UpsertAsync(
         [
-            new OctopusImportSourceMapRow(1, "Project", "Projects-1", projectId, OctopusImportSourceMapQueries.CreatedOutcome),
-            new OctopusImportSourceMapRow(1, "Channel", "Channels-1", channelId, OctopusImportSourceMapQueries.CreatedOutcome),
-            new OctopusImportSourceMapRow(1, "Environment", "Environments-1", environmentId, OctopusImportSourceMapQueries.CreatedOutcome)
+            new OctopusImportSourceMapRow(1, "Project", "Projects-1", projectId, OctopusImportSourceMapQueries.CreatedOutcome) { CreatedInstallationId = StubOctopusServer.InstallationId },
+            new OctopusImportSourceMapRow(1, "Channel", "Channels-1", channelId, OctopusImportSourceMapQueries.CreatedOutcome) { CreatedInstallationId = StubOctopusServer.InstallationId },
+            new OctopusImportSourceMapRow(1, "Environment", "Environments-1", environmentId, OctopusImportSourceMapQueries.CreatedOutcome) { CreatedInstallationId = StubOctopusServer.InstallationId }
         ], Guid.NewGuid()));
 
     // ── Queries ──────────────────────────────────────────────────────────
