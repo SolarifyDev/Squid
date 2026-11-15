@@ -147,6 +147,60 @@ public class OctopusImportOriginPreviewTests
         plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, Codes(plan));
     }
 
+    // A refusal over rows a third origin created names that origin too (with what its import session recorded), in the preview's
+    // diagnostic, its verdict and the validation re-check alike; the two origins it is neither of stay named as before.
+    [Fact]
+    public async Task RowsOfAThirdOrigin_RefusalNamesTheOriginThatCreatedThem()
+    {
+        var plan = await ImportedSpace(Origin.FileOf, structureMatches: true).ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-1", 301, "inst-z").ImportSession("inst-z", "octopus-z.example.test", "Spaces-3", "2025.2.0").Incoming(Origin.ServerOf).PlanAsync();
+        const string creator = "Octopus installation inst-z (server octopus-z.example.test, space Spaces-3, Octopus 2025.2.0)";
+
+        plan.Preview.Origin.ShouldNotBeNull(Codes(plan)).ShouldSatisfyAllConditions(
+            o => o.Basis.ShouldBe("other-origin-rows"),
+            o => o.Creators.ShouldBe([creator]),
+            o => o.MoreCreators.ShouldBe(0));
+        plan.Preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).Message.ShouldSatisfyAllConditions(
+            m => m.ShouldContain($"Those resources were created by {creator}."),
+            m => m.ShouldContain("Octopus installation inst-x"),
+            m => m.ShouldContain($"export file with fingerprint {Fingerprint}"));
+        plan.Validation.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).Message.ShouldContain($"Those resources were created by {creator}.");
+    }
+
+    // More than three third origins: three named, the rest counted, in a fixed order.
+    [Fact]
+    public async Task RowsOfManyThirdOrigins_ThreeNamedTheRestCounted()
+    {
+        var scenario = ImportedSpace(Origin.ServerOf, structureMatches: false).Installation("inst-a");
+
+        foreach (var i in Enumerable.Range(1, 5)) scenario.Environment($"Environments-{10 + i}", $"E{i}").ExistingMappingCreatedBy(OctopusResourceKind.Environment, $"Environments-{10 + i}", 310 + i, $"inst-{6 - i}");
+
+        var plan = await scenario.PlanAsync();
+
+        plan.Preview.Origin.ShouldNotBeNull(Codes(plan)).ShouldSatisfyAllConditions(
+            o => o.Creators.ShouldBe(["Octopus installation inst-1", "Octopus installation inst-2", "Octopus installation inst-3"]),
+            o => o.MoreCreators.ShouldBe(2));
+        plan.Preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).Message.ShouldContain("created by Octopus installation inst-1, Octopus installation inst-2, Octopus installation inst-3 and 2 more.");
+    }
+
+    // Only a refusal over a third origin's rows has creators to name.
+    [Theory]
+    [InlineData("unproven")]
+    [InlineData("pairing")]
+    [InlineData("installation-mismatch")]
+    public async Task Origin_NoCreatorsUnlessRefusedOverAThirdOriginsRows(string situation)
+    {
+        var scenario = situation switch
+        {
+            "unproven" => ImportedSpace(Origin.FileOf, structureMatches: false).Incoming(Origin.ServerOf),
+            "pairing" => ImportedSpace(Origin.FileOf, structureMatches: true).Incoming(Origin.ServerOf),
+            _ => ImportedSpace(Origin.ServerOf, structureMatches: true).Installation("inst-b")
+        };
+
+        var plan = await scenario.PlanAsync();
+
+        plan.Preview.Origin.ShouldNotBeNull(Codes(plan)).ShouldSatisfyAllConditions(o => o.Creators.ShouldBeNull(), o => o.MoreCreators.ShouldBe(0));
+    }
+
     // The preview carries the origin verdict the page renders: refused (naming both origins), pairing required (with the GUIDs backing
     // it) or proven by id (with its basis) — whenever the import would link to rows an import of another origin created.
     [Theory]

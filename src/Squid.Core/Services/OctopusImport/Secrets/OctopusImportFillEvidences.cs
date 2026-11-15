@@ -125,8 +125,25 @@ public static class OctopusImportFillEvidences
             if (prior.TryGet(node.Kind.ToString(), node.SourceId, out var row)) yield return row;
     }
 
+    /// <summary>
+    /// The origins — neither the source nor the space's recorded one — that created rows the source would link to: each once, named by
+    /// its installation when it has one, else by its export fingerprint, ordered by that id.
+    /// </summary>
+    public static IReadOnlyList<OctopusImportRowCreator> OtherOriginCreators(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
+        => RowsOfAnotherOrigin(sourceInstallationId, fileExportSourceId, nodes, prior)
+            .Select(row => HasId(row.CreatedInstallationId) ? new OctopusImportRowCreator(row.CreatedInstallationId.Trim(), null) : new OctopusImportRowCreator(null, row.CreatedExportSourceId.Trim()))
+            .GroupBy(CreatorKey, StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+
     private static bool HitsRowsOfAnotherOrigin(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
-        => HitRows(nodes, prior).Any(row => !IsCreatedBy(row, sourceInstallationId, fileExportSourceId) && !IsOfRecordedOrigin(row, prior));
+        => RowsOfAnotherOrigin(sourceInstallationId, fileExportSourceId, nodes, prior).Any();
+
+    private static IEnumerable<OctopusImportPriorMapping> RowsOfAnotherOrigin(string sourceInstallationId, string fileExportSourceId, IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
+        => HitRows(nodes, prior).Where(row => !IsCreatedBy(row, sourceInstallationId, fileExportSourceId) && !IsOfRecordedOrigin(row, prior ?? OctopusImportPriorMappings.Empty));
+
+    private static string CreatorKey(OctopusImportRowCreator creator) => OctopusImportPriorMappings.Normalize(creator.InstallationId ?? creator.ExportSourceId);
 
     private static bool IsCreatedBy(OctopusImportPriorMapping row, string installationId, string exportSourceId)
         => SameId(installationId, row.CreatedInstallationId) || SameId(exportSourceId, row.CreatedExportSourceId);

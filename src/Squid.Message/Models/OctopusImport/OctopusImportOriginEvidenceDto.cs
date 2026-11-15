@@ -26,4 +26,13 @@ public class OctopusImportOriginEvidenceDto
 
     /// <summary>What the space was imported from: its recorded installation and / or pinned export fingerprint.</summary>
     public string Recorded { get; set; }
+
+    /// <summary>
+    /// For <c>other-origin-rows</c>: the origins that created the resources this import would link to (at most three, worded like
+    /// <see cref="Source"/>); null otherwise.
+    /// </summary>
+    public List<string> Creators { get; set; }
+
+    /// <summary>How many more such origins there are beyond <see cref="Creators"/>.</summary>
+    public int MoreCreators { get; set; }
 }

@@ -43,10 +43,11 @@ public class OctopusImportConflictDiscoveryService(
         var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
         var origin = await LoadRecordedOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var sourceOrigin = await LoadSourceOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var creatorOrigins = await LoadCreatorOriginsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var destinationVariables = await LoadVariablesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, Destinations = destinationResources, StoredHistory = storedHistory };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, CreatorOrigins = creatorOrigins, Destinations = destinationResources, StoredHistory = storedHistory };
     }
 
     // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
@@ -90,6 +91,19 @@ public class OctopusImportConflictDiscoveryService(
         if (string.IsNullOrWhiteSpace(graph.InstallationId) || prior.Mappings.Count == 0 || SameInstallation(graph.InstallationId, prior.InstallationId)) return null;
 
         return await LoadOriginAsync(destinationSpaceId, graph.InstallationId, ct).ConfigureAwait(false);
+    }
+
+    // Rows a third origin created, which the source would link to, refuse the import: the installations that created them (those a
+    // refusal names) show the server they were read from.
+    private async Task<IReadOnlyDictionary<string, OctopusImportInstallationOrigin>> LoadCreatorOriginsAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        var creators = OctopusImportFillEvidences.OtherOriginCreators(graph.InstallationId, graph.ExportSourceId, graph.Resources, prior).Take(OctopusImportOriginMessages.NamedCreatorLimit);
+        var origins = new Dictionary<string, OctopusImportInstallationOrigin>(StringComparer.Ordinal);
+
+        foreach (var installationId in creators.Select(c => c.InstallationId).Where(id => id != null))
+            if (await LoadOriginAsync(destinationSpaceId, installationId, ct).ConfigureAwait(false) is { } origin) origins[OctopusImportPriorMappings.Normalize(installationId)] = origin;
+
+        return origins;
     }
 
     private async Task<OctopusImportInstallationOrigin> LoadOriginAsync(int destinationSpaceId, string installationId, CancellationToken ct)

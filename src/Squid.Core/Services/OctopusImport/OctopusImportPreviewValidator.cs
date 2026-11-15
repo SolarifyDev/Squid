@@ -110,10 +110,13 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, prior, previewPlan.FillPairing?.Confirmed == true);
 
         if (OctopusImportFillEvidences.RefusesLinking(evidence))
-            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(evidence, OctopusImportOriginMessages.Source(conflicts.HistoryInstallationId, conflicts.ExportSourceId, conflicts.SourceOrigin), OctopusImportOriginMessages.Recorded(prior, conflicts.InstallationOrigin))));
+            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(evidence, OctopusImportOriginMessages.Source(conflicts.HistoryInstallationId, conflicts.ExportSourceId, conflicts.SourceOrigin), OctopusImportOriginMessages.Recorded(prior, conflicts.InstallationOrigin), OtherOriginCreators(graph, conflicts))));
         else if (evidence.State == OctopusImportFillEvidenceState.PairingRequired)
             result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed, OctopusImportOriginMessages.PairingUnconfirmed));
     }
+
+    private static IReadOnlyList<string> OtherOriginCreators(OctopusResourceGraph graph, OctopusImportConflictDiscoveryResult conflicts)
+        => OctopusImportOriginMessages.Creators(OctopusImportFillEvidences.OtherOriginCreators(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, conflicts.PriorMappings), conflicts.CreatorOrigins);
 
     private static OctopusImportDiagnosticDto PlanDiagnostic(string code, string message)
         => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = code, Message = message });

@@ -35,12 +35,41 @@ public static class OctopusImportOriginMessages
     public static string InstallationMismatch(string source, string recorded)
         => $"This source is {source}, but this space was imported from {recorded}. One Squid space holds the history of one Octopus installation, so nothing is linked or written. Import this server into another space.";
 
-    /// <summary>Why linking is refused: rows a third origin created, or nothing proving the source is the space's recorded origin.</summary>
-    public static string Refused(OctopusImportFillEvidence evidence, string source, string recorded)
-        => evidence?.Basis == OctopusImportFillEvidences.OtherOriginRowsBasis ? OtherOriginRows(source, recorded) : Unproven(evidence?.MatchingStructureIds ?? 0, source, recorded);
+    /// <summary>How many origins that created rows a refusal is about are named; the rest are counted.</summary>
+    public const int NamedCreatorLimit = 3;
 
-    public static string OtherOriginRows(string source, string recorded)
-        => $"This import would link to resources that an import of another Octopus source created in this space: neither this source ({source}) nor the one this space was imported from ({recorded}). {CollidingIds}, so nothing is linked or written. Import into another space.";
+    /// <summary>
+    /// Why linking is refused: rows a third origin created (named by <paramref name="creators"/>, see <see cref="Creators"/>), or nothing
+    /// proving the source is the space's recorded origin.
+    /// </summary>
+    public static string Refused(OctopusImportFillEvidence evidence, string source, string recorded, IReadOnlyList<string> creators = null)
+        => evidence?.Basis == OctopusImportFillEvidences.OtherOriginRowsBasis ? OtherOriginRows(source, recorded, creators) : Unproven(evidence?.MatchingStructureIds ?? 0, source, recorded);
+
+    public static string OtherOriginRows(string source, string recorded, IReadOnlyList<string> creators = null)
+        => $"This import would link to resources that an import of another Octopus source created in this space: neither this source ({source}) nor the one this space was imported from ({recorded}).{CreatedBy(creators)} {CollidingIds}, so nothing is linked or written. Import into another space.";
+
+    /// <summary>
+    /// The origins that created rows of a third origin, worded like <see cref="Source"/>: an installation with the server, space and
+    /// version its import session recorded (<paramref name="origins"/>, keyed by normalized installation id), or a file by its fingerprint.
+    /// </summary>
+    public static IReadOnlyList<string> Creators(IEnumerable<OctopusImportRowCreator> creators, IReadOnlyDictionary<string, OctopusImportInstallationOrigin> origins)
+        => (creators ?? []).Select(c => Source(c.InstallationId, c.ExportSourceId, RecordedOriginOf(c.InstallationId, origins))).ToList();
+
+    /// <summary>"a, b and c" — or "a, b, c and 2 more" beyond <see cref="NamedCreatorLimit"/>.</summary>
+    public static string CreatorsText(IReadOnlyList<string> creators)
+    {
+        var named = creators.Take(NamedCreatorLimit).ToList();
+        var more = creators.Count - named.Count;
+
+        if (more > 0) return $"{string.Join(", ", named)} and {more} more";
+
+        return named.Count == 1 ? named[0] : $"{string.Join(", ", named.Take(named.Count - 1))} and {named[^1]}";
+    }
+
+    private static string CreatedBy(IReadOnlyList<string> creators) => creators is { Count: > 0 } ? $" Those resources were created by {CreatorsText(creators)}." : string.Empty;
+
+    private static OctopusImportInstallationOrigin RecordedOriginOf(string installationId, IReadOnlyDictionary<string, OctopusImportInstallationOrigin> origins)
+        => string.IsNullOrWhiteSpace(installationId) || origins == null ? null : origins.GetValueOrDefault(OctopusImportPriorMappings.Normalize(installationId));
 
     public static string Unproven(int matchingStructureIds, string source, string recorded)
         => $"This import would link to resources an earlier import created in this space, but nothing proves it comes from the same Octopus server: this source is {source}, and the space was imported from {recorded}. {CollidingIds}, and {(matchingStructureIds == 0 ? "none" : matchingStructureIds.ToString())} of this source's process step, action and lifecycle phase ids were imported into this space, so nothing is linked or written. Import into another space, or import the Octopus server or export file this space came from.";

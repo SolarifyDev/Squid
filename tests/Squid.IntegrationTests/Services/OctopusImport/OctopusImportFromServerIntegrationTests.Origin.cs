@@ -60,6 +60,33 @@ public partial class OctopusImportFromServerIntegrationTests
             o => o.Recorded.ShouldContain($"export file with fingerprint {OriginFingerprint}", Case.Insensitive));
     }
 
+    // file(F) → resources server Z created → API(Y): Y's process GUIDs match F's, but it would link to resources Z created — refused,
+    // naming Z with the server its own import session read, beside Y and F.
+    [Fact]
+    public async Task RowsAThirdServerCreated_PreviewRefused_NamesTheServerThatCreatedThem()
+    {
+        const string thirdInstallation = "0be1d2c3-0000-4000-8000-0000000000ee";
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(OriginFingerprint)));
+        await using var third = StubOctopusServer.Start(ApiKey).WithWithheldSecrets();
+        third.Installation = thirdInstallation;
+        await ServerPreviewAsync(third);
+        await Run<SquidDbContext>(db => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE octopus_import_source_map SET created_installation_id = {thirdInstallation}, created_export_source_id = NULL WHERE upper(source_type) = 'ENVIRONMENT'"));
+        var creator = $"Octopus installation {thirdInstallation} (server {third.BaseUri.Authority}";
+
+        var (_, preview) = await ServerPreviewAsync(octopus);
+
+        preview.HasBlockers.ShouldBeTrue(Describe(preview));
+        preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.Unproven),
+            o => o.Basis.ShouldBe("other-origin-rows"),
+            o => o.Creators.ShouldHaveSingleItem().ShouldStartWith(creator, Case.Insensitive),
+            o => o.MoreCreators.ShouldBe(0),
+            o => o.Source.ShouldContain(StubOctopusServer.InstallationId, Case.Insensitive),
+            o => o.Recorded.ShouldContain($"export file with fingerprint {OriginFingerprint}", Case.Insensitive));
+        preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).Message.ShouldContain($"Those resources were created by {creator}", Case.Insensitive);
+    }
+
     // API(X) → API(X'): two installations of different servers sharing every id — one Squid space holds one installation's history.
     [Fact]
     public async Task ApiOfAnotherInstallation_Refused_NamesBothServers()

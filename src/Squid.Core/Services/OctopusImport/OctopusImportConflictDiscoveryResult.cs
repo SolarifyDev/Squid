@@ -53,6 +53,12 @@ public sealed record OctopusImportConflictDiscoveryResult(
     /// <summary>The server, space and version the incoming source was read from (an Octopus server read into a space of another origin); null otherwise.</summary>
     public OctopusImportInstallationOrigin SourceOrigin { get; init; }
 
+    /// <summary>
+    /// The server, space and version recorded by the import sessions of the installations that created rows of a third origin the source
+    /// would link to (keyed by normalized installation id; the first <c>NamedCreatorLimit</c> only), so a refusal names them.
+    /// </summary>
+    public IReadOnlyDictionary<string, OctopusImportInstallationOrigin> CreatorOrigins { get; init; } = new Dictionary<string, OctopusImportInstallationOrigin>();
+
     /// <summary>The Squid resources of the destination space discovery matched against (projects name the destination of each project's changes).</summary>
     public IReadOnlyList<OctopusImportDestinationResource> Destinations { get; init; } = [];
 

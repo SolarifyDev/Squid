@@ -49,6 +49,7 @@ public partial class OctopusImportPreviewPlanner
         private IReadOnlyDictionary<string, int> _variableKeyCounts;
         private OctopusImportFillEvidence _fillEvidence;
         private bool? _needsOriginProof;
+        private IReadOnlyList<string> _otherOriginCreators;
 
         public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(Nodes, Prior);
 
@@ -57,6 +58,9 @@ public partial class OctopusImportPreviewPlanner
 
         /// <summary>The source would link to rows an import of another origin created: it must prove the same Octopus.</summary>
         public bool NeedsOriginProof => _needsOriginProof ??= OctopusImportFillEvidences.NeedsOriginProof(Conflicts.HistoryInstallationId, Conflicts.ExportSourceId, Nodes, Prior);
+
+        /// <summary>The origins (worded for messages) that created rows of a third origin the source would link to.</summary>
+        public IReadOnlyList<string> OtherOriginCreators => _otherOriginCreators ??= OctopusImportOriginMessages.Creators(OctopusImportFillEvidences.OtherOriginCreators(Conflicts.HistoryInstallationId, Conflicts.ExportSourceId, Nodes, Prior), Conflicts.CreatorOrigins);
 
         public OctopusImportResourceResultDto Record(OctopusImportResourceResultDto preview)
         {

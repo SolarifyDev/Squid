@@ -89,6 +89,28 @@ public class OctopusImportOriginEvidenceTests
         evidence.Basis.ShouldBe(expectedBasis);
     }
 
+    // The origins that created the rows a refusal is about: neither the source nor the recorded origin (nor unknown, which is attributed
+    // to the recorded one); each named once — by installation when it has one, else by fingerprint — in a fixed order.
+    [Fact]
+    public void OtherOriginCreators_EachThirdOriginOnceInAFixedOrder()
+    {
+        var prior = Prior("inst-a", [], ("Project", "Projects-1", "inst-z", null), ("Project", "Projects-2", "INST-Z", FingerprintB), ("Project", "Projects-3", null, FingerprintB), ("Project", "Projects-4", "inst-c", null),
+            ("Project", "Projects-5", "inst-a", null), ("Project", "Projects-6", "inst-x", null), ("Project", "Projects-7", null, null), ("Project", "Projects-8", "inst-q", null));
+        var nodes = Enumerable.Range(1, 7).Select(i => Node($"Projects-{i}", OctopusResourceKind.Project)).ToList();
+
+        var creators = OctopusImportFillEvidences.OtherOriginCreators("inst-x", null, nodes, prior);
+
+        creators.ShouldBe([new OctopusImportRowCreator(null, FingerprintB), new OctopusImportRowCreator("inst-c", null), new OctopusImportRowCreator("inst-z", null)]);
+    }
+
+    [Fact]
+    public void OtherOriginCreators_NoneWhenTheSourceMeetsOnlyItsOwnOrTheRecordedOriginsRows()
+    {
+        var prior = Prior("inst-a", [], ("Project", "Projects-1", "inst-a", null), ("Project", "Projects-2", "inst-x", null), ("Project", "Projects-3", null, null));
+
+        OctopusImportFillEvidences.OtherOriginCreators("inst-x", null, [Node("Projects-1", OctopusResourceKind.Project), Node("Projects-2", OctopusResourceKind.Project), Node("Projects-3", OctopusResourceKind.Project)], prior).ShouldBeEmpty();
+    }
+
     [Theory]
     [InlineData(null, null, true)]
     [InlineData("inst-a", null, false)]

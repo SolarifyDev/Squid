@@ -21,7 +21,7 @@ public partial class OctopusImportPreviewPlanner
 
         if (!context.NeedsOriginProof) return [];
 
-        if (OctopusImportFillEvidences.RefusesLinking(context.FillEvidence)) return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(context.FillEvidence, SourceText(context), RecordedText(context)))];
+        if (OctopusImportFillEvidences.RefusesLinking(context.FillEvidence)) return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Refused(context.FillEvidence, SourceText(context), RecordedText(context), context.OtherOriginCreators))];
 
         // A fill's own pairing warning already asks for the same confirmation.
         if (context.FillEvidence.State != OctopusImportFillEvidenceState.PairingRequired || FillsNeedPairing(context)) return [];
@@ -40,7 +40,9 @@ public partial class OctopusImportPreviewPlanner
 
         if (OctopusImportFillEvidences.IsAnotherExportSource(evidence)) return null;
 
-        return new OctopusImportOriginEvidenceDto { State = evidence.State, Basis = evidence.Basis, MatchingStructureIds = evidence.MatchingStructureIds, Source = SourceText(context), Recorded = RecordedText(context) };
+        var creators = evidence.Basis == OctopusImportFillEvidences.OtherOriginRowsBasis ? context.OtherOriginCreators : null;
+
+        return new OctopusImportOriginEvidenceDto { State = evidence.State, Basis = evidence.Basis, MatchingStructureIds = evidence.MatchingStructureIds, Source = SourceText(context), Recorded = RecordedText(context), Creators = creators?.Take(OctopusImportOriginMessages.NamedCreatorLimit).ToList(), MoreCreators = Math.Max(0, (creators?.Count ?? 0) - OctopusImportOriginMessages.NamedCreatorLimit) };
     }
 
     private static string SourceText(PreviewPlanningContext context)
