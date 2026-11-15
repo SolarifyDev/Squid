@@ -746,7 +746,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         IOctopusExportSecretsAccessor secretsAccessor = null,
         Squid.Core.Services.Deployments.Variables.IVariableService variableService = null,
         Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedService externalFeedService = null,
-        string graphInstallationId = null)
+        string graphInstallationId = InstallationId)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,

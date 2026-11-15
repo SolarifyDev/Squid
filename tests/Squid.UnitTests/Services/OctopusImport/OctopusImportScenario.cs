@@ -36,6 +36,7 @@ internal sealed class OctopusImportScenario
     private string _installationId;
     private string _priorInstallationId;
     private OctopusImportHistoryFetchDto _priorImportSession;
+    private OctopusImportHistoryFetchDto _sourceImportSession;
     private string _exportSpaceId;
 
     public OctopusImportScenario Environment(string id, string name)
@@ -255,6 +256,13 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>The import session reading the incoming source from an Octopus server: the server, space and version it read.</summary>
+    public OctopusImportScenario SourceImportSession(string serverHost, string octopusSpaceId, string octopusVersion)
+    {
+        _sourceImportSession = new OctopusImportHistoryFetchDto { InstallationId = _installationId, ServerHost = serverHost, OctopusSpaceId = octopusSpaceId, OctopusVersion = octopusVersion };
+        return this;
+    }
+
     public OctopusImportScenario SquidFeed(int feedId, string username, bool hasPassword)
     {
         _squidFeeds.Add(new ExternalFeedCredentialSlot(feedId, username, hasPassword));
@@ -415,7 +423,7 @@ internal sealed class OctopusImportScenario
         feeds.Setup(f => f.GetCredentialSlotsAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyCollection<int> ids, CancellationToken _) => _squidFeeds.Where(f => ids.Contains(f.FeedId)).ToList());
 
         var sessions = new Mock<IOctopusImportSessionDataProvider>();
-        sessions.Setup(s => s.GetLatestHistoryFetchAsync(SpaceId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, string installationId, CancellationToken _) => string.Equals(installationId, _priorImportSession?.InstallationId, StringComparison.OrdinalIgnoreCase) ? _priorImportSession : null);
+        sessions.Setup(s => s.GetLatestHistoryFetchAsync(SpaceId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, string installationId, CancellationToken _) => new[] { _priorImportSession, _sourceImportSession }.FirstOrDefault(fetch => fetch != null && string.Equals(installationId, fetch.InstallationId, StringComparison.OrdinalIgnoreCase)));
 
         return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, new Lazy<IVariableService>(() => variables.Object), new Lazy<IExternalFeedService>(() => feeds.Object), sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
     }

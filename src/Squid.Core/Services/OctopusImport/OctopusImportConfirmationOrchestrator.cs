@@ -217,6 +217,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
         try
         {
+            EnsureOriginStillProven(execution);
+
             await LockCreatedLibraryNamesAsync(execution, ct).ConfigureAwait(false);
 
             foreach (var resource in request.DependencyPlan.OrderedResources)

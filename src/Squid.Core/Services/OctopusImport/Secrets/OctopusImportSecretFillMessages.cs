@@ -66,17 +66,7 @@ public static class OctopusImportSecretFillMessages
             : $"This {What(candidate.Kind)} is missing in {Where(candidate)}, but nothing proves this export file comes from the Octopus installation this space was imported from: no matching installation id, export fingerprint, or process step, action or lifecycle phase ids. Missing values are never filled from another installation's file; import the export file of the same Octopus server.";
 
     public static string PairingRequired(int matchingIds, string installationId, OctopusImportInstallationOrigin origin, int fills)
-        => $"This export file carries no proof of its Octopus installation, but {matchingIds} of its process step, action and lifecycle phase ids were imported into this space from Octopus installation {installationId ?? "(not recorded)"}{OriginText(origin)}. Confirm that the file comes from that installation to fill or settle {fills} missing value(s); without the confirmation the import is refused.";
-
-    // "server octopus.example.com, space Spaces-1, Octopus 2026.1" — whatever the import session recorded.
-    private static string OriginText(OctopusImportInstallationOrigin origin)
-    {
-        var parts = new[] { Part("server", origin?.ServerHost), Part("space", origin?.OctopusSpaceId), Part("Octopus", origin?.OctopusVersion) }.Where(p => p != null).ToList();
-
-        return parts.Count == 0 ? string.Empty : $" ({string.Join(", ", parts)})";
-    }
-
-    private static string Part(string label, string value) => string.IsNullOrWhiteSpace(value) ? null : $"{label} {value}";
+        => $"This export file carries no proof of its Octopus installation, but {matchingIds} of its process step, action and lifecycle phase ids were imported into this space from Octopus installation {installationId ?? "(not recorded)"}{OctopusImportOriginMessages.OriginText(origin)}. Confirm that the file comes from that installation to fill or settle {fills} missing value(s); without the confirmation the import is refused.";
 
     public const string PairingUnconfirmed = "This import fills missing values from an export file whose Octopus installation is not proven. Confirm the pairing shown in the preview (the file comes from the Octopus installation this space was imported from), or import without this file.";
 

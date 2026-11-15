@@ -26,6 +26,9 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string ChangedSinceLastImport = "octopus.preview.changed_since_last_import";
     public const string DefaultChannelNotRemapped = "octopus.preview.default_channel_not_remapped";
     public const string OctopusInstallationMismatch = "octopus.preview.octopus_installation_mismatch";
+    public const string ImportOriginUnproven = "octopus.preview.import_origin_unproven";
+    public const string ImportOriginPairingRequired = "octopus.preview.import_origin_pairing_required";
+    public const string ImportOriginPairingUnconfirmed = "octopus.validation.import_origin_pairing_unconfirmed";
     public const string ReleaseVersionExistsInSquid = "octopus.preview.release_version_exists_in_squid";
     public const string HistoryOwnerNotImported = "octopus.preview.history_owner_not_imported";
     public const string DeploymentTaskMissing = "octopus.preview.deployment_task_missing";

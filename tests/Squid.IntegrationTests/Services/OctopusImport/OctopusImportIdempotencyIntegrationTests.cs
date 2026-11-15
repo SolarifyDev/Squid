@@ -123,6 +123,7 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { ExportSuffix = OtherExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server B notes" }));
 
         snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").Select(r => $"{r.SourceType} {r.PreviewAction} {r.SkipReason?.Code}").ShouldBe(new[] { "Release", "Deployment", "ServerTask" }.Select(t => $"{t} {OctopusImportPreviewAction.Skip} {OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource}"), ignoreOrder: true);
+        snapshot.PreviewPlan.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven || d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, "another export fingerprint degrades (history skipped), it is never refused or asked about");
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
         (await CountRowsAsync()).Where(pair => pair.Key != "octopus_import_source_map").ShouldBe(before.Where(pair => pair.Key != "octopus_import_source_map"));
         (await SingleAsync<Release>()).ReleaseNote.ShouldBe("Server A notes");

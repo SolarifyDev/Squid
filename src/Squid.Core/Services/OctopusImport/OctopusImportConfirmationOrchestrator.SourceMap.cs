@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -18,6 +19,27 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         await _sourceMapDataProvider.AcquireSpaceLockAsync(spaceId, ct).ConfigureAwait(false);
 
         return await _sourceMapDataProvider.LoadAsync(spaceId, ct).ConfigureAwait(false);
+    }
+
+    // Validation ran before the space lock: another import may have recorded an origin (or rows) since. Re-checked against the locked
+    // prior mappings with the same evidence, so a source of another Octopus never links to them; a forged pairing confirmation is
+    // re-evaluated too (it proves nothing without matching process ids).
+    private static void EnsureOriginStillProven(ConfirmationExecutionContext execution)
+    {
+        var graph = execution.Request.Graph;
+        var anotherInstallation = OctopusImportFillEvidences.IsAnotherInstallation(graph.InstallationId, execution.Prior);
+
+        if (!anotherInstallation && !OctopusImportFillEvidences.NeedsOriginProof(graph.Resources, execution.Prior)) return;
+
+        var evidence = FillEvidence(execution);
+
+        if (!OctopusImportFillEvidences.RefusesLinking(evidence) && evidence.State != OctopusImportFillEvidenceState.PairingRequired) return;
+
+        var diagnostic = Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.StillUnproven);
+
+        execution.Result.Diagnostics.Add(diagnostic);
+
+        throw new OctopusImportConfirmationException("The import's Octopus origin is not proven.");
     }
 
     private async Task PersistSourceMapAsync(ConfirmationExecutionContext execution, CancellationToken ct)

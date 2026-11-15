@@ -147,7 +147,7 @@ public partial class OctopusImportFromServerIntegrationTests
 
         var (_, preview) = await UploadAndPreviewAsync(ExportArchive(extra: SecretDocuments(), exportSpaceId: $"Spaces-1-{FileFingerprint}", withInstallationId: false));
 
-        OctopusImportHandlerFlow.AllDiagnostics(preview).Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().ShouldBe([OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven]);
+        OctopusImportHandlerFlow.AllDiagnostics(preview).Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker).Select(d => d.Code).Distinct().ShouldBe([OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven], ignoreOrder: true, customMessage: "refused for its fills and for linking to what the API import created");
         preview.FillPairing.ShouldBeNull();
         (await DbPasswordAsync()).ShouldBeNullOrEmpty();
         (await SecretRowsAsync()).Select(r => (r.SourceId, r.OutcomeState)).ShouldBe(rows.Select(r => (r.SourceId, r.OutcomeState)), ignoreOrder: true);
@@ -181,7 +181,7 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(await ImportFromFileAsync(ExportWithoutLibrary(OtherFileFingerprint)));
         (await ExportSourceRowsAsync()).ShouldBe([FileFingerprint], "only the first export-file import pins the fingerprint");
 
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, confirmPairing: true));
         (await SecretRowsAsync()).Select(r => (r.SourceType, r.OutcomeState)).ShouldBe([(OctopusImportSourceMapQueries.VariableSecretSourceType, OctopusImportSourceMapQueries.MissingOutcome)]);
 
         var (_, clone) = await UploadAndPreviewAsync(SameInstallationExport(OtherFileFingerprint));
@@ -199,19 +199,22 @@ public partial class OctopusImportFromServerIntegrationTests
         (await ExportSourceRowsAsync()).ShouldBe([FileFingerprint]);
     }
 
-    // A file nothing proves is from this installation, imported while there is nothing to fill: it imports, but its fingerprint never
-    // becomes the space's reference — the genuine export still pairs later.
+    // A file nothing proves is from this installation, imported while there is nothing to fill: it would still link to what the API
+    // import created (ids like Projects-1 repeat across servers), so it is refused — and its fingerprint never becomes the reference.
     [Fact]
-    public async Task UnprovenFileWithNothingToFill_ImportsButNeverBecomesTheReference()
+    public async Task UnprovenFileWithNothingToFill_RefusedForItsLinks_NeverBecomesTheReference()
     {
         await using var octopus = await WithheldSecretsServerAsync();
         ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
         await SetInSquidAsync("Db.Password", "set-by-user", feedUsername: "user-robot", feedPassword: "user-token");
         await Run<SquidDbContext>(db => db.Set<Variable>().Where(v => v.Name == "Smtp.Password").ExecuteUpdateAsync(s => s.SetProperty(v => v.Value, "set-by-user")));
+        var before = await CountRowsAsync(ScopeTables);
 
-        ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(extra: SecretDocuments(), exportSpaceId: $"Spaces-1-{OtherFileFingerprint}", withInstallationId: false)));
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromFileAsync(ExportArchive(extra: SecretDocuments(), exportSpaceId: $"Spaces-1-{OtherFileFingerprint}", withInstallationId: false), confirmPairing: true));
 
+        refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
         (await ExportSourceRowsAsync()).ShouldBeEmpty("an unproven file is never pinned as the space's export source");
+        (await CountRowsAsync(ScopeTables)).ShouldBe(before);
         (await VariableAsync("Db.Password")).Value.ShouldBe("set-by-user");
     }
 
@@ -309,7 +312,7 @@ public partial class OctopusImportFromServerIntegrationTests
     {
         await using var octopus = await WithheldSecretsServerAsync();
         ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(FileFingerprint)));
-        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus, confirmPairing: true));
         await SetInSquidAsync("Db.Password", "set-by-user", feedUsername: "user-robot", feedPassword: "user-token");
 
         ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(FileFingerprint)));

@@ -82,7 +82,7 @@ public partial class OctopusImportPreviewPlanner
             Message = $"Values left missing by an earlier import of this space: {Count(OctopusImportPreviewDiagnosticCodes.SecretFillFromExport)} filled from this export file, {Count(OctopusImportPreviewDiagnosticCodes.SecretSetInSquid)} already set in Squid (kept, never overwritten), {Count(OctopusImportPreviewDiagnosticCodes.SecretEmptyInOctopus)} empty in Octopus too (settled, nothing written), {Count(OctopusImportPreviewDiagnosticCodes.SecretStillMissing) + Count(OctopusImportPreviewDiagnosticCodes.SecretFillAmbiguous)} still missing, {Count(OctopusImportPreviewDiagnosticCodes.SecretFillTargetGone)} no longer in Squid, {Count(OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven)} refused (export file not proven to be from this installation)."
         });
 
-        if (PairingRequired(context))
+        if (FillsNeedPairing(context))
             yield return OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Warning, Code = OctopusImportPreviewDiagnosticCodes.SecretFillPairingRequired, Message = OctopusImportSecretFillMessages.PairingRequired(context.FillEvidence.MatchingStructureIds, context.Prior.InstallationId, context.Conflicts.InstallationOrigin, context.SecretFillsNeedingEvidence) });
     }
 
@@ -97,12 +97,19 @@ public partial class OctopusImportPreviewPlanner
             ServerHost = context.Conflicts.InstallationOrigin?.ServerHost,
             OctopusSpaceId = context.Conflicts.InstallationOrigin?.OctopusSpaceId,
             OctopusVersion = context.Conflicts.InstallationOrigin?.OctopusVersion,
+            SourceInstallationId = context.Conflicts.HistoryInstallationId,
+            SourceServerHost = context.Conflicts.SourceOrigin?.ServerHost,
+            SourceOctopusSpaceId = context.Conflicts.SourceOrigin?.OctopusSpaceId,
             FileExportSourceId = context.Conflicts.ExportSourceId,
             RecordedExportSourceId = OctopusImportFillEvidences.RecordedExportSourceId(context.Prior),
             MatchingStructureIds = context.FillEvidence.MatchingStructureIds
         };
     }
 
-    private static bool PairingRequired(PreviewPlanningContext context)
+    private static bool FillsNeedPairing(PreviewPlanningContext context)
         => context.SecretFillsNeedingEvidence > 0 && context.FillEvidence.State == OctopusImportFillEvidenceState.PairingRequired;
+
+    // One pairing for the whole import: asked when its fills or its links to earlier rows need the proof.
+    private static bool PairingRequired(PreviewPlanningContext context)
+        => (context.SecretFillsNeedingEvidence > 0 || context.NeedsOriginProof) && context.FillEvidence.State == OctopusImportFillEvidenceState.PairingRequired;
 }

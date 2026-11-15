@@ -67,19 +67,20 @@ public partial class OctopusImportConfirmationOrchestratorTests
         outcome.FillDestination?.VariableSetId.ShouldBe(postedVariableSetId == 1002 ? 1002 : null, "a posted destination that is not the row written never reaches the result");
     }
 
+    // An unproven file is refused before any resource runs: under the space lock its origin no longer links to the space's rows.
     [Theory]
-    [InlineData("unproven")]
-    [InlineData("no-missing-row")]
-    [InlineData("settled-row")]
-    [InlineData("no-export-password")]
-    public async Task PostedFill_NotBackedByTheServersOwnData_FailsStaleNothingWritten(string reason)
+    [InlineData("unproven", OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven)]
+    [InlineData("no-missing-row", OctopusImportPreviewDiagnosticCodes.StalePreviewPlan)]
+    [InlineData("settled-row", OctopusImportPreviewDiagnosticCodes.StalePreviewPlan)]
+    [InlineData("no-export-password", OctopusImportPreviewDiagnosticCodes.StalePreviewPlan)]
+    public async Task PostedFill_NotBackedByTheServersOwnData_FailsStaleNothingWritten(string reason, string expectedCode)
     {
         var fill = FillScenario(FillPlaintext, graphInstallationId: reason == "unproven" ? null : InstallationId, rowOutcome: reason switch { "no-missing-row" => null, "settled-row" => OctopusImportSourceMapQueries.SupersededOutcome, _ => OctopusImportSourceMapQueries.MissingOutcome }, password: reason == "no-export-password" ? null : FillPassword);
 
         var result = await fill.Harness.Sut.ConfirmAsync(fill.Harness.Request, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Failed);
-        Outcome(fill.Harness, fill.Nodes.VariableOne).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+        fill.Harness.SessionService.RecordedResult.Diagnostics.Concat(Outcome(fill.Harness, fill.Nodes.VariableOne).Diagnostics).ShouldContain(d => d.Code == expectedCode);
         fill.Variables.Verify(v => v.FillEmptySensitiveValueAsync(It.IsAny<int>(), It.IsAny<VariableIdentity>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

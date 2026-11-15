@@ -26,7 +26,8 @@ public class OctopusImportSecretFillPolicyTests
     [Theory]
     [InlineData("inst-a", null, null, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.InstallationBasis)]
     [InlineData("INST-A", null, null, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.InstallationBasis)]
-    [InlineData("inst-b", null, null, false, false, OctopusImportFillEvidenceState.Unproven, null)]
+    [InlineData("inst-b", null, null, false, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.InstallationMismatchBasis)]
+    [InlineData("inst-b", FingerprintA, FingerprintA, true, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.InstallationMismatchBasis)] // another installation id outranks everything
     [InlineData(null, FingerprintA, FingerprintA, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
     [InlineData(null, "0123456789abcdef0123456789abcdef", FingerprintA, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
     [InlineData(null, FingerprintB, FingerprintA, true, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]

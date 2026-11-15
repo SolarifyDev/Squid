@@ -51,7 +51,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
-            .Concat(InstallationDiagnostics(conflicts))
+            .Concat(OriginDiagnostics(context))
             .Concat(GroupedScopeDiagnostics(resources))
             .Concat(WithheldSecretsSummary(resources))
             .Concat(SecretFillSummary(context))
@@ -84,13 +84,6 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             resources.Add(context.Record(BuildResourcePreview(resource, context)));
 
         return resources;
-    }
-
-    private static IEnumerable<OctopusImportDiagnosticDto> InstallationDiagnostics(OctopusImportConflictDiscoveryResult conflicts)
-    {
-        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, conflicts.PriorMappings);
-
-        return mismatch == null ? [] : [mismatch];
     }
 
     private OctopusImportResourceResultDto BuildResourcePreview(OctopusResourceNode resource, PreviewPlanningContext context)

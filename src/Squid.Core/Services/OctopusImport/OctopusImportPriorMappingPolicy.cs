@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -62,17 +63,17 @@ public static class OctopusImportPriorMappingPolicy
     }
 
     /// <summary>
-    /// History from a second Octopus server must never be silently skipped as "already imported", so a REST
-    /// source whose installation differs from the one this space was imported from blocks. File-only imports
-    /// carry no installation id and are not checked.
+    /// History from a second Octopus server must never be silently skipped as "already imported", so a source whose installation
+    /// differs from the one this space was imported from blocks, naming both. Export files carry no installation id and are checked
+    /// by <see cref="OctopusImportFillEvidences"/> instead.
     /// </summary>
-    public static OctopusImportDiagnosticDto InstallationMismatch(string incomingInstallationId, OctopusImportPriorMappings prior)
+    public static OctopusImportDiagnosticDto InstallationMismatch(string incomingInstallationId, OctopusImportPriorMappings prior, OctopusImportInstallationOrigin recordedOrigin = null, OctopusImportInstallationOrigin sourceOrigin = null)
     {
-        if (string.IsNullOrWhiteSpace(incomingInstallationId) || string.IsNullOrWhiteSpace(prior?.InstallationId)) return null;
+        if (!OctopusImportFillEvidences.IsAnotherInstallation(incomingInstallationId, prior)) return null;
 
-        if (OctopusImportPriorMappings.Normalize(incomingInstallationId) == OctopusImportPriorMappings.Normalize(prior.InstallationId)) return null;
+        var message = OctopusImportOriginMessages.InstallationMismatch(OctopusImportOriginMessages.Source(incomingInstallationId, null, sourceOrigin), OctopusImportOriginMessages.Recorded(prior, recordedOrigin));
 
-        return Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.OctopusInstallationMismatch, "This Octopus server is not the installation this space's history was imported from. One Squid space holds the history of one Octopus installation.", null);
+        return Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.OctopusInstallationMismatch, message, null);
     }
 
     /// <summary>

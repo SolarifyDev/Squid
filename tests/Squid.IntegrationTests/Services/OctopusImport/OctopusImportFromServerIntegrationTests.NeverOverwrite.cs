@@ -171,9 +171,10 @@ public partial class OctopusImportFromServerIntegrationTests
 
     private Task<OctopusImportFlowResult> ImportFromAsync(string source, StubOctopusServer octopus, string archive, bool interrupt)
     {
+        // The user confirms the pairing whenever the preview asks (the first time the other kind of source meets the space).
         if (source == FileSource) return ImportFromFileAsync(archive, confirmPairing: true);
 
-        return interrupt ? ImportFromServerFailingAtEveryPhaseAsync(octopus) : ImportFromServerAsync(octopus);
+        return interrupt ? ImportFromServerFailingAtEveryPhaseAsync(octopus) : ImportFromServerAsync(octopus, confirmPairing: true);
     }
 
     // Every phase's first request fails once; the fetch is called again on the same session (as the UI does) until it is done.
@@ -192,7 +193,7 @@ public partial class OctopusImportFromServerIntegrationTests
 
         failures.ShouldBe(FetchPhaseBoundaries.Length, "every phase boundary failed once and was resumed");
 
-        return await Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.FinishServerImportAsync(mediator, SpaceId, sessionId, fetch), OpenAuthorization);
+        return await Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.FinishServerImportAsync(mediator, SpaceId, sessionId, fetch, confirmPairing: true), OpenAuthorization);
     }
 
     // The withheld-secrets space with one deployment; its lifecycle phase id is a GUID, as on a real server (the installation evidence a

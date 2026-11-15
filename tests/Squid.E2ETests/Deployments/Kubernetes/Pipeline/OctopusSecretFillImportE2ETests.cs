@@ -163,7 +163,7 @@ public class OctopusSecretFillImportE2ETests : IClassFixture<OctopusSecretFillIm
         return path;
     }
 
-    private static string WithSpaceId(string json, string spaceId)
+    internal static string WithSpaceId(string json, string spaceId)
     {
         var node = JsonNode.Parse(json)!.AsObject();
         node["SpaceId"] = spaceId;
@@ -171,7 +171,7 @@ public class OctopusSecretFillImportE2ETests : IClassFixture<OctopusSecretFillIm
         return node.ToJsonString();
     }
 
-    private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents)
+    internal static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents)
     {
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new
         {

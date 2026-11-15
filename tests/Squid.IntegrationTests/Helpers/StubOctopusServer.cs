@@ -40,6 +40,9 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     public Uri BaseUri { get; }
 
+    /// <summary>The installation id <c>/api</c> reports; another value models another Octopus server sharing every id with this one.</summary>
+    public string Installation { get; set; } = InstallationId;
+
     public ConcurrentQueue<(string PathAndQuery, string ApiKey)> Requests { get; } = new();
 
     public Dictionary<string, List<Dictionary<string, object>>> Releases { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -227,7 +230,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
         if (FailureFor(path) is { } failure) return (failure, new { });
         if (path == "/api/users/me") return (HttpStatusCode.OK, new { Id = userId, Username = "importer", IsService = true });
         if (path == $"/api/users/{userId}/permissions") return (HttpStatusCode.OK, Permissions(_keyRestrictions.GetValueOrDefault(apiKey) ?? []));
-        if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
+        if (path == "/api") return (HttpStatusCode.OK, new { Application = "Octopus Deploy", Version = "2023.4.1", InstallationId = Installation, Links = new Dictionary<string, string> { ["Spaces"] = "/api/spaces{/id}" } });
         if (path == "/api/spaces/all") return (HttpStatusCode.OK, new[] { new { Id = "Spaces-1", Name = "Default", IsDefault = true } });
         if (path == "/api/teams") return Serve("teams", query);
         if (path == "/api/tasks") return (HttpStatusCode.OK, Page(query["ids"]!.Split(',').Where(Tasks.ContainsKey).Select(id => Tasks[id]).ToList(), query));

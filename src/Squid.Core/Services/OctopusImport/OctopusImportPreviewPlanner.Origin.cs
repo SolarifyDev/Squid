@@ -1,0 +1,38 @@
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
+
+namespace Squid.Core.Services.OctopusImport;
+
+/// <summary>
+/// The origin of the whole import. Ids like <c>Projects-1</c> repeat across Octopus servers, so a source that would link to rows an
+/// earlier import created must come from the Octopus the space was imported from (<see cref="OctopusImportFillEvidences"/>): another
+/// installation, or no process id in common, refuses the import; matching process ids ask the user to confirm the pairing.
+/// </summary>
+public partial class OctopusImportPreviewPlanner
+{
+    private static IEnumerable<OctopusImportDiagnosticDto> OriginDiagnostics(PreviewPlanningContext context)
+    {
+        var conflicts = context.Conflicts;
+        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, context.Prior, conflicts.InstallationOrigin, conflicts.SourceOrigin);
+
+        if (mismatch != null) return [mismatch];
+
+        if (!context.NeedsOriginProof) return [];
+
+        if (OctopusImportFillEvidences.RefusesLinking(context.FillEvidence)) return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Unproven(context.FillEvidence.MatchingStructureIds, SourceText(context), RecordedText(context)))];
+
+        // A fill's own pairing warning already asks for the same confirmation.
+        if (context.FillEvidence.State != OctopusImportFillEvidenceState.PairingRequired || FillsNeedPairing(context)) return [];
+
+        return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, OctopusImportOriginMessages.PairingRequired(context.FillEvidence.MatchingStructureIds, SourceText(context), RecordedText(context)))];
+    }
+
+    private static string SourceText(PreviewPlanningContext context)
+        => OctopusImportOriginMessages.Source(context.Conflicts.HistoryInstallationId, context.Conflicts.ExportSourceId, context.Conflicts.SourceOrigin);
+
+    private static string RecordedText(PreviewPlanningContext context) => OctopusImportOriginMessages.Recorded(context.Prior, context.Conflicts.InstallationOrigin);
+
+    private static OctopusImportDiagnosticDto OriginDiagnostic(OctopusImportCompatibilitySeverity severity, string code, string message)
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = severity, Code = code, Message = message });
+}

@@ -72,7 +72,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         ValidateReferences(graph, plan, result);
         ValidateVariableScopes(plan, result);
         ValidateReleasePackageFeeds(graph, plan, result);
-        ValidateInstallation(conflicts, result);
+        ValidateOrigin(graph, conflicts, previewPlan, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
         // Server-built inputs come first so their severity (not a client-posted IsRequired) wins the de-duplication.
@@ -91,13 +91,32 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         return result;
     }
 
-    // The preview shows the mismatch too, but the plan-level diagnostic is client-posted; this one is server-owned.
-    private static void ValidateInstallation(OctopusImportConflictDiscoveryResult conflicts, OctopusImportValidationResultDto result)
+    // The preview shows the origin check too, but the plan-level diagnostics are client-posted; these are server-owned. Another
+    // installation always refuses; a source linking to earlier rows must be proven, or its pairing confirmed by the user and backed
+    // by matching process ids (a posted confirmation alone proves nothing: the evidence is re-evaluated here).
+    private static void ValidateOrigin(OctopusResourceGraph graph, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, OctopusImportValidationResultDto result)
     {
-        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, conflicts.PriorMappings);
+        var prior = conflicts.PriorMappings;
+        var mismatch = OctopusImportPriorMappingPolicy.InstallationMismatch(conflicts.HistoryInstallationId, prior, conflicts.InstallationOrigin, conflicts.SourceOrigin);
 
-        if (mismatch != null) result.Diagnostics.Add(mismatch);
+        if (mismatch != null)
+        {
+            result.Diagnostics.Add(mismatch);
+            return;
+        }
+
+        if (!OctopusImportFillEvidences.NeedsOriginProof(graph.Resources, prior)) return;
+
+        var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, prior, previewPlan.FillPairing?.Confirmed == true);
+
+        if (OctopusImportFillEvidences.RefusesLinking(evidence))
+            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportOriginMessages.Unproven(evidence.MatchingStructureIds, OctopusImportOriginMessages.Source(conflicts.HistoryInstallationId, conflicts.ExportSourceId, conflicts.SourceOrigin), OctopusImportOriginMessages.Recorded(prior, conflicts.InstallationOrigin))));
+        else if (evidence.State == OctopusImportFillEvidenceState.PairingRequired)
+            result.Diagnostics.Add(PlanDiagnostic(OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed, OctopusImportOriginMessages.PairingUnconfirmed));
     }
+
+    private static OctopusImportDiagnosticDto PlanDiagnostic(string code, string message)
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = code, Message = message });
 
     private static void ValidateReleasePackageFeeds(OctopusResourceGraph graph, ValidationPlan plan, OctopusImportValidationResultDto result)
     {

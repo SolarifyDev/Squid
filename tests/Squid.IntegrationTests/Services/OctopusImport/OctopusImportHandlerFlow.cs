@@ -59,17 +59,21 @@ public static class OctopusImportHandlerFlow
     /// (posting the plan without its history rows, which the server owns) and a synchronous confirm. Any step that is
     /// refused throws with its reason.
     /// </summary>
-    public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
+    public static Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
+        => ImportFromServerAsync(mediator, spaceId, serverUri, apiKey, confirmPairing: false);
+
+    /// <summary>A server import; with <paramref name="confirmPairing"/> the user confirms the pairing the preview asks for (same Octopus server as the space's earlier imports).</summary>
+    public static async Task<OctopusImportFlowResult> ImportFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey, bool confirmPairing)
     {
         var sessionId = (await ConnectAsync(mediator, spaceId, serverUri, apiKey)).Data.Session.SessionId;
         var fetch = await FetchHistoryUntilDoneAsync(mediator, spaceId, sessionId, serverUri, apiKey);
 
-        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, plan => WithoutHistoryRows(confirmPairing ? ConfirmPairing(plan) : plan));
     }
 
     /// <summary>Finishes a server session whose fetch is done (e.g. after resuming a failed fetch): extract, preview, validate and a synchronous confirm.</summary>
-    public static Task<OctopusImportFlowResult> FinishServerImportAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch)
-        => ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
+    public static Task<OctopusImportFlowResult> FinishServerImportAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch, bool confirmPairing = false)
+        => ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, plan => WithoutHistoryRows(confirmPairing ? ConfirmPairing(plan) : plan));
 
     /// <summary>An export-file-only import: upload, extract, preview, validate and a synchronous confirm.</summary>
     public static Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
@@ -121,7 +125,7 @@ public static class OctopusImportHandlerFlow
 
     // The UI omits history rows from the validate body; the server replaces them with its own.
     private static OctopusImportPreviewPlanDto WithoutHistoryRows(OctopusImportPreviewPlanDto plan)
-        => new() { GeneratedAt = plan.GeneratedAt, Diagnostics = plan.Diagnostics, RequiredInputs = plan.RequiredInputs, Resources = plan.Resources.Where(r => r.SourceType is not ("Release" or "Deployment" or "ServerTask")).ToList() };
+        => new() { GeneratedAt = plan.GeneratedAt, Diagnostics = plan.Diagnostics, RequiredInputs = plan.RequiredInputs, FillPairing = plan.FillPairing, Resources = plan.Resources.Where(r => r.SourceType is not ("Release" or "Deployment" or "ServerTask")).ToList() };
 
     public static IEnumerable<OctopusImportDiagnosticDto> AllDiagnostics(OctopusImportPreviewPlanDto plan)
         => (plan?.Diagnostics ?? []).Concat((plan?.Resources ?? []).SelectMany(r => r.Diagnostics));

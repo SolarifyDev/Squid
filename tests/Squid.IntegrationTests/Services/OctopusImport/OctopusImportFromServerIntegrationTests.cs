@@ -635,8 +635,8 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         builder.RegisterInstance(authorization.Object).As<IAuthorizationService>();
     }
 
-    private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus)
-        => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, SpaceId, octopus.BaseUri, ApiKey), OpenAuthorization);
+    private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus, bool confirmPairing = false)
+        => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, SpaceId, octopus.BaseUri, ApiKey, confirmPairing), OpenAuthorization);
 
     private Task<OctopusImportFlowResult> ImportFromFileAsync(string exportPath)
         => Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromFileAsync(mediator, SpaceId, exportPath, ExportPassword), OpenAuthorization);

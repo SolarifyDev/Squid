@@ -47,8 +47,11 @@ public sealed record OctopusImportConflictDiscoveryResult(
     /// <summary>The Squid projects, library variable sets and feeds those missing secrets live in, named for preview.</summary>
     public IReadOnlyList<OctopusImportFillDestinationDto> FillDestinations { get; init; } = [];
 
-    /// <summary>The server, space and version of the API import that recorded the space's installation (for a pairing); null when unknown.</summary>
+    /// <summary>The server, space and version of the API import that recorded the space's installation (for a pairing or a refusal); null when unknown or proven.</summary>
     public OctopusImportInstallationOrigin InstallationOrigin { get; init; }
+
+    /// <summary>The server, space and version the incoming source was read from (an Octopus server read into a space of another origin); null otherwise.</summary>
+    public OctopusImportInstallationOrigin SourceOrigin { get; init; }
 
     /// <summary>The Squid resources of the destination space discovery matched against (projects name the destination of each project's changes).</summary>
     public IReadOnlyList<OctopusImportDestinationResource> Destinations { get; init; } = [];

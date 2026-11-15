@@ -48,11 +48,15 @@ public partial class OctopusImportPreviewPlanner
 
         private IReadOnlyDictionary<string, int> _variableKeyCounts;
         private OctopusImportFillEvidence _fillEvidence;
+        private bool? _needsOriginProof;
 
         public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(Nodes, Prior);
 
         // A preview never carries the user's confirmation: a pairing is confirmed by posting the plan back to validation.
         public OctopusImportFillEvidence FillEvidence => _fillEvidence ??= OctopusImportFillEvidences.Evaluate(Conflicts.HistoryInstallationId, Conflicts.ExportSourceId, Nodes, Prior, pairingConfirmed: false);
+
+        /// <summary>The source would link to rows an earlier import of a recorded origin created: it must prove the same Octopus.</summary>
+        public bool NeedsOriginProof => _needsOriginProof ??= OctopusImportFillEvidences.NeedsOriginProof(Nodes, Prior);
 
         public OctopusImportResourceResultDto Record(OctopusImportResourceResultDto preview)
         {

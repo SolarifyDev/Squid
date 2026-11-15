@@ -41,11 +41,12 @@ public class OctopusImportConflictDiscoveryService(
         var prior = await LoadPriorMappingsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
         var releaseKeys = await LoadExistingReleaseKeysAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
-        var origin = await LoadInstallationOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var origin = await LoadRecordedOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var sourceOrigin = await LoadSourceOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var destinationVariables = await LoadVariablesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, Destinations = destinationResources, StoredHistory = storedHistory };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, Destinations = destinationResources, StoredHistory = storedHistory };
     }
 
     // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
@@ -74,15 +75,34 @@ public class OctopusImportConflictDiscoveryService(
         return await destinationDataProvider.GetVariableNamesAsync(destinationSpaceId, setIds, ct).ConfigureAwait(false) ?? [];
     }
 
-    // Only a file pairing with an API-imported space shows the origin: read from the newest import session that recorded the installation.
-    private async Task<OctopusImportInstallationOrigin> LoadInstallationOriginAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    // A source not proven by the space's installation id shows where the space came from: read from the newest import session that
+    // recorded that installation.
+    private async Task<OctopusImportInstallationOrigin> LoadRecordedOriginAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
     {
-        if (sessionDataProvider == null || !string.IsNullOrWhiteSpace(graph.InstallationId) || string.IsNullOrWhiteSpace(prior.InstallationId)) return null;
+        if (string.IsNullOrWhiteSpace(prior.InstallationId) || SameInstallation(graph.InstallationId, prior.InstallationId)) return null;
 
-        var fetch = await sessionDataProvider.GetLatestHistoryFetchAsync(destinationSpaceId, prior.InstallationId, ct).ConfigureAwait(false);
+        return await LoadOriginAsync(destinationSpaceId, prior.InstallationId, ct).ConfigureAwait(false);
+    }
+
+    // An Octopus server read into a space that recorded another (or no) installation shows the server it reads: its own session.
+    private async Task<OctopusImportInstallationOrigin> LoadSourceOriginAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(graph.InstallationId) || prior.Mappings.Count == 0 || SameInstallation(graph.InstallationId, prior.InstallationId)) return null;
+
+        return await LoadOriginAsync(destinationSpaceId, graph.InstallationId, ct).ConfigureAwait(false);
+    }
+
+    private async Task<OctopusImportInstallationOrigin> LoadOriginAsync(int destinationSpaceId, string installationId, CancellationToken ct)
+    {
+        if (sessionDataProvider == null) return null;
+
+        var fetch = await sessionDataProvider.GetLatestHistoryFetchAsync(destinationSpaceId, installationId, ct).ConfigureAwait(false);
 
         return fetch == null ? null : new OctopusImportInstallationOrigin(fetch.InstallationId, fetch.ServerHost, fetch.OctopusSpaceId, fetch.OctopusVersion);
     }
+
+    private static bool SameInstallation(string incoming, string recorded)
+        => !string.IsNullOrWhiteSpace(incoming) && OctopusImportPriorMappings.Normalize(incoming) == OctopusImportPriorMappings.Normalize(recorded);
 
     // Only the Squid rows a live Missing secret row points at: whether each secret is still empty decides fill / kept / settled.
     private async Task<OctopusImportSecretSlots> LoadMissingSecretSlotsAsync(OctopusImportPriorMappings prior, CancellationToken ct)

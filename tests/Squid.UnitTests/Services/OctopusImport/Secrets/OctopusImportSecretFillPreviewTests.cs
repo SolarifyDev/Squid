@@ -222,13 +222,14 @@ public class OctopusImportSecretFillPreviewTests
         plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven);
     }
 
-    // No missing secret to act on (all set in Squid): an unproven file is not refused for fills it does not make.
+    // No missing secret to act on (all set in Squid): an unproven file is not refused for fills it does not make — but for linking to
+    // what the API import created (the whole-import origin check).
     [Fact]
-    public async Task UnprovenFile_NothingToFill_NotBlocked()
+    public async Task UnprovenFile_NothingToFill_RefusedForItsLinksNotForFills()
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: false).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", true, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
-        plan.BlocksConfirmation.ShouldBeFalse();
+        plan.Blockers.Select(b => b.Code).Distinct().ShouldBe([OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven]);
         plan.Resource(VariableId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
     }
 
