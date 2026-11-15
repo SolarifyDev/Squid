@@ -65,6 +65,14 @@ public class EnumOrdinalPinTests
     }
 
     [Theory]
+    [InlineData(Squid.Message.Enums.MissingImportedSecretReason.NotImported, 0)]
+    [InlineData(Squid.Message.Enums.MissingImportedSecretReason.SnapshotPredatesValue, 1)]
+    public void MissingImportedSecretReason_OrdinalsPinned(Squid.Message.Enums.MissingImportedSecretReason reason, int expected)
+    {
+        ((int)reason).ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData(OctopusRestErrorKind.Unauthorized, 0)]
     [InlineData(OctopusRestErrorKind.NotOctopus, 1)]
     [InlineData(OctopusRestErrorKind.Unreachable, 2)]

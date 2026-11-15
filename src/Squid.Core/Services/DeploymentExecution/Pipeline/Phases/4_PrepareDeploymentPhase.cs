@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -18,7 +19,8 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentTargetFinder targetFinder,
     IDeploymentDataProvider deploymentDataProvider,
     IActionHandlerRegistry actionHandlerRegistry,
-    IRepository repository = null) : IDeploymentPipelinePhase
+    IRepository repository = null,
+    IImportedSecretPreflight importedSecrets = null) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -28,6 +30,7 @@ public sealed class PrepareDeploymentPhase(
         await ResolveVariablesAsync(ctx, ct).ConfigureAwait(false);
         ValidatePromptedVariables(ctx);
         MergePromptedVariables(ctx);
+        await EnsureImportedSecretsPresentAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
         InjectPackageAcquisitionSteps(ctx);
@@ -126,6 +129,21 @@ public sealed class PrepareDeploymentPhase(
 
         PromptedVariableMerger.MergePromptedValues(ctx.Variables, formValues);
     }
+
+    // D16: a sensitive value the Octopus API withheld and nothing has supplied since fails the deployment before any step runs,
+    // naming it — instead of every script silently reading an empty secret. Runs after prompted values are merged (a prompt answers it).
+    private async Task EnsureImportedSecretsPresentAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        if (importedSecrets == null) return;
+
+        var missing = await importedSecrets.FindMissingAsync(ctx.Deployment.SpaceId, ctx.Variables, DeploymentScope(ctx), ct).ConfigureAwait(false);
+
+        if (missing.Count > 0)
+            throw new ImportedSecretMissingException(ctx.Deployment.Id, missing);
+    }
+
+    private static VariableScopeContext DeploymentScope(DeploymentTaskContext ctx)
+        => new() { EnvironmentId = ctx.Environment?.Id, EnvironmentName = ctx.Environment?.Name, ChannelId = ctx.Channel?.Id, ChannelName = ctx.Channel?.Name };
 
     private void DetectServerOnlyDeployment(DeploymentTaskContext ctx)
     {

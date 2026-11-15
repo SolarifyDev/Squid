@@ -30,7 +30,19 @@ public static class OctopusImportSecretKeys
 
         var type = OctopusImportVariableMapper.SquidVariableType(variable)?.ToString() ?? variable.Type;
 
-        return VariablePrefix + Hash($"{OctopusImportPriorMappings.Normalize(ownerSetSourceId)}|{variable.Name}|{type}|{string.Join(",", scopes)}");
+        return Compose(ownerSetSourceId, variable.Name, type, scopes);
+    }
+
+    /// <summary>
+    /// The key of the Squid variable a secret was imported as, given the source id of the Octopus variable set its owner set was
+    /// imported from. Equal to <see cref="ForVariable"/> of the source variable, so a deployment can tell which of its empty
+    /// sensitive values an import recorded as missing without the source document.
+    /// </summary>
+    public static string ForIdentity(string ownerSetSourceId, VariableIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+
+        return Compose(ownerSetSourceId, identity.Name, identity.Type.ToString(), identity.Scopes ?? []);
     }
 
     /// <summary>
@@ -57,6 +69,9 @@ public static class OctopusImportSecretKeys
 
     private static string CanonicalValue(OctopusImportScopeResolution resolution, Func<string, OctopusResourceKind, int?> destinationOf)
         => resolution.Outcome == OctopusImportScopeOutcome.Mapped ? destinationOf(resolution.ScopeValue, resolution.SourceKind!.Value)!.Value.ToString(CultureInfo.InvariantCulture) : resolution.ScopeValue;
+
+    private static string Compose(string ownerSetSourceId, string name, string type, IEnumerable<string> scopes)
+        => VariablePrefix + Hash($"{OctopusImportPriorMappings.Normalize(ownerSetSourceId)}|{name}|{type}|{string.Join(",", scopes)}");
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }

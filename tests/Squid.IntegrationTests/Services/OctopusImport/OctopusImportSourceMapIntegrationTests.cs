@@ -420,6 +420,35 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
+    // ── Deployment preflight read ────────────────────────────────────────────────────────────────
+
+    // The D16 preflight reads only its own set's rows: right space, right types, right destinations, ids as stored (normalised).
+    [Fact]
+    public async Task GetByDestinations_FiltersBySpaceTypeAndDestination_ReturnsStoredRows()
+    {
+        await Run<IOctopusImportSourceMapDataProvider>(async provider =>
+        {
+            await provider.UpsertAsync([
+                Row("VariableSet", "variableset-Projects-1", 601, "Created"),
+                Row("VariableSecret", "vs:abc", 601, "Missing"),
+                Row("VariableSecret", "vs:def", 602, "Filled"),
+                Row("VariableSecret", "vs:other-set", 603, "Missing"),
+                Row("Variable", "5b0c7d21-0000-4000-8000-000000000101", 601, "Created"),
+                Row("VariableSecret", "vs:other-space", 601, "Missing", spaceId: SpaceId + 1)
+            ], Guid.NewGuid());
+
+            var rows = await provider.GetByDestinationsAsync(SpaceId, ["VariableSet", "VariableSecret"], [601, 602]);
+
+            rows.Select(r => $"{r.SpaceId}|{r.SourceType}|{r.SourceId}|{r.DestinationId}|{r.OutcomeState}").ShouldBe([
+                $"{SpaceId}|VariableSet|VARIABLESET-PROJECTS-1|601|Created",
+                $"{SpaceId}|VariableSecret|VS:ABC|601|Missing",
+                $"{SpaceId}|VariableSecret|VS:DEF|602|Filled"
+            ], ignoreOrder: true);
+            (await provider.GetByDestinationsAsync(SpaceId, [], [601])).ShouldBeEmpty();
+            (await provider.GetByDestinationsAsync(SpaceId, ["VariableSecret"], [])).ShouldBeEmpty();
+        });
+    }
+
     // ── Conflict discovery wiring ────────────────────────────────────────────────────────────────
 
     [Fact]

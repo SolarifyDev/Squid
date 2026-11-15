@@ -64,6 +64,27 @@ public class OctopusImportSecretKeysTests
         OctopusImportSecretKeys.CanonicalScopes(scope, Destination).ShouldBe(["Channel:21", "Environment:11", "Environment:12", "Role:web"]);
     }
 
+    // A deployment recomputes the key from the Squid variable (the source document is gone): both sides must agree byte for byte.
+    [Fact]
+    public void SquidVariableIdentity_HasTheSourceVariablesKey()
+    {
+        var source = Secret("Db.Password", scopes: [("Environment", ["Environments-2", "Environments-1"]), ("Role", ["web"])]);
+        var imported = Squid.Message.Models.Deployments.Variable.VariableIdentity.Of("Db.Password", Squid.Message.Enums.VariableType.Password, [(Squid.Message.Enums.VariableScopeType.Role, "web"), (Squid.Message.Enums.VariableScopeType.Environment, "12"), (Squid.Message.Enums.VariableScopeType.Environment, "11")]);
+
+        OctopusImportSecretKeys.ForIdentity("VARIABLESET-PROJECTS-1", imported).ShouldBe(Key("variableset-Projects-1", source));
+    }
+
+    [Theory]
+    [InlineData("Db.Pass", Squid.Message.Enums.VariableType.Password, "11")]
+    [InlineData("Db.Password", Squid.Message.Enums.VariableType.String, "11")]
+    [InlineData("Db.Password", Squid.Message.Enums.VariableType.Password, "12")]
+    public void SquidVariableIdentity_AnyPartDiffers_KeyDiffers(string name, Squid.Message.Enums.VariableType type, string environmentId)
+    {
+        var identity = Squid.Message.Models.Deployments.Variable.VariableIdentity.Of(name, type, [(Squid.Message.Enums.VariableScopeType.Environment, environmentId)]);
+
+        OctopusImportSecretKeys.ForIdentity("variableset-Projects-1", identity).ShouldNotBe(Key("variableset-Projects-1", Secret("Db.Password", scopes: [("Environment", ["Environments-1"])])));
+    }
+
     private static void OctopusImportPriorMappingsNormalizeKeeps(string key)
         => Squid.Message.Models.OctopusImport.OctopusImportPriorMappings.Normalize(key).ShouldBe(key.ToUpperInvariant());
 

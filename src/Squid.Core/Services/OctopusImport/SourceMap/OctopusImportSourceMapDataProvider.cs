@@ -22,6 +22,16 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
         return ToPriorMappings(rows);
     }
 
+    public async Task<List<OctopusImportSourceMapRow>> GetByDestinationsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, IReadOnlyCollection<int> destinationIds, CancellationToken ct = default)
+    {
+        if (sourceTypes is not { Count: > 0 } || destinationIds is not { Count: > 0 }) return [];
+
+        var types = sourceTypes.Distinct().ToList();
+        var ids = destinationIds.Distinct().ToList();
+
+        return await repository.QueryNoTracking<OctopusImportSourceMap>(m => m.SpaceId == spaceId && types.Contains(m.SourceType) && ids.Contains(m.DestinationId)).Select(m => new OctopusImportSourceMapRow(m.SpaceId, m.SourceType, m.SourceId, m.DestinationId, m.OutcomeState, null, null)).ToListAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task UpsertAsync(IReadOnlyList<OctopusImportSourceMapRow> rows, Guid sessionId, CancellationToken ct = default)
     {
         var distinct = DistinctByKey(rows).ToList();

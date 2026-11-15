@@ -8,6 +8,13 @@ public interface IOctopusImportSourceMapDataProvider : IScopedDependency
     Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default);
 
     /// <summary>
+    /// The space's rows of the given source types whose destination is one of the ids, without the liveness filter of
+    /// <see cref="LoadAsync"/>: for callers that already hold those destinations (a deployment holds its variable sets). Cheap — no
+    /// whole-space load.
+    /// </summary>
+    Task<List<OctopusImportSourceMapRow>> GetByDestinationsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, IReadOnlyCollection<int> destinationIds, CancellationToken ct = default);
+
+    /// <summary>
     /// Inserts or updates the rows in batches. A row that was <c>Created</c> keeps that outcome when re-recorded against the
     /// same destination, and a null incoming fingerprint keeps the stored one (details are monotonic). Call it only inside the
     /// confirmation transaction, after <see cref="AcquireSpaceLockAsync"/>.

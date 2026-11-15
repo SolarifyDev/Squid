@@ -144,7 +144,7 @@ public class OctopusSecretFillImportE2ETests : IClassFixture<OctopusSecretFillIm
 
     // A real export: no manifest installation id, its fingerprint on every SpaceId, the secrets encrypted with the export password,
     // and the very process step/action GUIDs the API serves.
-    private static string SameInstallationExport()
+    internal static string SameInstallationExport()
     {
         var documents = new List<(string Id, string DocumentType, string Json)>
         {
