@@ -64,6 +64,19 @@ public class OctopusImportConfirmationJobTests
         _sessions.Verify(s => s.RecordResultAsync(sessionId, SpaceId, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Single().Code == OctopusImportConfirmationDiagnosticCodes.BackgroundConfirmationFailed && r.Diagnostics.Single().Severity == OctopusImportCompatibilitySeverity.Blocker && r.Diagnostics.Single().Message.Contains("permission denied")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // A third-party message (a driver error quoting a connection setting) reaches the session owner only through the import's redaction.
+    [Fact]
+    public async Task RunAsOwner_RunnerThrowsWithASecretInTheMessage_StoredRedacted()
+    {
+        var sessionId = Guid.NewGuid();
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("connect failed: Password=hunter2 Host=db"));
+        _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
+
+        await RunJobAsync(sessionId);
+
+        _sessions.Verify(s => s.RecordResultAsync(sessionId, SpaceId, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => !r.Diagnostics.Single().Message.Contains("hunter2") && r.Diagnostics.Single().Message.Contains("connect failed")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task RunAsOwner_Cancelled_PropagatesAndLeavesTheSessionAlone()
     {

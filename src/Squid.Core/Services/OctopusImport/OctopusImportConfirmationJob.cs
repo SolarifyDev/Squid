@@ -35,7 +35,8 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
         {
             Log.Error(ex, "Background Octopus import confirmation {SessionId} failed before the import started", sessionId);
 
-            return new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.BackgroundConfirmationFailed, Message = $"The background Octopus import confirmation failed before the import started: {ex.Message}" };
+            // The message may come from third-party code (a database driver): it reaches the session owner only through the redaction.
+            return OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.BackgroundConfirmationFailed, Message = $"The background Octopus import confirmation failed before the import started: {ex.Message}" });
         }
     }
 
