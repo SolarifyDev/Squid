@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -30,11 +31,20 @@ public partial class OctopusImportPreviewPlanner
 
         var prior = OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf);
 
-        if (prior != null) return KeepNotesEditedInSquid(resource, prior, context) ?? prior;
+        if (prior != null) return KeepHistoryOfAnotherSource(resource, prior, context) ?? KeepNotesEditedInSquid(resource, prior, context) ?? prior;
 
         return context.ReleaseVersionExists(release, ReleaseVersion(release, resource))
             ? new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, ReleaseVersionExistsInSquid(resource))
             : new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null);
+    }
+
+    // An export file whose fingerprint differs from the space's pinned one may come from another Octopus server with the same ids: the
+    // history it would rewrite is skipped (it stays linked to what Squid holds), never overwritten.
+    private static OctopusImportPriorDecision KeepHistoryOfAnotherSource(OctopusResourceNode resource, OctopusImportPriorDecision decision, PreviewPlanningContext context)
+    {
+        if (decision.Action != OctopusImportPreviewAction.Update || !OctopusImportFillEvidences.IsAnotherExportSource(context.FillEvidence)) return null;
+
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, decision.DestinationId, HistoryFromAnotherExportSource(resource));
     }
 
     // A variable's row goes stale whenever its set is saved in Squid (the variables are re-inserted with new ids): one the Squid set
@@ -71,7 +81,8 @@ public partial class OctopusImportPreviewPlanner
 
         if (task == null) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, DeploymentTaskMissing(resource));
 
-        var decision = DecideHistoryUnit(resource, task, context);
+        var unit = DecideHistoryUnit(resource, task, context);
+        var decision = KeepHistoryOfAnotherSource(resource, unit, context) ?? unit;
 
         context.RecordHistoryUnit(task.SourceId, decision.Action);
 
@@ -99,7 +110,8 @@ public partial class OctopusImportPreviewPlanner
 
         var destinationId = unitAction == OctopusImportPreviewAction.Create ? null : context.PriorFor(OctopusResourceKind.ServerTask, resource.SourceId)?.DestinationId;
 
-        return new OctopusImportPriorDecision(unitAction, destinationId);
+        // A recorded unit is skipped only when its deployment is kept as another export source's history: the task says the same.
+        return new OctopusImportPriorDecision(unitAction, destinationId, unitAction == OctopusImportPreviewAction.Skip ? HistoryFromAnotherExportSource(resource) : null);
     }
 
     private static bool DeploymentOwnersResolve(OctopusDeploymentDto deployment, PreviewPlanningContext context)
@@ -128,6 +140,9 @@ public partial class OctopusImportPreviewPlanner
 
     private static OctopusImportDiagnosticDto ReleaseVersionExistsInSquid(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ReleaseVersionExistsInSquid, $"Release '{resource.Name}' already exists in Squid on this project channel but was not created by an Octopus import. It is kept as it is; this release and its deployments are skipped.", resource);
+
+    private static OctopusImportDiagnosticDto HistoryFromAnotherExportSource(OctopusResourceNode resource)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource, $"This export file's fingerprint differs from the one this space was first imported from, so it may come from another Octopus server that uses the same ids. Octopus {resource.Kind} '{resource.Name}' is not written over the history already in Squid.", resource);
 
     private static OctopusImportDiagnosticDto ReleaseNotesEditedInSquid(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid, $"The notes of release '{resource.Name}' were edited in Squid after the import; they are kept and the Octopus notes are not applied.", resource);

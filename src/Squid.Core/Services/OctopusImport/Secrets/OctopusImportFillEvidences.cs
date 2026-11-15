@@ -47,6 +47,12 @@ public static class OctopusImportFillEvidences
         return pairingConfirmed ? new OctopusImportFillEvidence(OctopusImportFillEvidenceState.Proven, matches, ConfirmedPairingBasis) : new OctopusImportFillEvidence(OctopusImportFillEvidenceState.PairingRequired, matches, null);
     }
 
+    /// <summary>
+    /// The export file's fingerprint differs from the one pinned for the space: it may come from another Octopus server that shares ids like
+    /// <c>Releases-1</c>, so nothing it would write over earlier imported rows (history, secrets) is trusted.
+    /// </summary>
+    public static bool IsAnotherExportSource(OctopusImportFillEvidence evidence) => evidence?.Basis == ExportFingerprintMismatchBasis;
+
     /// <summary>The fingerprint pinned for the space: the one its first export-file import recorded.</summary>
     public static string RecordedExportSourceId(OctopusImportPriorMappings prior) => prior?.ExportSourceIds.FirstOrDefault();
 

@@ -13,7 +13,22 @@ WHERE source_type NOT IN ('OctopusInstallation', 'OctopusExportSource')
   AND source_id ~* '-[0-9A-F]{32}(?=$|/)'
 ON CONFLICT (space_id, source_type, source_id) DO NOTHING;
 
--- 2. Where a suffixed row and its canonical twin both exist, the newest row wins.
+-- 2. Rows of one canonical id from exports with DIFFERENT suffixes come from different Octopus servers imported into one
+--    space (ids like Projects-1 collide across servers): none of them may answer for the canonical id, so all are dropped.
+--    The Squid rows stay; a later import matches them as a first import would and never overwrites them.
+DELETE FROM octopus_import_source_map m
+USING (
+    SELECT space_id, source_type, upper(regexp_replace(source_id, '-[0-9A-F]{32}(?=$|/)', '', 'gi')) AS canonical_id
+    FROM octopus_import_source_map
+    WHERE source_type NOT IN ('OctopusInstallation', 'OctopusExportSource')
+    GROUP BY 1, 2, 3
+    HAVING count(DISTINCT upper(substring(source_id FROM '-([0-9A-Fa-f]{32})(?:$|/)'))) > 1
+) AS ambiguous
+WHERE m.space_id = ambiguous.space_id
+  AND m.source_type = ambiguous.source_type
+  AND upper(regexp_replace(m.source_id, '-[0-9A-F]{32}(?=$|/)', '', 'gi')) = ambiguous.canonical_id;
+
+-- 3. Where a suffixed row and its canonical twin (one export source) both exist, the newest row wins.
 DELETE FROM octopus_import_source_map m
 USING (
     SELECT id, row_number() OVER (PARTITION BY space_id, source_type, canonical_id ORDER BY last_modified_date DESC, id DESC) AS rank
@@ -24,7 +39,7 @@ USING (
 ) AS ranked
 WHERE m.id = ranked.id AND ranked.rank > 1;
 
--- 3. Rewrite the remaining suffixed ids to their canonical form.
+-- 4. Rewrite the remaining suffixed ids to their canonical form.
 UPDATE octopus_import_source_map
 SET source_id = upper(regexp_replace(source_id, '-[0-9A-F]{32}(?=$|/)', '', 'gi'))
 WHERE source_id ~* '-[0-9A-F]{32}(?=$|/)';

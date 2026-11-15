@@ -139,6 +139,39 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
+    // Two Octopus servers imported into one space by export file (allowed before canonical ids): their ids collide ("Projects-1" on
+    // both). Rows of one canonical id from exports with different suffixes belong to different servers, so none of them may answer for
+    // it: all are dropped (the Squid rows stay; a later import matches them as a first import would and never overwrites them).
+    // A suffix shared by only one export still collapses onto its canonical twin.
+    [Fact]
+    public async Task CanonicaliseMigration_SameIdFromTwoExportSources_NeverMerged_AllDropped()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var spaceId = await CreateSpaceAsync(db);
+            await InsertRawRowAsync(db, spaceId, "Project", $"PROJECTS-1-{Sfx}", 10, DateTimeOffset.UtcNow.AddDays(-2));
+            await InsertRawRowAsync(db, spaceId, "Project", $"PROJECTS-1-{OtherSfx}", 20, DateTimeOffset.UtcNow.AddDays(-1));
+            await InsertRawRowAsync(db, spaceId, "Project", "PROJECTS-1", 30, DateTimeOffset.UtcNow);
+            await InsertRawRowAsync(db, spaceId, "Deployment", $"DEPLOYMENTS-9-{Sfx}", 40, DateTimeOffset.UtcNow.AddDays(-2));
+            await InsertRawRowAsync(db, spaceId, "Deployment", $"DEPLOYMENTS-9-{OtherSfx}", 41, DateTimeOffset.UtcNow.AddDays(-1));
+            await InsertRawRowAsync(db, spaceId, "Project", $"PROJECTS-2-{OtherSfx}", 50, DateTimeOffset.UtcNow.AddDays(-1));
+            var otherSpaceId = await CreateSpaceAsync(db);
+            await InsertRawRowAsync(db, otherSpaceId, "Project", $"PROJECTS-1-{Sfx}", 60, DateTimeOffset.UtcNow);
+
+            await RunMigrationAsync(db, CanonicaliseMigrationFile);
+            var once = Describe(await LoadRawRowsAsync(db));
+            await RunMigrationAsync(db, CanonicaliseMigrationFile);
+
+            Describe(await LoadRawRowsAsync(db)).ShouldBe(once, "the migration must be re-runnable");
+            (await LoadRawRowsAsync(db)).Where(r => r.SpaceId == spaceId || r.SpaceId == otherSpaceId).Select(r => $"{r.SpaceId}|{r.SourceType}|{r.SourceId}|{r.DestinationId}").ShouldBe([
+                $"{spaceId}|Project|PROJECTS-2|50",
+                $"{spaceId}|{OctopusImportSourceMapQueries.ExportSourceSourceType}|{Sfx}|{spaceId}",
+                $"{spaceId}|{OctopusImportSourceMapQueries.ExportSourceSourceType}|{OtherSfx}|{spaceId}",
+                $"{otherSpaceId}|Project|PROJECTS-1|60",
+                $"{otherSpaceId}|{OctopusImportSourceMapQueries.ExportSourceSourceType}|{Sfx}|{otherSpaceId}"], ignoreOrder: true);
+        });
+    }
+
     [Fact]
     public async Task Upsert_SuffixedExportId_StoresTheCanonicalId_SoARestLookupHits()
     {

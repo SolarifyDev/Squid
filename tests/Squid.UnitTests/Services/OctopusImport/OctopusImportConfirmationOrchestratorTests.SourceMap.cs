@@ -180,6 +180,24 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.Where(r => r.SourceType == "Release").ShouldAllBe(r => r.Fingerprint == null, "a kept release records no new fingerprint, so the stored one stays");
     }
 
+    // The plan is posted by the client: an Update of history from an export file whose fingerprint differs from the space's pinned one
+    // (possibly another Octopus server with the same ids) is refused as stale, nothing written.
+    [Fact]
+    public async Task HistoryUpdate_FromAnotherExportSource_FailsStaleWithoutWriting()
+    {
+        var history = HistoryScenario();
+        var prior = new OctopusImportPriorMappings(history.Prior.Mappings, null, ["0123456789ABCDEF0123456789ABCDEF"]);
+        var harness = CreateHarness(history.Nodes, BuildDependencyPlan([history.Release]), Plan((history.Release, OctopusImportPreviewAction.Update, 4001)), true, false, false, sourceMap: SourceMap(prior).Object);
+        var request = harness.Request with { Graph = harness.Request.Graph with { ExportSourceId = "FEDCBA9876543210FEDCBA9876543210" } };
+        SquidReleaseNotes(harness, ImportedNotes, written: true);
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed);
+        Outcome(harness, history.Release).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+        harness.DeploymentHistoryImporter.Verify(i => i.UpdateReleaseNotesIfUnchangedAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private const string ImportedNotes = "Old notes";
 
     private static void SquidReleaseNotes(TestHarness harness, string notes, bool written)

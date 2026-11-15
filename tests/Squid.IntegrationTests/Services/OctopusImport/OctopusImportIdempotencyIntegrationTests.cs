@@ -109,6 +109,40 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         (await PreviewAsync(Archive(new HistorySpec { ReleaseNotes = "Hotfix notes" }))).PreviewPlan.Resources.Single(r => r.SourceType == "Release").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
     }
 
+    // Two Octopus servers share ids (Releases-1, Deployments-1). An export of another export source (different suffix) into a space
+    // already imported from the first never rewrites that history: release, deployment and task are skipped with the reason.
+    [Fact]
+    public async Task ExportOfAnotherExportSource_SameIds_NeverOverwritesTheImportedHistory()
+    {
+        await EnsureSpaceRowAsync();
+        await ConfirmSucceededAsync(Archive(new HistorySpec { ExportSuffix = ExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server A notes", State = "Executing", CompletedTime = null }));
+        var release = await SingleAsync<Release>();
+        var task = await SingleAsync<ServerTaskEntity>();
+        var before = await CountRowsAsync();
+
+        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { ExportSuffix = OtherExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server B notes" }));
+
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").Select(r => $"{r.SourceType} {r.PreviewAction} {r.SkipReason?.Code}").ShouldBe(new[] { "Release", "Deployment", "ServerTask" }.Select(t => $"{t} {OctopusImportPreviewAction.Skip} {OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource}"), ignoreOrder: true);
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        (await CountRowsAsync()).Where(pair => pair.Key != "octopus_import_source_map").ShouldBe(before.Where(pair => pair.Key != "octopus_import_source_map"));
+        (await SingleAsync<Release>()).ReleaseNote.ShouldBe("Server A notes");
+        (await SingleAsync<ServerTaskEntity>()).ShouldSatisfyAllConditions(t => t.Id.ShouldBe(task.Id), t => t.State.ShouldBe(task.State), t => t.CompletedTime.ShouldBe(task.CompletedTime));
+        release.Id.ShouldBe((await SingleAsync<Release>()).Id);
+    }
+
+    private const string OtherExportSuffix = "FEDCBA9876543210FEDCBA9876543210";
+
+    // The space the fingerprint row points at must exist for the row to be live (the per-test truncate removes the seeded one).
+    private Task EnsureSpaceRowAsync()
+        => Run<SquidDbContext>(async db =>
+        {
+            if (await db.Set<Space>().AnyAsync(x => x.Id == SpaceId)) return;
+
+            db.Set<Space>().Add(new Space { Name = "Default", Slug = "default" });
+            await db.SaveChangesAsync();
+            (await db.Set<Space>().AnyAsync(x => x.Id == SpaceId)).ShouldBeTrue();
+        });
+
     [Fact]
     public async Task ExecutingThenSuccess_UpdatesTask_AddsCompletion_NoDuplicates()
     {
@@ -582,6 +616,9 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         public bool WithConfiguration { get; init; }
         public bool MovedDefaultChannel { get; init; }
         public string ExportSuffix { get; init; }
+
+        /// <summary>A real Octopus export's manifest carries no installation id (only Squid-built bundles do).</summary>
+        public bool WithoutInstallationId { get; init; }
     }
 
     private string SessionDirectory()
@@ -674,7 +711,7 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
 
-        WriteArchive(path, Suffixed(spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents, spec.ExportSuffix));
+        WriteArchive(path, Suffixed(spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents, spec.ExportSuffix), spec.WithoutInstallationId ? null : InstallationId);
 
         return path;
     }
@@ -689,12 +726,12 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
             Document("Deployments-2", "Deployment", """{"Id":"Deployments-2","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-9","EnvironmentId":"Environments-1","ReleaseId":"Releases-2","TaskId":"ServerTasks-2","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":["Machines-1"],"Created":"2024-08-10T09:47:02+00:00"}""")
         ];
 
-    private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents)
+    private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents, string installationId)
     {
         var manifest = JsonSerializer.Serialize(new
         {
             SchemaVersions = Array.Empty<string>(),
-            InstallationId,
+            InstallationId = installationId,
             Entries = documents.Select(d => new { d.Id, Name = d.Id, d.DocumentType, ExportType = "FullDocument", DocumentSource = $"{d.Id}.json", ParentId = (string)null, Hash = Sha1(d.Json) })
         });
 

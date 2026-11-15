@@ -170,6 +170,34 @@ public class OctopusImportIncrementalPreviewTests
         plan.Preview.Summary.IsUpToDate.ShouldBeTrue();
     }
 
+    // Two Octopus servers share ids like Releases-1 and Deployments-1. An export file whose fingerprint differs from the one this space was
+    // imported from may come from another server, so the history it would rewrite is skipped with the reason, never overwritten. The same
+    // fingerprint (or a bare-id source) still updates.
+    [Theory]
+    [InlineData(OtherServerFingerprint, OctopusImportPreviewAction.Skip)]
+    [InlineData(PinnedFingerprint, OctopusImportPreviewAction.Update)]
+    [InlineData(null, OctopusImportPreviewAction.Update)]
+    public async Task HistoryChangedInAFileOfAnotherExportSource_SkippedWithReason_NeverOverwritten(string fileFingerprint, OctopusImportPreviewAction expected)
+    {
+        var first = await History(notes: "first notes", state: "Executing", finished: false).PlanAsync();
+        var scenario = History(notes: "edited in Octopus").ImportedAs(first).PriorExportSource(PinnedFingerprint);
+
+        if (fileFingerprint != null) scenario.ExportedFromSpace($"Spaces-1-{fileFingerprint}");
+
+        var plan = await scenario.PlanAsync();
+
+        ShouldBeConsistent(plan);
+        foreach (var id in new[] { "Releases-1", "Deployments-1", "ServerTasks-1" })
+        {
+            var resource = plan.Resource(id);
+            resource.PreviewAction.ShouldBe(expected, $"{id}: {Describe(plan)}");
+            if (expected == OctopusImportPreviewAction.Skip) resource.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource, id);
+        }
+    }
+
+    private const string PinnedFingerprint = "0123456789ABCDEF0123456789ABCDEF";
+    private const string OtherServerFingerprint = "FEDCBA9876543210FEDCBA9876543210";
+
     // The old side is what Squid holds now; only fields that really differ are listed, on the deployment and its task alike.
     [Fact]
     public async Task TaskFinishedInOctopus_UpdateListsOnlyTheChangedFields_OldFromSquid()
