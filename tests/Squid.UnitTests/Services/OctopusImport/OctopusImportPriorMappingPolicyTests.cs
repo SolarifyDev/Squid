@@ -125,6 +125,23 @@ public class OctopusImportPriorMappingPolicyTests
         (decision.Diagnostic?.Severity == OctopusImportCompatibilitySeverity.Info).ShouldBe(expectInfo);
     }
 
+    // A release update may rewrite Squid's notes only while they are what the last import wrote: an edit (or a clear) made in Squid is the user's.
+    [Theory]
+    [InlineData("imported", "imported", false)]
+    [InlineData("imported", "  imported  ", false)]                    // canonical: surrounding whitespace is not an edit
+    [InlineData("", "", false)]                                        // imported empty, still empty
+    [InlineData("", null, false)]
+    [InlineData("imported", "imported + approved by ops", true)]
+    [InlineData("imported", "", true)]                                 // cleared in Squid
+    [InlineData(null, "", false)]                                      // no fingerprint recorded (older import): only empty notes are not the user's
+    [InlineData(null, "written in Squid", true)]
+    public void ReleaseNotesEditedInSquid_OnlyWhenSquidNoLongerHoldsWhatTheImportWrote(string importedNotes, string squidNotes, bool expected)
+    {
+        var fingerprint = importedNotes == null ? null : OctopusImportFingerprint.ForRelease(new OctopusReleaseDto { ReleaseNotes = importedNotes });
+
+        OctopusImportPriorMappingPolicy.ReleaseNotesEditedInSquid(new OctopusImportPriorMapping(9, "Created", fingerprint, null), squidNotes).ShouldBe(expected);
+    }
+
     [Fact]
     public void Release_NullStoredFingerprint_Update()
     {

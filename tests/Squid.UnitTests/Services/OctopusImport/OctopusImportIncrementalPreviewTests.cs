@@ -118,6 +118,31 @@ public class OctopusImportIncrementalPreviewTests
         scenario.StoredHistoryReads.ShouldHaveSingleItem().ShouldSatisfyAllConditions(r => r.ReleaseIds.ShouldBe([scenario.PriorDestinationOf(OctopusResourceKind.Release, "Releases-1")]), r => r.TaskIds.ShouldBeEmpty());
     }
 
+    // Notes edited (or cleared) in Squid are the user's: a later Octopus change is not applied, the release is skipped with the reason and
+    // its deployments still land on it.
+    [Theory]
+    [InlineData("first notes + approved by ops")]
+    [InlineData("")]
+    public async Task ReleaseNotesEditedInSquid_ThenChangedInOctopus_KeptAndSkippedWithReason_UpToDate(string squidNotes)
+    {
+        var first = await History(notes: "first notes").PlanAsync();
+        var scenario = History(notes: "edited in Octopus").ImportedAs(first);
+        var releaseId = scenario.PriorDestinationOf(OctopusResourceKind.Release, "Releases-1");
+        scenario.StoredReleaseNotes(releaseId, squidNotes);
+
+        var plan = await scenario.PlanAsync();
+
+        ShouldBeConsistent(plan);
+        plan.Resource("Releases-1").ShouldSatisfyAllConditions(
+            r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)),
+            r => r.DestinationId.ShouldBe(releaseId),
+            r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid),
+            r => r.Diagnostics.ShouldHaveSingleItem().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info));
+        plan.Resource("Deployments-1").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
+        plan.Preview.Summary.Counts.Update.ShouldBe(0);
+        plan.Preview.Summary.IsUpToDate.ShouldBeTrue();
+    }
+
     // The old side is what Squid holds now; only fields that really differ are listed, on the deployment and its task alike.
     [Fact]
     public async Task TaskFinishedInOctopus_UpdateListsOnlyTheChangedFields_OldFromSquid()

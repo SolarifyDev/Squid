@@ -30,11 +30,23 @@ public partial class OctopusImportPreviewPlanner
 
         var prior = OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf);
 
-        if (prior != null) return prior;
+        if (prior != null) return KeepNotesEditedInSquid(resource, prior, context) ?? prior;
 
         return context.ReleaseVersionExists(release, ReleaseVersion(release, resource))
             ? new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, ReleaseVersionExistsInSquid(resource))
             : new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null);
+    }
+
+    // An Update whose Squid notes were edited since the import is skipped: the release stays linked (its deployments land on it), nothing is written.
+    private static OctopusImportPriorDecision KeepNotesEditedInSquid(OctopusResourceNode resource, OctopusImportPriorDecision prior, PreviewPlanningContext context)
+    {
+        if (prior.Action != OctopusImportPreviewAction.Update || prior.DestinationId is not { } releaseId) return null;
+
+        var squidNotes = context.Conflicts.StoredHistory.ReleaseNotes.GetValueOrDefault(releaseId);
+
+        if (!OctopusImportPriorMappingPolicy.ReleaseNotesEditedInSquid(context.PriorFor(OctopusResourceKind.Release, resource.SourceId), squidNotes)) return null;
+
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, releaseId, ReleaseNotesEditedInSquid(resource));
     }
 
     private static OctopusImportPriorDecision DecideDeployment(OctopusResourceNode resource, PreviewPlanningContext context)
@@ -104,6 +116,9 @@ public partial class OctopusImportPreviewPlanner
 
     private static OctopusImportDiagnosticDto ReleaseVersionExistsInSquid(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ReleaseVersionExistsInSquid, $"Release '{resource.Name}' already exists in Squid on this project channel but was not created by an Octopus import. It is kept as it is; this release and its deployments are skipped.", resource);
+
+    private static OctopusImportDiagnosticDto ReleaseNotesEditedInSquid(OctopusResourceNode resource)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid, $"The notes of release '{resource.Name}' were edited in Squid after the import; they are kept and the Octopus notes are not applied.", resource);
 
     private static OctopusImportDiagnosticDto TaskWithoutImportedDeployment(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.TaskImportedWithDeployment, "An Octopus task is imported only together with its deployment; this one has no deployment this import imports (a runbook run, a system task, or a skipped deployment).", resource);

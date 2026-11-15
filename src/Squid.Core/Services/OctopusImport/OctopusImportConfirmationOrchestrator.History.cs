@@ -69,11 +69,19 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         var destinationId = EnsurePriorDestination(execution, resource, preview.DestinationId);
         var source = resource.GetSource<OctopusReleaseDto>() ?? throw new OctopusImportConfirmationException("Release source payload is missing.");
 
-        await _deploymentHistoryImporter.UpdateReleaseNotesAsync(destinationId, source.ReleaseNotes, ct).ConfigureAwait(false);
+        var squidNotes = await _deploymentHistoryImporter.GetReleaseNotesAsync(destinationId, ct).ConfigureAwait(false);
+
+        var written = !OctopusImportPriorMappingPolicy.ReleaseNotesEditedInSquid(execution.PriorFor(resource), squidNotes) && await _deploymentHistoryImporter.UpdateReleaseNotesIfUnchangedAsync(destinationId, squidNotes, source.ReleaseNotes, ct).ConfigureAwait(false);
 
         execution.AddReused(resource, destinationId);
-        execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Updated);
+
+        if (written) execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Updated);
+        else execution.AddDiagnostic(resource, ReleaseNotesKept(resource));
     }
+
+    // Edited in Squid (before the write, or concurrently): kept, the release stays linked as reused and its stored fingerprint is not moved.
+    private static OctopusImportDiagnosticDto ReleaseNotesKept(OctopusResourceNode resource)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid, $"The notes of release '{resource.Name}' were edited in Squid; they were kept and the Octopus notes were not applied.", resource);
 
     private async Task UpdateHistoryUnitAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview, CancellationToken ct)
     {

@@ -85,6 +85,49 @@ public partial class OctopusImportFromServerIntegrationTests
         again.PreviewPlan.Summary.IsUpToDate.ShouldBeTrue(Describe(again.PreviewPlan));
     }
 
+    // Notes edited in Squid, then changed in Octopus: neither source overwrites the user's notes; the release is skipped with the reason,
+    // the deployment still lands on it, and the preview stays up to date.
+    [Fact]
+    public async Task ReleaseNotesEditedInSquid_ThenChangedInOctopus_NeitherSourceOverwritesThem()
+    {
+        await using var octopus = OneDeployment();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        await Run<SquidDbContext>(db => db.Set<Release>().ExecuteUpdateAsync(s => s.SetProperty(r => r.ReleaseNote, "notes 1.0.0 + approved by ops")));
+
+        octopus.Releases["Projects-1"][0]["ReleaseNotes"] = "notes edited in Octopus";
+
+        foreach (var fromServer in new[] { true, false, true })
+        {
+            var again = fromServer ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(ExportArchive(withHistory: true));
+
+            ShouldHaveSucceeded(again);
+            (await SingleAsync<Release>()).ReleaseNote.ShouldBe("notes 1.0.0 + approved by ops", $"{(fromServer ? "API" : "file")} import");
+            again.PreviewPlan.Summary.Counts.Update.ShouldBe(0, Describe(again.PreviewPlan));
+            again.PreviewPlan.Summary.IsUpToDate.ShouldBeTrue(Describe(again.PreviewPlan));
+        }
+
+        var release = Resource((await ImportFromServerAsync(octopus)).PreviewPlan, "Release");
+        release.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        release.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid);
+    }
+
+    // The confirmation's write is a compare-and-set on the notes it read: an edit that lands in between wins.
+    [Fact]
+    public async Task ReleaseNotesCompareAndSet_WritesOnlyWhileSquidStillHoldsTheReadNotes()
+    {
+        await using var octopus = OneDeployment();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        var release = await SingleAsync<Release>();
+
+        var lost = await Run<IOctopusImportDeploymentHistoryImporter, bool>(importer => importer.UpdateReleaseNotesIfUnchangedAsync(release.Id, "notes read before an edit", "from Octopus"));
+        (await SingleAsync<Release>()).ReleaseNote.ShouldBe("notes 1.0.0");
+
+        var won = await Run<IOctopusImportDeploymentHistoryImporter, bool>(importer => importer.UpdateReleaseNotesIfUnchangedAsync(release.Id, "notes 1.0.0", "from Octopus"));
+
+        (lost, won).ShouldBe((false, true));
+        (await SingleAsync<Release>()).ReleaseNote.ShouldBe("from Octopus");
+    }
+
     // The old side is read only from the destination space.
     [Fact]
     public async Task StoredHistory_ReadFromTheDestinationSpaceOnly()

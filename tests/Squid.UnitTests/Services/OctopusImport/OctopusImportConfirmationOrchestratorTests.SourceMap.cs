@@ -148,13 +148,45 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var upserted = new List<OctopusImportSourceMapRow>();
         var preview = Plan((history.Release, OctopusImportPreviewAction.Update, 4001));
         var harness = CreateHarness(history.Nodes, BuildDependencyPlan([history.Release]), preview, true, false, false, sourceMap: SourceMap(history.Prior, upserted: upserted).Object);
+        SquidReleaseNotes(harness, ImportedNotes, written: true);
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Succeeded);
-        harness.DeploymentHistoryImporter.Verify(i => i.UpdateReleaseNotesAsync(4001, "New notes", It.IsAny<CancellationToken>()), Times.Once);
+        harness.DeploymentHistoryImporter.Verify(i => i.UpdateReleaseNotesIfUnchangedAsync(4001, ImportedNotes, "New notes", It.IsAny<CancellationToken>()), Times.Once);
         Outcome(harness, history.Release).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Updated);
         upserted.ShouldContain(r => r.SourceType == "Release" && r.DestinationId == 4001 && r.Fingerprint == OctopusImportFingerprint.ForRelease(new OctopusReleaseDto { ReleaseNotes = "New notes" }));
+    }
+
+    // The plan is posted by the client and Squid can change after the preview: notes edited in Squid (seen before the write, or by a
+    // concurrent edit that wins the compare-and-set) are kept, the release stays linked, and its stored fingerprint is not moved.
+    [Theory]
+    [InlineData("Old notes + approved by ops", false)]
+    [InlineData(ImportedNotes, true)]
+    public async Task ReleaseUpdate_NotesEditedInSquid_KeptNotWritten_FingerprintUnchanged(string squidNotes, bool editedConcurrently)
+    {
+        var history = HistoryScenario();
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var harness = CreateHarness(history.Nodes, BuildDependencyPlan([history.Release]), Plan((history.Release, OctopusImportPreviewAction.Update, 4001)), true, false, false, sourceMap: SourceMap(history.Prior, upserted: upserted).Object);
+        SquidReleaseNotes(harness, squidNotes, written: false);
+
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        harness.DeploymentHistoryImporter.Verify(i => i.UpdateReleaseNotesIfUnchangedAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), editedConcurrently ? Times.Once() : Times.Never());
+        Outcome(harness, history.Release).ShouldSatisfyAllConditions(
+            o => o.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Reused),
+            o => o.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReleaseNotesEditedInSquid));
+        upserted.Where(r => r.SourceType == "Release").ShouldAllBe(r => r.Fingerprint == null, "a kept release records no new fingerprint, so the stored one stays");
+    }
+
+    private const string ImportedNotes = "Old notes";
+
+    private static void SquidReleaseNotes(TestHarness harness, string notes, bool written)
+    {
+        var importer = harness.DeploymentHistoryImporter;
+        importer.Setup(i => i.GetReleaseNotesAsync(4001, It.IsAny<CancellationToken>())).ReturnsAsync(notes);
+        importer.Setup(i => i.UpdateReleaseNotesIfUnchangedAsync(4001, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(written);
     }
 
     [Theory]
@@ -335,7 +367,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var taskDto = new OctopusServerTaskDto { Id = "ServerTasks-1", Name = "Deploy", State = "Success", QueueTime = new DateTimeOffset(2024, 7, 10, 9, 47, 2, TimeSpan.Zero), CompletedTime = new DateTimeOffset(2024, 7, 10, 9, 48, 11, TimeSpan.Zero) };
         var task = Node("ServerTasks-1", OctopusResourceKind.ServerTask, OctopusDocumentKind.ServerTask, "Deploy", taskDto, null);
         var deployment = Node("Deployments-1", OctopusResourceKind.Deployment, OctopusDocumentKind.Deployment, "Deploy to TEST", new OctopusDeploymentDto { Id = "Deployments-1", Name = "Deploy to TEST", ProjectId = "Projects-1", ChannelId = "Channels-1", EnvironmentId = "Environments-1", ReleaseId = "Releases-1", TaskId = "ServerTasks-1", DeployedToMachineIds = ["Machines-1"] }, null);
-        var stored = new List<(OctopusResourceNode, int, string)> { (nodes.Project, 1001, null), (channel, 2001, null), (nodes.Environment, 3001, null), (release, 4001, "old-notes") };
+        var stored = new List<(OctopusResourceNode, int, string)> { (nodes.Project, 1001, null), (channel, 2001, null), (nodes.Environment, 3001, null), (release, 4001, OctopusImportFingerprint.ForRelease(new OctopusReleaseDto { ReleaseNotes = ImportedNotes })) };
 
         if (storeDeployment) stored.Add((deployment, 5001, storedTaskFingerprint ?? OctopusImportFingerprint.ForTask(taskDto)));
         if (storeDeployment && storeTask) stored.Add((task, 6001, null));

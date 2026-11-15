@@ -15,8 +15,14 @@ public interface IOctopusImportDeploymentHistoryImporter : IScopedDependency
     /// <summary>Creates the history unit, or updates the rows an earlier import wrote in place (same ids, children replaced only when asked).</summary>
     Task<OctopusImportDeploymentHistoryResult> UpsertAsync(OctopusImportHistoryUnit unit, CancellationToken ct = default);
 
-    /// <summary>The only field an update of an imported release writes.</summary>
-    Task UpdateReleaseNotesAsync(int releaseId, string releaseNotes, CancellationToken ct = default);
+    /// <summary>Squid's current notes of a release (null when the release is gone).</summary>
+    Task<string> GetReleaseNotesAsync(int releaseId, CancellationToken ct = default);
+
+    /// <summary>
+    /// The only field an update of an imported release writes, and only while Squid still holds <paramref name="expectedNotes"/>
+    /// (compare-and-set): notes edited in the meantime are never overwritten. Returns whether the notes were written.
+    /// </summary>
+    Task<bool> UpdateReleaseNotesIfUnchangedAsync(int releaseId, string expectedNotes, string releaseNotes, CancellationToken ct = default);
 }
 
 public sealed record OctopusImportDeploymentHistoryRequest(
@@ -91,11 +97,16 @@ public sealed partial class OctopusImportDeploymentHistoryImporter : IOctopusImp
         return new OctopusImportDeploymentHistoryResult(deploymentId, taskId, _ctx.ActorId);
     }
 
-    public async Task UpdateReleaseNotesAsync(int releaseId, string releaseNotes, CancellationToken ct = default)
+    public async Task<string> GetReleaseNotesAsync(int releaseId, CancellationToken ct = default)
+        => await _dbContext.Set<Squid.Core.Persistence.Entities.Deployments.Release>().AsNoTracking().Where(r => r.Id == releaseId).Select(r => r.ReleaseNote).SingleOrDefaultAsync(ct).ConfigureAwait(false);
+
+    public async Task<bool> UpdateReleaseNotesIfUnchangedAsync(int releaseId, string expectedNotes, string releaseNotes, CancellationToken ct = default)
     {
         if (releaseId <= 0) throw new ArgumentOutOfRangeException(nameof(releaseId));
 
-        await _dbContext.Database.ExecuteSqlRawAsync("UPDATE release SET release_notes = {0}, last_modified_date = now() WHERE id = {1}", OctopusImportText.StripNul(new object[] { releaseNotes, releaseId }), ct).ConfigureAwait(false);
+        var written = await _dbContext.Database.ExecuteSqlRawAsync("UPDATE release SET release_notes = {0}, last_modified_date = now() WHERE id = {1} AND COALESCE(release_notes, '') = {2}", OctopusImportText.StripNul(new object[] { releaseNotes, releaseId, expectedNotes ?? string.Empty }), ct).ConfigureAwait(false);
+
+        return written > 0;
     }
 
     /// <summary>The configured per-task log line cap; an unset, unparsable or non-positive value falls back to the default.</summary>

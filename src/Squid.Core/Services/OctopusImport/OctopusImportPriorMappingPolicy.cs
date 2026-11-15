@@ -75,6 +75,15 @@ public static class OctopusImportPriorMappingPolicy
         return Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportPreviewDiagnosticCodes.OctopusInstallationMismatch, "This Octopus server is not the installation this space's history was imported from. One Squid space holds the history of one Octopus installation.", null);
     }
 
+    /// <summary>
+    /// A release update may rewrite Squid's notes only while they are still what the last import wrote; notes edited or cleared in Squid are
+    /// the user's. Without a recorded fingerprint (an older import) only empty notes can be told apart from an edit.
+    /// </summary>
+    public static bool ReleaseNotesEditedInSquid(OctopusImportPriorMapping stored, string squidNotes)
+        => stored?.Fingerprint == null
+            ? !string.IsNullOrWhiteSpace(squidNotes)
+            : !string.Equals(stored.Fingerprint, OctopusImportFingerprint.ForRelease(new OctopusReleaseDto { ReleaseNotes = squidNotes }), StringComparison.Ordinal);
+
     private static OctopusImportPriorDecision DecideRelease(OctopusResourceNode node, OctopusImportPriorMappings prior)
     {
         if (!TryGetPrior(prior, node, out var mapping)) return null;
