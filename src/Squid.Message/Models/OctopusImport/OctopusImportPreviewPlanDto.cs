@@ -15,6 +15,9 @@ public class OctopusImportPreviewPlanDto
     /// <summary>Set when this import would fill missing secrets from an export file whose installation the user must confirm; null otherwise.</summary>
     public OctopusImportFillPairingDto FillPairing { get; set; }
 
+    /// <summary>The origin check's verdict when the import would link to rows of another origin; null when nothing needs proof.</summary>
+    public OctopusImportOriginEvidenceDto Origin { get; set; }
+
     /// <summary>Totals, per-kind and per-project counts, skip reasons and the "up to date" flag; null for plans produced before it existed.</summary>
     public OctopusImportPreviewSummaryDto Summary { get; set; }
 

@@ -29,6 +29,20 @@ public partial class OctopusImportPreviewPlanner
         return [OriginDiagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, OctopusImportOriginMessages.PairingRequired(context.FillEvidence.MatchingStructureIds, SourceText(context), RecordedText(context)))];
     }
 
+    // The verdict the page shows. A file of another export fingerprint is not refused (it degrades, see the history diagnostics).
+    private static OctopusImportOriginEvidenceDto OriginEvidence(PreviewPlanningContext context)
+    {
+        var anotherInstallation = OctopusImportFillEvidences.IsAnotherInstallation(context.Conflicts.HistoryInstallationId, context.Prior);
+
+        if (!anotherInstallation && !context.NeedsOriginProof) return null;
+
+        var evidence = context.FillEvidence;
+
+        if (OctopusImportFillEvidences.IsAnotherExportSource(evidence)) return null;
+
+        return new OctopusImportOriginEvidenceDto { State = evidence.State, Basis = evidence.Basis, MatchingStructureIds = evidence.MatchingStructureIds, Source = SourceText(context), Recorded = RecordedText(context) };
+    }
+
     private static string SourceText(PreviewPlanningContext context)
         => OctopusImportOriginMessages.Source(context.Conflicts.HistoryInstallationId, context.Conflicts.ExportSourceId, context.Conflicts.SourceOrigin);
 

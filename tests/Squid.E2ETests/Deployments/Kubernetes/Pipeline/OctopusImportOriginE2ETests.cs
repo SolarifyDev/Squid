@@ -48,6 +48,13 @@ public class OctopusImportOriginE2ETests : IClassFixture<OctopusImportOriginE2ET
         first.Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded);
         var before = await RowCountsAsync();
 
+        var origin = (await PreviewServerAsync(octopus)).Origin;
+
+        origin.ShouldNotBeNull("the preview carries the refused verdict the page renders").ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.Unproven),
+            o => o.Source.ShouldContain(StubOctopusServer.InstallationId, Case.Insensitive),
+            o => o.Recorded.ShouldContain(FingerprintOfY, Case.Insensitive));
+
         var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromServerAsync(octopus));
 
         refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
@@ -59,6 +66,16 @@ public class OctopusImportOriginE2ETests : IClassFixture<OctopusImportOriginE2ET
 
     private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus)
         => _fixture.Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, 1, octopus.BaseUri, ApiKey, confirmPairing: true));
+
+    private Task<Squid.Message.Models.OctopusImport.OctopusImportPreviewPlanDto> PreviewServerAsync(StubOctopusServer octopus)
+        => _fixture.Run<IMediator, Squid.Message.Models.OctopusImport.OctopusImportPreviewPlanDto>(async mediator =>
+        {
+            var sessionId = (await OctopusImportHandlerFlow.ConnectAsync(mediator, 1, octopus.BaseUri, ApiKey)).Data.Session.SessionId;
+            await OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, 1, sessionId, octopus.BaseUri, ApiKey);
+            await OctopusImportHandlerFlow.ExtractAsync(mediator, 1, sessionId);
+
+            return (await OctopusImportHandlerFlow.PreviewAsync(mediator, 1, sessionId)).Data.PreviewPlan;
+        });
 
     private Task<OctopusImportFlowResult> ImportFromFileAsync(string archive)
         => _fixture.Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromFileAsync(mediator, 1, archive, ExportPassword, confirmPairing: true));

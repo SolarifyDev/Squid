@@ -42,6 +42,24 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SourceMapAsync()).Count.ShouldBe(sourceMap.Count, "neither the other installation nor its fingerprint is recorded");
     }
 
+    // file(Y) → API(X) with no process GUID in common: the preview's origin verdict refuses, naming both origins, and offers no pairing.
+    [Fact]
+    public async Task AnotherServersSource_PreviewOriginRefused_NamesBothOrigins()
+    {
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false)));
+
+        var (_, preview) = await ServerPreviewAsync(octopus);
+
+        preview.HasBlockers.ShouldBeTrue(Describe(preview));
+        preview.FillPairing.ShouldBeNull();
+        preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.Unproven),
+            o => o.MatchingStructureIds.ShouldBe(0),
+            o => o.Source.ShouldContain($"{StubOctopusServer.InstallationId} (server {octopus.BaseUri.Authority}", Case.Insensitive),
+            o => o.Recorded.ShouldContain($"export file with fingerprint {OriginFingerprint}", Case.Insensitive));
+    }
+
     // API(X) → API(X'): two installations of different servers sharing every id — one Squid space holds one installation's history.
     [Fact]
     public async Task ApiOfAnotherInstallation_Refused_NamesBothServers()
@@ -69,6 +87,7 @@ public partial class OctopusImportFromServerIntegrationTests
         var first = await ImportFromFileAsync(SameInstallationExport(OriginFingerprint));
         ShouldHaveSucceeded(first);
         first.PreviewPlan.FillPairing.ShouldBeNull("a first import into an empty space needs no proof");
+        first.PreviewPlan.Origin.ShouldBeNull("a first import has no origin to check against");
         OctopusImportHandlerFlow.AllDiagnostics(first.PreviewPlan).ShouldNotContain(d => d.Code.Contains("import_origin"));
         var before = await CountRowsAsync(LinkedTables);
 
@@ -82,6 +101,11 @@ public partial class OctopusImportFromServerIntegrationTests
             p => p.SourceServerHost.ShouldBe(octopus.BaseUri.Authority),
             p => p.RecordedExportSourceId.ShouldBe(OriginFingerprint),
             p => p.MatchingStructureIds.ShouldBe(2));
+        preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.PairingRequired),
+            o => o.MatchingStructureIds.ShouldBe(2),
+            o => o.Source.ShouldContain(StubOctopusServer.InstallationId, Case.Insensitive),
+            o => o.Recorded.ShouldContain(OriginFingerprint, Case.Insensitive));
         (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK, "a first pairing is never assumed");
 
         preview.FillPairing.Confirmed = true;
@@ -99,6 +123,8 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(file);
         api.PreviewPlan.FillPairing.ShouldBeNull("the recorded installation proves the server now");
         file.PreviewPlan.FillPairing.ShouldBeNull("the pinned fingerprint proves the file");
+        (api.PreviewPlan.Origin?.State, api.PreviewPlan.Origin?.Basis).ShouldBe((OctopusImportFillEvidenceState.Proven, "installation"));
+        file.PreviewPlan.Origin.ShouldBeNull("the file meets only rows it created itself: nothing to prove");
     }
 
     // A client cannot talk its way past the check: a posted confirmation without matching GUIDs is refused at validation.

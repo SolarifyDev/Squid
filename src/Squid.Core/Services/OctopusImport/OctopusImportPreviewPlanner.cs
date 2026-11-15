@@ -65,7 +65,8 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
                 .SelectMany(r => r.RequiredInputs)
                 .ToList(),
             Diagnostics = diagnostics,
-            FillPairing = FillPairing(context)
+            FillPairing = FillPairing(context),
+            Origin = OriginEvidence(context)
         };
 
         plan.Summary = Summary(plan, context);
