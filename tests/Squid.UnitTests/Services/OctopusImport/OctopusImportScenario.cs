@@ -2,10 +2,16 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.SourceMap;
+using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.ExternalFeed;
+using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
@@ -22,8 +28,13 @@ internal sealed class OctopusImportScenario
     private readonly List<OctopusImportDestinationResource> _destination = [];
     private readonly Dictionary<(string Type, string Id), OctopusImportPriorMapping> _prior = [];
     private readonly List<OctopusImportReleaseKey> _releaseKeys = [];
+    private readonly List<string> _priorExportSourceIds = [];
+    private readonly List<SensitiveVariableSlot> _squidVariables = [];
+    private readonly List<ExternalFeedCredentialSlot> _squidFeeds = [];
     private string _installationId;
     private string _priorInstallationId;
+    private OctopusImportHistoryFetchDto _priorImportSession;
+    private string _exportSpaceId;
 
     public OctopusImportScenario Environment(string id, string name)
         => Add(id, "StaticDeploymentEnvironment", new { Id = id, Name = name, Slug = name.ToLowerInvariant() });
@@ -36,6 +47,10 @@ internal sealed class OctopusImportScenario
 
     public OctopusImportScenario Feed(string id, string name, string feedType)
         => Add(id, "Feed", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), FeedType = feedType, FeedUri = "https://packages.example.com" });
+
+    /// <summary>A Docker feed as an export file carries it: username and the password encrypted with the export password (null = none).</summary>
+    public OctopusImportScenario FeedWithCredentials(string id, string name, string username, string encryptedPassword)
+        => Add(id, "Feed", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), FeedType = "Docker", FeedUri = "https://registry.example.com", Username = username, Password = encryptedPassword });
 
     public OctopusImportScenario Account(string id, string name, string accountType, params string[] environmentIds)
         => Add(id, "Account", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), AccountType = accountType, EnvironmentIds = environmentIds });
@@ -189,6 +204,58 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>Every document carries this <c>SpaceId</c>, as an Octopus export does (a suffixed one is the export's fingerprint).</summary>
+    public OctopusImportScenario ExportedFromSpace(string spaceId)
+    {
+        _exportSpaceId = spaceId;
+        return this;
+    }
+
+    /// <summary>An export fingerprint an earlier export-file import recorded for the space (the first one is pinned).</summary>
+    public OctopusImportScenario PriorExportSource(string exportSourceId)
+    {
+        _priorExportSourceIds.Add(exportSourceId);
+        return this;
+    }
+
+    /// <summary>A source-map row with an explicit outcome (e.g. a <c>VariableSecret</c> / <c>FeedSecret</c> row an API import left <c>Missing</c>).</summary>
+    public OctopusImportScenario PriorRow(string sourceType, string sourceId, int destinationId, string outcome)
+    {
+        _prior[(sourceType, sourceId)] = new OctopusImportPriorMapping(destinationId, outcome, null, null);
+        return this;
+    }
+
+    /// <summary>The <c>VariableSecret</c> row key of a sensitive variable, as the import that left it missing recorded it (scopes through the prior rows).</summary>
+    public string VariableSecretKey(string ownerSetSourceId, string name, Dictionary<string, string[]> scope = null)
+        => OctopusImportSecretKeys.ForVariable(ownerSetSourceId, new OctopusVariableDto { Name = name, Type = "Sensitive", IsSensitive = true, Scope = (scope ?? []).ToDictionary(kv => kv.Key, kv => kv.Value.ToList()) }, (id, kind) => _prior.TryGetValue((kind.ToString(), id), out var row) ? row.DestinationId : null);
+
+    /// <summary>A sensitive variable as Squid holds it now (the value itself is never read, only whether there is one).</summary>
+    public OctopusImportScenario SquidSensitiveVariable(int variableId, int variableSetId, string name, bool hasValue, params (VariableScopeType Type, string Value)[] scopes)
+    {
+        _squidVariables.Add(new SensitiveVariableSlot(variableId, variableSetId, VariableIdentity.Of(name, VariableType.Password, scopes), hasValue));
+        return this;
+    }
+
+    /// <summary>A Squid project (or library variable set) that owns the given variable set, as the destination data provider lists it.</summary>
+    public OctopusImportScenario ExistingVariableSetOwner(OctopusResourceKind kind, int id, string name, int variableSetId)
+    {
+        _destination.Add(new OctopusImportDestinationResource(id, SpaceId, kind, name, name.ToLowerInvariant(), DateTimeOffset.UtcNow.AddDays(-1)) { VariableSetId = variableSetId });
+        return this;
+    }
+
+    /// <summary>The import session that recorded the space's installation: the server, space and version it read.</summary>
+    public OctopusImportScenario PriorImportSession(string serverHost, string octopusSpaceId, string octopusVersion)
+    {
+        _priorImportSession = new OctopusImportHistoryFetchDto { InstallationId = _priorInstallationId, ServerHost = serverHost, OctopusSpaceId = octopusSpaceId, OctopusVersion = octopusVersion };
+        return this;
+    }
+
+    public OctopusImportScenario SquidFeed(int feedId, string username, bool hasPassword)
+    {
+        _squidFeeds.Add(new ExternalFeedCredentialSlot(feedId, username, hasPassword));
+        return this;
+    }
+
     /// <summary>Records every resource a plan writes as imported, the way confirmation fills the source map.</summary>
     public OctopusImportScenario ImportedAs(ScenarioResult plan)
     {
@@ -251,13 +318,17 @@ internal sealed class OctopusImportScenario
 
     public static string Encrypt(string plaintext) => Secrets.OctopusExportTestCipher.Encrypt(plaintext, ExportPassword);
 
-    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null)
+    /// <param name="pairingConfirmed">The user confirmed the export-file pairing the preview asked for (posted back with the plan).</param>
+    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null, bool pairingConfirmed = false)
     {
         var graph = await BuildGraphAsync().ConfigureAwait(false);
         var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph);
         var conflicts = await DiscoverConflictsAsync(graph).ConfigureAwait(false);
         var accessor = new OctopusExportSecretsAccessor { Secrets = secrets ?? OctopusExportSecrets.None };
         var preview = new OctopusImportPreviewPlanner(accessor).BuildPreviewPlan(dependencyPlan, conflicts);
+
+        if (pairingConfirmed && preview.FillPairing != null) preview.FillPairing.Confirmed = true;
+
         var validation = new OctopusImportPreviewValidator(accessor).Validate(graph, dependencyPlan, conflicts, preview);
 
         return new ScenarioResult(graph, dependencyPlan, conflicts, preview, validation);
@@ -266,7 +337,7 @@ internal sealed class OctopusImportScenario
     public async Task<OctopusResourceGraph> BuildGraphAsync()
     {
         var entries = new List<OctopusExtractedArchiveEntry> { new("manifest.json", Encoding.UTF8.GetBytes(BuildManifestJson())) };
-        entries.AddRange(_documents.Select(d => new OctopusExtractedArchiveEntry($"{d.Id}.json", Encoding.UTF8.GetBytes(d.Json))));
+        entries.AddRange(_documents.Select(d => new OctopusExtractedArchiveEntry($"{d.Id}.json", Encoding.UTF8.GetBytes(WithSpaceId(d.Json)))));
 
         var extraction = await new OctopusInputExtractor().ExtractJsonEntriesAsync(entries).ConfigureAwait(false);
 
@@ -280,9 +351,28 @@ internal sealed class OctopusImportScenario
         destination.Setup(d => d.GetReleaseKeysAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(_releaseKeys);
 
         var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
-        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(_prior), _priorInstallationId));
+        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(_prior), _priorInstallationId, _priorExportSourceIds));
 
-        return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
+        var variables = new Mock<IVariableService>();
+        variables.Setup(v => v.GetSensitiveVariableSlotsAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyCollection<int> ids, CancellationToken _) => _squidVariables.Where(v => ids.Contains(v.VariableSetId)).ToList());
+
+        var feeds = new Mock<IExternalFeedService>();
+        feeds.Setup(f => f.GetCredentialSlotsAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyCollection<int> ids, CancellationToken _) => _squidFeeds.Where(f => ids.Contains(f.FeedId)).ToList());
+
+        var sessions = new Mock<IOctopusImportSessionDataProvider>();
+        sessions.Setup(s => s.GetLatestHistoryFetchAsync(SpaceId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, string installationId, CancellationToken _) => string.Equals(installationId, _priorImportSession?.InstallationId, StringComparison.OrdinalIgnoreCase) ? _priorImportSession : null);
+
+        return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, variables.Object, feeds.Object, sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
+    }
+
+    private string WithSpaceId(string json)
+    {
+        if (_exportSpaceId == null) return json;
+
+        var node = JsonNode.Parse(json)!.AsObject();
+        node["SpaceId"] = _exportSpaceId;
+
+        return node.ToJsonString();
     }
 
     private OctopusImportScenario Add(string id, string documentType, object document)
@@ -296,7 +386,7 @@ internal sealed class OctopusImportScenario
         {
             SchemaVersions = Array.Empty<string>(),
             InstallationId = _installationId,
-            Entries = _documents.Select(d => new { d.Id, Name = d.Id, d.DocumentType, ExportType = "FullDocument", DocumentSource = $"{d.Id}.json", ParentId = (string)null, Hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(d.Json))).ToLowerInvariant() })
+            Entries = _documents.Select(d => new { d.Id, Name = d.Id, d.DocumentType, ExportType = "FullDocument", DocumentSource = $"{d.Id}.json", ParentId = (string)null, Hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(WithSpaceId(d.Json)))).ToLowerInvariant() })
         });
 
     internal sealed record ScenarioResult(OctopusResourceGraph Graph, OctopusImportDependencyPlan DependencyPlan, OctopusImportConflictDiscoveryResult Conflicts, OctopusImportPreviewPlanDto Preview, OctopusImportValidationResultDto Validation)

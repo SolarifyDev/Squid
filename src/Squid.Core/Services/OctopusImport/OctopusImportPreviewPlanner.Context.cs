@@ -1,4 +1,5 @@
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -29,9 +30,29 @@ public partial class OctopusImportPreviewPlanner
             _nodesById = nodes.ToDictionary(n => n.SourceId, StringComparer.OrdinalIgnoreCase);
             _referenceScope = dependencyPlan.ReferenceScope ?? OctopusImportReferenceScope.Everything;
             Prior = conflicts.PriorMappings;
+            Conflicts = conflicts;
+            Nodes = nodes;
         }
 
         public OctopusImportPriorMappings Prior { get; }
+
+        public OctopusImportConflictDiscoveryResult Conflicts { get; }
+
+        public IReadOnlyList<OctopusResourceNode> Nodes { get; }
+
+        /// <summary>What happened to each still-missing secret this source speaks for, by diagnostic code (for the plan summary).</summary>
+        public Dictionary<string, int> SecretFillTally { get; } = new(StringComparer.Ordinal);
+
+        /// <summary>Missing secrets the file would write or settle: the ones that need installation evidence.</summary>
+        public int SecretFillsNeedingEvidence { get; set; }
+
+        private IReadOnlyDictionary<string, int> _variableKeyCounts;
+        private OctopusImportFillEvidence _fillEvidence;
+
+        public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(Nodes, Prior);
+
+        // A preview never carries the user's confirmation: a pairing is confirmed by posting the plan back to validation.
+        public OctopusImportFillEvidence FillEvidence => _fillEvidence ??= OctopusImportFillEvidences.Evaluate(Conflicts.HistoryInstallationId, Conflicts.ExportSourceId, Nodes, Prior, pairingConfirmed: false);
 
         public OctopusImportResourceResultDto Record(OctopusImportResourceResultDto preview)
         {

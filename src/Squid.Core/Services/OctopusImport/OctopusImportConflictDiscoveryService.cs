@@ -1,4 +1,7 @@
+using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Models.OctopusImport;
 
@@ -14,7 +17,10 @@ public interface IOctopusImportConflictDiscoveryService : IScopedDependency
 
 public class OctopusImportConflictDiscoveryService(
     IOctopusImportDestinationDataProvider destinationDataProvider,
-    IOctopusImportSourceMapDataProvider sourceMapDataProvider = null)
+    IOctopusImportSourceMapDataProvider sourceMapDataProvider = null,
+    IVariableService variableService = null,
+    IExternalFeedService externalFeedService = null,
+    IOctopusImportSessionDataProvider sessionDataProvider = null)
     : IOctopusImportConflictDiscoveryService
 {
     public async Task<OctopusImportConflictDiscoveryResult> DiscoverAsync(
@@ -27,17 +33,40 @@ public class OctopusImportConflictDiscoveryService(
 
         ArgumentNullException.ThrowIfNull(graph);
 
-        var conflicts = await FindConflictsAsync(destinationSpaceId, graph, cancellationToken).ConfigureAwait(false);
+        var destinationResources = await destinationDataProvider.GetResourcesAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
+        var conflicts = FindConflicts(destinationSpaceId, graph, destinationResources);
         var prior = await LoadPriorMappingsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
         var releaseKeys = await LoadExistingReleaseKeysAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
+        var origin = await LoadInstallationOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin };
     }
 
-    private async Task<List<OctopusImportResourceConflict>> FindConflictsAsync(int destinationSpaceId, OctopusResourceGraph graph, CancellationToken ct)
+    // Only a file pairing with an API-imported space shows the origin: read from the newest import session that recorded the installation.
+    private async Task<OctopusImportInstallationOrigin> LoadInstallationOriginAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
     {
-        var destinationResources = await destinationDataProvider.GetResourcesAsync(destinationSpaceId, ct).ConfigureAwait(false);
+        if (sessionDataProvider == null || !string.IsNullOrWhiteSpace(graph.InstallationId) || string.IsNullOrWhiteSpace(prior.InstallationId)) return null;
 
+        var fetch = await sessionDataProvider.GetLatestHistoryFetchAsync(destinationSpaceId, prior.InstallationId, ct).ConfigureAwait(false);
+
+        return fetch == null ? null : new OctopusImportInstallationOrigin(fetch.InstallationId, fetch.ServerHost, fetch.OctopusSpaceId, fetch.OctopusVersion);
+    }
+
+    // Only the Squid rows a live Missing secret row points at: whether each secret is still empty decides fill / kept / settled.
+    private async Task<OctopusImportSecretSlots> LoadMissingSecretSlotsAsync(OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        var variableSetIds = OctopusImportSecretFills.MissingDestinations(prior, OctopusImportSourceMapQueries.VariableSecretSourceType);
+        var feedIds = OctopusImportSecretFills.MissingDestinations(prior, OctopusImportSourceMapQueries.FeedSecretSourceType);
+
+        var variables = variableSetIds.Count == 0 || variableService == null ? [] : await variableService.GetSensitiveVariableSlotsAsync(variableSetIds, ct).ConfigureAwait(false);
+        var feeds = feedIds.Count == 0 || externalFeedService == null ? [] : await externalFeedService.GetCredentialSlotsAsync(feedIds, ct).ConfigureAwait(false);
+
+        return new OctopusImportSecretSlots(variables, feeds);
+    }
+
+    private static List<OctopusImportResourceConflict> FindConflicts(int destinationSpaceId, OctopusResourceGraph graph, IReadOnlyList<OctopusImportDestinationResource> destinationResources)
+    {
         var destinationsByKind = destinationResources
             .GroupBy(x => x.Kind)
             .ToDictionary(x => x.Key, x => x.OrderBy(resource => resource.Id).ToList());

@@ -8,7 +8,7 @@ namespace Squid.Core.Services.OctopusImport;
 
 public sealed partial class OctopusImportConfirmationRunner
 {
-    // Every resource the plan writes (creates, or updates from an earlier import) needs the owner's matching permission in the destination space.
+    // Every resource the plan writes (creates, updates from an earlier import, or fills a missing secret into) needs the owner's matching permission in the destination space.
     private async Task EnsureImportPermissionsAsync(CancellationToken ct)
     {
         foreach (var permission in RequiredPermissions())
@@ -36,8 +36,21 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         if (!currentResources.TryGetValue(previewResource.SourceId, out var resource)) return null;
 
-        return previewResource.PreviewAction == OctopusImportPreviewAction.Update ? ResolveUpdatePermission(resource.Kind) : ResolveCreatePermission(resource, previews);
+        return previewResource.PreviewAction switch
+        {
+            OctopusImportPreviewAction.Update => ResolveUpdatePermission(resource.Kind),
+            OctopusImportPreviewAction.FillMissingSecret => ResolveFillPermission(resource.Kind),
+            _ => ResolveCreatePermission(resource, previews)
+        };
     }
+
+    // A fill writes one secret into an imported variable set or feed: the same edit a user setting it in Squid needs.
+    private static Permission? ResolveFillPermission(OctopusResourceKind kind) => kind switch
+    {
+        OctopusResourceKind.Variable => Permission.VariableEdit,
+        OctopusResourceKind.Feed => Permission.FeedEdit,
+        _ => null
+    };
 
     private static Permission? ResolveCreatePermission(OctopusResourceNode resource, IReadOnlyList<OctopusImportResourceResultDto> previews)
     {

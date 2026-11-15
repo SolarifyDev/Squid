@@ -18,6 +18,17 @@ public interface IVariableService : IScopedDependency
     Task<VariableSetDto> GetVariableSetByIdAsync(int id, CancellationToken cancellationToken);
 
     Task<GetVariableSetsResponse> GetVariableSetsAsync(GetVariableSetsRequest request, CancellationToken cancellationToken);
+
+    /// <summary>The sensitive variables of the sets by identity and whether each holds a value; values are never read.</summary>
+    Task<IReadOnlyList<SensitiveVariableSlot>> GetSensitiveVariableSlotsAsync(IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes <paramref name="plainValue"/> (encrypted at rest) into the ONE sensitive variable of the set with <paramref name="identity"/>,
+    /// and only while it is still empty (compare-and-set): a value set by anyone in the meantime is never overwritten. Returns
+    /// <see cref="SecretSlotState.Filled"/>, or why nothing was written (<see cref="SecretSlotState.Empty"/>: the set was saved concurrently
+    /// twice in a row; still empty, nothing written).
+    /// </summary>
+    Task<SecretSlotState> FillEmptySensitiveValueAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken);
 }
 
 public class VariableService : IVariableService
@@ -28,8 +39,11 @@ public class VariableService : IVariableService
     private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, ILibraryVariableSetDataProvider libraryVariableSetDataProvider)
+    private readonly IVariableEncryptionService _encryptionService;
+
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, ILibraryVariableSetDataProvider libraryVariableSetDataProvider, IVariableEncryptionService encryptionService = null)
     {
+        _encryptionService = encryptionService;
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
         _sensitiveVariableHandler = sensitiveVariableHandler;
@@ -121,6 +135,50 @@ public class VariableService : IVariableService
                 VariableSets = dtos
             }
         };
+    }
+
+    public async Task<IReadOnlyList<SensitiveVariableSlot>> GetSensitiveVariableSlotsAsync(IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken)
+        => await _variableDataProvider.GetSensitiveVariableSlotsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
+
+    public async Task<SecretSlotState> FillEmptySensitiveValueAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(plainValue))
+            throw new ArgumentException("A fill needs a value: an empty source value is never written.", nameof(plainValue));
+
+        var state = await TryFillOnceAsync(variableSetId, identity, plainValue, cancellationToken).ConfigureAwait(false);
+
+        // Still empty after a lost compare-and-set: the set was saved in between (variables re-inserted with new ids). Find it again, once.
+        if (state == SecretSlotState.Empty) state = await TryFillOnceAsync(variableSetId, identity, plainValue, cancellationToken).ConfigureAwait(false);
+
+        if (state == SecretSlotState.Filled) await BumpVersionAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+
+        return state;
+    }
+
+    // Filled, why nothing can be written (AlreadySet / NotFound / Ambiguous), or Empty when the write lost to a concurrent save.
+    private async Task<SecretSlotState> TryFillOnceAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken)
+    {
+        var slots = await _variableDataProvider.GetSensitiveVariableSlotsAsync([variableSetId], cancellationToken).ConfigureAwait(false);
+        var (state, slot) = SensitiveVariableSlots.Find(slots, variableSetId, identity);
+
+        if (state != SecretSlotState.Empty) return state;
+
+        var written = await _variableDataProvider.SetSensitiveValueIfEmptyAsync(slot.VariableId, Encrypt(plainValue, variableSetId), cancellationToken).ConfigureAwait(false);
+
+        return written == 0 ? SecretSlotState.Empty : SecretSlotState.Filled;
+    }
+
+    private string Encrypt(string plainValue, int variableSetId)
+        => (_encryptionService ?? throw new InvalidOperationException("Filling a sensitive value needs the variable encryption service.")).EncryptAsync(plainValue, variableSetId);
+
+    // Same as a save from the UI: the set's version moves, so snapshots and caches see the change.
+    private async Task BumpVersionAsync(int variableSetId, CancellationToken cancellationToken)
+    {
+        var variableSet = await GetAndValidateVariableSet(variableSetId, cancellationToken).ConfigureAwait(false);
+
+        variableSet.Version++;
+
+        await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableModel> variableDtos, CancellationToken cancellationToken)

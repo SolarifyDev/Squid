@@ -743,7 +743,10 @@ public partial class OctopusImportConfirmationOrchestratorTests
         IOctopusImportLibraryVariableSetNameLock nameLock = null,
         IOctopusImportSourceMapDataProvider sourceMap = null,
         IOctopusImportHistoryDetailsStore detailsStore = null,
-        IOctopusExportSecretsAccessor secretsAccessor = null)
+        IOctopusExportSecretsAccessor secretsAccessor = null,
+        Squid.Core.Services.Deployments.Variables.IVariableService variableService = null,
+        Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedService externalFeedService = null,
+        string graphInstallationId = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -823,7 +826,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
             teamService.Object,
             sourceMap,
             detailsStore,
-            secretsAccessor);
+            secretsAccessor,
+            variableService,
+            externalFeedService);
 
         return new TestHarness(
             orchestrator,
@@ -848,7 +853,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             new OctopusImportConfirmationRequest(
                 nodes.SessionId,
                 nodes.DestinationSpaceId,
-                new OctopusResourceGraph(dependencyPlan.OrderedResources, [], [], []),
+                new OctopusResourceGraph(dependencyPlan.OrderedResources, [], [], []) { InstallationId = graphInstallationId },
                 dependencyPlan,
                 previewPlan));
     }

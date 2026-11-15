@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Security;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Deployments.Variables;
 
@@ -28,6 +29,12 @@ public interface IVariableDataProvider : IScopedDependency
     Task<VariableSet> GetVariableSetByOwnerAsync(int ownerId, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
 
     Task<List<VariableSet>> GetVariableSetsByOwnerIdsAsync(List<int> ownerIds, VariableSetOwnerType ownerType, CancellationToken cancellationToken = default);
+
+    /// <summary>Every sensitive variable of the sets, by identity and whether it holds a value; values are never read.</summary>
+    Task<List<SensitiveVariableSlot>> GetSensitiveVariableSlotsAsync(IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Compare-and-set: stores the (already encrypted) value only while the sensitive variable is still empty. Returns the rows written (0 or 1).</summary>
+    Task<int> SetSensitiveValueIfEmptyAsync(int variableId, string encryptedValue, CancellationToken cancellationToken = default);
 }
 
 public class VariableDataProvider : IVariableDataProvider
@@ -176,4 +183,23 @@ public class VariableDataProvider : IVariableDataProvider
         return await _repository.QueryNoTracking<VariableSet>(vs => ownerIds.Contains(vs.OwnerId) && vs.OwnerType == ownerType)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    public async Task<List<SensitiveVariableSlot>> GetSensitiveVariableSlotsAsync(IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default)
+    {
+        if (variableSetIds == null || variableSetIds.Count == 0) return [];
+
+        var setIds = variableSetIds.Distinct().ToList();
+        var variables = await _repository.QueryNoTracking<Variable>(v => setIds.Contains(v.VariableSetId) && v.IsSensitive)
+            .Select(v => new { v.Id, v.VariableSetId, v.Name, v.Type, HasValue = v.Value != null && v.Value != "" })
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        var variableIds = variables.Select(v => v.Id).ToList();
+        var scopes = await _repository.QueryNoTracking<VariableScope>(s => variableIds.Contains(s.VariableId)).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var scopesByVariable = scopes.ToLookup(s => s.VariableId);
+
+        return variables.Select(v => new SensitiveVariableSlot(v.Id, v.VariableSetId, VariableIdentity.Of(v.Name, v.Type, scopesByVariable[v.Id].Select(s => (s.ScopeType, s.ScopeValue))), v.HasValue)).ToList();
+    }
+
+    public Task<int> SetSensitiveValueIfEmptyAsync(int variableId, string encryptedValue, CancellationToken cancellationToken = default)
+        => _repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE variable SET value = {encryptedValue}, last_modified_date = now() WHERE id = {variableId} AND is_sensitive AND (value IS NULL OR value = '')", cancellationToken);
 }

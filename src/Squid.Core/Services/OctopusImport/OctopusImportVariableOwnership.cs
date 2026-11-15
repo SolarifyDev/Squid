@@ -26,7 +26,7 @@ public static class OctopusImportVariableOwnership
 
     public static bool IsWrittenByImport(OctopusResourceNode resource, Func<string, OctopusResourceNode> findResource, Func<string, OctopusImportPreviewAction?> previewActionOf)
     {
-        if (resource != null && previewActionOf(resource.SourceId) == OctopusImportPreviewAction.AlreadyImported) return false;
+        if (resource != null && OctopusImportPreviewActions.IsImportedEarlier(previewActionOf(resource.SourceId))) return false;
 
         var libraryId = FindOwningLibraryId(resource, findResource);
 

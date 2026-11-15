@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.SourceMap;
@@ -32,7 +33,11 @@ public static class OctopusImportSecretKeys
         return VariablePrefix + Hash($"{OctopusImportPriorMappings.Normalize(ownerSetSourceId)}|{variable.Name}|{type}|{string.Join(",", scopes)}");
     }
 
-    /// <summary>Each scope as <c>Type:Value</c> (mapped scopes by Squid destination id), distinct and ordinal-sorted; null if any value cannot be mapped.</summary>
+    /// <summary>
+    /// Each scope as a <see cref="VariableIdentity"/> token (mapped scopes by Squid destination id), distinct and ordinal-sorted; null if
+    /// any value cannot be mapped. The tokens equal the ones Squid's stored scopes produce, so a source variable and the Squid variable
+    /// it was imported as have the same identity.
+    /// </summary>
     public static IReadOnlyList<string> CanonicalScopes(Dictionary<string, List<string>> scope, Func<string, OctopusResourceKind, int?> destinationOf)
     {
         ArgumentNullException.ThrowIfNull(destinationOf);
@@ -44,10 +49,10 @@ public static class OctopusImportSecretKeys
             if (resolution.Blocks) return null;
             if (resolution.Outcome == OctopusImportScopeOutcome.EmptyValue) continue;
 
-            values.Add($"{resolution.ScopeType}:{CanonicalValue(resolution, destinationOf)}");
+            values.Add(VariableIdentity.ScopeToken(resolution.ScopeType!.Value, CanonicalValue(resolution, destinationOf)));
         }
 
-        return values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToList();
+        return VariableIdentity.Canonical(values);
     }
 
     private static string CanonicalValue(OctopusImportScopeResolution resolution, Func<string, OctopusResourceKind, int?> destinationOf)

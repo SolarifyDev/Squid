@@ -51,6 +51,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Concat(InstallationDiagnostics(conflicts))
             .Concat(GroupedScopeDiagnostics(resources))
             .Concat(WithheldSecretsSummary(resources))
+            .Concat(SecretFillSummary(context))
             .ToList();
 
         return new OctopusImportPreviewPlanDto
@@ -60,7 +61,8 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             RequiredInputs = resources
                 .SelectMany(r => r.RequiredInputs)
                 .ToList(),
-            Diagnostics = diagnostics
+            Diagnostics = diagnostics,
+            FillPairing = FillPairing(context)
         };
     }
 
@@ -142,6 +144,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } priorDecision)
         {
             ApplyDecision(result, priorDecision);
+            ApplySecretFill(result, resource, context);
             return result;
         }
 
@@ -177,7 +180,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
         {
-            if (PreviewAction(resource.SourceId) is OctopusImportPreviewAction.AlreadyImported or OctopusImportPreviewAction.Skip) continue;
+            if (OctopusImportPreviewActions.IsImportedEarlier(PreviewAction(resource.SourceId)) || PreviewAction(resource.SourceId) == OctopusImportPreviewAction.Skip) continue;
 
             if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
                 AddWrittenVariableDiagnostics(previewsById[resource.SourceId], resource);

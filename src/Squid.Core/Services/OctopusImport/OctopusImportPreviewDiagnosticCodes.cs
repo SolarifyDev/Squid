@@ -38,6 +38,17 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string BuiltInFeedReferenced = "octopus.preview.built_in_feed_referenced";
     public const string SecretWithheldByServer = "octopus.preview.secret_withheld_by_server";
     public const string SecretsWithheldByServer = "octopus.preview.secrets_withheld_by_server";
+    public const string SecretFillFromExport = "octopus.preview.secret_fill_from_export";
+    public const string SecretSetInSquid = "octopus.preview.secret_set_in_squid";
+    public const string SecretFillTargetGone = "octopus.preview.secret_fill_target_gone";
+    public const string SecretFillAmbiguous = "octopus.preview.secret_fill_ambiguous";
+    public const string SecretStillMissing = "octopus.preview.secret_still_missing";
+    public const string SecretEmptyInOctopus = "octopus.preview.secret_empty_in_octopus";
+    public const string SecretFillInstallationUnproven = "octopus.preview.secret_fill_installation_unproven";
+    public const string SecretFillPairingRequired = "octopus.preview.secret_fill_pairing_required";
+    public const string SecretFillPairingUnconfirmed = "octopus.validation.secret_fill_pairing_unconfirmed";
+    public const string SecretFillNotBacked = "octopus.validation.secret_fill_not_backed";
+    public const string SecretFillsSummary = "octopus.preview.secret_fills_summary";
 
     public const string ExportPasswordUnavailableMessage = "The export password was accepted at upload but could not be kept or read back with the server's at-rest encryption key (Security:VariableEncryption:MasterKey is missing or has changed). Sensitive values are treated as if no export password had been given. Restore the original master key and retry, or configure a master key and upload the export again.";
 

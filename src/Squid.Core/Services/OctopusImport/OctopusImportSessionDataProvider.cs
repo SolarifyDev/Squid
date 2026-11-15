@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
 
@@ -44,6 +45,12 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
         CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
+
+    /// <summary>
+    /// The history fetch (server host, Octopus space, version — never the key) of the newest import session of the space that read the
+    /// given Octopus installation, of any user; null when no session records it.
+    /// </summary>
+    Task<OctopusImportHistoryFetchDto> GetLatestHistoryFetchAsync(int destinationSpaceId, string installationId, CancellationToken ct = default);
 
     Task<int> MarkInterruptedImportsFailedAsync(
         DateTimeOffset now,
@@ -237,6 +244,15 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
             ct).ConfigureAwait(false);
 
         return rowsAffected == 1;
+    }
+
+    public async Task<OctopusImportHistoryFetchDto> GetLatestHistoryFetchAsync(int destinationSpaceId, string installationId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(installationId)) return null;
+
+        var json = await _repository.Database.SqlQuery<string>($"SELECT source_summary_json::text AS \"Value\" FROM octopus_import_session WHERE destination_space_id = {destinationSpaceId} AND upper(source_summary_json -> 'historyFetch' ->> 'installationId') = upper({installationId.Trim()}) ORDER BY id DESC LIMIT 1").ToListAsync(ct).ConfigureAwait(false);
+
+        return json.Count == 0 ? null : OctopusImportSourceSummaries.Parse(json[0])?.HistoryFetch;
     }
 
     public Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default)

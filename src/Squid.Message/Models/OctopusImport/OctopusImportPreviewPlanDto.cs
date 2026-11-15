@@ -12,6 +12,9 @@ public class OctopusImportPreviewPlanDto
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];
 
+    /// <summary>Set when this import would fill missing secrets from an export file whose installation the user must confirm; null otherwise.</summary>
+    public OctopusImportFillPairingDto FillPairing { get; set; }
+
     public bool HasBlockers => Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker)
         || Resources.Any(r => r.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker));
 }

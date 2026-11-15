@@ -31,10 +31,14 @@ public sealed partial class OctopusImportConfirmationOrchestrator
             if (execution.IdMap.TryGetDestinationId(feed, out var feedId))
                 yield return SecretRow(execution, OctopusImportSourceMapQueries.FeedSecretSourceType, feed.SourceId, feedId);
         }
+
+        // Missing rows of earlier imports this confirmation filled or settled (Missing → Filled / Superseded; never back).
+        foreach (var ((sourceType, key), (destinationId, outcome)) in execution.SettledSecretRows)
+            yield return SecretRow(execution, sourceType, key, destinationId, outcome);
     }
 
-    private static OctopusImportSourceMapRow SecretRow(ConfirmationExecutionContext execution, string sourceType, string sourceId, int destinationId)
-        => new(execution.DestinationSpaceId, sourceType, sourceId, destinationId, OctopusImportSourceMapQueries.MissingOutcome);
+    private static OctopusImportSourceMapRow SecretRow(ConfirmationExecutionContext execution, string sourceType, string sourceId, int destinationId, string outcome = OctopusImportSourceMapQueries.MissingOutcome)
+        => new(execution.DestinationSpaceId, sourceType, sourceId, destinationId, outcome);
 
     private IEnumerable<OctopusResourceNode> CreatedWithheldVariables(ConfirmationExecutionContext execution)
         => execution.CurrentResources.Where(r => r.Kind == OctopusResourceKind.Variable && IsCreated(execution, r) && IsWithheldVariable(r));

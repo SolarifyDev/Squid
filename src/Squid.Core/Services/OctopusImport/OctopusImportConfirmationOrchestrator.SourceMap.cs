@@ -36,10 +36,18 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         var rows = execution.IdMap.Mappings.Select(mapping => SourceMapRow(execution, mapping)).Concat(SecretRows(execution)).ToList();
 
         AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.InstallationSourceType, execution.Request.Graph.InstallationId);
-        AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.ExportSourceSourceType, execution.Request.Graph.ExportSourceId);
+
+        if (MayPinExportSource(execution))
+            AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.ExportSourceSourceType, execution.Request.Graph.ExportSourceId);
 
         return rows;
     }
+
+    // The export fingerprint proves later files for secret fills, so it is pinned once — by the space's first export-file import — and
+    // never replaced (D10): a later file of a cloned server must not become a reference. A space imported from an Octopus server pins
+    // it only from a file proven to be that server's (or whose pairing the user confirmed).
+    private static bool MayPinExportSource(ConfirmationExecutionContext execution)
+        => execution.Prior.ExportSourceIds.Count == 0 && (string.IsNullOrWhiteSpace(execution.Prior.InstallationId) || FillEvidence(execution).State == OctopusImportFillEvidenceState.Proven);
 
     // A row describing where the space's import came from (installation, export fingerprint); it points at the space itself.
     private static void AddSpaceRow(List<OctopusImportSourceMapRow> rows, ConfirmationExecutionContext execution, string sourceType, string sourceId)

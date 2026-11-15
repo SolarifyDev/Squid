@@ -1,6 +1,7 @@
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -84,6 +85,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             .ToList();
         ValidateRequiredInputs(result);
         ValidateSensitiveResolutionFreshness(previewResources, selectedResources, result);
+        ValidateSecretFills(graph, conflicts, previewPlan, plan, result);
         result.Diagnostics.AddRange(OctopusImportExportSecretDiagnostics.Describe(Secrets));
 
         return result;
@@ -180,6 +182,43 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
             }));
         }
     }
+
+    // Server-owned: the client's plan can neither invent a fill (no recorded missing value, or nothing the file can supply) nor skip
+    // the installation evidence. A value set in Squid since the preview is not a plan error: confirmation's compare-and-set keeps it
+    // and settles the row as Superseded. A file that would write or settle a missing value must be proven to come from this
+    // space's Octopus installation — or the user must have confirmed the pairing the preview showed.
+    private void ValidateSecretFills(OctopusResourceGraph graph, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, ValidationPlan plan, OctopusImportValidationResultDto result)
+    {
+        var keyCounts = OctopusImportSecretFills.VariableKeyCounts(plan.Current.Values, plan.Prior);
+        var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, plan.Prior, previewPlan.FillPairing?.Confirmed == true);
+        var pairingNeeded = false;
+
+        foreach (var resource in plan.Current.Values.Where(r => OctopusImportSecretFills.IsFillableKind(r.Kind)))
+        {
+            var candidate = OctopusImportSecretFills.Candidate(resource, plan.Prior, Secrets, keyCounts);
+            var destination = candidate == null ? SecretSlotState.NotFound : OctopusImportSecretFills.DestinationState(candidate, conflicts.SecretSlots);
+
+            if (plan.PreviewAction(resource.SourceId) == OctopusImportPreviewAction.FillMissingSecret && candidate?.Source != OctopusImportSecretFillSource.Fillable)
+                result.Diagnostics.Add(ResourceDiagnostic(resource, OctopusImportPreviewDiagnosticCodes.SecretFillNotBacked, OctopusImportSecretFillMessages.NotBacked));
+
+            if (!ActsOnMissingSecret(candidate, destination)) continue;
+
+            if (evidence.State == OctopusImportFillEvidenceState.Unproven)
+                result.Diagnostics.Add(ResourceDiagnostic(resource, OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven, OctopusImportSecretFillMessages.Unproven(candidate, evidence)));
+
+            pairingNeeded |= evidence.State == OctopusImportFillEvidenceState.PairingRequired;
+        }
+
+        if (pairingNeeded)
+            result.Diagnostics.Add(OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportPreviewDiagnosticCodes.SecretFillPairingUnconfirmed, Message = OctopusImportSecretFillMessages.PairingUnconfirmed }));
+    }
+
+    // The file writes the value, or settles it as empty in Octopus.
+    private static bool ActsOnMissingSecret(OctopusImportSecretFillCandidate candidate, SecretSlotState destination)
+        => OctopusImportSecretFills.WouldFill(candidate, destination) || (candidate?.Source == OctopusImportSecretFillSource.EmptyInOctopus && destination == SecretSlotState.Empty);
+
+    private static OctopusImportDiagnosticDto ResourceDiagnostic(OctopusResourceNode resource, string code, string message)
+        => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = code, Message = message, SourceId = resource.SourceId, ResourceType = resource.Kind.ToString(), ResourceName = resource.Name });
 
     private static bool HasUnresolvedSensitiveBlocker(OctopusImportResourceResultDto preview)
         => preview.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing);

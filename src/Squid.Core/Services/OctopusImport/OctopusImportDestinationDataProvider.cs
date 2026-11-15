@@ -26,7 +26,7 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
 
         resources.AddRange(await repository.QueryNoTracking<Project>(x => x.SpaceId == destinationSpaceId)
             .Select(x => new OctopusImportDestinationResource(
-                x.Id, x.SpaceId, OctopusResourceKind.Project, x.Name, x.Slug, x.LastModifiedDate))
+                x.Id, x.SpaceId, OctopusResourceKind.Project, x.Name, x.Slug, x.LastModifiedDate) { VariableSetId = x.VariableSetId })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false));
 
@@ -56,7 +56,7 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
 
         resources.AddRange(await repository.QueryNoTracking<LibraryVariableSet>(x => x.SpaceId == destinationSpaceId)
             .Select(x => new OctopusImportDestinationResource(
-                x.Id, x.SpaceId, OctopusResourceKind.LibraryVariableSet, x.Name, null, x.LastModifiedDate))
+                x.Id, x.SpaceId, OctopusResourceKind.LibraryVariableSet, x.Name, null, x.LastModifiedDate) { VariableSetId = x.VariableSetId })
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false));
 

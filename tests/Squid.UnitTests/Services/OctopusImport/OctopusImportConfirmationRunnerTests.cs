@@ -72,6 +72,27 @@ public class OctopusImportConfirmationRunnerTests
         checkedPermissions.ShouldNotContain(expected == Permission.ChannelEdit ? Permission.ChannelCreate : Permission.ChannelEdit);
     }
 
+    // A fill writes one secret into a variable set or feed imported before: the owner needs the edit permission a user setting it
+    // in Squid needs — not a create permission (nothing is created) and not nothing (a secret is written).
+    [Theory]
+    [InlineData(OctopusResourceKind.Variable, "Variable", Permission.VariableEdit)]
+    [InlineData(OctopusResourceKind.Feed, "Feed", Permission.FeedEdit)]
+    public async Task Runner_SecretFill_RequiresTheEditPermissionOfWhatItWrites(OctopusResourceKind kind, string sourceType, Permission expected)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var preview = Preview(OctopusImportPreviewAction.AlreadyImported, new OctopusImportResourceResultDto { SourceId = "secret-1", SourceType = sourceType, SourceName = "Secret", PreviewAction = OctopusImportPreviewAction.FillMissingSecret, OutcomeState = OctopusImportResourceOutcomeState.Pending });
+        var resource = new OctopusResourceNode("secret-1", "Secret", kind, OctopusDocumentKind.VariableSet, "secret.json", "Projects-1", null, false, new object());
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resource));
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
+
+        await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        _authorization.Invocations.Select(i => ((PermissionCheckRequest)i.Arguments[0]).Permission).ShouldBe([expected]);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

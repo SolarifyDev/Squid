@@ -747,7 +747,9 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
 
     // The export of the same Octopus installation the stub serves: configuration, plus (optionally) the history the
     // stub also serves, as an export carries it — without task details.
-    private string ExportArchive(bool withHistory = false, IEnumerable<(string Id, string DocumentType, string Json)> extra = null)
+    // exportSpaceId: every document carries it as SpaceId (a real export's suffixed space id is its fingerprint). A real export's
+    // manifest records no installation id; withInstallationId=false builds it that way.
+    private string ExportArchive(bool withHistory = false, IEnumerable<(string Id, string DocumentType, string Json)> extra = null, string exportSpaceId = null, bool withInstallationId = true)
     {
         var documents = new List<(string Id, string DocumentType, string Json)>
         {
@@ -767,9 +769,11 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         documents.RemoveAll(d => extraDocuments.Any(e => e.Id == d.Id));
         documents.AddRange(extraDocuments);
 
+        if (exportSpaceId != null) documents = documents.Select(d => (d.Id, d.DocumentType, WithSpaceId(d.Json, exportSpaceId))).ToList();
+
         var path = Path.Combine(Path.GetTempPath(), $"squid-export-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
-        WriteArchive(path, documents);
+        WriteArchive(path, documents, withInstallationId);
 
         return path;
     }
@@ -782,12 +786,20 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         (DeploymentId, "Deployment", """{"Id":"Deployments-1","Name":"Deploy Deployments-1","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedToMachineIds":["Machines-1"],"Created":"2024-01-02T03:04:05Z"}""")
     ];
 
-    private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents)
+    private static string WithSpaceId(string json, string spaceId)
+    {
+        var node = JsonNode.Parse(json)!.AsObject();
+        node["SpaceId"] = spaceId;
+
+        return node.ToJsonString();
+    }
+
+    private static void WriteArchive(string path, IReadOnlyList<(string Id, string DocumentType, string Json)> documents, bool withInstallationId = true)
     {
         var manifest = JsonSerializer.SerializeToUtf8Bytes(new
         {
             SchemaVersions = Array.Empty<string>(),
-            StubOctopusServer.InstallationId,
+            InstallationId = withInstallationId ? StubOctopusServer.InstallationId : null,
             Entries = documents.Select(d => new { d.Id, Name = d.Id, d.DocumentType, ExportType = "FullDocument", DocumentSource = $"{d.Id}.json", ParentId = (string)null, Hash = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(d.Json))).ToLowerInvariant() })
         });
 

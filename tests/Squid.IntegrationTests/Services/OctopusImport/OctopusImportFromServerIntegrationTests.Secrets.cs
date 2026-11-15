@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -18,10 +16,10 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// </summary>
 public partial class OctopusImportFromServerIntegrationTests
 {
-    private const string SecretVariableId = "5b0c7d21-0000-4000-8000-000000000101";
-    private const string LibrarySecretVariableId = "5b0c7d21-0000-4000-8000-000000000102";
-    private const string SecretFeedId = "Feeds-7";
-    private const string SecretLibraryId = "LibraryVariableSets-7";
+    private const string SecretVariableId = OctopusWithheldSecretResources.SecretVariableId;
+    private const string LibrarySecretVariableId = OctopusWithheldSecretResources.LibrarySecretVariableId;
+    private const string SecretFeedId = OctopusWithheldSecretResources.SecretFeedId;
+    private const string SecretLibraryId = OctopusWithheldSecretResources.SecretLibraryId;
 
     [Fact]
     public async Task WithheldSecrets_ServerImportCommits_ListsThemAndRecordsFillableOnesMissing_RepeatImportChangesNothing()
@@ -112,28 +110,6 @@ public partial class OctopusImportFromServerIntegrationTests
             await db.Set<ExternalFeed>().ExecuteUpdateAsync(s => s.SetProperty(f => f.Username, feedUsername).SetProperty(f => f.Password, feedPassword));
         });
 
-    /// <summary>Independent reference implementation of the Octopus export cipher (not shared with production code).</summary>
-    private static string EncryptForExport(string plaintext, string password)
-    {
-        var key = Rfc2898DeriveBytes.Pbkdf2(password, Encoding.UTF8.GetBytes("Octopuss"), 1_000, HashAlgorithmName.SHA1, 16);
-        var iv = RandomNumberGenerator.GetBytes(16);
-
-        using var aes = Aes.Create();
-        aes.Key = key;
-        aes.IV = iv;
-
-        var bytes = Encoding.UTF8.GetBytes(plaintext);
-
-        return $"{Convert.ToBase64String(aes.EncryptCbc(bytes, iv))}|{Convert.ToBase64String(iv)}";
-    }
-
     // The same configuration as an export file carries it: values encrypted with the export password.
-    private static IEnumerable<(string Id, string DocumentType, string Json)> SecretDocuments() =>
-    [
-        (SecretFeedId, "Feed", $$"""{"Id":"{{SecretFeedId}}","Name":"Private registry","Slug":"private-registry","FeedType":"Docker","FeedUri":"https://registry.example.com","Username":"robot","Password":"{{EncryptForExport("registry-token", ExportPassword)}}"}"""),
-        ("Accounts-7", "Account", """{"Id":"Accounts-7","Name":"Cluster token","Slug":"cluster-token","AccountType":"Token","EnvironmentIds":[]}"""),
-        (SecretLibraryId, "LibraryVariableSet", $$"""{"Id":"{{SecretLibraryId}}","Name":"Shared mail","VariableSetId":"variableset-{{SecretLibraryId}}","ContentType":"Variables"}"""),
-        ($"variableset-{SecretLibraryId}", "LibraryVariables", $$"""{"Id":"variableset-{{SecretLibraryId}}","OwnerId":"{{SecretLibraryId}}","OwnerType":"LibraryVariableSet","Variables":[{"Id":"{{LibrarySecretVariableId}}","Name":"Smtp.Password","Type":"Sensitive","Value":"{{EncryptForExport("smtp-secret", ExportPassword)}}"}]}"""),
-        ("variableset-Projects-1", "ProjectVariables", $$$"""{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{"Id":"{{{SecretVariableId}}}","Name":"Db.Password","Type":"Sensitive","Value":"{{{EncryptForExport("db-secret", ExportPassword)}}}","Scope":{"Environment":["Environments-1"]}}]}""")
-    ];
+    private static IEnumerable<(string Id, string DocumentType, string Json)> SecretDocuments() => OctopusWithheldSecretResources.ExportSecretDocuments(ExportPassword);
 }

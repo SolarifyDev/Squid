@@ -68,11 +68,25 @@ public static class OctopusImportHandlerFlow
     }
 
     /// <summary>An export-file-only import: upload, extract, preview, validate and a synchronous confirm.</summary>
-    public static async Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
+    public static Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
+        => ImportFromFileAsync(mediator, spaceId, exportPath, exportPassword, confirmPairing: false);
+
+    /// <summary>
+    /// An export-file-only import; with <paramref name="confirmPairing"/> the user confirms the export-file pairing the preview asks for
+    /// (filling secrets an API import left missing), exactly as the UI posts it back with the plan.
+    /// </summary>
+    public static async Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword, bool confirmPairing)
     {
         var sessionId = await UploadSessionAsync(mediator, spaceId, exportPath, exportPassword);
 
-        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, null, plan => plan);
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, null, plan => confirmPairing ? ConfirmPairing(plan) : plan);
+    }
+
+    private static OctopusImportPreviewPlanDto ConfirmPairing(OctopusImportPreviewPlanDto plan)
+    {
+        if (plan.FillPairing != null) plan.FillPairing.Confirmed = true;
+
+        return plan;
     }
 
     private static async Task<Guid> UploadSessionAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)

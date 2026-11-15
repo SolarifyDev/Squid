@@ -18,6 +18,7 @@ public class EnumOrdinalPinTests
     [InlineData(OctopusImportPreviewAction.Blocked, 5)]
     [InlineData(OctopusImportPreviewAction.AlreadyImported, 6)]
     [InlineData(OctopusImportPreviewAction.Update, 7)]
+    [InlineData(OctopusImportPreviewAction.FillMissingSecret, 8)]
     public void OctopusImportPreviewAction_OrdinalsPinned(OctopusImportPreviewAction action, int expected)
     {
         ((int)action).ShouldBe(expected);
@@ -27,7 +28,38 @@ public class EnumOrdinalPinTests
     [InlineData(OctopusImportResourceOutcomeState.Pending, 0)]
     [InlineData(OctopusImportResourceOutcomeState.Failed, 6)]
     [InlineData(OctopusImportResourceOutcomeState.Updated, 7)]
+    [InlineData(OctopusImportResourceOutcomeState.SecretFilled, 8)]
     public void OctopusImportResourceOutcomeState_OrdinalsPinned(OctopusImportResourceOutcomeState state, int expected)
+    {
+        ((int)state).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportFillEvidenceState.Proven, 0)]
+    [InlineData(OctopusImportFillEvidenceState.PairingRequired, 1)]
+    [InlineData(OctopusImportFillEvidenceState.Unproven, 2)]
+    public void OctopusImportFillEvidenceState_OrdinalsPinned(OctopusImportFillEvidenceState state, int expected)
+    {
+        ((int)state).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportSecretFillSource.Fillable, 0)]
+    [InlineData(OctopusImportSecretFillSource.EmptyInOctopus, 1)]
+    [InlineData(OctopusImportSecretFillSource.StillMissing, 2)]
+    [InlineData(OctopusImportSecretFillSource.Ambiguous, 3)]
+    public void OctopusImportSecretFillSource_OrdinalsPinned(OctopusImportSecretFillSource source, int expected)
+    {
+        ((int)source).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(Squid.Message.Enums.SecretSlotState.Empty, 0)]
+    [InlineData(Squid.Message.Enums.SecretSlotState.AlreadySet, 1)]
+    [InlineData(Squid.Message.Enums.SecretSlotState.NotFound, 2)]
+    [InlineData(Squid.Message.Enums.SecretSlotState.Ambiguous, 3)]
+    [InlineData(Squid.Message.Enums.SecretSlotState.Filled, 4)]
+    public void SecretSlotState_OrdinalsPinned(Squid.Message.Enums.SecretSlotState state, int expected)
     {
         ((int)state).ShouldBe(expected);
     }

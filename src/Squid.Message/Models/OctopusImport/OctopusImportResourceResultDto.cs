@@ -33,6 +33,12 @@ public class OctopusImportResourceResultDto
     /// </summary>
     public string DestinationMemberFingerprint { get; set; }
 
+    /// <summary>
+    /// For a resource that speaks for a secret an earlier import left missing: the Squid project / library variable set / feed it is
+    /// (or would be) filled in. Null for every other resource.
+    /// </summary>
+    public OctopusImportFillDestinationDto FillDestination { get; set; }
+
     public List<OctopusImportRequiredInputDto> RequiredInputs { get; set; } = [];
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];

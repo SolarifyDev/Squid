@@ -6,6 +6,8 @@ using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Core.Services.Deployments.Channels;
+using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Deployments.Account;
@@ -67,6 +69,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
     private readonly IOctopusImportSourceMapDataProvider _sourceMapDataProvider;
     private readonly IOctopusImportHistoryDetailsStore _historyDetailsStore;
     private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+    private readonly IVariableService _variableService;
+    private readonly IExternalFeedService _externalFeedService;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -88,7 +92,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         ITeamService teamService,
         IOctopusImportSourceMapDataProvider sourceMapDataProvider = null,
         IOctopusImportHistoryDetailsStore historyDetailsStore = null,
-        IOctopusExportSecretsAccessor secretsAccessor = null)
+        IOctopusExportSecretsAccessor secretsAccessor = null,
+        IVariableService variableService = null,
+        IExternalFeedService externalFeedService = null)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -110,6 +116,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         _sourceMapDataProvider = sourceMapDataProvider;
         _historyDetailsStore = historyDetailsStore;
         _secretsAccessor = secretsAccessor;
+        _variableService = variableService;
+        _externalFeedService = externalFeedService;
     }
 
     public async Task<OctopusImportSessionDto> ConfirmAsync(
@@ -222,6 +230,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
             foreach (var resource in request.DependencyPlan.OutOfScopeResources)
                 execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
 
+            await SettleMissingSecretsAsync(execution, ct).ConfigureAwait(false);
             await PersistSourceMapAsync(execution, ct).ConfigureAwait(false);
 
             RecordMissingSensitiveValues(execution);
@@ -274,6 +283,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                 return;
             case OctopusImportPreviewAction.Update:
                 await UpdateResourceAsync(execution, resource, preview, ct).ConfigureAwait(false);
+                return;
+            case OctopusImportPreviewAction.FillMissingSecret:
+                await FillMissingSecretAsync(execution, resource, preview, ct).ConfigureAwait(false);
                 return;
             default:
                 execution.MarkFailed(resource, Diagnostic(
@@ -985,6 +997,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                         : r.OutcomeState,
                     DestinationId = r.DestinationId,
                     OwnerProjectSourceId = r.OwnerProjectSourceId,
+                    FillDestination = r.FillDestination,
                     RequiredInputs = r.RequiredInputs.ToList(),
                     Diagnostics = r.Diagnostics.Select(Redact).ToList()
                 })
@@ -1006,10 +1019,10 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         result.MissingSensitiveValues = [];
 
         foreach (var resource in result.Resources.Where(r =>
-                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.Pending))
+                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.SecretFilled or OctopusImportResourceOutcomeState.Pending))
         {
-            // An updated row existed before the import and survives the rollback, so it keeps its id.
-            if (resource.OutcomeState != OctopusImportResourceOutcomeState.Updated)
+            // An updated (or filled) row existed before the import and survives the rollback, so it keeps its id.
+            if (resource.OutcomeState is not (OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.SecretFilled))
                 resource.DestinationId = null;
 
             resource.OutcomeState = OctopusImportResourceOutcomeState.Failed;
@@ -1112,6 +1125,14 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         /// <summary>Deployment source ids whose history unit was rewritten without details, so their stored detail fingerprint is cleared.</summary>
         public HashSet<string> HistoryDetailsCleared { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+        private IReadOnlyDictionary<string, int> _variableKeyCounts;
+
+        /// <summary>How many current variables share each secret key (more than one: ambiguous, never filled).</summary>
+        public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(CurrentResources, Prior);
+
+        /// <summary>Missing-secret rows this confirmation settled (Filled / Superseded), keyed by (source type, row key).</summary>
+        public Dictionary<(string SourceType, string Key), (int DestinationId, string Outcome)> SettledSecretRows { get; } = new();
+
         public IReadOnlyList<OctopusResourceNode> CurrentResources { get; }
 
         public OctopusImportResourceResultDto GetPreview(OctopusResourceNode resource)
@@ -1122,6 +1143,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
             var result = GetPreview(resource);
             return result?.OutcomeState is OctopusImportResourceOutcomeState.Created
                 or OctopusImportResourceOutcomeState.Updated
+                or OctopusImportResourceOutcomeState.SecretFilled
                 or OctopusImportResourceOutcomeState.Skipped
                 or OctopusImportResourceOutcomeState.Unsupported
                 or OctopusImportResourceOutcomeState.Blocked

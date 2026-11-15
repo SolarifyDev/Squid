@@ -108,6 +108,26 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.Count(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldBe(expected ? 1 : 0);
     }
 
+    // The fingerprint is pinned once, by the first export-file import of the space, and never joined by another: otherwise a file of
+    // a cloned server imported while nothing needed filling would prove that server's files for every later fill (D10).
+    [Theory]
+    [InlineData(null, "0123456789ABCDEF0123456789ABCDEF", true)]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF", "FEDCBA9876543210FEDCBA9876543210", false)]
+    [InlineData("0123456789ABCDEF0123456789ABCDEF", "0123456789ABCDEF0123456789ABCDEF", false)]
+    public async Task SourceMap_PinsTheExportSourceFingerprintOnlyOnce(string recorded, string exportSourceId, bool expected)
+    {
+        var nodes = BuildMinimalNodes();
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(), null, recorded == null ? [] : [recorded]);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.ReuseExisting, 200)), true, false, false, sourceMap: SourceMap(prior, upserted: upserted).Object);
+        var request = harness.Request with { Graph = harness.Request.Graph with { ExportSourceId = exportSourceId } };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        upserted.Count(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldBe(expected ? 1 : 0);
+    }
+
     [Fact]
     public async Task SourceMap_IsNotWrittenWhenTheConfirmationFails()
     {

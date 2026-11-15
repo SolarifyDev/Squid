@@ -31,6 +31,18 @@ public sealed record OctopusImportConflictDiscoveryResult(
 
     /// <summary>The Octopus installation the incoming history came from; null for file-only imports.</summary>
     public string HistoryInstallationId { get; init; }
+
+    /// <summary>The incoming export file's fingerprint (its id suffix); null for API bundles and unsuffixed files.</summary>
+    public string ExportSourceId { get; init; }
+
+    /// <summary>Squid's current state of every secret an earlier import left missing (never values).</summary>
+    public OctopusImportSecretSlots SecretSlots { get; init; } = OctopusImportSecretSlots.Empty;
+
+    /// <summary>The Squid projects, library variable sets and feeds those missing secrets live in, named for preview.</summary>
+    public IReadOnlyList<OctopusImportFillDestinationDto> FillDestinations { get; init; } = [];
+
+    /// <summary>The server, space and version of the API import that recorded the space's installation (for a pairing); null when unknown.</summary>
+    public OctopusImportInstallationOrigin InstallationOrigin { get; init; }
 }
 
 /// <summary>Squid's release identity: a version is unique per project channel.</summary>
