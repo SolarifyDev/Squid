@@ -76,9 +76,9 @@ public class OctopusImportSecretFillPolicyTests
         }, "inst-a");
         OctopusImportDestinationResource Resource(OctopusResourceKind kind, int id, string name, int? variableSetId = null) => new(id, 1, kind, name, null, DateTimeOffset.UtcNow) { VariableSetId = variableSetId };
 
-        var destinations = OctopusImportFillDestinations.From([Resource(OctopusResourceKind.Project, 501, "Web", 601), Resource(OctopusResourceKind.LibraryVariableSet, 71, "Shared", 602), Resource(OctopusResourceKind.Project, 503, "Settled", 603), Resource(OctopusResourceKind.Feed, 801, "Registry"), Resource(OctopusResourceKind.Feed, 802, "Other"), Resource(OctopusResourceKind.Environment, 601, "Same id, not an owner")], prior);
+        var destinations = OctopusImportFillDestinations.From([Resource(OctopusResourceKind.LibraryVariableSet, 801, "Library with the feed's id", 602), Resource(OctopusResourceKind.Project, 501, "Web", 601), Resource(OctopusResourceKind.LibraryVariableSet, 71, "Shared", 602), Resource(OctopusResourceKind.Project, 503, "Settled", 603), Resource(OctopusResourceKind.Feed, 801, "Registry"), Resource(OctopusResourceKind.Feed, 802, "Other"), Resource(OctopusResourceKind.Environment, 601, "Same id, not an owner")], prior);
 
-        destinations.Select(d => (d.OwnerKind, d.OwnerId, d.OwnerName, d.VariableSetId)).ShouldBe([("Project", 501, "Web", 601), ("LibraryVariableSet", 71, "Shared", 602), ("Feed", 801, "Registry", (int?)null)], ignoreOrder: true);
+        destinations.Select(d => (d.OwnerKind, d.OwnerId, d.OwnerName, d.VariableSetId)).ShouldBe([("LibraryVariableSet", 801, "Library with the feed's id", 602), ("Project", 501, "Web", 601), ("LibraryVariableSet", 71, "Shared", 602), ("Feed", 801, "Registry", (int?)null)], ignoreOrder: true);
 
         var feed = new OctopusImportSecretFillCandidate(OctopusResourceKind.Feed, OctopusImportSourceMapQueries.FeedSecretSourceType, "Feeds-1", 601, null, null, OctopusImportSecretFillSource.Fillable);
         OctopusImportFillDestinations.Of(feed, destinations).ShouldBeNull("a feed never matches a variable set with the same number");
@@ -131,6 +131,19 @@ public class OctopusImportSecretFillPolicyTests
 
         (OctopusImportSecretFills.Candidate(feed, prior, OctopusExportSecrets.FromPassword("pw"), null) != null).ShouldBe(expected);
         OctopusImportSecretFills.MissingDestinations(prior, OctopusImportSourceMapQueries.FeedSecretSourceType).ShouldBe(expected ? [801] : []);
+    }
+
+    // A source without export secrets (an Octopus server, or a file without its password) never speaks for a feed password — not even
+    // as "empty in Octopus", which would settle the row and stop every later fill.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void FeedSource_WithoutExportSecrets_StillMissing(string password)
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [OctopusImportPriorMappings.Key(OctopusImportSourceMapQueries.FeedSecretSourceType, "Feeds-1")] = new(801, OctopusImportSourceMapQueries.MissingOutcome, null, null) }, "inst-a");
+        var feed = new OctopusResourceNode("Feeds-1", "Registry", OctopusResourceKind.Feed, OctopusDocumentKind.Feed, "feed.json", null, null, false, new OctopusFeedDto { Id = "Feeds-1", Username = "robot", Password = password });
+
+        OctopusImportSecretFills.Candidate(feed, prior, null, null).Source.ShouldBe(OctopusImportSecretFillSource.StillMissing);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

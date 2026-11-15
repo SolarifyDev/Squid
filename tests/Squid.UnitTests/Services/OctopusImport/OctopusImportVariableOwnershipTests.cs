@@ -10,6 +10,7 @@ public class OctopusImportVariableOwnershipTests
     [Theory]
     [InlineData(OctopusImportPreviewAction.Create, true)]
     [InlineData(OctopusImportPreviewAction.AlreadyImported, false)]
+    [InlineData(OctopusImportPreviewAction.FillMissingSecret, false)]   // only its missing value is filled; the variable is not rewritten
     public void AlreadyImportedProjectVariables_NotWritten(OctopusImportPreviewAction variableAction, bool expectedWritten)
     {
         var variableSet = VariableSet("variableset-Projects-1", "Projects-1", "Projects");

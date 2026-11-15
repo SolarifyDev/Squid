@@ -164,6 +164,8 @@ public class OctopusImportSecretFillPreviewTests
         plan.Resource(VariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
         plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableId && d.Message.Contains("nothing proves"));
         plan.Preview.FillPairing.ShouldBeNull("nothing to confirm: no ids match");
+        plan.Preview.HasBlockers.ShouldBeTrue("the preview itself shows the refusal as a blocker");
+        plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker, "validation refuses on its own, whatever the posted preview says");
     }
 
     // A cloned server shares ids and GUIDs; a different recorded fingerprint still refuses the file, confirmation or not.
