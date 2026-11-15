@@ -417,7 +417,7 @@ internal sealed class OctopusImportScenario
         var sessions = new Mock<IOctopusImportSessionDataProvider>();
         sessions.Setup(s => s.GetLatestHistoryFetchAsync(SpaceId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, string installationId, CancellationToken _) => string.Equals(installationId, _priorImportSession?.InstallationId, StringComparison.OrdinalIgnoreCase) ? _priorImportSession : null);
 
-        return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, variables.Object, feeds.Object, sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
+        return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, new Lazy<IVariableService>(() => variables.Object), new Lazy<IExternalFeedService>(() => feeds.Object), sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
     }
 
     private OctopusImportStoredHistory StoredHistory(IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds)

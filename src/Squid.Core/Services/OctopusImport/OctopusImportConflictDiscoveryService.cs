@@ -18,11 +18,14 @@ public interface IOctopusImportConflictDiscoveryService : IScopedDependency
 public class OctopusImportConflictDiscoveryService(
     IOctopusImportDestinationDataProvider destinationDataProvider,
     IOctopusImportSourceMapDataProvider sourceMapDataProvider = null,
-    IVariableService variableService = null,
-    IExternalFeedService externalFeedService = null,
+    Lazy<IVariableService> variableService = null,
+    Lazy<IExternalFeedService> externalFeedService = null,
     IOctopusImportSessionDataProvider sessionDataProvider = null)
     : IOctopusImportConflictDiscoveryService
 {
+    // Lazy: both services build the variable encryption service, whose constructor throws under an empty master key. Previewing an
+    // import with no missing secrets must not need a key, so they are built only when a missing secret slot is actually read.
+
     public async Task<OctopusImportConflictDiscoveryResult> DiscoverAsync(
         int destinationSpaceId,
         OctopusResourceGraph graph,
@@ -87,8 +90,8 @@ public class OctopusImportConflictDiscoveryService(
         var variableSetIds = OctopusImportSecretFills.MissingDestinations(prior, OctopusImportSourceMapQueries.VariableSecretSourceType);
         var feedIds = OctopusImportSecretFills.MissingDestinations(prior, OctopusImportSourceMapQueries.FeedSecretSourceType);
 
-        var variables = variableSetIds.Count == 0 || variableService == null ? [] : await variableService.GetSensitiveVariableSlotsAsync(variableSetIds, ct).ConfigureAwait(false);
-        var feeds = feedIds.Count == 0 || externalFeedService == null ? [] : await externalFeedService.GetCredentialSlotsAsync(feedIds, ct).ConfigureAwait(false);
+        var variables = variableSetIds.Count == 0 || variableService == null ? [] : await variableService.Value.GetSensitiveVariableSlotsAsync(variableSetIds, ct).ConfigureAwait(false);
+        var feeds = feedIds.Count == 0 || externalFeedService == null ? [] : await externalFeedService.Value.GetCredentialSlotsAsync(feedIds, ct).ConfigureAwait(false);
 
         return new OctopusImportSecretSlots(variables, feeds);
     }
