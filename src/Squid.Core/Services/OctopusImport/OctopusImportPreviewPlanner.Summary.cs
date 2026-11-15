@@ -18,7 +18,6 @@ public partial class OctopusImportPreviewPlanner
         {
             var preview = previewsById[node.SourceId];
 
-            if (preview.PreviewAction == OctopusImportPreviewAction.FillMissingSecret) preview.Changes = OctopusImportPreviewChanges.ForSecretFill(node.Kind);
             if (preview.PreviewAction != OctopusImportPreviewAction.Update) continue;
 
             if (node.Kind == OctopusResourceKind.Release) preview.Changes = OctopusImportPreviewChanges.ForRelease(node.GetSource<OctopusReleaseDto>(), preview.DestinationId, context.Conflicts.StoredHistory);

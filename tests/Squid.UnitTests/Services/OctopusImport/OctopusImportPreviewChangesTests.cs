@@ -120,12 +120,29 @@ public class OctopusImportPreviewChangesTests
         change.ShouldSatisfyAllConditions(c => c.Field.ShouldBe(field), c => c.ValueHidden.ShouldBeTrue(), c => c.OldValue.ShouldBeNull(), c => c.NewValue.ShouldBeNull());
     }
 
+    // A feed fill also writes the file's username where Squid's is empty (the compare-and-set's COALESCE): a plain field, shown old → new.
+    [Theory]
+    [InlineData(null, "deployer", true)]
+    [InlineData("", "deployer", true)]
+    [InlineData("deployer", "deployer", false)]   // same username: only the password is written
+    [InlineData(null, null, false)]               // the file has no username: Squid's is kept
+    [InlineData("deployer", null, false)]
+    public void ForSecretFill_Feed_ListsTheUsernameItWrites(string squidUsername, string fileUsername, bool listed)
+    {
+        var changes = OctopusImportPreviewChanges.ForSecretFill(OctopusResourceKind.Feed, squidUsername, fileUsername);
+
+        changes[0].Field.ShouldBe(OctopusImportPreviewChanges.FeedPasswordField);
+        var username = changes.SingleOrDefault(c => c.Field == OctopusImportPreviewChanges.FeedUsernameField);
+        (username != null).ShouldBe(listed);
+        username?.ShouldSatisfyAllConditions(c => c.OldValue.ShouldBeNull(), c => c.NewValue.ShouldBe(fileUsername), c => c.ValueHidden.ShouldBeFalse());
+    }
+
     // Field names are what clients show and match on.
     [Fact]
     public void FieldNames_Pinned()
     {
-        new[] { OctopusImportPreviewChanges.ReleaseNotesField, OctopusImportPreviewChanges.StateField, OctopusImportPreviewChanges.QueueTimeField, OctopusImportPreviewChanges.StartTimeField, OctopusImportPreviewChanges.CompletedTimeField, OctopusImportPreviewChanges.ErrorMessageField, OctopusImportPreviewChanges.HasWarningsOrErrorsField, OctopusImportPreviewChanges.DetailsField, OctopusImportPreviewChanges.TaskField, OctopusImportPreviewChanges.RecordField, OctopusImportPreviewChanges.VariableValueField, OctopusImportPreviewChanges.FeedPasswordField }
-            .ShouldBe(["ReleaseNotes", "State", "QueueTime", "StartTime", "CompletedTime", "ErrorMessage", "HasWarningsOrErrors", "Details", "ServerTask", "History", "Value", "Password"]);
+        new[] { OctopusImportPreviewChanges.ReleaseNotesField, OctopusImportPreviewChanges.StateField, OctopusImportPreviewChanges.QueueTimeField, OctopusImportPreviewChanges.StartTimeField, OctopusImportPreviewChanges.CompletedTimeField, OctopusImportPreviewChanges.ErrorMessageField, OctopusImportPreviewChanges.HasWarningsOrErrorsField, OctopusImportPreviewChanges.DetailsField, OctopusImportPreviewChanges.TaskField, OctopusImportPreviewChanges.RecordField, OctopusImportPreviewChanges.VariableValueField, OctopusImportPreviewChanges.FeedPasswordField, OctopusImportPreviewChanges.FeedUsernameField }
+            .ShouldBe(["ReleaseNotes", "State", "QueueTime", "StartTime", "CompletedTime", "ErrorMessage", "HasWarningsOrErrors", "Details", "ServerTask", "History", "Value", "Password", "Username"]);
     }
 
     private static OctopusServerTaskDto Task() => new() { Id = "ServerTasks-1", State = "Success", QueueTime = Queued, StartTime = Started, CompletedTime = Finished, ErrorMessage = null, HasWarningsOrErrors = false };

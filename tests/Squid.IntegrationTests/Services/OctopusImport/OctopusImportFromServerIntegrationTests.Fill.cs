@@ -83,6 +83,22 @@ public partial class OctopusImportFromServerIntegrationTests
         result.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
     }
 
+    // A feed whose username is empty in Squid: the fill writes the file's username too, and the preview lists it (old → new) next to
+    // the password, which is named only.
+    [Fact]
+    public async Task FeedFill_SquidUsernameEmpty_PreviewListsTheUsernameTheFillWrites()
+    {
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        await Run<SquidDbContext>(db => db.Set<ExternalFeed>().ExecuteUpdateAsync(s => s.SetProperty(f => f.Username, (string)null)));
+
+        var result = await ImportFromFileAsync(SameInstallationExport(FileFingerprint), confirmPairing: true);
+
+        ShouldHaveSucceeded(result);
+        result.PreviewPlan.Resources.Single(r => r.SourceId == SecretFeedId).Changes.Select(c => (c.Field, c.OldValue, c.NewValue, c.ValueHidden)).ShouldBe([(OctopusImportPreviewChanges.FeedPasswordField, null, null, true), (OctopusImportPreviewChanges.FeedUsernameField, null, "robot", false)]);
+        (await FeedCredentialsAsync()).ShouldBe(("robot", "registry-token"), "what the preview listed is what was written");
+    }
+
     // Seen set by a later import, then cleared by the user: the row is terminal, so no file ever fills it again.
     [Fact]
     public async Task UserSetThenApiRepeatThenUserCleared_FileNeverRefills()

@@ -24,6 +24,7 @@ public static class OctopusImportPreviewChanges
     public const string RecordField = "History";
     public const string VariableValueField = "Value";
     public const string FeedPasswordField = "Password";
+    public const string FeedUsernameField = "Username";
 
     /// <summary>Longer texts (release notes, error messages) are cut to this many characters for display.</summary>
     public const int MaxDisplayLength = 500;
@@ -83,9 +84,18 @@ public static class OctopusImportPreviewChanges
         return changes.Count > 0 ? changes : [RecordIncomplete()];
     }
 
-    /// <summary>What a fill writes: the secret field, named only.</summary>
-    public static List<OctopusImportFieldChangeDto> ForSecretFill(OctopusResourceKind kind)
-        => [new OctopusImportFieldChangeDto { Field = kind == OctopusResourceKind.Feed ? FeedPasswordField : VariableValueField, ValueHidden = true, Description = SecretFilledDescription }];
+    /// <summary>
+    /// What a fill writes: the secret field, named only; for a feed also the file's username, which the fill writes where Squid's is
+    /// empty (a plain field, old → new).
+    /// </summary>
+    public static List<OctopusImportFieldChangeDto> ForSecretFill(OctopusResourceKind kind, string squidUsername = null, string fillUsername = null)
+    {
+        var changes = new List<OctopusImportFieldChangeDto> { new() { Field = kind == OctopusResourceKind.Feed ? FeedPasswordField : VariableValueField, ValueHidden = true, Description = SecretFilledDescription } };
+
+        if (kind == OctopusResourceKind.Feed && !string.IsNullOrEmpty(fillUsername)) AddIfDifferent(changes, FeedUsernameField, Trimmed(squidUsername), fillUsername);
+
+        return changes;
+    }
 
     private static int? ChangedTaskRow(OctopusResourceNode deployment, IReadOnlyDictionary<string, OctopusResourceNode> tasks, OctopusImportPriorMappings prior)
     {

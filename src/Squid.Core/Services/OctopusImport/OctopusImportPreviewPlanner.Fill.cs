@@ -29,11 +29,17 @@ public partial class OctopusImportPreviewPlanner
         var (severity, code, message) = DescribeSecretFill(candidate, destination, context);
 
         if (OctopusImportSecretFills.WouldFill(candidate, destination) && context.FillEvidence.State != OctopusImportFillEvidenceState.Unproven)
+        {
             result.PreviewAction = OctopusImportPreviewAction.FillMissingSecret;
+            result.Changes = OctopusImportPreviewChanges.ForSecretFill(candidate.Kind, SquidFeedUsername(candidate, context), candidate.FillUsername);
+        }
 
         context.SecretFillTally[code] = context.SecretFillTally.GetValueOrDefault(code) + 1;
         result.Diagnostics.Add(Diagnostic(severity, code, message, resource));
     }
+
+    private static string SquidFeedUsername(OctopusImportSecretFillCandidate candidate, PreviewPlanningContext context)
+        => candidate.Kind == OctopusResourceKind.Feed ? context.Conflicts.SecretSlots.Feeds.FirstOrDefault(f => f.FeedId == candidate.DestinationId)?.Username : null;
 
     private (OctopusImportCompatibilitySeverity Severity, string Code, string Message) DescribeSecretFill(OctopusImportSecretFillCandidate candidate, SecretSlotState destination, PreviewPlanningContext context)
     {

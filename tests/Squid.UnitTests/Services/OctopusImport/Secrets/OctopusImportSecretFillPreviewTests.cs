@@ -272,7 +272,7 @@ public class OctopusImportSecretFillPreviewTests
 
         feed.FillDestination.ShouldNotBeNull().ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.FeedOwner), d => d.OwnerId.ShouldBe(FeedDestination), d => d.VariableSetId.ShouldBeNull());
         feed.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillFromExport).Message.ShouldContain($"Squid feed \"Private registry\" (feed {FeedDestination})");
-        feed.Changes.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Field.ShouldBe(OctopusImportPreviewChanges.FeedPasswordField), c => c.ValueHidden.ShouldBeTrue());
+        feed.Changes.Select(c => (c.Field, c.ValueHidden)).ShouldBe([(OctopusImportPreviewChanges.FeedPasswordField, true), (OctopusImportPreviewChanges.FeedUsernameField, false)], "Squid's username is empty, so the fill writes the file's too");
         plan.Preview.Summary.Space.Kinds.Single(k => k.Kind == "Feed").Counts.Fill.ShouldBe(1);
         JsonSerializer.Serialize(plan.Preview).ShouldNotContain("registry-token");
     }
@@ -347,6 +347,7 @@ public class OctopusImportSecretFillPreviewTests
         plan.BlocksConfirmation.ShouldBeFalse(string.Join("; ", plan.Blockers.Select(b => $"{b.Code}:{b.Message}")));
         feed.PreviewAction.ShouldBe(expectedAction);
         feed.Diagnostics.ShouldContain(d => d.Code == expectedCode);
+        feed.Changes.Where(c => c.Field == OctopusImportPreviewChanges.FeedUsernameField).Select(c => (c.OldValue, c.NewValue)).ShouldBe(expectedAction == OctopusImportPreviewAction.FillMissingSecret && squidUsername == null ? [(null, "robot")] : [], "the username the fill also writes is listed");
         JsonSerializer.Serialize(plan.Preview).ShouldNotContain("registry-token");
     }
 
