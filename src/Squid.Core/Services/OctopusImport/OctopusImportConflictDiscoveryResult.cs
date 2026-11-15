@@ -35,6 +35,12 @@ public sealed record OctopusImportConflictDiscoveryResult(
     /// <summary>The incoming export file's fingerprint (its id suffix); null for API bundles and unsuffixed files.</summary>
     public string ExportSourceId { get; init; }
 
+    /// <summary>
+    /// The variables (by name) Squid's imported variable sets hold now, read only for sets with incoming variables that have no live row:
+    /// a variable's row goes stale whenever its set is saved in Squid, so this tells "still in Squid" from "not in Squid".
+    /// </summary>
+    public IReadOnlyList<OctopusImportDestinationVariable> DestinationVariables { get; init; } = [];
+
     /// <summary>Squid's current state of every secret an earlier import left missing (never values).</summary>
     public OctopusImportSecretSlots SecretSlots { get; init; } = OctopusImportSecretSlots.Empty;
 

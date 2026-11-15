@@ -18,6 +18,9 @@ public interface IOctopusImportDestinationDataProvider : IScopedDependency
 
     /// <summary>Squid's current release notes and task scalars of the given rows in the space (what an Update would rewrite), for the preview's old → new.</summary>
     Task<OctopusImportStoredHistory> GetStoredHistoryAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken cancellationToken = default);
+
+    /// <summary>The names of the variables the given variable sets of the space hold now (never values).</summary>
+    Task<IReadOnlyList<OctopusImportDestinationVariable>> GetVariableNamesAsync(int destinationSpaceId, IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default);
 }
 
 public class OctopusImportDestinationDataProvider(IRepository repository) : IOctopusImportDestinationDataProvider
@@ -97,6 +100,15 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
         var tasks = await LoadStoredTasksAsync(destinationSpaceId, taskIds, cancellationToken).ConfigureAwait(false);
 
         return new OctopusImportStoredHistory(releaseNotes, tasks);
+    }
+
+    public async Task<IReadOnlyList<OctopusImportDestinationVariable>> GetVariableNamesAsync(int destinationSpaceId, IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default)
+    {
+        if (variableSetIds == null || variableSetIds.Count == 0) return [];
+
+        var sets = repository.QueryNoTracking<VariableSet>(s => s.SpaceId == destinationSpaceId && variableSetIds.Contains(s.Id)).Select(s => s.Id);
+
+        return await repository.QueryNoTracking<Variable>(v => sets.Contains(v.VariableSetId)).Select(v => new OctopusImportDestinationVariable(v.VariableSetId, v.Name)).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<Dictionary<int, string>> LoadReleaseNotesAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, CancellationToken ct)

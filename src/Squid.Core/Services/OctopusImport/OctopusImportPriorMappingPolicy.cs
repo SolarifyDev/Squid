@@ -113,9 +113,15 @@ public static class OctopusImportPriorMappingPolicy
     // A channel added in Octopus after the first import is created under the existing project. The default channel
     // is never remapped (that would overwrite the project's default channel): confirmation creates it as a regular
     // channel, so the releases and deployments on Octopus' new default channel are still imported.
+    // Any other child without a live row of its own (a step, action, phase, variable) is not something the owner's import wrote
+    // into Squid that Squid still holds: it was added in Octopus since, or removed in Squid. Imported configuration is never
+    // changed, so it is skipped with that reason, never counted as "already in Squid". Deployment settings have no rows of
+    // their own: they are what the owner's import wrote. (A variable's row also goes stale when its set is saved in Squid;
+    // the planner keeps one Squid still holds by name.)
     private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node)
     {
-        if (node.Kind != OctopusResourceKind.Channel) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
+        if (node.Kind == OctopusResourceKind.DeploymentSettings) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
+        if (node.Kind != OctopusResourceKind.Channel) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, NotInEarlierImport(node));
 
         var isDefault = node.GetSource<OctopusChannelDto>()?.IsDefault == true;
 
@@ -127,6 +133,9 @@ public static class OctopusImportPriorMappingPolicy
 
     private static OctopusImportDiagnosticDto ChangedSinceLastImport(OctopusResourceNode node)
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ChangedSinceLastImport, $"This {node.Kind} changed in Octopus since it was imported. Imported configuration is never overwritten; apply the change in Squid if it is still wanted.", node);
+
+    private static OctopusImportDiagnosticDto NotInEarlierImport(OctopusResourceNode node)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.NotInEarlierImport, $"This {node.Kind} is not in Squid: it was added in Octopus after what it belongs to was imported, or it was removed in Squid. Imported configuration is never changed, so it is not imported into the existing Squid resource; add it in Squid if it is still wanted.", node);
 
     private static OctopusImportDiagnosticDto DefaultChannelNotRemapped(OctopusResourceNode node)
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped, "The project was imported before and keeps its default channel; this Octopus default channel is created as a regular channel.", node);

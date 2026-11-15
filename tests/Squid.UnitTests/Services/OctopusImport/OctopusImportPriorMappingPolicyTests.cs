@@ -201,8 +201,16 @@ public class OctopusImportPriorMappingPolicyTests
         if (scenario is PriorScenario.HitSame or PriorScenario.HitChanged)
             return ConfigurationKindsWithOwnRows.Contains(kind) ? new(OctopusImportPreviewAction.AlreadyImported, PriorDestinationId, scenario == PriorScenario.HitChanged ? ChangedInfo() : null) : null;
 
+        // A child the earlier import would have recorded but did not was added in Octopus since: it is not in Squid and is not written
+        // into the existing owner, so it is skipped with the reason (never counted as "already in Squid"). Only the project's deployment
+        // settings have no rows of their own and are what the owner's import wrote.
         if (scenario == PriorScenario.OwnerAlreadyImported && KindsInheritingFromOwner.Contains(kind))
-            return kind == OctopusResourceKind.Channel ? new(OctopusImportPreviewAction.Create, null) : new(OctopusImportPreviewAction.AlreadyImported, null);
+            return kind switch
+            {
+                OctopusResourceKind.Channel => new(OctopusImportPreviewAction.Create, null),
+                OctopusResourceKind.DeploymentSettings => new(OctopusImportPreviewAction.AlreadyImported, null),
+                _ => new(OctopusImportPreviewAction.Skip, null, new OctopusImportDiagnosticDto { Code = OctopusImportPreviewDiagnosticCodes.NotInEarlierImport })
+            };
 
         return null;
     }

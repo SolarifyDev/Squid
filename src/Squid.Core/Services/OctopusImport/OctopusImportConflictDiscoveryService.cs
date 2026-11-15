@@ -40,8 +40,9 @@ public class OctopusImportConflictDiscoveryService(
         var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
         var origin = await LoadInstallationOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var destinationVariables = await LoadVariablesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, Destinations = destinationResources, StoredHistory = storedHistory };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, Destinations = destinationResources, StoredHistory = storedHistory };
     }
 
     // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
@@ -53,6 +54,21 @@ public class OctopusImportConflictDiscoveryService(
         if (releaseIds.Count == 0 && taskIds.Count == 0) return OctopusImportStoredHistory.Empty;
 
         return await destinationDataProvider.GetStoredHistoryAsync(destinationSpaceId, releaseIds, taskIds, ct).ConfigureAwait(false) ?? OctopusImportStoredHistory.Empty;
+    }
+
+    // Only the imported sets with an incoming variable that has no live row are read (by name): on an unchanged repeat, nothing.
+    private async Task<IReadOnlyList<OctopusImportDestinationVariable>> LoadVariablesWithoutRowsAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        var setIds = graph.Resources
+            .Where(n => n.Kind == OctopusResourceKind.Variable && !prior.TryGet(nameof(OctopusResourceKind.Variable), n.SourceId, out _))
+            .Select(n => prior.TryGet(nameof(OctopusResourceKind.VariableSet), OctopusImportPriorMappingPolicy.OwnerSourceId(n), out var set) ? set.DestinationId : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        if (setIds.Count == 0) return [];
+
+        return await destinationDataProvider.GetVariableNamesAsync(destinationSpaceId, setIds, ct).ConfigureAwait(false) ?? [];
     }
 
     // Only a file pairing with an API-imported space shows the origin: read from the newest import session that recorded the installation.

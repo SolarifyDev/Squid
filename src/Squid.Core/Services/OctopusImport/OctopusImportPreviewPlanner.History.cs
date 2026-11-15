@@ -37,6 +37,18 @@ public partial class OctopusImportPreviewPlanner
             : new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null);
     }
 
+    // A variable's row goes stale whenever its set is saved in Squid (the variables are re-inserted with new ids): one the Squid set
+    // still holds by name is in Squid, not "not in the earlier import".
+    private static OctopusImportPriorDecision KeepVariableStillInSquid(OctopusResourceNode resource, OctopusImportPriorDecision decision, PreviewPlanningContext context)
+    {
+        if (resource.Kind != OctopusResourceKind.Variable || decision.Action != OctopusImportPreviewAction.Skip) return decision;
+
+        var setId = context.PriorFor(OctopusResourceKind.VariableSet, OctopusImportPriorMappingPolicy.OwnerSourceId(resource))?.DestinationId;
+        var name = resource.GetSource<OctopusVariableDto>()?.Name;
+
+        return setId != null && context.Conflicts.DestinationVariables.Contains(new OctopusImportDestinationVariable(setId.Value, name)) ? new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null) : decision;
+    }
+
     // An Update whose Squid notes were edited since the import is skipped: the release stays linked (its deployments land on it), nothing is written.
     private static OctopusImportPriorDecision KeepNotesEditedInSquid(OctopusResourceNode resource, OctopusImportPriorDecision prior, PreviewPlanningContext context)
     {

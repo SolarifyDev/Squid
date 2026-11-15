@@ -148,9 +148,15 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } priorDecision)
+        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } decided)
         {
+            var priorDecision = KeepVariableStillInSquid(resource, decided, context);
+
             ApplyDecision(result, priorDecision);
+
+            // A child added in Octopus after its owner's import is skipped, and whatever belongs to it goes with it.
+            if (priorDecision.Action == OctopusImportPreviewAction.Skip) context.MarkScopeSkipped(result.SourceId);
+
             ApplySecretFill(result, resource, context);
             return result;
         }

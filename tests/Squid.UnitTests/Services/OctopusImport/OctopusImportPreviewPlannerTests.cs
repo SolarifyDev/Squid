@@ -552,7 +552,7 @@ public class OctopusImportPreviewPlannerTests
     }
 
     [Fact]
-    public async Task NewChildrenUnderImportedProject_InheritOrCreateUnderTheExistingProject()
+    public async Task NewChildrenUnderImportedProject_SkippedOrCreatedUnderTheExistingProject()
     {
         var result = await new OctopusImportScenario()
             .Project("Projects-1", "Web", [], [OctopusImportScenario.Var("Variables-new", "Added", "later")])
@@ -561,11 +561,28 @@ public class OctopusImportPreviewPlannerTests
             .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), 501)
             .PlanAsync();
 
-        result.Resource("Variables-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, customMessage: "a variable under an imported variable set is never written again");
+        result.Resource("Variables-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, customMessage: "a variable under an imported variable set is never written, and it is not in Squid");
         result.Resource("Variables-new").DestinationId.ShouldBeNull();
-        result.Resource("Variables-new").Diagnostics.ShouldBeEmpty(customMessage: "an already-imported variable is not a reused library variable");
+        result.Resource("Variables-new").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.NotInEarlierImport);
         result.Resource("Channels-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.Create, customMessage: "a channel added in Octopus later is created under the existing project");
         result.BlocksConfirmation.ShouldBeFalse(customMessage: Blockers(result));
+    }
+
+    // A variable's row goes stale when its set is saved in Squid (new ids): one the Squid set still holds by name is in Squid.
+    [Theory]
+    [InlineData("Greeting", OctopusImportPreviewAction.AlreadyImported)]
+    [InlineData("Renamed.In.Squid", OctopusImportPreviewAction.Skip)]
+    public async Task VariableWithoutRowUnderImportedSet_AlreadyImportedOnlyWhileTheSquidSetHoldsItsName(string squidName, OctopusImportPreviewAction expected)
+    {
+        var result = await new OctopusImportScenario()
+            .Project("Projects-1", "Web", [], [OctopusImportScenario.Var("Variables-1", "Greeting", "hello")])
+            .ExistingMapping(OctopusResourceKind.Project, "Projects-1", 500)
+            .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), 501)
+            .SquidSensitiveVariable(9001, 501, squidName, true)
+            .PlanAsync();
+
+        result.Resource("Variables-1").PreviewAction.ShouldBe(expected);
+        result.Resource("Variables-1").Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.NotInEarlierImport).ShouldBe(expected == OctopusImportPreviewAction.Skip);
     }
 
     [Fact]

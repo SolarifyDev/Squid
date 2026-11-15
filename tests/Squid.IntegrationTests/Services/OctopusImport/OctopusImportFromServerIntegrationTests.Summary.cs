@@ -128,6 +128,37 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SingleAsync<Release>()).ReleaseNote.ShouldBe("from Octopus");
     }
 
+    // A variable added in Octopus after the project was imported is not in Squid and is not written into it: the preview skips it with
+    // the reason and never counts it as "already in Squid", also after the Variables page re-saved the set (new variable ids).
+    [Fact]
+    public async Task VariableAddedInOctopusAfterTheImport_SkippedWithReason_NotWritten_EvenAfterTheSetIsSavedInSquid()
+    {
+        await using var octopus = OneDeployment();
+        octopus.Resources["projects/Projects-1/variables"] = ProjectVariables(new Dictionary<string, object> { ["Id"] = "6a1d2c3b-0000-4000-8000-000000000001", ["Name"] = "Greeting", ["Value"] = "hello", ["Type"] = "String" });
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+
+        octopus.Resources["projects/Projects-1/variables"] = ProjectVariables(new Dictionary<string, object> { ["Id"] = "6a1d2c3b-0000-4000-8000-000000000001", ["Name"] = "Greeting", ["Value"] = "hello", ["Type"] = "String" }, new Dictionary<string, object> { ["Id"] = "6a1d2c3b-0000-4000-8000-000000000002", ["Name"] = "Api.Key", ["Value"] = null, ["Type"] = "Sensitive", ["IsSensitive"] = true });
+
+        foreach (var saveInSquidFirst in new[] { false, true })
+        {
+            if (saveInSquidFirst) await SaveVariablesAsReadAsync("Server project", "added in Squid");
+            var before = await Run<SquidDbContext, List<string>>(db => db.Set<Variable>().AsNoTracking().Select(v => v.Name).OrderBy(n => n).ToListAsync());
+
+            var again = await ImportFromServerAsync(octopus);
+
+            ShouldHaveSucceeded(again);
+            var plan = again.PreviewPlan;
+            plan.Resources.Single(r => r.SourceType == "Variable" && r.SourceName == "Api.Key").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.NotInEarlierImport));
+            plan.Resources.Single(r => r.SourceType == "Variable" && r.SourceName == "Greeting").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, $"saved in Squid first: {saveInSquidFirst}");
+            plan.Summary.Projects.Single().Kinds.Single(k => k.Kind == "Variable").Counts.ShouldSatisfyAllConditions(c => c.AlreadyImported.ShouldBe(1), c => c.Skip.ShouldBe(1));
+            (await Run<SquidDbContext, List<string>>(db => db.Set<Variable>().AsNoTracking().Select(v => v.Name).OrderBy(n => n).ToListAsync())).ShouldBe(before, "nothing is written into the imported project");
+            again.Confirm.Data.Session.Result.MissingSensitiveValues.ShouldNotContain(m => m.Name == "Api.Key");
+        }
+    }
+
+    private static Dictionary<string, object> ProjectVariables(params Dictionary<string, object>[] variables)
+        => new() { ["Id"] = "variableset-Projects-1", ["OwnerId"] = "Projects-1", ["Variables"] = variables };
+
     // The old side is read only from the destination space.
     [Fact]
     public async Task StoredHistory_ReadFromTheDestinationSpaceOnly()
@@ -144,6 +175,21 @@ public partial class OctopusImportFromServerIntegrationTests
         stored.Tasks[task.Id].ShouldSatisfyAllConditions(t => t.State.ShouldBe(task.State), t => t.QueueTime.ShouldBe(task.QueueTime), t => t.CompletedTime.ShouldBe(task.CompletedTime), t => t.HasWarningsOrErrors.ShouldBe(task.HasWarningsOrErrors));
         otherSpace.ReleaseNotes.ShouldBeEmpty();
         otherSpace.Tasks.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task VariableNames_ReadFromTheDestinationSpaceOnly_NamesNotValues()
+    {
+        await using var octopus = OneDeployment();
+        octopus.Resources["projects/Projects-1/variables"] = ProjectVariables(new Dictionary<string, object> { ["Id"] = "6a1d2c3b-0000-4000-8000-000000000001", ["Name"] = "Greeting", ["Value"] = "hello", ["Type"] = "String" });
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        var set = await SingleAsync<VariableSet>();
+
+        var names = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationVariable>>(p => p.GetVariableNamesAsync(SpaceId, [set.Id]));
+        var otherSpace = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationVariable>>(p => p.GetVariableNamesAsync(SpaceId + 1, [set.Id]));
+
+        names.ShouldBe([new OctopusImportDestinationVariable(set.Id, "Greeting")]);
+        otherSpace.ShouldBeEmpty();
     }
 
     // An export file carries no task details; the API adds them to the history the file created: an Update that names the details.

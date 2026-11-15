@@ -15,7 +15,8 @@ public partial class OctopusImportPreviewPlanner
 {
     private void ApplySecretFill(OctopusImportResourceResultDto result, OctopusResourceNode resource, PreviewPlanningContext context)
     {
-        if (result.PreviewAction != OctopusImportPreviewAction.AlreadyImported || !OctopusImportSecretFills.IsFillableKind(resource.Kind)) return;
+        // A variable no longer in Squid (Skip: not in the earlier import) still names why its missing secret cannot be filled.
+        if (result.PreviewAction is not (OctopusImportPreviewAction.AlreadyImported or OctopusImportPreviewAction.Skip) || !OctopusImportSecretFills.IsFillableKind(resource.Kind)) return;
 
         var candidate = OctopusImportSecretFills.Candidate(resource, context.Prior, Secrets, context.VariableKeyCounts);
 

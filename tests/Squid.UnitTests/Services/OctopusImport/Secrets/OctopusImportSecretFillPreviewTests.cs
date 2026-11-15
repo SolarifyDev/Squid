@@ -75,7 +75,7 @@ public class OctopusImportSecretFillPreviewTests
         var variable = plan.Resource(VariableId);
 
         plan.BlocksConfirmation.ShouldBeFalse();
-        variable.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
+        variable.PreviewAction.ShouldBe(squidVariables == 0 ? OctopusImportPreviewAction.Skip : OctopusImportPreviewAction.AlreadyImported, "a variable Squid no longer holds is not counted as already in Squid");
         variable.Diagnostics.ShouldContain(d => d.Code == expectedCode && d.Severity == OctopusImportCompatibilitySeverity.Info);
         variable.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillFromExport);
     }
