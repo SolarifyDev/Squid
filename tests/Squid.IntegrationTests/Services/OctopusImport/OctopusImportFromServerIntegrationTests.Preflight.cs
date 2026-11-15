@@ -6,10 +6,13 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.Security;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
+using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Variable;
 using SquidEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.IntegrationTests.Services.OctopusImport;
@@ -89,6 +92,54 @@ public partial class OctopusImportFromServerIntegrationTests
 
         refused.Exception.ShouldBeOfType<ImportedSecretMissingException>().Secrets.Select(s => (s.Name, s.OwnerName, s.Scope)).ShouldBe([("Smtp.Password", "library variable set \"Shared mail\"", "")]);
     }
+
+    // The Variables page reads every secret as the mask and saves the set back as read (after editing something else). The withheld
+    // secret must stay empty: the preflight keeps refusing, and the export file still fills it.
+    [Fact]
+    public async Task ApiImport_VariablesPageSavedAsRead_WithheldSecretStaysEmpty_PreflightStillRefuses_FileStillFills()
+    {
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+
+        await SaveVariablesAsReadAsync("Server project", "edited in Squid");
+
+        (await VariableAsync("Db.Password")).Value.ShouldBeNullOrEmpty("the mask the page read is never stored as the value");
+        (await DeployAsync(await CreateReleaseAsync("1.0.0"))).Exception.ShouldBeOfType<ImportedSecretMissingException>().Secrets.Single().Name.ShouldBe("Db.Password");
+
+        ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(FileFingerprint), confirmPairing: true));
+
+        (await DecryptedAsync("Db.Password")).ShouldNotBeNullOrEmpty();
+        (await DecryptedAsync("Db.Password")).ShouldNotBe(MaskedSensitiveValues.Mask);
+        (await DeployAsync(await CreateReleaseAsync("1.0.1"))).State.ShouldBe(TaskState.Success);
+    }
+
+    // The same save keeps a secret the user set in Squid.
+    [Fact]
+    public async Task UserSetSecret_VariablesPageSavedAsRead_KeepsTheValue()
+    {
+        await using var octopus = await WithheldSecretsServerAsync();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        await SetEncryptedAsync("Db.Password", "set-by-user");
+
+        await SaveVariablesAsReadAsync("Server project", "edited in Squid");
+
+        (await DecryptedAsync("Db.Password")).ShouldBe("set-by-user");
+    }
+
+    // What the Variables page does: read the set (secrets masked), change nothing but one plain variable, post every variable back.
+    private Task SaveVariablesAsReadAsync(string projectName, string addedValue)
+        => Run<SquidDbContext, IVariableService>(async (db, variables) =>
+        {
+            var project = await db.Set<Project>().AsNoTracking().SingleAsync(p => p.Name == projectName);
+            var setId = await db.Set<VariableSet>().AsNoTracking().Where(s => s.OwnerId == project.Id && s.OwnerType == VariableSetOwnerType.Project).Select(s => s.Id).SingleAsync();
+            var read = await variables.GetVariableSetByIdAsync(setId, CancellationToken.None);
+
+            var posted = read.Variables.Select(v => new VariableModel { Name = v.Name, Value = v.Value, Description = v.Description, Type = v.Type, IsSensitive = v.IsSensitive, SortOrder = v.SortOrder, Scopes = v.Scopes.Select(s => new VariableScopeModel { ScopeType = s.ScopeType, ScopeValue = s.ScopeValue }).ToList() }).ToList();
+            posted.Add(new VariableModel { Name = "Added.In.Squid", Value = addedValue, Type = VariableType.String });
+
+            await variables.UpdateVariableSetAsync(new UpdateVariableSetCommand { Id = setId, Name = read.Name, Description = read.Description, OwnerId = project.Id, OwnerType = VariableSetOwnerType.Project, SpaceId = SpaceId, Variables = posted }, CancellationToken.None);
+            await db.SaveChangesAsync();
+        });
 
     // ── Deployment helpers ─────────────────────────────────────────────────
 

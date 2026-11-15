@@ -74,6 +74,8 @@ public class VariableService : IVariableService
         variableSet.SpaceId = command.SpaceId;
         variableSet.Version++;
 
+        await KeepStoredValuesOfMaskedSecretsAsync(variableSet.Id, command.Variables, cancellationToken).ConfigureAwait(false);
+
         await _variableDataProvider.DeleteVariablesByVariableSetIdAsync(variableSet.Id, cancellationToken).ConfigureAwait(false);
 
         await AddVariablesToSetAsync(variableSet.Id, command.Variables, cancellationToken).ConfigureAwait(false);
@@ -166,6 +168,27 @@ public class VariableService : IVariableService
         var written = await _variableDataProvider.SetSensitiveValueIfEmptyAsync(slot.VariableId, Encrypt(plainValue, variableSetId), cancellationToken).ConfigureAwait(false);
 
         return written == 0 ? SecretSlotState.Empty : SecretSlotState.Filled;
+    }
+
+    // The page posts each secret back as the mask it read: keep what is stored (read before the delete) instead of saving the mask.
+    private async Task KeepStoredValuesOfMaskedSecretsAsync(int variableSetId, List<VariableModel> incoming, CancellationToken cancellationToken)
+    {
+        if (!MaskedSensitiveValues.AnyMasked(incoming)) return;
+
+        var stored = await StoredSensitiveValuesAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+
+        MaskedSensitiveValues.Restore(incoming, stored);
+    }
+
+    private async Task<List<(VariableIdentity Identity, string Value)>> StoredSensitiveValuesAsync(int variableSetId, CancellationToken cancellationToken)
+    {
+        var variables = await _variableDataProvider.GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+        var secrets = variables.Where(v => v.IsSensitive).ToList();
+
+        var scopes = await _variableScopeDataProvider.GetVariableScopesByVariableIdsAsync(secrets.Select(v => v.Id).ToList(), cancellationToken).ConfigureAwait(false);
+        var scopesByVariable = scopes.ToLookup(s => s.VariableId);
+
+        return secrets.Select(v => (VariableIdentity.Of(v.Name, v.Type, scopesByVariable[v.Id].Select(s => (s.ScopeType, s.ScopeValue))), v.Value)).ToList();
     }
 
     private string Encrypt(string plainValue, int variableSetId)
