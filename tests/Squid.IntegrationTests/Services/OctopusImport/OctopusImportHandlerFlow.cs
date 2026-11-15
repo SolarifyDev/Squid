@@ -67,6 +67,10 @@ public static class OctopusImportHandlerFlow
         return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
     }
 
+    /// <summary>Finishes a server session whose fetch is done (e.g. after resuming a failed fetch): extract, preview, validate and a synchronous confirm.</summary>
+    public static Task<OctopusImportFlowResult> FinishServerImportAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch)
+        => ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
+
     /// <summary>An export-file-only import: upload, extract, preview, validate and a synchronous confirm.</summary>
     public static Task<OctopusImportFlowResult> ImportFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword)
         => ImportFromFileAsync(mediator, spaceId, exportPath, exportPassword, confirmPairing: false);

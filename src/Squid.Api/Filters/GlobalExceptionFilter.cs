@@ -44,7 +44,8 @@ public class GlobalExceptionFilter : IExceptionFilter
         var response = new SquidResponse
         {
             Code = statusCode,
-            Msg = message
+            Msg = message,
+            ErrorKind = OctopusImportErrorKinds.Of(context.Exception)
         };
 
         // PR 2 (1.7.0): when the failure is a permission denial, enrich the

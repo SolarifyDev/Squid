@@ -12,6 +12,7 @@ using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Response;
+using Squid.UnitTests.Services.OctopusImport;
 
 namespace Squid.UnitTests.Filters;
 
@@ -68,6 +69,35 @@ public class GlobalExceptionFilterTests
 
         AssertEnvelope(context, HttpStatusCode.BadRequest, exception.Message);
     }
+
+    // The import page decides how to recover (resume, reconnect, start again) from errorKind, never from the message text.
+    [Theory]
+    [MemberData(nameof(OctopusImportErrorKindsTests.ImportFailures), MemberType = typeof(OctopusImportErrorKindsTests))]
+    public void OnException_ImportFailure_CarriesItsErrorKind(Exception exception, string expectedKind)
+    {
+        var context = Execute(exception);
+
+        Response(context).ErrorKind.ShouldBe(expectedKind);
+    }
+
+    [Theory]
+    [MemberData(nameof(OctopusImportErrorKindsTests.OtherFailures), MemberType = typeof(OctopusImportErrorKindsTests))]
+    public void OnException_OtherFailure_HasNoErrorKind(Exception exception)
+    {
+        var context = Execute(exception);
+
+        Response(context).ErrorKind.ShouldBeNull();
+    }
+
+    [Fact]
+    public void ErrorKind_SerializedAsErrorKind()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new SquidResponse { ErrorKind = "Unreachable" });
+
+        json.ShouldContain("\"errorKind\":\"Unreachable\"", Case.Sensitive);
+    }
+
+    private static SquidResponse Response(ExceptionContext context) => context.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<SquidResponse>();
 
     private static ExceptionContext Execute(Exception exception)
     {
