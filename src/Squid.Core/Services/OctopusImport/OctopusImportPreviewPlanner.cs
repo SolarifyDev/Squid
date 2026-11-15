@@ -44,6 +44,9 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         AddVariableDiagnostics(nodes, resources);
         AddWithheldSecretDiagnostics(nodes, resources);
+        AddChanges(nodes, resources, context);
+        AttributeTasksToTheirDeploymentProject(nodes, resources);
+        AddSkipReasons(resources);
 
         var diagnostics = dependencyPlan.Diagnostics
             .Select(MapDependencyDiagnostic)
@@ -54,7 +57,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .Concat(SecretFillSummary(context))
             .ToList();
 
-        return new OctopusImportPreviewPlanDto
+        var plan = new OctopusImportPreviewPlanDto
         {
             GeneratedAt = DateTimeOffset.UtcNow,
             Resources = resources,
@@ -64,6 +67,10 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             Diagnostics = diagnostics,
             FillPairing = FillPairing(context)
         };
+
+        plan.Summary = Summary(plan, context);
+
+        return plan;
     }
 
     // Rank order puts every owner before what it owns (project before channel, process before step,

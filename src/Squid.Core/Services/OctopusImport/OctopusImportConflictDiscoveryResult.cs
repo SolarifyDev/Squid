@@ -43,6 +43,12 @@ public sealed record OctopusImportConflictDiscoveryResult(
 
     /// <summary>The server, space and version of the API import that recorded the space's installation (for a pairing); null when unknown.</summary>
     public OctopusImportInstallationOrigin InstallationOrigin { get; init; }
+
+    /// <summary>The Squid resources of the destination space discovery matched against (projects name the destination of each project's changes).</summary>
+    public IReadOnlyList<OctopusImportDestinationResource> Destinations { get; init; } = [];
+
+    /// <summary>Squid's current values of the history rows this import would update (old side of the preview's old → new).</summary>
+    public OctopusImportStoredHistory StoredHistory { get; init; } = OctopusImportStoredHistory.Empty;
 }
 
 /// <summary>Squid's release identity: a version is unique per project channel.</summary>

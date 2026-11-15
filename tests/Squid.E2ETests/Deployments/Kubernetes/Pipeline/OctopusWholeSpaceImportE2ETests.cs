@@ -50,7 +50,7 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
     [Fact]
     public async Task UnusedResourcesSquidCannotImport_Skipped_HistoryImported_NativeDeployRuns_RepeatWritesNothing()
     {
-        var nativeTaskId = await SeedPreviouslyImportedProjectAsync($"squid-e2e-{Guid.NewGuid():N}"[..18]);
+        var (nativeTaskId, squidProject) = await SeedPreviouslyImportedProjectAsync($"squid-e2e-{Guid.NewGuid():N}"[..18]);
         await using var octopus = StubOctopusServer.Start(ApiKey).WithUnusedResourcesSquidCannotImport().Release("Projects-1", "Releases-1", ImportedVersion).Deployment("Projects-1", "Deployments-1", "Releases-1", "ServerTasks-1");
         var initial = await SpaceRowsAsync();
 
@@ -63,6 +63,8 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
         imported.Feeds.ShouldBe(initial.Feeds.Append(OctopusWholeSpaceResources.SpareFeedName).ToList(), ignoreOrder: true, customMessage: "the unused feed Squid can import is imported; the Maven feed and the built-in repository are not");
         (imported.UnusedAccounts, imported.Libraries).ShouldBe((0, 0));
         imported.ImportedTaskStates.ShouldBe([TaskState.Success], "the imported project's Octopus history lands beside the skips");
+        ShouldLandOnTheSquidProject(import, squidProject);
+        import.PreviewPlan.Summary.SkipReasons.Where(r => r.Code == OctopusImportPreviewDiagnosticCodes.UnreferencedResourceSkipped).Select(r => r.ResourceType).ShouldBe(["Account", "Feed", "LibraryVariableSet"], ignoreOrder: true, customMessage: "the preview says why each kind is skipped");
 
         await _fixture.Run<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(nativeTaskId, CancellationToken.None));
 
@@ -74,6 +76,9 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
         repeat.Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(repeat));
         SkippedActions(repeat).ShouldAllBe(a => a == OctopusImportPreviewAction.Skip);
         repeat.PreviewPlan.Resources.ShouldNotContain(r => OctopusImportPreviewActions.WritesDestination(r.PreviewAction), customMessage: "a repeat import of an unchanged space writes nothing");
+        repeat.PreviewPlan.Summary.IsUpToDate.ShouldBeTrue("the repeat preview says everything is up to date");
+        repeat.PreviewPlan.Resources.ShouldAllBe(r => r.Changes.Count == 0);
+        ShouldLandOnTheSquidProject(repeat, squidProject);
         (await SpaceRowsAsync()).ShouldBeEquivalentTo(before);
     }
 
@@ -93,10 +98,17 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
 
     // The K8s scenario (project, TEST target, release 1.0.0 with a pending native deploy), recorded in the source map
     // as Octopus Projects-1 / Channels-1 / Environments-1 imported earlier.
-    private async Task<int> SeedPreviouslyImportedProjectAsync(string namespaceName)
+    private static void ShouldLandOnTheSquidProject(OctopusImportFlowResult import, Project squidProject)
+        => import.PreviewPlan.Summary.Projects.Single(p => p.SourceId == "Projects-1").Destination.ShouldSatisfyAllConditions(
+            d => d.State.ShouldBe(OctopusImportProjectDestinationState.Existing),
+            d => d.ProjectId.ShouldBe(squidProject.Id),
+            d => d.ProjectName.ShouldBe(squidProject.Name));
+
+    private async Task<(int NativeTaskId, Project Project)> SeedPreviouslyImportedProjectAsync(string namespaceName)
     {
         _fixture.ExecutionCapture.Clear();
         var nativeTaskId = 0;
+        Project seeded = null;
 
         await _fixture.Run<IRepository, IUnitOfWork, IDeploymentAccountDataProvider>(async (repository, unitOfWork, accounts) =>
         {
@@ -108,10 +120,11 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
             var environment = await repository.Query<Environment>().OrderByDescending(e => e.Id).FirstAsync();
 
             nativeTaskId = seeder.ServerTaskId;
+            seeded = project;
             await RecordImportedBeforeAsync(project.Id, channel.Id, environment.Id);
         });
 
-        return nativeTaskId;
+        return (nativeTaskId, seeded);
     }
 
     private Task RecordImportedBeforeAsync(int projectId, int channelId, int environmentId)

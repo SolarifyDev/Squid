@@ -50,6 +50,12 @@ public class OctopusImportSecretFillPreviewTests
             m => m.ShouldContain("one set in Squid in the meantime is kept"));
         plan.Preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillsSummary).Message.ShouldContain("1 filled from this export file, 0 already set in Squid");
         plan.Preview.FillPairing.ShouldBeNull("the recorded export fingerprint proves the file");
+        variable.Changes.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Field.ShouldBe(OctopusImportPreviewChanges.VariableValueField), c => c.ValueHidden.ShouldBeTrue(), c => c.OldValue.ShouldBeNull(), c => c.NewValue.ShouldBeNull());
+        plan.Preview.Summary.Counts.Fill.ShouldBe(1);
+        plan.Preview.Summary.IsUpToDate.ShouldBeFalse("a fill is a change");
+        var project = plan.Preview.Summary.Projects.Single();
+        project.Destination.ShouldSatisfyAllConditions(d => d.State.ShouldBe(OctopusImportProjectDestinationState.Existing), d => d.ProjectId.ShouldBe(501));
+        project.Kinds.Single(k => k.Kind == "Variable").Counts.Fill.ShouldBe(1);
         JsonSerializer.Serialize(plan.Preview).ShouldNotContain(Plaintext);
         JsonSerializer.Serialize(plan.Validation).ShouldNotContain(Plaintext);
     }
@@ -165,6 +171,9 @@ public class OctopusImportSecretFillPreviewTests
         plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableId && d.Message.Contains("nothing proves"));
         plan.Preview.FillPairing.ShouldBeNull("nothing to confirm: no ids match");
         plan.Preview.HasBlockers.ShouldBeTrue("the preview itself shows the refusal as a blocker");
+        plan.Preview.Summary.Counts.Incremental.ShouldBe(0, "a refused fill writes nothing");
+        plan.Preview.Summary.Projects.Single().IsUpToDate.ShouldBeFalse("a project with a blocked secret is not up to date");
+        plan.Preview.Summary.IsUpToDate.ShouldBeFalse();
         plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker, "validation refuses on its own, whatever the posted preview says");
     }
 
@@ -263,6 +272,9 @@ public class OctopusImportSecretFillPreviewTests
 
         feed.FillDestination.ShouldNotBeNull().ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.FeedOwner), d => d.OwnerId.ShouldBe(FeedDestination), d => d.VariableSetId.ShouldBeNull());
         feed.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillFromExport).Message.ShouldContain($"Squid feed \"Private registry\" (feed {FeedDestination})");
+        feed.Changes.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Field.ShouldBe(OctopusImportPreviewChanges.FeedPasswordField), c => c.ValueHidden.ShouldBeTrue());
+        plan.Preview.Summary.Space.Kinds.Single(k => k.Kind == "Feed").Counts.Fill.ShouldBe(1);
+        JsonSerializer.Serialize(plan.Preview).ShouldNotContain("registry-token");
     }
 
     // A resource that speaks for no missing secret carries no destination.

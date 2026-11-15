@@ -39,8 +39,20 @@ public class OctopusImportConflictDiscoveryService(
         var releaseKeys = await LoadExistingReleaseKeysAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
         var origin = await LoadInstallationOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, Destinations = destinationResources, StoredHistory = storedHistory };
+    }
+
+    // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
+    private async Task<OctopusImportStoredHistory> LoadStoredHistoryAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        var releaseIds = OctopusImportPreviewChanges.ReleaseIdsToCompare(graph.Resources, prior);
+        var taskIds = OctopusImportPreviewChanges.TaskIdsToCompare(graph.Resources, prior);
+
+        if (releaseIds.Count == 0 && taskIds.Count == 0) return OctopusImportStoredHistory.Empty;
+
+        return await destinationDataProvider.GetStoredHistoryAsync(destinationSpaceId, releaseIds, taskIds, ct).ConfigureAwait(false) ?? OctopusImportStoredHistory.Empty;
     }
 
     // Only a file pairing with an API-imported space shows the origin: read from the newest import session that recorded the installation.

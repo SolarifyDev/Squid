@@ -94,6 +94,15 @@ public class EnumOrdinalPinTests
     }
 
     [Theory]
+    [InlineData(OctopusImportProjectDestinationState.New, 0)]
+    [InlineData(OctopusImportProjectDestinationState.Existing, 1)]
+    [InlineData(OctopusImportProjectDestinationState.NotImported, 2)]
+    public void OctopusImportProjectDestinationState_OrdinalsPinned(OctopusImportProjectDestinationState state, int expected)
+    {
+        ((int)state).ShouldBe(expected);
+    }
+
+    [Theory]
     [InlineData(OctopusImportRequiredInputKind.SensitiveVariableValue, 0)]
     [InlineData(OctopusImportRequiredInputKind.FeedPassword, 1)]
     [InlineData(OctopusImportRequiredInputKind.AccountSecret, 2)]

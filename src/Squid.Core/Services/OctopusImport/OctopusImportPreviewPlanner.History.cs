@@ -71,7 +71,7 @@ public partial class OctopusImportPreviewPlanner
     // Runbook runs and system tasks have no deployment and are out of scope.
     private static OctopusImportPriorDecision DecideServerTask(OctopusResourceNode resource, PreviewPlanningContext context)
     {
-        if (!context.TryGetHistoryUnitAction(resource.SourceId, out var unitAction)) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null);
+        if (!context.TryGetHistoryUnitAction(resource.SourceId, out var unitAction)) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, TaskWithoutImportedDeployment(resource));
 
         var destinationId = unitAction == OctopusImportPreviewAction.Create ? null : context.PriorFor(OctopusResourceKind.ServerTask, resource.SourceId)?.DestinationId;
 
@@ -104,6 +104,9 @@ public partial class OctopusImportPreviewPlanner
 
     private static OctopusImportDiagnosticDto ReleaseVersionExistsInSquid(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ReleaseVersionExistsInSquid, $"Release '{resource.Name}' already exists in Squid on this project channel but was not created by an Octopus import. It is kept as it is; this release and its deployments are skipped.", resource);
+
+    private static OctopusImportDiagnosticDto TaskWithoutImportedDeployment(OctopusResourceNode resource)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.TaskImportedWithDeployment, "An Octopus task is imported only together with its deployment; this one has no deployment this import imports (a runbook run, a system task, or a skipped deployment).", resource);
 
     private static OctopusImportDiagnosticDto DeploymentTaskMissing(OctopusResourceNode resource)
         => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.DeploymentTaskMissing, "This Octopus deployment is skipped because its server task is not in the import source.", resource);

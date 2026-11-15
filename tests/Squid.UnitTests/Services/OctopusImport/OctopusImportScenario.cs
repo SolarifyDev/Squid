@@ -31,6 +31,8 @@ internal sealed class OctopusImportScenario
     private readonly List<string> _priorExportSourceIds = [];
     private readonly List<SensitiveVariableSlot> _squidVariables = [];
     private readonly List<ExternalFeedCredentialSlot> _squidFeeds = [];
+    private readonly Dictionary<int, string> _storedReleaseNotes = [];
+    private readonly Dictionary<int, OctopusImportStoredTask> _storedTasks = [];
     private string _installationId;
     private string _priorInstallationId;
     private OctopusImportHistoryFetchDto _priorImportSession;
@@ -170,6 +172,9 @@ internal sealed class OctopusImportScenario
     public OctopusImportScenario ServerTask(string id, string state = "Success", string detailFingerprint = null)
         => Add(id, "ServerTask", TaskDocument(id, state, detailFingerprint));
 
+    public OctopusImportScenario ServerTaskDocument(OctopusServerTaskDto task)
+        => Add(task.Id, "ServerTask", task);
+
     /// <summary>A source-map row an earlier confirmation recorded.</summary>
     public OctopusImportScenario ExistingMapping(OctopusResourceKind kind, string sourceId, int destinationId, string fingerprint = null, string detailFingerprint = null)
     {
@@ -256,17 +261,65 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
-    /// <summary>Records every resource a plan writes as imported, the way confirmation fills the source map.</summary>
+    /// <summary>
+    /// Records every resource a plan writes as imported, the way confirmation fills the source map, and what it wrote into Squid: the
+    /// project rows (by name) and the release notes / task scalars an Update would later compare with.
+    /// </summary>
     public OctopusImportScenario ImportedAs(ScenarioResult plan)
     {
         var nodes = plan.Graph.Resources.ToDictionary(n => n.SourceId, StringComparer.OrdinalIgnoreCase);
         var destinationId = 1000;
 
         foreach (var resource in plan.Preview.Resources.Where(r => r.PreviewAction == Squid.Message.Enums.OctopusImport.OctopusImportPreviewAction.Create))
-            ExistingMapping(Enum.Parse<OctopusResourceKind>(resource.SourceType), resource.SourceId, ++destinationId, FingerprintOf(nodes[resource.SourceId], nodes));
+        {
+            var node = nodes[resource.SourceId];
+
+            ExistingMapping(node.Kind, resource.SourceId, ++destinationId, FingerprintOf(node, nodes));
+            RecordWrittenRow(node, destinationId);
+        }
 
         return this;
     }
+
+    /// <summary>The Squid destination id an earlier import (or <see cref="ImportedAs"/>) recorded for a source resource.</summary>
+    public int PriorDestinationOf(OctopusResourceKind kind, string sourceId) => _prior[(kind.ToString(), sourceId)].DestinationId;
+
+    /// <summary>Squid's current notes of an imported release.</summary>
+    public OctopusImportScenario StoredReleaseNotes(int releaseId, string notes)
+    {
+        _storedReleaseNotes[releaseId] = notes;
+        return this;
+    }
+
+    /// <summary>Squid's current scalars of an imported task.</summary>
+    public OctopusImportScenario StoredTask(OctopusImportStoredTask task)
+    {
+        _storedTasks[task.Id] = task;
+        return this;
+    }
+
+    /// <summary>The release / task ids conflict discovery asked Squid for (the rows an Update would rewrite).</summary>
+    public List<(IReadOnlyCollection<int> ReleaseIds, IReadOnlyCollection<int> TaskIds)> StoredHistoryReads { get; } = [];
+
+    private void RecordWrittenRow(OctopusResourceNode node, int destinationId)
+    {
+        switch (node.Kind)
+        {
+            case OctopusResourceKind.Project:
+                ExistingProject(destinationId, node.Name);
+                break;
+            case OctopusResourceKind.Release:
+                _storedReleaseNotes[destinationId] = node.GetSource<OctopusReleaseDto>()?.ReleaseNotes;
+                break;
+            case OctopusResourceKind.ServerTask:
+                _storedTasks[destinationId] = StoredTaskOf(destinationId, node.GetSource<OctopusServerTaskDto>());
+                break;
+        }
+    }
+
+    // What the history importer writes: the state normalised, times in UTC.
+    private static OctopusImportStoredTask StoredTaskOf(int id, OctopusServerTaskDto task)
+        => new(id, Squid.Core.Services.OctopusImport.History.OctopusImportTaskStateNormalizer.Normalize(task.State).State, (task.QueueTime ?? DateTimeOffset.UtcNow).ToUniversalTime(), task.StartTime?.ToUniversalTime(), task.CompletedTime?.ToUniversalTime(), task.ErrorMessage ?? string.Empty, task.HasWarningsOrErrors);
 
     public static OctopusServerTaskDto TaskDocument(string id, string state = "Success", string detailFingerprint = null)
         => new() { Id = id, Name = "Deploy", State = state, QueueTime = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero), StartTime = new DateTimeOffset(2026, 1, 2, 3, 4, 6, TimeSpan.Zero), CompletedTime = new DateTimeOffset(2026, 1, 2, 3, 5, 6, TimeSpan.Zero), DetailFingerprint = detailFingerprint };
@@ -349,6 +402,7 @@ internal sealed class OctopusImportScenario
         var destination = new Mock<IOctopusImportDestinationDataProvider>();
         destination.Setup(d => d.GetResourcesAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(_destination);
         destination.Setup(d => d.GetReleaseKeysAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(_releaseKeys);
+        destination.Setup(d => d.GetStoredHistoryAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken _) => StoredHistory(releaseIds, taskIds));
 
         var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
         sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(_prior), _priorInstallationId, _priorExportSourceIds));
@@ -363,6 +417,13 @@ internal sealed class OctopusImportScenario
         sessions.Setup(s => s.GetLatestHistoryFetchAsync(SpaceId, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, string installationId, CancellationToken _) => string.Equals(installationId, _priorImportSession?.InstallationId, StringComparison.OrdinalIgnoreCase) ? _priorImportSession : null);
 
         return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, variables.Object, feeds.Object, sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
+    }
+
+    private OctopusImportStoredHistory StoredHistory(IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds)
+    {
+        StoredHistoryReads.Add((releaseIds.ToList(), taskIds.ToList()));
+
+        return new OctopusImportStoredHistory(_storedReleaseNotes.Where(r => releaseIds.Contains(r.Key)).ToDictionary(r => r.Key, r => r.Value), _storedTasks.Where(t => taskIds.Contains(t.Key)).ToDictionary(t => t.Key, t => t.Value));
     }
 
     private string WithSpaceId(string json)

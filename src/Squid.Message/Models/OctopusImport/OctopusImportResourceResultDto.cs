@@ -39,6 +39,12 @@ public class OctopusImportResourceResultDto
     /// </summary>
     public OctopusImportFillDestinationDto FillDestination { get; set; }
 
+    /// <summary>For an Update or a Fill: the fields written into the row an earlier import created, old → new (a secret is named, never shown). Empty otherwise.</summary>
+    public List<OctopusImportFieldChangeDto> Changes { get; set; } = [];
+
+    /// <summary>For a resource that is not imported (Skip, Unsupported): why. Null otherwise.</summary>
+    public OctopusImportSkipReasonDto SkipReason { get; set; }
+
     public List<OctopusImportRequiredInputDto> RequiredInputs { get; set; } = [];
 
     public List<OctopusImportDiagnosticDto> Diagnostics { get; set; } = [];

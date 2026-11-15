@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Models.OctopusImport;
 using DeploymentEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.Core.Services.OctopusImport;
@@ -14,6 +15,9 @@ public interface IOctopusImportDestinationDataProvider : IScopedDependency
 
     /// <summary>The release identities that exist under the given destination projects.</summary>
     Task<IReadOnlyList<OctopusImportReleaseKey>> GetReleaseKeysAsync(int destinationSpaceId, IReadOnlyCollection<int> projectIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Squid's current release notes and task scalars of the given rows in the space (what an Update would rewrite), for the preview's old → new.</summary>
+    Task<OctopusImportStoredHistory> GetStoredHistoryAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken cancellationToken = default);
 }
 
 public class OctopusImportDestinationDataProvider(IRepository repository) : IOctopusImportDestinationDataProvider
@@ -85,6 +89,30 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
         if (projectIds == null || projectIds.Count == 0) return [];
 
         return await repository.QueryNoTracking<Release>(x => x.SpaceId == destinationSpaceId && projectIds.Contains(x.ProjectId)).Select(x => new OctopusImportReleaseKey(x.ProjectId, x.ChannelId, x.Version)).ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<OctopusImportStoredHistory> GetStoredHistoryAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken cancellationToken = default)
+    {
+        var releaseNotes = await LoadReleaseNotesAsync(destinationSpaceId, releaseIds, cancellationToken).ConfigureAwait(false);
+        var tasks = await LoadStoredTasksAsync(destinationSpaceId, taskIds, cancellationToken).ConfigureAwait(false);
+
+        return new OctopusImportStoredHistory(releaseNotes, tasks);
+    }
+
+    private async Task<Dictionary<int, string>> LoadReleaseNotesAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, CancellationToken ct)
+    {
+        if (releaseIds == null || releaseIds.Count == 0) return [];
+
+        return await repository.QueryNoTracking<Release>(x => x.SpaceId == destinationSpaceId && releaseIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.ReleaseNote, ct).ConfigureAwait(false);
+    }
+
+    private async Task<Dictionary<int, OctopusImportStoredTask>> LoadStoredTasksAsync(int destinationSpaceId, IReadOnlyCollection<int> taskIds, CancellationToken ct)
+    {
+        if (taskIds == null || taskIds.Count == 0) return [];
+
+        var tasks = await repository.QueryNoTracking<ServerTask>(x => x.SpaceId == destinationSpaceId && taskIds.Contains(x.Id)).Select(x => new OctopusImportStoredTask(x.Id, x.State, x.QueueTime, x.StartTime, x.CompletedTime, x.ErrorMessage, x.HasWarningsOrErrors)).ToListAsync(ct).ConfigureAwait(false);
+
+        return tasks.ToDictionary(x => x.Id);
     }
 
     // Teams carry their built-in flag, current member count and member fingerprint: reusing a team grants approval rights to its members.
