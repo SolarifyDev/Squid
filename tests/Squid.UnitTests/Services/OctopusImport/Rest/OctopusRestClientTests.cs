@@ -331,6 +331,7 @@ public class OctopusRestClientTests
     [InlineData("http://169.254.169.254/")]
     [InlineData("http://169.254.10.10/")]
     [InlineData("http://100.100.100.200/")]
+    [InlineData("http://168.63.129.16/")]   // Azure host endpoint (wireserver)
     [InlineData("http://[fe80::1]/")]
     [InlineData("http://[fd00:ec2::254]/")]
     [InlineData("http://[::ffff:169.254.169.254]/")]
@@ -347,6 +348,22 @@ public class OctopusRestClientTests
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.Denied);
         handler.Requests.ShouldBeEmpty();
+    }
+
+    // Deliberate: Octopus servers usually live on the intranet, so private ranges are reachable by default; an operator narrows the
+    // reachable hosts with the allowlist env var.
+    [Theory]
+    [InlineData("http://10.1.2.3:8080/")]
+    [InlineData("http://172.16.0.5/")]
+    [InlineData("http://192.168.1.20/")]
+    [InlineData("http://100.64.0.7/")]
+    [InlineData("http://[fd12:3456::1]/")]
+    public void PrivateAddresses_AllowedByDefault_DeniedOutsideAnAllowlist(string serverUrl)
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(OctopusRestStubHandler.Root()));
+
+        Should.NotThrow(() => new OctopusRestClient(serverUrl, ApiKey, new OctopusRestOptions(), handler).Dispose());
+        Should.Throw<OctopusRestException>(() => new OctopusRestClient(serverUrl, ApiKey, new OctopusRestOptions { AllowedHosts = ["octopus.example.com"] }, handler)).Kind.ShouldBe(OctopusRestErrorKind.Denied);
     }
 
     [Theory]

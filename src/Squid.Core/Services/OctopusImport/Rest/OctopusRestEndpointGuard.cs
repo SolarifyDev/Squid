@@ -8,6 +8,8 @@ namespace Squid.Core.Services.OctopusImport.Rest;
 /// SSRF guard for the Octopus REST source. The server URL is checked when the client is built, and every
 /// connection resolves DNS itself and dials only an address it has just validated, so a name that re-resolves
 /// to a forbidden address (DNS rebinding) is still refused.
+/// Private ranges (10/8, 172.16/12, 192.168/16, 100.64/10, fc00::/7) are allowed on purpose: Octopus servers usually live
+/// on the intranet. An operator who wants to narrow that sets <see cref="OctopusRestOptions.AllowedHostsEnvVar"/>.
 /// </summary>
 public static class OctopusRestEndpointGuard
 {
@@ -15,6 +17,7 @@ public static class OctopusRestEndpointGuard
     [
         IPAddress.Parse("169.254.169.254"),
         IPAddress.Parse("100.100.100.200"),
+        IPAddress.Parse("168.63.129.16"),
         IPAddress.Parse("fd00:ec2::254")
     ];
 
