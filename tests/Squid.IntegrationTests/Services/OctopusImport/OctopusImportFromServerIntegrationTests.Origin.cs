@@ -135,6 +135,47 @@ public partial class OctopusImportFromServerIntegrationTests
         (await ExportSourceRowsAsync()).ShouldBeEmpty();
     }
 
+    // file(Y) → API(X) with no id in common (imported: nothing to link) → API(X) once X has an id that collides with Y's: refused. The
+    // first X import must not record X's installation next to Y's fingerprint, or it would prove X by installation and link X's
+    // Environments-1 to Y's without any check.
+    [Fact]
+    public async Task ServerWithNoIdInCommon_ThenACollidingId_Refused_ItsInstallationNeverRecorded()
+    {
+        await (await WithheldSecretsServerAsync()).DisposeAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false)));
+        await using var other = ServerWithEnvironments(("Environments-21", "Other STAGING"));
+        other.Installation = "0be1d2c3-0000-4000-8000-0000000000ff";
+
+        var unrelated = await ImportFromServerAsync(other);
+
+        ShouldHaveSucceeded(unrelated);
+        unrelated.PreviewPlan.FillPairing.ShouldBeNull("no id in common: nothing to link, nothing to prove");
+        (await SourceMapAsync()).ShouldNotContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType, "the other server is not the origin of the file's rows");
+        (await SourceMapAsync()).ShouldContain(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType && r.SourceId.ToUpper() == OriginFingerprint);
+
+        ((List<Dictionary<string, object>>)other.Resources["environments"]).Add(new() { ["Id"] = "Environments-1", ["Name"] = "Other PROD", ["Slug"] = "other-prod" });
+        var before = await CountRowsAsync(ScopeTables);
+
+        var refused = await Should.ThrowAsync<InvalidOperationException>(() => ImportFromServerAsync(other, confirmPairing: true));
+
+        refused.Message.ShouldStartWith("Preview blocked");
+        refused.Message.ShouldContain(OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
+        (await CountRowsAsync(ScopeTables)).ShouldBe(before, "nothing of the other server is linked to the file's Environments-1");
+    }
+
+    // A server whose space holds only these environments: no project, group or lifecycle id in common with the tests' export.
+    private static StubOctopusServer ServerWithEnvironments(params (string Id, string Name)[] environments)
+    {
+        var octopus = StubOctopusServer.Start(ApiKey);
+
+        octopus.Resources["projectgroups"] = new List<Dictionary<string, object>>();
+        octopus.Resources["lifecycles"] = new List<Dictionary<string, object>>();
+        octopus.Resources["projects"] = new List<Dictionary<string, object>>();
+        octopus.Resources["environments"] = environments.Select(e => new Dictionary<string, object> { ["Id"] = e.Id, ["Name"] = e.Name, ["Slug"] = e.Name.ToLowerInvariant().Replace(' ', '-') }).ToList();
+
+        return octopus;
+    }
+
     private Task<(Guid SessionId, OctopusImportPreviewPlanDto Preview)> ServerPreviewAsync(StubOctopusServer octopus)
         => Run<IMediator, (Guid, OctopusImportPreviewPlanDto)>(async mediator =>
         {

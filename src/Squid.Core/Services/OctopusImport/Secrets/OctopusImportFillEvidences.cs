@@ -95,7 +95,8 @@ public static class OctopusImportFillEvidences
             .Distinct(StringComparer.Ordinal)
             .Count();
 
-    private static bool HasRecordedOrigin(OctopusImportPriorMappings prior) => HasId(prior?.InstallationId) || prior?.ExportSourceIds.Count > 0;
+    /// <summary>The space records where its imports came from: an installation id or a pinned export fingerprint.</summary>
+    public static bool HasRecordedOrigin(OctopusImportPriorMappings prior) => HasId(prior?.InstallationId) || prior?.ExportSourceIds.Count > 0;
 
     private static bool IsSameOnEveryInstallation(OctopusResourceNode node) => node.Kind == OctopusResourceKind.Team && OctopusBuiltInTeams.IsBuiltIn(node.SourceId);
 

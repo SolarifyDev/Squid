@@ -57,7 +57,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     {
         var rows = execution.IdMap.Mappings.Select(mapping => SourceMapRow(execution, mapping)).Concat(SecretRows(execution)).ToList();
 
-        AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.InstallationSourceType, execution.Request.Graph.InstallationId);
+        if (MayRecordOrigin(execution))
+            AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.InstallationSourceType, execution.Request.Graph.InstallationId);
 
         if (MayPinExportSource(execution))
             AddSpaceRow(rows, execution, OctopusImportSourceMapQueries.ExportSourceSourceType, execution.Request.Graph.ExportSourceId);
@@ -68,8 +69,13 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     // The export fingerprint proves later files for secret fills, so it is pinned once — by the space's first export-file import — and
     // never replaced (D10): a later file of a cloned server must not become a reference. A space imported from an Octopus server pins
     // it only from a file proven to be that server's (or whose pairing the user confirmed).
-    private static bool MayPinExportSource(ConfirmationExecutionContext execution)
-        => execution.Prior.ExportSourceIds.Count == 0 && (string.IsNullOrWhiteSpace(execution.Prior.InstallationId) || FillEvidence(execution).State == OctopusImportFillEvidenceState.Proven);
+    private static bool MayPinExportSource(ConfirmationExecutionContext execution) => execution.Prior.ExportSourceIds.Count == 0 && MayRecordOrigin(execution);
+
+    // A recorded origin proves every later import of that source by id, so the source becomes one only where it cannot vouch for rows
+    // another origin created: a space with no recorded origin, or one whose origin it is proven to be (by id or a confirmed pairing).
+    // An import with no id in common needs no proof to run, but it does not make its server the origin of another server's rows.
+    private static bool MayRecordOrigin(ConfirmationExecutionContext execution)
+        => !OctopusImportFillEvidences.HasRecordedOrigin(execution.Prior) || FillEvidence(execution).State == OctopusImportFillEvidenceState.Proven;
 
     // A row describing where the space's import came from (installation, export fingerprint); it points at the space itself.
     private static void AddSpaceRow(List<OctopusImportSourceMapRow> rows, ConfirmationExecutionContext execution, string sourceType, string sourceId)

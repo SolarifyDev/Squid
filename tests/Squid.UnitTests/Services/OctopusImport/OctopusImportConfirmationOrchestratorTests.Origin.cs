@@ -43,6 +43,31 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.ShouldBe(expectSucceeded ? upserted : [], "a refused import links and records nothing");
     }
 
+    // No id of the source is in the space, so nothing needs proof — but the installation is recorded only where it cannot vouch for
+    // rows another origin created: in a space with no recorded origin, or when it is that origin. Recorded next to another server's
+    // fingerprint, it would prove that server's later imports by installation, and a later colliding id (its Environments-21 against
+    // the file's Environments-21) would link without any check. Another installation recorded since validation is refused under the lock.
+    [Theory]
+    [InlineData(null, null, "inst-x", true, true)]               // no origin recorded: the first one is
+    [InlineData("inst-x", null, "inst-x", true, true)]           // the recorded installation itself
+    [InlineData(null, OriginFingerprint, "inst-x", true, false)] // a file space: imported, but the server is not its origin
+    [InlineData("inst-a", null, "inst-b", false, false)]         // another installation recorded between validation and the lock
+    public async Task Origin_NoIdInCommon_InstallationRecordedOnlyWhereItIsTheOrigin(string recordedInstallation, string recordedFingerprint, string sourceInstallation, bool expectSucceeded, bool expectRecorded)
+    {
+        var nodes = BuildMinimalNodes();
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var unrelated = new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [OctopusImportPriorMappings.Key(nameof(OctopusResourceKind.Environment), "Environments-99")] = new(99, "Created", null, null) };
+        var prior = new OctopusImportPriorMappings(unrelated, recordedInstallation, recordedFingerprint == null ? [] : [recordedFingerprint]);
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.ReuseExisting, 200)), true, false, false, sourceMap: SourceMap(prior, upserted: upserted).Object);
+        var request = harness.Request with { Graph = harness.Request.Graph with { InstallationId = sourceInstallation } };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(expectSucceeded ? OctopusImportSessionState.Succeeded : OctopusImportSessionState.Failed);
+        harness.SessionService.RecordedResult.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).ShouldBe(!expectSucceeded);
+        upserted.Any(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType && r.SourceId == sourceInstallation).ShouldBe(expectRecorded);
+    }
+
     // After a confirmed pairing both origins are recorded, so the next import of either is proven by id without asking.
     [Fact]
     public async Task ConfirmedServerIntoAFileSpace_RecordsTheInstallationNextToThePinnedFingerprint()
