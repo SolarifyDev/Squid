@@ -125,13 +125,13 @@ public partial class OctopusImportPreviewPlanner
             .Concat(GroupByKind(unsupported, OctopusImportPreviewDiagnosticCodes.UnsupportedResourcesDetected, "are not imported by Squid; configure them in Squid if they are needed"));
     }
 
-    private static IEnumerable<OctopusImportDiagnosticDto> GroupByKind(IEnumerable<OctopusImportResourceResultDto> resources, string code, string outcome)
+    private static IEnumerable<OctopusImportDiagnosticDto> GroupByKind(IEnumerable<OctopusImportResourceResultDto> resources, string code, string outcome, OctopusImportCompatibilitySeverity severity = OctopusImportCompatibilitySeverity.Warning)
         => resources
             .GroupBy(r => r.SourceType, StringComparer.Ordinal)
             .OrderBy(g => g.Key, StringComparer.Ordinal)
             .Select(g => OctopusImportRedaction.RedactDiagnostic(new OctopusImportDiagnosticDto
             {
-                Severity = OctopusImportCompatibilitySeverity.Warning,
+                Severity = severity,
                 Code = code,
                 ResourceType = g.Key,
                 Message = $"{g.Count()} Octopus {g.Key} resource(s) {outcome}: {NameList(g)}."

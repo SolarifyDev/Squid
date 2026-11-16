@@ -76,9 +76,9 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
         PinServer(cursor, request);
         EnsureNoActiveChunk(cursor, request.SessionId);
 
-        await ClaimChunkAsync(request, cursor, ct).ConfigureAwait(false);
+        var claimed = await ClaimChunkAsync(request, cursor, ct).ConfigureAwait(false);
 
-        return await RunClaimedChunkAsync(request, session, cursor, ct).ConfigureAwait(false);
+        return await RunClaimedChunkAsync(request, session, cursor, claimed?.SourceSummary?.SelectedProjectIds, ct).ConfigureAwait(false);
     }
 
     private async Task<OctopusImportSession> LoadUploadedSessionAsync(OctopusHistoryFetchRequest request, CancellationToken ct)
@@ -129,13 +129,14 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
             throw new OctopusImportSessionConcurrencyException(sessionId);
     }
 
-    private async Task ClaimChunkAsync(OctopusHistoryFetchRequest request, OctopusImportHistoryFetchDto cursor, CancellationToken ct)
+    // The claimed session is read under the claim: its project selection cannot change while the chunk holds the lease.
+    private async Task<OctopusImportSessionDto> ClaimChunkAsync(OctopusHistoryFetchRequest request, OctopusImportHistoryFetchDto cursor, CancellationToken ct)
     {
         var previousChunkId = cursor.ChunkId;
 
         cursor.ChunkId = Guid.NewGuid();
         cursor.LeaseExpiresAt = DateTimeOffset.UtcNow.Add(_options.ChunkDuration).Add(LeaseMargin);
 
-        await sessionService.UpdateHistoryFetchAsync(request.SessionId, request.SpaceId, cursor, previousChunkId, ct).ConfigureAwait(false);
+        return await sessionService.UpdateHistoryFetchAsync(request.SessionId, request.SpaceId, cursor, previousChunkId, ct).ConfigureAwait(false);
     }
 }

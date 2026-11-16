@@ -247,6 +247,23 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         foreach (var directory in _directories) Directory.Delete(directory, recursive: true);
     }
 
+    // The chunk reads the selection of the session it claimed (written under the claim), never an earlier read nor the request.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FetchHistory_ReadsTheClaimedSessionsSelection(bool selected)
+    {
+        var session = Session(null);
+        OctopusHistoryFetchContext seen = null;
+        _sessionService.Setup(s => s.UpdateHistoryFetchAsync(It.IsAny<Guid>(), 7, It.IsAny<OctopusImportHistoryFetchDto>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SourceSummary = new OctopusImportSourceSummaryDto { SelectedProjectIds = selected ? ["Projects-2"] : null } });
+        _fetcher.Setup(f => f.FetchChunkAsync(It.IsAny<OctopusHistoryFetchContext>(), It.IsAny<CancellationToken>())).Callback((OctopusHistoryFetchContext c, CancellationToken _) => seen = c).ReturnsAsync(new OctopusHistoryFetchProgressDto());
+
+        await _service.FetchHistoryAsync(Request(session));
+
+        if (selected) seen.ChosenProjectIds.ShouldBe(["Projects-2"]);
+        else seen.ChosenProjectIds.ShouldBeNull();
+    }
+
     private OctopusImportSession Session(OctopusImportHistoryFetchDto historyFetch, OctopusImportSessionState state = OctopusImportSessionState.Uploaded, string mainFile = OctopusImportSourceReader.HistoryBundleFileName, string detectedFormat = OctopusImportServerSourceService.ServerSourceFormat)
     {
         var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter() } };

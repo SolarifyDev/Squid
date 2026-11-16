@@ -10,6 +10,8 @@ namespace Squid.Core.Services.OctopusImport;
 
 public sealed partial class OctopusImportConfirmationRunner
 {
+    public const string SelectionChangedMessage = "The projects to import changed after the preview was validated, so nothing was imported. Validate the preview again, then import.";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -31,6 +33,7 @@ public sealed partial class OctopusImportConfirmationRunner
         EnsureValidated();
         EnsureTemporaryUpload();
         ReadValidatedPlan();
+        EnsurePlanMatchesSelection();
 
         await EnsureExportSecretsReadableAsync(ct).ConfigureAwait(false);
     }
@@ -55,6 +58,16 @@ public sealed partial class OctopusImportConfirmationRunner
             throw new OctopusImportConfirmationRejectedException("Octopus import session does not have a validated preview plan.");
     }
 
+    // A validation that read one selection may store its plan after the selection changed: never import a plan for another selection.
+    private void EnsurePlanMatchesSelection()
+    {
+        if (!IsSameSelection(_ctx.ValidatedPlan.SelectedProjectIds, OctopusImportSourceSummaries.ChosenProjectIds(_ctx.Session.SourceSummaryJson)))
+            throw new OctopusImportConfirmationRejectedException(SelectionChangedMessage);
+    }
+
+    private static bool IsSameSelection(IReadOnlyCollection<string> validated, IReadOnlyCollection<string> current)
+        => validated == null || current == null ? validated == null && current == null : validated.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(current);
+
     // An envelope that the current master key cannot read was written under a key that did decrypt it, so the
     // plan may have been validated with the secrets; confirming without them would import a different result
     // and end the session terminally. Refuse instead: the session stays Validated, so restoring the master key
@@ -72,7 +85,7 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         try
         {
-            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.Session.TemporaryUploadPath, _ctx.SpaceId, ct: ct).ConfigureAwait(false);
+            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.Session.TemporaryUploadPath, _ctx.SpaceId, chosenProjectIds: OctopusImportSourceSummaries.ChosenProjectIds(_ctx.Session.SourceSummaryJson), ct: ct).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

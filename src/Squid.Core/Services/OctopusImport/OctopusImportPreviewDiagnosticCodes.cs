@@ -48,6 +48,10 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string BuiltInFeedExcluded = "octopus.preview.built_in_feed_excluded";
     public const string BuiltInFeedReferenced = "octopus.preview.built_in_feed_referenced";
     public const string SecretWithheldByServer = "octopus.preview.secret_withheld_by_server";
+    public const string ProjectNotChosen = "octopus.preview.project_not_chosen";
+    public const string NotUsedByChosenProjects = "octopus.preview.not_used_by_chosen_projects";
+    public const string ResourcesNotUsedByChosenProjects = "octopus.preview.resources_not_used_by_chosen_projects";
+    public const string ProjectsNotChosen = "octopus.preview.projects_not_chosen";
     public const string SecretsWithheldByServer = "octopus.preview.secrets_withheld_by_server";
     public const string SecretFillFromExport = "octopus.preview.secret_fill_from_export";
     public const string SecretSetInSquid = "octopus.preview.secret_set_in_squid";
@@ -78,4 +82,10 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string NotFillableSecretWithheldMessage = "The Octopus server API does not return this secret and the Octopus export file cannot supply it either. It is imported empty and listed as a missing secret; set it in Squid after the import.";
 
     public const string SensitiveValueUnresolvedMessage = "The sensitive variable value could not be decrypted with the export password (it may be masked or encrypted with a different password). Confirmation is blocked while this required input is unresolved.";
+
+    public const string ProjectNotChosenMessage = "Not chosen for this import.";
+
+    public const string NotUsedByChosenProjectsMessage = "Not used by the chosen projects, so it is not imported.";
+
+    public const string HistoryOfProjectNotChosenMessage = "Belongs to the history of an Octopus project that was not chosen for this import.";
 }

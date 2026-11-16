@@ -12,4 +12,7 @@ public sealed class OctopusHistoryFetchContext
     public OctopusImportHistoryFetchDto Cursor { get; init; } = new();
 
     public OctopusImportPriorMappings PriorMappings { get; init; } = OctopusImportPriorMappings.Empty;
+
+    /// <summary>The projects the session's selection names; null reads every project of the space.</summary>
+    public IReadOnlyCollection<string> ChosenProjectIds { get; init; }
 }

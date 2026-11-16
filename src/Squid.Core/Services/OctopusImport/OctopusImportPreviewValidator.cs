@@ -71,7 +71,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
             .GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources, conflicts.PriorMappings);
+        var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources, conflicts.PriorMappings, dependencyPlan.ReferenceScope ?? OctopusImportReferenceScope.Everything);
 
         ValidateReferences(graph, plan, result);
         ValidateVariableScopes(plan, result);
@@ -220,7 +220,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, plan.Prior, previewPlan.FillPairing?.Confirmed == true);
         var pairingNeeded = false;
 
-        foreach (var resource in plan.Current.Values.Where(r => OctopusImportSecretFills.IsFillableKind(r.Kind)))
+        foreach (var resource in plan.Current.Values.Where(r => OctopusImportSecretFills.IsFillableKind(r.Kind) && !plan.Scope.IsOutsideSelection(r)))
         {
             var candidate = OctopusImportSecretFills.Candidate(resource, plan.Prior, Secrets, keyCounts);
             var destination = candidate == null ? SecretSlotState.NotFound : OctopusImportSecretFills.DestinationState(candidate, conflicts.SecretSlots);
@@ -491,7 +491,8 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         }));
     }
 
-    private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews, OctopusImportPriorMappings Prior)
+    // Scope: a secret of a resource the session's project selection leaves out is never filled, so it needs no evidence either.
+    private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews, OctopusImportPriorMappings Prior, OctopusImportReferenceScope Scope)
     {
         public OctopusResourceNode FindResource(string sourceId)
             => sourceId != null && Current.TryGetValue(sourceId, out var resource) ? resource : null;

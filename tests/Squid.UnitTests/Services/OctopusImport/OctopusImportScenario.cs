@@ -67,6 +67,10 @@ internal sealed class OctopusImportScenario
     public OctopusImportScenario Lifecycle(string id, string name, params string[] environmentIds)
         => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = new[] { new { Id = $"{id}-phase", Name = "Phase", AutomaticDeploymentTargets = environmentIds, OptionalDeploymentTargets = Array.Empty<string>() } } });
 
+    /// <summary>A lifecycle without phases: Octopus deploys it to every environment.</summary>
+    public OctopusImportScenario PhaselessLifecycle(string id, string name)
+        => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = Array.Empty<object>() });
+
     /// <summary>A lifecycle whose phases (named by their ids) each deploy to <paramref name="environmentId"/>, in this order.</summary>
     public OctopusImportScenario LifecycleWithPhases(string id, string name, string environmentId, params string[] phaseIds)
         => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = phaseIds.Select(phaseId => new { Id = phaseId, Name = phaseId, AutomaticDeploymentTargets = new[] { environmentId }, OptionalDeploymentTargets = Array.Empty<string>() }).ToArray() });
@@ -470,10 +474,11 @@ internal sealed class OctopusImportScenario
 
     /// <param name="pairingConfirmed">The user confirmed the export-file pairing the preview asked for (posted back with the plan).</param>
     /// <param name="selections">What the user selected among the resources the plan offers to decide on.</param>
-    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null, bool pairingConfirmed = false, OctopusImportChoiceSelections selections = null)
+    /// <param name="chosenProjectIds">The session's project selection; null plans the whole space.</param>
+    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null, bool pairingConfirmed = false, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null)
     {
         var graph = await BuildGraphAsync().ConfigureAwait(false);
-        var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph);
+        var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph, chosenProjectIds);
         var conflicts = await DiscoverConflictsAsync(graph).ConfigureAwait(false);
         var accessor = new OctopusExportSecretsAccessor { Secrets = secrets ?? OctopusExportSecrets.None };
         var preview = new OctopusImportPreviewPlanner(accessor).BuildPreviewPlan(dependencyPlan, conflicts, selections);

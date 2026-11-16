@@ -1,3 +1,4 @@
+using System.Linq;
 using System.IO;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
@@ -164,6 +165,27 @@ public class OctopusImportPlanningPipelineTests
         }
     }
 
+    // The session's project selection scopes the plan; the picker reads the same cached graph without planning anything.
+    [Fact]
+    public async Task BuildPreviewAsync_PassesTheProjectSelectionToTheDependencyPlanner_GraphReusesTheExtraction()
+    {
+        var path = CreateTempFile();
+        var harness = new Harness();
+
+        try
+        {
+            await harness.Pipeline.BuildPreviewAsync(path, 7, chosenProjectIds: ["Projects-2"]);
+            await harness.Pipeline.BuildGraphAsync(path);
+
+            harness.DependencyPlanner.Verify(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>(), It.Is<IReadOnlyCollection<string>>(c => c.SequenceEqual(new[] { "Projects-2" }))), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), Path.GetFileName(path), null, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static string CreateTempFile()
     {
         var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");
@@ -192,7 +214,7 @@ public class OctopusImportPlanningPipelineTests
                 .Setup(b => b.Build(It.IsAny<OctopusManifestInventoryResult>()))
                 .Returns(new OctopusResourceGraph([], [], [], []));
             DependencyPlanner
-                .Setup(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>()))
+                .Setup(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>(), It.IsAny<IReadOnlyCollection<string>>()))
                 .Returns(new OctopusImportDependencyPlan([], [], [], []));
             ConflictDiscoveryService
                 .Setup(s => s.DiscoverAsync(It.IsAny<int>(), It.IsAny<OctopusResourceGraph>(), It.IsAny<CancellationToken>()))

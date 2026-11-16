@@ -17,4 +17,7 @@ public static class OctopusImportSourceSummaries
 
     public static OctopusImportSourceSummaryDto Parse(string json)
         => string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<OctopusImportSourceSummaryDto>(json, JsonOptions);
+
+    /// <summary>The session's project selection (null = whole space): the only place the planning reads it from.</summary>
+    public static IReadOnlyCollection<string> ChosenProjectIds(string json) => Parse(json)?.SelectedProjectIds;
 }

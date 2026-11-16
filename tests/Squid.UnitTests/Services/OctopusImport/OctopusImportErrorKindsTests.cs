@@ -30,6 +30,8 @@ public class OctopusImportErrorKindsTests
         yield return [new OctopusImportSessionNotFoundException(Guid.NewGuid()), "SessionNotFound"];
         yield return [new OctopusImportSessionStateTransitionException(OctopusImportSessionState.Expired, OctopusImportSessionState.Uploaded), "SessionStateConflict"];
         yield return [new OctopusImportSessionConcurrencyException(Guid.NewGuid()), "Concurrency"];
+        yield return [new OctopusImportProjectSelectionInvalidException(OctopusImportProjectSelectionProblem.Empty, "none"), "ProjectSelection"];
+        yield return [new OctopusImportProjectSelectionBeyondReadException(Guid.NewGuid()), "ProjectSelectionBeyondRead"];
     }
 
     [Theory]

@@ -7,7 +7,7 @@ namespace Squid.Core.Services.OctopusImport;
 /// Rows the server decides, never the client: history rows (Release, Deployment, ServerTask), decided from the source map, and every row
 /// the user decides about (and the rows that follow it), decided by the server's plan built with the user's selection. A posted plan's
 /// server-owned rows are replaced by the rows of the server's own preview, and its summary by the server's (the counts follow the
-/// selection). A client may also omit server-owned rows to keep the request small. A posted row claiming a choice the server does not
+/// selection). Rows outside the session's project selection are server-owned as well. A client may also omit server-owned rows to keep the request small. A posted row claiming a choice the server does not
 /// offer is kept as posted, for validation to refuse.
 /// </summary>
 public static class OctopusImportServerOwnedRows
@@ -30,7 +30,8 @@ public static class OctopusImportServerOwnedRows
         return clientPlan;
     }
 
-    private static bool IsServerOwned(OctopusImportResourceResultDto resource) => IsHistoryRow(resource) || resource.Choice != null;
+    // A row the session's project selection leaves out is the server's too: a posted plan can never widen what is imported.
+    private static bool IsServerOwned(OctopusImportResourceResultDto resource) => IsHistoryRow(resource) || resource.Choice != null || OctopusImportPreviewSummaries.IsOutsideSelection(resource);
 
     private static bool IsHistoryRow(OctopusImportResourceResultDto resource) => HistorySourceTypes.Contains(resource.SourceType ?? string.Empty);
 }

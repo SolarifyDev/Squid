@@ -64,6 +64,13 @@ public interface IOctopusImportSessionService : IScopedDependency
     /// </summary>
     Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Stores the session's project selection (null = whole space), admitted only while the session still holds
+    /// <paramref name="expectedDataVersion"/> (otherwise <see cref="OctopusImportSessionConcurrencyException"/>). A Validated session
+    /// loses its validated plan with it: confirmation refuses until a validation with the new selection passes.
+    /// </summary>
+    Task<OctopusImportSessionDto> UpdateProjectSelectionAsync(Guid sessionId, int destinationSpaceId, List<string> projectIds, byte[] expectedDataVersion, CancellationToken ct = default);
+
     Task<OctopusImportSessionDto> RecordResultAsync(
         Guid sessionId,
         int destinationSpaceId,
@@ -276,6 +283,21 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(summary));
 
         await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
+
+        return Map(session);
+    }
+
+    public async Task<OctopusImportSessionDto> UpdateProjectSelectionAsync(Guid sessionId, int destinationSpaceId, List<string> projectIds, byte[] expectedDataVersion, CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+        var summary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson) ?? new OctopusImportSourceSummaryDto();
+
+        summary.SelectedProjectIds = projectIds;
+        session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(summary));
+
+        if (ParseState(session.State) == OctopusImportSessionState.Validated) session.ValidatedPlanJson = null;
+
+        await _dataProvider.UpdateSessionAsync(session, expectedDataVersion, ct: ct).ConfigureAwait(false);
 
         return Map(session);
     }

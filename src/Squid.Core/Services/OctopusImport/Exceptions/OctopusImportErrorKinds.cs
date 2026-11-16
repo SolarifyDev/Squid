@@ -12,6 +12,8 @@ namespace Squid.Core.Services.OctopusImport.Exceptions;
 /// <item>Fix the server address or space: <c>NotOctopus</c>, <c>Denied</c>, <c>NotFound</c>, <c>ServerMismatch</c>.</item>
 /// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>NotServerSource</c>;
 /// <c>TooLarge</c> repeats until an operator raises the named limit.</item>
+/// <item>Choose projects again: <c>ProjectSelection</c> (none, too many or a malformed id); <c>ProjectSelectionBeyondRead</c> (the
+/// session already reads its chosen projects; connect again to add others).</item>
 /// </list>
 /// The Octopus REST kinds use the <see cref="Squid.Message.Enums.OctopusImport.OctopusRestErrorKind"/> member names.
 /// </summary>
@@ -24,6 +26,8 @@ public static class OctopusImportErrorKinds
     public const string SessionNotFound = "SessionNotFound";
     public const string SessionStateConflict = "SessionStateConflict";
     public const string Concurrency = "Concurrency";
+    public const string ProjectSelection = "ProjectSelection";
+    public const string ProjectSelectionBeyondRead = "ProjectSelectionBeyondRead";
 
     /// <summary>The kind of <paramref name="exception"/> itself (never of an inner exception); null when it is not an import failure.</summary>
     public static string Of(Exception exception)
@@ -37,6 +41,8 @@ public static class OctopusImportErrorKinds
             OctopusImportSessionNotFoundException => SessionNotFound,
             OctopusImportSessionStateTransitionException => SessionStateConflict,
             OctopusImportSessionConcurrencyException => Concurrency,
+            OctopusImportProjectSelectionInvalidException => ProjectSelection,
+            OctopusImportProjectSelectionBeyondReadException => ProjectSelectionBeyondRead,
             _ => null
         };
 }

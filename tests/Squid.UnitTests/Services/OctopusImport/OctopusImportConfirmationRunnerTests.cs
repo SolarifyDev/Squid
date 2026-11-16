@@ -37,7 +37,7 @@ public class OctopusImportConfirmationRunnerTests
         var uploadPath = CreateTempFile();
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -47,6 +47,55 @@ public class OctopusImportConfirmationRunnerTests
         _sessionDataProvider.Verify(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>()), Times.Once);
         _authorization.Verify(a => a.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.UserId == OwnerUserId && r.SpaceId == SpaceId && r.Permission == Permission.ProjectCreate), It.IsAny<CancellationToken>()), Times.Once);
         _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.SessionId == sessionId && r.DestinationSpaceId == SpaceId && r.SessionDirectory == Path.GetDirectoryName(uploadPath)), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Confirmation plans again with the session's own project selection (the one the plan was validated with), never a request's.
+    [Theory]
+    [InlineData("{\"selectedProjectIds\":[\"Projects-2\"]}", new[] { "Projects-2" })]
+    [InlineData("{}", null)]
+    public async Task Runner_PlansWithTheSessionsProjectSelection(string summaryJson, string[] expected)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var session = ValidatedSession(sessionId, uploadPath);
+        session.SourceSummaryJson = summaryJson;
+        session.ValidatedPlanJson = JsonSerializer.Serialize(new OctopusImportValidatedPlanDto { PreviewPlan = Preview(), Validation = new OctopusImportValidationResultDto(), SelectedProjectIds = expected?.ToList() }, JsonOptions);
+        IReadOnlyCollection<string> planned = ["not called"];
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).Callback<string, int, OctopusImportChoiceSelections, IReadOnlyCollection<string>, CancellationToken>((_, _, _, chosen, _) => planned = chosen).ReturnsAsync(Snapshot());
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
+
+        await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        planned.ShouldBe(expected);
+    }
+
+    // A validation that read one selection can store its plan after the selection changed (it re-reads the session to store): the plan
+    // remembers the selection it was validated with, and confirmation refuses it when the session's selection is now another.
+    [Theory]
+    [InlineData("[\"Projects-1\",\"Projects-2\"]", "{\"selectedProjectIds\":[\"Projects-1\"]}", true)]
+    [InlineData("[\"Projects-1\"]", "{}", true)]
+    [InlineData(null, "{\"selectedProjectIds\":[\"Projects-1\"]}", true)]
+    [InlineData("[\"projects-2\",\"Projects-1\"]", "{\"selectedProjectIds\":[\"Projects-1\",\"Projects-2\"]}", false)]
+    [InlineData(null, "{}", false)]
+    public async Task Runner_PlanValidatedForAnotherSelection_Rejected_NothingImported(string planSelectionJson, string summaryJson, bool rejected)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var session = ValidatedSession(sessionId, uploadPath);
+        session.SourceSummaryJson = summaryJson;
+        session.ValidatedPlanJson = JsonSerializer.Serialize(new OctopusImportValidatedPlanDto { PreviewPlan = Preview(), Validation = new OctopusImportValidationResultDto(), SelectedProjectIds = planSelectionJson == null ? null : JsonSerializer.Deserialize<List<string>>(planSelectionJson) }, JsonOptions);
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
+
+        var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        outcome.IsRejected.ShouldBe(rejected);
+        _orchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), rejected ? Times.Never() : Times.Once());
+        if (rejected) outcome.Rejection.Message.ShouldBe(OctopusImportConfirmationRunner.SelectionChangedMessage);
     }
 
     // The plan is imported only while the session still holds the version it was read with; a plan validated again meanwhile (the
@@ -62,7 +111,7 @@ public class OctopusImportConfirmationRunnerTests
         session.DataVersion = [4, 2];
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = stateAfterConfirm });
 
         var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -85,7 +134,7 @@ public class OctopusImportConfirmationRunnerTests
         var channel = new OctopusResourceNode("Channels-1", "Default", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "channel.json", null, "Projects-1", false, new OctopusChannelDto { Id = "Channels-1", ProjectId = "Projects-1", IsDefault = true });
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, channel));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, channel));
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -108,7 +157,7 @@ public class OctopusImportConfirmationRunnerTests
         var resource = new OctopusResourceNode("secret-1", "Secret", kind, OctopusDocumentKind.VariableSet, "secret.json", "Projects-1", null, false, new object());
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resource));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resource));
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -139,7 +188,7 @@ public class OctopusImportConfirmationRunnerTests
         var uploadPath = CreateTempFile();
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusArchiveExtractionException("Archive.Broken", "broken archive"));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusArchiveExtractionException("Archive.Broken", "broken archive"));
 
         var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
 

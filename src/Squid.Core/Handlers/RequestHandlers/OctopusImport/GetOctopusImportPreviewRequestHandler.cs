@@ -47,7 +47,7 @@ public class GetOctopusImportPreviewRequestHandler(
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline.BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, ct: cancellationToken).ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, chosenProjectIds: OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson), ct: cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

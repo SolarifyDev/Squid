@@ -50,6 +50,18 @@ public class GlobalExceptionFilterTests
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
     }
 
+    [Theory]
+    [InlineData(true, HttpStatusCode.BadRequest)]
+    [InlineData(false, HttpStatusCode.Conflict)]
+    public void OnException_ProjectSelectionRefused_InvalidIsBadRequest_BeyondReadIsConflict(bool invalid, HttpStatusCode expected)
+    {
+        Exception exception = invalid ? new OctopusImportProjectSelectionInvalidException(OctopusImportProjectSelectionProblem.TooMany, "too many") : new OctopusImportProjectSelectionBeyondReadException(Guid.NewGuid());
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, expected, exception.Message);
+    }
+
     public static IEnumerable<object[]> ServerSourceFailures()
     {
         foreach (var kind in Enum.GetValues<OctopusRestErrorKind>())

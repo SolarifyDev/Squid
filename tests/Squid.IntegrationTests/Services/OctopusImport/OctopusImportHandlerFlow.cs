@@ -41,6 +41,35 @@ public static class OctopusImportHandlerFlow
     public static Task<FetchOctopusImportHistoryResponse> FetchHistoryAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey)
         => mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(new FetchOctopusImportHistoryCommand { SpaceId = spaceId, SessionId = sessionId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
 
+    public static Task<ListOctopusServerProjectsResponse> ListServerProjectsAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey)
+        => mediator.RequestAsync<ListOctopusServerProjectsRequest, ListOctopusServerProjectsResponse>(new ListOctopusServerProjectsRequest { SpaceId = spaceId, ServerUrl = serverUri.ToString(), ApiKey = apiKey, OctopusSpaceId = "Spaces-1" });
+
+    public static Task<GetOctopusImportProjectsResponse> ListSessionProjectsAsync(IMediator mediator, int spaceId, Guid sessionId)
+        => mediator.RequestAsync<GetOctopusImportProjectsRequest, GetOctopusImportProjectsResponse>(new GetOctopusImportProjectsRequest { SpaceId = spaceId, SessionId = sessionId });
+
+    public static Task<SelectOctopusImportProjectsResponse> SelectProjectsAsync(IMediator mediator, int spaceId, Guid sessionId, IEnumerable<string> projectIds)
+        => mediator.SendAsync<SelectOctopusImportProjectsCommand, SelectOctopusImportProjectsResponse>(new SelectOctopusImportProjectsCommand { SpaceId = spaceId, SessionId = sessionId, ProjectIds = projectIds?.ToList() });
+
+    /// <summary>The server import with projects chosen first, as the UI does it: connect, choose, then read only those and import.</summary>
+    public static async Task<OctopusImportFlowResult> ImportChosenProjectsFromServerAsync(IMediator mediator, int spaceId, Uri serverUri, string apiKey, IEnumerable<string> projectIds)
+    {
+        var sessionId = (await ConnectAsync(mediator, spaceId, serverUri, apiKey)).Data.Session.SessionId;
+
+        await SelectProjectsAsync(mediator, spaceId, sessionId, projectIds);
+
+        var fetch = await FetchHistoryUntilDoneAsync(mediator, spaceId, sessionId, serverUri, apiKey);
+
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, fetch, WithoutHistoryRows);
+    }
+
+    /// <summary>An export-file import with projects chosen after the file is read: upload, extract, choose, preview, validate, confirm.</summary>
+    public static async Task<OctopusImportFlowResult> ImportChosenProjectsFromFileAsync(IMediator mediator, int spaceId, string exportPath, string exportPassword, IEnumerable<string> projectIds)
+    {
+        var sessionId = await UploadSessionAsync(mediator, spaceId, exportPath, exportPassword);
+
+        return await ExtractPreviewValidateConfirmAsync(mediator, spaceId, sessionId, null, plan => plan, () => SelectProjectsAsync(mediator, spaceId, sessionId, projectIds));
+    }
+
     /// <summary>Fetches chunk after chunk, as the UI does, until the server fetch (configuration and history) is complete.</summary>
     public static async Task<OctopusHistoryFetchProgressDto> FetchHistoryUntilDoneAsync(IMediator mediator, int spaceId, Guid sessionId, Uri serverUri, string apiKey, int maxChunks = 200)
     {
@@ -106,11 +135,13 @@ public static class OctopusImportHandlerFlow
         return upload.Data.Session.SessionId;
     }
 
-    private static async Task<OctopusImportFlowResult> ExtractPreviewValidateConfirmAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch, Func<OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto> postedPlan)
+    private static async Task<OctopusImportFlowResult> ExtractPreviewValidateConfirmAsync(IMediator mediator, int spaceId, Guid sessionId, OctopusHistoryFetchProgressDto fetch, Func<OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto> postedPlan, Func<Task> afterExtract = null)
     {
         var extract = await ExtractAsync(mediator, spaceId, sessionId);
 
         if (extract.Code != System.Net.HttpStatusCode.OK) throw new InvalidOperationException($"Extract refused: {DescribeBlockers(extract.Data.Extraction.Diagnostics)}");
+
+        if (afterExtract != null) await afterExtract();
 
         var preview = (await PreviewAsync(mediator, spaceId, sessionId)).Data.PreviewPlan;
 

@@ -22,12 +22,19 @@ public static class OctopusImportPreviewSummaries
             IsUpToDate = whole.IsUpToDate && !hasPlanBlockers,
             Counts = whole.Counts,
             Kinds = whole.Kinds,
-            Projects = Projects(resources, destinations ?? [], prior ?? OctopusImportPriorMappings.Empty),
+            Projects = Projects(resources.Where(r => !IsOutsideSelection(r)).ToList(), destinations ?? [], prior ?? OctopusImportPriorMappings.Empty),
             Space = Group(resources.Where(r => string.IsNullOrWhiteSpace(r.OwnerProjectSourceId)).ToList()),
             SkipReasons = SkipReasons(resources),
-            Choices = ChoiceCounts(resources)
+            Choices = ChoiceCounts(resources),
+            NotChosenProjectCount = resources.Count(r => r.SourceType == nameof(OctopusResourceKind.Project) && HasCode(r, OctopusImportPreviewDiagnosticCodes.ProjectNotChosen))
         };
     }
+
+    /// <summary>Skipped because the session's project selection leaves it out (a project not chosen, or a shared resource no chosen project uses).</summary>
+    public static bool IsOutsideSelection(OctopusImportResourceResultDto resource)
+        => HasCode(resource, OctopusImportPreviewDiagnosticCodes.ProjectNotChosen) || HasCode(resource, OctopusImportPreviewDiagnosticCodes.NotUsedByChosenProjects);
+
+    private static bool HasCode(OctopusImportResourceResultDto resource, string code) => resource.Diagnostics.Any(d => d.Code == code);
 
     /// <summary>Why a resource that is not imported is not imported: the first diagnostic its decision added.</summary>
     public static OctopusImportSkipReasonDto SkipReasonOf(OctopusImportResourceResultDto resource)

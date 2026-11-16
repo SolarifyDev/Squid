@@ -52,6 +52,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ReplaceValidatedPlanAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.TryStartConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateHistoryFetchAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateProjectSelectionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordResultAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true
     };

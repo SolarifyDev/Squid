@@ -85,6 +85,49 @@ public class OctopusImportSessionServiceHistoryFetchTests
         dto.SourceSummary.HistoryFetch.Done.ShouldBeTrue();
     }
 
+    // ── Project selection ──────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(OctopusImportSessionState.Uploaded)]
+    [InlineData(OctopusImportSessionState.Previewed)]
+    public async Task UpdateProjectSelection_StoredWithTheCursorKept_UnderTheExpectedDataVersion(OctopusImportSessionState state)
+    {
+        var session = Session(state, new OctopusImportHistoryFetchDto { ServerHost = "octopus.example.com" });
+        session.ValidatedPlanJson = "{\"kept\":true}";
+        var expected = Guid.NewGuid().ToByteArray();
+
+        var dto = await _service.UpdateProjectSelectionAsync(session.SessionId, 7, ["Projects-1", "Projects-2"], expected);
+
+        dto.SourceSummary.SelectedProjectIds.ShouldBe(["Projects-1", "Projects-2"], "project ids are not redacted");
+        dto.SourceSummary.HistoryFetch.ServerHost.ShouldBe("octopus.example.com");
+        session.SourceSummaryJson.ShouldContain("\"selectedProjectIds\":[\"Projects-1\",\"Projects-2\"]");
+        session.ValidatedPlanJson.ShouldNotBeNull();
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, expected, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // A plan validated for one selection is never confirmed for another: confirmation refuses until a validation with it passes.
+    [Fact]
+    public async Task UpdateProjectSelection_Validated_ClearsTheValidatedPlan()
+    {
+        var session = Session(OctopusImportSessionState.Validated, null);
+        session.ValidatedPlanJson = "{}";
+
+        await _service.UpdateProjectSelectionAsync(session.SessionId, 7, ["Projects-1"], session.DataVersion);
+
+        session.ValidatedPlanJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdateProjectSelection_Null_IsTheWholeSpace()
+    {
+        var session = Session(OctopusImportSessionState.Extracted, null);
+
+        var dto = await _service.UpdateProjectSelectionAsync(session.SessionId, 7, null, session.DataVersion);
+
+        dto.SourceSummary.SelectedProjectIds.ShouldBeNull();
+        session.SourceSummaryJson.ShouldNotContain("selectedProjectIds");
+    }
+
     private OctopusImportSession Session(OctopusImportSessionState state, OctopusImportHistoryFetchDto historyFetch)
     {
         var summary = new OctopusImportSourceSummaryDto { FileName = "export.zip", HistoryFetch = historyFetch };

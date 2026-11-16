@@ -161,6 +161,38 @@ public class OctopusImportController : ControllerBase
         return Ok(response);
     }
 
+    // A POST, like the probe: the API key travels in the body, never in the query string.
+    [HttpPost("history/projects")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ListOctopusServerProjectsResponse))]
+    public async Task<IActionResult> ListServerProjectsAsync([FromBody] ListOctopusServerProjectsRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<ListOctopusServerProjectsRequest, ListOctopusServerProjectsResponse>(request, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("{sessionId:guid}/projects")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportProjectsResponse))]
+    public async Task<IActionResult> ProjectsAsync([FromRoute] Guid sessionId, [FromQuery] GetOctopusImportProjectsRequest request, CancellationToken cancellationToken)
+    {
+        request.SessionId = sessionId;
+
+        var response = await _mediator.RequestAsync<GetOctopusImportProjectsRequest, GetOctopusImportProjectsResponse>(request, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPut("{sessionId:guid}/projects/selection")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(SelectOctopusImportProjectsResponse))]
+    public async Task<IActionResult> SelectProjectsAsync([FromRoute] Guid sessionId, [FromBody] SelectOctopusImportProjectsCommand command, CancellationToken cancellationToken)
+    {
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<SelectOctopusImportProjectsCommand, SelectOctopusImportProjectsResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("{sessionId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportStatusResponse))]
     public async Task<IActionResult> StatusAsync(

@@ -5,12 +5,13 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportDependencyPlanner : IScopedDependency
 {
-    OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph);
+    /// <param name="chosenProjectIds">The session's project selection; null plans the whole space.</param>
+    OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph, IReadOnlyCollection<string> chosenProjectIds = null);
 }
 
 public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 {
-    public OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph)
+    public OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph, IReadOnlyCollection<string> chosenProjectIds = null)
     {
         ArgumentNullException.ThrowIfNull(graph);
 
@@ -42,7 +43,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources) { ReferenceScope = OctopusImportReferenceScope.Build(graph) };
+        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources) { ReferenceScope = OctopusImportReferenceScope.Build(graph, chosenProjectIds) };
     }
 
     private static IReadOnlyList<OrderingEdge> BuildOrderingEdges(OctopusResourceGraph graph, Dictionary<string, OctopusResourceNode> resources)

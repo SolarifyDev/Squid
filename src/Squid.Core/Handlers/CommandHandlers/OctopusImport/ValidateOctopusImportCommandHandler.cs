@@ -47,11 +47,12 @@ public class ValidateOctopusImportCommandHandler(
 
         // The user's selection is an input to the server's plan: the rows it decides come from that plan, never from the client.
         var selections = OctopusImportChoiceSelections.From(command.PreviewPlan);
+        var chosenProjectIds = OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson);
 
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline.BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, selections, cancellationToken).ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, selections, chosenProjectIds, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
@@ -75,7 +76,8 @@ public class ValidateOctopusImportCommandHandler(
         var validatedPlan = new OctopusImportValidatedPlanDto
         {
             PreviewPlan = previewPlan,
-            Validation = validation
+            Validation = validation,
+            SelectedProjectIds = chosenProjectIds?.ToList()
         };
 
         var responseSession = await StoreValidatedPlanAsync(command, state, JsonSerializer.Serialize(validatedPlan, JsonOptions), cancellationToken).ConfigureAwait(false);

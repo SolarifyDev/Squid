@@ -105,6 +105,11 @@ public partial class OctopusImportPreviewPlanner
 
         public bool IsReferenced(string sourceId) => _referenceScope.IsReferenced(sourceId);
 
+        /// <summary>The session chose projects and this resource is neither one of them, theirs, nor used by them.</summary>
+        public bool IsOutsideSelection(OctopusResourceNode resource) => _referenceScope.IsOutsideSelection(resource);
+
+        public bool IsOutsideSelection(string sourceId) => IsOutsideSelection(FindNode(sourceId));
+
         public IReadOnlyList<string> TargetsOf(string sourceId) => _referenceScope.TargetsOf(sourceId);
 
         /// <summary>Skipped by the whole-space scope rule: what it owns is skipped with it, and an unreferenced resource that uses it too.</summary>

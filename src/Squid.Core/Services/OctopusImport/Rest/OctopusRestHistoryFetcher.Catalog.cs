@@ -60,9 +60,12 @@ public sealed partial class OctopusRestHistoryFetcher
         AdvanceCatalog(page);
     }
 
-    // A library variable set is staged with its variables; a project also joins the list of projects to fetch.
+    // A library variable set is staged with its variables; a project also joins the list of projects to fetch. A project the session's
+    // selection leaves out is neither staged nor fetched (it still counts as an item read).
     private async Task StageCatalogItemAsync(OctopusResourceKind kind, JsonObject resource, CancellationToken ct)
     {
+        if (kind == OctopusResourceKind.Project && !IsChosen(ReadString(resource, "Id"))) return;
+
         var variables = kind == OctopusResourceKind.LibraryVariableSet ? await VariableSetOrNullAsync(ReadString(resource, "VariableSetId"), ct).ConfigureAwait(false) : null;
 
         await StageAsync(kind, resource, null, ct).ConfigureAwait(false);
@@ -77,6 +80,8 @@ public sealed partial class OctopusRestHistoryFetcher
 
         return await GetOrNullAsync<JsonObject>($"{SpacePrefix}variables/{Escape(variableSetId)}", ct).ConfigureAwait(false);
     }
+
+    private bool IsChosen(string projectId) => _ctx.Context.ChosenProjectIds == null || _ctx.Context.ChosenProjectIds.Contains(projectId, StringComparer.OrdinalIgnoreCase);
 
     private void AddProject(string projectId)
     {

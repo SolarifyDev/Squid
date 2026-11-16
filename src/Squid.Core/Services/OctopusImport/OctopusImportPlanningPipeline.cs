@@ -7,7 +7,11 @@ namespace Squid.Core.Services.OctopusImport;
 public interface IOctopusImportPlanningPipeline : IScopedDependency
 {
     /// <param name="selections">What the user selected among the resources the plan offers to decide on; null means every server default.</param>
-    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, CancellationToken ct = default);
+    /// <param name="chosenProjectIds">The session's project selection, read from the session and never from a request; null plans the whole space.</param>
+    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null, CancellationToken ct = default);
+
+    /// <summary>The source's resource graph (the extraction is cached as for a preview): what a session's project picker lists.</summary>
+    Task<OctopusResourceGraph> BuildGraphAsync(string temporaryUploadPath, CancellationToken ct = default);
 }
 
 public sealed record OctopusImportPlanningSnapshot(
@@ -27,23 +31,29 @@ public class OctopusImportPlanningPipeline(
 {
     private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
 
-    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, CancellationToken ct = default)
+    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(temporaryUploadPath))
-            throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUploadPath));
         if (destinationSpaceId <= 0)
             throw new ArgumentOutOfRangeException(nameof(destinationSpaceId), destinationSpaceId, "Destination space id must be positive.");
 
-        var extraction = await ExtractInputAsync(temporaryUploadPath, ct).ConfigureAwait(false);
-        var inventory = inventoryBuilder.Build(extraction);
-        var graph = graphBuilder.Build(inventory);
-        var dependencyPlan = dependencyPlanner.BuildCurrentConfigurationPlan(graph);
+        var graph = await BuildGraphAsync(temporaryUploadPath, ct).ConfigureAwait(false);
+        var dependencyPlan = dependencyPlanner.BuildCurrentConfigurationPlan(graph, chosenProjectIds);
         var conflicts = await conflictDiscoveryService
             .DiscoverAsync(destinationSpaceId, graph, ct)
             .ConfigureAwait(false);
         var previewPlan = previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts, selections);
 
         return new OctopusImportPlanningSnapshot(graph, dependencyPlan, conflicts, previewPlan);
+    }
+
+    public async Task<OctopusResourceGraph> BuildGraphAsync(string temporaryUploadPath, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(temporaryUploadPath))
+            throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUploadPath));
+
+        var extraction = await ExtractInputAsync(temporaryUploadPath, ct).ConfigureAwait(false);
+
+        return graphBuilder.Build(inventoryBuilder.Build(extraction));
     }
 
     private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)

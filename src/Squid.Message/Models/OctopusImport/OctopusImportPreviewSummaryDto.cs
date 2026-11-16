@@ -23,4 +23,7 @@ public class OctopusImportPreviewSummaryDto
 
     /// <summary>The resources the user decides about, per reason (roots only, followers not counted): how many are offered and selected. Empty when none.</summary>
     public List<OctopusImportChoiceCountDto> Choices { get; set; } = [];
+
+    /// <summary>Octopus projects in the source that the session's project selection leaves out (0 without a selection).</summary>
+    public int NotChosenProjectCount { get; set; }
 }
