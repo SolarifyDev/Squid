@@ -43,6 +43,15 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
             await ClearDetailFingerprintAsync(row, ct).ConfigureAwait(false);
     }
 
+    public async Task SupersedeMissingSecretsAsync(int spaceId, string sourceType, IReadOnlyCollection<string> sourceIds, CancellationToken ct = default)
+    {
+        if (sourceIds is not { Count: > 0 }) return;
+
+        var ids = sourceIds.Select(OctopusImportPriorMappings.Normalize).Distinct().ToArray();
+
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE octopus_import_source_map SET outcome_state = {OctopusImportSourceMapQueries.SupersededOutcome}, last_modified_date = now() WHERE space_id = {spaceId} AND source_type = {sourceType} AND source_id = ANY({ids}) AND outcome_state = {OctopusImportSourceMapQueries.MissingOutcome}", ct).ConfigureAwait(false);
+    }
+
     public async Task AcquireSpaceLockAsync(int spaceId, CancellationToken ct = default)
     {
         if (repository.Database.CurrentTransaction == null)

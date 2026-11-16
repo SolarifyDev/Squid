@@ -35,6 +35,12 @@ public interface IVariableDataProvider : IScopedDependency
 
     /// <summary>Compare-and-set: stores the (already encrypted) value only while the sensitive variable is still empty. Returns the rows written (0 or 1).</summary>
     Task<int> SetSensitiveValueIfEmptyAsync(int variableId, string encryptedValue, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs <paramref name="action"/> holding the row locks of the set and of its variables (in a transaction of its own unless one is
+    /// open), so a save that re-inserts the set never works from values another writer (an import's fill) changed but had not committed.
+    /// </summary>
+    Task<T> ExecuteWithVariableSetLockedAsync<T>(int variableSetId, Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken = default);
 }
 
 public class VariableDataProvider : IVariableDataProvider
@@ -198,6 +204,30 @@ public class VariableDataProvider : IVariableDataProvider
         var scopesByVariable = scopes.ToLookup(s => s.VariableId);
 
         return variables.Select(v => new SensitiveVariableSlot(v.Id, v.VariableSetId, VariableIdentity.Of(v.Name, v.Type, scopesByVariable[v.Id].Select(s => (s.ScopeType, s.ScopeValue))), v.HasValue)).ToList();
+    }
+
+    public async Task<T> ExecuteWithVariableSetLockedAsync<T>(int variableSetId, Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken = default)
+    {
+        if (_repository.Database.CurrentTransaction != null) return await RunLockedAsync(variableSetId, action, cancellationToken).ConfigureAwait(false);
+
+        await using var transaction = await _repository.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+
+        var result = await RunLockedAsync(variableSetId, action, cancellationToken).ConfigureAwait(false);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+        return result;
+    }
+
+    // A writer that has not committed holds its rows: the lock waits for it, so what is read next is what it wrote. Every writer of a set
+    // (a save, an import's fill) locks through here: its variables in id order, then the set, so two writers queue and never deadlock.
+    private async Task<T> RunLockedAsync<T>(int variableSetId, Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+    {
+        await _repository.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM variable WHERE variable_set_id = {variableSetId} ORDER BY id FOR UPDATE", cancellationToken).ConfigureAwait(false);
+        await _repository.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM variable_set WHERE id = {variableSetId} FOR UPDATE", cancellationToken).ConfigureAwait(false);
+
+        return await action(cancellationToken).ConfigureAwait(false);
     }
 
     public Task<int> SetSensitiveValueIfEmptyAsync(int variableId, string encryptedValue, CancellationToken cancellationToken = default)

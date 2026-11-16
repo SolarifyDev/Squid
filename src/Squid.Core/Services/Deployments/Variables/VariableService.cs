@@ -35,20 +35,18 @@ public class VariableService : IVariableService
 {
     private readonly IMapper _mapper;
     private readonly IVariableDataProvider _variableDataProvider;
-    private readonly SensitiveVariableHandler _sensitiveVariableHandler;
     private readonly IVariableScopeDataProvider _variableScopeDataProvider;
     private readonly ILibraryVariableSetDataProvider _libraryVariableSetDataProvider;
 
-    private readonly IVariableEncryptionService _encryptionService;
+    private readonly VariableSecretCollaborators _secrets;
 
-    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, SensitiveVariableHandler sensitiveVariableHandler, ILibraryVariableSetDataProvider libraryVariableSetDataProvider, IVariableEncryptionService encryptionService = null)
+    public VariableService(IMapper mapper, IVariableDataProvider variableDataProvider, IVariableScopeDataProvider variableScopeDataProvider, ILibraryVariableSetDataProvider libraryVariableSetDataProvider, VariableSecretCollaborators secrets)
     {
-        _encryptionService = encryptionService;
         _mapper = mapper;
         _variableDataProvider = variableDataProvider;
-        _sensitiveVariableHandler = sensitiveVariableHandler;
         _variableScopeDataProvider = variableScopeDataProvider;
         _libraryVariableSetDataProvider = libraryVariableSetDataProvider;
+        _secrets = secrets;
     }
 
     public async Task<VariableSetDto> CreateVariableSetAsync(CreateVariableSetCommand command, CancellationToken cancellationToken)
@@ -63,7 +61,11 @@ public class VariableService : IVariableService
         return _mapper.Map<VariableSetDto>(variableSet);
     }
 
-    public async Task<VariableSetDto> UpdateVariableSetAsync(UpdateVariableSetCommand command, CancellationToken cancellationToken)
+    // Locked: the masked secrets keep what is stored, so nothing another writer has not committed yet may be read, deleted and re-inserted.
+    public Task<VariableSetDto> UpdateVariableSetAsync(UpdateVariableSetCommand command, CancellationToken cancellationToken)
+        => _variableDataProvider.ExecuteWithVariableSetLockedAsync(command.Id, ct => ReplaceVariableSetAsync(command, ct), cancellationToken);
+
+    private async Task<VariableSetDto> ReplaceVariableSetAsync(UpdateVariableSetCommand command, CancellationToken cancellationToken)
     {
         var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
@@ -84,7 +86,16 @@ public class VariableService : IVariableService
 
         await SyncLibraryVariableSetNameAsync(variableSet, command.Name, cancellationToken).ConfigureAwait(false);
 
+        await SettleImportedSecretsSetInSquidAsync(variableSet, cancellationToken).ConfigureAwait(false);
+
         return _mapper.Map<VariableSetDto>(variableSet);
+    }
+
+    // A secret an Octopus import left missing that this save gives a value is the user's from now on: clearing it later is an edit too.
+    private async Task SettleImportedSecretsSetInSquidAsync(VariableSet variableSet, CancellationToken cancellationToken)
+    {
+        foreach (var hook in _secrets.SavedHooks)
+            await hook.OnVariableSetSavedAsync(variableSet.SpaceId, variableSet.Id, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task DeleteVariableSetAsync(int id, CancellationToken cancellationToken)
@@ -118,7 +129,7 @@ public class VariableService : IVariableService
                 : new();
         }
 
-        return _sensitiveVariableHandler.MaskSensitiveValues(variableSetDto);
+        return _secrets.Handler.MaskSensitiveValues(variableSetDto);
     }
 
     public async Task<GetVariableSetsResponse> GetVariableSetsAsync(GetVariableSetsRequest request, CancellationToken cancellationToken)
@@ -142,11 +153,17 @@ public class VariableService : IVariableService
     public async Task<IReadOnlyList<SensitiveVariableSlot>> GetSensitiveVariableSlotsAsync(IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken)
         => await _variableDataProvider.GetSensitiveVariableSlotsAsync(variableSetIds, cancellationToken).ConfigureAwait(false);
 
-    public async Task<SecretSlotState> FillEmptySensitiveValueAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken)
+    // Locked like a save (the set's variables, then the set): two writers of one set always queue in the same order, never deadlock.
+    public Task<SecretSlotState> FillEmptySensitiveValueAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(plainValue))
             throw new ArgumentException("A fill needs a value: an empty source value is never written.", nameof(plainValue));
 
+        return _variableDataProvider.ExecuteWithVariableSetLockedAsync(variableSetId, ct => FillOnceOrRetryAsync(variableSetId, identity, plainValue, ct), cancellationToken);
+    }
+
+    private async Task<SecretSlotState> FillOnceOrRetryAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken)
+    {
         var state = await TryFillOnceAsync(variableSetId, identity, plainValue, cancellationToken).ConfigureAwait(false);
 
         // Still empty after a lost compare-and-set: the set was saved in between (variables re-inserted with new ids). Find it again, once.
@@ -192,7 +209,7 @@ public class VariableService : IVariableService
     }
 
     private string Encrypt(string plainValue, int variableSetId)
-        => (_encryptionService ?? throw new InvalidOperationException("Filling a sensitive value needs the variable encryption service.")).EncryptAsync(plainValue, variableSetId);
+        => (_secrets.Encryption ?? throw new InvalidOperationException("Filling a sensitive value needs the variable encryption service.")).EncryptAsync(plainValue, variableSetId);
 
     // Same as a save from the UI: the set's version moves, so snapshots and caches see the change.
     private async Task BumpVersionAsync(int variableSetId, CancellationToken cancellationToken)

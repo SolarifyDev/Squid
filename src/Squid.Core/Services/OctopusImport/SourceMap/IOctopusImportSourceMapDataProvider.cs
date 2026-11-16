@@ -21,6 +21,9 @@ public interface IOctopusImportSourceMapDataProvider : IScopedDependency
     /// </summary>
     Task UpsertAsync(IReadOnlyList<OctopusImportSourceMapRow> rows, Guid sessionId, CancellationToken ct = default);
 
+    /// <summary>Settles the given secret rows that are still <c>Missing</c> as <c>Superseded</c> (Squid holds a value for them now); other rows are untouched.</summary>
+    Task SupersedeMissingSecretsAsync(int spaceId, string sourceType, IReadOnlyCollection<string> sourceIds, CancellationToken ct = default);
+
     /// <summary>Serialises confirmations of one space for the rest of the CURRENT transaction (released at commit or rollback).</summary>
     Task AcquireSpaceLockAsync(int spaceId, CancellationToken ct = default);
 }

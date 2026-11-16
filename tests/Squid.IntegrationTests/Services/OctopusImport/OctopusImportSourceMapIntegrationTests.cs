@@ -474,7 +474,31 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
 
             var prior = await provider.LoadAsync(SpaceId);
             var stale = rows.Where(pair => pair.Key != ownerLabel && !prior.TryGet(pair.Value.SourceType, pair.Value.SourceId, out _)).Select(pair => pair.Key);
-            stale.ShouldBe(expectedStale.Split(','), ignoreOrder: true);
+            stale.ShouldBe(expectedStale.Split(',', StringSplitOptions.RemoveEmptyEntries), ignoreOrder: true);
+        });
+    }
+
+    // A Squid save that gives a missing secret a value settles only that still-Missing row: terminal rows and other rows stay as they are.
+    [Fact]
+    public async Task SupersedeMissingSecrets_SettlesOnlyTheNamedMissingRowsOfTheSpace()
+    {
+        await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
+        {
+            await provider.UpsertAsync([
+                Row("VariableSecret", "vs:set-in-squid", 601, "Missing"),
+                Row("VariableSecret", "vs:filled", 601, "Filled"),
+                Row("VariableSecret", "vs:still-empty", 601, "Missing"),
+                Row("VariableSecret", "vs:set-in-squid", 601, "Missing", spaceId: SpaceId + 1)
+            ], Guid.NewGuid());
+
+            await provider.SupersedeMissingSecretsAsync(SpaceId, "VariableSecret", ["vs:set-in-squid", "vs:filled"]);
+
+            Describe(await LoadRawRowsAsync(db)).ShouldBe([
+                $"{SpaceId}|VariableSecret|VS:SET-IN-SQUID|601|Superseded||",
+                $"{SpaceId}|VariableSecret|VS:FILLED|601|Filled||",
+                $"{SpaceId}|VariableSecret|VS:STILL-EMPTY|601|Missing||",
+                $"{SpaceId + 1}|VariableSecret|VS:SET-IN-SQUID|601|Missing||"
+            ], ignoreOrder: true);
         });
     }
 

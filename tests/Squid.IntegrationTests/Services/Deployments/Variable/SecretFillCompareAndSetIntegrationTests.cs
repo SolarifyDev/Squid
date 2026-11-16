@@ -5,6 +5,7 @@ using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.Security;
 using Squid.IntegrationTests.Helpers;
+using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Variable;
 
@@ -53,6 +54,64 @@ public class SecretFillCompareAndSetIntegrationTests : TestBase
         (expected == SecretSlotState.Filled ? await Run<IVariableEncryptionService, string>(e => e.DecryptAsync(value, setId)) : value).ShouldBe(expectedPlain);
         (await VersionAsync(setId)).ShouldBe(expected == SecretSlotState.Filled ? 2 : 1);
         (await Run<SquidDbContext, int>(db => db.Set<Core.Persistence.Entities.Deployments.Variable>().CountAsync(v => v.VariableSetId == setId && v.Value == ""))).ShouldBe(1, "the other scope's empty value is not touched");
+    }
+
+    // An import fills two secrets of one set in its own (Octopus) order inside one long transaction, and a Variables-page save of that
+    // set starts between the two fills. Both writers lock the set's variables in id order before writing, so the save waits for the
+    // import to commit; without that order the save would hold the first secret, the import the second, and Postgres would abort one.
+    [Fact]
+    public async Task SaveBetweenTwoFillsOfOneImport_WaitsForIt_NoDeadlock_BothFilledValuesKept()
+    {
+        var (setId, firstId) = await SeedVariableAsync("", true, environmentScope: "7");
+        var (_, secondId) = await SeedVariableAsync("", true, environmentScope: "8", variableSetId: setId);
+        Task save = null;
+
+        await Run<SquidDbContext, IVariableService>(async (db, variables) =>
+        {
+            await using var import = await db.Database.BeginTransactionAsync();
+
+            (await variables.FillEmptySensitiveValueAsync(setId, DbPasswordIn("8"), "second", CancellationToken.None)).ShouldBe(SecretSlotState.Filled);
+
+            save = Task.Run(() => SaveMaskedAsync(setId));
+            await WaitUntilAsync(async () => await WaitingBackendsAsync() >= 1, "the Variables save waits on the import's locks");
+
+            (await variables.FillEmptySensitiveValueAsync(setId, DbPasswordIn("7"), "first", CancellationToken.None)).ShouldBe(SecretSlotState.Filled);
+
+            await import.CommitAsync();
+        });
+
+        await save.WaitAsync(TimeSpan.FromSeconds(60));
+
+        var values = await Run<SquidDbContext, List<string>>(db => db.Set<Core.Persistence.Entities.Deployments.Variable>().AsNoTracking().Where(v => v.VariableSetId == setId).OrderBy(v => v.Id).Select(v => v.Value).ToListAsync());
+
+        values.Count.ShouldBe(2);
+        values.ShouldAllBe(v => !string.IsNullOrEmpty(v), "the save posted both secrets masked: it keeps what the import filled");
+        firstId.ShouldBeLessThan(secondId);
+    }
+
+    private static VariableIdentity DbPasswordIn(string environment) => VariableIdentity.Of("Db.Password", VariableType.Password, [(VariableScopeType.Environment, environment)]);
+
+    private Task SaveMaskedAsync(int setId)
+        => Run<IVariableService>(async variables =>
+        {
+            var saved = new[] { "7", "8" }.Select(env => new VariableModel { Name = "Db.Password", Value = MaskedSensitiveValues.Mask, Type = VariableType.Password, IsSensitive = true, Scopes = [new VariableScopeModel { ScopeType = VariableScopeType.Environment, ScopeValue = env }] }).ToList();
+
+            await variables.UpdateVariableSetAsync(new UpdateVariableSetCommand { Id = setId, Name = "Project variables", OwnerType = VariableSetOwnerType.Project, SpaceId = 1, Variables = saved }, CancellationToken.None);
+        });
+
+    private Task<int> WaitingBackendsAsync()
+        => Run<SquidDbContext, int>(db => db.Database.SqlQueryRaw<int>("""SELECT count(DISTINCT pid)::int AS "Value" FROM pg_locks WHERE NOT granted AND (database IS NULL OR database = (SELECT oid FROM pg_database WHERE datname = current_database()))""").SingleAsync());
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition, string what)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+
+        while (!await condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException($"Timed out waiting until {what} — check pg_locks / pg_stat_activity manually");
+
+            await Task.Delay(100);
+        }
     }
 
     [Theory]

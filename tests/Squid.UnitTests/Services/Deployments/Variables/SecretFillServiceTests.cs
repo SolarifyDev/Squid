@@ -116,6 +116,18 @@ public class SecretFillServiceTests
         harness.VersionBumps.ShouldBe(1);
     }
 
+    // A save locks the set's variables (id order) and then the set; a fill that wrote without that lock could deadlock against it.
+    [Fact]
+    public async Task FillVariable_WritesTheValueAndTheVersionOnlyUnderTheSetLock()
+    {
+        var harness = new VariableHarness([new SensitiveVariableSlot(100, SetId, DbPassword, false)]);
+
+        (await harness.FillAsync("from-export")).ShouldBe(SecretSlotState.Filled);
+
+        harness.LockedSets.ShouldBe([SetId]);
+        harness.WritesOutsideTheLock.ShouldBe(0);
+    }
+
     // Set by a user between the read and the write: the conditional UPDATE writes nothing and nothing is overwritten.
     [Fact]
     public async Task FillVariable_SetBetweenReadAndWrite_AlreadySetNoVersionBump()
@@ -208,11 +220,28 @@ public class SecretFillServiceTests
             _provider.Setup(p => p.SetSensitiveValueIfEmptyAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((int id, string value, CancellationToken _) =>
                 {
+                    if (!_locked) WritesOutsideTheLock++;
                     Writes.Add((id, value));
                     return RowsWritten.Count >= Writes.Count ? RowsWritten[Writes.Count - 1] : 1;
                 });
             _provider.Setup(p => p.GetVariableSetByIdAsync(SetId, It.IsAny<CancellationToken>())).ReturnsAsync(() => new VariableSet { Id = SetId, Version = 3 });
-            _provider.Setup(p => p.UpdateVariableSetAsync(It.Is<VariableSet>(s => s.Id == SetId && s.Version == 4), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback(() => VersionBumps++).Returns(Task.CompletedTask);
+            _provider.Setup(p => p.UpdateVariableSetAsync(It.Is<VariableSet>(s => s.Id == SetId && s.Version == 4), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback(() => { VersionBumps++; if (!_locked) WritesOutsideTheLock++; }).Returns(Task.CompletedTask);
+            _provider.Setup(p => p.ExecuteWithVariableSetLockedAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, Task<SecretSlotState>>>(), It.IsAny<CancellationToken>())).Returns((int setId, Func<CancellationToken, Task<SecretSlotState>> action, CancellationToken ct) => RunLockedAsync(setId, action, ct));
+        }
+
+        private bool _locked;
+
+        public List<int> LockedSets { get; } = [];
+
+        public int WritesOutsideTheLock { get; private set; }
+
+        private async Task<SecretSlotState> RunLockedAsync(int setId, Func<CancellationToken, Task<SecretSlotState>> action, CancellationToken ct)
+        {
+            LockedSets.Add(setId);
+            _locked = true;
+
+            try { return await action(ct); }
+            finally { _locked = false; }
         }
 
         public List<(int VariableId, string Value)> Writes { get; } = [];
@@ -226,7 +255,7 @@ public class SecretFillServiceTests
             var encryption = new Mock<IVariableEncryptionService>();
             encryption.Setup(e => e.EncryptAsync(It.IsAny<string>(), It.IsAny<int>())).Returns((string plain, int setId) => $"enc[{setId}]:{plain}");
 
-            var service = new VariableService(Mock.Of<IMapper>(), _provider.Object, Mock.Of<IVariableScopeDataProvider>(), new SensitiveVariableHandler(), Mock.Of<ILibraryVariableSetDataProvider>(), encryption.Object);
+            var service = new VariableService(Mock.Of<IMapper>(), _provider.Object, Mock.Of<IVariableScopeDataProvider>(), Mock.Of<ILibraryVariableSetDataProvider>(), new VariableSecretCollaborators(new SensitiveVariableHandler(), encryption.Object));
 
             return service.FillEmptySensitiveValueAsync(SetId, DbPassword, value, CancellationToken.None);
         }

@@ -3,6 +3,7 @@ using System.Linq;
 using Moq;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Variables;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.Security;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
@@ -115,22 +116,61 @@ public class MaskedSensitiveValuesTests
         dataProvider.Verify(p => p.GetVariablesByVariableSetIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // An import's fill not yet committed holds its rows: a save that read them unlocked would re-insert the masked secret empty.
+    [Fact]
+    public async Task UpdateVariableSet_ReadsAndRewritesTheSetOnlyUnderItsLock()
+    {
+        var (service, dataProvider, _) = Service();
+        dataProvider.Reset();
+
+        await service.UpdateVariableSetAsync(Command(Secret("Db.Password", MaskedSensitiveValues.Mask, "3")), CancellationToken.None);
+
+        dataProvider.Verify(p => p.ExecuteWithVariableSetLockedAsync(SetId, It.IsAny<Func<CancellationToken, Task<VariableSetDto>>>(), It.IsAny<CancellationToken>()), Times.Once);
+        dataProvider.Verify(p => p.DeleteVariablesByVariableSetIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateVariableSet_SettlesTheImportedSecretsTheSaveGaveAValue()
+    {
+        var (_, dataProvider, scopes) = Service();
+        var settlement = new Mock<IVariableSetSavedHook>();
+        var service = new VariableService(MapperFor(), dataProvider.Object, scopes.Object, new Mock<ILibraryVariableSetDataProvider>().Object, new VariableSecretCollaborators(new SensitiveVariableHandler(), savedHooks: [settlement.Object]));
+        var command = Command(Secret("Db.Password", "k1", "3"));
+        command.SpaceId = 5;
+
+        await service.UpdateVariableSetAsync(command, CancellationToken.None);
+
+        settlement.Verify(s => s.OnVariableSetSavedAsync(5, SetId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static (IVariableService Service, Mock<IVariableDataProvider> DataProvider, Mock<IVariableScopeDataProvider> Scopes) Service()
     {
-        var mapper = new Mock<IMapper>();
         var dataProvider = new Mock<IVariableDataProvider>();
         var scopes = new Mock<IVariableScopeDataProvider>();
 
         dataProvider.Setup(p => p.GetVariableSetByIdAsync(SetId, It.IsAny<CancellationToken>())).ReturnsAsync(new VariableSet { Id = SetId, OwnerType = VariableSetOwnerType.Project });
         scopes.Setup(p => p.GetVariableScopesByVariableIdsAsync(It.IsAny<List<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        RunLockedActions(dataProvider);
+
+        return (new VariableService(MapperFor(), dataProvider.Object, scopes.Object, new Mock<ILibraryVariableSetDataProvider>().Object, new VariableSecretCollaborators(new SensitiveVariableHandler())), dataProvider, scopes);
+    }
+
+    private static IMapper MapperFor()
+    {
+        var mapper = new Mock<IMapper>();
+
         mapper.Setup(m => m.Map<Variable>(It.IsAny<VariableModel>())).Returns<VariableModel>(m => new Variable { Name = m.Name, Value = m.Value, Type = m.Type, IsSensitive = m.IsSensitive });
         mapper.Setup(m => m.Map<VariableScope>(It.IsAny<VariableScopeModel>())).Returns<VariableScopeModel>(m => new VariableScope { ScopeType = m.ScopeType, ScopeValue = m.ScopeValue });
         mapper.Setup(m => m.Map<VariableSetDto>(It.IsAny<VariableSet>())).Returns(new VariableSetDto());
 
-        return (new VariableService(mapper.Object, dataProvider.Object, scopes.Object, new SensitiveVariableHandler(), new Mock<ILibraryVariableSetDataProvider>().Object), dataProvider, scopes);
+        return mapper.Object;
     }
+
+    // The real provider takes the set's row locks around the save; the mock just runs it.
+    public static void RunLockedActions(Mock<IVariableDataProvider> dataProvider)
+        => dataProvider.Setup(p => p.ExecuteWithVariableSetLockedAsync(It.IsAny<int>(), It.IsAny<Func<CancellationToken, Task<VariableSetDto>>>(), It.IsAny<CancellationToken>())).Returns((int _, Func<CancellationToken, Task<VariableSetDto>> action, CancellationToken ct) => action(ct));
 
     private static UpdateVariableSetCommand Command(params VariableModel[] variables)
         => new() { Id = SetId, Name = "Project variables", OwnerType = VariableSetOwnerType.Project, Variables = variables.ToList() };
