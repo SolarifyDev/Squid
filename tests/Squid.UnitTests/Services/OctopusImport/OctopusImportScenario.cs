@@ -156,6 +156,13 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>A Squid channel of a destination project (one the user made by hand, or one an import made).</summary>
+    public OctopusImportScenario ExistingChannel(int id, int projectId, string name)
+    {
+        _destination.Add(new OctopusImportDestinationResource(id, SpaceId, OctopusResourceKind.Channel, name, name.ToLowerInvariant(), DateTimeOffset.UtcNow.AddDays(-1)) { ProjectId = projectId });
+        return this;
+    }
+
     public OctopusImportScenario ExistingProject(int id, string name)
     {
         _destination.Add(new OctopusImportDestinationResource(id, SpaceId, OctopusResourceKind.Project, name, name.ToLowerInvariant(), DateTimeOffset.UtcNow.AddDays(-1)));

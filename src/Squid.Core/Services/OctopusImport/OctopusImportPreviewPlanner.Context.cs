@@ -102,10 +102,14 @@ public partial class OctopusImportPreviewPlanner
         public bool ReleaseVersionExists(OctopusReleaseDto release, string version)
         {
             var project = PriorFor(OctopusResourceKind.Project, release.ProjectId);
-            var channel = PriorFor(OctopusResourceKind.Channel, release.ChannelId);
+            var channelId = PriorFor(OctopusResourceKind.Channel, release.ChannelId)?.DestinationId ?? ReusedDestinationOf(release.ChannelId);
 
-            return project != null && channel != null && _existingReleaseKeys.Contains(new OctopusImportReleaseKey(project.DestinationId, channel.DestinationId, version));
+            return project != null && channelId != null && _existingReleaseKeys.Contains(new OctopusImportReleaseKey(project.DestinationId, channelId.Value, version));
         }
+
+        // A channel this plan links to a Squid channel by name may already hold the incoming version.
+        private int? ReusedDestinationOf(string sourceId)
+            => _previewsById.GetValueOrDefault(sourceId ?? string.Empty) is { PreviewAction: OctopusImportPreviewAction.ReuseExisting } preview ? preview.DestinationId : null;
 
         public void RecordHistoryUnit(string taskSourceId, OctopusImportPreviewAction action) => _historyUnitActionsByTaskId.TryAdd(taskSourceId, action);
 

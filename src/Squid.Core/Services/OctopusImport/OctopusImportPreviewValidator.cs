@@ -27,7 +27,9 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         OctopusResourceKind.Team,
         OctopusResourceKind.Machine,
         OctopusResourceKind.Account,
-        OctopusResourceKind.LibraryVariableSet
+        OctopusResourceKind.LibraryVariableSet,
+        // A channel added in Octopus after its project's import, linked to the one Squid channel of that name in the project.
+        OctopusResourceKind.Channel
     ];
 
     private readonly IOctopusExportSecretsAccessor _secretsAccessor;

@@ -146,6 +146,12 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         {
             var priorDecision = KeepVariableStillInSquid(resource, decided, context);
 
+            if (IsCreatedUnderImportedProject(resource, priorDecision) && context.TryGetConflict(resource.SourceId, out var channelConflict))
+            {
+                ApplyConflictAction(result, resource, channelConflict);
+                return result;
+            }
+
             ApplyDecision(result, priorDecision);
 
             // A child added in Octopus after its owner's import is skipped, and whatever belongs to it goes with it.
@@ -174,6 +180,11 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         AddManualConfigurationDiagnostics(result, resource);
         return result;
     }
+
+    // A channel Octopus added after its project's import is matched by name against that project's Squid channels, the same rule as every
+    // shared kind: one match is linked (never a second channel of that name), several need a rename.
+    private static bool IsCreatedUnderImportedProject(OctopusResourceNode resource, OctopusImportPriorDecision decision)
+        => resource.Kind == OctopusResourceKind.Channel && decision.Action == OctopusImportPreviewAction.Create;
 
     // Runs after every resource has its preview action, because whether a variable is written depends on
     // the action chosen for the library variable set that owns it.

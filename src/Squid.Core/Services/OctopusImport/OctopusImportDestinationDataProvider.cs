@@ -37,6 +37,12 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false));
 
+        resources.AddRange(await repository.QueryNoTracking<Channel>(x => x.SpaceId == destinationSpaceId)
+            .Select(x => new OctopusImportDestinationResource(
+                x.Id, x.SpaceId, OctopusResourceKind.Channel, x.Name, x.Slug, x.LastModifiedDate) { ProjectId = x.ProjectId })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false));
+
         resources.AddRange(await repository.QueryNoTracking<ProjectGroup>(x => x.SpaceId == destinationSpaceId)
             .Select(x => new OctopusImportDestinationResource(
                 x.Id, x.SpaceId, OctopusResourceKind.ProjectGroup, x.Name, x.Slug, x.LastModifiedDate))

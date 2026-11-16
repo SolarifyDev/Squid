@@ -37,8 +37,8 @@ public class OctopusImportConflictDiscoveryService(
         ArgumentNullException.ThrowIfNull(graph);
 
         var destinationResources = await destinationDataProvider.GetResourcesAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
-        var conflicts = FindConflicts(destinationSpaceId, graph, destinationResources);
         var prior = await LoadPriorMappingsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
+        var conflicts = FindConflicts(destinationSpaceId, graph, destinationResources, prior);
         var releaseKeys = await LoadExistingReleaseKeysAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var secretSlots = await LoadMissingSecretSlotsAsync(prior, cancellationToken).ConfigureAwait(false);
         var origin = await LoadRecordedOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
@@ -130,7 +130,7 @@ public class OctopusImportConflictDiscoveryService(
         return new OctopusImportSecretSlots(variables, feeds);
     }
 
-    private static List<OctopusImportResourceConflict> FindConflicts(int destinationSpaceId, OctopusResourceGraph graph, IReadOnlyList<OctopusImportDestinationResource> destinationResources)
+    private static List<OctopusImportResourceConflict> FindConflicts(int destinationSpaceId, OctopusResourceGraph graph, IReadOnlyList<OctopusImportDestinationResource> destinationResources, OctopusImportPriorMappings prior)
     {
         var destinationsByKind = destinationResources
             .GroupBy(x => x.Kind)
@@ -140,7 +140,7 @@ public class OctopusImportConflictDiscoveryService(
             .Where(x => !x.IsHistorical && IsDiscoverable(x.Kind))
             .OrderBy(x => x.Kind)
             .ThenBy(x => x.SourceId, StringComparer.OrdinalIgnoreCase)
-            .Select(source => BuildConflict(source, destinationsByKind, destinationSpaceId))
+            .Select(source => BuildConflict(source, ScopedToOwner(source, destinationsByKind, prior), destinationSpaceId))
             .Where(conflict => conflict != null)
             .ToList();
     }
@@ -173,6 +173,27 @@ public class OctopusImportConflictDiscoveryService(
             .Where(id => id > 0)
             .Distinct()
             .ToList();
+
+    // A channel's name is unique only within its project, and only a project imported before can already hold one: its channels are
+    // matched against the Squid channels of the project the source map records (none for a project this import creates) that no other
+    // Octopus channel is linked to.
+    private static IReadOnlyDictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> ScopedToOwner(OctopusResourceNode source, IReadOnlyDictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> destinationsByKind, OctopusImportPriorMappings prior)
+    {
+        if (source.Kind != OctopusResourceKind.Channel) return destinationsByKind;
+
+        var projectId = prior.TryGet(nameof(OctopusResourceKind.Project), source.GetSource<OctopusChannelDto>()?.ProjectId ?? source.OwnerProjectId, out var project) ? project.DestinationId : (int?)null;
+        var channels = destinationsByKind.GetValueOrDefault(OctopusResourceKind.Channel, []).Where(c => projectId != null && c.ProjectId == projectId && !IsLinkedToAnotherChannel(c.Id, source.SourceId, prior)).ToList();
+
+        return new Dictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> { [OctopusResourceKind.Channel] = channels };
+    }
+
+    // A Squid channel the source map already links to another Octopus channel is that channel's: never a second Octopus channel's too.
+    private static bool IsLinkedToAnotherChannel(int destinationId, string sourceId, OctopusImportPriorMappings prior)
+    {
+        var (channelType, channelId) = OctopusImportPriorMappings.Key(nameof(OctopusResourceKind.Channel), sourceId);
+
+        return prior.Mappings.Any(m => m.Key.Type == channelType && m.Key.Id != channelId && m.Value.DestinationId == destinationId);
+    }
 
     private static OctopusImportResourceConflict BuildConflict(OctopusResourceNode source, IReadOnlyDictionary<OctopusResourceKind, List<OctopusImportDestinationResource>> destinationsByKind, int destinationSpaceId)
     {
@@ -254,6 +275,7 @@ public class OctopusImportConflictDiscoveryService(
 
     private static bool IsDiscoverable(OctopusResourceKind kind)
         => kind is OctopusResourceKind.Project
+            or OctopusResourceKind.Channel
             or OctopusResourceKind.ProjectGroup
             or OctopusResourceKind.Environment
             or OctopusResourceKind.Lifecycle
