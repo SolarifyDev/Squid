@@ -8,3 +8,12 @@ public sealed record OctopusImportStoredHistory(IReadOnlyDictionary<int, string>
 {
     public static OctopusImportStoredHistory Empty { get; } = new(new Dictionary<int, string>(), new Dictionary<int, OctopusImportStoredTask>());
 }
+
+/// <summary>
+/// The history rows of a space a Squid delete left behind: releases whose project or channel, and deployments whose project, channel,
+/// release or environment, no longer exist. Only these are moved onto an owner an import creates again; history whose owners exist stays put.
+/// </summary>
+public sealed record OctopusImportOrphanedHistory(IReadOnlySet<int> ReleaseIds, IReadOnlySet<int> DeploymentIds)
+{
+    public static OctopusImportOrphanedHistory Empty { get; } = new(new HashSet<int>(), new HashSet<int>());
+}

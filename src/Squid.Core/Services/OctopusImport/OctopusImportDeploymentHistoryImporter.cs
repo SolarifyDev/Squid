@@ -23,6 +23,9 @@ public interface IOctopusImportDeploymentHistoryImporter : IScopedDependency
     /// (compare-and-set): notes edited in the meantime are never overwritten. Returns whether the notes were written.
     /// </summary>
     Task<bool> UpdateReleaseNotesIfUnchangedAsync(int releaseId, string expectedNotes, string releaseNotes, CancellationToken ct = default);
+
+    /// <summary>Points an imported release whose project or channel Squid deleted at the ones this import resolves; any other release is left where it is.</summary>
+    Task RelinkReleaseAsync(int releaseId, int projectId, int channelId, CancellationToken ct = default);
 }
 
 public sealed record OctopusImportDeploymentHistoryRequest(
@@ -47,7 +50,11 @@ public sealed record OctopusImportDeploymentHistoryRequest(
     bool HasWarningsOrErrors,
     int DurationSeconds);
 
-public sealed record OctopusImportDeploymentHistoryResult(int DeploymentId, int TaskId, int CreatedBy);
+public sealed record OctopusImportDeploymentHistoryResult(int DeploymentId, int TaskId, int CreatedBy)
+{
+    /// <summary>The incoming task was an older copy of the finished one Squid holds: only the unit's owners were written.</summary>
+    public bool OlderCopyKept { get; init; }
+}
 
 /// <summary>
 /// Writes imported Octopus deployment history with raw SQL inside the import transaction: server task, deployment,
@@ -94,7 +101,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter : IOctopusImp
         await WriteChildrenAsync(deploymentId, taskId, ct).ConfigureAwait(false);
         await RefreshKeptChildrenAsync(deploymentId, taskId, ct).ConfigureAwait(false);
 
-        return new OctopusImportDeploymentHistoryResult(deploymentId, taskId, _ctx.ActorId);
+        return new OctopusImportDeploymentHistoryResult(deploymentId, taskId, _ctx.ActorId) { OlderCopyKept = _ctx.KeepsNewer };
     }
 
     public async Task<string> GetReleaseNotesAsync(int releaseId, CancellationToken ct = default)
@@ -107,6 +114,20 @@ public sealed partial class OctopusImportDeploymentHistoryImporter : IOctopusImp
         var written = await _dbContext.Database.ExecuteSqlRawAsync("UPDATE release SET release_notes = {0}, last_modified_date = now() WHERE id = {1} AND COALESCE(release_notes, '') = {2}", OctopusImportText.StripNul(new object[] { releaseNotes, releaseId, expectedNotes ?? string.Empty }), ct).ConfigureAwait(false);
 
         return written > 0;
+    }
+
+    // Only a release a Squid delete left without its project or channel moves, and never onto a channel that already holds its version.
+    public async Task RelinkReleaseAsync(int releaseId, int projectId, int channelId, CancellationToken ct = default)
+    {
+        const string sql = """
+            UPDATE release SET project_id = {0}, channel_id = {1}, last_modified_date = now()
+            WHERE id = {2}
+              AND (project_id <> {0} OR channel_id <> {1})
+              AND (NOT EXISTS (SELECT 1 FROM project p WHERE p.id = release.project_id) OR NOT EXISTS (SELECT 1 FROM channel c WHERE c.id = release.channel_id))
+              AND NOT EXISTS (SELECT 1 FROM release o WHERE o.project_id = {0} AND o.channel_id = {1} AND o.version = release.version AND o.id <> release.id)
+            """;
+
+        await _dbContext.Database.ExecuteSqlRawAsync(sql, new object[] { projectId, channelId, releaseId }, ct).ConfigureAwait(false);
     }
 
     /// <summary>The configured per-task log line cap; an unset, unparsable or non-positive value falls back to the default.</summary>

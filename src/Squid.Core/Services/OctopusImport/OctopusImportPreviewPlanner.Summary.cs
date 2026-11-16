@@ -20,10 +20,21 @@ public partial class OctopusImportPreviewPlanner
 
             if (preview.PreviewAction != OctopusImportPreviewAction.Update) continue;
 
-            if (node.Kind == OctopusResourceKind.Release) preview.Changes = OctopusImportPreviewChanges.ForRelease(node.GetSource<OctopusReleaseDto>(), preview.DestinationId, context.Conflicts.StoredHistory);
+            if (node.Kind == OctopusResourceKind.Release) AddReleaseChanges(node, preview, context);
             if (node.Kind == OctopusResourceKind.Deployment) AddHistoryUnitChanges(node, preview, previewsById, context);
         }
     }
+
+    // Squid's notes are read only for a release whose notes changed in Octopus: a release that is only moved onto a re-created owner lists just that.
+    private static void AddReleaseChanges(OctopusResourceNode release, OctopusImportResourceResultDto preview, PreviewPlanningContext context)
+    {
+        var notesRead = preview.DestinationId is { } releaseId && context.Conflicts.StoredHistory.ReleaseNotes.ContainsKey(releaseId);
+        var changes = !IsRelinked(preview) || notesRead ? OctopusImportPreviewChanges.ForRelease(release.GetSource<OctopusReleaseDto>(), preview.DestinationId, context.Conflicts.StoredHistory) : [];
+
+        preview.Changes = IsRelinked(preview) ? OctopusImportPreviewChanges.Relinked(changes.Where(c => c.Field != OctopusImportPreviewChanges.RecordField)) : changes;
+    }
+
+    private static bool IsRelinked(OctopusImportResourceResultDto preview) => preview.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.HistoryRelinked);
 
     // A deployment and its task are one unit: both name the same written fields.
     private static void AddHistoryUnitChanges(OctopusResourceNode deployment, OctopusImportResourceResultDto preview, IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewsById, PreviewPlanningContext context)
@@ -32,7 +43,10 @@ public partial class OctopusImportPreviewPlanner
         var storedUnit = context.PriorFor(OctopusResourceKind.Deployment, deployment.SourceId);
         var storedTaskId = task == null ? null : context.PriorFor(OctopusResourceKind.ServerTask, task.SourceId)?.DestinationId;
 
-        preview.Changes = OctopusImportPreviewChanges.ForHistoryUnit(task?.GetSource<OctopusServerTaskDto>(), storedUnit, storedTaskId, context.Conflicts.StoredHistory);
+        var changes = OctopusImportPreviewChanges.ForHistoryUnit(task?.GetSource<OctopusServerTaskDto>(), storedUnit, storedTaskId, context.Conflicts.StoredHistory);
+        var taskRead = storedTaskId == null || context.Conflicts.StoredHistory.Tasks.ContainsKey(storedTaskId.Value);
+
+        preview.Changes = IsRelinked(preview) ? OctopusImportPreviewChanges.Relinked(taskRead ? changes.Where(c => c.Field != OctopusImportPreviewChanges.RecordField) : []) : changes;
 
         if (task != null && previewsById.TryGetValue(task.SourceId, out var taskPreview) && taskPreview.PreviewAction == OctopusImportPreviewAction.Update)
             taskPreview.Changes = preview.Changes.ToList();

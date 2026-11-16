@@ -1000,6 +1000,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                     DestinationId = r.DestinationId,
                     OwnerProjectSourceId = r.OwnerProjectSourceId,
                     FillDestination = r.FillDestination,
+                    PriorImportFingerprint = r.PriorImportFingerprint,
                     RequiredInputs = r.RequiredInputs.ToList(),
                     Diagnostics = r.Diagnostics.Select(Redact).ToList()
                 })

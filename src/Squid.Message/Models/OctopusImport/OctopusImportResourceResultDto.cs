@@ -39,6 +39,13 @@ public class OctopusImportResourceResultDto
     /// </summary>
     public OctopusImportFillDestinationDto FillDestination { get; set; }
 
+    /// <summary>
+    /// For an Update of imported history: what the source map held for it when the preview was generated. Confirmation refuses the update
+    /// once a later import has moved that record on, so an older copy of the Octopus content never replaces newer imported content. Null
+    /// for every other action and for plans produced before it existed.
+    /// </summary>
+    public string PriorImportFingerprint { get; set; }
+
     /// <summary>For an Update or a Fill: the fields written into the row an earlier import created, old → new (a secret is named, never shown). Empty otherwise.</summary>
     public List<OctopusImportFieldChangeDto> Changes { get; set; } = [];
 

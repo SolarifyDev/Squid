@@ -24,7 +24,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// Re-importing Octopus history through the real planning pipeline and confirmation orchestrator against a real
 /// database: the persistent source map makes every re-import insert only what is missing and update only what changed.
 /// </summary>
-public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
+public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
 {
     private const int SpaceId = 1;
     private const string InstallationId = "6c9b6a52-1d7e-4f4b-9a54-6f0a2b9e3c11";
@@ -392,7 +392,8 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
     }
 
     // Squid deletes never cascade, so the deleted project's channel, variable set, process, releases and history rows
-    // survive as orphans: their map rows must not count as "already imported" under the re-created project.
+    // survive as orphans: the configuration rows must not count as "already imported" under the re-created project, and
+    // the history rows move onto it instead of being imported a second time.
     [Fact]
     public async Task DeletedProject_ReimportRecreatesTheWholeProject()
     {
@@ -403,8 +404,11 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
 
         var (snapshot, result) = await PreviewAndConfirmAsync(archive);
 
-        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is not ("ProjectGroup" or "Environment" or "Lifecycle" or "LifecyclePhase")).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is not ("ProjectGroup" or "Environment" or "Lifecycle" or "LifecyclePhase" or "Release" or "Deployment" or "ServerTask")).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Update, "the history the delete left behind moves onto the re-created project");
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        (await CountAsync<Release>()).ShouldBe(1, "the release was imported a second time");
+        (await CountAsync<Deployment>()).ShouldBe(1, "the deployment was imported a second time");
         var project = await SingleAsync<Project>();
         project.Id.ShouldNotBe(deleted.Id);
         (await ListAsync<Variable>()).Where(v => v.VariableSetId == project.VariableSetId).Select(v => v.Name).ShouldBe(["Imported variable"]);
@@ -427,7 +431,8 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
 
         var (snapshot, result) = await PreviewAndConfirmAsync(archive);
 
-        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        snapshot.PreviewPlan.Resources.Single(r => r.SourceType == "Release").PreviewAction.ShouldBe(OctopusImportPreviewAction.Create, Describe(snapshot.PreviewPlan));
+        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Deployment" or "ServerTask").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Update, "the deployment the delete left behind moves onto the re-created release");
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
         var release = await SingleAsync<Release>();
         release.Id.ShouldNotBe(deleted.Id);
@@ -623,6 +628,8 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         public bool WithConfiguration { get; init; }
         public bool MovedDefaultChannel { get; init; }
         public string ExportSuffix { get; init; }
+        public string ReleaseChannelId { get; init; } = "Channels-1";
+        public string DeployedToMachineIds { get; init; } = "[\"Machines-1\"]";
 
         /// <summary>A real Octopus export's manifest carries no installation id (only Squid-built bundles do).</summary>
         public bool WithoutInstallationId { get; init; }
@@ -710,9 +717,9 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
             Document("variableset-Projects-1", "ProjectVariables", $$"""{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{{(spec.WithConfiguration ? ConfiguredVariable : "")}}]}"""),
             Document("deploymentprocess-Projects-1", "DeploymentProcess", $$"""{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{{(spec.WithConfiguration ? ConfiguredStep : "")}}]}"""),
             Document("Channels-1", "Channel", $$"""{"Id":"Channels-1","Name":"Default","Slug":"default","ProjectId":"Projects-1","IsDefault":{{(spec.MovedDefaultChannel ? "false" : "true")}}}"""),
-            Document("Releases-1", "Release", $$"""{"Id":"Releases-1","ProjectId":"Projects-1","ChannelId":"Channels-1","Version":"1.0.0","ReleaseNotes":{{JsonSerializer.Serialize(spec.ReleaseNotes)}},"Assembled":"2024-07-01T08:00:00+00:00"}"""),
+            Document("Releases-1", "Release", $$"""{"Id":"Releases-1","ProjectId":"Projects-1","ChannelId":"{{spec.ReleaseChannelId}}","Version":"1.0.0","ReleaseNotes":{{JsonSerializer.Serialize(spec.ReleaseNotes)}},"Assembled":"2024-07-01T08:00:00+00:00"}"""),
             Document("ServerTasks-1", "ServerTask", $$"""{"Id":"ServerTasks-1","Name":"{{spec.TaskName}}","Description":"Deploy idempotent release","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"{{spec.State}}","QueueTime":"2024-07-10T09:47:02+00:00","StartTime":"2024-07-10T09:47:03+00:00","CompletedTime":{{completed}},"ErrorMessage":{{JsonSerializer.Serialize(spec.ErrorMessage)}},"HasWarningsOrErrors":false,"DurationSeconds":68{{detail}}}"""),
-            Document("Deployments-1", "Deployment", """{"Id":"Deployments-1","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":["Machines-1"],"Created":"2024-07-10T09:47:02+00:00"}""")
+            Document("Deployments-1", "Deployment", $$"""{"Id":"Deployments-1","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":{{spec.DeployedToMachineIds}},"Created":"2024-07-10T09:47:02+00:00"}""")
         };
 
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");

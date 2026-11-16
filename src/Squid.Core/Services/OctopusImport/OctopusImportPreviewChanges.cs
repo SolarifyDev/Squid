@@ -25,6 +25,7 @@ public static class OctopusImportPreviewChanges
     public const string VariableValueField = "Value";
     public const string FeedPasswordField = "Password";
     public const string FeedUsernameField = "Username";
+    public const string OwnerField = "Owner";
 
     /// <summary>Longer texts (release notes, error messages) are cut to this many characters for display.</summary>
     public const int MaxDisplayLength = 500;
@@ -32,6 +33,7 @@ public static class OctopusImportPreviewChanges
     public const string DetailsChangedDescription = "The task log, interruptions, events or artifacts changed in Octopus; they are imported again.";
     public const string TaskRowMissingDescription = "The task an earlier import wrote is no longer in Squid; it is written again.";
     public const string RecordIncompleteDescription = "An earlier import recorded this history incompletely; it is read and written again.";
+    public const string RelinkedDescription = "What it belongs to (project, channel, release or environment) was deleted in Squid and is imported again; it is moved onto that, not imported a second time.";
     public const string SecretFilledDescription = "Filled from the export file into the value Squid holds empty. The value is never shown.";
 
     /// <summary>The release ids whose notes an Update would rewrite: imported before, notes changed (same rule as the preview).</summary>
@@ -83,6 +85,10 @@ public static class OctopusImportPreviewChanges
 
         return changes.Count > 0 ? changes : [RecordIncomplete()];
     }
+
+    /// <summary>History moved onto an owner this import creates again: its content changes are listed only when they were read for comparison.</summary>
+    public static List<OctopusImportFieldChangeDto> Relinked(IEnumerable<OctopusImportFieldChangeDto> contentChanges)
+        => [.. contentChanges ?? [], new OctopusImportFieldChangeDto { Field = OwnerField, Description = RelinkedDescription }];
 
     /// <summary>
     /// What a fill writes: the secret field, named only; for a feed also the file's username, which the fill writes where Squid's is

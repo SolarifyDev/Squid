@@ -21,8 +21,9 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         // Unit
         public OctopusImportHistoryUnit Unit { get; init; }
         public bool IsNewTask => Unit.ExistingTaskId == null;
-        public bool WritesScalars => IsNewTask || Unit.ExistingDeploymentId == null || Unit.ScalarChanged;
-        public bool WritesChildren => IsNewTask || Unit.ReplaceChildren;
+        public bool KeepsNewer { get; init; }
+        public bool WritesScalars => !KeepsNewer && (IsNewTask || Unit.ExistingDeploymentId == null || Unit.ScalarChanged);
+        public bool WritesChildren => !KeepsNewer && (IsNewTask || Unit.ReplaceChildren);
         public bool WritesDetails => WritesChildren && Unit.Details != null;
         public bool RefreshesKeptChildren => WritesScalars && !WritesChildren;
 
@@ -49,6 +50,7 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         return new HistoryUnitContext
         {
             Unit = unit,
+            KeepsNewer = await IsOlderCopyAsync(unit, ct).ConfigureAwait(false),
             ActorId = await ResolveActorIdAsync(unit.Deployment.DeployedBy, ct).ConfigureAwait(false),
             Username = string.IsNullOrWhiteSpace(unit.Deployment.DeployedBy) ? CurrentUsers.InternalUser.Name : unit.Deployment.DeployedBy.Trim(),
             State = OctopusImportTaskStateNormalizer.Normalize(task.State),
@@ -59,6 +61,16 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
             LastActivityTime = completedTime ?? startTime ?? queueTime,
             DurationSeconds = DurationSeconds(task, startTime, completedTime)
         };
+    }
+
+    // The one place every history write passes: an older copy of a task Squid holds finished never replaces it, whatever the plan said.
+    private async Task<bool> IsOlderCopyAsync(OctopusImportHistoryUnit unit, CancellationToken ct)
+    {
+        if (unit.ExistingTaskId is not { } taskId) return false;
+
+        var storedState = await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId).Select(t => t.State).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+
+        return OctopusImportHistoryWriteRules.IsOlderCopy(storedState, unit.Task);
     }
 
     private async Task<int> ResolveActorIdAsync(string deployedBy, CancellationToken ct)
@@ -86,9 +98,14 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
         var taskId = _ctx.Unit.ExistingTaskId!.Value;
 
         if (_ctx.WritesScalars || _ctx.WritesChildren) await UpdateServerTaskAsync(taskId, ct).ConfigureAwait(false);
+        else await RelinkServerTaskAsync(taskId, ct).ConfigureAwait(false);
 
         return taskId;
     }
+
+    // A kept task still follows its deployment's owners (they differ only when Squid deleted the old project or environment).
+    private Task RelinkServerTaskAsync(int taskId, CancellationToken ct)
+        => _dbContext.Database.ExecuteSqlRawAsync("UPDATE server_task SET project_id = {0}, environment_id = {1} WHERE id = {2} AND (project_id IS DISTINCT FROM {0} OR environment_id IS DISTINCT FROM {1})", new object[] { _ctx.Unit.ProjectId, _ctx.Unit.EnvironmentId, taskId }, ct);
 
     private async Task<int> InsertServerTaskAsync(CancellationToken ct)
     {
@@ -207,9 +224,23 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
 
         var deploymentId = _ctx.Unit.ExistingDeploymentId.Value;
 
-        await UpdateDeploymentAsync(deploymentId, taskId, ct).ConfigureAwait(false);
+        if (_ctx.KeepsNewer) await RelinkDeploymentAsync(deploymentId, ct).ConfigureAwait(false);
+        else await UpdateDeploymentAsync(deploymentId, taskId, ct).ConfigureAwait(false);
 
         return deploymentId;
+    }
+
+    // An older copy writes nothing of its own (machines, json, deployed-by stay the newer copy's): only the owners the deployment follows.
+    private Task RelinkDeploymentAsync(int deploymentId, CancellationToken ct)
+    {
+        const string sql = """
+            UPDATE deployment SET project_id = {0}, channel_id = {1}, release_id = {2}, environment_id = {3}
+            WHERE id = {4} AND (project_id IS DISTINCT FROM {0} OR channel_id IS DISTINCT FROM {1} OR release_id IS DISTINCT FROM {2} OR environment_id IS DISTINCT FROM {3})
+            """;
+
+        var unit = _ctx.Unit;
+
+        return _dbContext.Database.ExecuteSqlRawAsync(sql, new object[] { unit.ProjectId, unit.ChannelId, unit.ReleaseId, unit.EnvironmentId, deploymentId }, ct);
     }
 
     private Task<int> InsertDeploymentAsync(int taskId, CancellationToken ct)

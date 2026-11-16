@@ -17,6 +17,7 @@ using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.OctopusImport;
 using EnvironmentEntity = Squid.Core.Persistence.Entities.Deployments.Environment;
+using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 
 namespace Squid.IntegrationTests.Services.OctopusImport;
 
@@ -88,7 +89,8 @@ public partial class OctopusImportFromServerIntegrationTests
     }
 
     // Deleted in Squid after the first import: the next import, from either source, re-creates what was deleted (and only that),
-    // under the project it belongs to; what a user edited elsewhere is kept; a further import of that source is up to date.
+    // under the project it belongs to, and moves the history the delete left behind onto it (never imported twice); what a user
+    // edited elsewhere is kept; a further import of that source is up to date.
     [Theory]
     [InlineData(ApiSource, ApiSource, "Project")]
     [InlineData(ApiSource, FileSource, "Project")]
@@ -103,13 +105,17 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(await ImportFromAsync(first, octopus, archive, interrupt: false));
         await SetFeedCredentialsInSquidAsync("user-robot", "user-token");
         var environment = await SingleAsync<EnvironmentEntity>();
+        var history = (await CountAsync<Deployment>(), await CountAsync<ServerTaskEntity>());
         var gone = deleted == "Project" ? await DeleteProjectAsync() : await DeleteReleaseAsync();
 
         var reimport = await ImportFromAsync(then, octopus, archive, interrupt: false);
 
         ShouldHaveSucceeded(reimport);
-        var recreated = deleted == "Project" ? ["Project", "Channel", "DeploymentStep", "DeploymentAction", "Release", "Deployment", "ServerTask"] : new[] { "Release", "Deployment", "ServerTask" };
+        var recreated = deleted == "Project" ? ["Project", "Channel", "DeploymentStep", "DeploymentAction"] : new[] { "Release" };
+        var moved = deleted == "Project" ? ["Release", "Deployment", "ServerTask"] : new[] { "Deployment", "ServerTask" };
         reimport.PreviewPlan.Resources.Where(r => recreated.Contains(r.SourceType)).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Create, Describe(reimport.PreviewPlan));
+        reimport.PreviewPlan.Resources.Where(r => moved.Contains(r.SourceType)).ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Update, Describe(reimport.PreviewPlan));
+        (await CountAsync<Deployment>(), await CountAsync<ServerTaskEntity>()).ShouldBe(history, "the history the delete left behind was imported a second time");
         reimport.PreviewPlan.Resources.Where(r => r.SourceType is "Environment" or "Lifecycle" or "Feed" or "LibraryVariableSet").ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported, Describe(reimport.PreviewPlan));
         var project = await SingleProjectWithHistoryAsync();
         (deleted == "Project" ? project.Id : (await SingleAsync<Release>()).Id).ShouldNotBe(gone);

@@ -39,7 +39,9 @@ public static class OctopusImportSourceMapTables
     /// <summary>
     /// What else must exist for a row of an owned kind to be live, as a predicate over its destination row <c>d</c>.
     /// Squid deletes do not cascade: a deleted project leaves its channels, variable set, process and history behind,
-    /// and a row pointing at such an orphan must be stale, or the re-created owner would be left empty.
+    /// and a configuration row pointing at such an orphan must be stale, or the re-created owner would be left empty.
+    /// History (releases, deployments) has none: it stays live while its own row exists, and an import that re-creates
+    /// its owner moves it onto the new owner instead of importing it a second time.
     /// </summary>
     public static IReadOnlyDictionary<string, string> OwnerPredicates { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -50,14 +52,10 @@ public static class OctopusImportSourceMapTables
         [nameof(OctopusResourceKind.Variable)] = $"EXISTS (SELECT 1 FROM variable_set vs WHERE vs.id = d.variable_set_id AND {VariableSetOwned("vs")})",
         [nameof(OctopusResourceKind.DeploymentProcess)] = ProcessOwned("d"),
         [nameof(OctopusResourceKind.DeploymentStep)] = $"EXISTS (SELECT 1 FROM deployment_process dp WHERE dp.id = d.process_id AND {ProcessOwned("dp")})",
-        [nameof(OctopusResourceKind.DeploymentAction)] = $"EXISTS (SELECT 1 FROM deployment_step ds JOIN deployment_process dp ON dp.id = ds.process_id WHERE ds.id = d.step_id AND {ProcessOwned("dp")})",
-        [nameof(OctopusResourceKind.Release)] = $"{ProjectExists("d.project_id")} AND {ChannelExists("d.channel_id")}",
-        [nameof(OctopusResourceKind.Deployment)] = $"{ProjectExists("d.project_id")} AND {ChannelExists("d.channel_id")} AND EXISTS (SELECT 1 FROM release orl WHERE orl.id = d.release_id) AND EXISTS (SELECT 1 FROM environment oe WHERE oe.id = d.environment_id)"
+        [nameof(OctopusResourceKind.DeploymentAction)] = $"EXISTS (SELECT 1 FROM deployment_step ds JOIN deployment_process dp ON dp.id = ds.process_id WHERE ds.id = d.step_id AND {ProcessOwned("dp")})"
     };
 
     private static string ProjectExists(string column) => $"EXISTS (SELECT 1 FROM project op WHERE op.id = {column})";
-
-    private static string ChannelExists(string column) => $"EXISTS (SELECT 1 FROM channel oc WHERE oc.id = {column})";
 
     // Owned through the owner's pointer, not the set's own owner column: a re-created project points at its new set.
     private static string VariableSetOwned(string alias)

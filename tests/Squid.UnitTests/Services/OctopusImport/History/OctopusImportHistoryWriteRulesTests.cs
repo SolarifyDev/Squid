@@ -12,6 +12,17 @@ public class OctopusImportHistoryWriteRulesTests
     private static string TaskFingerprint => OctopusImportFingerprint.ForTask(Task);
 
     [Theory]
+    [InlineData("Success", "Executing", true)]    // Squid holds it finished, the source still running → older copy
+    [InlineData("Failed", "Queued", true)]
+    [InlineData("Cancelled", "Cancelling", true)]
+    [InlineData("Executing", "Success", false)]   // the source finished it → newer
+    [InlineData("Pending", "Executing", false)]   // both still running → a change, not provably older
+    [InlineData("Success", "Failed", false)]      // both final → a change
+    [InlineData(null, "Executing", false)]        // no stored task
+    public void IsOlderCopy_Theory(string storedSquidState, string incomingOctopusState, bool expected)
+        => OctopusImportHistoryWriteRules.IsOlderCopy(storedSquidState, new OctopusServerTaskDto { State = incomingOctopusState }).ShouldBe(expected);
+
+    [Theory]
     [InlineData(true, true, false)]    // same task, row present → unchanged
     [InlineData(false, true, true)]    // task changed in Octopus
     [InlineData(true, false, true)]    // task row gone → re-created

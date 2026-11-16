@@ -33,6 +33,8 @@ internal sealed class OctopusImportScenario
     private readonly List<ExternalFeedCredentialSlot> _squidFeeds = [];
     private readonly Dictionary<int, string> _storedReleaseNotes = [];
     private readonly Dictionary<int, OctopusImportStoredTask> _storedTasks = [];
+    private readonly HashSet<int> _orphanedReleases = [];
+    private readonly HashSet<int> _orphanedDeployments = [];
     private string _installationId;
     private string _priorInstallationId;
     private OctopusImportHistoryFetchDto _priorImportSession;
@@ -202,6 +204,15 @@ internal sealed class OctopusImportScenario
     public OctopusImportScenario WithoutMapping(OctopusResourceKind kind, string sourceId)
     {
         _prior.Remove((kind.ToString(), sourceId));
+        return this;
+    }
+
+    /// <summary>Imported history whose owner a Squid delete removed: the release or deployment row is still there, pointing at the deleted row.</summary>
+    public OctopusImportScenario OrphanedInSquid(OctopusResourceKind kind, string sourceId)
+    {
+        var destinationId = PriorDestinationOf(kind, sourceId);
+
+        (kind == OctopusResourceKind.Release ? _orphanedReleases : _orphanedDeployments).Add(destinationId);
         return this;
     }
 
@@ -447,6 +458,7 @@ internal sealed class OctopusImportScenario
         destination.Setup(d => d.GetResourcesAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(_destination);
         destination.Setup(d => d.GetReleaseKeysAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(_releaseKeys);
         destination.Setup(d => d.GetVariableNamesAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> setIds, CancellationToken _) => _squidVariables.Where(v => setIds.Contains(v.VariableSetId)).Select(v => new OctopusImportDestinationVariable(v.VariableSetId, v.Identity.Name)).Distinct().ToList());
+        destination.Setup(d => d.GetOrphanedHistoryAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(() => new OctopusImportOrphanedHistory(_orphanedReleases.ToHashSet(), _orphanedDeployments.ToHashSet()));
         destination.Setup(d => d.GetStoredHistoryAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken _) => StoredHistory(releaseIds, taskIds));
 
         var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();

@@ -441,27 +441,29 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
 
             var prior = await provider.LoadAsync(SpaceId);
 
-            prior.Mappings.Count.ShouldBe(2);
+            prior.Mappings.Count.ShouldBe(3);
             prior.TryGet("Environment", "environments-1", out var environmentMapping).ShouldBeTrue();
             environmentMapping.ShouldBe(new OctopusImportPriorMapping(environment.Id, "Created", "fp-env", null));
             prior.TryGet("Release", "Releases-1", out var releaseMapping).ShouldBeTrue();
             releaseMapping.DestinationId.ShouldBe(release.Id);
             prior.TryGet("Release", "Releases-2", out _).ShouldBeFalse(customMessage: "a row whose destination was deleted must be dropped as stale");
-            prior.TryGet("Release", "Releases-3", out _).ShouldBeFalse(customMessage: "a release whose project was deleted is an orphan, so its row must be dropped as stale");
+            prior.TryGet("Release", "Releases-3", out _).ShouldBeTrue(customMessage: "a release whose project was deleted is still in Squid: an import that re-creates the project moves it there, never imports it twice");
             prior.TryGet("Certificate", "Certificates-1", out _).ShouldBeFalse(customMessage: "a type with no known table can never be verified, so it is never trusted");
             prior.InstallationId.ShouldBeNull();
         });
     }
 
-    // Squid deletes never cascade: when an owner row is deleted, every row it owned survives as an orphan, and a map
-    // row pointing at such an orphan must be stale too, or the re-created owner would be left empty.
+    // Squid deletes never cascade: when an owner row is deleted, every row it owned survives as an orphan, and a configuration
+    // map row pointing at such an orphan must be stale too, or the re-created owner would be left empty. History (releases,
+    // deployments) stays live while its own row exists: an import that re-creates its owner moves it there instead of importing
+    // it a second time.
     [Theory]
-    [InlineData("project", "Project", "Channel,VariableSet:project,Variable:project,VariableSecret:project,DeploymentProcess,DeploymentStep,DeploymentAction,Release,Deployment")]
+    [InlineData("project", "Project", "Channel,VariableSet:project,Variable:project,VariableSecret:project,DeploymentProcess,DeploymentStep,DeploymentAction")]
     [InlineData("library_variable_set", "LibraryVariableSet", "VariableSet:library,Variable:library,VariableSecret:library")]
     [InlineData("lifecycle", "Lifecycle", "LifecyclePhase")]
-    [InlineData("channel", "Channel", "Release,Deployment")]
-    [InlineData("release", "Release", "Deployment")]
-    [InlineData("environment", "Environment", "Deployment")]
+    [InlineData("channel", "Channel", "")]
+    [InlineData("release", "Release", "")]
+    [InlineData("environment", "Environment", "")]
     public async Task Load_OwnerDeleted_DropsTheRowsItOwned(string ownerTable, string ownerLabel, string expectedStale)
     {
         await Run<SquidDbContext, IRepository, IUnitOfWork, IOctopusImportSourceMapDataProvider>(async (db, repository, unitOfWork, provider) =>

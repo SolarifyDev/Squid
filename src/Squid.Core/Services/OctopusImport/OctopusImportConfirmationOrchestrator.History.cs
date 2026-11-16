@@ -69,6 +69,10 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         var destinationId = EnsurePriorDestination(execution, resource, preview.DestinationId);
         var source = resource.GetSource<OctopusReleaseDto>() ?? throw new OctopusImportConfirmationException("Release source payload is missing.");
 
+        EnsureUpdateNotStale(execution, resource, preview);
+
+        await _deploymentHistoryImporter.RelinkReleaseAsync(destinationId, ResolveOwner(execution, resource, source.ProjectId, OctopusResourceKind.Project), ResolveOwner(execution, resource, source.ChannelId, OctopusResourceKind.Channel), ct).ConfigureAwait(false);
+
         var squidNotes = await _deploymentHistoryImporter.GetReleaseNotesAsync(destinationId, ct).ConfigureAwait(false);
 
         var written = !OctopusImportPriorMappingPolicy.ReleaseNotesEditedInSquid(execution.PriorFor(resource), squidNotes) && await _deploymentHistoryImporter.UpdateReleaseNotesIfUnchangedAsync(destinationId, squidNotes, source.ReleaseNotes, ct).ConfigureAwait(false);
@@ -86,6 +90,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     private async Task UpdateHistoryUnitAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview, CancellationToken ct)
     {
         var deploymentId = EnsurePriorDestination(execution, resource, preview.DestinationId);
+
+        EnsureUpdateNotStale(execution, resource, preview);
+
         var source = await LoadHistoryUnitSourceAsync(execution, resource, ct).ConfigureAwait(false);
         var stored = execution.PriorFor(resource);
         var existingTaskId = execution.PriorFor(source.Task)?.DestinationId;
@@ -99,10 +106,19 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         RecordUpdatedUnit(execution, source, result, existingTaskId, replaceChildren);
     }
 
-    // An updated unit maps as Reused (it existed before); a task whose row was gone was re-created.
+    // An updated unit maps as Reused (it existed before); a task whose row was gone was re-created. An older copy the importer kept out
+    // wrote nothing of its own: the unit stays Reused, so its stored fingerprints are kept.
     private static void RecordUpdatedUnit(ConfirmationExecutionContext execution, HistoryUnitSource source, OctopusImportDeploymentHistoryResult result, int? existingTaskId, bool childrenReplaced)
     {
         execution.AddReused(source.Deployment, result.DeploymentId);
+
+        if (result.OlderCopyKept)
+        {
+            execution.AddReused(source.Task, result.TaskId);
+            execution.AddDiagnostic(source.Deployment, OlderHistoryKept(source.Deployment));
+            return;
+        }
+
         execution.MarkOutcome(source.Deployment, OctopusImportResourceOutcomeState.Updated);
 
         if (existingTaskId == null)
@@ -180,6 +196,18 @@ public sealed partial class OctopusImportConfirmationOrchestrator
 
         throw StalePlan(execution, resource, "This resource was imported by another confirmation after this plan was previewed. Re-run the preview.");
     }
+
+    // An update rewrites what the source map held when the plan was previewed. A later import that moved the record on since wrote content
+    // at least as new, so an older copy never replaces it: the plan is stale.
+    private static void EnsureUpdateNotStale(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
+    {
+        if (preview.PriorImportFingerprint == null || preview.PriorImportFingerprint == OctopusImportPriorMappingPolicy.ImportBasis(execution.PriorFor(resource))) return;
+
+        throw StalePlan(execution, resource, "This resource was imported again by another confirmation after this plan was previewed; an older copy never replaces it. Re-run the preview.");
+    }
+
+    private static OctopusImportDiagnosticDto OlderHistoryKept(OctopusResourceNode resource)
+        => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.OlderHistoryKept, "Squid holds this Octopus deployment finished, but the import source has it still running: the source is an older copy, so the newer imported history was kept.", resource);
 
     // The plan is client-posted: an update's destination id is trusted only when the source map recorded exactly that id.
     private static int EnsurePriorDestination(ConfirmationExecutionContext execution, OctopusResourceNode resource, int? destinationId)

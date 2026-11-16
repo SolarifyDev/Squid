@@ -64,6 +64,9 @@ public sealed record OctopusImportConflictDiscoveryResult(
 
     /// <summary>Squid's current values of the history rows this import would update (old side of the preview's old → new).</summary>
     public OctopusImportStoredHistory StoredHistory { get; init; } = OctopusImportStoredHistory.Empty;
+
+    /// <summary>The history rows a Squid delete left without an owner: the only ones an import moves onto a re-created owner.</summary>
+    public OctopusImportOrphanedHistory OrphanedHistory { get; init; } = OctopusImportOrphanedHistory.Empty;
 }
 
 /// <summary>Squid's release identity: a version is unique per project channel.</summary>

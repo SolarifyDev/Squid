@@ -113,6 +113,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         if (IsHistoryKind(resource.Kind))
         {
             ApplyDecision(result, DecideHistory(resource, context));
+            result.PriorImportFingerprint = PreviewedBasis(resource, result.PreviewAction, context);
             return result;
         }
 

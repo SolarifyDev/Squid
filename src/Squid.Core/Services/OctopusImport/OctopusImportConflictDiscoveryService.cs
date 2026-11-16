@@ -46,8 +46,9 @@ public class OctopusImportConflictDiscoveryService(
         var creatorOrigins = await LoadCreatorOriginsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var destinationVariables = await LoadVariablesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var orphanedHistory = await LoadOrphanedHistoryAsync(destinationSpaceId, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, CreatorOrigins = creatorOrigins, Destinations = destinationResources, StoredHistory = storedHistory };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, CreatorOrigins = creatorOrigins, Destinations = destinationResources, StoredHistory = storedHistory, OrphanedHistory = orphanedHistory };
     }
 
     // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
@@ -60,6 +61,17 @@ public class OctopusImportConflictDiscoveryService(
 
         return await destinationDataProvider.GetStoredHistoryAsync(destinationSpaceId, releaseIds, taskIds, ct).ConfigureAwait(false) ?? OctopusImportStoredHistory.Empty;
     }
+
+    // Only a space an earlier import wrote history into can hold imported history a Squid delete orphaned.
+    private async Task<OctopusImportOrphanedHistory> LoadOrphanedHistoryAsync(int destinationSpaceId, OctopusImportPriorMappings prior, CancellationToken ct)
+    {
+        if (!prior.Mappings.Keys.Any(IsHistoryRow)) return OctopusImportOrphanedHistory.Empty;
+
+        return await destinationDataProvider.GetOrphanedHistoryAsync(destinationSpaceId, ct).ConfigureAwait(false) ?? OctopusImportOrphanedHistory.Empty;
+    }
+
+    private static bool IsHistoryRow((string Type, string Id) key)
+        => key.Type == OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Release)) || key.Type == OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Deployment));
 
     // Only the imported sets with an incoming variable that has no live row are read (by name): on an unchanged repeat, nothing.
     private async Task<IReadOnlyList<OctopusImportDestinationVariable>> LoadVariablesWithoutRowsAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)

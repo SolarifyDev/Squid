@@ -85,6 +85,10 @@ public static class OctopusImportPriorMappingPolicy
             ? !string.IsNullOrWhiteSpace(squidNotes)
             : !string.Equals(stored.Fingerprint, OctopusImportFingerprint.ForRelease(new OctopusReleaseDto { ReleaseNotes = squidNotes }), StringComparison.Ordinal);
 
+    /// <summary>What an Update is previewed against: the recorded fingerprints of the history it rewrites (null when nothing is recorded).</summary>
+    public static string ImportBasis(OctopusImportPriorMapping stored)
+        => stored == null ? null : $"{stored.Fingerprint}|{stored.DetailFingerprint}";
+
     private static OctopusImportPriorDecision DecideRelease(OctopusResourceNode node, OctopusImportPriorMappings prior)
     {
         if (!TryGetPrior(prior, node, out var mapping)) return null;

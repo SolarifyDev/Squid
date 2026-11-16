@@ -21,6 +21,9 @@ public interface IOctopusImportDestinationDataProvider : IScopedDependency
 
     /// <summary>The names of the variables the given variable sets of the space hold now (never values).</summary>
     Task<IReadOnlyList<OctopusImportDestinationVariable>> GetVariableNamesAsync(int destinationSpaceId, IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default);
+
+    /// <summary>The releases and deployments of the space whose owner rows were deleted in Squid (deletes do not cascade).</summary>
+    Task<OctopusImportOrphanedHistory> GetOrphanedHistoryAsync(int destinationSpaceId, CancellationToken cancellationToken = default);
 }
 
 public class OctopusImportDestinationDataProvider(IRepository repository) : IOctopusImportDestinationDataProvider
@@ -115,6 +118,32 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
         var sets = repository.QueryNoTracking<VariableSet>(s => s.SpaceId == destinationSpaceId && variableSetIds.Contains(s.Id)).Select(s => s.Id);
 
         return await repository.QueryNoTracking<Variable>(v => sets.Contains(v.VariableSetId)).Select(v => new OctopusImportDestinationVariable(v.VariableSetId, v.Name)).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<OctopusImportOrphanedHistory> GetOrphanedHistoryAsync(int destinationSpaceId, CancellationToken cancellationToken = default)
+    {
+        var releaseIds = await LoadOrphanedReleaseIdsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
+        var deploymentIds = await LoadOrphanedDeploymentIdsAsync(destinationSpaceId, cancellationToken).ConfigureAwait(false);
+
+        return new OctopusImportOrphanedHistory(releaseIds.ToHashSet(), deploymentIds.ToHashSet());
+    }
+
+    private async Task<List<int>> LoadOrphanedReleaseIdsAsync(int destinationSpaceId, CancellationToken ct)
+    {
+        var projects = repository.QueryNoTracking<Project>();
+        var channels = repository.QueryNoTracking<Channel>();
+
+        return await repository.QueryNoTracking<Release>(r => r.SpaceId == destinationSpaceId).Where(r => !projects.Any(p => p.Id == r.ProjectId) || !channels.Any(c => c.Id == r.ChannelId)).Select(r => r.Id).ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<List<int>> LoadOrphanedDeploymentIdsAsync(int destinationSpaceId, CancellationToken ct)
+    {
+        var projects = repository.QueryNoTracking<Project>();
+        var channels = repository.QueryNoTracking<Channel>();
+        var releases = repository.QueryNoTracking<Release>();
+        var environments = repository.QueryNoTracking<DeploymentEnvironment>();
+
+        return await repository.QueryNoTracking<Deployment>(d => d.SpaceId == destinationSpaceId).Where(d => !projects.Any(p => p.Id == d.ProjectId) || !channels.Any(c => c.Id == d.ChannelId) || !releases.Any(r => r.Id == d.ReleaseId) || !environments.Any(e => e.Id == d.EnvironmentId)).Select(d => d.Id).ToListAsync(ct).ConfigureAwait(false);
     }
 
     private async Task<Dictionary<int, string>> LoadReleaseNotesAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, CancellationToken ct)
