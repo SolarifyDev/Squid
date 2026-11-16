@@ -70,10 +70,12 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     private static OctopusImportSourceMapRow WithCreatingOrigin(OctopusImportSourceMapRow row, OctopusResourceGraph graph)
         => row with { CreatedInstallationId = graph.InstallationId, CreatedExportSourceId = graph.ExportSourceId };
 
-    // The export fingerprint proves later files for secret fills, so it is pinned once — by the space's first export-file import — and
-    // never replaced (D10): a later file of a cloned server must not become a reference. A space imported from an Octopus server pins
-    // it only from a file proven to be that server's (or whose pairing the user confirmed).
-    private static bool MayPinExportSource(ConfirmationExecutionContext execution) => execution.Prior.ExportSourceIds.Count == 0 && MayRecordOrigin(execution);
+    // A recorded export fingerprint proves later files of it (links, history, secret fills), so it is recorded only from a file that is
+    // the space's origin: the space's first export-file import, or a file whose pairing with the origin the user confirmed (backed by
+    // matching process ids). The first one stays pinned; each confirmed one is added next to it as another export of the same Octopus,
+    // so its next import is proven without asking. A file of an unknown fingerprint that needed no proof is never recorded.
+    private static bool MayPinExportSource(ConfirmationExecutionContext execution)
+        => !OctopusImportFillEvidences.IsKnownExportSource(execution.Request.Graph.ExportSourceId, execution.Prior) && MayRecordOrigin(execution);
 
     // A recorded origin proves every later import of that source by id for the rows attributed to it, so the source becomes one only
     // where it cannot vouch for rows another origin created: an empty space or one whose every row has a known creator and no recorded

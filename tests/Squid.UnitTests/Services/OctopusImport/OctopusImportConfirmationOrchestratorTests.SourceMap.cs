@@ -108,13 +108,14 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.Count(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldBe(expected ? 1 : 0);
     }
 
-    // The fingerprint is pinned once, by the first export-file import of the space, and never joined by another: otherwise a file of
-    // a cloned server imported while nothing needed filling would prove that server's files for every later fill (D10).
+    // A fingerprint is recorded only by a file that is the space's origin: the first export-file import of the space pins it. A file of
+    // another fingerprint that needed no proof (no id in common) is not joined: otherwise a cloned server's file imported while nothing
+    // needed proof would prove that server's files for every later import (a confirmed pairing adds one, see the origin tests).
     [Theory]
     [InlineData(null, "0123456789ABCDEF0123456789ABCDEF", true)]
     [InlineData("0123456789ABCDEF0123456789ABCDEF", "FEDCBA9876543210FEDCBA9876543210", false)]
     [InlineData("0123456789ABCDEF0123456789ABCDEF", "0123456789ABCDEF0123456789ABCDEF", false)]
-    public async Task SourceMap_PinsTheExportSourceFingerprintOnlyOnce(string recorded, string exportSourceId, bool expected)
+    public async Task SourceMap_RecordsAnExportFingerprintOnlyFromTheSpacesOrigin(string recorded, string exportSourceId, bool expected)
     {
         var nodes = BuildMinimalNodes();
         var upserted = new List<OctopusImportSourceMapRow>();
@@ -180,10 +181,10 @@ public partial class OctopusImportConfirmationOrchestratorTests
         upserted.Where(r => r.SourceType == "Release").ShouldAllBe(r => r.Fingerprint == null, "a kept release records no new fingerprint, so the stored one stays");
     }
 
-    // The plan is posted by the client: an Update of history from an export file whose fingerprint differs from the space's pinned one
-    // (possibly another Octopus server with the same ids) is refused as stale, nothing written.
+    // The plan is posted by the client: an Update of history from an export file whose fingerprint the space does not know (possibly
+    // another Octopus server with the same ids), with no process id backing a pairing, is refused under the space lock, nothing written.
     [Fact]
-    public async Task HistoryUpdate_FromAnotherExportSource_FailsStaleWithoutWriting()
+    public async Task HistoryUpdate_FromAnUnprovenExportFingerprint_RefusedWithoutWriting()
     {
         var history = HistoryScenario();
         var prior = new OctopusImportPriorMappings(history.Prior.Mappings, null, ["0123456789ABCDEF0123456789ABCDEF"]);
@@ -194,7 +195,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Failed);
-        Outcome(harness, history.Release).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan);
+        harness.SessionService.RecordedResult.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
         harness.DeploymentHistoryImporter.Verify(i => i.UpdateReleaseNotesIfUnchangedAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

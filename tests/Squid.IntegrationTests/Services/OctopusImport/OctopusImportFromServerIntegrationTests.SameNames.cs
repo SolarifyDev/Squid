@@ -12,7 +12,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// <summary>
 /// Another Octopus URL whose projects carry the same names (and ids) as what Squid already holds, with other configuration: what is
 /// merged and what is refused, pinned on the real database. Imports never merge by name: a source links to an earlier import's rows
-/// only by source id, and only once its origin is proven (installation id, pinned export fingerprint, or a confirmed pairing); a
+/// only by source id, and only once its origin is proven (installation id, a recorded export fingerprint, or a confirmed pairing); a
 /// Squid resource made by hand is reused only when it is not a project and exactly one matches.
 /// </summary>
 public partial class OctopusImportFromServerIntegrationTests
@@ -150,42 +150,111 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SpaceContentAsync()).ShouldBe(before);
     }
 
-    // CHARACTERIZATION of today's behaviour — not an endorsement (the owner kept the export-fingerprint degrade). An export file of
-    // ANOTHER Octopus server (another fingerprint, no installation id) whose ids collide with the first export's: nothing refuses it.
-    // Its Projects-1 (another name, another configuration) is treated as already imported and LINKED to the first server's project;
-    // only history it would rewrite is skipped. History new to Squid (Releases-7, Deployments-7) is CREATED under the first server's
-    // project and environment. Its fingerprint is never pinned; the rows it created are stamped with it.
+    // file(Y) → file of ANOTHER Octopus server (another fingerprint, no installation id) whose ids collide with Y's (Projects-1 named
+    // "Payments API", Releases-1, Deployments-1) and with none of Y's process ids: the preview refuses it, naming both fingerprints, and
+    // offers no pairing; validation refuses it — a forged pairing confirmation too — and confirmation is refused. Nothing of the other
+    // server is linked or written: every row of the space is byte-identical afterwards.
     [Fact]
-    public async Task Characterization_ExportOfAnotherServer_CollidingIds_LinkedToTheFirstServersProject_ItsNewHistoryAddedThere()
+    public async Task ExportOfAnotherServer_CollidingIds_NoProcessIdInCommon_Refused_SpaceByteIdentical()
     {
         await EnsureImportSpaceAsync();
         ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(withHistory: true, exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false)));
+        var before = await SpaceContentAsync();
+
+        var (sessionId, preview) = await UploadAndPreviewAsync(ExportArchive(withHistory: true, extra: OtherServerDocuments(), exportSpaceId: $"Spaces-1-{OtherServerFingerprint}", withInstallationId: false));
+
+        preview.HasBlockers.ShouldBeTrue(Describe(preview));
+        preview.FillPairing.ShouldBeNull("no process id backs a pairing, so none is offered");
+        preview.Origin.ShouldNotBeNull(Describe(preview)).ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.Unproven),
+            o => o.Basis.ShouldBe("export-fingerprint-mismatch"),
+            o => o.MatchingStructureIds.ShouldBe(0),
+            o => o.Source.ShouldContain($"export file with fingerprint {OtherServerFingerprint}", Case.Insensitive),
+            o => o.Recorded.ShouldContain($"export file with fingerprint {OriginFingerprint}", Case.Insensitive));
+        preview.Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).ShouldSatisfyAllConditions(
+            d => d.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Blocker),
+            d => d.Message.ShouldContain("nothing is linked or written"));
+        (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK);
+
+        preview.FillPairing = new OctopusImportFillPairingDto { Required = true, Confirmed = true };
+        var forged = await ValidateAsync(sessionId, preview);
+        forged.Code.ShouldNotBe(HttpStatusCode.OK, "a posted pairing without matching process ids proves nothing");
+        forged.Data.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+        var confirm = await ConfirmAsync(sessionId);
+
+        (confirm.Code, confirm.Data?.Session?.State).ShouldNotBe((HttpStatusCode.OK, OctopusImportSessionState.Succeeded));
+        (await SpaceContentAsync()).ShouldBe(before);
+    }
+
+    // file(F1) → a re-export of the SAME server with a new fingerprint (F2): its process ids match what F1 created, so the preview asks
+    // for the pairing (file wording, both fingerprints) instead of refusing; without the confirmation validation refuses. Confirmed, it
+    // links to F1's rows (nothing duplicated), adds only what is new, updates history changed in Octopus, and F2 is recorded next to the
+    // pinned F1 — so the next import of F2 (and of F1) is proven without asking.
+    [Fact]
+    public async Task SameServersReExport_NewFingerprint_PairingConfirmedOnce_LinksAndAdds_NextImportProvenWithoutPrompt()
+    {
+        const string reExportFingerprint = "2B3C4D5E6F708192A3B4C5D6E7F80912";
+        await EnsureImportSpaceAsync();
+        ShouldHaveSucceeded(await ImportFromFileAsync(ExportArchive(withHistory: true, extra: [OctopusWithheldSecretResources.ExportProcessDocument()], exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false)));
         var project = await SingleAsync<Project>();
         var environment = await SingleAsync<EnvironmentEntity>();
-        var otherServer = ExportArchive(withHistory: true, extra: OtherServerDocuments(), exportSpaceId: $"Spaces-1-{OtherServerFingerprint}", withInstallationId: false);
+        var linked = await CountRowsAsync(LinkedTables);
+        var reExport = ExportArchive(withHistory: true, extra: ReExportDocuments(), exportSpaceId: $"Spaces-1-{reExportFingerprint}", withInstallationId: false);
 
-        var result = await ImportFromFileAsync(otherServer);
+        var (sessionId, preview) = await UploadAndPreviewAsync(reExport);
 
-        ShouldHaveSucceeded(result);
-        var plan = result.PreviewPlan;
-        plan.HasBlockers.ShouldBeFalse(Describe(plan));
-        plan.Origin.ShouldBeNull("another export fingerprint shows no origin verdict");
-        plan.FillPairing.ShouldBeNull();
-        OctopusImportHandlerFlow.AllDiagnostics(plan).ShouldNotContain(d => d.Code.Contains("import_origin"));
-        plan.Resources.Single(r => r.SourceType == "Project").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(plan)), r => r.DestinationId.ShouldBe(project.Id), r => r.SourceName.ShouldBe("Payments API"));
-        plan.Resources.Single(r => r.SourceType == "Project").Diagnostics.ShouldBeEmpty("nothing on the project says it is another server's project of another name");
-        plan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").Select(r => $"{r.SourceId} {r.PreviewAction}").ShouldBe(["Releases-1 Skip", "Releases-7 Create", "Deployments-1 AlreadyImported", "Deployments-7 Create", "ServerTasks-1 AlreadyImported", "ServerTasks-7 Create"], ignoreOrder: true, customMessage: Describe(plan));
-        plan.Resources.Single(r => r.SourceId == "Releases-1").Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource, "only history it would rewrite is skipped");
+        preview.HasBlockers.ShouldBeFalse(Describe(preview));
+        preview.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired && d.Severity == OctopusImportCompatibilitySeverity.Warning, Describe(preview));
+        preview.FillPairing.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            p => p.Required.ShouldBeTrue(),
+            p => p.SourceInstallationId.ShouldBeNull(),
+            p => p.FileExportSourceId.ShouldBe(reExportFingerprint, StringCompareShould.IgnoreCase),
+            p => p.RecordedExportSourceId.ShouldBe(OriginFingerprint, StringCompareShould.IgnoreCase),
+            p => p.MatchingStructureIds.ShouldBe(2));
+        preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(
+            o => o.State.ShouldBe(OctopusImportFillEvidenceState.PairingRequired),
+            o => o.Basis.ShouldBe("export-fingerprint-mismatch"),
+            o => o.MatchingStructureIds.ShouldBe(2));
+        (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK, "a first pairing is never assumed");
 
+        preview.FillPairing.Confirmed = true;
+        (await ValidateAsync(sessionId, preview)).Code.ShouldBe(HttpStatusCode.OK);
+        var confirm = await ConfirmAsync(sessionId);
+
+        confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(confirm.Data.Session.Result));
+        (await CountRowsAsync(LinkedTables)).ShouldBe(linked, "linked to F1's resources, nothing duplicated");
         (await SingleAsync<Project>()).ShouldSatisfyAllConditions(p => p.Id.ShouldBe(project.Id), p => p.Name.ShouldBe("Server project"));
-        (await SingleAsync<EnvironmentEntity>()).Id.ShouldBe(environment.Id);
-        (await Run<SquidDbContext, List<string>>(db => db.Set<Release>().AsNoTracking().Select(r => $"{r.ProjectId}|{r.Version}|{r.ReleaseNote}").ToListAsync())).ShouldBe([$"{project.Id}|1.0.0|notes 1.0.0", $"{project.Id}|7.0.0|other server 7.0.0"], ignoreOrder: true);
+        (await Run<SquidDbContext, List<string>>(db => db.Set<Release>().AsNoTracking().Select(r => $"{r.ProjectId}|{r.Version}|{r.ReleaseNote}").ToListAsync())).ShouldBe([$"{project.Id}|1.0.0|notes 1.0.0 (edited in Octopus)", $"{project.Id}|7.0.0|notes 7.0.0"], ignoreOrder: true);
         (await Run<SquidDbContext, List<string>>(db => db.Set<Deployment>().AsNoTracking().Select(d => $"{d.ProjectId}|{d.EnvironmentId}").ToListAsync())).ShouldBe([$"{project.Id}|{environment.Id}", $"{project.Id}|{environment.Id}"]);
-        (await ExportSourceRowsAsync()).ShouldBe([OriginFingerprint], "only the first export-file import pins the fingerprint");
-        (await SourceMapAsync()).Where(r => r.SourceType is "Release" or "Deployment" && r.SourceId.ToUpperInvariant() is "RELEASES-7" or "DEPLOYMENTS-7").Select(r => r.CreatedExportSourceId).ShouldBe([OtherServerFingerprint, OtherServerFingerprint]);
+        (await ExportSourceRowsAsync()).Select(f => f.ToUpperInvariant()).ShouldBe([OriginFingerprint, reExportFingerprint], ignoreOrder: true);
+        (await SourceMapAsync()).Where(r => r.SourceId.ToUpperInvariant() is "RELEASES-7" or "DEPLOYMENTS-7").Select(r => r.CreatedExportSourceId?.ToUpperInvariant()).ShouldBe([reExportFingerprint, reExportFingerprint], "what F2 created is stamped with F2");
+
+        var again = await ImportFromFileAsync(reExport);
+        var first = await ImportFromFileAsync(ExportArchive(withHistory: true, extra: ReExportDocuments(), exportSpaceId: $"Spaces-1-{OriginFingerprint}", withInstallationId: false));
+
+        ShouldHaveSucceeded(again);
+        ShouldHaveSucceeded(first);
+        again.PreviewPlan.FillPairing.ShouldBeNull("its recorded fingerprint proves F2 now");
+        (again.PreviewPlan.Origin?.State, again.PreviewPlan.Origin?.Basis).ShouldBe((OctopusImportFillEvidenceState.Proven, "export-fingerprint"));
+        first.PreviewPlan.FillPairing.ShouldBeNull("the pinned fingerprint still proves F1");
+        (first.PreviewPlan.Origin?.State, first.PreviewPlan.Origin?.Basis).ShouldBe((OctopusImportFillEvidenceState.Proven, "export-fingerprint"), "F1 meets what F2 created: rows of the same origin, not of a third one");
+        (await CountRowsAsync(LinkedTables)).ShouldBe(linked);
+        (await Run<SquidDbContext, int>(db => db.Set<Release>().CountAsync())).ShouldBe(2, "re-imports add nothing twice");
+        (await ExportSourceRowsAsync()).Count.ShouldBe(2);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
+
+    // The same server exported again later: the same process ids, the notes of Releases-1 edited in Octopus, and a release and
+    // deployment made since.
+    private static IEnumerable<(string Id, string DocumentType, string Json)> ReExportDocuments() =>
+    [
+        OctopusWithheldSecretResources.ExportProcessDocument(),
+        ("Releases-1", "Release", """{"Id":"Releases-1","ProjectId":"Projects-1","ChannelId":"Channels-1","Version":"1.0.0","ReleaseNotes":"notes 1.0.0 (edited in Octopus)","SelectedPackages":[]}"""),
+        ("Releases-7", "Release", """{"Id":"Releases-7","ProjectId":"Projects-1","ChannelId":"Channels-1","Version":"7.0.0","ReleaseNotes":"notes 7.0.0","SelectedPackages":[]}"""),
+        ("ServerTasks-7", "ServerTask", """{"Id":"ServerTasks-7","Name":"Deploy","Description":"Deploy Deployments-7","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"Success","QueueTime":"2024-02-02T03:04:05Z","StartTime":"2024-02-02T03:04:06Z","CompletedTime":"2024-02-02T03:05:06Z","HasWarningsOrErrors":false}"""),
+        ("Deployments-7", "Deployment", """{"Id":"Deployments-7","Name":"Deploy Deployments-7","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-7","TaskId":"ServerTasks-7","DeployedToMachineIds":["Machines-1"],"Created":"2024-02-02T03:04:05Z"}""")
+    ];
 
     // One deployment, with the project's description and one plain variable set to what this installation holds.
     private static StubOctopusServer ServerWithConfiguration(string installationId, string projectDescription, string variableValue)

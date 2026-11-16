@@ -177,14 +177,22 @@ public class OctopusImportSecretFillPreviewTests
         plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker, "validation refuses on its own, whatever the posted preview says");
     }
 
-    // A cloned server shares ids and GUIDs; a different recorded fingerprint still refuses the file, confirmation or not.
-    [Fact]
-    public async Task FileFingerprintDiffersFromTheRecordedOne_FillBlockedEvenWithMatchingIdsAndConfirmation()
+    // A file whose fingerprint differs from the recorded one is checked by its process ids: matching ones ask for the pairing and a
+    // confirmed pairing fills; with none in common the fill is refused, confirmation or not.
+    [Theory]
+    [InlineData(true, false, OctopusImportPreviewAction.FillMissingSecret, true)]
+    [InlineData(true, true, OctopusImportPreviewAction.FillMissingSecret, false)]
+    [InlineData(false, true, OctopusImportPreviewAction.AlreadyImported, true)]
+    public async Task FileFingerprintDiffersFromTheRecordedOne_FillsOnlyThroughAConfirmedPairing(bool structureRecorded, bool confirmed, OctopusImportPreviewAction expectedAction, bool expectBlocked)
     {
-        var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope)).PriorExportSource(Fingerprint).ExportedFromSpace(SuffixedSpace(OtherFingerprint)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets, pairingConfirmed: true);
+        var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: structureRecorded).PriorExportSource(Fingerprint).ExportedFromSpace(SuffixedSpace(OtherFingerprint)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets, pairingConfirmed: confirmed);
 
-        plan.Resource(VariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
-        plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Message.Contains("fingerprint is not the one recorded"));
+        plan.Resource(VariableId).PreviewAction.ShouldBe(expectedAction);
+        plan.BlocksConfirmation.ShouldBe(expectBlocked, string.Join("; ", plan.Blockers.Select(b => b.Code)));
+        plan.Preview.FillPairing?.FileExportSourceId.ShouldBe(OtherFingerprint);
+        (plan.Preview.FillPairing != null).ShouldBe(structureRecorded);
+
+        if (!structureRecorded) plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Message.Contains("fingerprint is not one recorded"));
     }
 
     [Fact]

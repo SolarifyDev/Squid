@@ -62,7 +62,7 @@ public static class OctopusImportSecretFillMessages
 
     public static string Unproven(OctopusImportSecretFillCandidate candidate, OctopusImportFillEvidence evidence)
         => evidence?.Basis == OctopusImportFillEvidences.ExportFingerprintMismatchBasis
-            ? $"This {What(candidate.Kind)} is missing in {Where(candidate)}, but this export file's fingerprint is not the one recorded for this space by its first export-file import, so it comes from another export source. Missing values are never filled from another installation's file; import an export file of the same Octopus server."
+            ? $"This {What(candidate.Kind)} is missing in {Where(candidate)}, but this export file's fingerprint is not one recorded for this space, and none of its process step, action or lifecycle phase ids were imported into it, so nothing proves it comes from the same Octopus server. Missing values are never filled from another installation's file; import an export file of the same Octopus server."
             : $"This {What(candidate.Kind)} is missing in {Where(candidate)}, but nothing proves this export file comes from the Octopus installation this space was imported from: no matching installation id, export fingerprint, or process step, action or lifecycle phase ids. Missing values are never filled from another installation's file; import the export file of the same Octopus server.";
 
     public static string PairingRequired(int matchingIds, string installationId, OctopusImportInstallationOrigin origin, int fills)

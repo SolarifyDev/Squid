@@ -109,10 +109,12 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         (await PreviewAsync(Archive(new HistorySpec { ReleaseNotes = "Hotfix notes" }))).PreviewPlan.Resources.Single(r => r.SourceType == "Release").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
     }
 
-    // Two Octopus servers share ids (Releases-1, Deployments-1). An export of another export source (different suffix) into a space
-    // already imported from the first never rewrites that history: release, deployment and task are skipped with the reason.
+    // Two Octopus servers share ids (Releases-1, Deployments-1). An export of another export source (different suffix, no process id
+    // in common) into a space already imported from the first is refused as a whole: the preview blocks naming the fingerprint basis,
+    // and a plan confirmed anyway (stale or forged) is refused by confirmation, which checks the origin again on its own — every row,
+    // the history included, stays as it is.
     [Fact]
-    public async Task ExportOfAnotherExportSource_SameIds_NeverOverwritesTheImportedHistory()
+    public async Task ExportOfAnotherExportSource_SameIds_Refused_NeverOverwritesTheImportedHistory()
     {
         await EnsureSpaceRowAsync();
         await ConfirmSucceededAsync(Archive(new HistorySpec { ExportSuffix = ExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server A notes", State = "Executing", CompletedTime = null }));
@@ -120,15 +122,19 @@ public class OctopusImportIdempotencyIntegrationTests : TestBase, IAsyncLifetime
         var task = await SingleAsync<ServerTaskEntity>();
         var before = await CountRowsAsync();
 
-        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { ExportSuffix = OtherExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server B notes" }));
+        var snapshot = await PreviewAsync(Archive(new HistorySpec { ExportSuffix = OtherExportSuffix, WithoutInstallationId = true, ReleaseNotes = "Server B notes" }));
 
-        snapshot.PreviewPlan.Resources.Where(r => r.SourceType is "Release" or "Deployment" or "ServerTask").Select(r => $"{r.SourceType} {r.PreviewAction} {r.SkipReason?.Code}").ShouldBe(new[] { "Release", "Deployment", "ServerTask" }.Select(t => $"{t} {OctopusImportPreviewAction.Skip} {OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource}"), ignoreOrder: true);
-        snapshot.PreviewPlan.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven || d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, "another export fingerprint degrades (history skipped), it is never refused or asked about");
-        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
-        (await CountRowsAsync()).Where(pair => pair.Key != "octopus_import_source_map").ShouldBe(before.Where(pair => pair.Key != "octopus_import_source_map"));
-        (await SingleAsync<Release>()).ReleaseNote.ShouldBe("Server A notes");
+        snapshot.PreviewPlan.HasBlockers.ShouldBeTrue(Describe(snapshot.PreviewPlan));
+        snapshot.PreviewPlan.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+        (snapshot.PreviewPlan.Origin?.State, snapshot.PreviewPlan.Origin?.Basis).ShouldBe((OctopusImportFillEvidenceState.Unproven, "export-fingerprint-mismatch"));
+
+        var result = await ConfirmAsync(await SeedValidatedSessionAsync(), snapshot);
+
+        result.State.ShouldBe(OctopusImportSessionState.Failed, Describe(result.Result));
+        result.Result.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven);
+        (await CountRowsAsync()).ShouldBe(before);
+        (await SingleAsync<Release>()).ShouldSatisfyAllConditions(r => r.Id.ShouldBe(release.Id), r => r.ReleaseNote.ShouldBe("Server A notes"));
         (await SingleAsync<ServerTaskEntity>()).ShouldSatisfyAllConditions(t => t.Id.ShouldBe(task.Id), t => t.State.ShouldBe(task.State), t => t.CompletedTime.ShouldBe(task.CompletedTime));
-        release.Id.ShouldBe((await SingleAsync<Release>()).Id);
     }
 
     private const string OtherExportSuffix = "FEDCBA9876543210FEDCBA9876543210";

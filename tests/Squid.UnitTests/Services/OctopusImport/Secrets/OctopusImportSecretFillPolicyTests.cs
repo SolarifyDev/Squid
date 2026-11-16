@@ -30,7 +30,9 @@ public class OctopusImportSecretFillPolicyTests
     [InlineData("inst-b", FingerprintA, FingerprintA, true, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.InstallationMismatchBasis)] // another installation id outranks everything
     [InlineData(null, FingerprintA, FingerprintA, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
     [InlineData(null, "0123456789abcdef0123456789abcdef", FingerprintA, false, false, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
-    [InlineData(null, FingerprintB, FingerprintA, true, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
+    [InlineData(null, FingerprintB, FingerprintA, true, true, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ConfirmedPairingBasis)]            // another fingerprint, backed and confirmed
+    [InlineData(null, FingerprintB, FingerprintA, true, false, OctopusImportFillEvidenceState.PairingRequired, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)] // ... asks for the pairing
+    [InlineData(null, FingerprintB, FingerprintA, false, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]      // ... refused without matching ids
     [InlineData(null, FingerprintA, null, true, false, OctopusImportFillEvidenceState.PairingRequired, null)]
     [InlineData(null, FingerprintA, null, true, true, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ConfirmedPairingBasis)]
     [InlineData(null, null, FingerprintA, true, false, OctopusImportFillEvidenceState.PairingRequired, null)]   // an unsuffixed file proves nothing by fingerprint
@@ -46,17 +48,17 @@ public class OctopusImportSecretFillPolicyTests
         evidence.Basis.ShouldBe(expectedBasis);
     }
 
-    // Only the fingerprint the space's FIRST export-file import recorded proves a file (D10). A space may carry more than one (rows
-    // recorded before this rule, or by a file from a cloned server): those later ones prove nothing, whatever the pairing says.
+    // Every fingerprint recorded for the space proves a file: the first one pinned, and each one a confirmed pairing (backed by matching
+    // process ids) later recorded as another export of the same Octopus. An unknown fingerprint is checked by its process ids.
     [Theory]
     [InlineData(FingerprintA, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
-    [InlineData(FingerprintB, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
-    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
-    public void Evidence_OnlyTheFirstRecordedFingerprintProves(string fileFingerprint, OctopusImportFillEvidenceState expected, string expectedBasis)
+    [InlineData(FingerprintB, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
+    [InlineData("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", OctopusImportFillEvidenceState.PairingRequired, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
+    public void Evidence_EveryRecordedFingerprintProves(string fileFingerprint, OctopusImportFillEvidenceState expected, string expectedBasis)
     {
         var prior = Prior("inst-a", [FingerprintA, FingerprintB], OctopusImportSourceMapQueries.CreatedOutcome);
 
-        var evidence = OctopusImportFillEvidences.Evaluate(null, fileFingerprint, StructureNodes(), prior, pairingConfirmed: true);
+        var evidence = OctopusImportFillEvidences.Evaluate(null, fileFingerprint, StructureNodes(), prior, pairingConfirmed: false);
 
         evidence.State.ShouldBe(expected);
         evidence.Basis.ShouldBe(expectedBasis);

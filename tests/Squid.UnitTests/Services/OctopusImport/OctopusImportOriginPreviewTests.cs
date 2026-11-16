@@ -19,7 +19,8 @@ public class OctopusImportOriginPreviewTests
 
     public enum Origin { FileOf, ServerOf }
 
-    // file(Y) → API(X), API(X) → file(Y): matching GUIDs ask for a pairing, none refuse; a confirmed pairing lets the import through.
+    // file(Y) → API(X), API(X) → file(Y), file(Y) → file of another fingerprint (Y'): matching GUIDs ask for a pairing, none refuse; a
+    // confirmed pairing lets the import through.
     [Theory]
     [InlineData(Origin.FileOf, Origin.ServerOf, true, false, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed)]
     [InlineData(Origin.FileOf, Origin.ServerOf, true, true, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, null)]
@@ -28,6 +29,10 @@ public class OctopusImportOriginPreviewTests
     [InlineData(Origin.ServerOf, Origin.FileOf, true, false, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed)]
     [InlineData(Origin.ServerOf, Origin.FileOf, true, true, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, null)]
     [InlineData(Origin.ServerOf, Origin.FileOf, false, false, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven)]
+    [InlineData(Origin.FileOf, Origin.FileOf, true, false, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingUnconfirmed)]
+    [InlineData(Origin.FileOf, Origin.FileOf, true, true, OctopusImportPreviewDiagnosticCodes.ImportOriginPairingRequired, null)]
+    [InlineData(Origin.FileOf, Origin.FileOf, false, false, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven)]
+    [InlineData(Origin.FileOf, Origin.FileOf, false, true, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven)]
     public async Task OtherKindOfSource_LinkingToEarlierRows_NeedsGuidBackedConfirmedPairing(Origin recorded, Origin incoming, bool structureMatches, bool confirmed, string expectedPreviewCode, string expectedValidationBlocker)
     {
         var plan = await ImportedSpace(recorded, structureMatches).Incoming(incoming).PlanAsync(pairingConfirmed: confirmed);
@@ -78,15 +83,16 @@ public class OctopusImportOriginPreviewTests
             m => m.ShouldContain("inst-a (server octopus-a.example.test, space Spaces-1, Octopus 2025.4.0)"));
     }
 
-    // Proven by id, a first import, nothing in common, only rows the source itself created, or another export fingerprint (degrades,
-    // see the history tests): no origin diagnostic at all.
+    // Proven by id, a first import, nothing in common, or only rows the source itself created (a file of another fingerprint included):
+    // no origin diagnostic at all.
     [Theory]
     [InlineData("same-installation")]
     [InlineData("same-fingerprint")]
     [InlineData("no-overlap")]
     [InlineData("no-recorded-origin")]
     [InlineData("own-rows-in-another-origins-space")]
-    [InlineData("another-fingerprint")]
+    [InlineData("another-fingerprint-own-rows")]
+    [InlineData("another-fingerprint-no-overlap")]
     public async Task NoProofNeededOrProvenById_NoOriginDiagnostic(string situation)
     {
         var scenario = situation switch
@@ -96,7 +102,8 @@ public class OctopusImportOriginPreviewTests
             "no-overlap" => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorExportSource(Fingerprint).Installation("inst-x"),
             "no-recorded-origin" => ImportedSpace(Origin.ServerOf, structureMatches: false).PriorInstallation(null).ExportedFromSpace($"Spaces-1-{Fingerprint}"),
             "own-rows-in-another-origins-space" => new OctopusImportScenario().Environment("Environments-7", "Test").ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-7", 307, "inst-x").PriorExportSource(Fingerprint).Installation("inst-x"),
-            _ => ImportedSpace(Origin.FileOf, structureMatches: false).ExportedFromSpace($"Spaces-1-{OtherFingerprint}")
+            "another-fingerprint-own-rows" => new OctopusImportScenario().Environment("Environments-7", "Test").ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-7", 307, null, OtherFingerprint).PriorExportSource(Fingerprint).ExportedFromSpace($"Spaces-1-{OtherFingerprint}"),
+            _ => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorExportSource(Fingerprint).ExportedFromSpace($"Spaces-1-{OtherFingerprint}")
         };
 
         var plan = await scenario.PlanAsync();
@@ -211,6 +218,8 @@ public class OctopusImportOriginPreviewTests
     [InlineData("other-origin-rows", OctopusImportFillEvidenceState.Unproven, "other-origin-rows", 0, "Octopus installation inst-a", "Octopus installation inst-a")]
     [InlineData("proven-by-installation", OctopusImportFillEvidenceState.Proven, "installation", 0, "Octopus installation inst-a", "Octopus installation inst-a")]
     [InlineData("proven-by-fingerprint", OctopusImportFillEvidenceState.Proven, "export-fingerprint", 0, "export file with fingerprint " + Fingerprint, "export file with fingerprint " + Fingerprint)]
+    [InlineData("another-fingerprint-unproven", OctopusImportFillEvidenceState.Unproven, "export-fingerprint-mismatch", 0, "export file with fingerprint " + OtherFingerprint, "export file with fingerprint " + Fingerprint)]
+    [InlineData("another-fingerprint-pairing", OctopusImportFillEvidenceState.PairingRequired, "export-fingerprint-mismatch", 1, "export file with fingerprint " + OtherFingerprint, "export file with fingerprint " + Fingerprint)]
     public async Task Origin_CarriesTheVerdictBasisAndBothOrigins(string situation, OctopusImportFillEvidenceState state, string basis, int matching, string source, string recorded)
     {
         var scenario = situation switch
@@ -221,6 +230,8 @@ public class OctopusImportOriginPreviewTests
             "installation-mismatch-no-overlap" => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorInstallation("inst-a").Installation("inst-b"),
             "other-origin-rows" => ImportedSpace(Origin.ServerOf, structureMatches: false).ExistingMappingCreatedBy(OctopusResourceKind.Environment, "Environments-1", 301, "inst-third").Installation("inst-a"),
             "proven-by-installation" => ImportedSpace(Origin.ServerOf, structureMatches: false).RowsOfUnknownOrigin().Installation("inst-a"),
+            "another-fingerprint-unproven" => ImportedSpace(Origin.FileOf, structureMatches: false).ExportedFromSpace($"Spaces-1-{OtherFingerprint}"),
+            "another-fingerprint-pairing" => ImportedSpace(Origin.FileOf, structureMatches: true).ExportedFromSpace($"Spaces-1-{OtherFingerprint}"),
             _ => ImportedSpace(Origin.FileOf, structureMatches: false).RowsOfUnknownOrigin().ExportedFromSpace($"Spaces-1-{Fingerprint}")
         };
 
@@ -234,21 +245,21 @@ public class OctopusImportOriginPreviewTests
             o => o.Recorded.ShouldContain(recorded));
     }
 
-    // Nothing to prove (a first import, no id in common, only the source's own rows), or a file of another fingerprint that degrades
-    // instead of being refused: no origin verdict to show.
+    // Nothing to prove (a first import, no id in common, only the source's own rows — a file of another fingerprint included): no
+    // origin verdict to show.
     [Theory]
     [InlineData("first-import")]
     [InlineData("no-overlap")]
     [InlineData("own-rows")]
-    [InlineData("another-fingerprint")]
-    public async Task Origin_AbsentWhenNothingNeedsProofOrTheFileDegrades(string situation)
+    [InlineData("another-fingerprint-no-overlap")]
+    public async Task Origin_AbsentWhenNothingNeedsProof(string situation)
     {
         var scenario = situation switch
         {
             "first-import" => new OctopusImportScenario().Environment("Environments-1", "Test").Installation("inst-x"),
             "no-overlap" => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorExportSource(Fingerprint).Installation("inst-x"),
             "own-rows" => ImportedSpace(Origin.ServerOf, structureMatches: true).Installation("inst-a"),
-            _ => ImportedSpace(Origin.FileOf, structureMatches: false).ExportedFromSpace($"Spaces-1-{OtherFingerprint}")
+            _ => new OctopusImportScenario().Environment("Environments-1", "Test").ExistingMapping(OctopusResourceKind.Environment, "Environments-9", 309).PriorExportSource(Fingerprint).ExportedFromSpace($"Spaces-1-{OtherFingerprint}")
         };
 
         var plan = await scenario.PlanAsync();

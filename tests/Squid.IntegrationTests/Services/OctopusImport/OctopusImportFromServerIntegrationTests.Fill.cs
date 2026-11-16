@@ -153,9 +153,12 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SecretRowsAsync()).Select(r => (r.SourceId, r.OutcomeState)).ShouldBe(rows.Select(r => (r.SourceId, r.OutcomeState)), ignoreOrder: true);
     }
 
-    // Once a fingerprint is recorded, a file with another one is refused even though its ids match (a cloned server's would).
+    // API → file F1 (pairing confirmed) → a re-export F2 of the same server with a new fingerprint: its process ids match, so the
+    // preview asks for the pairing again (it is not proven by F1's fingerprint) and validation refuses until it is confirmed; nothing
+    // is filled before. Confirmed, it fills only the value still missing (never the one the user cleared), F2 is recorded next to F1,
+    // and the next import of F2 is proven without asking and writes nothing.
     [Fact]
-    public async Task AfterPairing_FileWithAnotherFingerprint_Refused()
+    public async Task AfterPairing_ReExportWithAnotherFingerprint_AsksOnce_FillsOnlyWhatIsMissing_ThenProven()
     {
         await using var octopus = await WithheldSecretsServerAsync();
         ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
@@ -163,31 +166,56 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(await ImportFromFileAsync(SameInstallationExport(FileFingerprint, LibraryWithoutValue()), confirmPairing: true));
         await SetInSquidAsync("Db.Password", "", feedUsername: "user-robot", feedPassword: "user-token");
         await ClearLibrarySecretRowsToMissingAsync();
+        var linked = await CountRowsAsync(LinkedTables);
 
-        var (_, preview) = await UploadAndPreviewAsync(SameInstallationExport(OtherFileFingerprint));
+        var (sessionId, preview) = await UploadAndPreviewAsync(SameInstallationExport(OtherFileFingerprint));
 
-        OctopusImportHandlerFlow.AllDiagnostics(preview).ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.Message.Contains("fingerprint is not the one recorded"), Describe(preview));
+        preview.HasBlockers.ShouldBeFalse(Describe(preview));
+        preview.FillPairing.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.Required.ShouldBeTrue(), p => p.FileExportSourceId.ShouldBe(OtherFileFingerprint), p => p.RecordedExportSourceId.ShouldBe(FileFingerprint), p => p.MatchingStructureIds.ShouldBe(2));
+        preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(o => o.State.ShouldBe(OctopusImportFillEvidenceState.PairingRequired), o => o.Basis.ShouldBe("export-fingerprint-mismatch"));
+        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).Select(r => r.SourceId).ShouldBe([LibrarySecretVariableId], Describe(preview));
+        (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK, "another fingerprint is never assumed to be the same server");
         (await DecryptedAsync("Smtp.Password")).ShouldBeNullOrEmpty();
+
+        preview.FillPairing.Confirmed = true;
+        (await ValidateAsync(sessionId, preview)).Code.ShouldBe(HttpStatusCode.OK);
+        var confirm = await ConfirmAsync(sessionId);
+
+        confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(confirm.Data.Session.Result));
+        (await DecryptedAsync("Smtp.Password")).ShouldBe("smtp-secret");
+        (await DbPasswordAsync()).ShouldBeNullOrEmpty("the value the user cleared in Squid is kept");
+        (await FeedCredentialsAsync()).ShouldBe(("user-robot", "user-token"));
+        (await CountRowsAsync(LinkedTables)).ShouldBe(linked, "linked to what the earlier imports created, nothing duplicated");
+        (await ExportSourceRowsAsync()).ShouldBe([FileFingerprint, OtherFileFingerprint], ignoreOrder: true);
+
+        var before = await CountRowsAsync(ScopeTables);
+        var again = await ImportFromFileAsync(SameInstallationExport(OtherFileFingerprint));
+
+        ShouldHaveSucceeded(again);
+        again.PreviewPlan.FillPairing.ShouldBeNull("its recorded fingerprint proves the re-export now");
+        (again.PreviewPlan.Origin?.State, again.PreviewPlan.Origin?.Basis).ShouldBe((OctopusImportFillEvidenceState.Proven, "export-fingerprint"));
+        (await CountRowsAsync(ScopeTables)).ShouldBe(before);
+        (await DecryptedAsync("Smtp.Password")).ShouldBe("smtp-secret");
     }
 
-    // File-first space (no installation recorded): a cloned server's file imported while nothing needs filling must not become a
-    // second reference — otherwise, once the API import leaves a value missing (here: a library set created in Octopus after both
-    // exports), that clone's file would fill it with no question asked.
+    // File-first space (no installation recorded): another fingerprint's file imported while nothing needs filling is no second
+    // reference unless its pairing is confirmed — unconfirmed it is refused and never recorded. When the API import later leaves a
+    // value missing (here: a library set created in Octopus after both exports), that file still asks before it fills anything; the
+    // pinned file fills it without asking.
     [Fact]
-    public async Task FileFirst_ClonedServersFileWhileNothingToFill_NeverProvesALaterFill()
+    public async Task FileFirst_AnotherFingerprintsFile_NeverProvesALaterFillWithoutAConfirmedPairing()
     {
         await using var octopus = await WithheldSecretsServerAsync();
         ShouldHaveSucceeded(await ImportFromFileAsync(ExportWithoutLibrary(FileFingerprint)));
-        ShouldHaveSucceeded(await ImportFromFileAsync(ExportWithoutLibrary(OtherFileFingerprint)));
-        (await ExportSourceRowsAsync()).ShouldBe([FileFingerprint], "only the first export-file import pins the fingerprint");
+        await Should.ThrowAsync<InvalidOperationException>(() => ImportFromFileAsync(ExportWithoutLibrary(OtherFileFingerprint)));
+        (await ExportSourceRowsAsync()).ShouldBe([FileFingerprint], "an unconfirmed file of another fingerprint is never recorded");
 
         ShouldHaveSucceeded(await ImportFromServerAsync(octopus, confirmPairing: true));
         (await SecretRowsAsync()).Select(r => (r.SourceType, r.OutcomeState)).ShouldBe([(OctopusImportSourceMapQueries.VariableSecretSourceType, OctopusImportSourceMapQueries.MissingOutcome)]);
 
         var (_, clone) = await UploadAndPreviewAsync(SameInstallationExport(OtherFileFingerprint));
 
-        OctopusImportHandlerFlow.AllDiagnostics(clone).ShouldContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven, Describe(clone));
-        clone.Resources.ShouldNotContain(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret);
+        clone.FillPairing.ShouldNotBeNull(Describe(clone)).Required.ShouldBeTrue();
         await Should.ThrowAsync<InvalidOperationException>(() => ImportFromFileAsync(SameInstallationExport(OtherFileFingerprint)));
         (await DecryptedAsync("Smtp.Password")).ShouldBeNullOrEmpty();
 

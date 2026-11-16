@@ -171,14 +171,14 @@ public class OctopusImportIncrementalPreviewTests
         plan.Preview.Summary.IsUpToDate.ShouldBeTrue();
     }
 
-    // Two Octopus servers share ids like Releases-1 and Deployments-1. An export file whose fingerprint differs from the one this space was
-    // imported from may come from another server, so the history it would rewrite is skipped with the reason, never overwritten. The same
-    // fingerprint (or a bare-id source) still updates.
+    // Two Octopus servers share ids like Releases-1 and Deployments-1. An export file whose fingerprint the space does not know (or that
+    // carries none), with no process id in common, would link to the history an import of the space's origin created: the import is
+    // refused as a whole (preview and validation), so its history never overwrites what Squid holds. The recorded fingerprint updates.
     [Theory]
-    [InlineData(OtherServerFingerprint, OctopusImportPreviewAction.Skip)]
-    [InlineData(PinnedFingerprint, OctopusImportPreviewAction.Update)]
-    [InlineData(null, OctopusImportPreviewAction.Update)]
-    public async Task HistoryChangedInAFileOfAnotherExportSource_SkippedWithReason_NeverOverwritten(string fileFingerprint, OctopusImportPreviewAction expected)
+    [InlineData(OtherServerFingerprint, true)]
+    [InlineData(null, true)]
+    [InlineData(PinnedFingerprint, false)]
+    public async Task HistoryChangedInAFileNotProvenToBeTheOrigin_RefusedAsAWhole_NeverOverwritten(string fileFingerprint, bool refused)
     {
         var first = await History(notes: "first notes", state: "Executing", finished: false).PlanAsync();
         var scenario = History(notes: "edited in Octopus").ImportedAs(first).PriorExportSource(PinnedFingerprint);
@@ -188,12 +188,11 @@ public class OctopusImportIncrementalPreviewTests
         var plan = await scenario.PlanAsync();
 
         ShouldBeConsistent(plan);
+        plan.BlocksConfirmation.ShouldBe(refused, Describe(plan));
+        plan.Blockers.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven).ShouldBe(refused, Describe(plan));
+        plan.Validation.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker).ShouldBe(refused, "validation refuses on its own");
         foreach (var id in new[] { "Releases-1", "Deployments-1", "ServerTasks-1" })
-        {
-            var resource = plan.Resource(id);
-            resource.PreviewAction.ShouldBe(expected, $"{id}: {Describe(plan)}");
-            if (expected == OctopusImportPreviewAction.Skip) resource.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.HistoryFromAnotherExportSource, id);
-        }
+            plan.Resource(id).PreviewAction.ShouldBe(OctopusImportPreviewAction.Update, $"{id}: {Describe(plan)}");
     }
 
     private const string PinnedFingerprint = "0123456789ABCDEF0123456789ABCDEF";

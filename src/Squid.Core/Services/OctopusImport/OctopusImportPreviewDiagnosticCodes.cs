@@ -33,7 +33,6 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string HistoryOwnerNotImported = "octopus.preview.history_owner_not_imported";
     public const string DeploymentTaskMissing = "octopus.preview.deployment_task_missing";
     public const string TaskImportedWithDeployment = "octopus.preview.task_imported_with_deployment";
-    public const string HistoryFromAnotherExportSource = "octopus.preview.history_from_another_export_source";
     public const string NotInEarlierImport = "octopus.preview.not_in_earlier_import";
     public const string ReleaseNotesEditedInSquid = "octopus.preview.release_notes_edited_in_squid";
     public const string UnreferencedResourceSkipped = "octopus.preview.unreferenced_resource_skipped";

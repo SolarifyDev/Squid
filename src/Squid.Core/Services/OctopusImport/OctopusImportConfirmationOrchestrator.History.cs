@@ -1,7 +1,6 @@
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Octopus;
-using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -39,9 +38,6 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     {
         try
         {
-            if (OctopusImportFillEvidences.IsAnotherExportSource(FillEvidence(execution)))
-                throw StalePlan(execution, resource, "This export file may come from another Octopus server than the one this space was imported from; its history is never written over the history already in Squid. Re-run the preview.");
-
             switch (resource.Kind)
             {
                 case OctopusResourceKind.Release:

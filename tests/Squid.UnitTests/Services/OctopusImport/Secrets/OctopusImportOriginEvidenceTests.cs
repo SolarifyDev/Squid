@@ -16,6 +16,7 @@ public class OctopusImportOriginEvidenceTests
     private const string ActionGuid = "7a1d0c3e-0000-4000-8000-000000000001";
     private const string FingerprintA = "0123456789ABCDEF0123456789ABCDEF";
     private const string FingerprintB = "FEDCBA9876543210FEDCBA9876543210";
+    private const string FingerprintC = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     // ── Does the source link to earlier imported rows? ─────────────────────
 
@@ -72,12 +73,12 @@ public class OctopusImportOriginEvidenceTests
     }
 
     // A source proven by id (or a confirmed pairing) still never links to a row a third origin created: the space's origin vouches only
-    // for its own rows. Another export fingerprint keeps degrading (decision B) and a refusal keeps its own basis.
+    // for its own rows. A file of another export fingerprint is no exception, and a refusal keeps its own basis.
     [Theory]
     [InlineData("inst-a", null, "inst-a", null, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.OtherOriginRowsBasis)]
     [InlineData(null, FingerprintA, null, FingerprintA, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.OtherOriginRowsBasis)]
     [InlineData(null, FingerprintA, "inst-x", null, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.OtherOriginRowsBasis)]
-    [InlineData(null, FingerprintA, null, FingerprintB, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
+    [InlineData(null, FingerprintA, null, FingerprintB, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.OtherOriginRowsBasis)]
     [InlineData("inst-a", null, "inst-b", null, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.InstallationMismatchBasis)]
     public void Evaluate_RowsOfAThirdOrigin_NeverLinked(string recordedInstallation, string recordedFingerprint, string sourceInstallation, string sourceFingerprint, bool confirmed, OctopusImportFillEvidenceState expectedState, string expectedBasis)
     {
@@ -129,10 +130,63 @@ public class OctopusImportOriginEvidenceTests
     [InlineData(OctopusImportFillEvidenceState.PairingRequired, null, false)]                                       // asks, never refuses
     [InlineData(OctopusImportFillEvidenceState.Unproven, null, true)]                                               // no structure id in common
     [InlineData(OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.InstallationMismatchBasis, true)]
-    [InlineData(OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, false)] // degrades: history skipped
-    public void RefusesLinking_UnprovenOriginsExceptAnotherExportFingerprint(OctopusImportFillEvidenceState state, string basis, bool expected)
+    [InlineData(OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, true)]  // another fingerprint, no id in common
+    [InlineData(OctopusImportFillEvidenceState.PairingRequired, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, false)]
+    public void RefusesLinking_EveryUnprovenOrigin(OctopusImportFillEvidenceState state, string basis, bool expected)
     {
         OctopusImportFillEvidences.RefusesLinking(new OctopusImportFillEvidence(state, 0, basis)).ShouldBe(expected);
+    }
+
+    // An export file whose fingerprint is not one the space recorded is checked like any source without an id in common: process ids an
+    // import of the space's origin created ask for the pairing (named for the fingerprint), none refuse, and a confirmation backed by
+    // them proves it. A confirmation alone proves nothing.
+    [Theory]
+    [InlineData(true, false, OctopusImportFillEvidenceState.PairingRequired, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, 1)]
+    [InlineData(true, true, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ConfirmedPairingBasis, 1)]
+    [InlineData(false, false, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, 0)]
+    [InlineData(false, true, OctopusImportFillEvidenceState.Unproven, OctopusImportFillEvidences.ExportFingerprintMismatchBasis, 0)]
+    public void AnotherExportFingerprint_CheckedByProcessIds(bool structureMatches, bool confirmed, OctopusImportFillEvidenceState expectedState, string expectedBasis, int expectedMatches)
+    {
+        var rows = structureMatches ? new[] { ("Project", "Projects-1", (string)null, FingerprintA), ("DeploymentAction", ActionGuid, null, FingerprintA) } : [("Project", "Projects-1", null, FingerprintA)];
+        var prior = Prior(null, [FingerprintA], rows);
+
+        var evidence = OctopusImportFillEvidences.Evaluate(null, FingerprintB, [Node("Projects-1", OctopusResourceKind.Project), Node(ActionGuid, OctopusResourceKind.DeploymentAction)], prior, confirmed);
+
+        evidence.State.ShouldBe(expectedState);
+        evidence.Basis.ShouldBe(expectedBasis);
+        evidence.MatchingStructureIds.ShouldBe(expectedMatches);
+        OctopusImportFillEvidences.RefusesLinking(evidence).ShouldBe(expectedState == OctopusImportFillEvidenceState.Unproven);
+    }
+
+    // A space may know several fingerprints of its origin (each later one recorded by a confirmed pairing). Each proves its files, and
+    // rows any of them created are the origin's: a file of one links to and is backed by rows another created, with no prompt.
+    [Theory]
+    [InlineData(FingerprintA, FingerprintB, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
+    [InlineData(FingerprintB, FingerprintA, OctopusImportFillEvidenceState.Proven, OctopusImportFillEvidences.ExportFingerprintBasis)]
+    [InlineData(FingerprintC, FingerprintB, OctopusImportFillEvidenceState.PairingRequired, OctopusImportFillEvidences.ExportFingerprintMismatchBasis)]
+    public void KnownFingerprints_EachProvesAndOwnsItsRows(string fileFingerprint, string rowFingerprint, OctopusImportFillEvidenceState expectedState, string expectedBasis)
+    {
+        var prior = Prior(null, [FingerprintA, FingerprintB], ("Project", "Projects-1", null, rowFingerprint), ("DeploymentAction", ActionGuid, null, rowFingerprint));
+        var nodes = new[] { Node("Projects-1", OctopusResourceKind.Project), Node(ActionGuid, OctopusResourceKind.DeploymentAction) };
+
+        var evidence = OctopusImportFillEvidences.Evaluate(null, fileFingerprint, nodes, prior, pairingConfirmed: false);
+
+        evidence.State.ShouldBe(expectedState);
+        evidence.Basis.ShouldBe(expectedBasis);
+        OctopusImportFillEvidences.MatchingStructureIds(nodes, prior).ShouldBe(1, "a structure row of any known fingerprint backs a pairing");
+        OctopusImportFillEvidences.IsKnownExportSource(fileFingerprint, prior).ShouldBe(fileFingerprint != FingerprintC);
+    }
+
+    [Theory]
+    [InlineData(FingerprintB, true)]
+    [InlineData("fedcba9876543210fedcba9876543210", true)]
+    [InlineData(FingerprintC, false)]
+    [InlineData(null, false)]
+    [InlineData(" ", false)]
+    public void IsKnownExportSource_AnyRecordedFingerprintComparedCanonically(string fileFingerprint, bool expected)
+    {
+        OctopusImportFillEvidences.IsKnownExportSource(fileFingerprint, new OctopusImportPriorMappings(null, null, [FingerprintA, FingerprintB])).ShouldBe(expected);
+        OctopusImportFillEvidences.IsKnownExportSource(fileFingerprint, OctopusImportPriorMappings.Empty).ShouldBeFalse();
     }
 
     // A confirmed pairing never overrides two different installation ids: two REST imports of different servers.

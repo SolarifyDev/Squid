@@ -15,6 +15,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
 {
     private const string OriginActionGuid = "5e0c7a11-0000-4000-8000-0000000000b1";
     private const string OriginFingerprint = "0123456789ABCDEF0123456789ABCDEF";
+    private const string OtherFingerprint = "FEDCBA9876543210FEDCBA9876543210";
 
     [Theory]
     [InlineData("inst-a", null, "inst-b", null, true, true, false)]                          // another installation, whatever is confirmed
@@ -22,7 +23,11 @@ public partial class OctopusImportConfirmationOrchestratorTests
     [InlineData(null, OriginFingerprint, "inst-x", null, true, false, false)]                 // GUIDs match, pairing not confirmed (plan forged / stale)
     [InlineData(null, OriginFingerprint, "inst-x", null, true, true, true)]                   // confirmed pairing backed by a GUID
     [InlineData(null, OriginFingerprint, "inst-x", null, false, true, false)]                 // a confirmation without matching GUIDs proves nothing
-    [InlineData(null, OriginFingerprint, null, "FEDCBA9876543210FEDCBA9876543210", false, false, true)] // another fingerprint degrades, never refuses
+    [InlineData(null, OriginFingerprint, null, OtherFingerprint, false, false, false)]       // another fingerprint, no process id in common
+    [InlineData(null, OriginFingerprint, null, OtherFingerprint, false, true, false)]        // ... a confirmation alone proves nothing
+    [InlineData(null, OriginFingerprint, null, OtherFingerprint, true, false, false)]        // ... matching GUIDs, pairing not confirmed
+    [InlineData(null, OriginFingerprint, null, OtherFingerprint, true, true, true)]          // ... confirmed pairing backed by a GUID
+    [InlineData(null, OriginFingerprint, null, OriginFingerprint, false, false, true)]       // proven by the recorded fingerprint
     [InlineData("inst-a", null, "inst-a", null, false, false, true)]                         // proven by installation
     [InlineData(null, null, "inst-x", null, false, false, false)]                            // no origin recorded, rows of unknown origin: no evidence
     [InlineData(null, null, "inst-x", null, true, false, false)]                             // ... matching GUIDs still need the confirmation
@@ -89,6 +94,30 @@ public partial class OctopusImportConfirmationOrchestratorTests
         (await harness.Sut.ConfirmAsync(request, CancellationToken.None)).State.ShouldBe(OctopusImportSessionState.Succeeded);
 
         upserted.ShouldContain(r => r.SourceType == OctopusImportSourceMapQueries.InstallationSourceType && r.SourceId == "inst-x");
+    }
+
+    // A file of another fingerprint whose pairing the user confirmed (backed by the origin's GUIDs) is another export of the space's
+    // Octopus: its fingerprint is recorded next to the pinned one, so its next import is proven without asking. Unconfirmed, it is
+    // refused and records nothing; a file the space already knows records no second row.
+    [Theory]
+    [InlineData(OtherFingerprint, true, true)]
+    [InlineData(OtherFingerprint, false, false)]
+    [InlineData(OriginFingerprint, false, false)]
+    public async Task ConfirmedFileOfAnotherFingerprint_RecordedAsAnotherFingerprintOfTheOrigin(string fileFingerprint, bool confirmed, bool expectRecorded)
+    {
+        var nodes = BuildMinimalNodes();
+        var action = new OctopusResourceNode(OriginActionGuid, "Run", OctopusResourceKind.DeploymentAction, OctopusDocumentKind.DeploymentProcess, "process.json", null, null, false, new object());
+        var upserted = new List<OctopusImportSourceMapRow>();
+        var harness = CreateHarness(nodes, BuildDependencyPlan([nodes.Environment]), Plan((nodes.Environment, OctopusImportPreviewAction.AlreadyImported, 321)), true, false, false, sourceMap: SourceMap(OriginPrior(nodes.Environment, action, null, OriginFingerprint, true), upserted: upserted).Object);
+        var request = harness.Request with { Graph = new OctopusResourceGraph([nodes.Environment, action], [], [], []) { ExportSourceId = fileFingerprint } };
+
+        if (confirmed) request.PreviewPlan.FillPairing = new OctopusImportFillPairingDto { Required = true, Confirmed = true };
+
+        var result = await harness.Sut.ConfirmAsync(request, CancellationToken.None);
+
+        result.State.ShouldBe(fileFingerprint == OriginFingerprint || confirmed ? OctopusImportSessionState.Succeeded : OctopusImportSessionState.Failed);
+        upserted.Where(r => r.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).Select(r => r.SourceId).ShouldBe(expectRecorded ? [OtherFingerprint] : []);
+        upserted.Where(r => r.SourceType != OctopusImportSourceMapQueries.ExportSourceSourceType).ShouldAllBe(r => r.CreatedExportSourceId == fileFingerprint, "every row it writes names the file's fingerprint");
     }
 
     // Every row a confirmation writes names its origin, so a later import can tell its own rows from another origin's.
