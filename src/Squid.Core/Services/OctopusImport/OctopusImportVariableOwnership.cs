@@ -27,11 +27,17 @@ public static class OctopusImportVariableOwnership
     public static bool IsWrittenByImport(OctopusResourceNode resource, Func<string, OctopusResourceNode> findResource, Func<string, OctopusImportPreviewAction?> previewActionOf)
     {
         if (resource != null && OctopusImportPreviewActions.IsImportedEarlier(previewActionOf(resource.SourceId))) return false;
+        if (IsAddedToImportedSet(resource, previewActionOf)) return true;
 
         var libraryId = FindOwningLibraryId(resource, findResource);
 
         return string.IsNullOrWhiteSpace(libraryId) || !IsKeptAsIs(previewActionOf(libraryId));
     }
+
+    // A variable the user selected into a set an earlier import created (deleted in Squid since, or added in Octopus later) is inserted
+    // into that set, even a library's: the set's other variables are still never rewritten.
+    private static bool IsAddedToImportedSet(OctopusResourceNode resource, Func<string, OctopusImportPreviewAction?> previewActionOf)
+        => resource?.Kind == OctopusResourceKind.Variable && !string.IsNullOrWhiteSpace(resource.ParentSourceId) && previewActionOf(resource.SourceId) == OctopusImportPreviewAction.Create && OctopusImportPreviewActions.IsImportedEarlier(previewActionOf(resource.ParentSourceId));
 
     // A library that is reused or was imported earlier is linked as-is: its variables are never rewritten.
     private static bool IsKeptAsIs(OctopusImportPreviewAction? libraryAction)

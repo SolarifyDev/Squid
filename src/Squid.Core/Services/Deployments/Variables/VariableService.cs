@@ -29,6 +29,13 @@ public interface IVariableService : IScopedDependency
     /// twice in a row; still empty, nothing written).
     /// </summary>
     Task<SecretSlotState> FillEmptySensitiveValueAsync(int variableSetId, VariableIdentity identity, string plainValue, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Appends variables to an existing set (encrypted at rest when sensitive, after the set's last sort order) without re-saving it: the
+    /// set's other variables are never read back, deleted or re-inserted. Only the set's version moves, as on any change. Returns the
+    /// new variables' ids, in order.
+    /// </summary>
+    Task<IReadOnlyList<int>> AddVariablesAsync(int variableSetId, IReadOnlyList<VariableModel> variables, CancellationToken cancellationToken);
 }
 
 public class VariableService : IVariableService
@@ -187,6 +194,24 @@ public class VariableService : IVariableService
         return written == 0 ? SecretSlotState.Empty : SecretSlotState.Filled;
     }
 
+    // Locked like a save (the set's variables, then the set): a concurrent save never re-inserts the set over the appended variables.
+    public Task<IReadOnlyList<int>> AddVariablesAsync(int variableSetId, IReadOnlyList<VariableModel> variables, CancellationToken cancellationToken)
+        => _variableDataProvider.ExecuteWithVariableSetLockedAsync(variableSetId, ct => AppendVariablesAsync(variableSetId, variables, ct), cancellationToken);
+
+    private async Task<IReadOnlyList<int>> AppendVariablesAsync(int variableSetId, IReadOnlyList<VariableModel> variables, CancellationToken cancellationToken)
+    {
+        var existing = await _variableDataProvider.GetVariablesByVariableSetIdAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+        var nextSortOrder = existing.Count == 0 ? 0 : existing.Max(v => v.SortOrder) + 1;
+
+        for (var i = 0; i < variables.Count; i++) variables[i].SortOrder = nextSortOrder + i;
+
+        var added = await AddVariablesToSetAsync(variableSetId, variables, cancellationToken).ConfigureAwait(false);
+
+        await BumpVersionAsync(variableSetId, cancellationToken).ConfigureAwait(false);
+
+        return added.Select(v => v.Id).ToList();
+    }
+
     // The page posts each secret back as the mask it read: keep what is stored (read before the delete) instead of saving the mask.
     private async Task KeepStoredValuesOfMaskedSecretsAsync(int variableSetId, List<VariableModel> incoming, CancellationToken cancellationToken)
     {
@@ -221,9 +246,9 @@ public class VariableService : IVariableService
         await _variableDataProvider.UpdateVariableSetAsync(variableSet, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableModel> variableDtos, CancellationToken cancellationToken)
+    private async Task<List<Variable>> AddVariablesToSetAsync(int variableSetId, IEnumerable<VariableModel> variableDtos, CancellationToken cancellationToken)
     {
-        if (variableDtos?.Any() != true) return;
+        if (variableDtos?.Any() != true) return [];
 
         var dtoList = variableDtos.ToList();
 
@@ -252,6 +277,8 @@ public class VariableService : IVariableService
 
         if (allScopes.Count > 0)
             await _variableScopeDataProvider.AddVariableScopesAsync(allScopes, cancellationToken).ConfigureAwait(false);
+
+        return variables;
     }
 
     private async Task<VariableSet> GetAndValidateVariableSet(int id, CancellationToken cancellationToken)

@@ -4,24 +4,33 @@ using Squid.Message.Models.OctopusImport;
 namespace Squid.Core.Services.OctopusImport;
 
 /// <summary>
-/// History rows (Release, Deployment, ServerTask) are decided by the server from the source map, never by
-/// the client: a posted plan's history rows are replaced by the rows of the server's own preview. A client
-/// may also omit them to keep the request small.
+/// Rows the server decides, never the client: history rows (Release, Deployment, ServerTask), decided from the source map, and every row
+/// the user decides about (and the rows that follow it), decided by the server's plan built with the user's selection. A posted plan's
+/// server-owned rows are replaced by the rows of the server's own preview, and its summary by the server's (the counts follow the
+/// selection). A client may also omit server-owned rows to keep the request small. A posted row claiming a choice the server does not
+/// offer is kept as posted, for validation to refuse.
 /// </summary>
 public static class OctopusImportServerOwnedRows
 {
     private static readonly HashSet<string> HistorySourceTypes = new(StringComparer.OrdinalIgnoreCase) { nameof(OctopusResourceKind.Release), nameof(OctopusResourceKind.Deployment), nameof(OctopusResourceKind.ServerTask) };
 
-    public static OctopusImportPreviewPlanDto MergeServerOwnedHistoryRows(OctopusImportPreviewPlanDto clientPlan, OctopusImportPreviewPlanDto serverPlan)
+    public static OctopusImportPreviewPlanDto MergeServerOwnedRows(OctopusImportPreviewPlanDto clientPlan, OctopusImportPreviewPlanDto serverPlan)
     {
         ArgumentNullException.ThrowIfNull(serverPlan);
 
         if (clientPlan == null) return serverPlan;
 
-        clientPlan.Resources = clientPlan.Resources.Where(r => !IsHistoryRow(r)).Concat(serverPlan.Resources.Where(IsHistoryRow)).ToList();
+        var serverOwned = serverPlan.Resources.Where(IsServerOwned).GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var clientRows = clientPlan.Resources.Where(r => !IsHistoryRow(r)).Select(r => serverOwned.GetValueOrDefault(r.SourceId ?? string.Empty) ?? r).ToList();
+        var clientIds = clientRows.Select(r => r.SourceId ?? string.Empty).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        clientPlan.Resources = clientRows.Concat(serverOwned.Values.Where(r => !clientIds.Contains(r.SourceId))).ToList();
+        clientPlan.Summary = serverPlan.Summary;
 
         return clientPlan;
     }
+
+    private static bool IsServerOwned(OctopusImportResourceResultDto resource) => IsHistoryRow(resource) || resource.Choice != null;
 
     private static bool IsHistoryRow(OctopusImportResourceResultDto resource) => HistorySourceTypes.Contains(resource.SourceType ?? string.Empty);
 }

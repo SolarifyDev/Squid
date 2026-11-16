@@ -40,7 +40,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, validatedPlan));
         harness.PlanningPipeline
-            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Snapshot(preview));
         harness.ConfirmationOrchestrator
             .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
@@ -113,7 +113,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, validatedPlan));
         harness.PlanningPipeline
-            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Snapshot(preview, resourceKind, sourceId, isDefaultChannel));
         harness.ConfirmationOrchestrator
             .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
@@ -154,7 +154,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         var validatedPlan = new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() };
 
         harness.SessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, validatedPlan));
-        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resourceKind, sourceId, false));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resourceKind, sourceId, false));
         harness.ConfirmationOrchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
 
         await harness.Sut.Handle(Context(new ConfirmOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
@@ -213,6 +213,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             p => p.BuildPreviewAsync(
                 It.IsAny<string>(),
                 It.IsAny<int>(),
+                It.IsAny<OctopusImportChoiceSelections>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
         harness.ConfirmationOrchestrator.Verify(
@@ -240,7 +241,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
         harness.PlanningPipeline
-            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>()))
             .Callback(() => secretsAvailableWhenPlanning = accessor.Secrets.IsAvailable)
             .ReturnsAsync(Snapshot(preview));
         harness.ConfirmationOrchestrator
@@ -277,7 +278,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         harness.SessionDataProvider
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
-        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
         harness.ConfirmationOrchestrator
             .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
@@ -308,7 +309,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Validated, new OctopusImportValidatedPlanDto { PreviewPlan = preview, Validation = new OctopusImportValidationResultDto() }));
         harness.SessionService.Setup(s => s.GetSessionAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
-        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview));
         harness.ConfirmationOrchestrator
             .Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Succeeded });
@@ -322,7 +323,7 @@ public class ConfirmOctopusImportCommandHandlerTests
         response.Code.ShouldBe(HttpStatusCode.OK);
         response.Data.Session.State.ShouldBe(runInBackground ? OctopusImportSessionState.Validated : OctopusImportSessionState.Succeeded);
         harness.ConfirmationOrchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), runInBackground ? Times.Never() : Times.Once());
-        harness.PlanningPipeline.Verify(p => p.BuildPreviewAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), runInBackground ? Times.Never() : Times.Once());
+        harness.PlanningPipeline.Verify(p => p.BuildPreviewAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>()), runInBackground ? Times.Never() : Times.Once());
         harness.BackgroundJobClient.Verify(c => c.Enqueue(It.IsAny<Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()), runInBackground ? Times.Once() : Times.Never());
 
         if (!runInBackground) return;

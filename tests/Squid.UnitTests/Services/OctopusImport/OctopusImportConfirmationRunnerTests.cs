@@ -37,7 +37,7 @@ public class OctopusImportConfirmationRunnerTests
         var uploadPath = CreateTempFile();
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -47,6 +47,29 @@ public class OctopusImportConfirmationRunnerTests
         _sessionDataProvider.Verify(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>()), Times.Once);
         _authorization.Verify(a => a.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.UserId == OwnerUserId && r.SpaceId == SpaceId && r.Permission == Permission.ProjectCreate), It.IsAny<CancellationToken>()), Times.Once);
         _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.SessionId == sessionId && r.DestinationSpaceId == SpaceId && r.SessionDirectory == Path.GetDirectoryName(uploadPath)), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // The plan is imported only while the session still holds the version it was read with; a plan validated again meanwhile (the
+    // confirmation finds the session still Validated) is reported, never silently left unimported.
+    [Theory]
+    [InlineData(OctopusImportSessionState.Succeeded, false)]
+    [InlineData(OctopusImportSessionState.Validated, true)]
+    public async Task Runner_ConfirmsTheVersionThePlanWasReadWith_RejectsWhenValidatedAgain(OctopusImportSessionState stateAfterConfirm, bool rejected)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var session = ValidatedSession(sessionId, uploadPath);
+        session.DataVersion = [4, 2];
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = stateAfterConfirm });
+
+        var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.ValidatedDataVersion.SequenceEqual(new byte[] { 4, 2 })), It.IsAny<CancellationToken>()), Times.Once);
+        outcome.IsRejected.ShouldBe(rejected);
+        if (rejected) outcome.Rejection.Message.ShouldContain("validated again");
     }
 
     // An Octopus default channel takes over the default channel of a project created by this import (an edit); under a
@@ -62,7 +85,7 @@ public class OctopusImportConfirmationRunnerTests
         var channel = new OctopusResourceNode("Channels-1", "Default", OctopusResourceKind.Channel, OctopusDocumentKind.Channel, "channel.json", null, "Projects-1", false, new OctopusChannelDto { Id = "Channels-1", ProjectId = "Projects-1", IsDefault = true });
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, channel));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, channel));
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -85,7 +108,7 @@ public class OctopusImportConfirmationRunnerTests
         var resource = new OctopusResourceNode("secret-1", "Secret", kind, OctopusDocumentKind.VariableSet, "secret.json", "Projects-1", null, false, new object());
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath, preview));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resource));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(preview, resource));
         _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
 
         await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
@@ -116,7 +139,7 @@ public class OctopusImportConfirmationRunnerTests
         var uploadPath = CreateTempFile();
 
         _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath));
-        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusArchiveExtractionException("Archive.Broken", "broken archive"));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusArchiveExtractionException("Archive.Broken", "broken archive"));
 
         var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
 

@@ -25,7 +25,8 @@ public partial class OctopusImportIdempotencyIntegrationTests
         var imported = await SingleAsync<Deployment>();
         await DeleteOwnerRowAsync(ownerTable, imported);
 
-        var (_, result) = await PreviewAndConfirmAsync(archive);
+        // A channel deleted in Squid stays deleted unless the user ticks it: ticked, it is created again and takes its history back.
+        var (_, result) = await PreviewAndConfirmAsync(archive, choices: ownerTable == "channel" ? new Dictionary<string, bool> { ["Channels-1"] = true } : null);
 
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
         (await CountAsync<Release>()).ShouldBe(1, "the release was imported a second time");

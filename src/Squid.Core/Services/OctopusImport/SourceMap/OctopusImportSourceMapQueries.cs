@@ -42,6 +42,9 @@ public static class OctopusImportSourceMapQueries
     /// <summary>Outcomes a re-recorded row keeps when it still points at the same destination (an import only ever fills).</summary>
     public static IReadOnlyList<string> StickyOutcomes { get; } = [CreatedOutcome, FilledOutcome, SupersededOutcome];
 
+    /// <summary>The child kinds a re-import offers for the user to decide on when their Squid row is gone (deleted in Squid since the import).</summary>
+    public static IReadOnlySet<string> ChoosableChildSourceTypes { get; } = new HashSet<string>([nameof(OctopusResourceKind.Channel), nameof(OctopusResourceKind.LifecyclePhase), nameof(OctopusResourceKind.DeploymentStep), nameof(OctopusResourceKind.DeploymentAction), nameof(OctopusResourceKind.Variable)], StringComparer.Ordinal);
+
     public static IQueryable<int> CreatedDestinationIds(IQueryable<OctopusImportSourceMap> query, OctopusResourceKind kind)
     {
         var sourceType = kind.ToString();

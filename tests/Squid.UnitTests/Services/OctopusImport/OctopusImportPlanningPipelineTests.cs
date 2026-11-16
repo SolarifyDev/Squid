@@ -198,7 +198,7 @@ public class OctopusImportPlanningPipelineTests
                 .Setup(s => s.DiscoverAsync(It.IsAny<int>(), It.IsAny<OctopusResourceGraph>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new OctopusImportConflictDiscoveryResult([]));
             PreviewPlanner
-                .Setup(p => p.BuildPreviewPlan(It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>()))
+                .Setup(p => p.BuildPreviewPlan(It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportChoiceSelections>()))
                 .Returns(new OctopusImportPreviewPlanDto());
 
             Pipeline = new OctopusImportPlanningPipeline(

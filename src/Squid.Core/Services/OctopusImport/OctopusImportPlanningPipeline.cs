@@ -6,10 +6,8 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportPlanningPipeline : IScopedDependency
 {
-    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
-        string temporaryUploadPath,
-        int destinationSpaceId,
-        CancellationToken ct = default);
+    /// <param name="selections">What the user selected among the resources the plan offers to decide on; null means every server default.</param>
+    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, CancellationToken ct = default);
 }
 
 public sealed record OctopusImportPlanningSnapshot(
@@ -29,10 +27,7 @@ public class OctopusImportPlanningPipeline(
 {
     private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
 
-    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
-        string temporaryUploadPath,
-        int destinationSpaceId,
-        CancellationToken ct = default)
+    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(temporaryUploadPath))
             throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUploadPath));
@@ -46,7 +41,7 @@ public class OctopusImportPlanningPipeline(
         var conflicts = await conflictDiscoveryService
             .DiscoverAsync(destinationSpaceId, graph, ct)
             .ConfigureAwait(false);
-        var previewPlan = previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts);
+        var previewPlan = previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts, selections);
 
         return new OctopusImportPlanningSnapshot(graph, dependencyPlan, conflicts, previewPlan);
     }

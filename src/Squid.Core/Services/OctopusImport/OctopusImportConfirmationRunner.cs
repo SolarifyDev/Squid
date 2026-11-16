@@ -62,9 +62,19 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
 
     private async Task<OctopusImportConfirmationOutcome> ConfirmAsync(CancellationToken ct)
     {
-        var request = new OctopusImportConfirmationRequest(_ctx.SessionId, _ctx.SpaceId, _ctx.Snapshot.Graph, _ctx.Snapshot.DependencyPlan, _ctx.ValidatedPlan.PreviewPlan) { SessionDirectory = Path.GetDirectoryName(_ctx.Session.TemporaryUploadPath) };
+        var request = new OctopusImportConfirmationRequest(_ctx.SessionId, _ctx.SpaceId, _ctx.Snapshot.Graph, _ctx.Snapshot.DependencyPlan, _ctx.ValidatedPlan.PreviewPlan) { SessionDirectory = Path.GetDirectoryName(_ctx.Session.TemporaryUploadPath), ValidatedDataVersion = _ctx.Session.DataVersion };
+        var session = await confirmationOrchestrator.ConfirmAsync(request, ct).ConfigureAwait(false);
 
-        return new OctopusImportConfirmationOutcome(await confirmationOrchestrator.ConfirmAsync(request, ct).ConfigureAwait(false));
+        EnsureNotValidatedAgain(session);
+
+        return new OctopusImportConfirmationOutcome(session);
+    }
+
+    // Still Validated after the confirmation: the plan was validated again after it was read here, so the read plan was not imported.
+    private static void EnsureNotValidatedAgain(OctopusImportSessionDto session)
+    {
+        if (session?.State == OctopusImportSessionState.Validated)
+            throw new OctopusImportConfirmationRejectedException("The preview plan was validated again while this import was starting, so nothing was imported. Import again to import the latest validated plan.");
     }
 
     // The job reopens a scope as the owner: Hangfire scopes run as the internal user, which owns no import session.

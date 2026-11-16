@@ -21,8 +21,9 @@ public partial class OctopusImportPreviewPlanner
         private readonly Dictionary<string, OctopusImportPreviewAction> _historyUnitActionsByTaskId = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _scopeSkippedIds = new(StringComparer.OrdinalIgnoreCase);
         private readonly OctopusImportReferenceScope _referenceScope;
+        private readonly Dictionary<int, IReadOnlyDictionary<string, int>> _variablesHeldBySet = new();
 
-        public PreviewPlanningContext(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, IReadOnlyList<OctopusResourceNode> nodes)
+        public PreviewPlanningContext(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, IReadOnlyList<OctopusResourceNode> nodes, OctopusImportChoiceSelections selections)
         {
             _conflictsBySourceId = conflicts.Conflicts.GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             _blockedSourceIds = dependencyPlan.Diagnostics.Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && !string.IsNullOrWhiteSpace(d.SourceId)).Select(d => d.SourceId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -32,7 +33,11 @@ public partial class OctopusImportPreviewPlanner
             Prior = conflicts.PriorMappings;
             Conflicts = conflicts;
             Nodes = nodes;
+            Selections = selections;
         }
+
+        /// <summary>What the user selected among the resources this plan offers to decide on.</summary>
+        public OctopusImportChoiceSelections Selections { get; }
 
         public OctopusImportPriorMappings Prior { get; }
 
@@ -62,6 +67,34 @@ public partial class OctopusImportPreviewPlanner
         /// <summary>The origins (worded for messages) that created rows of a third origin the source would link to.</summary>
         public IReadOnlyList<string> OtherOriginCreators => _otherOriginCreators ??= OctopusImportOriginMessages.Creators(OctopusImportFillEvidences.OtherOriginCreators(Conflicts.HistoryInstallationId, Conflicts.ExportSourceId, Nodes, Prior), Conflicts.CreatorOrigins);
 
+        /// <summary>
+        /// The owner's Squid rows still hold this child, which has no live row of its own: by name, and for a variable by name and scope
+        /// with each Squid row holding at most one Octopus variable (rows linked to another Octopus variable hold that one).
+        /// </summary>
+        public bool IsStillInSquid(OctopusResourceNode child, int ownerId)
+            => child.Kind == OctopusResourceKind.Variable ? VariablesHeldBy(ownerId).ContainsKey(child.SourceId) : Conflicts.DestinationChildren.Any(c => c.Kind == child.Kind.ToString() && c.OwnerId == ownerId && c.Name == child.Name);
+
+        private IReadOnlyDictionary<string, int> VariablesHeldBy(int variableSetId)
+        {
+            if (!_variablesHeldBySet.TryGetValue(variableSetId, out var held))
+                _variablesHeldBySet[variableSetId] = held = OctopusImportVariableMatching.Pair(UnmappedVariablesOf(variableSetId), UnclaimedVariableRowsOf(variableSetId), PriorDestinationOf);
+
+            return held;
+        }
+
+        private IEnumerable<OctopusResourceNode> UnmappedVariablesOf(int variableSetId)
+            => Nodes.Where(n => n.Kind == OctopusResourceKind.Variable && PriorFor(n.Kind, n.SourceId) == null && OctopusImportChildOwners.ImportedOwnerDestinationId(n, Prior) == variableSetId);
+
+        private IEnumerable<OctopusImportDestinationChild> UnclaimedVariableRowsOf(int variableSetId)
+        {
+            var variableType = OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Variable));
+            var claimed = Prior.Mappings.Where(m => m.Key.Type == variableType).Select(m => m.Value.DestinationId).ToHashSet();
+
+            return Conflicts.DestinationChildren.Where(c => c.Kind == nameof(OctopusResourceKind.Variable) && c.OwnerId == variableSetId && !claimed.Contains(c.Id));
+        }
+
+        private int? PriorDestinationOf(string sourceId, OctopusResourceKind kind) => PriorFor(kind, sourceId)?.DestinationId;
+
         public OctopusImportResourceResultDto Record(OctopusImportResourceResultDto preview)
         {
             _previewsById[preview.SourceId] = preview;
@@ -84,6 +117,9 @@ public partial class OctopusImportPreviewPlanner
         public bool TryGetConflict(string sourceId, out OctopusImportResourceConflict conflict) => _conflictsBySourceId.TryGetValue(sourceId, out conflict);
 
         public OctopusImportPreviewAction? PreviewActionOf(string sourceId) => _previewsById.GetValueOrDefault(sourceId)?.PreviewAction;
+
+        /// <summary>The choice recorded on a resource already decided, or null when the user does not decide about it.</summary>
+        public OctopusImportChoiceDto ChoiceOf(string sourceId) => string.IsNullOrWhiteSpace(sourceId) ? null : _previewsById.GetValueOrDefault(sourceId)?.Choice;
 
         public OctopusResourceNode FindNode(string sourceId, OctopusResourceKind kind)
             => !string.IsNullOrWhiteSpace(sourceId) && _nodesById.TryGetValue(sourceId, out var node) && node.Kind == kind ? node : null;

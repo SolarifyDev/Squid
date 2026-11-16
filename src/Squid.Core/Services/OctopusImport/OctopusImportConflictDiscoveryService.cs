@@ -45,10 +45,10 @@ public class OctopusImportConflictDiscoveryService(
         var sourceOrigin = await LoadSourceOriginAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var creatorOrigins = await LoadCreatorOriginsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var storedHistory = await LoadStoredHistoryAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
-        var destinationVariables = await LoadVariablesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
+        var destinationChildren = await LoadChildNamesWithoutRowsAsync(destinationSpaceId, graph, prior, cancellationToken).ConfigureAwait(false);
         var orphanedHistory = await LoadOrphanedHistoryAsync(destinationSpaceId, prior, cancellationToken).ConfigureAwait(false);
 
-        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationVariables = destinationVariables, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, CreatorOrigins = creatorOrigins, Destinations = destinationResources, StoredHistory = storedHistory, OrphanedHistory = orphanedHistory };
+        return new OctopusImportConflictDiscoveryResult(conflicts) { DestinationChildren = destinationChildren, PriorMappings = prior, ExistingReleaseKeys = releaseKeys, HistoryInstallationId = graph.InstallationId, ExportSourceId = graph.ExportSourceId, SecretSlots = secretSlots, FillDestinations = OctopusImportFillDestinations.From(destinationResources, prior), InstallationOrigin = origin, SourceOrigin = sourceOrigin, CreatorOrigins = creatorOrigins, Destinations = destinationResources, StoredHistory = storedHistory, OrphanedHistory = orphanedHistory };
     }
 
     // Only the rows an Update would rewrite are read: imported history whose notes or task changed in Octopus.
@@ -73,20 +73,24 @@ public class OctopusImportConflictDiscoveryService(
     private static bool IsHistoryRow((string Type, string Id) key)
         => key.Type == OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Release)) || key.Type == OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Deployment));
 
-    // Only the imported sets with an incoming variable that has no live row are read (by name): on an unchanged repeat, nothing.
-    private async Task<IReadOnlyList<OctopusImportDestinationVariable>> LoadVariablesWithoutRowsAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
+    // Only the imported owners with an incoming child that has no live row are read (by name), once per kind: on an unchanged repeat, nothing.
+    private async Task<IReadOnlyList<OctopusImportDestinationChild>> LoadChildNamesWithoutRowsAsync(int destinationSpaceId, OctopusResourceGraph graph, OctopusImportPriorMappings prior, CancellationToken ct)
     {
-        var setIds = graph.Resources
-            .Where(n => n.Kind == OctopusResourceKind.Variable && !prior.TryGet(nameof(OctopusResourceKind.Variable), n.SourceId, out _))
-            .Select(n => prior.TryGet(nameof(OctopusResourceKind.VariableSet), OctopusImportPriorMappingPolicy.OwnerSourceId(n), out var set) ? set.DestinationId : 0)
-            .Where(id => id > 0)
-            .Distinct()
-            .ToList();
+        var children = new List<OctopusImportDestinationChild>();
 
-        if (setIds.Count == 0) return [];
+        foreach (var (kind, ownerIds) in ImportedOwnersOfChildrenWithoutRows(graph, prior))
+            children.AddRange(await destinationDataProvider.GetChildNamesAsync(destinationSpaceId, kind, ownerIds, ct).ConfigureAwait(false) ?? []);
 
-        return await destinationDataProvider.GetVariableNamesAsync(destinationSpaceId, setIds, ct).ConfigureAwait(false) ?? [];
+        return children;
     }
+
+    private static IEnumerable<(OctopusResourceKind Kind, List<int> OwnerIds)> ImportedOwnersOfChildrenWithoutRows(OctopusResourceGraph graph, OctopusImportPriorMappings prior)
+        => graph.Resources
+            .Where(n => !n.IsHistorical && OctopusImportChildOwners.IsNamedChild(n.Kind) && !prior.TryGet(n.Kind.ToString(), n.SourceId, out _))
+            .Select(n => (n.Kind, OwnerId: OctopusImportChildOwners.ImportedOwnerDestinationId(n, prior)))
+            .Where(c => c.OwnerId > 0)
+            .GroupBy(c => c.Kind)
+            .Select(g => (g.Key, g.Select(c => c.OwnerId).Distinct().ToList()));
 
     // A source not proven by the space's installation id shows where the space came from: read from the newest import session that
     // recorded that installation.

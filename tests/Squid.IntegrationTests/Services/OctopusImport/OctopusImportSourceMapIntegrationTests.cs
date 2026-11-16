@@ -480,6 +480,33 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
+    // A re-import offers the user a child the earlier import created whose Squid row is gone: only the five choosable child kinds are
+    // named (never history, never a set, a process or a secret row), and a live row never is.
+    [Theory]
+    [InlineData("project", "Project", "Channel,Variable:project,DeploymentStep,DeploymentAction")]
+    [InlineData("lifecycle", "Lifecycle", "LifecyclePhase")]
+    [InlineData("deployment_step", "DeploymentStep", "DeploymentStep,DeploymentAction")]
+    [InlineData("variable", "Variable:library", "Variable:library")]
+    [InlineData("release", "Release", "")]
+    public async Task Load_RowDeletedInSquid_NamesOnlyDeletedRowsOfTheChoosableChildKinds(string table, string deletedLabel, string expectedDeleted)
+    {
+        await Run<SquidDbContext, IRepository, IUnitOfWork, IOctopusImportSourceMapDataProvider>(async (db, repository, unitOfWork, provider) =>
+        {
+            var rows = await SeedOwnerGraphAsync(new TestDataBuilder(repository, unitOfWork));
+            await provider.UpsertAsync(rows.Values.ToList(), Guid.NewGuid());
+            rows.Values.ShouldAllBe(r => !IsDeletedInSquid(provider, r).Result, "nothing is deleted while every row is live");
+
+            await db.Database.ExecuteSqlRawAsync($"DELETE FROM {table} WHERE id = {{0}}", rows[deletedLabel].DestinationId);
+
+            var prior = await provider.LoadAsync(SpaceId);
+            rows.Where(pair => prior.IsDeletedInSquid(pair.Value.SourceType, pair.Value.SourceId)).Select(pair => pair.Key).ShouldBe(expectedDeleted.Split(',', StringSplitOptions.RemoveEmptyEntries), ignoreOrder: true);
+            (await provider.LoadAsync(SpaceId + 1)).IsDeletedInSquid("DeploymentStep", "Steps-1").ShouldBeFalse("another space's rows are never read");
+        });
+    }
+
+    private async Task<bool> IsDeletedInSquid(IOctopusImportSourceMapDataProvider provider, OctopusImportSourceMapRow row)
+        => (await provider.LoadAsync(row.SpaceId)).IsDeletedInSquid(row.SourceType, row.SourceId);
+
     // A Squid save that gives a missing secret a value settles only that still-Missing row: terminal rows and other rows stay as they are.
     [Fact]
     public async Task SupersedeMissingSecrets_SettlesOnlyTheNamedMissingRowsOfTheSpace()

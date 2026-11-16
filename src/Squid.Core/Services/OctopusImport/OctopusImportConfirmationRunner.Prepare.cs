@@ -72,7 +72,7 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         try
         {
-            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.Session.TemporaryUploadPath, _ctx.SpaceId, ct).ConfigureAwait(false);
+            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.Session.TemporaryUploadPath, _ctx.SpaceId, ct: ct).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

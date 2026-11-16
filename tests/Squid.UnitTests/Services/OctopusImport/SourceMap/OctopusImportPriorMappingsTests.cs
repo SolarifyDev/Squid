@@ -54,4 +54,26 @@ public class OctopusImportPriorMappingsTests
         OctopusImportPriorMappings.Empty.TryGet("Release", "Releases-1", out _).ShouldBeFalse();
         OctopusImportPriorMappings.Empty.InstallationId.ShouldBeNull();
     }
+
+    // A row the source map recorded whose Squid row is gone: the export suffix and case never hide it, and a live row never is one.
+    [Theory]
+    [InlineData("DeploymentStep", "Steps-7-0123456789ABCDEF0123456789ABCDEF", "deploymentstep", "steps-7", true)]
+    [InlineData("DeploymentStep", "steps-7", "DeploymentStep", "STEPS-7-0123456789abcdef0123456789abcdef", true)]
+    [InlineData("DeploymentStep", "Steps-7", "DeploymentAction", "Steps-7", false)]
+    [InlineData("DeploymentStep", "Steps-7", "DeploymentStep", "Steps-8", false)]
+    public void IsDeletedInSquid_NormalisesTypeIdAndExportSuffix(string recordedType, string recordedId, string type, string id, bool expected)
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(), null, deletedKeys: new HashSet<(string Type, string Id)> { (recordedType, recordedId) });
+
+        prior.IsDeletedInSquid(type, id).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void IsDeletedInSquid_LiveRowNeverDeleted_EmptyNeverDeleted()
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [("Variable", "Variables-1")] = new(42, "Created", null, null) }, null, deletedKeys: new HashSet<(string Type, string Id)> { ("Variable", "VARIABLES-1") });
+
+        prior.IsDeletedInSquid("Variable", "Variables-1").ShouldBeFalse("a live row is in Squid");
+        OctopusImportPriorMappings.Empty.IsDeletedInSquid("Variable", "Variables-1").ShouldBeFalse();
+    }
 }

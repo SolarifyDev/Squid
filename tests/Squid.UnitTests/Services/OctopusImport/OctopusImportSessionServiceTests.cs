@@ -186,6 +186,40 @@ public class OctopusImportSessionServiceTests
                 CancellationToken.None));
     }
 
+    // A validation after the user changed what to import replaces (or, when blocked, clears) the plan confirmation imports, only while
+    // the session is Validated: once importing or settled, the plan it confirmed is never swapped.
+    [Theory]
+    [InlineData("{\"previewPlan\":{}}")]
+    [InlineData(null)]
+    public async Task ReplaceValidatedPlanAsync_Validated_ReplacesOrClearsThePlan_StateKept(string json)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Validated);
+        session.ValidatedPlanJson = "{\"previewPlan\":{\"old\":true}}";
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var result = await _service.ReplaceValidatedPlanAsync(sessionId, 7, json);
+
+        session.ValidatedPlanJson.ShouldBe(json);
+        result.State.ShouldBe(OctopusImportSessionState.Validated);
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, session.DataVersion, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportSessionState.Previewed)]
+    [InlineData(OctopusImportSessionState.Importing)]
+    [InlineData(OctopusImportSessionState.Succeeded)]
+    [InlineData(OctopusImportSessionState.Failed)]
+    public async Task ReplaceValidatedPlanAsync_NotValidated_Throws_NothingWritten(OctopusImportSessionState state)
+    {
+        var sessionId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, state));
+
+        await Should.ThrowAsync<OctopusImportSessionStateTransitionException>(() => _service.ReplaceValidatedPlanAsync(sessionId, 7, "{}"));
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task UpdatePayloadAndTransitionAsync_RejectsUnexpectedCurrentState()
     {
@@ -299,12 +333,30 @@ public class OctopusImportSessionServiceTests
             .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None);
+        var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None);
 
         admitted.ShouldBeTrue();
         _dataProvider.Verify(
             p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // The version the validated plan was read with wins over the current one: a plan validated again meanwhile is never imported instead.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TryStartConfirmationAsync_ExpectsTheVersionThePlanWasReadWith_OrTheCurrentOne(bool planVersionGiven)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Validated);
+        session.DataVersion = [1, 1, 1];
+        byte[] planVersion = [2, 2, 2];
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await _service.TryStartConfirmationAsync(sessionId, 7, planVersionGiven ? planVersion : null, CancellationToken.None);
+
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(sessionId, 42, 7, planVersionGiven ? planVersion : session.DataVersion, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -313,7 +365,7 @@ public class OctopusImportSessionServiceTests
         var sessionId = Guid.NewGuid();
 
         var exception = await Should.ThrowAsync<OctopusImportSessionNotFoundException>(
-            () => _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None));
+            () => _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None));
 
         exception.SessionId.ShouldBe(sessionId);
         _dataProvider.Verify(

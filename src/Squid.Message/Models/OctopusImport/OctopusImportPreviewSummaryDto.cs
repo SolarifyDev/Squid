@@ -20,4 +20,7 @@ public class OctopusImportPreviewSummaryDto
     public OctopusImportPreviewGroupDto Space { get; set; } = new();
 
     public List<OctopusImportSkipReasonCountDto> SkipReasons { get; set; } = [];
+
+    /// <summary>The resources the user decides about, per reason (roots only, followers not counted): how many are offered and selected. Empty when none.</summary>
+    public List<OctopusImportChoiceCountDto> Choices { get; set; } = [];
 }

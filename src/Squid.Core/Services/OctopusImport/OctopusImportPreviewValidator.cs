@@ -16,7 +16,7 @@ public interface IOctopusImportPreviewValidator : IScopedDependency
         OctopusImportPreviewPlanDto previewPlan);
 }
 
-public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
+public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
 {
     private static readonly HashSet<OctopusResourceKind> ReusableSharedResourceKinds =
     [
@@ -33,10 +33,12 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
     ];
 
     private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+    private readonly IOctopusImportPreviewPlanner _previewPlanner;
 
-    public OctopusImportPreviewValidator(IOctopusExportSecretsAccessor secretsAccessor = null)
+    public OctopusImportPreviewValidator(IOctopusExportSecretsAccessor secretsAccessor = null, IOctopusImportPreviewPlanner previewPlanner = null)
     {
         _secretsAccessor = secretsAccessor;
+        _previewPlanner = previewPlanner ?? new OctopusImportPreviewPlanner(secretsAccessor);
     }
 
     private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
@@ -77,6 +79,7 @@ public class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
         ValidateOrigin(graph, conflicts, previewPlan, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
+        ValidateChoices(dependencyPlan, conflicts, previewPlan, result);
         // Server-built inputs come first so their severity (not a client-posted IsRequired) wins the de-duplication.
         result.RequiredInputs = BuildRequiredInputs(plan)
             .Concat(previewPlan.RequiredInputs)

@@ -521,9 +521,10 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
     }
 
-    private async Task<(OctopusImportPlanningSnapshot Snapshot, OctopusImportSessionDto Result)> PreviewAndConfirmAsync(string archivePath, string sessionDirectory = null)
+    // With choices: the user's selection posted back, as validation plans it (the plan is built again with the selection).
+    private async Task<(OctopusImportPlanningSnapshot Snapshot, OctopusImportSessionDto Result)> PreviewAndConfirmAsync(string archivePath, string sessionDirectory = null, IReadOnlyDictionary<string, bool> choices = null)
     {
-        var snapshot = await PreviewAsync(archivePath);
+        var snapshot = await PreviewAsync(archivePath, choices);
         var sessionId = await SeedValidatedSessionAsync();
 
         snapshot.PreviewPlan.HasBlockers.ShouldBeFalse(Describe(snapshot.PreviewPlan));
@@ -531,8 +532,24 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         return (snapshot, await ConfirmAsync(sessionId, snapshot, sessionDirectory));
     }
 
-    private Task<OctopusImportPlanningSnapshot> PreviewAsync(string archivePath)
-        => Run<IOctopusImportPlanningPipeline, OctopusImportPlanningSnapshot>(pipeline => pipeline.BuildPreviewAsync(archivePath, SpaceId));
+    private async Task<OctopusImportPlanningSnapshot> PreviewAsync(string archivePath, IReadOnlyDictionary<string, bool> choices = null)
+    {
+        var snapshot = await Run<IOctopusImportPlanningPipeline, OctopusImportPlanningSnapshot>(pipeline => pipeline.BuildPreviewAsync(archivePath, SpaceId));
+
+        if (choices == null) return snapshot;
+
+        var selections = Selections(snapshot.PreviewPlan, choices);
+
+        return await Run<IOctopusImportPlanningPipeline, OctopusImportPlanningSnapshot>(pipeline => pipeline.BuildPreviewAsync(archivePath, SpaceId, selections));
+    }
+
+    private static OctopusImportChoiceSelections Selections(OctopusImportPreviewPlanDto plan, IReadOnlyDictionary<string, bool> choices)
+    {
+        foreach (var (sourceId, selected) in choices)
+            (plan.Resources.Single(r => r.SourceId == sourceId).Choice ?? throw new InvalidOperationException($"{sourceId} is not offered: {Describe(plan)}")).Selected = selected;
+
+        return OctopusImportChoiceSelections.From(plan);
+    }
 
     private Task<OctopusImportSessionDto> ConfirmAsync(Guid sessionId, OctopusImportPlanningSnapshot snapshot, string sessionDirectory = null)
         => Run<IOctopusImportConfirmationOrchestrator, OctopusImportSessionDto>(orchestrator => orchestrator.ConfirmAsync(new OctopusImportConfirmationRequest(sessionId, SpaceId, snapshot.Graph, snapshot.DependencyPlan, snapshot.PreviewPlan) { SessionDirectory = sessionDirectory }));
@@ -633,6 +650,18 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
 
         /// <summary>A real Octopus export's manifest carries no installation id (only Squid-built bundles do).</summary>
         public bool WithoutInstallationId { get; init; }
+
+        /// <summary>The process's steps (JSON array items); null: the configured step when <see cref="WithConfiguration"/>, else none.</summary>
+        public string StepsJson { get; init; }
+
+        /// <summary>The lifecycle's phases (JSON array items); null: one TEST phase.</summary>
+        public string PhasesJson { get; init; }
+
+        /// <summary>The project's variables (JSON array items); null: the configured variable when <see cref="WithConfiguration"/>, else none.</summary>
+        public string VariablesJson { get; init; }
+
+        /// <summary>More documents of the same export (channels, releases, deployments, tasks).</summary>
+        public IReadOnlyList<(string Id, string DocumentType, string Json)> ExtraDocuments { get; init; } = [];
     }
 
     private string SessionDirectory()
@@ -700,6 +729,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         return details;
     }
 
+    private const string DefaultPhase = """{"Id":"Phases-1","Name":"TEST","AutomaticDeploymentTargets":["Environments-1"]}""";
+
     private const string ConfiguredVariable = """{"Id":"Variables-1","Name":"Imported variable","Value":"imported-value","Type":"String"}""";
 
     private const string ConfiguredStep = """{"Id":"Steps-1","Name":"Imported step","Condition":"Success","StartTrigger":"StartAfterPrevious","Actions":[{"Id":"Actions-1","Name":"Imported action","ActionType":"Octopus.Script","IsRequired":true,"Properties":{"Octopus.Action.RunOnServer":"true","Octopus.Action.Script.ScriptSource":"Inline","Octopus.Action.Script.Syntax":"Bash","Octopus.Action.Script.ScriptBody":"echo hi"}}]}""";
@@ -712,10 +743,10 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         {
             Document("ProjectGroups-1", "ProjectGroup", """{"Id":"ProjectGroups-1","Name":"Idempotent group","Slug":"idempotent-group"}"""),
             Document("Environments-1", "StaticDeploymentEnvironment", """{"Id":"Environments-1","Name":"Idempotent TEST","Slug":"idempotent-test"}"""),
-            Document("Lifecycles-1", "Lifecycle", """{"Id":"Lifecycles-1","Name":"Idempotent lifecycle","Slug":"idempotent-lifecycle","Phases":[{"Id":"Phases-1","Name":"TEST","AutomaticDeploymentTargets":["Environments-1"]}]}"""),
+            Document("Lifecycles-1", "Lifecycle", $$"""{"Id":"Lifecycles-1","Name":"Idempotent lifecycle","Slug":"idempotent-lifecycle","Phases":[{{spec.PhasesJson ?? DefaultPhase}}]}"""),
             Document("Projects-1", "Project", """{"Id":"Projects-1","Name":"Idempotent project","Slug":"idempotent-project","ProjectGroupId":"ProjectGroups-1","LifecycleId":"Lifecycles-1","VariableSetId":"variableset-Projects-1","DeploymentProcessId":"deploymentprocess-Projects-1"}"""),
-            Document("variableset-Projects-1", "ProjectVariables", $$"""{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{{(spec.WithConfiguration ? ConfiguredVariable : "")}}]}"""),
-            Document("deploymentprocess-Projects-1", "DeploymentProcess", $$"""{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{{(spec.WithConfiguration ? ConfiguredStep : "")}}]}"""),
+            Document("variableset-Projects-1", "ProjectVariables", $$"""{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{{spec.VariablesJson ?? (spec.WithConfiguration ? ConfiguredVariable : "")}}]}"""),
+            Document("deploymentprocess-Projects-1", "DeploymentProcess", $$"""{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{{spec.StepsJson ?? (spec.WithConfiguration ? ConfiguredStep : "")}}]}"""),
             Document("Channels-1", "Channel", $$"""{"Id":"Channels-1","Name":"Default","Slug":"default","ProjectId":"Projects-1","IsDefault":{{(spec.MovedDefaultChannel ? "false" : "true")}}}"""),
             Document("Releases-1", "Release", $$"""{"Id":"Releases-1","ProjectId":"Projects-1","ChannelId":"{{spec.ReleaseChannelId}}","Version":"1.0.0","ReleaseNotes":{{JsonSerializer.Serialize(spec.ReleaseNotes)}},"Assembled":"2024-07-01T08:00:00+00:00"}"""),
             Document("ServerTasks-1", "ServerTask", $$"""{"Id":"ServerTasks-1","Name":"{{spec.TaskName}}","Description":"Deploy idempotent release","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"{{spec.State}}","QueueTime":"2024-07-10T09:47:02+00:00","StartTime":"2024-07-10T09:47:03+00:00","CompletedTime":{{completed}},"ErrorMessage":{{JsonSerializer.Serialize(spec.ErrorMessage)}},"HasWarningsOrErrors":false,"DurationSeconds":68{{detail}}}"""),
@@ -725,7 +756,7 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");
         _paths.Add(path);
 
-        WriteArchive(path, Suffixed(spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments()] : documents, spec.ExportSuffix), spec.WithoutInstallationId ? null : InstallationId);
+        WriteArchive(path, Suffixed(spec.MovedDefaultChannel ? [.. documents, .. NewDefaultChannelDocuments(), .. spec.ExtraDocuments] : [.. documents, .. spec.ExtraDocuments], spec.ExportSuffix), spec.WithoutInstallationId ? null : InstallationId);
 
         return path;
     }

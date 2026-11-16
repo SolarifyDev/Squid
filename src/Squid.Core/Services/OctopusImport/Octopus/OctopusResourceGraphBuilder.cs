@@ -593,7 +593,8 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             ? OctopusResourceReferenceKind.VariableSetSnapshot
             : OctopusResourceReferenceKind.VariableSet;
 
-    private static string BuildChildSourceId(string parentSourceId, string childKind, string sourceId, int index)
+    /// <summary>A child's source id: its own id, or one derived from its owner and position when Octopus gives it none.</summary>
+    public static string BuildChildSourceId(string parentSourceId, string childKind, string sourceId, int index)
         => string.IsNullOrWhiteSpace(sourceId)
             ? $"{parentSourceId}/{childKind}-{index + 1}"
             : sourceId;

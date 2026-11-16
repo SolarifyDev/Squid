@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Models.Deployments.Variable;
 using Squid.Message.Models.OctopusImport;
 using DeploymentEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
@@ -19,8 +20,11 @@ public interface IOctopusImportDestinationDataProvider : IScopedDependency
     /// <summary>Squid's current release notes and task scalars of the given rows in the space (what an Update would rewrite), for the preview's old → new.</summary>
     Task<OctopusImportStoredHistory> GetStoredHistoryAsync(int destinationSpaceId, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken cancellationToken = default);
 
-    /// <summary>The names of the variables the given variable sets of the space hold now (never values).</summary>
-    Task<IReadOnlyList<OctopusImportDestinationVariable>> GetVariableNamesAsync(int destinationSpaceId, IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// The names of the rows of one child kind the given owners of the space hold now (never values): the steps of processes, the actions
+    /// of steps, the phases of lifecycles or the variables of variable sets.
+    /// </summary>
+    Task<IReadOnlyList<OctopusImportDestinationChild>> GetChildNamesAsync(int destinationSpaceId, OctopusResourceKind kind, IReadOnlyCollection<int> ownerIds, CancellationToken cancellationToken = default);
 
     /// <summary>The releases and deployments of the space whose owner rows were deleted in Squid (deletes do not cascade).</summary>
     Task<OctopusImportOrphanedHistory> GetOrphanedHistoryAsync(int destinationSpaceId, CancellationToken cancellationToken = default);
@@ -111,14 +115,65 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
         return new OctopusImportStoredHistory(releaseNotes, tasks);
     }
 
-    public async Task<IReadOnlyList<OctopusImportDestinationVariable>> GetVariableNamesAsync(int destinationSpaceId, IReadOnlyCollection<int> variableSetIds, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<OctopusImportDestinationChild>> GetChildNamesAsync(int destinationSpaceId, OctopusResourceKind kind, IReadOnlyCollection<int> ownerIds, CancellationToken cancellationToken = default)
     {
-        if (variableSetIds == null || variableSetIds.Count == 0) return [];
+        if (ownerIds == null || ownerIds.Count == 0) return [];
 
-        var sets = repository.QueryNoTracking<VariableSet>(s => s.SpaceId == destinationSpaceId && variableSetIds.Contains(s.Id)).Select(s => s.Id);
+        var names = await ChildNames(destinationSpaceId, kind, ownerIds).ToListAsync(cancellationToken).ConfigureAwait(false);
+        var scopes = kind == OctopusResourceKind.Variable ? await VariableScopeTokensAsync(names.Select(n => n.Id).ToList(), cancellationToken).ConfigureAwait(false) : null;
 
-        return await repository.QueryNoTracking<Variable>(v => sets.Contains(v.VariableSetId)).Select(v => new OctopusImportDestinationVariable(v.VariableSetId, v.Name)).Distinct().ToListAsync(cancellationToken).ConfigureAwait(false);
+        return names.Select(n => new OctopusImportDestinationChild(kind.ToString(), n.OwnerId, n.Name) { Id = n.Id, Scopes = scopes == null ? null : scopes.GetValueOrDefault(n.Id) ?? [] }).ToList();
     }
+
+    // Each variable's scope as the canonical tokens its VariableIdentity is built from (an unscoped variable has none).
+    private async Task<IReadOnlyDictionary<int, IReadOnlyList<string>>> VariableScopeTokensAsync(IReadOnlyCollection<int> variableIds, CancellationToken cancellationToken)
+    {
+        var scopes = await repository.QueryNoTracking<VariableScope>(s => variableIds.Contains(s.VariableId)).Select(s => new { s.VariableId, s.ScopeType, s.ScopeValue }).ToListAsync(cancellationToken).ConfigureAwait(false);
+
+        return scopes.GroupBy(s => s.VariableId).ToDictionary(g => g.Key, g => VariableIdentity.Canonical(g.Where(s => !string.IsNullOrWhiteSpace(s.ScopeValue)).Select(s => VariableIdentity.ScopeToken(s.ScopeType, s.ScopeValue))));
+    }
+
+    // Each owner is read through its space, so an id of another space never answers.
+    private IQueryable<OwnedName> ChildNames(int spaceId, OctopusResourceKind kind, IReadOnlyCollection<int> ownerIds)
+        => kind switch
+        {
+            OctopusResourceKind.DeploymentStep => StepNames(spaceId, ownerIds),
+            OctopusResourceKind.DeploymentAction => ActionNames(spaceId, ownerIds),
+            OctopusResourceKind.LifecyclePhase => PhaseNames(spaceId, ownerIds),
+            OctopusResourceKind.Variable => VariableNames(spaceId, ownerIds),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Only steps, actions, lifecycle phases and variables are read by owner.")
+        };
+
+    private IQueryable<OwnedName> StepNames(int spaceId, IReadOnlyCollection<int> processIds)
+    {
+        var processes = repository.QueryNoTracking<DeploymentProcess>(p => p.SpaceId == spaceId && processIds.Contains(p.Id)).Select(p => p.Id);
+
+        return repository.QueryNoTracking<DeploymentStep>(s => processes.Contains(s.ProcessId)).Select(s => new OwnedName(s.Id, s.ProcessId, s.Name));
+    }
+
+    private IQueryable<OwnedName> ActionNames(int spaceId, IReadOnlyCollection<int> stepIds)
+    {
+        var processes = repository.QueryNoTracking<DeploymentProcess>(p => p.SpaceId == spaceId).Select(p => p.Id);
+        var steps = repository.QueryNoTracking<DeploymentStep>(s => stepIds.Contains(s.Id) && processes.Contains(s.ProcessId)).Select(s => s.Id);
+
+        return repository.QueryNoTracking<DeploymentAction>(a => steps.Contains(a.StepId)).Select(a => new OwnedName(a.Id, a.StepId, a.Name));
+    }
+
+    private IQueryable<OwnedName> PhaseNames(int spaceId, IReadOnlyCollection<int> lifecycleIds)
+    {
+        var lifecycles = repository.QueryNoTracking<Lifecycle>(l => l.SpaceId == spaceId && lifecycleIds.Contains(l.Id)).Select(l => l.Id);
+
+        return repository.QueryNoTracking<LifecyclePhase>(p => lifecycles.Contains(p.LifecycleId)).Select(p => new OwnedName(p.Id, p.LifecycleId, p.Name));
+    }
+
+    private IQueryable<OwnedName> VariableNames(int spaceId, IReadOnlyCollection<int> variableSetIds)
+    {
+        var sets = repository.QueryNoTracking<VariableSet>(s => s.SpaceId == spaceId && variableSetIds.Contains(s.Id)).Select(s => s.Id);
+
+        return repository.QueryNoTracking<Variable>(v => sets.Contains(v.VariableSetId)).Select(v => new OwnedName(v.Id, v.VariableSetId, v.Name));
+    }
+
+    private sealed record OwnedName(int Id, int OwnerId, string Name);
 
     public async Task<OctopusImportOrphanedHistory> GetOrphanedHistoryAsync(int destinationSpaceId, CancellationToken cancellationToken = default)
     {

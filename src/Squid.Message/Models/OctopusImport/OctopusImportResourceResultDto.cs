@@ -49,6 +49,12 @@ public class OctopusImportResourceResultDto
     /// <summary>For an Update or a Fill: the fields written into the row an earlier import created, old → new (a secret is named, never shown). Empty otherwise.</summary>
     public List<OctopusImportFieldChangeDto> Changes { get; set; } = [];
 
+    /// <summary>
+    /// Set when the user decides whether this row is imported: it was deleted in Squid after an earlier import, or added in Octopus after
+    /// what it belongs to was imported. Null for every other row and for plans produced before it existed.
+    /// </summary>
+    public OctopusImportChoiceDto Choice { get; set; }
+
     /// <summary>For a resource that is not imported (Skip, Unsupported): why. Null otherwise.</summary>
     public OctopusImportSkipReasonDto SkipReason { get; set; }
 

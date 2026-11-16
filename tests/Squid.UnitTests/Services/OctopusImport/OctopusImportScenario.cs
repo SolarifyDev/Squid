@@ -35,6 +35,8 @@ internal sealed class OctopusImportScenario
     private readonly Dictionary<int, OctopusImportStoredTask> _storedTasks = [];
     private readonly HashSet<int> _orphanedReleases = [];
     private readonly HashSet<int> _orphanedDeployments = [];
+    private readonly HashSet<(string Type, string Id)> _deletedInSquid = [];
+    private readonly List<OctopusImportDestinationChild> _squidChildren = [];
     private string _installationId;
     private string _priorInstallationId;
     private OctopusImportHistoryFetchDto _priorImportSession;
@@ -64,6 +66,21 @@ internal sealed class OctopusImportScenario
 
     public OctopusImportScenario Lifecycle(string id, string name, params string[] environmentIds)
         => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = new[] { new { Id = $"{id}-phase", Name = "Phase", AutomaticDeploymentTargets = environmentIds, OptionalDeploymentTargets = Array.Empty<string>() } } });
+
+    /// <summary>A lifecycle whose phases (named by their ids) each deploy to <paramref name="environmentId"/>, in this order.</summary>
+    public OctopusImportScenario LifecycleWithPhases(string id, string name, string environmentId, params string[] phaseIds)
+        => Add(id, "Lifecycle", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), Phases = phaseIds.Select(phaseId => new { Id = phaseId, Name = phaseId, AutomaticDeploymentTargets = new[] { environmentId }, OptionalDeploymentTargets = Array.Empty<string>() }).ToArray() });
+
+    /// <summary>A project whose process is one step ("Step 1", id <c>{id}-step-1</c>) holding every action, in order.</summary>
+    public OctopusImportScenario ProjectWithOneStep(string id, string name, params object[] actions)
+    {
+        Add(id, "Project", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), VariableSetId = ProjectVariableSetId(id), DeploymentProcessId = $"deploymentprocess-{id}", IncludedLibraryVariableSetIds = Array.Empty<string>() });
+        Add(ProjectVariableSetId(id), "ProjectVariables", new { Id = ProjectVariableSetId(id), OwnerId = id, OwnerType = "Project", Variables = Array.Empty<object>() });
+
+        var step = new { Id = $"{id}-step-1", Name = "Step 1", Condition = "Success", StartTrigger = "StartAfterPrevious", PackageRequirement = "LetOctopusDecide", Properties = new Dictionary<string, string>(), Actions = actions };
+
+        return Add($"deploymentprocess-{id}", "DeploymentProcess", new { Id = $"deploymentprocess-{id}", OwnerId = id, Steps = new[] { step } });
+    }
 
     /// <summary>A project with no variables and no steps that deploys through <paramref name="lifecycleId"/>.</summary>
     public OctopusImportScenario ProjectOnLifecycle(string id, string name, string lifecycleId)
@@ -216,6 +233,28 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>An imported child whose Squid row was deleted since: the source map still records it, its destination is gone.</summary>
+    public OctopusImportScenario DeletedInSquid(OctopusResourceKind kind, string sourceId)
+    {
+        _prior.Remove((kind.ToString(), sourceId));
+        _deletedInSquid.Add((kind.ToString(), sourceId));
+        return this;
+    }
+
+    /// <summary>A row Squid holds under an owner now, by name (a step of a process, an action of a step, a phase of a lifecycle).</summary>
+    public OctopusImportScenario SquidChild(OctopusResourceKind kind, int ownerId, string name)
+    {
+        _squidChildren.Add(new OctopusImportDestinationChild(kind.ToString(), ownerId, name));
+        return this;
+    }
+
+    /// <summary>A variable Squid holds in a set now: its row id, name and scope (compared as VariableIdentity tokens).</summary>
+    public OctopusImportScenario SquidVariable(int id, int variableSetId, string name, params (VariableScopeType Type, string Value)[] scopes)
+    {
+        _squidChildren.Add(new OctopusImportDestinationChild(nameof(OctopusResourceKind.Variable), variableSetId, name) { Id = id, Scopes = VariableIdentity.Of(name, VariableType.String, scopes).Scopes });
+        return this;
+    }
+
     /// <summary>A release that exists in Squid under a destination project and channel.</summary>
     public OctopusImportScenario ExistingRelease(int projectId, int channelId, string version)
     {
@@ -353,6 +392,9 @@ internal sealed class OctopusImportScenario
         return this;
     }
 
+    /// <summary>The owners conflict discovery asked Squid for the child names of, per kind.</summary>
+    public List<(OctopusResourceKind Kind, IReadOnlyCollection<int> OwnerIds)> ChildNameReads { get; } = [];
+
     /// <summary>The release / task ids conflict discovery asked Squid for (the rows an Update would rewrite).</summary>
     public List<(IReadOnlyCollection<int> ReleaseIds, IReadOnlyCollection<int> TaskIds)> StoredHistoryReads { get; } = [];
 
@@ -427,13 +469,14 @@ internal sealed class OctopusImportScenario
     public static string Encrypt(string plaintext) => Secrets.OctopusExportTestCipher.Encrypt(plaintext, ExportPassword);
 
     /// <param name="pairingConfirmed">The user confirmed the export-file pairing the preview asked for (posted back with the plan).</param>
-    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null, bool pairingConfirmed = false)
+    /// <param name="selections">What the user selected among the resources the plan offers to decide on.</param>
+    public async Task<ScenarioResult> PlanAsync(OctopusExportSecrets secrets = null, bool pairingConfirmed = false, OctopusImportChoiceSelections selections = null)
     {
         var graph = await BuildGraphAsync().ConfigureAwait(false);
         var dependencyPlan = new OctopusImportDependencyPlanner().BuildCurrentConfigurationPlan(graph);
         var conflicts = await DiscoverConflictsAsync(graph).ConfigureAwait(false);
         var accessor = new OctopusExportSecretsAccessor { Secrets = secrets ?? OctopusExportSecrets.None };
-        var preview = new OctopusImportPreviewPlanner(accessor).BuildPreviewPlan(dependencyPlan, conflicts);
+        var preview = new OctopusImportPreviewPlanner(accessor).BuildPreviewPlan(dependencyPlan, conflicts, selections);
 
         if (pairingConfirmed && preview.FillPairing != null) preview.FillPairing.Confirmed = true;
 
@@ -457,12 +500,12 @@ internal sealed class OctopusImportScenario
         var destination = new Mock<IOctopusImportDestinationDataProvider>();
         destination.Setup(d => d.GetResourcesAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(_destination);
         destination.Setup(d => d.GetReleaseKeysAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync(_releaseKeys);
-        destination.Setup(d => d.GetVariableNamesAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> setIds, CancellationToken _) => _squidVariables.Where(v => setIds.Contains(v.VariableSetId)).Select(v => new OctopusImportDestinationVariable(v.VariableSetId, v.Identity.Name)).Distinct().ToList());
+        destination.Setup(d => d.GetChildNamesAsync(SpaceId, It.IsAny<OctopusResourceKind>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).Callback((int _, OctopusResourceKind kind, IReadOnlyCollection<int> ownerIds, CancellationToken _) => ChildNameReads.Add((kind, ownerIds.ToList()))).ReturnsAsync((int _, OctopusResourceKind kind, IReadOnlyCollection<int> ownerIds, CancellationToken _) => SquidChildren(kind).Where(c => ownerIds.Contains(c.OwnerId)).Distinct().ToList());
         destination.Setup(d => d.GetOrphanedHistoryAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(() => new OctopusImportOrphanedHistory(_orphanedReleases.ToHashSet(), _orphanedDeployments.ToHashSet()));
         destination.Setup(d => d.GetStoredHistoryAsync(SpaceId, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, IReadOnlyCollection<int> releaseIds, IReadOnlyCollection<int> taskIds, CancellationToken _) => StoredHistory(releaseIds, taskIds));
 
         var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
-        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(PriorRows(graph), _priorInstallationId, _priorExportSourceIds));
+        sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportPriorMappings(PriorRows(graph), _priorInstallationId, _priorExportSourceIds, _deletedInSquid));
 
         var variables = new Mock<IVariableService>();
         variables.Setup(v => v.GetSensitiveVariableSlotsAsync(It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyCollection<int> ids, CancellationToken _) => _squidVariables.Where(v => ids.Contains(v.VariableSetId)).ToList());
@@ -475,6 +518,10 @@ internal sealed class OctopusImportScenario
 
         return await new OctopusImportConflictDiscoveryService(destination.Object, sourceMap.Object, new Lazy<IVariableService>(() => variables.Object), new Lazy<IExternalFeedService>(() => feeds.Object), sessions.Object).DiscoverAsync(SpaceId, graph).ConfigureAwait(false);
     }
+
+    // Variables come from the sensitive slots too (a secret Squid holds is a variable it holds by name).
+    private IEnumerable<OctopusImportDestinationChild> SquidChildren(OctopusResourceKind kind)
+        => _squidChildren.Where(c => c.Kind == kind.ToString()).Concat(kind == OctopusResourceKind.Variable ? _squidVariables.Select(v => new OctopusImportDestinationChild(kind.ToString(), v.VariableSetId, v.Identity.Name) { Id = v.VariableId, Scopes = v.Identity.Scopes }) : []);
 
     private Dictionary<(string Type, string Id), OctopusImportPriorMapping> PriorRows(OctopusResourceGraph graph)
         => _prior.ToDictionary(pair => pair.Key, pair => _rowsOfUnknownOrigin || HasCreator(pair.Value) ? pair.Value : WithDefaultCreator(pair.Value, graph));

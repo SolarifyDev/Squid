@@ -34,6 +34,9 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string DeploymentTaskMissing = "octopus.preview.deployment_task_missing";
     public const string TaskImportedWithDeployment = "octopus.preview.task_imported_with_deployment";
     public const string NotInEarlierImport = "octopus.preview.not_in_earlier_import";
+    public const string ChildDeletedInSquid = "octopus.preview.child_deleted_in_squid";
+    public const string ChildAddedInOctopus = "octopus.preview.child_added_in_octopus";
+    public const string HistoryOwnerNotSelected = "octopus.preview.history_owner_not_selected";
     public const string ReleaseNotesEditedInSquid = "octopus.preview.release_notes_edited_in_squid";
     public const string HistoryRelinked = "octopus.preview.history_relinked";
     public const string OlderHistoryKept = "octopus.preview.older_history_kept";

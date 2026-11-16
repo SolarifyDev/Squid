@@ -9,9 +9,8 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportPreviewPlanner : IScopedDependency
 {
-    OctopusImportPreviewPlanDto BuildPreviewPlan(
-        OctopusImportDependencyPlan dependencyPlan,
-        OctopusImportConflictDiscoveryResult conflicts);
+    /// <param name="selections">What the user selected among the resources the plan offers to decide on; null means every server default.</param>
+    OctopusImportPreviewPlanDto BuildPreviewPlan(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportChoiceSelections selections = null);
 }
 
 public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
@@ -25,9 +24,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
     private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
 
-    public OctopusImportPreviewPlanDto BuildPreviewPlan(
-        OctopusImportDependencyPlan dependencyPlan,
-        OctopusImportConflictDiscoveryResult conflicts)
+    public OctopusImportPreviewPlanDto BuildPreviewPlan(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportChoiceSelections selections = null)
     {
         ArgumentNullException.ThrowIfNull(dependencyPlan);
         ArgumentNullException.ThrowIfNull(conflicts);
@@ -39,8 +36,10 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var context = new PreviewPlanningContext(dependencyPlan, conflicts, nodes);
+        var context = new PreviewPlanningContext(dependencyPlan, conflicts, nodes, selections ?? OctopusImportChoiceSelections.Empty);
         var resources = BuildResourcePreviews(nodes, context);
+
+        MarkChoiceFollowers(nodes, resources);
 
         AddVariableDiagnostics(nodes, resources);
         AddWithheldSecretDiagnostics(nodes, resources);
@@ -145,19 +144,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } decided)
         {
-            var priorDecision = KeepVariableStillInSquid(resource, decided, context);
-
-            if (IsCreatedUnderImportedProject(resource, priorDecision) && context.TryGetConflict(resource.SourceId, out var channelConflict))
-            {
-                ApplyConflictAction(result, resource, channelConflict);
-                return result;
-            }
-
-            ApplyDecision(result, priorDecision);
-
-            // A child added in Octopus after its owner's import is skipped, and whatever belongs to it goes with it.
-            if (priorDecision.Action == OctopusImportPreviewAction.Skip) context.MarkScopeSkipped(result.SourceId);
-
+            ApplyPriorDecision(result, resource, decided, context);
             ApplySecretFill(result, resource, context);
             return result;
         }
@@ -181,11 +168,6 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         AddManualConfigurationDiagnostics(result, resource);
         return result;
     }
-
-    // A channel Octopus added after its project's import is matched by name against that project's Squid channels, the same rule as every
-    // shared kind: one match is linked (never a second channel of that name), several need a rename.
-    private static bool IsCreatedUnderImportedProject(OctopusResourceNode resource, OctopusImportPriorDecision decision)
-        => resource.Kind == OctopusResourceKind.Channel && decision.Action == OctopusImportPreviewAction.Create;
 
     // Runs after every resource has its preview action, because whether a variable is written depends on
     // the action chosen for the library variable set that owns it.

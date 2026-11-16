@@ -22,6 +22,12 @@ public interface IDeploymentActionDataProvider : IScopedDependency
     Task DeleteDeploymentActionsByStepIdAsync(int stepId, CancellationToken cancellationToken = default);
 
     Task DeleteDeploymentActionsByStepIdsAsync(List<int> stepIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves the action order of every action of the step at or after <paramref name="actionOrder"/> up by one, so an action can be created
+    /// there. Only that column is written (no audit columns), and the relative order of the actions is kept.
+    /// </summary>
+    Task OpenActionOrderGapAsync(int stepId, int actionOrder, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentActionDataProvider(
@@ -144,5 +150,12 @@ public class DeploymentActionDataProvider(
         await repository.DeleteAllAsync(actions, cancellationToken).ConfigureAwait(false);
 
         await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // (step_id, action_order) is unique and checked per row: the moved orders are negated first, then turned back one higher.
+    public async Task OpenActionOrderGapAsync(int stepId, int actionOrder, CancellationToken cancellationToken = default)
+    {
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE deployment_action SET action_order = -action_order WHERE step_id = {stepId} AND action_order >= {actionOrder}", cancellationToken).ConfigureAwait(false);
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE deployment_action SET action_order = 1 - action_order WHERE step_id = {stepId} AND action_order <= {-actionOrder}", cancellationToken).ConfigureAwait(false);
     }
 }

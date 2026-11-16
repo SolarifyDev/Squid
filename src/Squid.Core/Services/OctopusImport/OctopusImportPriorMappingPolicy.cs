@@ -1,5 +1,6 @@
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -39,7 +40,7 @@ public static class OctopusImportPriorMappingPolicy
 
         if (MappedConfigurationKinds.Contains(node.Kind) && TryGetPrior(prior, node, out var mapping)) return AlreadyImported(node, mapping);
 
-        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node) : null;
+        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node, prior) : null;
     }
 
     /// <summary>The owner an owned resource inherits from: its structural parent (lifecycle, library, variable set, process, step), else its project.</summary>
@@ -115,23 +116,36 @@ public static class OctopusImportPriorMappingPolicy
         return !string.IsNullOrWhiteSpace(ownerId) && ownerActionOf?.Invoke(ownerId) == OctopusImportPreviewAction.AlreadyImported;
     }
 
-    // A channel added in Octopus after the first import is created under the existing project. The default channel
-    // is never remapped (that would overwrite the project's default channel): confirmation creates it as a regular
-    // channel, so the releases and deployments on Octopus' new default channel are still imported.
-    // Any other child without a live row of its own (a step, action, phase, variable) is not something the owner's import wrote
-    // into Squid that Squid still holds: it was added in Octopus since, or removed in Squid. Imported configuration is never
-    // changed, so it is skipped with that reason, never counted as "already in Squid". Deployment settings have no rows of
-    // their own: they are what the owner's import wrote. (A variable's row also goes stale when its set is saved in Squid;
-    // the planner keeps one Squid still holds by name.)
-    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node)
+    // A child without a live row of its own under an owner an earlier import created is either deleted in Squid since (the source map
+    // recorded it) or added in Octopus after the owner was imported (never recorded). Imported configuration is never changed unless the
+    // user selects it: the decision is the user's, and Create is what happens when it is selected. Only a channel added in Octopus is
+    // selected by default (its releases and deployments need it); what the user deleted stays deleted. The default channel is never
+    // remapped (that would overwrite the project's default channel): confirmation creates it as a regular channel. Deployment settings
+    // have no rows of their own: they are what the owner's import wrote. A process or variable set has no row only when Squid moved its
+    // project onto another one; it is never written into the project again.
+    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node, OctopusImportPriorMappings prior)
     {
         if (node.Kind == OctopusResourceKind.DeploymentSettings) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
-        if (node.Kind != OctopusResourceKind.Channel) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, NotInEarlierImport(node));
+        if (!IsChoosable(node.Kind)) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, NotInEarlierImport(node));
 
-        var isDefault = node.GetSource<OctopusChannelDto>()?.IsDefault == true;
+        var isDefaultChannel = node.Kind == OctopusResourceKind.Channel && node.GetSource<OctopusChannelDto>()?.IsDefault == true;
 
-        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefault ? DefaultChannelNotRemapped(node) : null);
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefaultChannel ? DefaultChannelNotRemapped(node) : null, Choice(node, prior));
     }
+
+    /// <summary>The child kinds whose missing Squid row the user decides to import or not.</summary>
+    public static bool IsChoosable(OctopusResourceKind kind) => OctopusImportSourceMapQueries.ChoosableChildSourceTypes.Contains(kind.ToString());
+
+    private static OctopusImportChoice Choice(OctopusResourceNode node, OctopusImportPriorMappings prior)
+    {
+        var reason = prior.IsDeletedInSquid(node.Kind.ToString(), node.SourceId) ? OctopusImportChoiceReason.DeletedInSquid : OctopusImportChoiceReason.AddedInOctopus;
+
+        return new OctopusImportChoice(reason, DefaultSelected(node.Kind, reason));
+    }
+
+    /// <summary>Nothing changes silently: only a channel added in Octopus is selected unless the user says otherwise.</summary>
+    public static bool DefaultSelected(OctopusResourceKind kind, OctopusImportChoiceReason reason)
+        => reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel;
 
     private static bool TryGetPrior(OctopusImportPriorMappings prior, OctopusResourceNode node, out OctopusImportPriorMapping mapping)
         => prior.TryGet(node.Kind.ToString(), node.SourceId, out mapping);
@@ -140,7 +154,7 @@ public static class OctopusImportPriorMappingPolicy
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ChangedSinceLastImport, $"This {node.Kind} changed in Octopus since it was imported. Imported configuration is never overwritten; apply the change in Squid if it is still wanted.", node);
 
     private static OctopusImportDiagnosticDto NotInEarlierImport(OctopusResourceNode node)
-        => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.NotInEarlierImport, $"This {node.Kind} is not in Squid: it was added in Octopus after what it belongs to was imported, or it was removed in Squid. Imported configuration is never changed, so it is not imported into the existing Squid resource; add it in Squid if it is still wanted.", node);
+        => Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.NotInEarlierImport, $"This {node.Kind} is not in Squid: its project in Squid holds another one. Imported configuration is never changed, so it is not imported into the existing Squid project.", node);
 
     private static OctopusImportDiagnosticDto DefaultChannelNotRemapped(OctopusResourceNode node)
         => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped, "The project was imported before and keeps its default channel; this Octopus default channel is created as a regular channel.", node);

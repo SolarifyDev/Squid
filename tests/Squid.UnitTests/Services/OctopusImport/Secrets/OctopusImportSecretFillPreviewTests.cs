@@ -136,6 +136,7 @@ public class OctopusImportSecretFillPreviewTests
                 OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope),
                 OctopusImportScenario.Secret(OtherVariableId, "Db.Password", OctopusImportScenario.Encrypt("another"), TestScope))
             .SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301"))
+            .SquidSensitiveVariable(9002, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301"))
             .PlanAsync(FileSecrets);
 
         foreach (var id in new[] { VariableId, OtherVariableId })

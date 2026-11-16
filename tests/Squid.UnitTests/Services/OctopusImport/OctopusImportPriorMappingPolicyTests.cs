@@ -57,6 +57,52 @@ public class OctopusImportPriorMappingPolicyTests
         decision.DestinationId.ShouldBe(expected.DestinationId, $"{kind} / {scenario}");
         decision.Diagnostic?.Code.ShouldBe(expected.Diagnostic?.Code, $"{kind} / {scenario}");
         (decision.Diagnostic == null).ShouldBe(expected.Diagnostic == null, $"{kind} / {scenario}");
+        decision.Choice.ShouldBe(expected.Choice, $"{kind} / {scenario}");
+    }
+
+    // A child without a live row under an imported owner is the user's to decide, whichever kind: the source map tells the reason, and
+    // only a channel added in Octopus is selected by default (nothing changes silently; what the user deleted stays deleted).
+    [Theory]
+    [InlineData(OctopusResourceKind.DeploymentStep, true, OctopusImportChoiceReason.DeletedInSquid, false)]
+    [InlineData(OctopusResourceKind.DeploymentStep, false, OctopusImportChoiceReason.AddedInOctopus, false)]
+    [InlineData(OctopusResourceKind.DeploymentAction, true, OctopusImportChoiceReason.DeletedInSquid, false)]
+    [InlineData(OctopusResourceKind.DeploymentAction, false, OctopusImportChoiceReason.AddedInOctopus, false)]
+    [InlineData(OctopusResourceKind.LifecyclePhase, true, OctopusImportChoiceReason.DeletedInSquid, false)]
+    [InlineData(OctopusResourceKind.LifecyclePhase, false, OctopusImportChoiceReason.AddedInOctopus, false)]
+    [InlineData(OctopusResourceKind.Variable, true, OctopusImportChoiceReason.DeletedInSquid, false)]
+    [InlineData(OctopusResourceKind.Variable, false, OctopusImportChoiceReason.AddedInOctopus, false)]
+    [InlineData(OctopusResourceKind.Channel, true, OctopusImportChoiceReason.DeletedInSquid, false)]
+    [InlineData(OctopusResourceKind.Channel, false, OctopusImportChoiceReason.AddedInOctopus, true)]
+    public void ChildWithoutLiveRowUnderImportedOwner_IsAChoice_ReasonFromTheSourceMap_DefaultSelectedOnlyForAnAddedChannel(OctopusResourceKind kind, bool recordedBefore, OctopusImportChoiceReason expectedReason, bool expectedDefault)
+    {
+        var node = NodeFor(kind);
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(), null, deletedKeys: recordedBefore ? new HashSet<(string Type, string Id)> { (kind.ToString(), node.SourceId) } : null);
+
+        var decision = OctopusImportPriorMappingPolicy.Decide(node, prior, OwnerActionFor(PriorScenario.OwnerAlreadyImported));
+
+        decision.Action.ShouldBe(OctopusImportPreviewAction.Create, "Create is what a selected child does");
+        decision.Choice.ShouldBe(new OctopusImportChoice(expectedReason, expectedDefault));
+    }
+
+    [Fact]
+    public void DefaultChannelUnderImportedProject_IsStillAChoice_AndKeepsItsNotRemappedNote()
+    {
+        var channel = Node(OctopusResourceKind.Channel, "Channels-1", parentSourceId: null, ownerProjectId: "Projects-1", source: new OctopusChannelDto { Id = "Channels-1", Name = "Default", IsDefault = true });
+
+        var decision = OctopusImportPriorMappingPolicy.Decide(channel, OctopusImportPriorMappings.Empty, id => id == "Projects-1" ? OctopusImportPreviewAction.AlreadyImported : null);
+
+        decision.Choice.ShouldBe(new OctopusImportChoice(OctopusImportChoiceReason.AddedInOctopus, true));
+        decision.Diagnostic.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.DefaultChannelNotRemapped);
+    }
+
+    // The literal codes are a wire contract with SquidWeb, which words and groups the choices by them.
+    [Fact]
+    public void ChoiceDiagnosticCodes_ArePinned()
+    {
+        OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid.ShouldBe("octopus.preview.child_deleted_in_squid");
+        OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus.ShouldBe("octopus.preview.child_added_in_octopus");
+        OctopusImportPreviewDiagnosticCodes.HistoryOwnerNotSelected.ShouldBe("octopus.preview.history_owner_not_selected");
+        ((int)OctopusImportChoiceReason.DeletedInSquid, (int)OctopusImportChoiceReason.AddedInOctopus).ShouldBe((0, 1), "the SquidWeb mirror of the reason is ordinal");
     }
 
     [Fact]
@@ -201,15 +247,16 @@ public class OctopusImportPriorMappingPolicyTests
         if (scenario is PriorScenario.HitSame or PriorScenario.HitChanged)
             return ConfigurationKindsWithOwnRows.Contains(kind) ? new(OctopusImportPreviewAction.AlreadyImported, PriorDestinationId, scenario == PriorScenario.HitChanged ? ChangedInfo() : null) : null;
 
-        // A child the earlier import would have recorded but did not was added in Octopus since: it is not in Squid and is not written
-        // into the existing owner, so it is skipped with the reason (never counted as "already in Squid"). Only the project's deployment
-        // settings have no rows of their own and are what the owner's import wrote.
+        // A child the earlier import would have recorded but did not was added in Octopus since: the user decides (Create is what a
+        // selected child does; only a channel is selected by default). The project's deployment settings have no rows of their own and are
+        // what the owner's import wrote; a process or variable set without a row is never written into the imported project again.
         if (scenario == PriorScenario.OwnerAlreadyImported && KindsInheritingFromOwner.Contains(kind))
             return kind switch
             {
-                OctopusResourceKind.Channel => new(OctopusImportPreviewAction.Create, null),
+                OctopusResourceKind.Channel => new(OctopusImportPreviewAction.Create, null, Choice: new OctopusImportChoice(OctopusImportChoiceReason.AddedInOctopus, true)),
                 OctopusResourceKind.DeploymentSettings => new(OctopusImportPreviewAction.AlreadyImported, null),
-                _ => new(OctopusImportPreviewAction.Skip, null, new OctopusImportDiagnosticDto { Code = OctopusImportPreviewDiagnosticCodes.NotInEarlierImport })
+                OctopusResourceKind.DeploymentProcess or OctopusResourceKind.VariableSet => new(OctopusImportPreviewAction.Skip, null, new OctopusImportDiagnosticDto { Code = OctopusImportPreviewDiagnosticCodes.NotInEarlierImport }),
+                _ => new(OctopusImportPreviewAction.Create, null, Choice: new OctopusImportChoice(OctopusImportChoiceReason.AddedInOctopus, false))
             };
 
         return null;

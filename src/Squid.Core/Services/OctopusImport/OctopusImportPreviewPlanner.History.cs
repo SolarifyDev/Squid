@@ -27,7 +27,7 @@ public partial class OctopusImportPreviewPlanner
     {
         var release = resource.GetSource<OctopusReleaseDto>();
 
-        if (!context.Resolves(OctopusResourceKind.Project, release?.ProjectId) || !context.Resolves(OctopusResourceKind.Channel, release?.ChannelId)) return OwnerNotImported(resource);
+        if (!context.Resolves(OctopusResourceKind.Project, release?.ProjectId) || !context.Resolves(OctopusResourceKind.Channel, release?.ChannelId)) return OwnerNotImported(resource, context, release?.ChannelId);
 
         var prior = OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf);
 
@@ -36,18 +36,6 @@ public partial class OctopusImportPreviewPlanner
         return context.ReleaseVersionExists(release, ReleaseVersion(release, resource))
             ? new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, ReleaseVersionExistsInSquid(resource))
             : new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null);
-    }
-
-    // A variable's row goes stale whenever its set is saved in Squid (the variables are re-inserted with new ids): one the Squid set
-    // still holds by name is in Squid, not "not in the earlier import".
-    private static OctopusImportPriorDecision KeepVariableStillInSquid(OctopusResourceNode resource, OctopusImportPriorDecision decision, PreviewPlanningContext context)
-    {
-        if (resource.Kind != OctopusResourceKind.Variable || decision.Action != OctopusImportPreviewAction.Skip) return decision;
-
-        var setId = context.PriorFor(OctopusResourceKind.VariableSet, OctopusImportPriorMappingPolicy.OwnerSourceId(resource))?.DestinationId;
-        var name = resource.GetSource<OctopusVariableDto>()?.Name;
-
-        return setId != null && context.Conflicts.DestinationVariables.Contains(new OctopusImportDestinationVariable(setId.Value, name)) ? new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null) : decision;
     }
 
     // An Update whose Squid notes were edited since the import is skipped: the release stays linked (its deployments land on it), nothing is written.
@@ -66,7 +54,7 @@ public partial class OctopusImportPreviewPlanner
     {
         var deployment = resource.GetSource<OctopusDeploymentDto>();
 
-        if (!DeploymentOwnersResolve(deployment, context)) return OwnerNotImported(resource);
+        if (!DeploymentOwnersResolve(deployment, context)) return OwnerNotImported(resource, context, deployment?.ChannelId);
 
         var task = context.FindNode(deployment.TaskId, OctopusResourceKind.ServerTask);
 
@@ -164,6 +152,13 @@ public partial class OctopusImportPreviewPlanner
 
         if (decision.Action == OctopusImportPreviewAction.Skip) result.OutcomeState = OctopusImportResourceOutcomeState.Skipped;
     }
+
+    // History on a channel the user did not select is skipped with that reason: nothing is imported onto, or moved off, another channel.
+    private static OctopusImportPriorDecision OwnerNotImported(OctopusResourceNode resource, PreviewPlanningContext context, string channelSourceId)
+        => context.ChoiceOf(channelSourceId) is { Selected: false } ? OwnerNotSelected(resource, context.FindNode(channelSourceId)) : OwnerNotImported(resource);
+
+    private static OctopusImportPriorDecision OwnerNotSelected(OctopusResourceNode resource, OctopusResourceNode channel)
+        => new(OctopusImportPreviewAction.Skip, null, Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.HistoryOwnerNotSelected, $"This Octopus {resource.Kind} is skipped because its channel '{channel?.Name}' is not selected for import.", resource));
 
     private static OctopusImportPriorDecision OwnerNotImported(OctopusResourceNode resource)
         => new(OctopusImportPreviewAction.Skip, null, Diagnostic(OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.HistoryOwnerNotImported, $"This Octopus {resource.Kind} is skipped because its project, channel, environment or release is neither imported by this plan nor by an earlier import.", resource));

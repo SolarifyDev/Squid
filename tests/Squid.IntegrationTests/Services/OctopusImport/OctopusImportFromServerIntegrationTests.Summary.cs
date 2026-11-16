@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -128,8 +129,8 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SingleAsync<Release>()).ReleaseNote.ShouldBe("from Octopus");
     }
 
-    // A variable added in Octopus after the project was imported is not in Squid and is not written into it: the preview skips it with
-    // the reason and never counts it as "already in Squid", also after the Variables page re-saved the set (new variable ids).
+    // A variable added in Octopus after the project was imported is not in Squid and is not written into it unless the user ticks it: the
+    // preview skips it with the reason and never counts it as "already in Squid", also after the Variables page re-saved the set (new ids).
     [Fact]
     public async Task VariableAddedInOctopusAfterTheImport_SkippedWithReason_NotWritten_EvenAfterTheSetIsSavedInSquid()
     {
@@ -148,7 +149,7 @@ public partial class OctopusImportFromServerIntegrationTests
 
             ShouldHaveSucceeded(again);
             var plan = again.PreviewPlan;
-            plan.Resources.Single(r => r.SourceType == "Variable" && r.SourceName == "Api.Key").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.NotInEarlierImport));
+            plan.Resources.Single(r => r.SourceType == "Variable" && r.SourceName == "Api.Key").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus));
             plan.Resources.Single(r => r.SourceType == "Variable" && r.SourceName == "Greeting").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, $"saved in Squid first: {saveInSquidFirst}");
             plan.Summary.Projects.Single().Kinds.Single(k => k.Kind == "Variable").Counts.ShouldSatisfyAllConditions(c => c.AlreadyImported.ShouldBe(1), c => c.Skip.ShouldBe(1));
             (await Run<SquidDbContext, List<string>>(db => db.Set<Variable>().AsNoTracking().Select(v => v.Name).OrderBy(n => n).ToListAsync())).ShouldBe(before, "nothing is written into the imported project");
@@ -185,11 +186,27 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
         var set = await SingleAsync<VariableSet>();
 
-        var names = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationVariable>>(p => p.GetVariableNamesAsync(SpaceId, [set.Id]));
-        var otherSpace = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationVariable>>(p => p.GetVariableNamesAsync(SpaceId + 1, [set.Id]));
+        var names = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationChild>>(p => p.GetChildNamesAsync(SpaceId, OctopusResourceKind.Variable, [set.Id]));
+        var otherSpace = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationChild>>(p => p.GetChildNamesAsync(SpaceId + 1, OctopusResourceKind.Variable, [set.Id]));
 
-        names.ShouldBe([new OctopusImportDestinationVariable(set.Id, "Greeting")]);
+        var greeting = await SingleAsync<Variable>();
+        names.ShouldHaveSingleItem().ShouldSatisfyAllConditions(n => n.ShouldBe(new OctopusImportDestinationChild(nameof(OctopusResourceKind.Variable), set.Id, "Greeting") { Id = greeting.Id, Scopes = n.Scopes }), n => n.Scopes.ShouldBeEmpty());
         otherSpace.ShouldBeEmpty();
+    }
+
+    // A variable's scope is read as the tokens of its identity, by the Squid row the scope maps to: two namesakes are told apart by it.
+    [Fact]
+    public async Task VariableNames_CarryTheScopeAsIdentityTokens()
+    {
+        await using var octopus = OneDeployment();
+        octopus.Resources["projects/Projects-1/variables"] = ProjectVariables(new Dictionary<string, object> { ["Id"] = "6a1d2c3b-0000-4000-8000-000000000002", ["Name"] = "ApiUrl", ["Value"] = "https://test", ["Type"] = "String", ["Scope"] = new Dictionary<string, object> { ["Environment"] = new[] { "Environments-1" } } });
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        var set = await SingleAsync<VariableSet>();
+        var environment = await Run<SquidDbContext, int>(db => db.Set<Squid.Core.Persistence.Entities.Deployments.Environment>().AsNoTracking().Select(e => e.Id).SingleAsync());
+
+        var names = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationChild>>(p => p.GetChildNamesAsync(SpaceId, OctopusResourceKind.Variable, [set.Id]));
+
+        names.ShouldHaveSingleItem().Scopes.ShouldBe([$"Environment:{environment}"]);
     }
 
     // An export file carries no task details; the API adds them to the history the file created: an Update that names the details.

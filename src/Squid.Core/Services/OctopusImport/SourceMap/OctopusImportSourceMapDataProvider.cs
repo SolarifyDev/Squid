@@ -18,8 +18,18 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
     public async Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default)
     {
         var rows = await repository.FromSqlRaw<OctopusImportSourceMap>(BuildLiveRowsSql(), spaceId).AsNoTracking().ToListAsync(ct).ConfigureAwait(false);
+        var recordedChildKeys = await LoadRecordedChildKeysAsync(spaceId, ct).ConfigureAwait(false);
 
-        return ToPriorMappings(rows);
+        return ToPriorMappings(rows, recordedChildKeys);
+    }
+
+    // Every recorded row of the choosable child kinds, live or not: the prior mappings name the ones whose destination is gone.
+    private async Task<HashSet<(string Type, string Id)>> LoadRecordedChildKeysAsync(int spaceId, CancellationToken ct)
+    {
+        var types = OctopusImportSourceMapQueries.ChoosableChildSourceTypes.ToList();
+        var rows = await repository.QueryNoTracking<OctopusImportSourceMap>(m => m.SpaceId == spaceId && types.Contains(m.SourceType)).Select(m => new { m.SourceType, m.SourceId }).ToListAsync(ct).ConfigureAwait(false);
+
+        return rows.Select(r => (r.SourceType, r.SourceId)).ToHashSet();
     }
 
     public async Task<List<OctopusImportSourceMapRow>> GetByDestinationsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, IReadOnlyCollection<int> destinationIds, CancellationToken ct = default)
@@ -69,11 +79,11 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
     private static string OwnerCondition(string sourceType)
         => OctopusImportSourceMapTables.OwnerPredicates.TryGetValue(sourceType, out var predicate) ? $" AND {predicate}" : string.Empty;
 
-    private static OctopusImportPriorMappings ToPriorMappings(IReadOnlyList<OctopusImportSourceMap> rows)
+    private static OctopusImportPriorMappings ToPriorMappings(IReadOnlyList<OctopusImportSourceMap> rows, IReadOnlySet<(string Type, string Id)> recordedChildKeys)
     {
         var mappings = NewestPerKey(rows).ToDictionary(r => OctopusImportPriorMappings.Key(r.SourceType, r.SourceId), r => new OctopusImportPriorMapping(r.DestinationId, r.OutcomeState, r.Fingerprint, r.DetailFingerprint, r.CreatedInstallationId, r.CreatedExportSourceId));
 
-        return new OctopusImportPriorMappings(mappings, LatestInstallationId(rows), ExportSourceIds(rows));
+        return new OctopusImportPriorMappings(mappings, LatestInstallationId(rows), ExportSourceIds(rows), recordedChildKeys);
     }
 
     // Two stored ids can share one canonical key only if a row escaped the canonicalising migration; the newest wins

@@ -45,7 +45,17 @@ public interface IOctopusImportSessionService : IScopedDependency
         string validatedPlanJson = null,
         CancellationToken ct = default);
 
-    Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default);
+    /// <summary>
+    /// Replaces (or with null clears) the validated plan of a session that stays Validated: a validation after a changed selection must be
+    /// what confirmation imports. Any other state throws <see cref="OctopusImportSessionStateTransitionException"/>.
+    /// </summary>
+    Task<OctopusImportSessionDto> ReplaceValidatedPlanAsync(Guid sessionId, int destinationSpaceId, string validatedPlanJson, CancellationToken ct = default);
+
+    /// <summary>
+    /// Moves a Validated session to Importing, atomically. With <paramref name="expectedDataVersion"/> (the version the validated plan was
+    /// read with) it is admitted only while the session still holds that version; without it, the current version is expected.
+    /// </summary>
+    Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default);
 
     /// <summary>
     /// Replaces the REST history fetch state of an Uploaded session. <paramref name="expectedChunkId"/> must match the
@@ -221,7 +231,22 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         return Map(session);
     }
 
-    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
+    public async Task<OctopusImportSessionDto> ReplaceValidatedPlanAsync(Guid sessionId, int destinationSpaceId, string validatedPlanJson, CancellationToken ct = default)
+    {
+        var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+        var currentState = ParseState(session.State);
+
+        if (currentState != OctopusImportSessionState.Validated)
+            throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Validated);
+
+        session.ValidatedPlanJson = validatedPlanJson == null ? null : OctopusImportRedaction.RedactJson(validatedPlanJson);
+
+        await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
+
+        return Map(session);
+    }
+
+    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default)
     {
         var ownerUserId = GetCurrentUserId();
         var session = await _dataProvider.GetSessionNoTrackingAsync(sessionId, ownerUserId, destinationSpaceId, ct).ConfigureAwait(false);
@@ -229,12 +254,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (session == null)
             throw new OctopusImportSessionNotFoundException(sessionId);
 
-        return await _dataProvider.TryStartConfirmationAsync(
-            sessionId,
-            ownerUserId,
-            destinationSpaceId,
-            session.DataVersion,
-            ct).ConfigureAwait(false);
+        return await _dataProvider.TryStartConfirmationAsync(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion ?? session.DataVersion, ct).ConfigureAwait(false);
     }
 
     public async Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)

@@ -36,10 +36,11 @@ public sealed record OctopusImportConflictDiscoveryResult(
     public string ExportSourceId { get; init; }
 
     /// <summary>
-    /// The variables (by name) Squid's imported variable sets hold now, read only for sets with incoming variables that have no live row:
-    /// a variable's row goes stale whenever its set is saved in Squid, so this tells "still in Squid" from "not in Squid".
+    /// The children (by name) Squid's imported owners hold now — steps of a process, actions of a step, phases of a lifecycle, variables
+    /// of a set — read only for owners with an incoming child that has no live row. Saving an owner in Squid re-inserts its children
+    /// with new ids, so their rows go stale: this tells "still in Squid" from "not in Squid".
     /// </summary>
-    public IReadOnlyList<OctopusImportDestinationVariable> DestinationVariables { get; init; } = [];
+    public IReadOnlyList<OctopusImportDestinationChild> DestinationChildren { get; init; } = [];
 
     /// <summary>Squid's current state of every secret an earlier import left missing (never values).</summary>
     public OctopusImportSecretSlots SecretSlots { get; init; } = OctopusImportSecretSlots.Empty;

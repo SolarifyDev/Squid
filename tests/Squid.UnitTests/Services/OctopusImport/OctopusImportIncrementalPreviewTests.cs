@@ -102,8 +102,8 @@ public class OctopusImportIncrementalPreviewTests
         summary.Space.IsUpToDate.ShouldBeTrue();
     }
 
-    // A variable and a step added in Octopus after the project was imported are not written into the existing Squid project (imported
-    // configuration is never changed). The preview says so per resource and never counts them as "already in Squid".
+    // A variable and a step added in Octopus after the project was imported are not written into the existing Squid project unless the user
+    // ticks them (imported configuration is never changed silently). The preview says so per resource and never counts them as "already in Squid".
     [Fact]
     public async Task VariableAndStepAddedInOctopusAfterTheImport_SkippedWithReason_NotCountedAsAlreadyInSquid()
     {
@@ -118,15 +118,15 @@ public class OctopusImportIncrementalPreviewTests
         var plan = await scenario.PlanAsync();
 
         ShouldBeConsistent(plan);
-        plan.Resource("Variables-2").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.NotInEarlierImport), r => r.DestinationId.ShouldBeNull());
-        plan.Resource("Projects-1-step-2").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.NotInEarlierImport);
+        plan.Resource("Variables-2").ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, Describe(plan)), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus), r => r.DestinationId.ShouldBeNull());
+        plan.Resource("Projects-1-step-2").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus);
         plan.Resource("Actions-2").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.SkippedWithOwner, "an action of the added step goes with it");
         plan.Resource("Variables-1").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
         plan.Resource("Actions-1").PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
         var project = plan.Preview.Summary.Projects.Single();
         KindCounts(project, "Variable").ShouldSatisfyAllConditions(c => c.AlreadyImported.ShouldBe(1), c => c.Skip.ShouldBe(1));
         KindCounts(project, "DeploymentStep").ShouldSatisfyAllConditions(c => c.AlreadyImported.ShouldBe(1), c => c.Skip.ShouldBe(1));
-        plan.Preview.Summary.SkipReasons.Where(r => r.Code == OctopusImportPreviewDiagnosticCodes.NotInEarlierImport).Select(r => (r.ResourceType, r.Count)).OrderBy(r => r.ResourceType).ShouldBe([("DeploymentStep", 1), ("Variable", 1)]);
+        plan.Preview.Summary.SkipReasons.Where(r => r.Code == OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus).Select(r => (r.ResourceType, r.Count)).OrderBy(r => r.ResourceType).ShouldBe([("DeploymentStep", 1), ("Variable", 1)]);
         plan.BlocksConfirmation.ShouldBeFalse();
     }
 

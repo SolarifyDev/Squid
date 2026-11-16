@@ -37,6 +37,17 @@ namespace Squid.UnitTests.Services.OctopusImport;
 
 public partial class OctopusImportConfirmationOrchestratorTests
 {
+    // The session is admitted only at the version the validated plan was read with: a plan validated again meanwhile is never imported.
+    [Fact]
+    public async Task ConfirmAsync_StartsAtTheVersionThePlanWasReadWith()
+    {
+        var harness = CreateRichHarness();
+
+        await harness.Sut.ConfirmAsync(harness.Request with { ValidatedDataVersion = [9, 8, 7] }, CancellationToken.None);
+
+        harness.SessionService.ExpectedDataVersion.ShouldBe([9, 8, 7]);
+    }
+
     [Fact]
     public async Task ConfirmAsync_SucceedsAndCapturesCreatedAndReusedOutcomes()
     {
@@ -76,6 +87,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.ProjectGroup.SourceId).OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Created);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Project.SourceId).DestinationId.ShouldBe(1001);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.VariableSet.SourceId).DestinationId.ShouldBe(1002);
+        recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.VariableOne.SourceId).DestinationId.ShouldBe(1004);
+        recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.VariableTwo.SourceId).DestinationId.ShouldBe(1005);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.DeploymentProcess.SourceId).DestinationId.ShouldBe(1003);
         recorded.IdMappings.Single(m => m.SourceId == harness.Nodes.Release.SourceId).DestinationId.ShouldBe(1009);
         harness.ProcessMapper.Invocations
@@ -828,7 +841,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
             detailsStore,
             secretsAccessor,
             variableService,
-            externalFeedService);
+            externalFeedService,
+            destinationDataProvider: VariableRowsOf(nodes).Object);
 
         return new TestHarness(
             orchestrator,
@@ -1122,12 +1136,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
                             Name = nodes.VariableSet.Name,
                             OwnerId = 1001,
                             OwnerType = VariableSetOwnerType.Project,
-                            SpaceId = nodes.DestinationSpaceId,
-                            Variables =
-                            [
-                                new VariableDto { Id = 1004, Name = nodes.VariableOne.Name, Value = nodes.VariableOne.GetSource<OctopusVariableDto>().Value },
-                                new VariableDto { Id = 1005, Name = nodes.VariableTwo.Name, Value = nodes.VariableTwo.GetSource<OctopusVariableDto>().Value }
-                            ]
+                            SpaceId = nodes.DestinationSpaceId
                         }
                     }
                 });
@@ -1748,6 +1757,17 @@ public partial class OctopusImportConfirmationOrchestratorTests
         IReadOnlyList<OctopusResourceNode> RichOrderedResources,
         ChannelUpdateCapture ChannelUpdate);
 
+    // The rows the set's save wrote, as confirmation reads them back to record each variable's row.
+    private static Mock<IOctopusImportDestinationDataProvider> VariableRowsOf(ScenarioNodes nodes)
+    {
+        var destination = new Mock<IOctopusImportDestinationDataProvider>();
+        var rows = nodes.VariableSet == null ? new List<OctopusImportDestinationChild>() : [new(nameof(OctopusResourceKind.Variable), 1002, nodes.VariableOne.Name) { Id = 1004, Scopes = [] }, new(nameof(OctopusResourceKind.Variable), 1002, nodes.VariableTwo.Name) { Id = 1005, Scopes = [] }];
+
+        destination.Setup(d => d.GetChildNamesAsync(It.IsAny<int>(), OctopusResourceKind.Variable, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync((int _, OctopusResourceKind _, IReadOnlyCollection<int> ownerIds, CancellationToken _) => rows.Where(r => ownerIds.Contains(r.OwnerId)).ToList());
+
+        return destination;
+    }
+
     private sealed class TestOctopusImportSessionService : IOctopusImportSessionService
     {
         public TestOctopusImportSessionService(
@@ -1775,6 +1795,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
 
         public int TryStartConfirmationCalls { get; private set; }
 
+        public byte[] ExpectedDataVersion { get; private set; }
+
         public int RecordResultCalls { get; private set; }
 
         public bool AdmissionShouldSucceed { get; set; } = true;
@@ -1794,6 +1816,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
         public Task<OctopusImportSessionDto> UpdatePayloadAndTransitionAsync(Guid sessionId, int destinationSpaceId, OctopusImportSessionState expectedState, OctopusImportSessionState newState, string redactedNormalizedDataJson = null, string validatedPlanJson = null, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task<OctopusImportSessionDto> ReplaceValidatedPlanAsync(Guid sessionId, int destinationSpaceId, string validatedPlanJson, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
         public Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default)
             => throw new NotSupportedException();
 
@@ -1806,9 +1831,10 @@ public partial class OctopusImportConfirmationOrchestratorTests
             return Task.FromResult(CloneSession(CurrentSession));
         }
 
-        public Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
+        public Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default)
         {
             TryStartConfirmationCalls++;
+            ExpectedDataVersion = expectedDataVersion;
 
             if (CurrentSession.State != OctopusImportSessionState.Validated)
                 return Task.FromResult(false);

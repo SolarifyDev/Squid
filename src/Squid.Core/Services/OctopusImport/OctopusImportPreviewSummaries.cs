@@ -24,7 +24,8 @@ public static class OctopusImportPreviewSummaries
             Kinds = whole.Kinds,
             Projects = Projects(resources, destinations ?? [], prior ?? OctopusImportPriorMappings.Empty),
             Space = Group(resources.Where(r => string.IsNullOrWhiteSpace(r.OwnerProjectSourceId)).ToList()),
-            SkipReasons = SkipReasons(resources)
+            SkipReasons = SkipReasons(resources),
+            Choices = ChoiceCounts(resources)
         };
     }
 
@@ -119,6 +120,15 @@ public static class OctopusImportPreviewSummaries
     }
 
     private static OctopusImportProjectDestinationDto NotImported() => new() { State = OctopusImportProjectDestinationState.NotImported };
+
+    // Roots only: a follower (an action of a choosable step) is decided with its root and never counted on its own.
+    private static List<OctopusImportChoiceCountDto> ChoiceCounts(IReadOnlyList<OctopusImportResourceResultDto> resources)
+        => resources
+            .Where(r => r.Choice is { FollowsSourceId: null })
+            .GroupBy(r => r.Choice.Reason)
+            .OrderBy(g => g.Key)
+            .Select(g => new OctopusImportChoiceCountDto { Reason = g.Key, Total = g.Count(), Selected = g.Count(r => r.Choice.Selected == true) })
+            .ToList();
 
     private static List<OctopusImportSkipReasonCountDto> SkipReasons(IReadOnlyList<OctopusImportResourceResultDto> resources)
         => resources
