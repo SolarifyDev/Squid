@@ -46,6 +46,45 @@ public sealed class OctopusRestConfigAsCodeFetchTests : IDisposable
         cursor.ProjectIds.ShouldBe(["Projects-1"]);
     }
 
+    // A reopened page names a sample of the chosen projects; a Config-as-Code project is never read, so it is never named.
+    [Fact]
+    public async Task ChosenProjectNames_NamesFetchedProjectsOnly_NeverConfigAsCode()
+    {
+        var server = SpaceWithConfigAsCodeProject();
+        var cursor = CatalogCursor();
+
+        await FetchUntilDoneAsync(server, NewSessionDirectory(), cursor, ["Projects-1", CacProject]);
+
+        cursor.ChosenProjectNames.ShouldBe([ProjectName(server, "Projects-1")]);
+    }
+
+    [Fact]
+    public async Task ChosenProjectNames_AtMostFive_UnchosenNever()
+    {
+        var server = SpaceWithConfigAsCodeProject();
+        var projects = (JsonArray)server.Resources["projects"];
+        var template = projects.OfType<JsonObject>().Single(p => p["Id"]!.GetValue<string>() == "Projects-1");
+
+        for (var i = 10; i < 17; i++)
+        {
+            var copy = (JsonObject)template.DeepClone();
+            copy["Id"] = $"Projects-{i}";
+            copy["Name"] = $"Extra {i}";
+            projects.Add(copy);
+        }
+
+        var cursor = CatalogCursor();
+        var chosen = Enumerable.Range(11, 6).Select(i => $"Projects-{i}").ToList();
+
+        await FetchUntilDoneAsync(server, NewSessionDirectory(), cursor, chosen);
+
+        cursor.ChosenProjectNames.Count.ShouldBe(OctopusRestHistoryFetcher.MaxChosenProjectNames);
+        cursor.ChosenProjectNames.ShouldAllBe(name => name != "Extra 10");
+        cursor.ChosenProjectNames.ShouldNotContain(ProjectName(server, "Projects-1"));
+    }
+
+    private static string ProjectName(FakeOctopusServer server, string id) => ((JsonArray)server.Resources["projects"]).OfType<JsonObject>().Single(p => p["Id"]!.GetValue<string>() == id)["Name"]!.GetValue<string>();
+
     [Fact]
     public async Task ConfigAsCodeProject_CountedOnce_NothingRejected_ProjectCountExcludesIt()
     {

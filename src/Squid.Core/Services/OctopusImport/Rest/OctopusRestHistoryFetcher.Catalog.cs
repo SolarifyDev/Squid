@@ -87,9 +87,31 @@ public sealed partial class OctopusRestHistoryFetcher
         await StageAsync(OctopusResourceKind.Project, resource, null, ct).ConfigureAwait(false);
 
         if (OctopusConfigAsCode.IsVersionControlled(resource))
+        {
             CountConfigAsCodeProject(projectId);
-        else
-            AddProject(projectId);
+            return;
+        }
+
+        AddProject(projectId);
+        RecordChosenName(ReadString(resource, "Name"));
+    }
+
+    /// <summary>How many chosen projects' names the cursor keeps for a reopened page to show; display only.</summary>
+    public const int MaxChosenProjectNames = 5;
+
+    private const int MaxChosenProjectNameLength = 200;
+
+    // A sample, kept on the cursor so a restarted kind or a retried item records a name once; a skipped project is never named.
+    private void RecordChosenName(string name)
+    {
+        var names = _ctx.Cursor.ChosenProjectNames ??= [];
+        var trimmed = name?.Trim();
+
+        if (string.IsNullOrEmpty(trimmed) || names.Count >= MaxChosenProjectNames) return;
+
+        trimmed = trimmed.Length > MaxChosenProjectNameLength ? trimmed[..MaxChosenProjectNameLength] : trimmed;
+
+        if (!names.Contains(trimmed, StringComparer.OrdinalIgnoreCase)) names.Add(trimmed);
     }
 
     // Kept on the cursor with the count it feeds, so a restarted kind, a retried item or a resumed fetch counts a project once.

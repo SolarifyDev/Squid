@@ -249,6 +249,36 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         summary.HistoryFetch.Phase.ShouldBe(OctopusHistoryFetchPhase.Catalog);
     }
 
+    // A reloaded page resumes the read with the URL the session kept: scheme, host and path, never a credential.
+    [Fact]
+    public async Task Connect_StampsSanitizedServerUrl()
+    {
+        var sessionId = Guid.NewGuid();
+        var directory = Path.Combine(Path.GetTempPath(), $"squid-connect-{sessionId:N}");
+        var connection = new OctopusServerConnection("https://user:pw@Octopus.Example.com/octopus/?apikey=API-SECRET", "API-KEY", null);
+        OctopusImportSourceSummaryDto summary = null;
+        _fetcher.Setup(f => f.AuthorizeAsync(connection, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Catalog });
+        _sessionService.Setup(s => s.CreateSessionAsync(7, It.IsAny<OctopusImportSourceSummaryDto>(), It.IsAny<CancellationToken>())).Callback((int _, OctopusImportSourceSummaryDto s, CancellationToken _) => summary = s).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId });
+        _uploadStore.Setup(s => s.GetSessionDirectory(sessionId)).Returns(directory);
+        _directories.Add(directory);
+
+        await _service.ConnectAsync(7, connection);
+
+        summary.HistoryFetch.ServerUrl.ShouldBe("https://octopus.example.com/octopus");
+    }
+
+    [Fact]
+    public void PinServer_UnpinnedSession_StampsServerUrl_KeepsHostPin()
+    {
+        var cursor = new OctopusImportHistoryFetchDto();
+
+        OctopusImportServerSourceService.PinServer(cursor, new OctopusHistoryFetchRequest(Guid.NewGuid(), 7, "https://octopus.example.com/octopus/", "API-KEY", "Spaces-1"));
+
+        cursor.ServerUrl.ShouldBe("https://octopus.example.com/octopus");
+        cursor.ServerHost.ShouldBe("octopus.example.com");
+        Should.Throw<OctopusImportHistoryServerMismatchException>(() => OctopusImportServerSourceService.PinServer(cursor, new OctopusHistoryFetchRequest(Guid.NewGuid(), 7, "https://other.example.com/octopus", "API-KEY", null)));
+    }
+
     [Fact]
     public async Task Connect_RestrictedKey_RefusedBeforeAnySessionExists()
     {

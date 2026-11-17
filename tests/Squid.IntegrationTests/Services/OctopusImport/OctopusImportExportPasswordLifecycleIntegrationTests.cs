@@ -51,6 +51,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetTemporaryUploadCleanupCandidatesAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanupFailedAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetLatestHistoryFetchAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetResumableSessionsNoTrackingAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.CreateSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.GetSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RegisterTemporaryUploadAsync)}"] = false,
@@ -64,7 +65,8 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.SettleConfirmationAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ReturnConfirmationToValidatedAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordConfirmationNotStartedAsync)}"] = false,
-        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ListResumableSessionsAsync)}"] = false
     };
 
     private static readonly Guid SettlingAttemptId = Guid.NewGuid();

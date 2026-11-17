@@ -17,6 +17,12 @@ public class OctopusImportHistoryFetchDto
     public string OctopusVersion { get; set; }
     public bool Spaceless { get; set; }
 
+    /// <summary>The server's base URL (scheme, host and path; never credentials, a query or a fragment), so a reopened page can resume the read.</summary>
+    public string ServerUrl { get; set; }
+
+    /// <summary>Up to five names of the chosen projects, recorded while reading; display only.</summary>
+    public List<string> ChosenProjectNames { get; set; } = [];
+
     // Key binding: the Octopus user the API key belongs to, and an HMAC of the key under the server's master key (never the key)
     public string UserId { get; set; }
     public string KeyHmac { get; set; }

@@ -1838,6 +1838,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
         public Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task<IReadOnlyList<OctopusImportResumableSessionDto>> ListResumableSessionsAsync(int destinationSpaceId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
         public Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)
             => throw new NotSupportedException();
 

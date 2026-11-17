@@ -193,6 +193,16 @@ public class OctopusImportController : ControllerBase
         return Ok(response);
     }
 
+    // The current user's import sessions in the space that a reloaded page can continue; never the API key or anything secret.
+    [HttpGet("sessions")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ListOctopusImportSessionsResponse))]
+    public async Task<IActionResult> SessionsAsync([FromQuery] ListOctopusImportSessionsRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<ListOctopusImportSessionsRequest, ListOctopusImportSessionsResponse>(request, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpGet("{sessionId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportStatusResponse))]
     public async Task<IActionResult> StatusAsync(

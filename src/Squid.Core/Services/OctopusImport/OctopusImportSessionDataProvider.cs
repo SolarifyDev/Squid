@@ -88,6 +88,12 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// </summary>
     Task<OctopusImportHistoryFetchDto> GetLatestHistoryFetchAsync(int destinationSpaceId, string installationId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The owner's sessions in the space that can still be continued, newest first: not expired, not closed, upload not cleaned up, or
+    /// Importing (followed until it ends, whatever its expiry). Only the small columns are read, never the source data or the plan.
+    /// </summary>
+    Task<IReadOnlyList<OctopusImportResumableSessionRow>> GetResumableSessionsNoTrackingAsync(int ownerUserId, int destinationSpaceId, DateTimeOffset now, int limit, CancellationToken ct = default);
+
     Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(
         DateTimeOffset now,
         int limit,
@@ -109,6 +115,9 @@ public sealed record OctopusImportInterruptedConfirmation(Guid SessionId, Guid? 
 /// <param name="HeartbeatStale">A heartbeat at least this old, by the database clock that stamped it, is stale.</param>
 /// <param name="LegacyStaleBefore">A session with no heartbeat (started by an older server) is stale once its state changed at or before this.</param>
 public sealed record OctopusImportInterruptedConfirmationCutoffs(TimeSpan HeartbeatStale, DateTimeOffset LegacyStaleBefore);
+
+/// <summary>The columns of a session the resumable-session list reads: never the source data, the plan, the result or anything secret.</summary>
+public sealed record OctopusImportResumableSessionRow(Guid SessionId, string State, string SourceSummaryJson, bool HasUpload, bool HasConfirmationFailure, DateTimeOffset CreatedDate, DateTimeOffset LastModifiedDate, DateTimeOffset LastStateChangedAt, DateTimeOffset ExpiresAt);
 
 public sealed record OctopusImportTemporaryUploadCleanupCandidate(
     Guid SessionId,
@@ -425,6 +434,26 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
                 .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
+    }
+
+    public async Task<IReadOnlyList<OctopusImportResumableSessionRow>> GetResumableSessionsNoTrackingAsync(int ownerUserId, int destinationSpaceId, DateTimeOffset now, int limit, CancellationToken ct = default)
+    {
+        var rows = await _repository.QueryNoTracking(Resumable(ownerUserId, destinationSpaceId, now))
+            .OrderByDescending(s => s.LastModifiedDate)
+            .Take(Math.Max(1, limit))
+            .Select(s => new { s.SessionId, s.State, s.SourceSummaryJson, HasUpload = s.TemporaryUploadPath != null, HasConfirmationFailure = s.LastConfirmationFailureJson != null, s.CreatedDate, s.LastModifiedDate, s.LastStateChangedAt, s.ExpiresAt })
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        return rows.Select(r => new OctopusImportResumableSessionRow(r.SessionId, r.State, r.SourceSummaryJson, r.HasUpload, r.HasConfirmationFailure, r.CreatedDate, r.LastModifiedDate, r.LastStateChangedAt, r.ExpiresAt)).ToList();
+    }
+
+    // An open session is resumable while it lasts; a running import is followed until it ends, whatever its expiry (the sweep never expires it).
+    private static Expression<Func<OctopusImportSession, bool>> Resumable(int ownerUserId, int destinationSpaceId, DateTimeOffset now)
+    {
+        var open = new[] { OctopusImportSessionState.Uploaded, OctopusImportSessionState.Extracted, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated }.Select(state => state.ToString()).ToList();
+        var importing = OctopusImportSessionState.Importing.ToString();
+
+        return s => s.OwnerUserId == ownerUserId && s.DestinationSpaceId == destinationSpaceId && ((open.Contains(s.State) && s.ExpiresAt > now && s.TemporaryUploadCleanedAt == null) || s.State == importing);
     }
 
     public async Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(

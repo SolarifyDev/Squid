@@ -100,9 +100,12 @@ public interface IOctopusImportSessionService : IScopedDependency
         CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
+
+    /// <summary>The current user's sessions in the space that can still be continued (newest first, at most <see cref="OctopusImportSessionService.MaxListedSessions"/>); read-only.</summary>
+    Task<IReadOnlyList<OctopusImportResumableSessionDto>> ListResumableSessionsAsync(int destinationSpaceId, CancellationToken ct = default);
 }
 
-public class OctopusImportSessionService : IOctopusImportSessionService
+public partial class OctopusImportSessionService : IOctopusImportSessionService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

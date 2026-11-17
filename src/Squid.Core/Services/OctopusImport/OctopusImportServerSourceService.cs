@@ -56,6 +56,7 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
         var cursor = await fetcher.AuthorizeAsync(connection, ct).ConfigureAwait(false);
 
         cursor.ServerHost = ServerHostOf(connection.ServerUrl);
+        cursor.ServerUrl = OctopusImportServerUrl.Sanitize(connection.ServerUrl);
 
         return cursor;
     }
@@ -118,6 +119,7 @@ public sealed partial class OctopusImportServerSourceService(IOctopusImportSessi
             throw new OctopusImportHistoryServerMismatchException("space");
 
         cursor.ServerHost ??= host;
+        cursor.ServerUrl ??= OctopusImportServerUrl.Sanitize(request.ServerUrl);
         cursor.OctopusSpaceId ??= space;
     }
 

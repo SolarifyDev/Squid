@@ -50,7 +50,7 @@ public class GetOctopusImportPreviewRequestHandler(
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline.BuildPreviewAsync(sourcePath, destinationSpaceId, chosenProjectIds: OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson), ct: cancellationToken).ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(sourcePath, destinationSpaceId, SavedChoicesOf(session, state), OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson), cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
@@ -96,6 +96,11 @@ public class GetOctopusImportPreviewRequestHandler(
 
         return session;
     }
+
+    // A validated session is previewed with the choices it was validated with (a reopened page shows what Import would import); any other
+    // state plans the default choices.
+    private static OctopusImportChoiceSelections SavedChoicesOf(OctopusImportSession session, OctopusImportSessionState state)
+        => state == OctopusImportSessionState.Validated ? OctopusImportValidatedPlans.SavedChoices(session.ValidatedPlanJson) : null;
 
     private static void EnsurePreviewAllowed(OctopusImportSessionState state)
     {
