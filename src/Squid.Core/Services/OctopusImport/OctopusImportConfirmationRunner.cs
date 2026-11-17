@@ -7,7 +7,7 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
 
-public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, IAuthorizationService authorizationService, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportConfirmationOrchestrator confirmationOrchestrator, ISquidBackgroundJobClient backgroundJobClient, IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor secretsAccessor = null) : IOctopusImportConfirmationRunner
+public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, IAuthorizationService authorizationService, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportConfirmationOrchestrator confirmationOrchestrator, ISquidBackgroundJobClient backgroundJobClient, IOctopusImportTemporaryUploadSettings temporaryUploadSettings, IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor secretsAccessor = null) : IOctopusImportConfirmationRunner
 {
     private RunContext _ctx;
 

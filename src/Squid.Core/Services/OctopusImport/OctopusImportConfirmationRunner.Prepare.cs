@@ -31,6 +31,7 @@ public sealed partial class OctopusImportConfirmationRunner
     private async Task EnsureConfirmableAsync(CancellationToken ct)
     {
         EnsureValidated();
+        EnsureWithinMaxAge();
         EnsureTemporaryUpload();
         ReadValidatedPlan();
         EnsurePlanMatchesSelection();
@@ -42,6 +43,15 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         if (_ctx.State != OctopusImportSessionState.Validated)
             throw new OctopusImportConfirmationRejectedException("Octopus import confirmation requires a validated session.");
+    }
+
+    // Refused before planning or queueing, as SessionExpired (409): a queued run would otherwise only fail later as a generic background failure.
+    private void EnsureWithinMaxAge()
+    {
+        var maxAge = temporaryUploadSettings.MaxSessionAge;
+
+        if (OctopusImportSessionExpiry.IsOverAge(_ctx.Session.CreatedDate, maxAge, DateTimeOffset.UtcNow))
+            throw new OctopusImportSessionExpiredException(_ctx.SessionId, OctopusImportSessionExpiry.Deadline(_ctx.Session.CreatedDate, maxAge), maxAge);
     }
 
     private void EnsureTemporaryUpload()

@@ -225,8 +225,38 @@ public class OctopusImportConfirmationRunnerTests
         job.Verify(j => j.RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, CancellationToken.None), Times.Once);
     }
 
+    // Past its maximum age the session takes no more work: both confirmation paths refuse with SessionExpired (409) before planning,
+    // confirming or queueing, so a background confirmation never ends an over-age session as a generic failure.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Runner_SessionOverMaxAge_ThrowsSessionExpired_NothingRunsOrIsQueued(bool enqueue)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = ValidatedSession(sessionId, CreateTempFile());
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-169);
+        var runner = CreateRunner();
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var exception = await Should.ThrowAsync<OctopusImportSessionExpiredException>(() => enqueue ? runner.EnqueueAsync(sessionId, SpaceId, OwnerUserId) : runner.RunAsync(sessionId, SpaceId, OwnerUserId));
+
+        exception.Deadline.ShouldBe(session.CreatedDate.AddHours(168));
+        _planningPipeline.VerifyNoOtherCalls();
+        _orchestrator.VerifyNoOtherCalls();
+        _backgroundJobClient.Verify(c => c.Enqueue(It.IsAny<System.Linq.Expressions.Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()), Times.Never);
+    }
+
     private OctopusImportConfirmationRunner CreateRunner()
-        => new(_sessionDataProvider.Object, _sessionService.Object, _authorization.Object, _planningPipeline.Object, _orchestrator.Object, _backgroundJobClient.Object);
+        => new(_sessionDataProvider.Object, _sessionService.Object, _authorization.Object, _planningPipeline.Object, _orchestrator.Object, _backgroundJobClient.Object, Settings());
+
+    private static IOctopusImportTemporaryUploadSettings Settings()
+    {
+        var settings = new Mock<IOctopusImportTemporaryUploadSettings>();
+        settings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
+
+        return settings.Object;
+    }
 
     private static OctopusImportPreviewPlanDto Preview(OctopusImportPreviewAction projectAction = OctopusImportPreviewAction.Create, params OctopusImportResourceResultDto[] others)
         => new() { GeneratedAt = DateTimeOffset.UtcNow, Resources = [new OctopusImportResourceResultDto { SourceId = "Projects-1", SourceType = "Project", SourceName = "Project", PreviewAction = projectAction, OutcomeState = OctopusImportResourceOutcomeState.Pending }, .. others] };
@@ -244,6 +274,7 @@ public class OctopusImportConfirmationRunnerTests
             TemporaryUploadPath = uploadPath,
             SourceSummaryJson = "{}",
             ValidatedPlanJson = JsonSerializer.Serialize(new OctopusImportValidatedPlanDto { PreviewPlan = preview ?? Preview(), Validation = new OctopusImportValidationResultDto() }, JsonOptions),
+            CreatedDate = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             LastStateChangedAt = DateTimeOffset.UtcNow
         };

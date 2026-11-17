@@ -1,4 +1,5 @@
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -31,6 +32,10 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
 
             return outcome.Rejection;
         }
+        catch (OctopusImportSessionExpiredException ex)
+        {
+            return MaxAgeReached(ex);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Error(ex, "Background Octopus import confirmation {SessionId} failed before the import started", sessionId);
@@ -54,8 +59,13 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
 
         if (current.State != OctopusImportSessionState.Validated) return;
 
-        await sessions.RecordResultAsync(sessionId, spaceId, OctopusImportSessionState.Failed, new OctopusImportSessionResultDto { Diagnostics = [rejection] }, CancellationToken.None).ConfigureAwait(false);
+        await sessions.RecordResultAsync(sessionId, spaceId, TerminalStateFor(rejection), new OctopusImportSessionResultDto { Diagnostics = [rejection] }, CancellationToken.None).ConfigureAwait(false);
     }
+
+    // The session reached its maximum age before the run started: it ends Expired with that reason, as the cleanup sweep would end it.
+    private static OctopusImportDiagnosticDto MaxAgeReached(OctopusImportSessionExpiredException ex) => new() { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportSessionExpiry.MaxAgeReachedCode, Message = ex.Message };
+
+    private static OctopusImportSessionState TerminalStateFor(OctopusImportDiagnosticDto rejection) => rejection.Code == OctopusImportSessionExpiry.MaxAgeReachedCode ? OctopusImportSessionState.Expired : OctopusImportSessionState.Failed;
 
     private ILifetimeScope BeginOwnerScope(int ownerUserId) => lifetimeScope.BeginLifetimeScope(builder => builder.RegisterInstance<ICurrentUser>(new OctopusImportSessionOwner(ownerUserId)));
 }

@@ -465,6 +465,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             TemporaryUploadPath = uploadPath,
             SourceSummaryJson = "{}",
             ValidatedPlanJson = validatedPlan == null ? null : JsonSerializer.Serialize(validatedPlan, JsonOptions),
+            CreatedDate = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
             LastStateChangedAt = DateTimeOffset.UtcNow
         };
@@ -490,6 +491,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             AuthorizationService
                 .Setup(a => a.EnsurePermissionAsync(It.IsAny<PermissionCheckRequest>(), It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
+            TemporaryUploadSettings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
             Sut = CreateSut(null, null);
         }
 
@@ -498,9 +500,11 @@ public class ConfirmOctopusImportCommandHandlerTests
             => new(CurrentUser.Object, CreateRunner(secretStore, accessor));
 
         public OctopusImportConfirmationRunner CreateRunner(IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor accessor = null)
-            => new(SessionDataProvider.Object, SessionService.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, BackgroundJobClient.Object, secretStore, accessor);
+            => new(SessionDataProvider.Object, SessionService.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, BackgroundJobClient.Object, TemporaryUploadSettings.Object, secretStore, accessor);
 
         public Mock<ISquidBackgroundJobClient> BackgroundJobClient { get; } = new();
+
+        public Mock<IOctopusImportTemporaryUploadSettings> TemporaryUploadSettings { get; } = new();
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();
 

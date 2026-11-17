@@ -286,6 +286,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Uploaded);
 
         EnsureWithinMaxAge(session);
+        EnsureLeaseWithinMaxAge(session, historyFetch);
 
         var summary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson) ?? new OctopusImportSourceSummaryDto();
 
@@ -467,6 +468,17 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (!OctopusImportSessionExpiry.IsOverAge(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge, DateTimeOffset.UtcNow)) return;
 
         throw new OctopusImportSessionExpiredException(session.SessionId, OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge), _temporaryUploadSettings.MaxSessionAge);
+    }
+
+    // A chunk lease never outlives the cap: the over-age sweep does not look at leases, so a chunk still writing past the deadline would
+    // have its staging directory deleted under it and leave what it writes afterwards on disk with no row pointing at it.
+    private void EnsureLeaseWithinMaxAge(OctopusImportSession session, OctopusImportHistoryFetchDto historyFetch)
+    {
+        var deadline = OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge);
+
+        if (historyFetch.LeaseExpiresAt == null || historyFetch.LeaseExpiresAt <= deadline) return;
+
+        throw new OctopusImportSessionExpiredException(session.SessionId, deadline, _temporaryUploadSettings.MaxSessionAge);
     }
 
     private static T Deserialize<T>(string json) where T : class

@@ -2,6 +2,7 @@ using System.Linq;
 using Autofac;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
@@ -77,6 +78,21 @@ public class OctopusImportConfirmationJobTests
         await RunJobAsync(sessionId);
 
         _sessions.Verify(s => s.RecordResultAsync(sessionId, SpaceId, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Single().Code == OctopusImportConfirmationDiagnosticCodes.BackgroundConfirmationFailed && r.Diagnostics.Single().Severity == OctopusImportCompatibilitySeverity.Blocker && r.Diagnostics.Single().Message.Contains("permission denied")), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // The session passed its maximum age between queueing and running: it ends Expired with the max-age reason (the page offers a
+    // new session), never Failed with a generic background failure that would also keep the upload a further retention period.
+    [Fact]
+    public async Task RunAsOwner_SessionReachedMaxAge_EndsTheSessionExpiredWithTheMaxAgeReason()
+    {
+        var sessionId = Guid.NewGuid();
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusImportSessionExpiredException(sessionId, DateTimeOffset.UtcNow, TimeSpan.FromHours(168)));
+        _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
+
+        await RunJobAsync(sessionId);
+
+        _sessions.Verify(s => s.RecordResultAsync(sessionId, SpaceId, OctopusImportSessionState.Expired, It.Is<OctopusImportSessionResultDto>(r => r.Diagnostics.Single().Code == OctopusImportSessionExpiry.MaxAgeReachedCode && r.Diagnostics.Single().Severity == OctopusImportCompatibilitySeverity.Blocker && r.Diagnostics.Single().Message == OctopusImportSessionExpiry.MaxAgeReachedMessage(TimeSpan.FromHours(168))), It.IsAny<CancellationToken>()), Times.Once);
+        _sessions.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), OctopusImportSessionState.Failed, It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // A third-party message (a driver error quoting a connection setting) reaches the session owner only through the import's redaction.

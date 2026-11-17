@@ -126,6 +126,40 @@ public class OctopusImportSessionServiceHistoryFetchTests
         _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // A chunk lease never outlives the session's maximum age: otherwise the over-age sweep would delete the staging directory while the
+    // chunk still writes to it, and the files written after the delete would stay on disk with no row pointing at them.
+    [Theory]
+    [InlineData(1, true)]    // the lease runs a minute past the deadline: refused
+    [InlineData(-1, false)]  // the lease ends a minute before the deadline: claimed
+    public async Task UpdateHistoryFetch_LeasePastDeadline_ThrowsSessionExpiredWithoutWriting(int leaseEndMinutesAfterDeadline, bool refused)
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-168).AddMinutes(10);
+        var deadline = session.CreatedDate.AddHours(168);
+        var claim = new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), LeaseExpiresAt = deadline.AddMinutes(leaseEndMinutesAfterDeadline) };
+
+        var act = () => _service.UpdateHistoryFetchAsync(session.SessionId, 7, claim, previous);
+
+        if (refused) (await Should.ThrowAsync<OctopusImportSessionExpiredException>(act)).Deadline.ShouldBe(deadline);
+        else await act();
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), refused ? Times.Never() : Times.Once());
+    }
+
+    // Releasing (no lease) right before the deadline still records the cursor: only a new lease is bounded.
+    [Fact]
+    public async Task UpdateHistoryFetch_ReleaseNearDeadline_Recorded()
+    {
+        var chunk = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = chunk });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-168).AddSeconds(30);
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = chunk, LeaseExpiresAt = null }, chunk);
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task UpdateHistoryFetch_SessionAlreadyExtracted_Rejected()
     {

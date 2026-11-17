@@ -6,6 +6,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
 
 namespace Squid.IntegrationTests.Services.OctopusImport;
@@ -76,6 +77,61 @@ public class OctopusImportBackgroundConfirmationIntegrationTests : TestBase
         }
     }
 
+    // The session passed its maximum age between queueing and running: the job ends it Expired with the max-age reason (what the page
+    // offers a new session for), never Failed with a generic background failure, and imports nothing.
+    [Fact]
+    public async Task BackgroundConfirm_SessionReachesMaxAgeAfterQueueing_EndsExpiredWithTheMaxAgeReason()
+    {
+        var projectName = $"BackgroundOverAge-{Guid.NewGuid():N}";
+        var archivePath = OctopusExportSecretsArchive.Write(projectName);
+
+        try
+        {
+            var sessionId = await ValidateAsync(archivePath);
+            var job = await ConfirmInBackgroundAsync(sessionId);
+
+            await BackdateCreationAsync(sessionId, TimeSpan.FromHours(169));
+            await Run<IOctopusImportConfirmationJob>(runner => job.Compile()(runner), builder => builder.RegisterInstance(AllowAllAuthorization()).As<IAuthorizationService>());
+
+            var stored = await StoredSessionAsync(sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Expired.ToString(), customMessage: stored.ResultJson);
+            stored.ResultJson.ShouldContain(OctopusImportSessionExpiry.MaxAgeReachedCode);
+            stored.ResultJson.ShouldNotContain(OctopusImportConfirmationDiagnosticCodes.BackgroundConfirmationFailed);
+            (await ProjectExistsAsync(projectName)).ShouldBeFalse();
+        }
+        finally
+        {
+            File.Delete(archivePath);
+        }
+    }
+
+    // Already over its cap when the confirmation is asked for: refused as SessionExpired (409) and nothing is queued.
+    [Fact]
+    public async Task BackgroundConfirm_SessionAlreadyOverMaxAge_RefusedAsSessionExpired_NothingQueued()
+    {
+        var archivePath = OctopusExportSecretsArchive.Write($"BackgroundRefused-{Guid.NewGuid():N}");
+
+        try
+        {
+            var sessionId = await ValidateAsync(archivePath);
+
+            await BackdateCreationAsync(sessionId, TimeSpan.FromHours(169));
+
+            await Run<IMediator, ISquidBackgroundJobClient>(async (mediator, jobClient) =>
+            {
+                await Should.ThrowAsync<OctopusImportSessionExpiredException>(() => OctopusImportHandlerFlow.ConfirmAsync(mediator, SpaceId, sessionId, runInBackground: true));
+
+                ((MockSquidBackgroundJobClient)jobClient).EnqueuedJobs.OfType<Expression<Func<IOctopusImportConfirmationJob, Task>>>().ShouldBeEmpty();
+            });
+
+            (await StoredSessionAsync(sessionId)).State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+        }
+        finally
+        {
+            File.Delete(archivePath);
+        }
+    }
+
     private async Task<Guid> ValidateAsync(string archivePath)
     {
         var sessionId = Guid.Empty;
@@ -112,6 +168,13 @@ public class OctopusImportBackgroundConfirmationIntegrationTests : TestBase
         });
 
         return job;
+    }
+
+    private Task BackdateCreationAsync(Guid sessionId, TimeSpan age)
+    {
+        var createdDate = DateTimeOffset.UtcNow.Subtract(age);
+
+        return Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedDate, createdDate)));
     }
 
     private Task<bool> ProjectExistsAsync(string projectName) => Run<SquidDbContext, bool>(db => db.Set<Project>().AnyAsync(p => p.Name == projectName));

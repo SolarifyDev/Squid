@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Constants;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -135,6 +136,22 @@ public class OctopusImportSessionMaxAgeIntegrationTests : TestBase
         var stored = await StoredAsync(sessionId);
         stored.ExpiresAt.ShouldBe(stored.CreatedDate.AddHours(2), TimeSpan.FromMilliseconds(1));
         stored.TemporaryUploadCleanupAfter.ShouldBe(stored.ExpiresAt);
+    }
+
+    // A chunk claim whose lease would outlive the cap is refused against the real row: no lease is stored, so the over-age sweep can never
+    // delete the staging directory under a chunk that is still writing to it.
+    [Fact]
+    public async Task UpdateHistoryFetch_RealRow_ClaimWhoseLeaseOutlivesTheCap_RefusedAndNothingStored()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded, TimeSpan.FromHours(2).Subtract(TimeSpan.FromMinutes(3)));
+        var before = await StoredAsync(sessionId);
+        var claim = new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), LeaseExpiresAt = DateTimeOffset.UtcNow.AddMinutes(10) };
+
+        await Should.ThrowAsync<OctopusImportSessionExpiredException>(() => Run<IOctopusImportSessionService, OctopusImportSessionDto>(s => s.UpdateHistoryFetchAsync(sessionId, SpaceId, claim, null), TwoHourCap));
+
+        var after = await StoredAsync(sessionId);
+        after.DataVersion.ShouldBe(before.DataVersion);
+        after.SourceSummaryJson.ShouldBe(before.SourceSummaryJson);
     }
 
     private static void TwoHourCap(ContainerBuilder builder)
