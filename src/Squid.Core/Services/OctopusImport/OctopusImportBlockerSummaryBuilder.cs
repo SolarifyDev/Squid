@@ -222,6 +222,14 @@ public static class OctopusImportBlockerSummaryBuilder
                 "The import could not be completed because an error occurred. No changes were saved.",
             OctopusImportConfirmationDiagnosticCodes.ValidationBlockedConfirmation =>
                 "The import plan is no longer valid. Generate a new preview before importing.",
+            OctopusImportConfirmationDiagnosticCodes.TransientRetriesExhausted =>
+                "The database kept failing while importing, so nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationInterrupted =>
+                "The server running the import stopped before it finished, so nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationNotStarted =>
+                "The import did not start because the database failed. Nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable =>
+                "The import was rolled back and nothing was saved. Import again.",
             _ when code.StartsWith("octopus.archive.", StringComparison.OrdinalIgnoreCase)
                 || code.StartsWith("octopus.input.", StringComparison.OrdinalIgnoreCase)
                 || code.StartsWith("octopus.manifest.", StringComparison.OrdinalIgnoreCase)

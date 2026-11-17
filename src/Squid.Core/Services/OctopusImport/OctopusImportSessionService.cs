@@ -57,6 +57,27 @@ public interface IOctopusImportSessionService : IScopedDependency
     /// </summary>
     Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default);
 
+    /// <summary>The same admission under the caller's <paramref name="attemptId"/>, which fences every write that ends the attempt.</summary>
+    Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, byte[] expectedDataVersion, CancellationToken ct = default);
+
+    /// <summary>Whether the attempt still holds the session as Importing; false once it committed or was recovered.</summary>
+    Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Ends the attempt's session in <paramref name="terminalState"/> with <paramref name="result"/>, like <see cref="RecordResultAsync"/>,
+    /// only while <paramref name="attemptId"/> still holds it; otherwise throws <see cref="OctopusImportConfirmationFencedException"/>.
+    /// </summary>
+    Task<OctopusImportSessionDto> SettleConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, OctopusImportSessionState terminalState, OctopusImportSessionResultDto result, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the session held by <paramref name="failure"/>'s attempt to Validated, recording the failure; the session as it is when the
+    /// attempt no longer holds it (its commit landed after all, or it was recovered).
+    /// </summary>
+    Task<OctopusImportSessionDto> ReturnConfirmationToValidatedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default);
+
+    /// <summary>Records on a Validated session why its confirmation never started; the session stays Validated, importable as it is.</summary>
+    Task<OctopusImportSessionDto> RecordConfirmationNotStartedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default);
+
     /// <summary>
     /// Replaces the REST history fetch state of an Uploaded session. <paramref name="expectedChunkId"/> must match the
     /// stored chunk id and the row's data version must be unchanged, otherwise a concurrent chunk won and this throws
@@ -260,7 +281,10 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         return Map(session);
     }
 
-    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default)
+    public Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, byte[] expectedDataVersion = null, CancellationToken ct = default)
+        => TryStartConfirmationAsync(sessionId, destinationSpaceId, Guid.NewGuid(), expectedDataVersion, ct);
+
+    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, byte[] expectedDataVersion, CancellationToken ct = default)
     {
         var ownerUserId = GetCurrentUserId();
         var session = await _dataProvider.GetSessionNoTrackingAsync(sessionId, ownerUserId, destinationSpaceId, ct).ConfigureAwait(false);
@@ -272,7 +296,42 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
         var createdAfter = DateTimeOffset.UtcNow.Subtract(_temporaryUploadSettings.MaxSessionAge);
 
-        return await _dataProvider.TryStartConfirmationAsync(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion ?? session.DataVersion, createdAfter, ct).ConfigureAwait(false);
+        return await _dataProvider.TryStartConfirmationAsync(new OctopusImportConfirmationAdmission(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion ?? session.DataVersion, createdAfter, attemptId), ct).ConfigureAwait(false);
+    }
+
+    public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default) => _dataProvider.IsConfirmationHeldAsync(sessionId, attemptId, ct);
+
+    public async Task<OctopusImportSessionDto> SettleConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, OctopusImportSessionState terminalState, OctopusImportSessionResultDto result, CancellationToken ct = default)
+    {
+        EnsureTerminal(terminalState);
+
+        // Read from the database, never the change tracker: a session tracked earlier in this scope would show a state the fence must not trust.
+        var session = await _dataProvider.GetSessionNoTrackingAsync(sessionId, GetCurrentUserId(), destinationSpaceId, ct).ConfigureAwait(false) ?? throw new OctopusImportSessionNotFoundException(sessionId);
+
+        if (ParseState(session.State) != OctopusImportSessionState.Importing || session.ConfirmationAttemptId != attemptId)
+            throw new OctopusImportConfirmationFencedException(sessionId, attemptId);
+
+        return await RecordAsync(session, terminalState, result, ct).ConfigureAwait(false);
+    }
+
+    public async Task<OctopusImportSessionDto> ReturnConfirmationToValidatedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+
+        await _dataProvider.ReturnConfirmationToValidatedAsync(sessionId, failure.AttemptId, SerializeFailure(failure), DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+
+        return await GetSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<OctopusImportSessionDto> RecordConfirmationNotStartedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(failure);
+
+        var session = await GetSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+
+        await _dataProvider.RecordConfirmationFailureAsync(session.SessionId, SerializeFailure(failure), ct).ConfigureAwait(false);
+
+        return await GetSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
     }
 
     public async Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)
@@ -328,10 +387,21 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         OctopusImportSessionResultDto result,
         CancellationToken ct = default)
     {
-        if (!OctopusImportSessionStateMachine.IsTerminal(terminalState))
-            throw new ArgumentException($"State '{terminalState}' is not terminal.", nameof(terminalState));
+        EnsureTerminal(terminalState);
 
         var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+
+        return await RecordAsync(session, terminalState, result, ct).ConfigureAwait(false);
+    }
+
+    private static void EnsureTerminal(OctopusImportSessionState terminalState)
+    {
+        if (!OctopusImportSessionStateMachine.IsTerminal(terminalState))
+            throw new ArgumentException($"State '{terminalState}' is not terminal.", nameof(terminalState));
+    }
+
+    private async Task<OctopusImportSessionDto> RecordAsync(OctopusImportSession session, OctopusImportSessionState terminalState, OctopusImportSessionResultDto result, CancellationToken ct)
+    {
         var currentState = ParseState(session.State);
 
         if (currentState != terminalState)
@@ -403,9 +473,14 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             ExpiresAt = session.ExpiresAt,
             MaxExpiresAt = OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge),
             CompletedAt = session.CompletedAt,
-            LastStateChangedAt = session.LastStateChangedAt
+            LastStateChangedAt = session.LastStateChangedAt,
+            LastConfirmationFailure = RetryableFailure(session)
         };
     }
+
+    // Only a Validated session can be imported again; once the session moves on, an older attempt's failure no longer describes it.
+    private static OctopusImportConfirmationFailureDto RetryableFailure(OctopusImportSession session)
+        => ParseState(session.State) == OctopusImportSessionState.Validated ? OctopusImportRedaction.RedactDto(Deserialize<OctopusImportConfirmationFailureDto>(session.LastConfirmationFailureJson)) : null;
 
     // The key fingerprint only binds chunks server-side; no response needs it.
     private static OctopusImportSourceSummaryDto WithoutKeyBinding(OctopusImportSourceSummaryDto summary)
@@ -426,6 +501,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
     /// <summary>A session result in the shape <see cref="RecordResultAsync"/> stores, for writers that bypass it (the over-age sweep).</summary>
     public static string SerializeResult(OctopusImportSessionResultDto result) => Serialize(OctopusImportRedaction.RedactDto(result));
+
+    /// <summary>A confirmation failure in the shape the session stores it, redacted, for writers that bypass this service (the recovery sweep).</summary>
+    public static string SerializeFailure(OctopusImportConfirmationFailureDto failure) => Serialize(OctopusImportRedaction.RedactDto(failure));
 
     private DateTimeOffset GetTerminalUploadCleanupAfter(OctopusImportSessionState terminalState, DateTimeOffset completedAt)
     {

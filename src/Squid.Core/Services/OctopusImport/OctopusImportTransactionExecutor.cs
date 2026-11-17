@@ -95,10 +95,32 @@ public sealed class OctopusImportTransactionExecutor : IOctopusImportTransaction
         }
     }
 
-    private Task<IDbContextTransaction> BeginTransactionAsync(OctopusImportTransactionContext context, CancellationToken ct)
+    private async Task<IDbContextTransaction> BeginTransactionAsync(OctopusImportTransactionContext context, CancellationToken ct)
     {
-        return context.IsolationLevel.HasValue
-            ? _repository.Database.BeginTransactionAsync(context.IsolationLevel.Value, ct)
-            : _repository.Database.BeginTransactionAsync(ct);
+        var transaction = context.IsolationLevel.HasValue
+            ? await _repository.Database.BeginTransactionAsync(context.IsolationLevel.Value, ct).ConfigureAwait(false)
+            : await _repository.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            await ApplyIdleInTransactionTimeoutAsync(context, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            await transaction.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        return transaction;
+    }
+
+    // SET LOCAL lasts until the transaction ends, so the pooled connection goes back with the server default.
+    private async Task ApplyIdleInTransactionTimeoutAsync(OctopusImportTransactionContext context, CancellationToken ct)
+    {
+        if (context.IdleInTransactionTimeout is not { } timeout) return;
+
+        var milliseconds = (long)Math.Max(1, timeout.TotalMilliseconds);
+
+        await _repository.Database.ExecuteSqlRawAsync($"SET LOCAL idle_in_transaction_session_timeout = {milliseconds}", ct).ConfigureAwait(false);
     }
 }

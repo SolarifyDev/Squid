@@ -36,6 +36,27 @@ public class GetOctopusImportStatusRequestHandlerTests
         response.Data.Session.State.ShouldBe(OctopusImportSessionState.Validated);
     }
 
+    // A session Validated again after a rolled-back attempt is described by that attempt's failure, so the page can say why to import again.
+    [Fact]
+    public async Task Handle_ValidatedWithConfirmationFailure_BlockerSummaryFromTheFailure()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = new OctopusImportSessionDto
+        {
+            SessionId = sessionId,
+            DestinationSpaceId = 7,
+            State = OctopusImportSessionState.Validated,
+            LastConfirmationFailure = new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.Interrupted, Diagnostics = [new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationInterrupted, Message = "stopped" }] }
+        };
+        var sessionService = new Mock<IOctopusImportSessionService>();
+        sessionService.Setup(s => s.GetSessionAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var response = await new GetOctopusImportStatusRequestHandler(sessionService.Object).Handle(Context(new GetOctopusImportStatusRequest { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        response.Data.BlockerSummary.HasBlockers.ShouldBeTrue();
+        response.Data.BlockerSummary.BlockingReasons.ShouldHaveSingleItem().Message.ShouldContain("stopped before it finished");
+    }
+
     [Fact]
     public async Task Handle_ReturnsTerminalResultForIdempotentStatusReads()
     {

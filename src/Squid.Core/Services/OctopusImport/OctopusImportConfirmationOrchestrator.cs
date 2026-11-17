@@ -51,6 +51,9 @@ public sealed record OctopusImportConfirmationRequest(
     /// that version, so a plan validated again meanwhile is never imported in place of the newer one. Null admits the current version.
     /// </summary>
     public byte[] ValidatedDataVersion { get; init; }
+
+    /// <summary>The fencing token this confirmation holds the session under; a failure it records carries it, so the caller can tell it is its own.</summary>
+    public Guid AttemptId { get; init; } = Guid.NewGuid();
 }
 
 public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImportConfirmationOrchestrator
@@ -79,6 +82,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
     private readonly IExternalFeedService _externalFeedService;
     private readonly IReadOnlyList<IOctopusImportChildInserter> _childInserters;
     private readonly IOctopusImportDestinationDataProvider _destinationDataProvider;
+    private readonly IOctopusImportConfirmationHeartbeat _heartbeat;
+    private readonly TimeProvider _time;
+    private readonly OctopusImportConfirmationResilienceOptions _resilience;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -104,7 +110,10 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         IVariableService variableService = null,
         IExternalFeedService externalFeedService = null,
         IEnumerable<IOctopusImportChildInserter> childInserters = null,
-        IOctopusImportDestinationDataProvider destinationDataProvider = null)
+        IOctopusImportDestinationDataProvider destinationDataProvider = null,
+        IOctopusImportConfirmationHeartbeat heartbeat = null,
+        TimeProvider time = null,
+        OctopusImportConfirmationResilienceOptions resilience = null)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -130,79 +139,71 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         _externalFeedService = externalFeedService;
         _childInserters = childInserters?.ToList() ?? [];
         _destinationDataProvider = destinationDataProvider;
+        _heartbeat = heartbeat;
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience ?? OctopusImportConfirmationResilienceOptions.FromEnvironment();
     }
 
-    public async Task<OctopusImportSessionDto> ConfirmAsync(
-        OctopusImportConfirmationRequest request,
-        CancellationToken ct = default)
+    public async Task<OctopusImportSessionDto> ConfirmAsync(OctopusImportConfirmationRequest request, CancellationToken ct = default)
     {
         ValidateRequest(request);
 
-        var current = await _sessionService
-            .GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct)
-            .ConfigureAwait(false);
+        var current = await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
 
-        if (OctopusImportSessionStateMachine.IsTerminal(current.State) || current.State == OctopusImportSessionState.Importing)
-            return current;
+        if (IsSettledOrImporting(current)) return current;
 
-        if (current.State != OctopusImportSessionState.Validated)
-            throw new InvalidOperationException($"Octopus import confirmation requires a Validated session. Current state is '{current.State}'.");
+        EnsureValidated(current);
 
-        var admitted = await _sessionService.TryStartConfirmationAsync(request.SessionId, request.DestinationSpaceId, request.ValidatedDataVersion, ct).ConfigureAwait(false);
+        if (!await TryAdmitAsync(request, ct).ConfigureAwait(false)) return await CurrentAsync(request).ConfigureAwait(false);
 
-        if (!admitted)
-            return await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
+        await using var beat = StartHeartbeat(request);
 
-        OctopusImportSessionResultDto result = null;
-        try
-        {
-            result = BuildInitialResult(request.PreviewPlan);
-            var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
-            if (request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker))
-                return await _sessionService
-                    .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
-                    .ConfigureAwait(false);
-
-            var context = new OctopusImportTransactionContext(request.SessionId, request.DestinationSpaceId);
-            return await _transactionExecutor
-                .ExecuteInImportTransactionAsync(
-                    context,
-                    async (_, transactionCt) =>
-                    {
-                        var prior = await LockSpaceAndLoadPriorMappingsAsync(request.DestinationSpaceId, transactionCt).ConfigureAwait(false);
-                        result = await ExecuteAsync(request, result, prior, transactionCt).ConfigureAwait(false);
-                        result.Succeeded = true;
-
-                        return await _sessionService
-                            .RecordResultAsync(
-                                request.SessionId,
-                                request.DestinationSpaceId,
-                                OctopusImportSessionState.Succeeded,
-                                result,
-                                transactionCt)
-                            .ConfigureAwait(false);
-                    },
-                    ct)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Octopus import confirmation {SessionId} failed and was rolled back", request.SessionId);
-
-            result ??= new OctopusImportSessionResultDto();
-            MarkRolledBack(result, ex);
-            result.Succeeded = false;
-
-            return await _sessionService
-                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
+        return await RunAttemptsAsync(request, ct).ConfigureAwait(false);
     }
 
-    private async Task<OctopusImportValidationResultDto> RevalidateAsync(
-        OctopusImportConfirmationRequest request,
-        OctopusImportSessionResultDto result,
-        CancellationToken ct)
+    private static bool IsSettledOrImporting(OctopusImportSessionDto session) => OctopusImportSessionStateMachine.IsTerminal(session.State) || session.State == OctopusImportSessionState.Importing;
+
+    private static void EnsureValidated(OctopusImportSessionDto session)
+    {
+        if (session.State != OctopusImportSessionState.Validated)
+            throw new InvalidOperationException($"Octopus import confirmation requires a Validated session. Current state is '{session.State}'.");
+    }
+
+    private Task<bool> TryAdmitAsync(OctopusImportConfirmationRequest request, CancellationToken ct) => _sessionService.TryStartConfirmationAsync(request.SessionId, request.DestinationSpaceId, request.AttemptId, request.ValidatedDataVersion, ct);
+
+    private Task<OctopusImportSessionDto> CurrentAsync(OctopusImportConfirmationRequest request) => _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, CancellationToken.None);
+
+    // One attempt: confirmation-time validation, then the import and its Succeeded record in one transaction. Blockers end the session Failed.
+    private async Task<OctopusImportSessionDto> RunAttemptAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
+    {
+        var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
+
+        if (HasBlockers(request, validation, result)) return await SettleAsync(request, OctopusImportSessionState.Failed, result, CancellationToken.None).ConfigureAwait(false);
+
+        var context = new OctopusImportTransactionContext(request.SessionId, request.DestinationSpaceId) { IdleInTransactionTimeout = _resilience.HeartbeatStale };
+
+        return await _transactionExecutor.ExecuteInImportTransactionAsync(context, (_, transactionCt) => ImportAsync(request, result, transactionCt), ct).ConfigureAwait(false);
+    }
+
+    private static bool HasBlockers(OctopusImportConfirmationRequest request, OctopusImportValidationResultDto validation, OctopusImportSessionResultDto result)
+        => request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+
+    private async Task<OctopusImportSessionDto> ImportAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
+    {
+        var prior = await LockSpaceAndLoadPriorMappingsAsync(request.DestinationSpaceId, ct).ConfigureAwait(false);
+
+        await ExecuteAsync(request, result, prior, ct).ConfigureAwait(false);
+
+        result.Succeeded = true;
+
+        return await SettleAsync(request, OctopusImportSessionState.Succeeded, result, ct).ConfigureAwait(false);
+    }
+
+    // Fenced on the attempt: if the session was recovered (and maybe started again) meanwhile, this throws and the transaction rolls back.
+    private Task<OctopusImportSessionDto> SettleAsync(OctopusImportConfirmationRequest request, OctopusImportSessionState state, OctopusImportSessionResultDto result, CancellationToken ct)
+        => _sessionService.SettleConfirmationAsync(request.SessionId, request.DestinationSpaceId, request.AttemptId, state, result, ct);
+
+    private async Task<OctopusImportValidationResultDto> RevalidateAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
     {
         var conflicts = await _conflictDiscoveryService
             .DiscoverAsync(request.DestinationSpaceId, request.Graph, ct)

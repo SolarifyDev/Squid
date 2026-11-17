@@ -331,15 +331,29 @@ public class OctopusImportSessionServiceTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
         _dataProvider
-            .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.SessionId == sessionId && a.OwnerUserId == 42 && a.DestinationSpaceId == 7), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None);
 
         admitted.ShouldBeTrue();
         _dataProvider.Verify(
-            p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.SessionId == sessionId && a.OwnerUserId == 42 && a.DestinationSpaceId == 7 && a.AttemptId != Guid.Empty), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // The caller's attempt id is the fencing token the admission records; nothing else may stand in for it.
+    [Fact]
+    public async Task TryStartConfirmationAsync_WithAttemptId_RecordsThatAttempt()
+    {
+        var sessionId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await _service.TryStartConfirmationAsync(sessionId, 7, attemptId, null, CancellationToken.None);
+
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.AttemptId == attemptId), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // The version the validated plan was read with wins over the current one: a plan validated again meanwhile is never imported instead.
@@ -353,11 +367,12 @@ public class OctopusImportSessionServiceTests
         session.DataVersion = [1, 1, 1];
         byte[] planVersion = [2, 2, 2];
         _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
-        _dataProvider.Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         await _service.TryStartConfirmationAsync(sessionId, 7, planVersionGiven ? planVersion : null, CancellationToken.None);
 
-        _dataProvider.Verify(p => p.TryStartConfirmationAsync(sessionId, 42, 7, planVersionGiven ? planVersion : session.DataVersion, It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        var expected = planVersionGiven ? planVersion : session.DataVersion;
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.ExpectedDataVersion == expected), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -369,15 +384,7 @@ public class OctopusImportSessionServiceTests
             () => _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None));
 
         exception.SessionId.ShouldBe(sessionId);
-        _dataProvider.Verify(
-            p => p.TryStartConfirmationAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<byte[]>(),
-                It.IsAny<DateTimeOffset>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -622,7 +629,7 @@ public class OctopusImportSessionServiceTests
 
         exception.SessionId.ShouldBe(sessionId);
         _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
-        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<byte[]>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // The admission itself also refuses a session that reached the cap, atomically with the state check.
@@ -632,7 +639,7 @@ public class OctopusImportSessionServiceTests
         var sessionId = Guid.NewGuid();
         _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
         DateTimeOffset createdAfter = default;
-        _dataProvider.Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).Callback<Guid, int, int, byte[], DateTimeOffset, CancellationToken>((_, _, _, _, after, _) => createdAfter = after).ReturnsAsync(true);
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).Callback<OctopusImportConfirmationAdmission, CancellationToken>((admission, _) => createdAfter = admission.CreatedAfter).ReturnsAsync(true);
         var expected = DateTimeOffset.UtcNow.AddHours(-168);
 
         await _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None);

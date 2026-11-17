@@ -24,4 +24,10 @@ public class OctopusImportSessionDto
     public DateTimeOffset? CompletedAt { get; set; }
 
     public DateTimeOffset LastStateChangedAt { get; set; }
+
+    /// <summary>
+    /// Set only while the session is Validated after a confirmation attempt imported nothing (rolled back, interrupted, or not started):
+    /// the plan can be imported again as it is.
+    /// </summary>
+    public OctopusImportConfirmationFailureDto LastConfirmationFailure { get; set; }
 }

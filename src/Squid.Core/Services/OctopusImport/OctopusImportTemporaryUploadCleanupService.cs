@@ -22,11 +22,6 @@ public sealed class OctopusImportTemporaryUploadCleanupService(IOctopusImportSes
         var now = DateTimeOffset.UtcNow;
         var overAge = await ExpireOverAgeAsync(now, ct).ConfigureAwait(false);
         var expired = await dataProvider.ExpireSessionsAsync(now, ct).ConfigureAwait(false);
-        var interrupted = await dataProvider.MarkInterruptedImportsFailedAsync(
-            now,
-            now.Subtract(settings.InterruptedImportGracePeriod),
-            settings.FailedRetentionPeriod,
-            ct).ConfigureAwait(false);
 
         var candidates = await dataProvider.GetTemporaryUploadCleanupCandidatesAsync(
             now,
@@ -64,7 +59,8 @@ public sealed class OctopusImportTemporaryUploadCleanupService(IOctopusImportSes
             }
         }
 
-        return new OctopusImportTemporaryUploadCleanupOutcome(expired, interrupted, candidates.Count, cleaned, failed, overAge);
+        // Interrupted imports are no longer failed here: OctopusImportConfirmationRecoveryService returns them to Validated.
+        return new OctopusImportTemporaryUploadCleanupOutcome(expired, 0, candidates.Count, cleaned, failed, overAge);
     }
 
     // This server's copy first, then the stored files with the mark in one transaction: a session counts as cleaned only once its files

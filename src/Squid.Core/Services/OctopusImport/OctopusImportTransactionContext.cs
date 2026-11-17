@@ -35,4 +35,10 @@ public sealed class OctopusImportTransactionContext
     public IsolationLevel? IsolationLevel { get; }
 
     public DateTimeOffset StartedAt { get; }
+
+    /// <summary>
+    /// When set, the transaction runs with <c>idle_in_transaction_session_timeout</c>: if the process holding it dies, the database ends
+    /// it (and releases its locks) after this long instead of keeping it open until the connection is noticed dead.
+    /// </summary>
+    public TimeSpan? IdleInTransactionTimeout { get; init; }
 }

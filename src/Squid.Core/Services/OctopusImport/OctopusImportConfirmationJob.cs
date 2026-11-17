@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Message.Enums.OctopusImport;
@@ -36,6 +37,12 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
         {
             return MaxAgeReached(ex);
         }
+        catch (Exception ex) when (PostgresTransientFailureClassifier.IsTransient(ex))
+        {
+            Log.Warning(ex, "Background Octopus import confirmation {SessionId} did not start because of a transient database failure; the session stays Validated", sessionId);
+
+            return NotStarted(ex);
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Error(ex, "Background Octopus import confirmation {SessionId} failed before the import started", sessionId);
@@ -48,9 +55,11 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
     // Nobody waits on the request that queued this run: a refusal that leaves the session Validated would keep the
     // caller polling forever, so end the session with the reason. A session the orchestrator already ended is left alone,
     // and so is one whose plan was replaced meanwhile (validated again, selection changed): that newer plan is still importable.
+    // A retryable refusal (the import rolled back and the session is Validated again with the reason) is left as it is: the page offers
+    // "Import again". A transient failure before the import started is recorded the same way, without ending the session.
     private async Task RecordRejectionAsync(Guid sessionId, int spaceId, int ownerUserId, OctopusImportDiagnosticDto rejection)
     {
-        if (rejection.Code == OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded) return;
+        if (rejection.Code is OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded or OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable) return;
 
         await using var scope = BeginOwnerScope(ownerUserId);
 
@@ -59,8 +68,19 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
 
         if (current.State != OctopusImportSessionState.Validated) return;
 
+        if (rejection.Code == OctopusImportConfirmationDiagnosticCodes.ConfirmationNotStarted)
+        {
+            await sessions.RecordConfirmationNotStartedAsync(sessionId, spaceId, NotStartedFailure(rejection), CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
         await sessions.RecordResultAsync(sessionId, spaceId, TerminalStateFor(rejection), new OctopusImportSessionResultDto { Diagnostics = [rejection] }, CancellationToken.None).ConfigureAwait(false);
     }
+
+    // Only the exception's type and SQLSTATE reach the session owner: the message may come from the database driver.
+    private static OctopusImportDiagnosticDto NotStarted(Exception ex) => new() { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationNotStarted, Message = $"The import did not start because the database failed transiently ({ex.GetType().Name}, SQLSTATE {PostgresTransientFailureClassifier.SqlStateOf(ex) ?? "none"}). Nothing was imported; import again." };
+
+    private static OctopusImportConfirmationFailureDto NotStartedFailure(OctopusImportDiagnosticDto rejection) => new() { AttemptId = Guid.NewGuid(), FailedAt = DateTimeOffset.UtcNow, Reason = OctopusImportConfirmationFailureReason.NotStarted, Transient = true, Attempts = 0, Diagnostics = [rejection] };
 
     // The session reached its maximum age before the run started: it ends Expired with that reason, as the cleanup sweep would end it.
     private static OctopusImportDiagnosticDto MaxAgeReached(OctopusImportSessionExpiredException ex) => new() { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportSessionExpiry.MaxAgeReachedCode, Message = ex.Message };

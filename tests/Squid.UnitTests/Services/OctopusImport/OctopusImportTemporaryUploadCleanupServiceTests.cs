@@ -24,13 +24,6 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
             .ReturnsAsync(0);
         _dataProvider.Setup(p => p.ExpireOverAgeSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         _dataProvider
-            .Setup(p => p.MarkInterruptedImportsFailedAsync(
-                It.IsAny<DateTimeOffset>(),
-                It.IsAny<DateTimeOffset>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(0);
-        _dataProvider
             .Setup(p => p.GetTemporaryUploadCleanupCandidatesAsync(
                 It.IsAny<DateTimeOffset>(),
                 It.IsAny<int>(),
@@ -42,24 +35,20 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
         _service = new OctopusImportTemporaryUploadCleanupService(_dataProvider.Object, _uploadStore.Object, _files.Object, _settings);
     }
 
+    // An interrupted import is no longer failed by this sweep (the recovery sweep returns it to Validated): the field stays, always 0.
     [Fact]
-    public async Task EnforceCleanupAsync_ExpiresSessionsAndMarksInterruptedImportsBeforeCleaningFiles()
+    public async Task EnforceCleanupAsync_ExpiresSessionsAndNeverFailsInterruptedImports()
     {
         _dataProvider
             .Setup(p => p.ExpireSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(2);
-        _dataProvider
-            .Setup(p => p.MarkInterruptedImportsFailedAsync(
-                It.IsAny<DateTimeOffset>(),
-                It.IsAny<DateTimeOffset>(),
-                TimeSpan.FromHours(4),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
 
         var outcome = await _service.EnforceCleanupAsync(CancellationToken.None);
 
         outcome.ExpiredSessions.ShouldBe(2);
-        outcome.InterruptedImportsFailed.ShouldBe(1);
+        outcome.InterruptedImportsFailed.ShouldBe(0);
+        _dataProvider.Verify(p => p.GetInterruptedConfirmationsAsync(It.IsAny<OctopusImportInterruptedConfirmationCutoffs>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(p => p.RecoverInterruptedConfirmationAsync(It.IsAny<OctopusImportInterruptedConfirmation>(), It.IsAny<OctopusImportInterruptedConfirmationCutoffs>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
         _dataProvider.Verify(p => p.GetTemporaryUploadCleanupCandidatesAsync(
             It.IsAny<DateTimeOffset>(),
             25,

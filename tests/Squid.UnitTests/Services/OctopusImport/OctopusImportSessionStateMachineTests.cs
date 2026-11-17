@@ -13,6 +13,7 @@ public class OctopusImportSessionStateMachineTests
     [InlineData(OctopusImportSessionState.Validated, OctopusImportSessionState.Importing)]
     [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Succeeded)]
     [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Failed)]
+    [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Validated)] // the attempt imported nothing: retryable
     [InlineData(OctopusImportSessionState.Uploaded, OctopusImportSessionState.Expired)]
     public void IsValidTransition_AllowsExpectedWorkflowTransitions(
         OctopusImportSessionState from,
@@ -26,6 +27,9 @@ public class OctopusImportSessionStateMachineTests
     [InlineData(OctopusImportSessionState.Validated, OctopusImportSessionState.Succeeded)]
     [InlineData(OctopusImportSessionState.Succeeded, OctopusImportSessionState.Failed)]
     [InlineData(OctopusImportSessionState.Expired, OctopusImportSessionState.Extracted)]
+    [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Previewed)]
+    [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Extracted)]
+    [InlineData(OctopusImportSessionState.Importing, OctopusImportSessionState.Expired)] // a running import is never expired under itself
     public void EnsureValidTransition_RejectsInvalidTransitions(
         OctopusImportSessionState from,
         OctopusImportSessionState to)

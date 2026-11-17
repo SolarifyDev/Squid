@@ -108,6 +108,35 @@ public class OctopusImportConfirmationJobTests
         _sessions.Verify(s => s.RecordResultAsync(sessionId, SpaceId, OctopusImportSessionState.Failed, It.Is<OctopusImportSessionResultDto>(r => !r.Diagnostics.Single().Message.Contains("hunter2") && r.Diagnostics.Single().Message.Contains("connect failed")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // The import rolled back and returned the session to Validated with the reason: the page offers "Import again", so it is not ended.
+    [Fact]
+    public async Task RunAsOwner_RetryableRejection_LeavesTheSessionValidated()
+    {
+        var sessionId = Guid.NewGuid();
+        var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable, Message = "rolled back" };
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
+        _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
+
+        await RunJobAsync(sessionId);
+
+        _sessions.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportSessionState>(), It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // A transient database failure before the import started (reading staged files, admission) imported nothing: the session stays
+    // Validated with a NotStarted failure the page can import again from, never Failed.
+    [Fact]
+    public async Task RunAsOwner_TransientPreImportFailure_RecordsNotStartedAndStaysValidated()
+    {
+        var sessionId = Guid.NewGuid();
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new Npgsql.PostgresException("Password=hunter2", "FATAL", "FATAL", "57P01"));
+        _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
+
+        await RunJobAsync(sessionId);
+
+        _sessions.Verify(s => s.RecordConfirmationNotStartedAsync(sessionId, SpaceId, It.Is<OctopusImportConfirmationFailureDto>(f => f.Reason == OctopusImportConfirmationFailureReason.NotStarted && f.Transient && f.AttemptId != Guid.Empty && f.Diagnostics.Single().Code == OctopusImportConfirmationDiagnosticCodes.ConfirmationNotStarted && f.Diagnostics.Single().Message.Contains("57P01") && !f.Diagnostics.Single().Message.Contains("hunter2")), It.IsAny<CancellationToken>()), Times.Once);
+        _sessions.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportSessionState>(), It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task RunAsOwner_Cancelled_PropagatesAndLeavesTheSessionAlone()
     {

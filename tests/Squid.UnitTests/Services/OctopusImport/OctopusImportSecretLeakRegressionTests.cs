@@ -295,13 +295,6 @@ public class OctopusImportSecretLeakRegressionTests
                 .Setup(p => p.ExpireSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(0);
             _dataProvider
-                .Setup(p => p.MarkInterruptedImportsFailedAsync(
-                    It.IsAny<DateTimeOffset>(),
-                    It.IsAny<DateTimeOffset>(),
-                    It.IsAny<TimeSpan>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(0);
-            _dataProvider
                 .Setup(p => p.GetTemporaryUploadCleanupCandidatesAsync(
                     It.IsAny<DateTimeOffset>(),
                     It.IsAny<int>(),

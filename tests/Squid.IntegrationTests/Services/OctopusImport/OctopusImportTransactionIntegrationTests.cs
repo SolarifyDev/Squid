@@ -368,42 +368,41 @@ public class OctopusImportTransactionIntegrationTests : TestBase
         });
     }
 
+    // An Importing session whose heartbeat stopped committed nothing: recovery returns it to Validated (importable again), never Failed.
     [Fact]
-    public async Task MarkInterruptedImportsFailedAsync_WhenImportIsStaleButSessionHasNotExpired_MarksFailed()
+    public async Task RecoverInterruptedConfirmation_WhenHeartbeatIsStale_ReturnsTheSessionToValidated()
     {
         var sessionId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
 
         await Run<SquidDbContext>(async db =>
         {
             var session = CreateSession(sessionId, OctopusImportSessionState.Importing);
             session.ExpiresAt = now.AddHours(18);
-            session.LastStateChangedAt = now.AddHours(-7);
+            session.ConfirmationAttemptId = attemptId;
+            session.ImportHeartbeatAt = now.AddMinutes(-10);
             db.Set<OctopusImportSession>().Add(session);
             await db.SaveChangesAsync();
         });
 
+        var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(now.AddMinutes(-5), now.AddHours(-6));
+
         await Run<IOctopusImportSessionDataProvider>(async provider =>
         {
-            var affected = await provider.MarkInterruptedImportsFailedAsync(
-                now,
-                now.AddHours(-6),
-                TimeSpan.FromHours(24));
+            var interrupted = (await provider.GetInterruptedConfirmationsAsync(cutoffs, 10)).ShouldHaveSingleItem();
+            interrupted.ShouldBe(new OctopusImportInterruptedConfirmation(sessionId, attemptId));
 
-            affected.ShouldBe(1);
+            (await provider.RecoverInterruptedConfirmationAsync(interrupted, cutoffs, "{}", now)).ShouldBe(1);
         });
 
         await Run<SquidDbContext>(async db =>
         {
-            var session = await db.Set<OctopusImportSession>()
-                .AsNoTracking()
-                .SingleAsync(s => s.SessionId == sessionId);
-            session.State.ShouldBe(OctopusImportSessionState.Failed.ToString());
-            session.CompletedAt.ShouldNotBeNull();
-            session.TemporaryUploadCleanupAfter.ShouldNotBeNull();
-            session.TemporaryUploadCleanupAfter.Value.ShouldBeInRange(
-                now.AddHours(24).AddMilliseconds(-1),
-                now.AddHours(24).AddMilliseconds(1));
+            var session = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);
+            session.State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+            session.CompletedAt.ShouldBeNull();
+            session.ConfirmationAttemptId.ShouldBeNull();
+            session.ImportHeartbeatAt.ShouldBeNull();
         });
     }
 

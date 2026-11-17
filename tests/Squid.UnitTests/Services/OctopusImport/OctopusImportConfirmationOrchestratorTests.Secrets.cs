@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport.Exceptions;
 using System.Linq;
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport;
@@ -58,6 +59,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var nodes = BuildRichNodes();
         WithholdValue(nodes.VariableOne);
         var harness = CreateHarness(nodes, BuildDependencyPlan(nodes.RichOrderedResources), BuildPreviewPlan(nodes.RichOrderedResources, reusedResources: [nodes.Environment]), true, throwAfterAction: true, false, sourceMap: SourceMap(OctopusImportPriorMappings.Empty).Object, secretsAccessor: Session(true));
+        harness.TransactionExecutor.AfterActionException = new OctopusImportStalePlanException("Variable", "Variables-1");
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 

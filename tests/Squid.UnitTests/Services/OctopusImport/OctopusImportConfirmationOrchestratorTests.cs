@@ -5,6 +5,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.Channels;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
@@ -363,7 +364,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
     [Fact]
     public async Task ConfirmAsync_WhenTransactionFails_RollsBackAndPersistsFailedSessionResult()
     {
+        // A plan failure (stale against the destination): importing the same plan again would fail the same way, so it ends Failed.
         var harness = CreateMinimalHarness(throwAfterAction: true, includeReusedEnvironment: true);
+        harness.TransactionExecutor.AfterActionException = new OctopusImportStalePlanException("Project", "Projects-1");
 
         var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
@@ -677,6 +680,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
     public async Task MarkRolledBack_ConvertsUpdated_KeepsItsPreExistingDestination()
     {
         var harness = CreateMinimalHarness(throwAfterAction: true);
+        harness.TransactionExecutor.AfterActionException = new OctopusImportStalePlanException("Project", "Projects-1");
         var project = harness.Request.PreviewPlan.Resources.Single(r => r.SourceId == harness.Nodes.Project.SourceId);
         project.PreviewAction = OctopusImportPreviewAction.Update;
         project.OutcomeState = OctopusImportResourceOutcomeState.Updated;
@@ -698,7 +702,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
         bool admissionShouldSucceed = true,
         bool throwAfterAction = false,
         bool withTransactionGate = false,
-        bool includeReusedEnvironment = false)
+        bool includeReusedEnvironment = false,
+        IOctopusImportConfirmationHeartbeat heartbeat = null,
+        TimeProvider time = null)
     {
         var nodes = BuildMinimalNodes();
         return CreateHarness(
@@ -709,7 +715,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
                 reusedResources: includeReusedEnvironment ? [nodes.Environment] : null),
             admissionShouldSucceed,
             throwAfterAction,
-            withTransactionGate);
+            withTransactionGate,
+            heartbeat: heartbeat,
+            time: time);
     }
 
     private static TestHarness CreateLibraryHarness(Mock<IOctopusImportLibraryVariableSetNameLock> nameLock)
@@ -760,7 +768,9 @@ public partial class OctopusImportConfirmationOrchestratorTests
         Squid.Core.Services.Deployments.Variables.IVariableService variableService = null,
         Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedService externalFeedService = null,
         string graphInstallationId = InstallationId,
-        IEnumerable<Squid.Core.Services.OctopusImport.ChildInsert.IOctopusImportChildInserter> childInserters = null)
+        IEnumerable<Squid.Core.Services.OctopusImport.ChildInsert.IOctopusImportChildInserter> childInserters = null,
+        IOctopusImportConfirmationHeartbeat heartbeat = null,
+        TimeProvider time = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -773,7 +783,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var transactionExecutor = new TestOctopusImportTransactionExecutor
         {
             ThrowAfterAction = throwAfterAction,
-            UseGate = withTransactionGate
+            UseGate = withTransactionGate,
+            Sessions = sessionService
         };
 
         var projectMapper = new Mock<IOctopusImportProjectMapper>();
@@ -844,7 +855,10 @@ public partial class OctopusImportConfirmationOrchestratorTests
             variableService,
             externalFeedService,
             childInserters,
-            destinationDataProvider: VariableRowsOf(nodes).Object);
+            destinationDataProvider: VariableRowsOf(nodes).Object,
+            heartbeat: heartbeat,
+            time: time ?? new ImmediateTime(),
+            resilience: new OctopusImportConfirmationResilienceOptions());
 
         return new TestHarness(
             orchestrator,
@@ -1856,6 +1870,73 @@ public partial class OctopusImportConfirmationOrchestratorTests
             return Task.FromResult(false);
         }
 
+        public Guid? AttemptId { get; private set; }
+
+        public int ReturnToValidatedCalls { get; private set; }
+
+        public OctopusImportConfirmationFailureDto ReturnedFailure { get; private set; }
+
+        /// <summary>Overrides what <see cref="IsConfirmationHeldAsync"/> answers (null = the real answer).</summary>
+        public bool? HeldOverride { get; set; }
+
+        public Task<bool> TryStartConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, byte[] expectedDataVersion, CancellationToken ct = default)
+        {
+            AttemptId = attemptId;
+
+            return TryStartConfirmationAsync(sessionId, destinationSpaceId, expectedDataVersion, ct);
+        }
+
+        public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default) => Task.FromResult(HeldOverride ?? IsHeldBy(attemptId));
+
+        public Task<OctopusImportSessionDto> SettleConfirmationAsync(Guid sessionId, int destinationSpaceId, Guid attemptId, OctopusImportSessionState terminalState, OctopusImportSessionResultDto result, CancellationToken ct = default)
+        {
+            if (!IsHeldBy(attemptId))
+                throw new OctopusImportConfirmationFencedException(sessionId, attemptId);
+
+            return RecordResultAsync(sessionId, destinationSpaceId, terminalState, result, ct);
+        }
+
+        public Task<OctopusImportSessionDto> ReturnConfirmationToValidatedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default)
+        {
+            ReturnToValidatedCalls++;
+
+            if (IsHeldBy(failure.AttemptId))
+            {
+                ReturnedFailure = failure;
+                CurrentSession.State = OctopusImportSessionState.Validated;
+                CurrentSession.LastConfirmationFailure = failure;
+                AttemptId = null;
+            }
+
+            return Task.FromResult(CloneSession(CurrentSession));
+        }
+
+        public Task<OctopusImportSessionDto> RecordConfirmationNotStartedAsync(Guid sessionId, int destinationSpaceId, OctopusImportConfirmationFailureDto failure, CancellationToken ct = default)
+        {
+            CurrentSession.LastConfirmationFailure = failure;
+
+            return Task.FromResult(CloneSession(CurrentSession));
+        }
+
+        /// <summary>Moves the session on behind the running attempt's back (the recovery sweep, or a commit that landed after all).</summary>
+        public void MoveOn(OctopusImportSessionState state)
+        {
+            CurrentSession.State = state;
+            AttemptId = null;
+        }
+
+        public SessionSnapshot Capture() => new(CurrentSession.State, CloneResult(CurrentSession.Result), CurrentSession.CompletedAt, AttemptId);
+
+        public void Restore(SessionSnapshot snapshot)
+        {
+            CurrentSession.State = snapshot.State;
+            CurrentSession.Result = snapshot.Result;
+            CurrentSession.CompletedAt = snapshot.CompletedAt;
+            AttemptId = snapshot.AttemptId;
+        }
+
+        private bool IsHeldBy(Guid attemptId) => CurrentSession.State == OctopusImportSessionState.Importing && AttemptId == attemptId;
+
         public Task<OctopusImportSessionDto> RecordResultAsync(Guid sessionId, int destinationSpaceId, OctopusImportSessionState terminalState, OctopusImportSessionResultDto result, CancellationToken ct = default)
         {
             RecordResultCalls++;
@@ -1885,7 +1966,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
                     Result = CloneResult(session.Result),
                     ExpiresAt = session.ExpiresAt,
                     CompletedAt = session.CompletedAt,
-                    LastStateChangedAt = session.LastStateChangedAt
+                    LastStateChangedAt = session.LastStateChangedAt,
+                    LastConfirmationFailure = session.LastConfirmationFailure
                 };
 
         private static OctopusImportSessionResultDto CloneResult(OctopusImportSessionResultDto result)
@@ -1960,6 +2042,33 @@ public partial class OctopusImportConfirmationOrchestratorTests
                 };
     }
 
+    /// <summary>Fires every timer at once (on the thread pool) and records what it was asked to wait, so a retry's backoff costs no test time.</summary>
+    private sealed class ImmediateTime : TimeProvider
+    {
+        public List<TimeSpan> Waits { get; } = [];
+
+        public override ITimer CreateTimer(TimerCallback callback, object state, TimeSpan dueTime, TimeSpan period)
+        {
+            Waits.Add(dueTime);
+            ThreadPool.QueueUserWorkItem(_ => callback(state));
+
+            return new NoTimer();
+        }
+
+        private sealed class NoTimer : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+
+            public void Dispose()
+            {
+            }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed record SessionSnapshot(OctopusImportSessionState State, OctopusImportSessionResultDto Result, DateTimeOffset? CompletedAt, Guid? AttemptId);
+
     private sealed class TestOctopusImportTransactionExecutor : IOctopusImportTransactionExecutor
     {
         public int ExecuteCalls { get; private set; }
@@ -1989,11 +2098,35 @@ public partial class OctopusImportConfirmationOrchestratorTests
             if (UseGate)
                 await Release.Task.ConfigureAwait(false);
 
-            var result = await action(context, ct).ConfigureAwait(false);
-            if (ThrowAfterAction)
-                throw new InvalidOperationException("boom");
+            Contexts.Add(context);
 
-            return result;
+            var before = Sessions?.Capture();
+
+            try
+            {
+                var result = await action(context, ct).ConfigureAwait(false);
+
+                if (Failures.TryDequeue(out var failure)) throw failure;
+                if (ThrowAfterAction)
+                    throw AfterActionException;
+
+                return result;
+            }
+            catch when (before != null)
+            {
+                Sessions.Restore(before);
+                throw;
+            }
         }
+
+        /// <summary>The session service whose writes inside the transaction roll back with it, as the real session row would.</summary>
+        public TestOctopusImportSessionService Sessions { get; set; }
+
+        /// <summary>Thrown, one per attempt, after the attempt's work and before its commit.</summary>
+        public Queue<Exception> Failures { get; } = new();
+
+        public Exception AfterActionException { get; set; } = new InvalidOperationException("boom");
+
+        public List<OctopusImportTransactionContext> Contexts { get; } = [];
     }
 }

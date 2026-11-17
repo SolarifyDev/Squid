@@ -42,7 +42,12 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TryStartConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync)}"] = true,
-        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TouchConfirmationHeartbeatAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.IsConfirmationHeldAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ReturnConfirmationToValidatedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.RecordConfirmationFailureAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetInterruptedConfirmationsAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.RecoverInterruptedConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetTemporaryUploadCleanupCandidatesAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanupFailedAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetLatestHistoryFetchAsync)}"] = false,
@@ -55,8 +60,14 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateHistoryFetchAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateProjectSelectionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordResultAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.IsConfirmationHeldAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.SettleConfirmationAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ReturnConfirmationToValidatedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordConfirmationNotStartedAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true
     };
+
+    private static readonly Guid SettlingAttemptId = Guid.NewGuid();
 
     public OctopusImportExportPasswordLifecycleIntegrationTests()
         : base("OctopusImportExportPasswordLifecycle", "squid_it_octopus_import_export_password_lifecycle")
@@ -99,7 +110,8 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             }
         }
 
-        data.Add(nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
+        data.Add(nameof(IOctopusImportSessionService.SettleConfirmationAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Succeeded);
+        data.Add(nameof(IOctopusImportSessionService.SettleConfirmationAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
 
         // The upload purge (stored files and the mark, one transaction) only runs for terminal sessions, but must not trust that they were cleared.
         foreach (var terminal in states.Where(OctopusImportSessionStateMachine.IsTerminal))
@@ -120,7 +132,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             var db = scope.Resolve<SquidDbContext>();
             var session = Session(sessionId, from, RetainedEnvelope, uploadPath);
             if (path == nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync)) session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-            if (path == nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)) session.LastStateChangedAt = DateTimeOffset.UtcNow.AddHours(-2);
+            if (path == nameof(IOctopusImportSessionService.SettleConfirmationAsync)) session.ConfirmationAttemptId = SettlingAttemptId;
             db.Set<OctopusImportSession>().Add(session);
             await db.SaveChangesAsync();
             db.ChangeTracker.Clear();
@@ -152,6 +164,40 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             (await sessions.TryStartConfirmationAsync(sessionId, SpaceId)).ShouldBeTrue();
 
             (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).ProtectedExportPassword.ShouldBe(RetainedEnvelope, "confirmation still needs it while the session is active");
+        });
+    }
+
+    // An attempt that imported nothing (rolled back, or recovered after its server died) leaves the session Validated and importable
+    // again: confirmation still needs the password, so neither path may clear it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReturnedOrRecoveredToValidated_KeepsTheRetainedExportPassword(bool recovered)
+    {
+        var sessionId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var db = scope.Resolve<SquidDbContext>();
+            var session = Session(sessionId, OctopusImportSessionState.Importing, RetainedEnvelope, "/tmp/keep.zip");
+            session.ConfirmationAttemptId = attemptId;
+            session.ImportHeartbeatAt = DateTimeOffset.UtcNow.AddHours(-1);
+            db.Set<OctopusImportSession>().Add(session);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
+            var now = DateTimeOffset.UtcNow;
+            var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(now.AddMinutes(-5), now.AddHours(-6));
+            var changed = recovered
+                ? await provider.RecoverInterruptedConfirmationAsync(new OctopusImportInterruptedConfirmation(sessionId, attemptId), cutoffs, "{}", now)
+                : await provider.ReturnConfirmationToValidatedAsync(sessionId, attemptId, "{}", now);
+
+            changed.ShouldBe(1);
+            var stored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+            stored.ProtectedExportPassword.ShouldBe(RetainedEnvelope);
         });
     }
 
@@ -322,8 +368,8 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             case nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync):
                 (await provider.ExpireOverAgeSessionsAsync(now, now.AddMinutes(1), "{\"succeeded\":false}")).ShouldBeGreaterThanOrEqualTo(1);
                 break;
-            case nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync):
-                (await provider.MarkInterruptedImportsFailedAsync(now, now.AddHours(-1), TimeSpan.FromHours(6))).ShouldBeGreaterThanOrEqualTo(1);
+            case nameof(IOctopusImportSessionService.SettleConfirmationAsync):
+                await sessions.SettleConfirmationAsync(sessionId, SpaceId, SettlingAttemptId, to, new OctopusImportSessionResultDto());
                 break;
             case nameof(IOctopusImportSessionFileStore.PurgeAndMarkCleanedAsync):
                 (await scope.Resolve<IOctopusImportSessionFileStore>().PurgeAndMarkCleanedAsync(sessionId, uploadPath, now)).ShouldBeTrue();

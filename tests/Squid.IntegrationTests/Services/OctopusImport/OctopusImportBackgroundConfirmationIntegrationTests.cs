@@ -51,6 +51,34 @@ public class OctopusImportBackgroundConfirmationIntegrationTests : TestBase
         }
     }
 
+    // A transient database failure inside the queued import is retried by the job itself: nobody presses anything.
+    [Fact]
+    public async Task BackgroundConfirm_TransientFailure_SucceedsWithoutUserAction()
+    {
+        var projectName = $"BackgroundTransient-{Guid.NewGuid():N}";
+        var archivePath = OctopusExportSecretsArchive.Write(projectName);
+
+        try
+        {
+            var sessionId = await ValidateAsync(archivePath);
+            var job = await ConfirmInBackgroundAsync(sessionId);
+            await Run<SquidDbContext>(db => db.Database.ExecuteSqlRawAsync(
+                "CREATE SEQUENCE it_bg_fault_seq; CREATE OR REPLACE FUNCTION it_bg_fault() RETURNS trigger LANGUAGE plpgsql AS $fn$ BEGIN IF nextval('it_bg_fault_seq') = 1 THEN RAISE EXCEPTION 'injected' USING ERRCODE = '40P01'; END IF; RETURN NEW; END $fn$; " +
+                "CREATE TRIGGER it_bg_fault BEFORE INSERT ON project_group FOR EACH ROW EXECUTE FUNCTION it_bg_fault();"));
+
+            await Run<IOctopusImportConfirmationJob>(runner => job.Compile()(runner), builder => builder.RegisterInstance(AllowAllAuthorization()).As<IAuthorizationService>());
+
+            var stored = await StoredSessionAsync(sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString(), customMessage: stored.ResultJson);
+            (await ProjectExistsAsync(projectName)).ShouldBeTrue();
+        }
+        finally
+        {
+            File.Delete(archivePath);
+            await Run<SquidDbContext>(db => db.Database.ExecuteSqlRawAsync("DROP TRIGGER IF EXISTS it_bg_fault ON project_group; DROP FUNCTION IF EXISTS it_bg_fault(); DROP SEQUENCE IF EXISTS it_bg_fault_seq;"));
+        }
+    }
+
     [Fact]
     public async Task BackgroundConfirm_OwnerLacksPermission_EndsTheSessionFailedWithTheReason_ImportsNothing()
     {

@@ -125,7 +125,30 @@ public class OctopusImportConfirmationRunnerTests
         if (rejected) outcome.Rejection.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
-    // An Octopus default channel takes over the default channel of a project created by this import (an edit); under a
+    // Validated again with THIS attempt's failure: the import rolled back and can be imported again (retryable). Validated with another
+    // attempt's failure, or none, means the plan read here was replaced before it was admitted (superseded).
+    [Theory]
+    [InlineData(true, OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable)]
+    [InlineData(false, OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded)]
+    public async Task Runner_ValidatedAfterConfirm_RetryableOnlyWithItsOwnAttemptFailure(bool ownAttempt, string expectedCode)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        OctopusImportConfirmationRequest sent = null;
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, uploadPath));
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).Callback<OctopusImportConfirmationRequest, CancellationToken>((r, _) => sent = r).ReturnsAsync((OctopusImportConfirmationRequest r, CancellationToken _) => new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Validated, LastConfirmationFailure = new OctopusImportConfirmationFailureDto { AttemptId = ownAttempt ? r.AttemptId : Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack, Diagnostics = [new OctopusImportDiagnosticDto { Code = "x", Message = "the root cause" }] } });
+
+        var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId);
+
+        sent.AttemptId.ShouldNotBe(Guid.Empty);
+        outcome.Rejection.Code.ShouldBe(expectedCode);
+        if (ownAttempt) outcome.Rejection.Message.ShouldContain("the root cause");
+        outcome.Session.LastConfirmationFailure.ShouldNotBeNull("the page reads why it can import again from the session the confirmation left");
+    }
+
+
     // project imported before it is created as a regular channel, so the owner needs the create permission.
     [Theory]
     [InlineData(OctopusImportPreviewAction.Create, Permission.ChannelEdit)]

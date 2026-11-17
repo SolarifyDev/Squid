@@ -65,16 +65,30 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
         var request = new OctopusImportConfirmationRequest(_ctx.SessionId, _ctx.SpaceId, _ctx.Snapshot.Graph, _ctx.Snapshot.DependencyPlan, _ctx.ValidatedPlan.PreviewPlan) { ValidatedDataVersion = _ctx.Session.DataVersion };
         var session = await confirmationOrchestrator.ConfirmAsync(request, ct).ConfigureAwait(false);
 
-        EnsureNotValidatedAgain(session);
+        _ctx.Confirmed = session;
+
+        EnsureNotValidatedAgain(session, request.AttemptId);
 
         return new OctopusImportConfirmationOutcome(session);
     }
 
-    // Still Validated after the confirmation: the plan was validated again after it was read here, so the read plan was not imported.
-    private static void EnsureNotValidatedAgain(OctopusImportSessionDto session)
+    // Still Validated after the confirmation: either this attempt imported nothing and returned the session (retryable, with its
+    // failure), or the plan was validated again after it was read here, so the read plan was never admitted (superseded).
+    private static void EnsureNotValidatedAgain(OctopusImportSessionDto session, Guid attemptId)
     {
-        if (session?.State == OctopusImportSessionState.Validated)
-            throw new OctopusImportConfirmationRejectedException("The preview plan was validated again while this import was starting, so nothing was imported. Import again to import the latest validated plan.", OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
+        if (session?.State != OctopusImportSessionState.Validated) return;
+
+        if (session.LastConfirmationFailure?.AttemptId == attemptId)
+            throw new OctopusImportConfirmationRejectedException(RetryableMessage(session.LastConfirmationFailure), OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable);
+
+        throw new OctopusImportConfirmationRejectedException("The preview plan was validated again while this import was starting, so nothing was imported. Import again to import the latest validated plan.", OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
+    }
+
+    private static string RetryableMessage(OctopusImportConfirmationFailureDto failure)
+    {
+        var cause = failure.Diagnostics.FirstOrDefault()?.Message;
+
+        return $"The import was rolled back and nothing was imported{(string.IsNullOrWhiteSpace(cause) ? "." : $": {cause}")} Import again to retry the same plan.";
     }
 
     // The job reopens a scope as the owner: Hangfire scopes run as the internal user, which owns no import session.
@@ -87,7 +101,8 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
 
     private OctopusImportConfirmationOutcome Rejected(OctopusImportConfirmationRejectedException ex)
     {
-        var session = new OctopusImportSessionDto { SessionId = _ctx.SessionId, DestinationSpaceId = _ctx.SpaceId, State = _ctx.State };
+        // The session the confirmation left (Validated again, with why it imported nothing), or the one read before it ran.
+        var session = _ctx.Confirmed ?? new OctopusImportSessionDto { SessionId = _ctx.SessionId, DestinationSpaceId = _ctx.SpaceId, State = _ctx.State };
         var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = ex.Code, Message = ex.Message };
 
         return new OctopusImportConfirmationOutcome(session, rejection);

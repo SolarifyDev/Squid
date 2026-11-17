@@ -283,7 +283,7 @@ public partial class OctopusImportFromServerIntegrationTests
     }
 
     // A confirmation that fails after the fills were written (here: recording the source map) rolls them back with everything else:
-    // no value, no settled row, no pinned fingerprint, no "SecretFilled" outcome. The retry fills each value exactly once.
+    // no value, no settled row, no pinned fingerprint. The session is Validated again, and importing it again fills each value exactly once.
     [Fact]
     public async Task FailureAfterTheFillsWereWritten_RolledBack_RetryFillsOnce()
     {
@@ -297,8 +297,8 @@ public partial class OctopusImportFromServerIntegrationTests
 
         var failed = await Run<IMediator, Squid.Message.Commands.OctopusImport.ConfirmOctopusImportResponse>(mediator => OctopusImportHandlerFlow.ConfirmAsync(mediator, SpaceId, sessionId), builder => { OpenAuthorization(builder); FailSourceMapUpsert(builder); });
 
-        failed.Data.Session.State.ShouldBe(OctopusImportSessionState.Failed, Describe(failed.Data.Session.Result));
-        failed.Data.Session.Result.Resources.ShouldNotContain(r => r.OutcomeState == OctopusImportResourceOutcomeState.SecretFilled);
+        failed.Data.Session.State.ShouldBe(OctopusImportSessionState.Validated, "an import that rolled back imported nothing: the same plan can be imported again");
+        failed.Data.Session.LastConfirmationFailure.ShouldNotBeNull().Reason.ShouldBe(OctopusImportConfirmationFailureReason.RolledBack);
         (await DbPasswordAsync()).ShouldBeNullOrEmpty();
         (await DecryptedAsync("Smtp.Password")).ShouldBeNullOrEmpty();
         (await FeedCredentialsAsync()).Password.ShouldBeNull();
@@ -306,10 +306,11 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SecretRowsAsync()).Select(r => (r.SourceId, r.OutcomeState)).ShouldBe(rows.Select(r => (r.SourceId, r.OutcomeState)), ignoreOrder: true);
         (await ExportSourceRowsAsync()).ShouldBeEmpty();
 
-        var retry = await ImportFromFileAsync(SameInstallationExport(FileFingerprint), confirmPairing: true);
+        // Import again on the same session, with the same validated plan: no upload, no preview, no validation.
+        var retry = await Run<IMediator, Squid.Message.Commands.OctopusImport.ConfirmOctopusImportResponse>(mediator => OctopusImportHandlerFlow.ConfirmAsync(mediator, SpaceId, sessionId), OpenAuthorization);
 
-        ShouldHaveSucceeded(retry);
-        retry.Confirm.Data.Session.Result.Resources.Count(r => r.OutcomeState == OctopusImportResourceOutcomeState.SecretFilled).ShouldBe(3);
+        retry.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(retry.Data.Session.Result));
+        retry.Data.Session.Result.Resources.Count(r => r.OutcomeState == OctopusImportResourceOutcomeState.SecretFilled).ShouldBe(3);
         (await DbPasswordAsync()).ShouldBe("db-secret");
         (await DecryptedAsync("Smtp.Password")).ShouldBe("smtp-secret");
         (await FeedCredentialsAsync()).ShouldBe(("robot", "registry-token"));

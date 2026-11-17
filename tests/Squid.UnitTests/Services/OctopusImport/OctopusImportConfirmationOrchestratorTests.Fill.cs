@@ -1,3 +1,4 @@
+using Squid.Core.Services.OctopusImport.Exceptions;
 using System.Linq;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Deployments.Variables;
@@ -128,6 +129,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
     public async Task RolledBackAfterAFill_FilledResourceReportedFailed()
     {
         var fill = FillScenario(FillPlaintext, throwAfterAction: true);
+        fill.Harness.TransactionExecutor.AfterActionException = new OctopusImportStalePlanException("Variable", "Variables-1");
         fill.Variables.Setup(v => v.FillEmptySensitiveValueAsync(It.IsAny<int>(), It.IsAny<VariableIdentity>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(SecretSlotState.Filled);
 
         var result = await fill.Harness.Sut.ConfirmAsync(fill.Harness.Request, CancellationToken.None);

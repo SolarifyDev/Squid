@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport.Exceptions;
@@ -43,6 +44,33 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// </summary>
     Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, byte[] expectedDataVersion, DateTimeOffset createdAfter, CancellationToken ct = default);
 
+    /// <summary>
+    /// The same admission, recording <see cref="OctopusImportConfirmationAdmission.AttemptId"/> as the attempt that holds the session and
+    /// starting its heartbeat: every later write that ends the attempt is fenced on that id.
+    /// </summary>
+    Task<bool> TryStartConfirmationAsync(OctopusImportConfirmationAdmission admission, CancellationToken ct = default);
+
+    /// <summary>Refreshes only the heartbeat of the attempt that still holds the session: no data version, no modification date.</summary>
+    Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, DateTimeOffset now, CancellationToken ct = default);
+
+    /// <summary>Whether <paramref name="attemptId"/> still holds the session as Importing (read without tracking, outside any transaction it is not in).</summary>
+    Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the session the attempt holds to Validated with <paramref name="failureJson"/>, keeping the export password (the session is
+    /// not over); 0 when the attempt no longer holds it (it committed, or was recovered and another attempt started).
+    /// </summary>
+    Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, DateTimeOffset now, CancellationToken ct = default);
+
+    /// <summary>Records why a Validated session's confirmation never started; nothing else changes (not even the data version).</summary>
+    Task<int> RecordConfirmationFailureAsync(Guid sessionId, string failureJson, CancellationToken ct = default);
+
+    /// <summary>Importing sessions whose heartbeat stopped before the cut-offs (or, started by an older server, that have none).</summary>
+    Task<IReadOnlyList<OctopusImportInterruptedConfirmation>> GetInterruptedConfirmationsAsync(OctopusImportInterruptedConfirmationCutoffs cutoffs, int limit, CancellationToken ct = default);
+
+    /// <summary>Returns one interrupted session to Validated, only while it is still the same attempt and still stale (a late beat wins).</summary>
+    Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, DateTimeOffset now, CancellationToken ct = default);
+
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
 
     /// <summary>
@@ -57,12 +85,6 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// </summary>
     Task<OctopusImportHistoryFetchDto> GetLatestHistoryFetchAsync(int destinationSpaceId, string installationId, CancellationToken ct = default);
 
-    Task<int> MarkInterruptedImportsFailedAsync(
-        DateTimeOffset now,
-        DateTimeOffset staleBefore,
-        TimeSpan failedRetentionPeriod,
-        CancellationToken ct = default);
-
     Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(
         DateTimeOffset now,
         int limit,
@@ -75,6 +97,15 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
         DateTimeOffset attemptedAt,
         CancellationToken ct = default);
 }
+
+public sealed record OctopusImportConfirmationAdmission(Guid SessionId, int OwnerUserId, int DestinationSpaceId, byte[] ExpectedDataVersion, DateTimeOffset CreatedAfter, Guid AttemptId);
+
+/// <summary>An Importing session whose heartbeat stopped; <see cref="AttemptId"/> is null for one started by an older server.</summary>
+public sealed record OctopusImportInterruptedConfirmation(Guid SessionId, Guid? AttemptId);
+
+/// <param name="StaleBefore">A heartbeat at or before this is stale.</param>
+/// <param name="LegacyStaleBefore">A session with no heartbeat (started by an older server) is stale once its state changed at or before this.</param>
+public sealed record OctopusImportInterruptedConfirmationCutoffs(DateTimeOffset StaleBefore, DateTimeOffset LegacyStaleBefore);
 
 public sealed record OctopusImportTemporaryUploadCleanupCandidate(
     Guid SessionId,
@@ -195,9 +226,6 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         OctopusImportSessionState newState,
         byte[] expectedDataVersion,
         CancellationToken ct = default)
-        => TransitionStateAsync(sessionId, ownerUserId, destinationSpaceId, expectedState, newState, expectedDataVersion, null, ct);
-
-    private Task<int> TransitionStateAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, OctopusImportSessionState expectedState, OctopusImportSessionState newState, byte[] expectedDataVersion, DateTimeOffset? createdAfter, CancellationToken ct)
     {
         OctopusImportSessionStateMachine.EnsureValidTransition(expectedState, newState);
 
@@ -211,8 +239,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                  s.OwnerUserId == ownerUserId &&
                  s.DestinationSpaceId == destinationSpaceId &&
                  s.State == expectedState.ToString() &&
-                 (expectedDataVersion == null || s.DataVersion == expectedDataVersion) &&
-                 (createdAfter == null || s.CreatedDate > createdAfter),
+                 (expectedDataVersion == null || s.DataVersion == expectedDataVersion),
             setters => setters
                 .SetProperty(s => s.State, newState.ToString())
                 .SetProperty(s => s.DataVersion, dataVersion)
@@ -228,13 +255,115 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     private static string RetainedExportPassword(string state, string protectedExportPassword)
         => Enum.TryParse<OctopusImportSessionState>(state, ignoreCase: true, out var parsed) && OctopusImportSessionStateMachine.IsTerminal(parsed) ? null : protectedExportPassword;
 
-    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, byte[] expectedDataVersion, DateTimeOffset createdAfter, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(expectedDataVersion);
+    public Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, byte[] expectedDataVersion, DateTimeOffset createdAfter, CancellationToken ct = default)
+        => TryStartConfirmationAsync(new OctopusImportConfirmationAdmission(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion, createdAfter, Guid.NewGuid()), ct);
 
-        var rowsAffected = await TransitionStateAsync(sessionId, ownerUserId, destinationSpaceId, OctopusImportSessionState.Validated, OctopusImportSessionState.Importing, expectedDataVersion, createdAfter, ct).ConfigureAwait(false);
+    public async Task<bool> TryStartConfirmationAsync(OctopusImportConfirmationAdmission admission, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(admission);
+        ArgumentNullException.ThrowIfNull(admission.ExpectedDataVersion);
+
+        var now = DateTimeOffset.UtcNow;
+        var dataVersion = Guid.NewGuid().ToByteArray();
+        var importing = OctopusImportSessionState.Importing.ToString();
+
+        var rowsAffected = await _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.SessionId == admission.SessionId &&
+                 s.OwnerUserId == admission.OwnerUserId &&
+                 s.DestinationSpaceId == admission.DestinationSpaceId &&
+                 s.State == OctopusImportSessionState.Validated.ToString() &&
+                 s.DataVersion == admission.ExpectedDataVersion &&
+                 s.CreatedDate > admission.CreatedAfter,
+            setters => setters
+                .SetProperty(s => s.State, importing)
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastStateChangedAt, now)
+                .SetProperty(s => s.LastModifiedDate, now)
+                .SetProperty(s => s.CompletedAt, (DateTimeOffset?)null)
+                .SetProperty(s => s.ConfirmationAttemptId, admission.AttemptId)
+                .SetProperty(s => s.ImportHeartbeatAt, now),
+            ct).ConfigureAwait(false);
 
         return rowsAffected == 1;
+    }
+
+    public Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, DateTimeOffset now, CancellationToken ct = default)
+        => _repository.ExecuteUpdateAsync<OctopusImportSession>(HeldBy(sessionId, attemptId), setters => setters.SetProperty(s => s.ImportHeartbeatAt, now), ct);
+
+    public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
+        => _repository.QueryNoTracking(HeldBy(sessionId, attemptId)).AnyAsync(ct);
+
+    public Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, DateTimeOffset now, CancellationToken ct = default)
+        => ReturnToValidatedAsync(HeldBy(sessionId, attemptId), failureJson, now, ct);
+
+    public Task<int> RecordConfirmationFailureAsync(Guid sessionId, string failureJson, CancellationToken ct = default)
+    {
+        var validated = OctopusImportSessionState.Validated.ToString();
+
+        return _repository.ExecuteUpdateAsync<OctopusImportSession>(s => s.SessionId == sessionId && s.State == validated, setters => setters.SetProperty(s => s.LastConfirmationFailureJson, failureJson), ct);
+    }
+
+    public async Task<IReadOnlyList<OctopusImportInterruptedConfirmation>> GetInterruptedConfirmationsAsync(OctopusImportInterruptedConfirmationCutoffs cutoffs, int limit, CancellationToken ct = default)
+    {
+        var rows = await _repository.QueryNoTracking(Interrupted(cutoffs)).OrderBy(s => s.Id).Take(Math.Max(1, limit)).Select(s => new { s.SessionId, s.ConfirmationAttemptId }).ToListAsync(ct).ConfigureAwait(false);
+
+        return rows.Select(r => new OctopusImportInterruptedConfirmation(r.SessionId, r.ConfirmationAttemptId)).ToList();
+    }
+
+    public Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, DateTimeOffset now, CancellationToken ct = default)
+    {
+        var stale = Interrupted(cutoffs);
+        var attemptId = interrupted.AttemptId;
+
+        return ReturnToValidatedAsync(And(stale, s => s.SessionId == interrupted.SessionId && s.ConfirmationAttemptId == attemptId), failureJson, now, ct);
+    }
+
+    // The attempt still holds the session: Importing, under that attempt's fencing token.
+    private static Expression<Func<OctopusImportSession, bool>> HeldBy(Guid sessionId, Guid attemptId)
+    {
+        var importing = OctopusImportSessionState.Importing.ToString();
+
+        return s => s.SessionId == sessionId && s.State == importing && s.ConfirmationAttemptId == attemptId;
+    }
+
+    private static Expression<Func<OctopusImportSession, bool>> Interrupted(OctopusImportInterruptedConfirmationCutoffs cutoffs)
+    {
+        var importing = OctopusImportSessionState.Importing.ToString();
+        var (staleBefore, legacyStaleBefore) = (cutoffs.StaleBefore, cutoffs.LegacyStaleBefore);
+
+        return s => s.State == importing && ((s.ImportHeartbeatAt != null && s.ImportHeartbeatAt <= staleBefore) || (s.ImportHeartbeatAt == null && s.LastStateChangedAt <= legacyStaleBefore));
+    }
+
+    // Validated again under a new data version (a plan read before is not imported in its place), the password kept, the attempt released.
+    private Task<int> ReturnToValidatedAsync(Expression<Func<OctopusImportSession, bool>> predicate, string failureJson, DateTimeOffset now, CancellationToken ct)
+    {
+        var dataVersion = Guid.NewGuid().ToByteArray();
+        var validated = OctopusImportSessionState.Validated.ToString();
+
+        return _repository.ExecuteUpdateAsync(
+            predicate,
+            setters => setters
+                .SetProperty(s => s.State, validated)
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastStateChangedAt, now)
+                .SetProperty(s => s.LastModifiedDate, now)
+                .SetProperty(s => s.LastConfirmationFailureJson, failureJson)
+                .SetProperty(s => s.ConfirmationAttemptId, (Guid?)null)
+                .SetProperty(s => s.ImportHeartbeatAt, (DateTimeOffset?)null),
+            ct);
+    }
+
+    private static Expression<Func<T, bool>> And<T>(Expression<Func<T, bool>> left, Expression<Func<T, bool>> right)
+    {
+        var parameter = left.Parameters[0];
+        var body = Expression.AndAlso(left.Body, new ParameterReplacer(right.Parameters[0], parameter).Visit(right.Body)!);
+
+        return Expression.Lambda<Func<T, bool>>(body, parameter);
+    }
+
+    private sealed class ParameterReplacer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) => node == from ? to : base.VisitParameter(node);
     }
 
     public async Task<OctopusImportHistoryFetchDto> GetLatestHistoryFetchAsync(int destinationSpaceId, string installationId, CancellationToken ct = default)
@@ -286,29 +415,6 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.ExpiresAt, now)
                 .SetProperty(s => s.ResultJson, resultJson)
                 .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
-                .SetProperty(s => s.ProtectedExportPassword, (string)null),
-            ct);
-    }
-
-    public Task<int> MarkInterruptedImportsFailedAsync(
-        DateTimeOffset now,
-        DateTimeOffset staleBefore,
-        TimeSpan failedRetentionPeriod,
-        CancellationToken ct = default)
-    {
-        var dataVersion = Guid.NewGuid().ToByteArray();
-        var cleanupAfter = now.Add(failedRetentionPeriod);
-
-        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
-            s => s.LastStateChangedAt <= staleBefore &&
-                 s.State == OctopusImportSessionState.Importing.ToString(),
-            setters => setters
-                .SetProperty(s => s.State, OctopusImportSessionState.Failed.ToString())
-                .SetProperty(s => s.DataVersion, dataVersion)
-                .SetProperty(s => s.LastStateChangedAt, now)
-                .SetProperty(s => s.LastModifiedDate, now)
-                .SetProperty(s => s.CompletedAt, now)
-                .SetProperty(s => s.TemporaryUploadCleanupAfter, cleanupAfter)
                 .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);
     }

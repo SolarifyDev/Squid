@@ -21,5 +21,8 @@ public sealed partial class OctopusImportConfirmationRunner
 
         // Plan
         public OctopusImportPlanningSnapshot Snapshot { get; set; }
+
+        // Outcome
+        public OctopusImportSessionDto Confirmed { get; set; }
     }
 }
