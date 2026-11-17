@@ -58,7 +58,7 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         import.Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(import));
         _fixture.ExecutionCapture.Clear();
 
-        var deployed = await DeployAsync(OctopusClonedProjectResources.CloneProjectName);
+        var deployed = await DeployAsync(OctopusClonedProjectResources.CloneProjectName, "1.0.0");
 
         deployed.ShouldBe(TaskState.Success, customMessage: "the clone must deploy; check the captured requests and the task log");
         var script = _fixture.ExecutionCapture.CapturedRequests.ShouldHaveSingleItem().ScriptBody;
@@ -80,7 +80,53 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         (await ExportSourceRowsAsync()).ShouldBe([Fingerprint], "the first confirmed export file of the installation pins its fingerprint for the space");
     }
 
+    // An import made before owner-qualified ids linked the clone's children to the original's rows (same raw ids): the clone had no steps
+    // or variables, and the migration qualified the rows by the original. The next import offers the clone's children as missed by the
+    // earlier import, selected; confirming fills the clone, which then deploys with its own value. Works on whatever an earlier test of
+    // this class left (the class shares one database): it rebuilds the damage itself.
+    [Fact]
+    public async Task CloneDamagedByLegacyImport_ReimportFillsChildren_CloneDeploysItsOwnValue()
+    {
+        await EnsureSpaceAsync();
+        await using var octopus = StubOctopusServer.Start(ApiKey).WithProjectAndClone();
+        (await ImportFromServerAsync(octopus)).Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded);
+        await DamageCloneAsByLegacyImportAsync();
+
+        var repair = await ImportFromServerAsync(octopus);
+
+        repair.Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(repair));
+        repair.PreviewPlan.Resources.Where(r => r.SourceId.StartsWith($"{OctopusClonedProjectResources.CloneProjectId}/", StringComparison.OrdinalIgnoreCase) && r.Choice != null).ShouldAllBe(r => r.Choice.Reason == OctopusImportChoiceReason.MissedByEarlierImport && r.Choice.Selected == true, customMessage: "the clone's children are offered as missed by the earlier import, selected");
+        _fixture.ExecutionCapture.Clear();
+
+        var deployed = await DeployAsync(OctopusClonedProjectResources.CloneProjectName, "2.0.0-repaired");
+
+        deployed.ShouldBe(TaskState.Success, customMessage: "the repaired clone must deploy; check the captured requests and the task log");
+        var script = _fixture.ExecutionCapture.CapturedRequests.ShouldHaveSingleItem().ScriptBody;
+        script.ShouldContain($"only-in-{OctopusClonedProjectResources.CloneProjectId}", customMessage: "the refilled clone's action-scoped variable must be scoped to the clone's own action");
+        script.ShouldNotContain("only-in-Projects-1");
+        (await ImportFromServerAsync(octopus)).PreviewPlan.Resources.ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.AlreadyImported || r.PreviewAction == OctopusImportPreviewAction.Unsupported, customMessage: "the import after the repair finds everything");
+    }
+
     // ── Steps ────────────────────────────────────────────────────────────
+
+    // The clone's children gone from Squid and from the source map, the original's child rows back to bare ids on the clone's session
+    // (what the earlier import wrote), then the real migration file.
+    private Task DamageCloneAsByLegacyImportAsync()
+        => _fixture.Run<SquidDbContext>(async db =>
+        {
+            var clone = OctopusClonedProjectResources.CloneProjectName;
+            var cloneId = OctopusClonedProjectResources.CloneProjectId.ToUpperInvariant();
+
+            await db.Database.ExecuteSqlRawAsync($"""
+                DELETE FROM variable_scope WHERE variable_id IN (SELECT v.id FROM variable v JOIN project p ON p.variable_set_id = v.variable_set_id WHERE p.name = '{clone}');
+                DELETE FROM variable WHERE variable_set_id IN (SELECT variable_set_id FROM project WHERE name = '{clone}');
+                DELETE FROM deployment_action WHERE step_id IN (SELECT s.id FROM deployment_step s JOIN project p ON p.deployment_process_id = s.process_id WHERE p.name = '{clone}');
+                DELETE FROM deployment_step WHERE process_id IN (SELECT deployment_process_id FROM project WHERE name = '{clone}');
+                DELETE FROM octopus_import_source_map WHERE source_type IN ('DeploymentStep', 'DeploymentAction', 'Variable') AND source_id LIKE '{cloneId}/%';
+                UPDATE octopus_import_source_map SET source_id = regexp_replace(source_id, '^[^/]*/(STEP|ACTION|VARIABLE)/', ''), last_session_id = (SELECT last_session_id FROM octopus_import_source_map WHERE source_type = 'Project' AND source_id = '{cloneId}') WHERE source_type IN ('DeploymentStep', 'DeploymentAction', 'Variable');
+                """);
+            await db.Database.ExecuteSqlRawAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, Squid.Core.Persistence.Db.DbUpRunner.ScriptFolder, "20261117_qualify_octopus_import_child_source_ids.sql")));
+        });
 
     private Task<OctopusImportFlowResult> ImportFromServerAsync(StubOctopusServer octopus)
         => _fixture.Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.ImportFromServerAsync(mediator, 1, octopus.BaseUri, ApiKey));
@@ -95,7 +141,7 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         });
 
     // A release of the project, deployed to "Server TEST": created and executed in separate scopes, as the API and the background runner do.
-    private async Task<string> DeployAsync(string projectName)
+    private async Task<string> DeployAsync(string projectName, string version)
     {
         var taskId = 0;
 
@@ -104,7 +150,7 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
             var project = await db.Set<Project>().AsNoTracking().SingleAsync(p => p.Name == projectName);
             var channel = await db.Set<Channel>().AsNoTracking().SingleAsync(c => c.ProjectId == project.Id && c.IsDefault);
             var environment = await db.Set<SquidEnvironment>().AsNoTracking().SingleAsync(e => e.Name == "Server TEST");
-            var releaseId = (await releases.CreateReleaseAsync(new CreateReleaseCommand { SpaceId = 1, ProjectId = project.Id, ChannelId = channel.Id, Version = "1.0.0" })).Release.Id;
+            var releaseId = (await releases.CreateReleaseAsync(new CreateReleaseCommand { SpaceId = 1, ProjectId = project.Id, ChannelId = channel.Id, Version = version })).Release.Id;
 
             taskId = (await deployments.CreateDeploymentAsync(new CreateDeploymentCommand { SpaceId = 1, ReleaseId = releaseId, EnvironmentId = environment.Id, Name = "Deploy the clone" })).TaskId;
         });

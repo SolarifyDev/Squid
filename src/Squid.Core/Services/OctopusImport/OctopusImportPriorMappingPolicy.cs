@@ -30,7 +30,7 @@ public static class OctopusImportPriorMappingPolicy
         OctopusResourceKind.DeploymentStep, OctopusResourceKind.DeploymentAction, OctopusResourceKind.VariableSet, OctopusResourceKind.Variable
     ];
 
-    public static OctopusImportPriorDecision Decide(OctopusResourceNode node, OctopusImportPriorMappings prior, Func<string, OctopusImportPreviewAction?> ownerActionOf, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds = null)
+    public static OctopusImportPriorDecision Decide(OctopusResourceNode node, OctopusImportPriorMappings prior, Func<string, OctopusImportPreviewAction?> ownerActionOf, OctopusImportLegacyChildIds legacyIds = null)
     {
         ArgumentNullException.ThrowIfNull(node);
 
@@ -40,7 +40,7 @@ public static class OctopusImportPriorMappingPolicy
 
         if (MappedConfigurationKinds.Contains(node.Kind) && TryGetPrior(prior, node, out var mapping)) return AlreadyImported(node, mapping);
 
-        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node, prior, sharedUnqualifiedIds) : null;
+        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node, prior, legacyIds ?? OctopusImportLegacyChildIds.None) : null;
     }
 
     /// <summary>The owner an owned resource inherits from: its structural parent (lifecycle, library, variable set, process, step), else its project.</summary>
@@ -123,25 +123,44 @@ public static class OctopusImportPriorMappingPolicy
     // remapped (that would overwrite the project's default channel): confirmation creates it as a regular channel. Deployment settings
     // have no rows of their own: they are what the owner's import wrote. A process or variable set has no row only when Squid moved its
     // project onto another one; it is never written into the project again.
-    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node, OctopusImportPriorMappings prior, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds)
+    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node, OctopusImportPriorMappings prior, OctopusImportLegacyChildIds legacyIds)
     {
         if (node.Kind == OctopusResourceKind.DeploymentSettings) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
         if (!IsChoosable(node.Kind)) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, NotInEarlierImport(node));
 
         var isDefaultChannel = node.Kind == OctopusResourceKind.Channel && node.GetSource<OctopusChannelDto>()?.IsDefault == true;
 
-        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefaultChannel ? DefaultChannelNotRemapped(node) : null, Choice(node, prior, sharedUnqualifiedIds));
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefaultChannel ? DefaultChannelNotRemapped(node) : null, Choice(node, prior, legacyIds));
     }
 
     /// <summary>The child kinds whose missing Squid row the user decides to import or not.</summary>
     public static bool IsChoosable(OctopusResourceKind kind) => OctopusImportSourceMapQueries.ChoosableChildSourceTypes.Contains(kind.ToString());
 
-    private static OctopusImportChoice Choice(OctopusResourceNode node, OctopusImportPriorMappings prior, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds)
+    private static OctopusImportChoice Choice(OctopusResourceNode node, OctopusImportPriorMappings prior, OctopusImportLegacyChildIds legacyIds)
     {
-        var deleted = prior.IsDeletedInSquid(node.Kind.ToString(), node.SourceId) || WasDeletedBeforeQualifiedIds(node, prior, sharedUnqualifiedIds);
-        var reason = deleted ? OctopusImportChoiceReason.DeletedInSquid : OctopusImportChoiceReason.AddedInOctopus;
+        var reason = ChoiceReason(node, prior, legacyIds);
 
         return new OctopusImportChoice(reason, DefaultSelected(node.Kind, reason));
+    }
+
+    // Its own deleted row is the strongest evidence, then the other owner's live row (only the old raw-id collision leaves one), then a
+    // deleted row recorded before ids were qualified.
+    private static OctopusImportChoiceReason ChoiceReason(OctopusResourceNode node, OctopusImportPriorMappings prior, OctopusImportLegacyChildIds legacyIds)
+    {
+        if (prior.IsDeletedInSquid(node.Kind.ToString(), node.SourceId)) return OctopusImportChoiceReason.DeletedInSquid;
+        if (WasMissedByLegacyImport(node, legacyIds.Recorded)) return OctopusImportChoiceReason.MissedByEarlierImport;
+
+        return WasDeletedBeforeQualifiedIds(node, prior, legacyIds.Shared) ? OctopusImportChoiceReason.DeletedInSquid : OctopusImportChoiceReason.AddedInOctopus;
+    }
+
+    // Before ids were owner-qualified, a project and its Octopus clone shared raw child ids: importing the clone after the original linked
+    // the clone's children to the original's rows (the migration later qualified them by the original), so they never reached Squid. A
+    // child with no live row of its own whose bare id is live under another owner can come from nothing else.
+    private static bool WasMissedByLegacyImport(OctopusResourceNode node, IReadOnlySet<(string Type, string Id)> recordedUnqualifiedIds)
+    {
+        var unqualified = OctopusImportChildSourceIds.Unqualified(node.SourceId);
+
+        return unqualified != null && recordedUnqualifiedIds.Contains(OctopusImportPriorMappings.Key(node.Kind.ToString(), unqualified));
     }
 
     // A child deleted in Squid before ids were owner-qualified keeps its bare-id row: the migration ties a row to its owner through the
@@ -161,9 +180,16 @@ public static class OctopusImportPriorMappingPolicy
     public static IReadOnlySet<(string Type, string Id)> SharedUnqualifiedIds(IEnumerable<OctopusResourceNode> nodes)
         => nodes.Where(n => IsChoosable(n.Kind)).Select(n => (Kind: n.Kind.ToString(), Id: OctopusImportChildSourceIds.Unqualified(n.SourceId))).Where(k => k.Id != null).GroupBy(k => OctopusImportPriorMappings.Key(k.Kind, k.Id)).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
 
-    /// <summary>Nothing changes silently: only a channel added in Octopus is selected unless the user says otherwise.</summary>
+    /// <summary>The (kind, bare id) keys of the live owner-qualified source-map rows: what <see cref="OctopusImportLegacyChildIds.Recorded"/> holds.</summary>
+    public static IReadOnlySet<(string Type, string Id)> RecordedUnqualifiedIds(OctopusImportPriorMappings prior)
+        => (prior ?? OctopusImportPriorMappings.Empty).Mappings.Keys.Select(k => (k.Type, Id: OctopusImportChildSourceIds.Unqualified(k.Id))).Where(k => k.Id != null).Select(k => OctopusImportPriorMappings.Key(k.Type, k.Id)).ToHashSet();
+
+    /// <summary>
+    /// Nothing changes silently: only a channel added in Octopus (its history needs it) and a child an earlier import missed (its owner
+    /// was imported meaning all of it) are selected unless the user says otherwise.
+    /// </summary>
     public static bool DefaultSelected(OctopusResourceKind kind, OctopusImportChoiceReason reason)
-        => reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel;
+        => reason == OctopusImportChoiceReason.MissedByEarlierImport || (reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel);
 
     private static bool TryGetPrior(OctopusImportPriorMappings prior, OctopusResourceNode node, out OctopusImportPriorMapping mapping)
         => prior.TryGet(node.Kind.ToString(), node.SourceId, out mapping);

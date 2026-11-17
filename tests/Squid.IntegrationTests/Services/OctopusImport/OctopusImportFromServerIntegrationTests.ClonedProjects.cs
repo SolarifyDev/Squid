@@ -233,6 +233,53 @@ public partial class OctopusImportFromServerIntegrationTests
         (await CountRowsAsync(ClonedTables)).ShouldBe(before);
     }
 
+    // ── Clones an import before owner-qualified ids damaged ────────────────
+
+    // An import before owner-qualified ids found the clone's children under the original's rows (same raw ids): it created the clone's
+    // project but none of its children, and moved the original's child rows onto the clone's session. The migration qualifies every such
+    // row by the owner of its Squid row (the original), so no source-map row points into a project other than the one it names.
+    [Fact]
+    public async Task ClonedProject_DamagedByLegacyImport_MigrationQualifiesByDestinationOwner_NoCrossProjectRows()
+    {
+        await using var octopus = OneDeployment().WithProjectAndClone();
+        var original = await DamageCloneAsByLegacyImportAsync(octopus);
+
+        await RunQualifyMigrationAsync();
+
+        (await ChildRowsOfAsync(["DeploymentStep", "DeploymentAction", "Variable"])).ShouldBe(original, ignoreOrder: true, customMessage: "every row is the original's, qualified by it, pointing at its row");
+        (await CrossProjectChildRowsAsync()).ShouldBe(0, "no row names one project and points into another: nothing needs dropping");
+    }
+
+    // The next import, from either source, offers the clone's missing children as missed by the earlier import, selected; confirming
+    // creates them in the clone (the original's rows untouched), and the import after that is up to date.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClonedProject_DamagedByLegacyImport_ReimportOffersMissedSelected_ConfirmFillsClone_ThirdImportUpToDate(bool fromServer)
+    {
+        await using var octopus = OneDeployment().WithProjectAndClone();
+        var file = ExportArchive(withHistory: true, extra: ProjectAndCloneDocuments());
+        var original = await DamageCloneAsByLegacyImportAsync(octopus);
+        await RunQualifyMigrationAsync();
+
+        var repair = fromServer ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(file);
+
+        ShouldHaveSucceeded(repair);
+        var missed = new[] { $"{CloneProjectId}/step/{StepId}", $"{CloneProjectId}/variable/{VariableId}", $"{CloneProjectId}/variable/{ActionScopedVariableId}" };
+        var offered = repair.PreviewPlan.Resources.Where(r => missed.Contains(r.SourceId, StringComparer.OrdinalIgnoreCase)).ToList();
+        offered.Count.ShouldBe(missed.Length, Describe(repair.PreviewPlan));
+        offered.ShouldAllBe(r => r.Choice != null && r.Choice.Reason == OctopusImportChoiceReason.MissedByEarlierImport && r.Choice.Selected == true && r.PreviewAction == OctopusImportPreviewAction.Create, Describe(repair.PreviewPlan));
+        (await ChildRowsOfAsync(["DeploymentStep", "DeploymentAction", "Variable"])).Where(r => r.Contains("|PROJECTS-1/")).ShouldBe(original, ignoreOrder: true, customMessage: "the original's rows are untouched");
+        await ShouldHoldBothProjectsCompleteAsync();
+        var before = await CountRowsAsync(ClonedTables);
+
+        var third = fromServer ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(file);
+
+        ShouldHaveSucceeded(third);
+        ShouldFindAllConfigurationImported(third);
+        (await CountRowsAsync(ClonedTables)).ShouldBe(before);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     // Every configuration resource is found where an import left it: nothing created, nothing offered. (A server import after a file one
@@ -291,6 +338,45 @@ public partial class OctopusImportFromServerIntegrationTests
 
         await RewriteChildRowsToLegacyAsync();
     }
+
+    // Leaves the space as an import before owner-qualified ids did (original first, clone later): the clone's project without children,
+    // the original's child rows recorded under bare ids and moved onto the clone's session. Returns the original's rows as the migration
+    // should leave them.
+    private async Task<List<string>> DamageCloneAsByLegacyImportAsync(StubOctopusServer octopus)
+    {
+        ShouldHaveSucceeded(await ImportChosenAsync(octopus, ["Projects-1"]));
+        ShouldHaveSucceeded(await ImportChosenAsync(octopus, [CloneProjectId]));
+        var original = (await ChildRowsOfAsync(["DeploymentStep", "DeploymentAction", "Variable"])).Where(r => r.Contains("|PROJECTS-1/")).ToList();
+
+        await ExecuteAsync(RemoveCloneChildrenSql);
+        await RewriteChildRowsToLegacyAsync();
+        await ExecuteAsync($"UPDATE octopus_import_source_map SET last_session_id = (SELECT last_session_id FROM octopus_import_source_map WHERE source_type = 'Project' AND source_id = '{CloneProjectId.ToUpperInvariant()}') WHERE source_type IN ('DeploymentStep', 'DeploymentAction', 'Variable')");
+
+        return original;
+    }
+
+    private static readonly string RemoveCloneChildrenSql = $"""
+        DELETE FROM variable_scope WHERE variable_id IN (SELECT v.id FROM variable v JOIN project p ON p.variable_set_id = v.variable_set_id WHERE p.name = '{CloneProjectName}');
+        DELETE FROM variable WHERE variable_set_id IN (SELECT variable_set_id FROM project WHERE name = '{CloneProjectName}');
+        DELETE FROM deployment_action WHERE step_id IN (SELECT s.id FROM deployment_step s JOIN project p ON p.deployment_process_id = s.process_id WHERE p.name = '{CloneProjectName}');
+        DELETE FROM deployment_step WHERE process_id IN (SELECT deployment_process_id FROM project WHERE name = '{CloneProjectName}');
+        DELETE FROM octopus_import_source_map WHERE source_type IN ('DeploymentStep', 'DeploymentAction', 'Variable') AND source_id LIKE '{CloneProjectId.ToUpperInvariant()}/%';
+        """;
+
+    // Child rows whose qualifying owner is not the project that holds their Squid row (step and action through the process, variable through the set).
+    private Task<int> CrossProjectChildRowsAsync()
+        => Run<SquidDbContext, int>(db => db.Database.SqlQueryRaw<int>("""
+            SELECT count(*)::int AS "Value"
+            FROM octopus_import_source_map m
+            JOIN (SELECT 'DeploymentStep' AS source_type, s.id, p.id AS project_id FROM deployment_step s JOIN project p ON p.deployment_process_id = s.process_id
+                  UNION ALL SELECT 'DeploymentAction', a.id, p.id FROM deployment_action a JOIN deployment_step s ON s.id = a.step_id JOIN project p ON p.deployment_process_id = s.process_id
+                  UNION ALL SELECT 'Variable', v.id, p.id FROM variable v JOIN project p ON p.variable_set_id = v.variable_set_id) AS holder ON holder.source_type = m.source_type AND holder.id = m.destination_id
+            JOIN octopus_import_source_map o ON o.space_id = m.space_id AND o.source_type = 'Project' AND o.destination_id = holder.project_id
+            WHERE split_part(m.source_id, '/', 1) <> o.source_id
+            """).SingleAsync());
+
+    private async Task<List<string>> ChildRowsOfAsync(string[] sourceTypes)
+        => (await SourceMapAsync()).Where(r => sourceTypes.Contains(r.SourceType)).Select(r => $"{r.SourceType}|{r.SourceId}|{r.DestinationId}").ToList();
 
     // What an import before owner-qualified ids recorded: the bare Octopus id.
     private Task RewriteChildRowsToLegacyAsync()

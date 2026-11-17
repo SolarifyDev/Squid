@@ -18,6 +18,7 @@ public class OctopusImportPreviewPlannerChoiceTests
     public static IEnumerable<object[]> KindsAndReasons()
         => from kind in new[] { OctopusResourceKind.DeploymentStep, OctopusResourceKind.DeploymentAction, OctopusResourceKind.LifecyclePhase, OctopusResourceKind.Variable, OctopusResourceKind.Channel }
            from reason in Enum.GetValues<OctopusImportChoiceReason>()
+           where !(kind == OctopusResourceKind.Channel && reason == OctopusImportChoiceReason.MissedByEarlierImport)   // a clone's channels get ids of their own
            select new object[] { kind, reason };
 
     // ── Defaults and selection ─────────────────────────────────────────────
@@ -29,11 +30,11 @@ public class OctopusImportPreviewPlannerChoiceTests
         var plan = await (await ChildScenarioAsync(kind, reason)).PlanAsync();
 
         var row = plan.Resource(RootOf(kind));
-        var expectedDefault = reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel;
+        var expectedDefault = reason == OctopusImportChoiceReason.MissedByEarlierImport || (reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel);
         row.Choice.ShouldNotBeNull(Describe(plan));
         row.Choice.ShouldSatisfyAllConditions(c => c.Reason.ShouldBe(reason), c => c.DefaultSelected.ShouldBe(expectedDefault), c => c.Selected.ShouldBe(expectedDefault), c => c.FollowsSourceId.ShouldBeNull(), c => c.OwnerName.ShouldNotBeNullOrWhiteSpace());
         row.PreviewAction.ShouldBe(expectedDefault ? OctopusImportPreviewAction.Create : OctopusImportPreviewAction.Skip);
-        row.Diagnostics.First().Code.ShouldBe(reason == OctopusImportChoiceReason.DeletedInSquid ? OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid : OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus);
+        row.Diagnostics.First().Code.ShouldBe(CodeOf(reason));
         plan.BlocksConfirmation.ShouldBeFalse(Blockers(plan));
     }
 
@@ -50,7 +51,7 @@ public class OctopusImportPreviewPlannerChoiceTests
         var row = plan.Resource(RootOf(kind));
         row.Choice.Selected.ShouldBe(flipped);
         row.PreviewAction.ShouldBe(flipped ? OctopusImportPreviewAction.Create : OctopusImportPreviewAction.Skip);
-        row.SkipReason?.Code.ShouldBe(reason == OctopusImportChoiceReason.DeletedInSquid ? OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid : OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus);
+        row.SkipReason?.Code.ShouldBe(CodeOf(reason));
         plan.Preview.Summary.Choices.ShouldHaveSingleItem().ShouldSatisfyAllConditions(c => c.Reason.ShouldBe(reason), c => c.Total.ShouldBe(1), c => c.Selected.ShouldBe(flipped ? 1 : 0));
         plan.Preview.Summary.Counts.Create.ShouldBe(defaults.Preview.Summary.Counts.Create + (flipped ? 1 : -1) * (1 + FollowerCount(kind)), Describe(plan));
     }
@@ -277,15 +278,29 @@ public class OctopusImportPreviewPlannerChoiceTests
             _ => "Channels-2"
         };
 
+    private static string CodeOf(OctopusImportChoiceReason reason)
+        => reason switch
+        {
+            OctopusImportChoiceReason.DeletedInSquid => OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid,
+            OctopusImportChoiceReason.MissedByEarlierImport => OctopusImportPreviewDiagnosticCodes.ChildMissedByEarlierImport,
+            _ => OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus
+        };
+
+    // The same child id under another owner, as the migration qualified a clone's child an import before owner-qualified ids linked.
+    private static string UnderAnotherOwner(string sourceId) => sourceId.Replace("Projects-1/", "Projects-9/").Replace("Lifecycles-1/", "Lifecycles-9/");
+
     // The action of the added step follows it (counted with it when it is created).
     private static int FollowerCount(OctopusResourceKind kind) => kind == OctopusResourceKind.DeploymentStep ? 1 : 0;
 
-    // Imported once (with the child when it is deleted in Squid since, without it when Octopus added it later), then planned again.
+    // Imported once (with the child when it is deleted in Squid since, without it when Octopus added it later or an import before
+    // owner-qualified ids linked it to the same-id child of the project it was cloned from), then planned again.
     private static async Task<OctopusImportScenario> ChildScenarioAsync(OctopusResourceKind kind, OctopusImportChoiceReason reason)
     {
         var deleted = reason == OctopusImportChoiceReason.DeletedInSquid;
         var first = await Source(kind, withChild: deleted).PlanAsync();
         var scenario = Source(kind, withChild: true).ImportedAs(first);
+
+        if (reason == OctopusImportChoiceReason.MissedByEarlierImport) return scenario.ExistingMapping(kind, UnderAnotherOwner(RootOf(kind)), 9000);
 
         if (!deleted) return scenario;
 

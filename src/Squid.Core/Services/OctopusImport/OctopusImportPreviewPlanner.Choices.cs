@@ -91,9 +91,12 @@ public partial class OctopusImportPreviewPlanner
     // ── Wording ──────────────────────────────────────────────────────────────
 
     private static OctopusImportDiagnosticDto ChoiceDiagnostic(OctopusResourceNode resource, OctopusImportChoiceReason reason, bool selected, string ownerName)
-        => reason == OctopusImportChoiceReason.DeletedInSquid
-            ? Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid, DeletedInSquidMessage(resource, selected), resource)
-            : Diagnostic(selected ? OctopusImportCompatibilitySeverity.Info : OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus, AddedInOctopusMessage(resource, selected, ownerName), resource);
+        => reason switch
+        {
+            OctopusImportChoiceReason.DeletedInSquid => Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid, DeletedInSquidMessage(resource, selected), resource),
+            OctopusImportChoiceReason.MissedByEarlierImport => Diagnostic(selected ? OctopusImportCompatibilitySeverity.Info : OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ChildMissedByEarlierImport, MissedByEarlierImportMessage(resource, selected, ownerName), resource),
+            _ => Diagnostic(selected ? OctopusImportCompatibilitySeverity.Info : OctopusImportCompatibilitySeverity.Warning, OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus, AddedInOctopusMessage(resource, selected, ownerName), resource)
+        };
 
     private static string DeletedInSquidMessage(OctopusResourceNode resource, bool selected)
     {
@@ -108,6 +111,11 @@ public partial class OctopusImportPreviewPlanner
 
         return selected ? $"{what} It is added; nothing already in Squid is changed or reordered.{SelectedConsequence(resource)}" : $"{what} Imported configuration is never changed unless you tick it. It is offered again on every import.";
     }
+
+    private static string MissedByEarlierImportMessage(OctopusResourceNode resource, bool selected, string ownerName)
+        => selected
+            ? $"An earlier import of {ownerName} missed this {resource.Kind}: Octopus gave it the same id as one in the project it was cloned from. It is added; nothing already in Squid is changed or reordered.{SelectedConsequence(resource)}"
+            : $"An earlier import of {ownerName} missed this {resource.Kind}: Octopus gave it the same id as one in the project it was cloned from. It is not added unless you tick it. It is offered again on every import.";
 
     private static string SelectedConsequence(OctopusResourceNode resource)
         => resource.Kind switch

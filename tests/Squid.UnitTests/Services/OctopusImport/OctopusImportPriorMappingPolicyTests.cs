@@ -103,9 +103,67 @@ public class OctopusImportPriorMappingPolicyTests
         var twin = Node(kind, sourceId.Replace("Projects-1", "Projects-2").Replace("Lifecycles-1", "Lifecycles-2"), OwnerId, "Projects-2", new TestDocument());
         var shared = OctopusImportPriorMappingPolicy.SharedUnqualifiedIds(sharedInSource ? [node, twin] : [node]);
 
-        var decision = OctopusImportPriorMappingPolicy.Decide(node, prior, OwnerActionFor(PriorScenario.OwnerAlreadyImported), shared);
+        var decision = OctopusImportPriorMappingPolicy.Decide(node, prior, OwnerActionFor(PriorScenario.OwnerAlreadyImported), new OctopusImportLegacyChildIds(shared, OctopusImportPriorMappingPolicy.RecordedUnqualifiedIds(prior)));
 
         decision.Choice.ShouldBe(new OctopusImportChoice(expectedReason, false));
+    }
+
+    // An import made before owner-qualified ids linked a clone's children to the original's rows (they share raw ids), so the clone's
+    // children never reached Squid; the migration then qualified those rows by the original. A child with no live row of its own whose bare
+    // id is live under another owner can only come from that: it was missed, and is selected (its owner was imported meaning all of it).
+    [Theory]
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "live", "Projects-1/STEP/A1", null, OctopusImportChoiceReason.MissedByEarlierImport)]
+    [InlineData(OctopusResourceKind.DeploymentAction, "Projects-2/action/b2", "live", "Projects-1/ACTION/B2", null, OctopusImportChoiceReason.MissedByEarlierImport)]
+    [InlineData(OctopusResourceKind.DeploymentAction, "Projects-2/step/a1/action-1", "live", "Projects-1/STEP/A1/ACTION-1", null, OctopusImportChoiceReason.MissedByEarlierImport)]
+    [InlineData(OctopusResourceKind.Variable, "Projects-2/variable/c3", "live", "Projects-1/VARIABLE/C3", null, OctopusImportChoiceReason.MissedByEarlierImport)]
+    [InlineData(OctopusResourceKind.LifecyclePhase, "Lifecycles-2/phase/d4", "live", "Lifecycles-1/PHASE/D4", null, OctopusImportChoiceReason.MissedByEarlierImport)]
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "live", "Projects-1/STEP/A1", "Projects-2/step/a1", OctopusImportChoiceReason.DeletedInSquid)]   // its own deleted row wins
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "dead", "Projects-1/STEP/A1", null, OctopusImportChoiceReason.AddedInOctopus)]                   // the other owner's row is gone
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "live", "A1", null, OctopusImportChoiceReason.AddedInOctopus)]                                   // a raw row names no owner
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "live", "Projects-1/STEP/B9", null, OctopusImportChoiceReason.AddedInOctopus)]                   // another bare id
+    [InlineData(OctopusResourceKind.Variable, "Projects-2/variable/a1", "live", "Projects-1/STEP/A1", null, OctopusImportChoiceReason.AddedInOctopus)]                     // a row of another kind
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-2/step/a1", "none", null, null, OctopusImportChoiceReason.AddedInOctopus)]                                   // no earlier import
+    public void ChildMissedByLegacyImport_BareIdLiveUnderAnotherOwner_IsMissedAndSelected(OctopusResourceKind kind, string sourceId, string recorded, string recordedId, string deletedOwnId, OctopusImportChoiceReason expectedReason)
+    {
+        var node = Node(kind, sourceId, OwnerId, "Projects-2", new TestDocument { Id = sourceId });
+        var recordedKind = kind == OctopusResourceKind.Variable && recordedId?.Contains("/STEP/") == true ? OctopusResourceKind.DeploymentStep : kind;
+        var live = recorded == "live" ? new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [(recordedKind.ToString(), recordedId)] = new OctopusImportPriorMapping(PriorDestinationId, "Created", null, null) } : new();
+        var deleted = new HashSet<(string Type, string Id)>();
+        if (recorded == "dead") deleted.Add((recordedKind.ToString(), recordedId));
+        if (deletedOwnId != null) deleted.Add((kind.ToString(), deletedOwnId));
+        var prior = new OctopusImportPriorMappings(live, null, deletedKeys: deleted);
+
+        var decision = OctopusImportPriorMappingPolicy.Decide(node, prior, OwnerActionFor(PriorScenario.OwnerAlreadyImported), new OctopusImportLegacyChildIds(new HashSet<(string Type, string Id)>(), OctopusImportPriorMappingPolicy.RecordedUnqualifiedIds(prior)));
+
+        decision.Action.ShouldBe(OctopusImportPreviewAction.Create, "Create is what a selected child does");
+        decision.Choice.ShouldBe(new OctopusImportChoice(expectedReason, expectedReason == OctopusImportChoiceReason.MissedByEarlierImport));
+    }
+
+    [Fact]
+    public void RecordedUnqualifiedIds_OnlyLiveOwnerQualifiedRows()
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>
+        {
+            [("DeploymentStep", "Projects-1/STEP/A1")] = new(1, "Created", null, null),
+            [("DeploymentStep", "B2")] = new(2, "Created", null, null),
+            [("Project", "Projects-1")] = new(3, "Created", null, null)
+        }, null, deletedKeys: new HashSet<(string Type, string Id)> { ("DeploymentStep", "Projects-1/STEP/C3") });
+
+        OctopusImportPriorMappingPolicy.RecordedUnqualifiedIds(prior).ShouldBe([("DEPLOYMENTSTEP", "A1")], ignoreOrder: true);
+    }
+
+    public static IEnumerable<object[]> EveryChoosableKindAndReason()
+        => from kind in Enum.GetValues<OctopusResourceKind>().Where(OctopusImportPriorMappingPolicy.IsChoosable) from reason in Enum.GetValues<OctopusImportChoiceReason>() select new object[] { kind, reason };
+
+    // Nothing changes silently: a channel added in Octopus is selected (its history needs it), and so is a child an earlier import missed
+    // (its owner was imported meaning all of it); what the user deleted stays deleted and anything else added in Octopus waits for a tick.
+    [Theory]
+    [MemberData(nameof(EveryChoosableKindAndReason))]
+    public void DefaultSelected_EveryChoosableKindAndReason(OctopusResourceKind kind, OctopusImportChoiceReason reason)
+    {
+        var expected = reason == OctopusImportChoiceReason.MissedByEarlierImport || (reason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Channel);
+
+        OctopusImportPriorMappingPolicy.DefaultSelected(kind, reason).ShouldBe(expected, $"{kind} / {reason}");
     }
 
     [Fact]
@@ -126,7 +184,8 @@ public class OctopusImportPriorMappingPolicyTests
         OctopusImportPreviewDiagnosticCodes.ChildDeletedInSquid.ShouldBe("octopus.preview.child_deleted_in_squid");
         OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus.ShouldBe("octopus.preview.child_added_in_octopus");
         OctopusImportPreviewDiagnosticCodes.HistoryOwnerNotSelected.ShouldBe("octopus.preview.history_owner_not_selected");
-        ((int)OctopusImportChoiceReason.DeletedInSquid, (int)OctopusImportChoiceReason.AddedInOctopus).ShouldBe((0, 1), "the SquidWeb mirror of the reason is ordinal");
+        OctopusImportPreviewDiagnosticCodes.ChildMissedByEarlierImport.ShouldBe("octopus.preview.child_missed_by_earlier_import");
+        ((int)OctopusImportChoiceReason.DeletedInSquid, (int)OctopusImportChoiceReason.AddedInOctopus, (int)OctopusImportChoiceReason.MissedByEarlierImport).ShouldBe((0, 1, 2), "the SquidWeb mirror of the reason is ordinal");
     }
 
     [Fact]

@@ -9,5 +9,11 @@ public enum OctopusImportChoiceReason
     DeletedInSquid = 0,
 
     /// <summary>It was added in Octopus after what it belongs to was imported.</summary>
-    AddedInOctopus = 1
+    AddedInOctopus = 1,
+
+    /// <summary>
+    /// What it belongs to was imported, but an import made before child ids were owner-qualified linked this child to the same-id child
+    /// of another project (a project and its Octopus clone share child ids), so it never reached Squid.
+    /// </summary>
+    MissedByEarlierImport = 2
 }

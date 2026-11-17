@@ -56,10 +56,10 @@ public partial class OctopusImportPreviewPlanner
         private bool? _needsOriginProof;
         private IReadOnlyList<string> _otherOriginCreators;
 
-        private IReadOnlySet<(string Type, string Id)> _sharedUnqualifiedIds;
+        private OctopusImportLegacyChildIds _legacyChildIds;
 
-        /// <summary>Bare child ids (as recorded before owner-qualified ids) more than one child of this source shares.</summary>
-        public IReadOnlySet<(string Type, string Id)> SharedUnqualifiedIds => _sharedUnqualifiedIds ??= OctopusImportPriorMappingPolicy.SharedUnqualifiedIds(Nodes);
+        /// <summary>What bare child ids (as recorded before owner-qualified ids) tell: the ones this source's children share, and the live recorded ones.</summary>
+        public OctopusImportLegacyChildIds LegacyChildIds => _legacyChildIds ??= new OctopusImportLegacyChildIds(OctopusImportPriorMappingPolicy.SharedUnqualifiedIds(Nodes), OctopusImportPriorMappingPolicy.RecordedUnqualifiedIds(Prior));
 
         public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(Nodes, Prior);
 
