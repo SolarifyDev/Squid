@@ -106,11 +106,14 @@ public static class OctopusImportFillEvidences
     /// origin created. Rows another origin created (the source's own included) prove nothing about the recorded one.
     /// </summary>
     public static int MatchingStructureIds(IEnumerable<OctopusResourceNode> nodes, OctopusImportPriorMappings prior)
-        => (nodes ?? []).Where(n => StructureKinds.Contains(n.Kind) && !n.IsHistorical && Guid.TryParse(n.SourceId, out _))
+        => (nodes ?? []).Where(n => StructureKinds.Contains(n.Kind) && !n.IsHistorical && IsGuid(n.SourceId))
             .Where(n => prior.TryGet(n.Kind.ToString(), n.SourceId, out var mapping) && mapping.OutcomeState == OctopusImportSourceMapQueries.CreatedOutcome && IsOfRecordedOrigin(mapping, prior))
-            .Select(n => OctopusImportPriorMappings.Normalize(n.SourceId))
+            .Select(n => OctopusImportPriorMappings.Normalize(OctopusImportChildSourceIds.OctopusId(n.SourceId)))
             .Distinct(StringComparer.Ordinal)
             .Count();
+
+    // A child's source id is qualified by its owner; the random part is the Octopus id after the last '/'.
+    private static bool IsGuid(string sourceId) => Guid.TryParse(OctopusImportChildSourceIds.OctopusId(sourceId), out _);
 
     /// <summary>The space records where its imports came from: an installation id or a pinned export fingerprint.</summary>
     public static bool HasRecordedOrigin(OctopusImportPriorMappings prior) => HasId(prior?.InstallationId) || prior?.ExportSourceIds.Count > 0;

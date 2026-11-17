@@ -45,7 +45,7 @@ public class OctopusImportConfigAsCodePreviewTests
 
         plan.Resource(Cac).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip), r => r.OutcomeState.ShouldBe(OctopusImportResourceOutcomeState.Skipped), r => r.SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ConfigAsCodeNotSupported), r => r.Diagnostics.Single().Severity.ShouldBe(OctopusImportCompatibilitySeverity.Info));
         var owned = plan.Preview.Resources.Where(r => r.OwnerProjectSourceId == Cac && r.SourceId != Cac).ToList();
-        owned.Select(r => r.SourceId).ShouldBe(["cac-var", $"{Cac}-channel", ProjectVariableSetId(Cac)], ignoreOrder: true);
+        owned.Select(r => r.SourceId).ShouldBe([VariableId(Cac, "cac-var"), $"{Cac}-channel", ProjectVariableSetId(Cac)], ignoreOrder: true);
         owned.ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Skip && r.Diagnostics.Single().Code == OctopusImportPreviewDiagnosticCodes.ConfigAsCodeNotSupported && r.Diagnostics.Single().Message.Contains("'Cac'"));
     }
 
@@ -81,7 +81,7 @@ public class OctopusImportConfigAsCodePreviewTests
     [InlineData("Lifecycles-2")]
     [InlineData("Environments-2")]
     [InlineData("LibraryVariableSets-1")]
-    [InlineData("lib-var")]
+    [InlineData("LibraryVariableSets-1/variable/lib-var")]
     public async Task Selection_WhatOnlyTheChosenConfigAsCodeProjectUses_NotUsedByChosenProjects(string sourceId)
     {
         var plan = await Space().PlanAsync(chosenProjectIds: [Web, Cac]);
@@ -96,7 +96,7 @@ public class OctopusImportConfigAsCodePreviewTests
         var plan = await Space().PlanAsync();
         var scope = plan.DependencyPlan.ReferenceScope;
 
-        new[] { "Lifecycles-2", "Environments-2", "LibraryVariableSets-1", "lib-var" }.ShouldAllBe(id => !scope.IsReferenced(id));
+        new[] { "Lifecycles-2", "Environments-2", "LibraryVariableSets-1", "LibraryVariableSets-1/variable/lib-var" }.ShouldAllBe(id => !scope.IsReferenced(id));
         scope.IsReferenced("Environments-1").ShouldBeTrue("Web uses it too");
         plan.Resource("Lifecycles-2").PreviewAction.ShouldBe(OctopusImportPreviewAction.Create);
     }
@@ -132,7 +132,7 @@ public class OctopusImportConfigAsCodePreviewTests
 
         var plan = await scenario.PlanAsync();
 
-        new[] { Cac, $"{Cac}-channel", ProjectVariableSetId(Cac), "cac-var" }.ShouldAllBe(id => plan.Resource(id).PreviewAction == OctopusImportPreviewAction.Skip && plan.Resource(id).Choice == null);
+        new[] { Cac, $"{Cac}-channel", ProjectVariableSetId(Cac), VariableId(Cac, "cac-var") }.ShouldAllBe(id => plan.Resource(id).PreviewAction == OctopusImportPreviewAction.Skip && plan.Resource(id).Choice == null);
         plan.BlocksConfirmation.ShouldBeFalse(Describe(plan));
         plan.Preview.Summary.Counts.Fill.ShouldBe(0);
     }
@@ -157,8 +157,8 @@ public class OctopusImportConfigAsCodePreviewTests
 
         var plan = await scenario.PlanAsync(OctopusExportSecrets.FromPassword(ExportPassword), pairingConfirmed: true);
 
-        plan.Resource(secretId).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
-        plan.Validation.Diagnostics.ShouldNotContain(d => d.SourceId == secretId, string.Join("; ", plan.Validation.Diagnostics.Select(d => d.Code)));
+        plan.Resource(VariableId(Cac, secretId)).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        plan.Validation.Diagnostics.ShouldNotContain(d => d.SourceId == VariableId(Cac, secretId), string.Join("; ", plan.Validation.Diagnostics.Select(d => d.Code)));
     }
 
     // ── Plan-level ──────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ public class OctopusImportConfigAsCodePreviewTests
     [InlineData(Cac, true)]
     [InlineData("Projects-2-channel", true)]
     [InlineData("variableset-Projects-2", true)]
-    [InlineData("cac-var", true)]
+    [InlineData("Projects-2/variable/cac-var", true)]
     [InlineData(Web, false)]
     [InlineData("Lifecycles-2", false)]
     [InlineData("Environments-1", false)]
@@ -257,7 +257,7 @@ public class OctopusImportConfigAsCodePreviewTests
     {
         var graph = await Space().BuildGraphAsync();
 
-        OctopusImportReferenceScope.Build(graph, [Web, "Projects-2-00112233445566778899AABBCCDDEEFF"]).IsConfigAsCode(graph.Resources.First(r => r.SourceId == "cac-var")).ShouldBeTrue();
+        OctopusImportReferenceScope.Build(graph, [Web, "Projects-2-00112233445566778899AABBCCDDEEFF"]).IsConfigAsCode(graph.Resources.First(r => r.SourceId == VariableId(Cac, "cac-var"))).ShouldBeTrue();
     }
 
     [Fact]

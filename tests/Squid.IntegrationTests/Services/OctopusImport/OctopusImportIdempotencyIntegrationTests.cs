@@ -546,7 +546,7 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     private static OctopusImportChoiceSelections Selections(OctopusImportPreviewPlanDto plan, IReadOnlyDictionary<string, bool> choices)
     {
         foreach (var (sourceId, selected) in choices)
-            (plan.Resources.Single(r => r.SourceId == sourceId).Choice ?? throw new InvalidOperationException($"{sourceId} is not offered: {Describe(plan)}")).Selected = selected;
+            (plan.Resources.Single(r => r.SourceId == GraphId(sourceId)).Choice ?? throw new InvalidOperationException($"{sourceId} is not offered: {Describe(plan)}")).Selected = selected;
 
         return OctopusImportChoiceSelections.From(plan);
     }

@@ -34,7 +34,7 @@ public sealed class VariableInserter(IOctopusImportVariableMapper variableMapper
     {
         var source = set.GetSource<OctopusVariableSetDto>();
 
-        return (source?.Variables ?? []).Select((variable, index) => OctopusResourceGraphBuilder.BuildChildSourceId(source.Id, "variable", variable.Id, index)).ToList();
+        return (source?.Variables ?? []).Select((variable, index) => OctopusImportChildSourceIds.Variable(source, variable.Id, index)).ToList();
     }
 
     private static int VariableIndex(OctopusResourceNode set, string variableSourceId) => OctopusImportChildPlacement.IndexOf(VariableIds(set), variableSourceId);

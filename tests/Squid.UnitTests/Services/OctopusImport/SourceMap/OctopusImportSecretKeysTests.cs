@@ -61,7 +61,7 @@ public class OctopusImportSecretKeysTests
     {
         var scope = new Dictionary<string, List<string>> { ["Role"] = ["web"], ["Channel"] = ["Channels-1"], ["Environment"] = ["Environments-2", "Environments-1", ""] };
 
-        OctopusImportSecretKeys.CanonicalScopes(scope, Destination).ShouldBe(["Channel:21", "Environment:11", "Environment:12", "Role:web"]);
+        OctopusImportSecretKeys.CanonicalScopes(scope, "Projects-1", Destination).ShouldBe(["Channel:21", "Environment:11", "Environment:12", "Role:web"]);
     }
 
     // A deployment recomputes the key from the Squid variable (the source document is gone): both sides must agree byte for byte.
@@ -88,7 +88,21 @@ public class OctopusImportSecretKeysTests
     private static void OctopusImportPriorMappingsNormalizeKeeps(string key)
         => Squid.Message.Models.OctopusImport.OctopusImportPriorMappings.Normalize(key).ShouldBe(key.ToUpperInvariant());
 
-    private static string Key(string owner, OctopusVariableDto variable) => OctopusImportSecretKeys.ForVariable(owner, variable, Destination);
+    private static string Key(string owner, OctopusVariableDto variable) => OctopusImportSecretKeys.ForVariable(owner, "Projects-1", variable, Destination);
+
+    // A stored VariableSecret key hashes the Squid destination id of an Action scope, never the Octopus id: qualifying the action's
+    // source id changes only how that destination is found, so keys an earlier import recorded still match (literal pinned).
+    [Fact]
+    public void ForVariable_ActionScoped_KeyEqualsPreUpgradeKey()
+    {
+        const string actionId = "6a0b1c2d-0000-4000-8000-000000000002";
+        var actions = new Dictionary<(string, OctopusResourceKind), int> { [($"Projects-2/action/{actionId}", OctopusResourceKind.DeploymentAction)] = 31, [($"Projects-1/action/{actionId}", OctopusResourceKind.DeploymentAction)] = 30 };
+        int? DestinationOfAction(string sourceId, OctopusResourceKind kind) => actions.TryGetValue((sourceId, kind), out var id) ? id : null;
+        var secret = Secret("Db.Password", scopes: ("Action", [actionId]));
+
+        OctopusImportSecretKeys.ForVariable("variableset-Projects-2", "Projects-2", secret, DestinationOfAction).ShouldBe("vs:93673012aa322beac155fbaa4cba5ec3094a2aeee26efefd1d209e5d0dbd5bba");
+        OctopusImportSecretKeys.ForVariable("variableset-Projects-2", "Projects-1", secret, DestinationOfAction).ShouldNotBe(OctopusImportSecretKeys.ForVariable("variableset-Projects-2", "Projects-2", secret, DestinationOfAction), "the action of another project is another scope");
+    }
 
     private static int? Destination(string sourceId, OctopusResourceKind kind) => Destinations.TryGetValue((sourceId, kind), out var id) ? id : null;
 

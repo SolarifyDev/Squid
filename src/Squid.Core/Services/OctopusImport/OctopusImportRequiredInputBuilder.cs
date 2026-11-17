@@ -64,11 +64,6 @@ public static class OctopusImportRequiredInputBuilder
     /// <summary>Only these secrets can be filled by a later export-file import; the rest must be set in Squid by hand.</summary>
     public static bool IsFillable(OctopusImportRequiredInputKind kind) => kind is OctopusImportRequiredInputKind.SensitiveVariableValue or OctopusImportRequiredInputKind.FeedPassword;
 
-    public static string BuildVariableSourceId(string variableSetSourceId, string variableSourceId, int index)
-        => string.IsNullOrWhiteSpace(variableSourceId)
-            ? $"{variableSetSourceId}/variable-{index + 1}"
-            : variableSourceId;
-
     private static string BuildInputKey(
         OctopusImportRequiredInputKind kind,
         string sourceId,

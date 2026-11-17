@@ -134,7 +134,7 @@ public class OctopusImportOriginPreviewTests
     [InlineData(true)]
     public async Task SourcesOwnStructureRows_NeverBackAPairingWithTheRecordedOrigin(bool confirmed)
     {
-        var plan = await ImportedSpace(Origin.FileOf, structureMatches: false).ExistingMappingCreatedBy(OctopusResourceKind.DeploymentAction, ActionGuid, 701, "inst-x").Incoming(Origin.ServerOf).PlanAsync(pairingConfirmed: confirmed);
+        var plan = await ImportedSpace(Origin.FileOf, structureMatches: false).ExistingMappingCreatedBy(OctopusResourceKind.DeploymentAction, OctopusImportScenario.ActionId("Projects-1", ActionGuid), 701, "inst-x").Incoming(Origin.ServerOf).PlanAsync(pairingConfirmed: confirmed);
 
         plan.Preview.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven && d.Severity == OctopusImportCompatibilitySeverity.Blocker, Codes(plan));
         plan.Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven, Codes(plan));
@@ -281,7 +281,7 @@ public class OctopusImportOriginPreviewTests
             .ExistingProject(501, "Web")
             .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), 601);
 
-        if (structureMatches) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, ActionGuid, 701);
+        if (structureMatches) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, OctopusImportScenario.ActionId("Projects-1", ActionGuid), 701);
 
         return recorded == Origin.FileOf ? scenario.PriorExportSource(Fingerprint) : scenario.PriorInstallation("inst-a");
     }

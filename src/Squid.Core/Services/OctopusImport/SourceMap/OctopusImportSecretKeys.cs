@@ -20,11 +20,11 @@ public static class OctopusImportSecretKeys
     public const string VariablePrefix = "vs:";
 
     /// <summary>The key, or null when a scope value cannot be mapped (such a secret cannot be identified, so it is never filled).</summary>
-    public static string ForVariable(string ownerSetSourceId, OctopusVariableDto variable, Func<string, OctopusResourceKind, int?> destinationOf)
+    public static string ForVariable(string ownerSetSourceId, string ownerProjectId, OctopusVariableDto variable, Func<string, OctopusResourceKind, int?> destinationOf)
     {
         ArgumentNullException.ThrowIfNull(variable);
 
-        var scopes = CanonicalScopes(variable.Scope, destinationOf);
+        var scopes = CanonicalScopes(variable.Scope, ownerProjectId, destinationOf);
 
         if (scopes == null) return null;
 
@@ -50,13 +50,13 @@ public static class OctopusImportSecretKeys
     /// any value cannot be mapped. The tokens equal the ones Squid's stored scopes produce, so a source variable and the Squid variable
     /// it was imported as have the same identity.
     /// </summary>
-    public static IReadOnlyList<string> CanonicalScopes(Dictionary<string, List<string>> scope, Func<string, OctopusResourceKind, int?> destinationOf)
+    public static IReadOnlyList<string> CanonicalScopes(Dictionary<string, List<string>> scope, string ownerProjectId, Func<string, OctopusResourceKind, int?> destinationOf)
     {
         ArgumentNullException.ThrowIfNull(destinationOf);
 
         var values = new List<string>();
 
-        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(scope, (sourceId, kind) => destinationOf(sourceId, kind) is > 0))
+        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(scope, ownerProjectId, (sourceId, kind) => destinationOf(sourceId, kind) is > 0))
         {
             if (resolution.Blocks) return null;
             if (resolution.Outcome == OctopusImportScopeOutcome.EmptyValue) continue;

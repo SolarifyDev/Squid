@@ -1324,7 +1324,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             null);
 
         var lifecyclePhase = Node(
-            "LifecyclePhases-1",
+            "Lifecycles-1/phase/LifecyclePhases-1",
             OctopusResourceKind.LifecyclePhase,
             OctopusDocumentKind.Lifecycle,
             "Phase 1",
@@ -1392,7 +1392,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             null);
 
         var variableOne = Node(
-            "Variables-1",
+            "Projects-1/variable/Variables-1",
             OctopusResourceKind.Variable,
             OctopusDocumentKind.VariableSet,
             "ApiKey",
@@ -1406,7 +1406,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             "VariableSets-1");
 
         var variableTwo = Node(
-            "Variables-2",
+            "Projects-1/variable/Variables-2",
             OctopusResourceKind.Variable,
             OctopusDocumentKind.VariableSet,
             "Region",
@@ -1450,7 +1450,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             "Projects-1");
 
         var deploymentAction = Node(
-            "Actions-1",
+            "Projects-1/action/Actions-1",
             OctopusResourceKind.DeploymentAction,
             OctopusDocumentKind.DeploymentProcess,
             "Run",
@@ -1469,10 +1469,10 @@ public partial class OctopusImportConfirmationOrchestratorTests
                     }
                 ]
             },
-            "Steps-1");
+            "Projects-1/step/Steps-1");
 
         var deploymentStep = Node(
-            "Steps-1",
+            "Projects-1/step/Steps-1",
             OctopusResourceKind.DeploymentStep,
             OctopusDocumentKind.DeploymentProcess,
             "Deploy",

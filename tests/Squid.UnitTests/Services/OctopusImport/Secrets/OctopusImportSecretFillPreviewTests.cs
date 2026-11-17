@@ -23,6 +23,8 @@ public class OctopusImportSecretFillPreviewTests
     private const string OtherVariableId = "c4b1e0f2-0000-4000-8000-000000000002";
     private const string ActionId = "c4b1e0f2-0000-4000-8000-0000000000a1";
     private const string Plaintext = "db-secret-plaintext";
+    private static readonly string VariableSourceId = OctopusImportScenario.VariableId("Projects-1", VariableId);
+    private static readonly string ActionSourceId = OctopusImportScenario.ActionId("Projects-1", ActionId);
     private const string Fingerprint = "0123456789ABCDEF0123456789ABCDEF";
     private const string OtherFingerprint = "FEDCBA9876543210FEDCBA9876543210";
     private const int VariableSetDestination = 601;
@@ -39,7 +41,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope)).PriorExportSource(Fingerprint).ExportedFromSpace(SuffixedSpace(Fingerprint)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
-        var variable = plan.Resource(VariableId);
+        var variable = plan.Resource(VariableSourceId);
 
         plan.BlocksConfirmation.ShouldBeFalse(string.Join("; ", plan.Blockers.Select(b => $"{b.Code}:{b.Message}")));
         variable.PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret);
@@ -72,7 +74,7 @@ public class OctopusImportSecretFillPreviewTests
             scenario.SquidSensitiveVariable(9001 + i, VariableSetDestination, "Db.Password", hasValue, (VariableScopeType.Environment, "301"));
 
         var plan = await scenario.PlanAsync(FileSecrets);
-        var variable = plan.Resource(VariableId);
+        var variable = plan.Resource(VariableSourceId);
 
         plan.BlocksConfirmation.ShouldBeFalse();
         variable.PreviewAction.ShouldBe(squidVariables == 0 ? OctopusImportPreviewAction.Skip : OctopusImportPreviewAction.AlreadyImported, "a variable Squid no longer holds is not counted as already in Squid");
@@ -86,7 +88,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ProvenFile(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "302")).PlanAsync(FileSecrets);
 
-        plan.Resource(VariableId).ShouldSatisfyAllConditions(
+        plan.Resource(VariableSourceId).ShouldSatisfyAllConditions(
             v => v.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported),
             v => v.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillTargetGone));
     }
@@ -108,7 +110,7 @@ public class OctopusImportSecretFillPreviewTests
         };
 
         var plan = await scenario.SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(secrets);
-        var resource = plan.Resource(VariableId);
+        var resource = plan.Resource(VariableSourceId);
 
         resource.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
         resource.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretStillMissing);
@@ -121,7 +123,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ProvenFile(OctopusImportScenario.Secret(VariableId, "Db.Password", null, TestScope)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
-        var variable = plan.Resource(VariableId);
+        var variable = plan.Resource(VariableSourceId);
 
         variable.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
         variable.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretEmptyInOctopus);
@@ -139,7 +141,7 @@ public class OctopusImportSecretFillPreviewTests
             .SquidSensitiveVariable(9002, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301"))
             .PlanAsync(FileSecrets);
 
-        foreach (var id in new[] { VariableId, OtherVariableId })
+        foreach (var id in new[] { VariableId, OtherVariableId }.Select(id => OctopusImportScenario.VariableId("Projects-1", id)))
         {
             plan.Resource(id).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
             plan.Resource(id).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillAmbiguous);
@@ -156,8 +158,8 @@ public class OctopusImportSecretFillPreviewTests
 
         var plan = await scenario.SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
-        plan.Resource(VariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
-        plan.Resource(VariableId).Diagnostics.ShouldBeEmpty();
+        plan.Resource(VariableSourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
+        plan.Resource(VariableSourceId).Diagnostics.ShouldBeEmpty();
         plan.Preview.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillsSummary);
     }
 
@@ -168,8 +170,8 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: false).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets, pairingConfirmed: true);
 
-        plan.Resource(VariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
-        plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableId && d.Message.Contains("nothing proves"));
+        plan.Resource(VariableSourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported);
+        plan.Blockers.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableSourceId && d.Message.Contains("nothing proves"));
         plan.Preview.FillPairing.ShouldBeNull("nothing to confirm: no ids match");
         plan.Preview.HasBlockers.ShouldBeTrue("the preview itself shows the refusal as a blocker");
         plan.Preview.Summary.Counts.Incremental.ShouldBe(0, "a refused fill writes nothing");
@@ -188,7 +190,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: structureRecorded).PriorExportSource(Fingerprint).ExportedFromSpace(SuffixedSpace(OtherFingerprint)).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets, pairingConfirmed: confirmed);
 
-        plan.Resource(VariableId).PreviewAction.ShouldBe(expectedAction);
+        plan.Resource(VariableSourceId).PreviewAction.ShouldBe(expectedAction);
         plan.BlocksConfirmation.ShouldBe(expectBlocked, string.Join("; ", plan.Blockers.Select(b => b.Code)));
         plan.Preview.FillPairing?.FileExportSourceId.ShouldBe(OtherFingerprint);
         (plan.Preview.FillPairing != null).ShouldBe(structureRecorded);
@@ -201,7 +203,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var unconfirmed = await PairingScenario().PlanAsync(FileSecrets);
 
-        unconfirmed.Resource(VariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret);
+        unconfirmed.Resource(VariableSourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret);
         unconfirmed.Preview.HasBlockers.ShouldBeFalse("the preview asks; validation enforces");
         unconfirmed.Preview.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillPairingRequired && d.Severity == OctopusImportCompatibilitySeverity.Warning && d.Message.Contains("installation-a"));
         unconfirmed.Preview.FillPairing.ShouldNotBeNull();
@@ -224,7 +226,7 @@ public class OctopusImportSecretFillPreviewTests
     public async Task StructureIdsOnlyReused_NotEvidence()
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: false)
-            .PriorRow(nameof(OctopusResourceKind.DeploymentAction), ActionId, 701, OctopusImportSourceMapQueries.ReusedOutcome)
+            .PriorRow(nameof(OctopusResourceKind.DeploymentAction), ActionSourceId, 701, OctopusImportSourceMapQueries.ReusedOutcome)
             .SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301"))
             .PlanAsync(FileSecrets);
 
@@ -239,7 +241,7 @@ public class OctopusImportSecretFillPreviewTests
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), structureRecorded: false).SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", true, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
         plan.Blockers.Select(b => b.Code).Distinct().ShouldBe([OctopusImportPreviewDiagnosticCodes.ImportOriginUnproven]);
-        plan.Resource(VariableId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
+        plan.Resource(VariableSourceId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
     }
 
     // ── Where it lands ─────────────────────────────────────────────────────
@@ -257,7 +259,7 @@ public class OctopusImportSecretFillPreviewTests
             .SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", setInSquid, (VariableScopeType.Environment, "301"))
             .PlanAsync(FileSecrets);
 
-        var variable = plan.Resource(VariableId);
+        var variable = plan.Resource(VariableSourceId);
         var code = setInSquid ? OctopusImportPreviewDiagnosticCodes.SecretSetInSquid : OctopusImportPreviewDiagnosticCodes.SecretFillFromExport;
 
         variable.FillDestination.ShouldNotBeNull().ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(expectedKind), d => d.OwnerId.ShouldBe(501), d => d.OwnerName.ShouldBe("Web"), d => d.VariableSetId.ShouldBe(VariableSetDestination));
@@ -293,7 +295,7 @@ public class OctopusImportSecretFillPreviewTests
     {
         var plan = await ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), missingOutcome: null).ExistingVariableSetOwner(OctopusResourceKind.Project, 501, "Web", VariableSetDestination).PlanAsync(FileSecrets);
 
-        plan.Resource(VariableId).FillDestination.ShouldBeNull();
+        plan.Resource(VariableSourceId).FillDestination.ShouldBeNull();
     }
 
     // The first pairing shows which Octopus server, space and version the space was imported from (what the user confirms).
@@ -327,10 +329,10 @@ public class OctopusImportSecretFillPreviewTests
         var scenario = ApiImportedSpace(OctopusImportScenario.Secret(VariableId, "Db.Password", OctopusImportScenario.Encrypt(Plaintext), TestScope), missingOutcome: null).PriorExportSource(Fingerprint).ExportedFromSpace(SuffixedSpace(Fingerprint));
         var plan = await scenario.SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301")).PlanAsync(FileSecrets);
 
-        plan.Resource(VariableId).PreviewAction = OctopusImportPreviewAction.FillMissingSecret;
+        plan.Resource(VariableSourceId).PreviewAction = OctopusImportPreviewAction.FillMissingSecret;
         var validation = new OctopusImportPreviewValidator(new OctopusExportSecretsAccessor { Secrets = FileSecrets }).Validate(plan.Graph, plan.DependencyPlan, plan.Conflicts, plan.Preview);
 
-        validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillNotBacked && d.SourceId == VariableId && d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+        validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillNotBacked && d.SourceId == VariableSourceId && d.Severity == OctopusImportCompatibilitySeverity.Blocker);
     }
 
     // ── Feeds ──────────────────────────────────────────────────────────────
@@ -380,7 +382,7 @@ public class OctopusImportSecretFillPreviewTests
             .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), VariableSetDestination)
             .PriorInstallation("installation-a");
 
-        if (structureRecorded) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, ActionId, 701);
+        if (structureRecorded) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, ActionSourceId, 701);
 
         if (missingOutcome != null)
             scenario.PriorRow(OctopusImportSourceMapQueries.VariableSecretSourceType, scenario.VariableSecretKey(OctopusImportScenario.ProjectVariableSetId("Projects-1"), "Db.Password", TestScope), VariableSetDestination, missingOutcome);

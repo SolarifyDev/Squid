@@ -69,7 +69,7 @@ public class OctopusImportDeploymentIntegrationTests : TestBase
                         .ToListAsync();
                     var actionMapping = result.Result.IdMappings.Single(mapping =>
                         mapping.SourceType == OctopusResourceKind.DeploymentAction.ToString() &&
-                        mapping.SourceId == "Actions-1");
+                        mapping.SourceId == "Projects-1/action/Actions-1");
                     var processMapping = result.Result.IdMappings.Single(mapping =>
                         mapping.SourceType == OctopusResourceKind.DeploymentProcess.ToString() &&
                         mapping.SourceId == "deploymentprocess-Projects-1");

@@ -21,6 +21,10 @@ public partial class OctopusImportFromServerIntegrationTests
     private const string SecretFeedId = OctopusWithheldSecretResources.SecretFeedId;
     private const string SecretLibraryId = OctopusWithheldSecretResources.SecretLibraryId;
 
+    // The graph (and preview) name a variable by its owner: the project's or the library variable set's id, then its Octopus id.
+    private const string SecretVariableSourceId = "Projects-1/variable/" + SecretVariableId;
+    private const string LibrarySecretVariableSourceId = SecretLibraryId + "/variable/" + LibrarySecretVariableId;
+
     [Fact]
     public async Task WithheldSecrets_ServerImportCommits_ListsThemAndRecordsFillableOnesMissing_RepeatImportChangesNothing()
     {

@@ -35,9 +35,9 @@ public sealed class ActionInserter(IOctopusImportDeploymentProcessMapper process
 
     private static OctopusImportDeploymentActionModelMapping FindAction(OctopusImportDeploymentProcessMappingResult mapping, OctopusResourceNode process, string stepSourceId, string actionSourceId)
     {
-        var step = mapping.Steps.Single(s => OctopusResourceGraphBuilder.BuildChildSourceId(process.SourceId, "step", s.SourceStepId, s.SourceIndex) == stepSourceId);
+        var step = mapping.Steps.Single(s => OctopusImportChildSourceIds.Step(process, s.SourceStepId, s.SourceIndex) == stepSourceId);
 
-        return step.Actions.SingleOrDefault(a => OctopusResourceGraphBuilder.BuildChildSourceId(stepSourceId, "action", a.SourceActionId, a.ActionIndex) == actionSourceId);
+        return step.Actions.SingleOrDefault(a => OctopusImportChildSourceIds.Action(process, stepSourceId, a.SourceActionId, a.ActionIndex) == actionSourceId);
     }
 
     // Every step and action id of the process except the action's own.
@@ -46,7 +46,7 @@ public sealed class ActionInserter(IOctopusImportDeploymentProcessMapper process
         var steps = process.GetSource<OctopusDeploymentProcessDto>()?.Steps ?? [];
         var own = new[] { action.SourceId, action.GetSource<OctopusDeploymentActionDto>()?.Id };
 
-        return steps.SelectMany((step, index) => OctopusImportSiblingDiagnostics.StepIds(step, OctopusResourceGraphBuilder.BuildChildSourceId(process.SourceId, "step", step.Id, index)))
+        return steps.SelectMany((step, index) => OctopusImportSiblingDiagnostics.StepIds(step, OctopusImportChildSourceIds.Step(process, step.Id, index), process.OwnerProjectId))
             .Except(own.Where(id => id != null), StringComparer.OrdinalIgnoreCase)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }

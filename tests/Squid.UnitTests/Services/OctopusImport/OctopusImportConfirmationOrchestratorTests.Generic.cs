@@ -22,7 +22,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         string[] phaseNames = ["Dev", "Test", "Prod"];
         var phaseDtos = phaseIds.Zip(phaseNames, (id, name) => new OctopusLifecyclePhaseDto { Id = id, Name = name }).ToList();
         var lifecycle = Node("Lifecycles-9", OctopusResourceKind.Lifecycle, OctopusDocumentKind.Lifecycle, "Three phases", new OctopusLifecycleDto { Id = "Lifecycles-9", Name = "Three phases", Slug = "three-phases", Phases = phaseDtos }, null);
-        var phases = phaseDtos.Select((p, i) => Node(OctopusResourceGraphBuilder.BuildChildSourceId(lifecycle.SourceId, "phase", p.Id, i), OctopusResourceKind.LifecyclePhase, OctopusDocumentKind.Lifecycle, p.Name, p, lifecycle.SourceId)).ToList();
+        var phases = phaseDtos.Select((p, i) => Node(OctopusImportChildSourceIds.Qualify(lifecycle.SourceId, lifecycle.SourceId, OctopusImportChildSourceIds.PhaseToken, p.Id, i), OctopusResourceKind.LifecyclePhase, OctopusDocumentKind.Lifecycle, p.Name, p, lifecycle.SourceId)).ToList();
         var ordered = new List<OctopusResourceNode> { lifecycle };
         ordered.AddRange(phases.OrderBy(p => p.SourceId, StringComparer.OrdinalIgnoreCase));
         var harness = CreateHarness(nodes, BuildDependencyPlan(ordered), Plan(ordered.Select(n => (n, OctopusImportPreviewAction.Create, (int?)null)).ToArray()), true, false, false);

@@ -112,7 +112,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         {
             var variable = node.GetSource<OctopusVariableDto>();
             (variable.Type, variable.IsSensitive, variable.Value) = ("Sensitive", true, OctopusExportTestCipher.Encrypt($"{node.SourceId}-secret", FillPassword));
-            rows.Add((OctopusImportSourceMapQueries.VariableSecretSourceType, OctopusImportSecretKeys.ForVariable(nodes.VariableSet.SourceId, variable, (_, _) => null), 1002, OctopusImportSourceMapQueries.MissingOutcome));
+            rows.Add((OctopusImportSourceMapQueries.VariableSecretSourceType, OctopusImportSecretKeys.ForVariable(nodes.VariableSet.SourceId, nodes.VariableSet.OwnerProjectId, variable, (_, _) => null), 1002, OctopusImportSourceMapQueries.MissingOutcome));
         }
 
         var variables = new Mock<IVariableService>();

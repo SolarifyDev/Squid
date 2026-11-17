@@ -28,7 +28,7 @@ public partial class OctopusImportFromServerIntegrationTests
         recorded.Count.ShouldBe(3);
 
         foreach (var (id, name) in phases)
-            recorded[id].ShouldBe(name, $"Octopus phase {name} ({id}) is recorded against the wrong Squid phase");
+            recorded[$"Lifecycles-1/phase/{id}"].ShouldBe(name, $"Octopus phase {name} ({id}) is recorded against the wrong Squid phase");
     }
 
     // "ProcessOwner": ["Projects-1"] is how Octopus 2019.11+ scopes a variable to the project's deployment process. It imports as the

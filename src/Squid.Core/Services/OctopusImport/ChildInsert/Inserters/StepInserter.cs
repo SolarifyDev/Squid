@@ -31,19 +31,19 @@ public sealed class StepInserter(IOctopusImportDeploymentProcessMapper processMa
 
         var created = await stepService.InsertDeploymentStepAsync(step.CreateCommand, insert.Order, ct).ConfigureAwait(false);
 
-        return new OctopusImportInsertedChild(created.Data.Id, diagnostics, Followers(insert.Resource.SourceId, step, created.Data));
+        return new OctopusImportInsertedChild(created.Data.Id, diagnostics, Followers(process, insert.Resource.SourceId, step, created.Data));
     }
 
     private static string StepSourceId(OctopusResourceNode process, OctopusImportDeploymentStepCommandMapping step)
-        => OctopusResourceGraphBuilder.BuildChildSourceId(process.SourceId, "step", step.SourceStepId, step.SourceIndex);
+        => OctopusImportChildSourceIds.Step(process, step.SourceStepId, step.SourceIndex);
 
     // The actions written with the step, by the Octopus source id the graph gives them.
-    private static Dictionary<string, int> Followers(string stepSourceId, OctopusImportDeploymentStepCommandMapping step, DeploymentStepDto created)
+    private static Dictionary<string, int> Followers(OctopusResourceNode process, string stepSourceId, OctopusImportDeploymentStepCommandMapping step, DeploymentStepDto created)
     {
         var actions = step.Actions.OrderBy(a => a.ActionIndex).ToList();
         var written = created.Actions.OrderBy(a => a.ActionOrder).ToList();
 
-        return actions.Zip(written).ToDictionary(pair => OctopusResourceGraphBuilder.BuildChildSourceId(stepSourceId, "action", pair.First.SourceActionId, pair.First.ActionIndex), pair => pair.Second.Id, StringComparer.OrdinalIgnoreCase);
+        return actions.Zip(written).ToDictionary(pair => OctopusImportChildSourceIds.Action(process, stepSourceId, pair.First.SourceActionId, pair.First.ActionIndex), pair => pair.Second.Id, StringComparer.OrdinalIgnoreCase);
     }
 
     // The source ids of every other step of the process and of their actions.
@@ -51,9 +51,9 @@ public sealed class StepInserter(IOctopusImportDeploymentProcessMapper processMa
     {
         var steps = process.GetSource<OctopusDeploymentProcessDto>()?.Steps ?? [];
 
-        return steps.Select((step, index) => (Step: step, Id: OctopusResourceGraphBuilder.BuildChildSourceId(process.SourceId, "step", step.Id, index)))
+        return steps.Select((step, index) => (Step: step, Id: OctopusImportChildSourceIds.Step(process, step.Id, index)))
             .Where(s => !string.Equals(s.Id, stepSourceId, StringComparison.OrdinalIgnoreCase))
-            .SelectMany(s => OctopusImportSiblingDiagnostics.StepIds(s.Step, s.Id))
+            .SelectMany(s => OctopusImportSiblingDiagnostics.StepIds(s.Step, s.Id, process.OwnerProjectId))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 }

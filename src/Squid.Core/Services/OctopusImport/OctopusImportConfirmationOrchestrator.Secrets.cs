@@ -57,7 +57,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     private static bool IsCreated(ConfirmationExecutionContext execution, OctopusResourceNode resource) => execution.OutcomeOf(resource.SourceId) == OctopusImportResourceOutcomeState.Created;
 
     private static string VariableSecretKey(ConfirmationExecutionContext execution, OctopusResourceNode variable)
-        => OctopusImportSecretKeys.ForVariable(variable.ParentSourceId, variable.GetSource<OctopusVariableDto>(), (sourceId, kind) => execution.IdMap.TryGetDestinationId(sourceId, kind.ToString(), out var id) ? id : null);
+        => OctopusImportSecretKeys.ForVariable(variable.ParentSourceId, variable.OwnerProjectId, variable.GetSource<OctopusVariableDto>(), (sourceId, kind) => execution.IdMap.TryGetDestinationId(sourceId, kind.ToString(), out var id) ? id : null);
 
     // ── Missing secrets listed in the result ────────────────────────────────
 

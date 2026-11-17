@@ -32,7 +32,7 @@ public partial class OctopusImportFromServerIntegrationTests
         var (sessionId, preview) = await UploadAndPreviewAsync(archive);
 
         preview.HasBlockers.ShouldBeFalse(Describe(preview));
-        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).Select(r => r.SourceId).ShouldBe([SecretVariableId, LibrarySecretVariableId, SecretFeedId], ignoreOrder: true, customMessage: Describe(preview));
+        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).Select(r => r.SourceId).ShouldBe([SecretVariableSourceId, LibrarySecretVariableSourceId, SecretFeedId], ignoreOrder: true, customMessage: Describe(preview));
         preview.FillPairing.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.Required.ShouldBeTrue(), p => p.InstallationId.ShouldBe(StubOctopusServer.InstallationId, StringCompareShould.IgnoreCase), p => p.MatchingStructureIds.ShouldBe(2), p => p.FileExportSourceId.ShouldBe(FileFingerprint));
         preview.FillPairing.ShouldSatisfyAllConditions("the pairing names the server, space and version the API import read", p => p.ServerHost.ShouldBe(octopus.BaseUri.Authority), p => p.OctopusSpaceId.ShouldBe("Spaces-1"), p => p.OctopusVersion.ShouldNotBeNullOrWhiteSpace());
         await ShouldNameTheOwnersAsync(preview);
@@ -80,7 +80,7 @@ public partial class OctopusImportFromServerIntegrationTests
         (await SingleAsync<ExternalFeed>()).ShouldSatisfyAllConditions(f => f.Username.ShouldBe("user-robot"), f => f.Password.ShouldBe("user-token"));
         (await DecryptedAsync("Smtp.Password")).ShouldBe("smtp-secret");
         (await SecretRowsAsync()).Select(r => (r.SourceType, r.OutcomeState)).Order().ShouldBe([("FeedSecret", "Superseded"), ("VariableSecret", "Filled"), ("VariableSecret", "Superseded")]);
-        result.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
+        result.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableSourceId).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretSetInSquid);
     }
 
     // A feed whose username is empty in Squid: the fill writes the file's username too, and the preview lists it (old → new) next to
@@ -128,7 +128,7 @@ public partial class OctopusImportFromServerIntegrationTests
         var result = await ImportFromFileAsync(SameInstallationExport(FileFingerprint, emptyValue), confirmPairing: true);
 
         ShouldHaveSucceeded(result);
-        result.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableId).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported), r => r.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretEmptyInOctopus));
+        result.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableSourceId).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported), r => r.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretEmptyInOctopus));
         (await VariableAsync("Db.Password")).Value.ShouldBeNullOrEmpty();
         (await SecretRowsAsync()).Where(r => r.SourceType == "VariableSecret").Select(r => r.OutcomeState).ShouldAllBe(o => o == OctopusImportSourceMapQueries.FilledOutcome);
 
@@ -173,7 +173,7 @@ public partial class OctopusImportFromServerIntegrationTests
         preview.HasBlockers.ShouldBeFalse(Describe(preview));
         preview.FillPairing.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.Required.ShouldBeTrue(), p => p.FileExportSourceId.ShouldBe(OtherFileFingerprint), p => p.RecordedExportSourceId.ShouldBe(FileFingerprint), p => p.MatchingStructureIds.ShouldBe(2));
         preview.Origin.ShouldNotBeNull().ShouldSatisfyAllConditions(o => o.State.ShouldBe(OctopusImportFillEvidenceState.PairingRequired), o => o.Basis.ShouldBe("export-fingerprint-mismatch"));
-        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).Select(r => r.SourceId).ShouldBe([LibrarySecretVariableId], Describe(preview));
+        preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).Select(r => r.SourceId).ShouldBe([LibrarySecretVariableSourceId], Describe(preview));
         (await ValidateAsync(sessionId, preview)).Code.ShouldNotBe(HttpStatusCode.OK, "another fingerprint is never assumed to be the same server");
         (await DecryptedAsync("Smtp.Password")).ShouldBeNullOrEmpty();
 
@@ -376,10 +376,10 @@ public partial class OctopusImportFromServerIntegrationTests
         var feed = await SingleAsync<ExternalFeed>();
         var fills = preview.Resources.Where(r => r.PreviewAction == OctopusImportPreviewAction.FillMissingSecret).ToDictionary(r => r.SourceId);
 
-        fills[SecretVariableId].FillDestination.ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.ProjectOwner), d => d.OwnerId.ShouldBe(project.Id), d => d.OwnerName.ShouldBe(project.Name), d => d.VariableSetId.ShouldBe(project.VariableSetId));
-        fills[LibrarySecretVariableId].FillDestination.ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.LibraryVariableSetOwner), d => d.OwnerId.ShouldBe(library.Id), d => d.OwnerName.ShouldBe(library.Name));
+        fills[SecretVariableSourceId].FillDestination.ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.ProjectOwner), d => d.OwnerId.ShouldBe(project.Id), d => d.OwnerName.ShouldBe(project.Name), d => d.VariableSetId.ShouldBe(project.VariableSetId));
+        fills[LibrarySecretVariableSourceId].FillDestination.ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.LibraryVariableSetOwner), d => d.OwnerId.ShouldBe(library.Id), d => d.OwnerName.ShouldBe(library.Name));
         fills[SecretFeedId].FillDestination.ShouldSatisfyAllConditions(d => d.OwnerKind.ShouldBe(OctopusImportFillDestinationDto.FeedOwner), d => d.OwnerId.ShouldBe(feed.Id));
-        fills[SecretVariableId].Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillFromExport && d.Message.Contains($"Squid project \"{project.Name}\" (project {project.Id}"));
+        fills[SecretVariableSourceId].Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillFromExport && d.Message.Contains($"Squid project \"{project.Name}\" (project {project.Id}"));
     }
 
     // The space's own rows (installation, export fingerprint) are live only while the space exists: create it as production has it.

@@ -37,7 +37,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
 
         var row = rows.ShouldHaveSingleItem();
         row.SourceType.ShouldBe(OctopusImportSourceMapQueries.VariableSecretSourceType);
-        row.SourceId.ShouldBe(OctopusImportSecretKeys.ForVariable("VariableSets-1", nodes.VariableOne.GetSource<OctopusVariableDto>(), (_, _) => null));
+        row.SourceId.ShouldBe(OctopusImportSecretKeys.ForVariable("VariableSets-1", nodes.VariableOne.OwnerProjectId, nodes.VariableOne.GetSource<OctopusVariableDto>(), (_, _) => null));
         row.DestinationId.ShouldBe(1002, customMessage: "the row points at the Squid variable set, which survives every save; variable ids do not");
         row.OutcomeState.ShouldBe(OctopusImportSourceMapQueries.MissingOutcome);
 

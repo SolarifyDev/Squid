@@ -95,11 +95,11 @@ public class OctopusImportProjectSelectionPreviewTests
     public async Task UnchosenProjectsMissingSecret_NotFilled()
     {
         var scenario = ImportedSpaceMissingASecret().ProjectOnLifecycle("Projects-9", "New", "Lifecycles-9").Lifecycle("Lifecycles-9", "New", "Environments-1");
-        (await scenario.PlanAsync(FileSecrets)).Resource(SecretId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret);
+        (await scenario.PlanAsync(FileSecrets)).Resource(VariableId(Web, SecretId)).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret);
 
         var plan = await scenario.PlanAsync(FileSecrets, chosenProjectIds: ["Projects-9"]);
 
-        plan.Resource(SecretId).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
+        plan.Resource(VariableId(Web, SecretId)).PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip);
         plan.Preview.Summary.Counts.Fill.ShouldBe(0);
     }
 
@@ -108,11 +108,11 @@ public class OctopusImportProjectSelectionPreviewTests
     public async Task UnchosenProjectsMissingSecret_NoFillEvidenceDemanded()
     {
         var scenario = ImportedSpaceMissingASecret(structureRecorded: false).ExportedFromSpace($"Spaces-1-{OtherFingerprint}").ProjectOnLifecycle("Projects-9", "New", "Lifecycles-9").Lifecycle("Lifecycles-9", "New", "Environments-1");
-        (await scenario.PlanAsync(FileSecrets, pairingConfirmed: true)).Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == SecretId);
+        (await scenario.PlanAsync(FileSecrets, pairingConfirmed: true)).Validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableId(Web, SecretId));
 
         var plan = await scenario.PlanAsync(FileSecrets, pairingConfirmed: true, chosenProjectIds: ["Projects-9"]);
 
-        plan.Validation.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == SecretId);
+        plan.Validation.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.SecretFillInstallationUnproven && d.SourceId == VariableId(Web, SecretId));
     }
 
     [Fact]
@@ -291,7 +291,7 @@ public class OctopusImportProjectSelectionPreviewTests
             .ExportedFromSpace($"Spaces-1-{Fingerprint}")
             .SquidSensitiveVariable(9001, VariableSetDestination, "Db.Password", false, (VariableScopeType.Environment, "301"));
 
-        if (structureRecorded) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, SecretActionId, 701);
+        if (structureRecorded) scenario.ExistingMapping(OctopusResourceKind.DeploymentAction, ActionId(Web, SecretActionId), 701);
 
         return scenario.PriorRow(Squid.Core.Services.OctopusImport.SourceMap.OctopusImportSourceMapQueries.VariableSecretSourceType, scenario.VariableSecretKey(ProjectVariableSetId(Web), "Db.Password", scope), VariableSetDestination, Squid.Core.Services.OctopusImport.SourceMap.OctopusImportSourceMapQueries.MissingOutcome);
     }

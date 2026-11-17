@@ -90,7 +90,7 @@ public partial class OctopusImportPreviewPlanner
     {
         if (OctopusImportVariableMapper.SquidVariableType(variable) == null) return OctopusImportVariableMapper.UnsupportedVariableTypeMessage(variable);
 
-        var scope = OctopusImportVariableScopeRule.ResolveAll(variable.Scope, (sourceId, kind) => context.Resolves(kind, sourceId) && OctopusImportVariableScopeRule.IsImportedBefore(kind, OctopusResourceKind.LibraryVariableSet)).FirstOrDefault(r => r.Blocks);
+        var scope = OctopusImportVariableScopeRule.ResolveAll(variable.Scope, null, (sourceId, kind) => context.Resolves(kind, sourceId) && OctopusImportVariableScopeRule.IsImportedBefore(kind, OctopusResourceKind.LibraryVariableSet)).FirstOrDefault(r => r.Blocks);
 
         return scope == null ? null : $"Octopus variable '{variable.Name}' is scoped to {scope.ScopeKey} '{scope.ScopeValue}', which Squid cannot represent for this import.";
     }

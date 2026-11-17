@@ -563,9 +563,9 @@ public class OctopusImportPreviewPlannerTests
             .ExistingMapping(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"), 501)
             .PlanAsync();
 
-        result.Resource("Variables-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, customMessage: "a variable added under an imported variable set is written only when the user ticks it");
-        result.Resource("Variables-new").DestinationId.ShouldBeNull();
-        result.Resource("Variables-new").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus);
+        result.Resource("Projects-1/variable/Variables-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.Skip, customMessage: "a variable added under an imported variable set is written only when the user ticks it");
+        result.Resource("Projects-1/variable/Variables-new").DestinationId.ShouldBeNull();
+        result.Resource("Projects-1/variable/Variables-new").SkipReason.Code.ShouldBe(OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus);
         result.Resource("Channels-new").PreviewAction.ShouldBe(OctopusImportPreviewAction.Create, customMessage: "a channel added in Octopus later is created under the existing project");
         result.BlocksConfirmation.ShouldBeFalse(customMessage: Blockers(result));
     }
@@ -583,9 +583,9 @@ public class OctopusImportPreviewPlannerTests
             .SquidSensitiveVariable(9001, 501, squidName, true)
             .PlanAsync();
 
-        result.Resource("Variables-1").PreviewAction.ShouldBe(expected);
-        result.Resource("Variables-1").Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus).ShouldBe(expected == OctopusImportPreviewAction.Skip);
-        (result.Resource("Variables-1").Choice != null).ShouldBe(expected == OctopusImportPreviewAction.Skip, "a variable Squid still holds by name is never offered");
+        result.Resource("Projects-1/variable/Variables-1").PreviewAction.ShouldBe(expected);
+        result.Resource("Projects-1/variable/Variables-1").Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.ChildAddedInOctopus).ShouldBe(expected == OctopusImportPreviewAction.Skip);
+        (result.Resource("Projects-1/variable/Variables-1").Choice != null).ShouldBe(expected == OctopusImportPreviewAction.Skip, "a variable Squid still holds by name is never offered");
     }
 
     [Fact]

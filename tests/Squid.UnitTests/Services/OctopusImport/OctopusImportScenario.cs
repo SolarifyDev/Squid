@@ -157,6 +157,18 @@ internal sealed class OctopusImportScenario
         return AddRest(OctopusResourceKind.DeploymentProcess, "DeploymentProcess", new { Id = $"deploymentprocess-{id}", ProjectId = id, Steps = steps });
     }
 
+    /// <summary>A variable's graph source id: qualified by its owner (project or library variable set).</summary>
+    public static string VariableId(string ownerId, string variableId) => $"{ownerId}/variable/{variableId}";
+
+    /// <summary>A step's graph source id: qualified by its project.</summary>
+    public static string StepId(string projectId, string stepId) => $"{projectId}/step/{stepId}";
+
+    /// <summary>An action's graph source id: qualified by its project.</summary>
+    public static string ActionId(string projectId, string actionId) => $"{projectId}/action/{actionId}";
+
+    /// <summary>A lifecycle phase's graph source id: qualified by its lifecycle.</summary>
+    public static string PhaseId(string lifecycleId, string phaseId) => $"{lifecycleId}/phase/{phaseId}";
+
     /// <summary>A sensitive variable as the Octopus API returns it: no value, IsSensitive and Type Sensitive.</summary>
     public static object RestSecret(string id, string name, Dictionary<string, string[]> scope = null)
         => new { Id = id, Name = name, Value = (string)null, Type = "Sensitive", IsSensitive = true, IsEditable = true, Prompt = (object)null, Scope = scope ?? new Dictionary<string, string[]>() };
@@ -327,8 +339,8 @@ internal sealed class OctopusImportScenario
     }
 
     /// <summary>The <c>VariableSecret</c> row key of a sensitive variable, as the import that left it missing recorded it (scopes through the prior rows).</summary>
-    public string VariableSecretKey(string ownerSetSourceId, string name, Dictionary<string, string[]> scope = null)
-        => OctopusImportSecretKeys.ForVariable(ownerSetSourceId, new OctopusVariableDto { Name = name, Type = "Sensitive", IsSensitive = true, Scope = (scope ?? []).ToDictionary(kv => kv.Key, kv => kv.Value.ToList()) }, (id, kind) => _prior.TryGetValue((kind.ToString(), id), out var row) ? row.DestinationId : null);
+    public string VariableSecretKey(string ownerSetSourceId, string name, Dictionary<string, string[]> scope = null, string ownerProjectId = null)
+        => OctopusImportSecretKeys.ForVariable(ownerSetSourceId, ownerProjectId, new OctopusVariableDto { Name = name, Type = "Sensitive", IsSensitive = true, Scope = (scope ?? []).ToDictionary(kv => kv.Key, kv => kv.Value.ToList()) }, (id, kind) => _prior.TryGetValue((kind.ToString(), id), out var row) ? row.DestinationId : null);
 
     /// <summary>A sensitive variable as Squid holds it now (the value itself is never read, only whether there is one).</summary>
     public OctopusImportScenario SquidSensitiveVariable(int variableId, int variableSetId, string name, bool hasValue, params (VariableScopeType Type, string Value)[] scopes)

@@ -12,7 +12,7 @@ namespace Squid.UnitTests.Services.OctopusImport;
 /// </summary>
 public class OctopusImportPreviewValidatorChoicesTests
 {
-    private const string AddedStep = "Projects-1-step-2";
+    private const string AddedStep = "Projects-1/step/Projects-1-step-2";
 
     [Fact]
     public async Task UnchangedSquid_SelectedPlan_Accepted()
@@ -72,7 +72,7 @@ public class OctopusImportPreviewValidatorChoicesTests
         var scenario = await StepScenarioAsync(deleted: true);
         var preview = (await scenario.PlanAsync()).Preview;
         var step = preview.Resources.Single(r => r.SourceId == AddedStep);
-        var imported = preview.Resources.Single(r => r.SourceId == "Projects-1-step-1");
+        var imported = preview.Resources.Single(r => r.SourceId == "Projects-1/step/Projects-1-step-1");
 
         if (forgery == "action") step.PreviewAction = OctopusImportPreviewAction.Create;
         if (forgery == "reason") step.Choice.Reason = OctopusImportChoiceReason.AddedInOctopus;
@@ -98,7 +98,7 @@ public class OctopusImportPreviewValidatorChoicesTests
         var server = await scenario.PlanAsync();
         var posted = (await scenario.PlanAsync()).Preview;
         var step = posted.Resources.Single(r => r.SourceId == AddedStep);
-        var imported = posted.Resources.Single(r => r.SourceId == "Projects-1-step-1");
+        var imported = posted.Resources.Single(r => r.SourceId == "Projects-1/step/Projects-1-step-1");
         var planner = new Mock<IOctopusImportPreviewPlanner>(MockBehavior.Strict);
 
         if (forgery == "action") step.PreviewAction = OctopusImportPreviewAction.Create;
@@ -135,9 +135,9 @@ public class OctopusImportPreviewValidatorChoicesTests
         var defaults = await scenario.PlanAsync();
         Select(defaults.Preview, "Channels-2", channelSelected);
 
-        var plan = await scenario.PlanAsync(selections: Select(defaults.Preview, "Variables-2", true));
+        var plan = await scenario.PlanAsync(selections: Select(defaults.Preview, "Projects-1/variable/Variables-2", true));
 
-        plan.Validation.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope && d.SourceId == "Variables-2").ShouldBe(expectBlocker);
+        plan.Validation.Diagnostics.Any(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope && d.SourceId == "Projects-1/variable/Variables-2").ShouldBe(expectBlocker);
     }
 
     // A selected step is checked like any written step: a feed it uses that the import cannot map blocks; the same step not selected does not.
@@ -152,7 +152,22 @@ public class OctopusImportPreviewValidatorChoicesTests
 
         var plan = await scenario.PlanAsync(selections: Select(defaults.Preview, AddedStep, selected));
 
-        plan.Validation.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.SourceId == "Actions-2").ShouldBe(expectBlocker, string.Join(Environment.NewLine, plan.Blockers.Select(b => $"{b.Code} {b.SourceId}")));
+        plan.Validation.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.SourceId == "Projects-1/action/Actions-2").ShouldBe(expectBlocker, string.Join(Environment.NewLine, plan.Blockers.Select(b => $"{b.Code} {b.SourceId}")));
+    }
+
+    // A plan without a row for a resource the import source holds (built before the source ids changed, or for another source) is refused
+    // at validation, before confirmation writes anything, instead of failing half-way through the import.
+    [Fact]
+    public async Task Validate_PlanMissingSelectedResource_StaleBlocker()
+    {
+        var plan = await Web(withAddedStep: true).PlanAsync();
+        var posted = plan.Preview;
+        posted.Resources.RemoveAll(r => r.SourceId == "Projects-1/action/Actions-1" || r.SourceId == "Projects-1/step/Projects-1-step-1");
+
+        var validation = new OctopusImportPreviewValidator().Validate(plan.Graph, plan.DependencyPlan, plan.Conflicts, posted);
+
+        validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan && d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Message.StartsWith("2 resource(s)") && d.Message.Contains("Re-run the preview"));
+        plan.Validation.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan, "the plan the server built covers the source");
     }
 
     // ── Scenarios ──────────────────────────────────────────────────────────
@@ -162,7 +177,7 @@ public class OctopusImportPreviewValidatorChoicesTests
         var first = await Web(withAddedStep: deleted).PlanAsync();
         var scenario = Web(withAddedStep: true).ImportedAs(first);
 
-        return deleted ? scenario.DeletedInSquid(OctopusResourceKind.DeploymentStep, AddedStep).DeletedInSquid(OctopusResourceKind.DeploymentAction, "Actions-2") : scenario;
+        return deleted ? scenario.DeletedInSquid(OctopusResourceKind.DeploymentStep, AddedStep).DeletedInSquid(OctopusResourceKind.DeploymentAction, "Projects-1/action/Actions-2") : scenario;
     }
 
     private static async Task<OctopusImportPreviewPlanDto> SelectedStepPlanAsync()

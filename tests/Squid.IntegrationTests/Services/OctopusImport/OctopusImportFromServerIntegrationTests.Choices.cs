@@ -19,6 +19,8 @@ public partial class OctopusImportFromServerIntegrationTests
 {
     private const string AddedSecretId = "6a1d2c3b-0000-4000-8000-000000000002";
     private const string AddedPlainId = "6a1d2c3b-0000-4000-8000-000000000003";
+    private const string AddedSecretSourceId = "Projects-1/variable/" + AddedSecretId;
+    private const string AddedPlainSourceId = "Projects-1/variable/" + AddedPlainId;
 
     [Fact]
     public async Task SecretAddedInOctopus_Ticked_AddedEmpty_RecordedMissing_NextImportAlreadyImported()
@@ -28,7 +30,7 @@ public partial class OctopusImportFromServerIntegrationTests
         ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
         octopus.Resources["projects/Projects-1/variables"] = ProjectVariables(Greeting(), new Dictionary<string, object> { ["Id"] = AddedSecretId, ["Name"] = "Api.Key", ["Value"] = null, ["Type"] = "Sensitive", ["IsSensitive"] = true });
 
-        var ticked = await ImportWithChoicesAsync(octopus, plan => Tick(plan, AddedSecretId, true));
+        var ticked = await ImportWithChoicesAsync(octopus, plan => Tick(plan, AddedSecretSourceId, true));
 
         ShouldHaveSucceeded(ticked);
         (await Run<SquidDbContext, Variable>(db => db.Set<Variable>().AsNoTracking().SingleAsync(v => v.Name == "Api.Key"))).ShouldSatisfyAllConditions(v => v.IsSensitive.ShouldBeTrue(), v => string.IsNullOrEmpty(v.Value).ShouldBeTrue());
@@ -38,7 +40,7 @@ public partial class OctopusImportFromServerIntegrationTests
         var again = await ImportFromServerAsync(octopus);
 
         ShouldHaveSucceeded(again);
-        again.PreviewPlan.Resources.Single(r => r.SourceId == AddedSecretId).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(again.PreviewPlan)), r => r.Choice.ShouldBeNull());
+        again.PreviewPlan.Resources.Single(r => r.SourceId == AddedSecretSourceId).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(again.PreviewPlan)), r => r.Choice.ShouldBeNull());
     }
 
     // Filled from the file, then deleted in Squid, then added back empty by an API import the user ticked: the re-created variable is
@@ -54,7 +56,7 @@ public partial class OctopusImportFromServerIntegrationTests
         (await DbPasswordAsync()).ShouldBe(OctopusWithheldSecretResources.DbPassword);
         await SaveProjectVariableSetInSquidAsync(keepDbPassword: false);
 
-        var ticked = await ImportWithChoicesAsync(octopus, plan => Tick(plan, SecretVariableId, true));
+        var ticked = await ImportWithChoicesAsync(octopus, plan => Tick(plan, SecretVariableSourceId, true));
 
         ShouldHaveSucceeded(ticked);
         (await DbPasswordAsync()).ShouldBeNullOrEmpty("the API withholds the value, so the ticked variable is added empty");
@@ -64,7 +66,7 @@ public partial class OctopusImportFromServerIntegrationTests
         var file = await ImportFromAsync(FileSource, octopus, archive, interrupt: false);
 
         ShouldHaveSucceeded(file);
-        file.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret, Describe(file.PreviewPlan));
+        file.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableSourceId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret, Describe(file.PreviewPlan));
         (await DbPasswordAsync()).ShouldBe(OctopusWithheldSecretResources.DbPassword);
         (await VariableAsync(AddedInSquid)).Value.ShouldBe("user value");
     }
@@ -84,8 +86,8 @@ public partial class OctopusImportFromServerIntegrationTests
         var result = await Run<IMediator, OctopusImportFlowResult>(async mediator =>
         {
             var (sessionId, fetch, preview) = await PreviewFromServerAsync(mediator, octopus);
-            (await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, Posted(Tick(preview, AddedPlainId, first)))).Code.ShouldBe(HttpStatusCode.OK);
-            var revalidated = await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, Posted(Tick(preview, AddedPlainId, last)));
+            (await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, Posted(Tick(preview, AddedPlainSourceId, first)))).Code.ShouldBe(HttpStatusCode.OK);
+            var revalidated = await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, Posted(Tick(preview, AddedPlainSourceId, last)));
             revalidated.Code.ShouldBe(HttpStatusCode.OK);
             revalidated.Data.PreviewPlan.Summary.Choices.Single().Selected.ShouldBe(last ? 1 : 0, "the counts follow the selection");
 

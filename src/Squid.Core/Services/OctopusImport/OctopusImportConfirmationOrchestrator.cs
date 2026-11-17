@@ -864,7 +864,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                 .SendAsync<CreateDeploymentStepCommand, CreateDeploymentStepResponse>(stepMapping.CreateCommand, ct)
                 .ConfigureAwait(false);
 
-            var stepResource = execution.FindResource(stepMapping.SourceStepId, OctopusResourceKind.DeploymentStep);
+            var stepSourceId = OctopusImportChildSourceIds.Step(resource, stepMapping.SourceStepId, stepMapping.SourceIndex);
+            var stepResource = execution.FindResource(stepSourceId, OctopusResourceKind.DeploymentStep);
             if (stepResource != null)
                 execution.AddCreated(stepResource, response.Data.Id);
 
@@ -872,7 +873,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
             for (var i = 0; i < orderedActions.Count && i < response.Data.Actions.Count; i++)
             {
                 var actionMapping = orderedActions[i];
-                var actionResource = execution.FindResource(actionMapping.SourceActionId, OctopusResourceKind.DeploymentAction);
+                var actionResource = execution.FindResource(OctopusImportChildSourceIds.Action(resource, stepSourceId, actionMapping.SourceActionId, actionMapping.ActionIndex), OctopusResourceKind.DeploymentAction);
                 if (actionResource != null)
                     execution.AddCreated(actionResource, response.Data.Actions[i].Id);
             }

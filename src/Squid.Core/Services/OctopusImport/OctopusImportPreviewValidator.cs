@@ -80,6 +80,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
 
         var plan = new ValidationPlan(selectedResources, allCurrentResources, previewResources, conflicts.PriorMappings, dependencyPlan.ReferenceScope ?? OctopusImportReferenceScope.Everything);
 
+        ValidatePlanCoversSelection(selectedResources, previewResources, result);
         ValidateReferences(graph, plan, result);
         ValidateVariableScopes(plan, result);
         ValidateReleasePackageFeeds(graph, plan, result);
@@ -297,6 +298,22 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
     private static bool ClaimsProjectName(OctopusImportPreviewAction action)
         => OctopusImportPreviewActions.WritesDestination(action) || action == OctopusImportPreviewAction.ReuseExisting;
 
+    // Confirmation refuses a resource the plan has no row for, but only when it reaches it — after earlier resources were written. Checked
+    // here first, so a plan built before the source ids changed (or for another source) is refused before anything is written.
+    private static void ValidatePlanCoversSelection(IReadOnlyDictionary<string, OctopusResourceNode> selectedResources, IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources, OctopusImportValidationResultDto result)
+    {
+        var missing = selectedResources.Keys.Count(sourceId => !previewResources.ContainsKey(sourceId));
+
+        if (missing == 0) return;
+
+        result.Diagnostics.Add(new OctopusImportDiagnosticDto
+        {
+            Severity = OctopusImportCompatibilitySeverity.Blocker,
+            Code = OctopusImportPreviewDiagnosticCodes.StalePreviewPlan,
+            Message = $"{missing} resource(s) of the import source are not in this plan. Re-run the preview."
+        });
+    }
+
     // Predicts confirmation's scope mapping with the SAME rule the variable mapper uses: a scope target
     // resolves only if confirmation will have created or reused it before the variable set is written.
     private static void ValidateVariableScopes(ValidationPlan plan, OctopusImportValidationResultDto result)
@@ -306,7 +323,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
             var variable = resource.GetSource<OctopusVariableDto>();
             var writerKind = OctopusImportVariableScopeRule.WriterKind(plan.FindResource(resource.ParentSourceId)?.GetSource<OctopusVariableSetDto>());
 
-            foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable?.Scope, (sourceId, kind) => plan.IsImportedBefore(sourceId, kind, writerKind)).Where(r => r.Blocks))
+            foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable?.Scope, resource.OwnerProjectId, (sourceId, kind) => plan.IsImportedBefore(sourceId, kind, writerKind)).Where(r => r.Blocks))
                 AddReferenceDiagnostic(result, resource, OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope, UnmappableScopeMessage(variable, resolution));
         }
     }

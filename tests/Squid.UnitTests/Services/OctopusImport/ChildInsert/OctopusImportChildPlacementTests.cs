@@ -58,8 +58,24 @@ public class OctopusImportChildPlacementTests
     {
         var process = new OctopusResourceNode("deploymentprocess-Projects-1", "Process", OctopusResourceKind.DeploymentProcess, default, null, "Projects-1", "Projects-1", false, new OctopusDeploymentProcessDto { Id = "deploymentprocess-Projects-1", Steps = [new OctopusDeploymentStepDto { Id = "Steps-1" }, new OctopusDeploymentStepDto { Id = null }] });
 
-        OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.DeploymentStep, process).ShouldBe(["Steps-1", "deploymentprocess-Projects-1/step-2"]);
+        OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.DeploymentStep, process).ShouldBe(["Projects-1/step/Steps-1", "deploymentprocess-Projects-1/step-2"]);
         OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.Variable, process).ShouldBeEmpty("variables are always appended");
+    }
+
+    // A clone shares its step and action ids with the original: its siblings are named under the clone's own project (a step's actions
+    // by the step's project, a lifecycle's phases by the lifecycle), so a child is placed among its own owner's rows only.
+    [Theory]
+    [InlineData("Projects-1")]
+    [InlineData("Projects-2")]
+    public void OctopusSiblingIds_CloneSharingIds_QualifiedByItsOwnOwner(string projectId)
+    {
+        var process = new OctopusResourceNode($"deploymentprocess-{projectId}", "Process", OctopusResourceKind.DeploymentProcess, default, null, projectId, projectId, false, new OctopusDeploymentProcessDto { Id = $"deploymentprocess-{projectId}", Steps = [new OctopusDeploymentStepDto { Id = "S1" }] });
+        var step = new OctopusResourceNode($"{projectId}/step/S1", "Step", OctopusResourceKind.DeploymentStep, default, null, projectId, process.SourceId, false, new OctopusDeploymentStepDto { Id = "S1", Actions = [new OctopusDeploymentActionDto { Id = "A1" }, new OctopusDeploymentActionDto()] });
+        var lifecycle = new OctopusResourceNode("Lifecycles-1", "Lifecycle", OctopusResourceKind.Lifecycle, default, null, null, null, false, new OctopusLifecycleDto { Id = "Lifecycles-1", Phases = [new OctopusLifecyclePhaseDto { Id = "P1" }] });
+
+        OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.DeploymentStep, process).ShouldBe([$"{projectId}/step/S1"]);
+        OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.DeploymentAction, step).ShouldBe([$"{projectId}/action/A1", $"{projectId}/step/S1/action-2"]);
+        OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.LifecyclePhase, lifecycle).ShouldBe(["Lifecycles-1/phase/P1"]);
     }
 
     private static Dictionary<string, int> Held(string held)

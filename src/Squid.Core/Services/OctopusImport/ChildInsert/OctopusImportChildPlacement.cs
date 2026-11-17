@@ -28,14 +28,15 @@ public static class OctopusImportChildPlacement
     public static IReadOnlyList<string> OctopusSiblingIds(OctopusResourceKind childKind, OctopusResourceNode owner)
         => childKind switch
         {
-            OctopusResourceKind.DeploymentStep => ChildIds(owner?.SourceId, "step", owner?.GetSource<OctopusDeploymentProcessDto>()?.Steps?.Select(s => s.Id)),
-            OctopusResourceKind.DeploymentAction => ChildIds(owner?.SourceId, "action", owner?.GetSource<OctopusDeploymentStepDto>()?.Actions?.Select(a => a.Id)),
-            OctopusResourceKind.LifecyclePhase => ChildIds(owner?.SourceId, "phase", owner?.GetSource<OctopusLifecycleDto>()?.Phases?.Select(p => p.Id)),
+            OctopusResourceKind.DeploymentStep => ChildIds(owner?.OwnerProjectId, owner?.SourceId, OctopusImportChildSourceIds.StepToken, owner?.GetSource<OctopusDeploymentProcessDto>()?.Steps?.Select(s => s.Id)),
+            OctopusResourceKind.DeploymentAction => ChildIds(owner?.OwnerProjectId, owner?.SourceId, OctopusImportChildSourceIds.ActionToken, owner?.GetSource<OctopusDeploymentStepDto>()?.Actions?.Select(a => a.Id)),
+            OctopusResourceKind.LifecyclePhase => ChildIds(owner?.SourceId, owner?.SourceId, OctopusImportChildSourceIds.PhaseToken, owner?.GetSource<OctopusLifecycleDto>()?.Phases?.Select(p => p.Id)),
             _ => []
         };
 
-    private static List<string> ChildIds(string ownerSourceId, string childKind, IEnumerable<string> ids)
-        => (ids ?? []).Select((id, index) => OctopusResourceGraphBuilder.BuildChildSourceId(ownerSourceId, childKind, id, index)).ToList();
+    // A process's and a step's children are qualified by their project; a lifecycle's phases by the lifecycle.
+    private static List<string> ChildIds(string qualifierId, string parentSourceId, string childToken, IEnumerable<string> ids)
+        => (ids ?? []).Select((id, index) => OctopusImportChildSourceIds.Qualify(qualifierId, parentSourceId, childToken, id, index)).ToList();
 
     /// <summary>The position of <paramref name="id"/> among <paramref name="ids"/> (ignoring case), or -1.</summary>
     public static int IndexOf(IReadOnlyList<string> ids, string id)

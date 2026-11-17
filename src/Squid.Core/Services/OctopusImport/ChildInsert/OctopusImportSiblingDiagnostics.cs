@@ -16,7 +16,7 @@ public static class OctopusImportSiblingDiagnostics
 
     public static bool HasBlocker(IEnumerable<OctopusImportDiagnosticDto> diagnostics) => diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
 
-    /// <summary>A step's ids (as Octopus gives it and as the graph names it) and the ids of its actions.</summary>
-    public static IEnumerable<string> StepIds(OctopusDeploymentStepDto step, string stepSourceId)
-        => new[] { step.Id, stepSourceId }.Concat((step.Actions ?? []).SelectMany((action, index) => new[] { action.Id, OctopusResourceGraphBuilder.BuildChildSourceId(stepSourceId, "action", action.Id, index) })).Where(id => !string.IsNullOrWhiteSpace(id));
+    /// <summary>A step's ids (as Octopus gives it and as the graph names it, qualified by <paramref name="ownerProjectId"/>) and the ids of its actions.</summary>
+    public static IEnumerable<string> StepIds(OctopusDeploymentStepDto step, string stepSourceId, string ownerProjectId)
+        => new[] { step.Id, stepSourceId }.Concat((step.Actions ?? []).SelectMany((action, index) => new[] { action.Id, OctopusImportChildSourceIds.Qualify(ownerProjectId, stepSourceId, OctopusImportChildSourceIds.ActionToken, action.Id, index) })).Where(id => !string.IsNullOrWhiteSpace(id));
 }

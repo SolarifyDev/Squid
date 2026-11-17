@@ -16,6 +16,7 @@ namespace Squid.UnitTests.Services.OctopusImport.Secrets;
 public class OctopusImportWithheldSecretsPreviewTests
 {
     private const string VariableId = "c9e2a6a4-61f6-4bb4-9a43-3c4f2b8a1d10";
+    private static readonly string VariableSourceId = OctopusImportScenario.VariableId("Projects-1", VariableId);
 
     [Theory]
     [InlineData(true, false)]
@@ -26,7 +27,7 @@ public class OctopusImportWithheldSecretsPreviewTests
 
         plan.BlocksConfirmation.ShouldBe(expectBlocked);
 
-        var variable = plan.Resource(VariableId);
+        var variable = plan.Resource(VariableSourceId);
         var input = variable.RequiredInputs.Single();
 
         input.Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
@@ -43,7 +44,7 @@ public class OctopusImportWithheldSecretsPreviewTests
         var plan = await WebProject(OctopusImportScenario.RestSecret(VariableId, "Db.Password")).PlanAsync(OctopusExportSecrets.Unreadable);
 
         plan.BlocksConfirmation.ShouldBeTrue();
-        plan.Resource(VariableId).RequiredInputs.Single().WithheldByServer.ShouldBeFalse();
+        plan.Resource(VariableSourceId).RequiredInputs.Single().WithheldByServer.ShouldBeFalse();
     }
 
     // The validator rebuilds every sensitive input itself: a client posting IsRequired=false cannot lift a file blocker.
@@ -58,7 +59,7 @@ public class OctopusImportWithheldSecretsPreviewTests
 
         var validation = new OctopusImportPreviewValidator(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.None }).Validate(plan.Graph, plan.DependencyPlan, plan.Conflicts, plan.Preview);
 
-        validation.Diagnostics.ShouldContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && d.SourceId == VariableId);
+        validation.Diagnostics.ShouldContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && d.SourceId == VariableSourceId);
     }
 
     [Theory]
@@ -86,7 +87,7 @@ public class OctopusImportWithheldSecretsPreviewTests
             .PlanAsync(OctopusExportSecrets.WithheldByServer);
 
         var account = plan.Resource("Accounts-1");
-        var action = plan.Resource("Actions-1");
+        var action = plan.Resource(OctopusImportScenario.ActionId("Projects-1", "Actions-1"));
 
         account.RequiredInputs.Select(i => (i.Kind, i.FieldName, i.Fillable)).ShouldBe([(OctopusImportRequiredInputKind.AccountSecret, "Token", false)]);
         action.RequiredInputs.Select(i => (i.Kind, i.FieldName, i.Fillable)).ShouldBe([(OctopusImportRequiredInputKind.SensitiveActionProperty, "Notify.ApiKey", false)]);

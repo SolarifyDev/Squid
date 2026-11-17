@@ -96,7 +96,7 @@ public static class OctopusImportSecretFills
         if (key == null || !TryGetMissing(prior, OctopusImportSourceMapQueries.VariableSecretSourceType, key, out var row)) return null;
 
         var variable = node.GetSource<OctopusVariableDto>();
-        var identity = new VariableIdentity(variable.Name, OctopusImportVariableMapper.SquidVariableType(variable) ?? VariableType.Password, OctopusImportSecretKeys.CanonicalScopes(variable.Scope, DestinationOf(prior)));
+        var identity = new VariableIdentity(variable.Name, OctopusImportVariableMapper.SquidVariableType(variable) ?? VariableType.Password, OctopusImportSecretKeys.CanonicalScopes(variable.Scope, node.OwnerProjectId, DestinationOf(prior)));
         var ambiguous = (variableKeyCounts ?? new Dictionary<string, int>()).GetValueOrDefault(OctopusImportPriorMappings.Normalize(key)) > 1;
 
         return new OctopusImportSecretFillCandidate(OctopusResourceKind.Variable, OctopusImportSourceMapQueries.VariableSecretSourceType, key, row.DestinationId, identity, null, ambiguous ? OctopusImportSecretFillSource.Ambiguous : VariableSource(variable, secrets));
@@ -135,7 +135,7 @@ public static class OctopusImportSecretFills
     }
 
     private static string VariableKey(OctopusResourceNode node, OctopusImportPriorMappings prior)
-        => OctopusImportSecretKeys.ForVariable(node.ParentSourceId, node.GetSource<OctopusVariableDto>(), DestinationOf(prior));
+        => OctopusImportSecretKeys.ForVariable(node.ParentSourceId, node.OwnerProjectId, node.GetSource<OctopusVariableDto>(), DestinationOf(prior));
 
     // Scope targets are compared by the Squid rows earlier imports mapped them to — exactly what the key was written with.
     private static Func<string, OctopusResourceKind, int?> DestinationOf(OctopusImportPriorMappings prior)

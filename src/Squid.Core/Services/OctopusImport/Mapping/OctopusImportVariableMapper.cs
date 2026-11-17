@@ -208,7 +208,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             PromptLabel = variable.Prompt?.Label,
             PromptDescription = variable.Prompt?.Description,
             PromptRequired = variable.Prompt?.Required ?? false,
-            Scopes = MapScopes(variable, context.IdMap, diagnostics)
+            Scopes = MapScopes(variable, OwnerProjectId(context.VariableSet), context.IdMap, diagnostics)
         };
     }
 
@@ -216,7 +216,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
     {
         if (OctopusImportSensitiveValues.TryResolve(variable, context.Secrets, out var plaintext)) return plaintext;
 
-        var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(context.VariableSet.Id, variable.Id, index);
+        var variableSourceId = OctopusImportChildSourceIds.Variable(context.VariableSet, variable.Id, index);
         var withheld = OctopusImportSensitiveValues.IsWithheld(variable);
         var withheldByServer = OctopusImportSecretSeverity.IsWithheldByServer(withheld, context.Secrets);
 
@@ -276,11 +276,13 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
     public static string UnsupportedVariableTypeMessage(OctopusVariableDto variable)
         => $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.";
 
-    private static List<VariableScopeModel> MapScopes(OctopusVariableDto variable, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics)
+    private static string OwnerProjectId(OctopusVariableSetDto variableSet) => OctopusResourceGraphBuilder.IsLibraryVariableSetOwner(variableSet?.OwnerType) ? null : variableSet?.OwnerId;
+
+    private static List<VariableScopeModel> MapScopes(OctopusVariableDto variable, string ownerProjectId, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics)
     {
         var scopes = new List<VariableScopeModel>();
 
-        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable.Scope, (sourceId, kind) => idMap.TryGetDestinationId(sourceId, kind.ToString(), out _)))
+        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable.Scope, ownerProjectId, (sourceId, kind) => idMap.TryGetDestinationId(sourceId, kind.ToString(), out _)))
             AddScope(variable, resolution, idMap, diagnostics, scopes);
 
         return scopes;

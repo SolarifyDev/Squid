@@ -69,7 +69,7 @@ public class OctopusOptionalChildrenImportE2ETests : IClassFixture<OctopusOption
         Phases(octopus, "TEST", "STAGING");
         Variables(octopus, Greeting, Farewell, ApiUrlEverywhere, ApiUrlOnTest);
 
-        var import = await ImportAsync(octopus, plan => Tick(Tick(Tick(Tick(plan, "Step-Smoke"), "Step-Migrate"), ApiUrlEverywhere.Id), ApiUrlOnTest.Id));
+        var import = await ImportAsync(octopus, plan => Tick(Tick(Tick(Tick(plan, "Projects-1/step/Step-Smoke"), "Projects-1/step/Step-Migrate"), $"Projects-1/variable/{ApiUrlEverywhere.Id}"), $"Projects-1/variable/{ApiUrlOnTest.Id}"));
 
         var offered = import.PreviewPlan.Resources.Where(r => r.Choice is { FollowsSourceId: null }).Select(r => (r.SourceName, r.Choice.Reason, r.Choice.DefaultSelected)).ToList();
         offered.ShouldBe([("Smoke", OctopusImportChoiceReason.DeletedInSquid, false), ("Hotfix", OctopusImportChoiceReason.DeletedInSquid, false), ("Farewell", OctopusImportChoiceReason.DeletedInSquid, false), ("Migrate", OctopusImportChoiceReason.AddedInOctopus, false), ("Canary", OctopusImportChoiceReason.AddedInOctopus, true), ("STAGING", OctopusImportChoiceReason.AddedInOctopus, false), ("ApiUrl", OctopusImportChoiceReason.AddedInOctopus, false), ("ApiUrl", OctopusImportChoiceReason.AddedInOctopus, false)], ignoreOrder: true, customMessage: "the preview must offer the three deleted and the five added children (both ApiUrl namesakes), with their reasons and defaults");

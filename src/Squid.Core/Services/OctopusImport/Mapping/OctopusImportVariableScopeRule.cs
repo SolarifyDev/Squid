@@ -26,7 +26,8 @@ public sealed record OctopusImportScopeResolution(string ScopeKey, string ScopeV
 /// </summary>
 public static class OctopusImportVariableScopeRule
 {
-    public static IEnumerable<OctopusImportScopeResolution> ResolveAll(Dictionary<string, List<string>> scope, Func<string, OctopusResourceKind, bool> hasDestination)
+    /// <param name="ownerProjectId">The Octopus project the variable belongs to (null for a library variable): an <c>Action</c> scope names that project's action.</param>
+    public static IEnumerable<OctopusImportScopeResolution> ResolveAll(Dictionary<string, List<string>> scope, string ownerProjectId, Func<string, OctopusResourceKind, bool> hasDestination)
     {
         foreach (var entry in scope ?? [])
         {
@@ -40,7 +41,7 @@ public static class OctopusImportVariableScopeRule
 
             // Trimmed here, once, so preview's plan lookup and confirmation's id map see the same identity.
             foreach (var value in entry.Value ?? [])
-                yield return Resolve(entry.Key, scopeType.Value, ScopedSourceId(entry.Key, value?.Trim()), hasDestination);
+                yield return Resolve(entry.Key, scopeType.Value, ScopedSourceId(entry.Key, value?.Trim(), ownerProjectId), hasDestination);
         }
     }
 
@@ -85,10 +86,17 @@ public static class OctopusImportVariableScopeRule
 
     // A ProcessOwner value names the process's owner. A project owns exactly one deployment process, which Octopus ids as
     // "deploymentprocess-" + project id; a runbook id is kept as it is, and since runbooks are never imported it stays unmapped.
-    private static string ScopedSourceId(string scopeKey, string value)
-        => string.Equals(scopeKey?.Trim(), ProcessOwnerScopeKey, StringComparison.Ordinal) && value != null && value.StartsWith("Projects-", StringComparison.OrdinalIgnoreCase)
+    // An Action value names an action of the variable's own project (a cloned project shares its actions' ids with the original).
+    private static string ScopedSourceId(string scopeKey, string value, string ownerProjectId)
+    {
+        var key = scopeKey?.Trim();
+
+        if (string.Equals(key, "Action", StringComparison.Ordinal)) return OctopusImportChildSourceIds.ScopedAction(ownerProjectId, value);
+
+        return string.Equals(key, ProcessOwnerScopeKey, StringComparison.Ordinal) && value != null && value.StartsWith("Projects-", StringComparison.OrdinalIgnoreCase)
             ? $"deploymentprocess-{value}"
             : value;
+    }
 
     private static OctopusResourceKind? SourceKind(VariableScopeType scopeType)
         => scopeType switch

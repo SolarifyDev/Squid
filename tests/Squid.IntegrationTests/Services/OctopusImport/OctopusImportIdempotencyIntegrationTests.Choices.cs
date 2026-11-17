@@ -457,7 +457,7 @@ public partial class OctopusImportIdempotencyIntegrationTests
         });
 
     private async Task<int> DestinationOfAsync(string sourceType, string sourceId)
-        => (await SourceMapAsync()).Single(m => m.SourceType == sourceType && m.SourceId == sourceId.ToUpperInvariant()).DestinationId;
+        => (await SourceMapAsync()).Single(m => m.SourceType == sourceType && m.SourceId == GraphId(sourceId).ToUpperInvariant()).DestinationId;
 
     private Task<List<DeploymentStep>> StepsAsync()
         => Run<SquidDbContext, List<DeploymentStep>>(db => db.Set<DeploymentStep>().AsNoTracking().OrderBy(s => s.StepOrder).ToListAsync());
@@ -485,5 +485,17 @@ public partial class OctopusImportIdempotencyIntegrationTests
     }
 
     private static OctopusImportResourceResultDto Row(OctopusImportPlanningSnapshot snapshot, string sourceId)
-        => snapshot.PreviewPlan.Resources.Single(r => r.SourceId == sourceId);
+        => snapshot.PreviewPlan.Resources.Single(r => r.SourceId == GraphId(sourceId));
+
+    // The archive holds one project (Projects-1) and one lifecycle (Lifecycles-1): a child is named by the Octopus id these tests use,
+    // and the graph (and the source map) name it qualified by that owner.
+    private static string GraphId(string id)
+        => id switch
+        {
+            _ when id.StartsWith("Steps-", StringComparison.Ordinal) => $"Projects-1/step/{id}",
+            _ when id.StartsWith("Actions-", StringComparison.Ordinal) => $"Projects-1/action/{id}",
+            _ when id.StartsWith("Variables-", StringComparison.Ordinal) => $"Projects-1/variable/{id}",
+            _ when id.StartsWith("Phases-", StringComparison.Ordinal) => $"Lifecycles-1/phase/{id}",
+            _ => id
+        };
 }

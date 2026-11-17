@@ -216,6 +216,25 @@ public class OctopusImportOriginEvidenceTests
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
+    // Child source ids are owner-qualified ("Projects-1/action/<guid>"): the GUID after the last '/' is what proves the origin, and a
+    // project and its clone (one GUID, two qualified ids) count it once.
+    [Fact]
+    public void MatchingStructureIds_QualifiedIds_CountGuids()
+    {
+        var prior = Prior(null, [], ("DeploymentAction", $"Projects-1/action/{ActionGuid}"));
+
+        OctopusImportFillEvidences.MatchingStructureIds([Node($"Projects-1/action/{ActionGuid}", OctopusResourceKind.DeploymentAction)], prior).ShouldBe(1);
+    }
+
+    [Fact]
+    public void MatchingStructureIds_ProjectAndClone_CountsDistinctGuids()
+    {
+        var prior = Prior(null, [], ("DeploymentAction", $"Projects-1/action/{ActionGuid}"), ("DeploymentAction", $"Projects-2/action/{ActionGuid}"));
+        var nodes = new[] { Node($"Projects-1/action/{ActionGuid}", OctopusResourceKind.DeploymentAction), Node($"Projects-2/action/{ActionGuid}", OctopusResourceKind.DeploymentAction) };
+
+        OctopusImportFillEvidences.MatchingStructureIds(nodes, prior).ShouldBe(1);
+    }
+
     private static OctopusResourceNode Node(string id, OctopusResourceKind kind)
         => new(id, id, kind, OctopusDocumentKind.Unknown, $"{id}.json", null, null, false, new object());
 

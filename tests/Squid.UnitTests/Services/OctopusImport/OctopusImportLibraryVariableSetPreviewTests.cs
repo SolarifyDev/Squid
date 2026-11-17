@@ -49,7 +49,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
         result.Preview.RequiredInputs.ShouldBeEmpty();
         result.Validation.RequiredInputs.ShouldBeEmpty();
         result.BlocksConfirmation.ShouldBeFalse();
-        result.Resource("Variables-L1").Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept && d.Severity == OctopusImportCompatibilitySeverity.Info);
+        result.Resource(VariableId(Library, "Variables-L1")).Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept && d.Severity == OctopusImportCompatibilitySeverity.Info);
     }
 
     [Theory]
@@ -66,7 +66,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
 
         result.Resource(Library).PreviewAction.ShouldBe(OctopusImportPreviewAction.Create);
         result.Blockers.Select(b => b.Code).ShouldContain(expectedCode);
-        result.Blockers.ShouldAllBe(b => b.SourceId == "Variables-L1");
+        result.Blockers.ShouldAllBe(b => b.SourceId == VariableId(Library, "Variables-L1"));
         result.BlocksConfirmation.ShouldBeTrue();
         result.AllDiagnostics.Select(d => d.Code).ShouldNotContain(OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept);
     }
@@ -82,8 +82,8 @@ public class OctopusImportLibraryVariableSetPreviewTests
 
         var validation = new OctopusImportPreviewValidator().Validate(result.Graph, result.DependencyPlan, result.Conflicts, edited);
 
-        validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && d.SourceId == "Variables-L1");
-        validation.RequiredInputs.Single().SourceId.ShouldBe("Variables-L1");
+        validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && d.SourceId == VariableId(Library, "Variables-L1"));
+        validation.RequiredInputs.Single().SourceId.ShouldBe(VariableId(Library, "Variables-L1"));
     }
 
     [Fact]
@@ -95,8 +95,8 @@ public class OctopusImportLibraryVariableSetPreviewTests
             .ExistingLibrary(901, "Shared Lib")
             .PlanAsync();
 
-        result.Blockers.Select(b => b.SourceId).Distinct().ShouldBe(["Variables-P1"]);
-        result.Validation.RequiredInputs.Select(i => i.SourceId).ShouldBe(["Variables-P1"]);
+        result.Blockers.Select(b => b.SourceId).Distinct().ShouldBe([VariableId(Project, "Variables-P1")]);
+        result.Validation.RequiredInputs.Select(i => i.SourceId).ShouldBe([VariableId(Project, "Variables-P1")]);
     }
 
     [Fact]
@@ -109,8 +109,8 @@ public class OctopusImportLibraryVariableSetPreviewTests
             .ExistingLibrary(901, "Existing Lib")
             .PlanAsync();
 
-        result.Blockers.Select(b => b.SourceId).Distinct().ShouldBe(["Variables-B"]);
-        result.Resource("Variables-A").Diagnostics.Select(d => d.Code).ShouldBe([OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept]);
+        result.Blockers.Select(b => b.SourceId).Distinct().ShouldBe([VariableId("LibraryVariableSets-2", "Variables-B")]);
+        result.Resource(VariableId("LibraryVariableSets-1", "Variables-A")).Diagnostics.Select(d => d.Code).ShouldBe([OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept]);
     }
 
     // ── B2: preview predicts the scope mapping confirmation will do — never widens a scope ──────
@@ -146,7 +146,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
 
         var unmappable = result.Blockers.Where(b => b.Code == OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope).ToList();
         unmappable.Any().ShouldBe(expectBlocked);
-        unmappable.ShouldAllBe(b => b.SourceId == "Variables-X" && b.Message.Contains("'Scoped'") && b.Message.Contains($"{scopeKey} '{scopeValue}'"));
+        unmappable.ShouldAllBe(b => b.SourceId == VariableId(ownedByProject ? Project : Library, "Variables-X") && b.Message.Contains("'Scoped'") && b.Message.Contains($"{scopeKey} '{scopeValue}'"));
     }
 
     [Theory]
@@ -226,7 +226,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
             .Project(Project, "Api", [Library], [Var("Variables-P", "connstr", "proj", EnvironmentScope(projectEnvironments))])
             .PlanAsync();
 
-        var warnings = result.Resource("Variables-P").Diagnostics.Where(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).ToList();
+        var warnings = result.Resource(VariableId(Project, "Variables-P")).Diagnostics.Where(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).ToList();
 
         warnings.Count.ShouldBe(expectWarning ? 1 : 0);
         warnings.ShouldAllBe(w => w.Severity == OctopusImportCompatibilitySeverity.Warning && w.Message.Contains("'Api'") && w.Message.Contains("'connstr'") && w.Message.Contains("'Shared Lib'") && w.Message.Contains("library value"));
@@ -258,7 +258,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
                 .Project(Project, "Api", [Library], [Var("Variables-P", "ConnStr", "proj", RoleAndEnvironmentScope(projectRoles, projectEnvironments))])
                 .PlanAsync();
 
-            result.Resource("Variables-P").Diagnostics.Count(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).ShouldBe(expectWarning ? 1 : 0, customMessage: $"machineHoldsBoth={machineHoldsBoth}");
+            result.Resource(VariableId(Project, "Variables-P")).Diagnostics.Count(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).ShouldBe(expectWarning ? 1 : 0, customMessage: $"machineHoldsBoth={machineHoldsBoth}");
             result.BlocksConfirmation.ShouldBeFalse(customMessage: string.Join("; ", result.Blockers.Select(b => $"{b.Code}:{b.SourceId}")));
         }
     }
@@ -274,7 +274,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
             .ExistingLibrary(901, "Shared Lib")
             .PlanAsync();
 
-        var warning = result.Resource("Variables-P").Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable);
+        var warning = result.Resource(VariableId(Project, "Variables-P")).Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable);
 
         warning.Severity.ShouldBe(OctopusImportCompatibilitySeverity.Warning);
         warning.Message.ShouldContain("'Shared Lib'");
@@ -291,7 +291,7 @@ public class OctopusImportLibraryVariableSetPreviewTests
             .Project(Project, "Api", [Library], [Var("Variables-P", "ConnStr", "proj")])
             .PlanAsync();
 
-        result.Resource("Variables-P").Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).Message.ShouldNotContain("reused as-is");
+        result.Resource(VariableId(Project, "Variables-P")).Diagnostics.Single(d => d.Code == OctopusImportPreviewDiagnosticCodes.ProjectVariableShadowedByLibraryVariable).Message.ShouldNotContain("reused as-is");
     }
 
     [Theory]

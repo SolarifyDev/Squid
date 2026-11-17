@@ -188,7 +188,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
         foreach (var phase in lifecycle.Phases.Select((value, index) => (value, index)))
         {
-            var sourceId = BuildChildSourceId(lifecycle.Id, "phase", phase.value.Id, phase.index);
+            var sourceId = OctopusImportChildSourceIds.Qualify(lifecycle.Id, lifecycle.Id, OctopusImportChildSourceIds.PhaseToken, phase.value.Id, phase.index);
             if (!AddNode(context, sourceId, phase.value.Name, OctopusResourceKind.LifecyclePhase, OctopusDocumentKind.Lifecycle, context.Document.SourcePath, null, lifecycle.Id, false, phase.value))
                 continue;
 
@@ -251,7 +251,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddDeploymentStep(GraphBuildContext context, OctopusDeploymentProcessDto process, OctopusResourceKind processKind, OctopusDeploymentStepDto step, int index)
     {
-        var sourceId = BuildChildSourceId(process.Id, "step", step.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Qualify(process.OwnerId, process.Id, OctopusImportChildSourceIds.StepToken, step.Id, index);
         if (!AddNode(context, sourceId, step.Name, OctopusResourceKind.DeploymentStep, context.Classification.Kind, context.Document.SourcePath, process.OwnerId, process.Id, context.Classification.IsOutOfScopeHistory, step))
             return;
 
@@ -263,7 +263,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddDeploymentAction(GraphBuildContext context, OctopusDeploymentProcessDto process, string stepId, OctopusDeploymentActionDto action, int index)
     {
-        var sourceId = BuildChildSourceId(stepId, "action", action.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Qualify(process.OwnerId, stepId, OctopusImportChildSourceIds.ActionToken, action.Id, index);
         if (!AddNode(context, sourceId, action.Name, OctopusResourceKind.DeploymentAction, context.Classification.Kind, context.Document.SourcePath, process.OwnerId, stepId, context.Classification.IsOutOfScopeHistory, action))
             return;
 
@@ -320,7 +320,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddVariable(GraphBuildContext context, OctopusVariableSetDto variableSet, OctopusResourceKind variableSetKind, OctopusVariableDto variable, int index)
     {
-        var sourceId = BuildChildSourceId(variableSet.Id, "variable", variable.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Variable(variableSet, variable.Id, index);
         var ownerProjectId = IsLibraryVariableSetOwner(variableSet.OwnerType) ? null : variableSet.OwnerId;
 
         if (!AddNode(context, sourceId, variable.Name, OctopusResourceKind.Variable, context.Classification.Kind, context.Document.SourcePath, ownerProjectId, variableSet.Id, context.Classification.IsOutOfScopeHistory, variable))
@@ -550,7 +550,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             _ => (OctopusResourceKind?)null
         };
 
-        AddReference(context, variableId, OctopusResourceKind.Variable, referenceKind.Value, scopedValue, toKind, ownerProjectId, false);
+        var targetId = referenceKind == OctopusResourceReferenceKind.DeploymentAction ? OctopusImportChildSourceIds.ScopedAction(ownerProjectId, scopedValue) : scopedValue;
+
+        AddReference(context, variableId, OctopusResourceKind.Variable, referenceKind.Value, targetId, toKind, ownerProjectId, false);
     }
 
     private static void AddReference(
@@ -592,12 +594,6 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         => variableSetKind == OctopusResourceKind.VariableSetSnapshot
             ? OctopusResourceReferenceKind.VariableSetSnapshot
             : OctopusResourceReferenceKind.VariableSet;
-
-    /// <summary>A child's source id: its own id, or one derived from its owner and position when Octopus gives it none.</summary>
-    public static string BuildChildSourceId(string parentSourceId, string childKind, string sourceId, int index)
-        => string.IsNullOrWhiteSpace(sourceId)
-            ? $"{parentSourceId}/{childKind}-{index + 1}"
-            : sourceId;
 
     private static string GetProperty(Dictionary<string, string> properties, string key)
     {

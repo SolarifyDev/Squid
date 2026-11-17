@@ -108,7 +108,7 @@ public sealed class OctopusRestBundleSeamTests : IDisposable
 
         listed.ShouldContain("FeedPassword:Feeds-1:Password:True");
         listed.ShouldNotContain(i => i.Contains(":Feeds-2:"), customMessage: "a feed without a password (HasValue false) has nothing missing");
-        listed.ShouldContain("SensitiveActionProperty:" + WindowsServiceActionId + ":Octopus.Action.WindowsService.CustomAccountPassword:False");
+        listed.ShouldContain("SensitiveActionProperty:Projects-2/action/" + WindowsServiceActionId + ":Octopus.Action.WindowsService.CustomAccountPassword:False");
         listed.ShouldContain(i => i.StartsWith("AccountSecret:Accounts-2:Token:False"));
         listed.Count(i => i.StartsWith("SensitiveVariableValue:")).ShouldBe(preview.Resources.Count(r => r.SourceType == "Variable" && r.PreviewAction == OctopusImportPreviewAction.Create && r.RequiredInputs.Count > 0));
         preview.Resources.SelectMany(r => r.RequiredInputs).ShouldAllBe(i => i.WithheldByServer && !i.IsRequired);

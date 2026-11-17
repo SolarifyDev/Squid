@@ -150,7 +150,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         variable.IsSensitive = true;
         variable.Value = fileValue == null ? null : OctopusExportTestCipher.Encrypt(fileValue, FillPassword);
 
-        var rowKey = OctopusImportSecretKeys.ForVariable(nodes.VariableSet.SourceId, variable, (_, _) => null);
+        var rowKey = OctopusImportSecretKeys.ForVariable(nodes.VariableSet.SourceId, nodes.VariableSet.OwnerProjectId, variable, (_, _) => null);
         var rows = new List<(string, string, int, string)> { (nameof(OctopusResourceKind.Project), nodes.Project.SourceId, 1001, "Created"), (nameof(OctopusResourceKind.VariableSet), nodes.VariableSet.SourceId, 1002, "Created") };
 
         if (rowOutcome != null) rows.Add((OctopusImportSourceMapQueries.VariableSecretSourceType, rowKey, 1002, rowOutcome));

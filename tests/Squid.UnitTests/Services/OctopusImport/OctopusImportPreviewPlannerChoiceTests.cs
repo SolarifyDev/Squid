@@ -13,7 +13,7 @@ namespace Squid.UnitTests.Services.OctopusImport;
 /// </summary>
 public class OctopusImportPreviewPlannerChoiceTests
 {
-    private const string AddedStep = "Projects-1-step-2";
+    private const string AddedStep = "Projects-1/step/Projects-1-step-2";
 
     public static IEnumerable<object[]> KindsAndReasons()
         => from kind in new[] { OctopusResourceKind.DeploymentStep, OctopusResourceKind.DeploymentAction, OctopusResourceKind.LifecyclePhase, OctopusResourceKind.Variable, OctopusResourceKind.Channel }
@@ -61,11 +61,11 @@ public class OctopusImportPreviewPlannerChoiceTests
     {
         var scenario = await ChildScenarioAsync(OctopusResourceKind.DeploymentStep, OctopusImportChoiceReason.AddedInOctopus);
         var defaults = await scenario.PlanAsync();
-        var forged = new OctopusImportPreviewPlanDto { Resources = new[] { "Projects-1", "Projects-1-step-1", "Actions-1" }.Select(id => new OctopusImportResourceResultDto { SourceId = id, Choice = new OctopusImportChoiceDto { Selected = true } }).ToList() };
+        var forged = new OctopusImportPreviewPlanDto { Resources = new[] { "Projects-1", "Projects-1/step/Projects-1-step-1", "Projects-1/action/Actions-1" }.Select(id => new OctopusImportResourceResultDto { SourceId = id, Choice = new OctopusImportChoiceDto { Selected = true } }).ToList() };
 
         var plan = await scenario.PlanAsync(selections: OctopusImportChoiceSelections.From(forged));
 
-        foreach (var id in new[] { "Projects-1", "Projects-1-step-1", "Actions-1" })
+        foreach (var id in new[] { "Projects-1", "Projects-1/step/Projects-1-step-1", "Projects-1/action/Actions-1" })
             plan.Resource(id).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported), r => r.Choice.ShouldBeNull());
 
         plan.Preview.Summary.Counts.ShouldBeEquivalentTo(defaults.Preview.Summary.Counts);
@@ -81,11 +81,11 @@ public class OctopusImportPreviewPlannerChoiceTests
         var defaults = await scenario.PlanAsync();
         var posted = defaults.Preview;
         posted.Resources.Single(r => r.SourceId == AddedStep).Choice.Selected = stepSelected;
-        posted.Resources.Single(r => r.SourceId == "Actions-2").Choice.Selected = !stepSelected;
+        posted.Resources.Single(r => r.SourceId == "Projects-1/action/Actions-2").Choice.Selected = !stepSelected;
 
         var plan = await scenario.PlanAsync(selections: OctopusImportChoiceSelections.From(posted));
 
-        var action = plan.Resource("Actions-2");
+        var action = plan.Resource("Projects-1/action/Actions-2");
         action.Choice.ShouldSatisfyAllConditions(c => c.FollowsSourceId.ShouldBe(AddedStep), c => c.Selected.ShouldBe(stepSelected), c => c.Reason.ShouldBe(OctopusImportChoiceReason.DeletedInSquid));
         action.PreviewAction.ShouldBe(stepSelected ? OctopusImportPreviewAction.Create : OctopusImportPreviewAction.Skip);
         plan.Preview.Summary.Choices.Single().Total.ShouldBe(1, "a follower is never counted on its own");
@@ -96,7 +96,7 @@ public class OctopusImportPreviewPlannerChoiceTests
     // Saving an owner in Squid re-inserts its children with new ids: one the owner still holds by name is in Squid, never offered.
     [Theory]
     [InlineData(OctopusResourceKind.DeploymentStep, OctopusResourceKind.DeploymentProcess, "deploymentprocess-Projects-1", "Step 2")]
-    [InlineData(OctopusResourceKind.DeploymentAction, OctopusResourceKind.DeploymentStep, "Projects-1-step-1", "Actions-2")]
+    [InlineData(OctopusResourceKind.DeploymentAction, OctopusResourceKind.DeploymentStep, "Projects-1/step/Projects-1-step-1", "Actions-2")]
     [InlineData(OctopusResourceKind.LifecyclePhase, OctopusResourceKind.Lifecycle, "Lifecycles-1", "Phases-2")]
     [InlineData(OctopusResourceKind.Variable, OctopusResourceKind.VariableSet, "variableset-Projects-1", "Added")]
     public async Task DeletedRowButStillInSquidByName_AlreadyImported_NotOffered(OctopusResourceKind kind, OctopusResourceKind ownerKind, string ownerSourceId, string name)
@@ -148,10 +148,10 @@ public class OctopusImportPreviewPlannerChoiceTests
         var scenario = Library(withSecret: true).ImportedAs(first);
         var defaults = await scenario.PlanAsync();
 
-        var plan = await scenario.PlanAsync(selections: Select(defaults, "Variables-L2", selected));
+        var plan = await scenario.PlanAsync(selections: Select(defaults, "LibraryVariableSets-1/variable/Variables-L2", selected));
 
-        plan.Resource("Variables-L2").PreviewAction.ShouldBe(selected ? OctopusImportPreviewAction.Create : OctopusImportPreviewAction.Skip, Describe(plan));
-        plan.Blockers.Any(b => b.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && b.SourceId == "Variables-L2").ShouldBe(expectBlocker, Blockers(plan));
+        plan.Resource("LibraryVariableSets-1/variable/Variables-L2").PreviewAction.ShouldBe(selected ? OctopusImportPreviewAction.Create : OctopusImportPreviewAction.Skip, Describe(plan));
+        plan.Blockers.Any(b => b.Code == OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing && b.SourceId == "LibraryVariableSets-1/variable/Variables-L2").ShouldBe(expectBlocker, Blockers(plan));
     }
 
     // ── History on a choosable channel ─────────────────────────────────────
@@ -223,26 +223,26 @@ public class OctopusImportPreviewPlannerChoiceTests
     {
         var plan = await (await ScopedVariablesScenarioAsync()).PlanAsync();
 
-        foreach (var id in new[] { "Variables-3", "Variables-4" })
+        foreach (var id in new[] { "Projects-1/variable/Variables-3", "Projects-1/variable/Variables-4" })
             plan.Resource(id).Choice.ShouldNotBeNull(Describe(plan)).Reason.ShouldBe(OctopusImportChoiceReason.AddedInOctopus);
     }
 
     // A Squid row holds at most one Octopus variable: the one ticked before (linked by the source map) never hides its namesake, and an
     // unlinked Squid row of the same name and scope holds that variable, not the other one.
     [Theory]
-    [InlineData(true, "Variables-4")]
-    [InlineData(false, "Variables-3")]
+    [InlineData(true, "Projects-1/variable/Variables-4")]
+    [InlineData(false, "Projects-1/variable/Variables-3")]
     public async Task VariablesSharingAName_ASquidRowHoldsOnlyOne_TheOtherStillOffered(bool linkedToProduction, string offered)
     {
         var scenario = await ScopedVariablesScenarioAsync();
         var setId = scenario.PriorDestinationOf(OctopusResourceKind.VariableSet, OctopusImportScenario.ProjectVariableSetId("Projects-1"));
         var environment = scenario.PriorDestinationOf(OctopusResourceKind.Environment, linkedToProduction ? "Environments-1" : "Environments-2").ToString();
         scenario.SquidVariable(3003, setId, "ApiUrl", (Squid.Message.Enums.VariableScopeType.Environment, environment));
-        if (linkedToProduction) scenario.ExistingMapping(OctopusResourceKind.Variable, "Variables-3", 3003);
+        if (linkedToProduction) scenario.ExistingMapping(OctopusResourceKind.Variable, "Projects-1/variable/Variables-3", 3003);
 
         var plan = await scenario.PlanAsync();
 
-        var kept = offered == "Variables-3" ? "Variables-4" : "Variables-3";
+        var kept = offered == "Projects-1/variable/Variables-3" ? "Projects-1/variable/Variables-4" : "Projects-1/variable/Variables-3";
         plan.Resource(kept).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(plan)), r => r.Choice.ShouldBeNull());
         plan.Resource(offered).Choice.ShouldNotBeNull(Describe(plan)).Reason.ShouldBe(OctopusImportChoiceReason.AddedInOctopus);
     }
@@ -253,9 +253,9 @@ public class OctopusImportPreviewPlannerChoiceTests
         => kind switch
         {
             OctopusResourceKind.DeploymentStep => AddedStep,
-            OctopusResourceKind.DeploymentAction => "Actions-2",
-            OctopusResourceKind.LifecyclePhase => "Phases-2",
-            OctopusResourceKind.Variable => "Variables-2",
+            OctopusResourceKind.DeploymentAction => "Projects-1/action/Actions-2",
+            OctopusResourceKind.LifecyclePhase => "Lifecycles-1/phase/Phases-2",
+            OctopusResourceKind.Variable => "Projects-1/variable/Variables-2",
             _ => "Channels-2"
         };
 
@@ -273,7 +273,7 @@ public class OctopusImportPreviewPlannerChoiceTests
 
         scenario.DeletedInSquid(kind, RootOf(kind));
 
-        return kind == OctopusResourceKind.DeploymentStep ? scenario.DeletedInSquid(OctopusResourceKind.DeploymentAction, "Actions-2") : scenario;
+        return kind == OctopusResourceKind.DeploymentStep ? scenario.DeletedInSquid(OctopusResourceKind.DeploymentAction, "Projects-1/action/Actions-2") : scenario;
     }
 
     private static OctopusImportScenario Source(OctopusResourceKind kind, bool withChild)

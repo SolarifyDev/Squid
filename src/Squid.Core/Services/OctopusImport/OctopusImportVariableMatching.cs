@@ -47,7 +47,7 @@ public static class OctopusImportVariableMatching
     {
         var source = variable.GetSource<OctopusVariableDto>();
 
-        return new VariableCandidate(variable.SourceId, source?.Name ?? variable.Name, source == null ? null : OctopusImportSecretKeys.CanonicalScopes(source.Scope, destinationOf));
+        return new VariableCandidate(variable.SourceId, source?.Name ?? variable.Name, source == null ? null : OctopusImportSecretKeys.CanonicalScopes(source.Scope, variable.OwnerProjectId, destinationOf));
     }
 
     private sealed record VariableCandidate(string SourceId, string Name, IReadOnlyList<string> Scopes);

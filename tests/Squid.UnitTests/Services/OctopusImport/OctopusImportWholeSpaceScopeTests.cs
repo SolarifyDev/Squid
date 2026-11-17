@@ -57,7 +57,7 @@ public class OctopusImportWholeSpaceScopeTests
     {
         var plan = await Unwritable(unwritable, used: false).PlanAsync();
 
-        var owned = plan.Preview.Resources.Where(r => r.SourceId.StartsWith(LibraryVariableSetId("LibraryVariableSets-9")) || r.SourceId.StartsWith("lib-var")).ToList();
+        var owned = plan.Preview.Resources.Where(r => r.SourceId.StartsWith(LibraryVariableSetId("LibraryVariableSets-9")) || r.SourceId.StartsWith("LibraryVariableSets-9/variable/")).ToList();
         owned.Count.ShouldBe(2, Describe(plan));
         owned.ShouldAllBe(r => r.PreviewAction == OctopusImportPreviewAction.Skip && r.Diagnostics.Single().Code == OctopusImportPreviewDiagnosticCodes.SkippedWithOwner);
         plan.Validation.RequiredInputs.ShouldBeEmpty();
@@ -67,9 +67,9 @@ public class OctopusImportWholeSpaceScopeTests
     // The same resource used by an imported project blocks in the preview — before confirmation, with the mapper's rule.
     [Theory]
     [InlineData(UnwritableCase.MavenFeed, "Feeds-9", OctopusImportFeedMappingDiagnosticCodes.UnsupportedFeedType)]
-    [InlineData(UnwritableCase.LibraryWithTenantTagScope, "lib-var-1", OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope)]
-    [InlineData(UnwritableCase.LibraryWithAccountVariable, "lib-var-1", OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType)]
-    [InlineData(UnwritableCase.LibraryWithMachineScope, "lib-var-1", OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope)]
+    [InlineData(UnwritableCase.LibraryWithTenantTagScope, "LibraryVariableSets-9/variable/lib-var-1", OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope)]
+    [InlineData(UnwritableCase.LibraryWithAccountVariable, "LibraryVariableSets-9/variable/lib-var-1", OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType)]
+    [InlineData(UnwritableCase.LibraryWithMachineScope, "LibraryVariableSets-9/variable/lib-var-1", OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope)]
     public async Task UsedResourceSquidCannotWrite_BlocksInThePreview(UnwritableCase unwritable, string blockedSourceId, string code)
     {
         var plan = await Unwritable(unwritable, used: true).PlanAsync();
@@ -96,7 +96,7 @@ public class OctopusImportWholeSpaceScopeTests
     {
         var plan = await Space().Feed("Feeds-8", "Spare registry", "Docker").Account("Accounts-8", "Spare token", "Token").Library("LibraryVariableSets-8", "Spare library", Var("spare-var", "Spare", "1")).PlanAsync();
 
-        new[] { "Feeds-8", "Accounts-8", "LibraryVariableSets-8", "spare-var" }.Select(id => plan.Resource(id).PreviewAction).ShouldAllBe(a => a == OctopusImportPreviewAction.Create);
+        new[] { "Feeds-8", "Accounts-8", "LibraryVariableSets-8", VariableId("LibraryVariableSets-8", "spare-var") }.Select(id => plan.Resource(id).PreviewAction).ShouldAllBe(a => a == OctopusImportPreviewAction.Create);
         plan.Preview.Diagnostics.ShouldNotContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.UnreferencedResourcesSkipped);
         plan.BlocksConfirmation.ShouldBeFalse(Describe(plan));
     }
