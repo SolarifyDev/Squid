@@ -29,4 +29,7 @@ public class OctopusHistoryFetchCountsDto
 
     /// <summary>Secret values the server did not return (sensitive variables, feed passwords, account keys, ...); imported as "value missing".</summary>
     public int SecretsWithheld { get; set; }
+
+    /// <summary>Config-as-Code projects read: their project document is staged (the preview skips it), nothing else of theirs is requested.</summary>
+    public int ConfigAsCodeProjects { get; set; }
 }

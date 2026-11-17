@@ -110,6 +110,12 @@ public partial class OctopusImportPreviewPlanner
 
         public bool IsOutsideSelection(string sourceId) => IsOutsideSelection(FindNode(sourceId));
 
+        /// <summary>A Config-as-Code project the import would otherwise take, or something it owns.</summary>
+        public bool IsConfigAsCode(OctopusResourceNode resource) => _referenceScope.IsConfigAsCode(resource);
+
+        /// <summary>Not imported because of the selection or because its project is Config as Code.</summary>
+        public bool IsLeftOut(string sourceId) => _referenceScope.IsLeftOut(FindNode(sourceId));
+
         public IReadOnlyList<string> TargetsOf(string sourceId) => _referenceScope.TargetsOf(sourceId);
 
         /// <summary>Skipped by the whole-space scope rule: what it owns is skipped with it, and an unreferenced resource that uses it too.</summary>

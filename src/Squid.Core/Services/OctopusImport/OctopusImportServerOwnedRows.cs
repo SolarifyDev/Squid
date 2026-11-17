@@ -30,8 +30,9 @@ public static class OctopusImportServerOwnedRows
         return clientPlan;
     }
 
-    // A row the session's project selection leaves out is the server's too: a posted plan can never widen what is imported.
-    private static bool IsServerOwned(OctopusImportResourceResultDto resource) => IsHistoryRow(resource) || resource.Choice != null || OctopusImportPreviewSummaries.IsOutsideSelection(resource);
+    // A row the session's project selection leaves out, or a Config-as-Code project leaves out, is the server's too: a posted plan can
+    // never widen what is imported.
+    private static bool IsServerOwned(OctopusImportResourceResultDto resource) => IsHistoryRow(resource) || resource.Choice != null || OctopusImportPreviewSummaries.IsOutsideSelection(resource) || OctopusImportPreviewSummaries.IsConfigAsCode(resource);
 
     private static bool IsHistoryRow(OctopusImportResourceResultDto resource) => HistorySourceTypes.Contains(resource.SourceType ?? string.Empty);
 }

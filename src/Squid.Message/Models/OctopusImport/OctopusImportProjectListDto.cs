@@ -30,4 +30,7 @@ public class OctopusImportProjectOptionDto
 
     /// <summary>An earlier import into this Squid space recorded this Octopus project (source map, not deleted in Squid). Advisory only: the preview decides.</summary>
     public bool PreviouslyImported { get; set; }
+
+    /// <summary>The project is Octopus Config as Code (version-controlled): Squid does not import it, and the preview skips it with a reason.</summary>
+    public bool IsConfigAsCode { get; set; }
 }

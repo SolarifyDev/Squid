@@ -225,7 +225,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         var evidence = OctopusImportFillEvidences.Evaluate(conflicts.HistoryInstallationId, conflicts.ExportSourceId, graph.Resources, plan.Prior, previewPlan.FillPairing?.Confirmed == true);
         var pairingNeeded = false;
 
-        foreach (var resource in plan.Current.Values.Where(r => OctopusImportSecretFills.IsFillableKind(r.Kind) && !plan.Scope.IsOutsideSelection(r)))
+        foreach (var resource in plan.Current.Values.Where(r => OctopusImportSecretFills.IsFillableKind(r.Kind) && !plan.Scope.IsLeftOut(r)))
         {
             var candidate = OctopusImportSecretFills.Candidate(resource, plan.Prior, Secrets, keyCounts);
             var destination = candidate == null ? SecretSlotState.NotFound : OctopusImportSecretFills.DestinationState(candidate, conflicts.SecretSlots);
@@ -496,7 +496,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         }));
     }
 
-    // Scope: a secret of a resource the session's project selection leaves out is never filled, so it needs no evidence either.
+    // Scope: a secret of a resource the session's project selection or a Config-as-Code project leaves out is never filled, so it needs no evidence either.
     private sealed record ValidationPlan(IReadOnlyDictionary<string, OctopusResourceNode> Selected, IReadOnlyDictionary<string, OctopusResourceNode> Current, IReadOnlyDictionary<string, OctopusImportResourceResultDto> Previews, OctopusImportPriorMappings Prior, OctopusImportReferenceScope Scope)
     {
         public OctopusResourceNode FindResource(string sourceId)

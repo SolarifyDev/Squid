@@ -16,7 +16,8 @@ public sealed record OctopusRestNormalizedDocument(OctopusResourceKind Kind, str
 /// <c>Properties</c> bags, whose keys are user data;</item>
 /// <item>drops every incoming <c>Squid.Import.*</c> member at any depth, so a server cannot plant Squid's own markers;</item>
 /// <item>reshapes per kind where REST and export differ (variable set <c>OwnerType</c>, process <c>OwnerId</c>, project
-/// <c>DeploymentSettingsId</c>, deployment settings id and connectivity policy, team security groups, account credentials);</item>
+/// <c>DeploymentSettingsId</c> and <c>PersistenceSettings</c> trimmed to its type, deployment settings id and connectivity policy, team
+/// security groups, account credentials);</item>
 /// <item>replaces every <c>SensitiveValue</c> object (<c>{HasValue, NewValue, Hint}</c>) and every sensitive variable value with
 /// <c>null</c>. When the server had a value, the member name is listed in <see cref="WithheldSecretsProperty"/> on the object that
 /// owns it — for a <c>Properties</c> bag, on the bag's owner (the step or action).</item>
@@ -95,6 +96,7 @@ public static partial class OctopusRestDocumentNormalizer
                 break;
             case OctopusResourceKind.Project:
                 AddDeploymentSettingsId(document);
+                TrimPersistenceSettings(document);
                 break;
             case OctopusResourceKind.DeploymentSettings:
                 ShapeDeploymentSettings(document, ownerId);
@@ -138,6 +140,14 @@ public static partial class OctopusRestDocumentNormalizer
         if (!string.IsNullOrWhiteSpace(ReadString(document, "DeploymentSettingsId"))) return;
 
         document["DeploymentSettingsId"] = DeploymentSettingsIdPrefix + ReadString(document, "Id");
+    }
+
+    // Only the persistence type is kept: a Config-as-Code project's git url, branch, path and credentials are never staged.
+    private static void TrimPersistenceSettings(JsonObject document)
+    {
+        if (document[OctopusConfigAsCode.PersistenceSettingsMember] is not JsonObject settings) return;
+
+        document[OctopusConfigAsCode.PersistenceSettingsMember] = new JsonObject { [OctopusConfigAsCode.PersistenceTypeMember] = settings[OctopusConfigAsCode.PersistenceTypeMember]?.DeepClone() };
     }
 
     // Also shapes an older server's project document (settings embedded on the project) into a settings document.

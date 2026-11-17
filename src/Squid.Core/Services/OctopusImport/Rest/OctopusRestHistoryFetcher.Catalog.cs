@@ -60,18 +60,36 @@ public sealed partial class OctopusRestHistoryFetcher
         AdvanceCatalog(page);
     }
 
-    // A library variable set is staged with its variables; a project also joins the list of projects to fetch. A project the session's
-    // selection leaves out is neither staged nor fetched (it still counts as an item read).
+    // A library variable set is staged with its variables; a project also joins the list of projects to fetch.
     private async Task StageCatalogItemAsync(OctopusResourceKind kind, JsonObject resource, CancellationToken ct)
     {
-        if (kind == OctopusResourceKind.Project && !IsChosen(ReadString(resource, "Id"))) return;
+        if (kind == OctopusResourceKind.Project)
+        {
+            await StageProjectAsync(resource, ct).ConfigureAwait(false);
+            return;
+        }
 
         var variables = kind == OctopusResourceKind.LibraryVariableSet ? await VariableSetOrNullAsync(ReadString(resource, "VariableSetId"), ct).ConfigureAwait(false) : null;
 
         await StageAsync(kind, resource, null, ct).ConfigureAwait(false);
         await StageAsync(OctopusResourceKind.VariableSet, variables, ReadString(resource, "Id"), ct).ConfigureAwait(false);
+    }
 
-        if (kind == OctopusResourceKind.Project) AddProject(ReadString(resource, "Id"));
+    // A project the session's selection leaves out is neither staged nor fetched (it still counts as an item read). A Config-as-Code
+    // project is staged, so the preview can say why it is not imported, but nothing of its own is ever requested: Octopus answers its
+    // process, settings and variables with 400, and its history is not imported.
+    private async Task StageProjectAsync(JsonObject resource, CancellationToken ct)
+    {
+        var projectId = ReadString(resource, "Id");
+
+        if (!IsChosen(projectId)) return;
+
+        await StageAsync(OctopusResourceKind.Project, resource, null, ct).ConfigureAwait(false);
+
+        if (OctopusConfigAsCode.IsVersionControlled(resource))
+            _ctx.Pending.ConfigAsCodeProjects++;
+        else
+            AddProject(projectId);
     }
 
     private async Task<JsonObject> VariableSetOrNullAsync(string variableSetId, CancellationToken ct)

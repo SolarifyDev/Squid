@@ -81,6 +81,17 @@ public class OctopusProjectDto : OctopusDocumentDto
     public List<JsonElement> ExtensionSettings { get; set; } = [];
 
     public string TenantedDeploymentMode { get; set; }
+
+    /// <summary>Octopus 2021.3+: the project is Config as Code (see <see cref="OctopusConfigAsCode"/>).</summary>
+    public bool IsVersionControlled { get; set; }
+
+    public OctopusProjectPersistenceSettingsDto PersistenceSettings { get; set; }
+}
+
+/// <summary>Only the type is read (<c>Database</c> or <c>VersionControlled</c>); the git url and credentials are never bound or staged.</summary>
+public class OctopusProjectPersistenceSettingsDto
+{
+    public string Type { get; set; }
 }
 
 public class OctopusProjectGroupDto : OctopusDocumentDto

@@ -345,6 +345,35 @@ public class OctopusRestDocumentNormalizerTests
     public void ObjectWithExtraMembers_NotTreatedAsASecret()
         => OctopusRestDocumentNormalizer.IsSensitiveValue(Parse("""{"HasValue":true,"NewValue":null,"Other":1}""")).ShouldBeFalse();
 
+    // ── Config as Code ──────────────────────────────────────────────────────
+
+    // The git url, branch, base path and credentials (a password, or a reference to a git credential) are never staged; the type is.
+    [Theory]
+    [InlineData("""{"Type":"UsernamePassword","Username":"git-user","Password":{"HasValue":true,"NewValue":null,"Hint":null}}""")]
+    [InlineData("""{"Type":"Reference","Id":"GitCredentials-1"}""")]
+    [InlineData("""{"Type":"Anonymous"}""")]
+    public void Project_ConfigAsCode_PersistenceSettingsTrimmedToType_NoWithheldSecrets(string credentials)
+    {
+        var resource = Parse("""{"Id":"Projects-9","Name":"Cac","IsVersionControlled":true,"PersistenceSettings":{"Type":"VersionControlled","Url":"https://git.example.com/acme/app.git","DefaultBranch":"main","BasePath":".octopus/app","ConversionState":{"VariablesAreInGit":false},"Credentials":""" + credentials + "}}");
+
+        var normalized = Normalize(OctopusResourceKind.Project, resource);
+
+        normalized.Document["PersistenceSettings"]!.ToJsonString().ShouldBe("""{"Type":"VersionControlled"}""");
+        normalized.Document["IsVersionControlled"]!.GetValue<bool>().ShouldBeTrue();
+        normalized.WithheldSecrets.ShouldBeEmpty();
+        normalized.Document.ToJsonString().ShouldNotContain("git.example.com");
+        normalized.Document.ToJsonString().ShouldNotContain("git-user");
+        normalized.Document.ToJsonString().ShouldNotContain("GitCredentials-1");
+    }
+
+    [Fact]
+    public void Project_Database_PersistenceSettingsUnchanged()
+    {
+        var resource = Fixture("projects-all", "Projects-1");
+
+        Normalize(OctopusResourceKind.Project, resource).Document["PersistenceSettings"]!.ToJsonString().ShouldBe(resource["PersistenceSettings"]!.ToJsonString());
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     public static TheoryData<string, OctopusResourceKind> FixtureDocuments()

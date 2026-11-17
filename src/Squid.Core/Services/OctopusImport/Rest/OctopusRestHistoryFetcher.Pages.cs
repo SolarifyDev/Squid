@@ -232,6 +232,7 @@ public sealed partial class OctopusRestHistoryFetcher
         total.ItemsAbandoned += item.ItemsAbandoned;
         total.ConfigurationDocuments += item.ConfigurationDocuments;
         total.SecretsWithheld += item.SecretsWithheld;
+        total.ConfigAsCodeProjects += item.ConfigAsCodeProjects;
     }
 
     // Skip already counts every item of the page written, so it is where the page ended. A refused page commits its record here.

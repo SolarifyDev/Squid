@@ -26,9 +26,15 @@ public static class OctopusImportPreviewSummaries
             Space = Group(resources.Where(r => string.IsNullOrWhiteSpace(r.OwnerProjectSourceId)).ToList()),
             SkipReasons = SkipReasons(resources),
             Choices = ChoiceCounts(resources),
-            NotChosenProjectCount = resources.Count(r => r.SourceType == nameof(OctopusResourceKind.Project) && HasCode(r, OctopusImportPreviewDiagnosticCodes.ProjectNotChosen))
+            NotChosenProjectCount = resources.Count(r => r.SourceType == nameof(OctopusResourceKind.Project) && HasCode(r, OctopusImportPreviewDiagnosticCodes.ProjectNotChosen)),
+            ConfigAsCodeProjectCount = resources.Count(IsConfigAsCodeProject)
         };
     }
+
+    /// <summary>Skipped because the Octopus project it belongs to is Config as Code (version-controlled).</summary>
+    public static bool IsConfigAsCode(OctopusImportResourceResultDto resource) => HasCode(resource, OctopusImportPreviewDiagnosticCodes.ConfigAsCodeNotSupported);
+
+    public static bool IsConfigAsCodeProject(OctopusImportResourceResultDto resource) => resource.SourceType == nameof(OctopusResourceKind.Project) && IsConfigAsCode(resource);
 
     /// <summary>Skipped because the session's project selection leaves it out (a project not chosen, or a shared resource no chosen project uses).</summary>
     public static bool IsOutsideSelection(OctopusImportResourceResultDto resource)

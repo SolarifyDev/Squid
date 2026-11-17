@@ -185,6 +185,39 @@ public class OctopusImportProjectSelectionServiceTests
         list.SelectedProjectIds.ShouldBe([$"Projects-2-{Suffix}"]);
     }
 
+    // The picker marks a Config-as-Code project, from the server listing and, after a reload, from the session's source.
+    [Fact]
+    public async Task ServerListing_ConfigAsCodeFlagCarried()
+    {
+        _lister.Setup(l => l.ListProjectsAsync(It.IsAny<OctopusServerConnection>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusRestProjectListing("inst-1", "Spaces-1", [], [new("Projects-1", "Api", null, false), new("Projects-2", "Git", null, false, IsConfigAsCode: true)]));
+
+        var list = await _service.ListServerProjectsAsync(SpaceId, new OctopusServerConnection("https://octopus.example.com", "API-KEY", null));
+
+        list.Projects.Select(p => (p.Id, p.IsConfigAsCode)).ShouldBe([("Projects-1", false), ("Projects-2", true)]);
+    }
+
+    [Fact]
+    public async Task SessionListing_ConfigAsCodeFlaggedFromTheSourceGraph()
+    {
+        var session = Session(OctopusImportSessionState.Extracted);
+        _pipeline.Setup(p => p.BuildGraphAsync(session.TemporaryUploadPath, It.IsAny<CancellationToken>())).ReturnsAsync(await new OctopusImportScenario().Project("Projects-1", "Api", [], []).ConfigAsCodeProject("Projects-2", "Git", null, []).BuildGraphAsync());
+
+        var list = await _service.ListSessionProjectsAsync(session.SessionId, SpaceId);
+
+        list.Projects.Select(p => (p.Id, p.IsConfigAsCode)).ShouldBe([("Projects-1", false), ("Projects-2", true)]);
+    }
+
+    // Old clients and "select all" still send it: accepted, and the preview skips it with its reason.
+    [Fact]
+    public async Task Select_ConfigAsCodeId_Accepted()
+    {
+        var session = Session(OctopusImportSessionState.Extracted);
+
+        await _service.SelectProjectsAsync(session.SessionId, SpaceId, ["Projects-1", "Projects-2"]);
+
+        _sessionService.Verify(s => s.UpdateProjectSelectionAsync(session.SessionId, SpaceId, It.Is<List<string>>(ids => ids.SequenceEqual(new[] { "Projects-1", "Projects-2" })), It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task SessionListing_BeforeTheSourceIsRead_Refused()
     {

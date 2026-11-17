@@ -13,6 +13,8 @@ namespace Squid.Core.Services.OctopusImport;
 /// With a project selection the roots are the chosen projects and what they own instead, a lifecycle without phases (Octopus
 /// deploys it to every environment) uses every environment, and a step property or variable value that is an account's id uses
 /// that account; anything not reached is <see cref="IsOutsideSelection"/>.
+/// A Config-as-Code project in the selection (every one without a selection) and what it owns is never entered either, in both modes: it
+/// is <see cref="IsConfigAsCode"/>, and what only it uses is unreached like anything no imported project uses.
 /// </summary>
 public sealed class OctopusImportReferenceScope
 {
@@ -20,25 +22,34 @@ public sealed class OctopusImportReferenceScope
     private readonly IReadOnlyDictionary<string, HashSet<string>> _targets;
     private readonly IReadOnlyDictionary<string, HashSet<string>> _children;
     private readonly bool _selected;
+    private readonly ConfigAsCodeProjects _configAsCode;
 
-    private OctopusImportReferenceScope(IReadOnlySet<string> referenced, IReadOnlyDictionary<string, HashSet<string>> targets, IReadOnlyDictionary<string, HashSet<string>> children, bool selected = false)
+    private OctopusImportReferenceScope(IReadOnlySet<string> referenced, IReadOnlyDictionary<string, HashSet<string>> targets, IReadOnlyDictionary<string, HashSet<string>> children, bool selected = false, ConfigAsCodeProjects configAsCode = null)
     {
         _referenced = referenced;
         _targets = targets;
         _children = children;
         _selected = selected;
+        _configAsCode = configAsCode;
     }
 
     public static OctopusImportReferenceScope Everything { get; } = new(null, new Dictionary<string, HashSet<string>>(), new Dictionary<string, HashSet<string>>());
+
+    /// <summary>A Config-as-Code project the import would otherwise take (chosen, or any without a selection), or something it owns.</summary>
+    public bool IsConfigAsCode(OctopusResourceNode resource) => resource != null && _configAsCode?.Owns(resource.SourceId) == true;
+
+    /// <summary>Not imported because of the project it belongs to or the selection: <see cref="IsOutsideSelection"/> or <see cref="IsConfigAsCode"/>.</summary>
+    public bool IsLeftOut(OctopusResourceNode resource) => IsOutsideSelection(resource) || IsConfigAsCode(resource);
 
     public bool IsReferenced(string sourceId) => _referenced == null || (sourceId != null && _referenced.Contains(sourceId));
 
     /// <summary>
     /// A project selection is present and this resource is neither a chosen project, something one owns, nor something they use. A
     /// shared resource Squid never imports (a machine, a certificate, a worker pool) is not: it is reported as today, whatever is chosen.
+    /// Nor is a chosen Config-as-Code project or what it owns: the selection takes it, its <see cref="IsConfigAsCode"/> reason leaves it out.
     /// </summary>
     public bool IsOutsideSelection(OctopusResourceNode resource)
-        => _selected && resource != null && !IsReferenced(resource.SourceId) && !IsReportOnlyShared(resource);
+        => _selected && resource != null && !IsReferenced(resource.SourceId) && !IsReportOnlyShared(resource) && !IsConfigAsCode(resource);
 
     private static bool IsReportOnlyShared(OctopusResourceNode resource)
         => string.IsNullOrWhiteSpace(resource.OwnerProjectId) && (OctopusResourceMetadata.For(resource.Kind).IsUnsupported || OctopusResourceMetadata.For(resource.Kind).IsPreviewOutOfScope);
@@ -57,13 +68,15 @@ public sealed class OctopusImportReferenceScope
 
         var targets = ReferenceTargets(graph);
         var children = Children(graph);
+        var ownership = new ProjectOwnership(graph);
+        var configAsCode = new ConfigAsCodeProjects(ownership, chosenProjectIds);
 
-        if (chosenProjectIds == null) return new OctopusImportReferenceScope(Reach(Roots(graph), Union(targets, children)), targets, children);
+        if (chosenProjectIds == null) return new OctopusImportReferenceScope(Reach(Roots(graph), Union(targets, children), configAsCode.MayEnter), targets, children, configAsCode: configAsCode);
 
-        var selection = new ProjectSelection(graph, chosenProjectIds);
+        var selection = new ProjectSelection(ownership, chosenProjectIds);
         var edges = Union(Union(Union(targets, children), PhaselessLifecycleEnvironments(graph)), AccountsNamedByValue(graph));
 
-        return new OctopusImportReferenceScope(Reach(Roots(graph), edges, selection.MayReach), targets, children, selected: true);
+        return new OctopusImportReferenceScope(Reach(Roots(graph), edges, id => selection.MayReach(id) && configAsCode.MayEnter(id)), targets, children, selected: true, configAsCode);
     }
 
     // A project and everything that belongs to it (configuration and history alike).
@@ -175,20 +188,50 @@ public sealed class OctopusImportReferenceScope
         set.Add(to);
     }
 
-    // Ids compare after the source-map normalisation, so an export's suffixed project id matches its bare id and the reverse.
-    private sealed class ProjectSelection(OctopusResourceGraph graph, IReadOnlyCollection<string> chosenProjectIds)
+    /// <summary>
+    /// The Octopus project each resource belongs to (a project to itself, anything else to its owner; null when no project owns it), with
+    /// project ids in the source-map normalisation, so an export's suffixed project id matches its bare id and the reverse.
+    /// </summary>
+    private sealed class ProjectOwnership(OctopusResourceGraph graph)
     {
-        private readonly HashSet<string> _chosen = chosenProjectIds.Select(OctopusImportPriorMappings.Normalize).ToHashSet(StringComparer.Ordinal);
         private readonly Dictionary<string, OctopusResourceNode> _nodes = graph.Resources.GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
-        /// <summary>What the selection may reach: anything no project owns, or a chosen project and what it owns.</summary>
-        public bool MayReach(string sourceId)
+        public OctopusResourceGraph Graph => graph;
+
+        public string ProjectOf(string sourceId)
         {
-            if (!_nodes.TryGetValue(sourceId, out var node)) return true;
+            if (sourceId == null || !_nodes.TryGetValue(sourceId, out var node)) return null;
 
             var projectId = node.Kind == OctopusResourceKind.Project ? node.SourceId : node.OwnerProjectId;
 
-            return string.IsNullOrWhiteSpace(projectId) || _chosen.Contains(OctopusImportPriorMappings.Normalize(projectId));
+            return string.IsNullOrWhiteSpace(projectId) ? null : OctopusImportPriorMappings.Normalize(projectId);
         }
+    }
+
+    private sealed class ProjectSelection(ProjectOwnership ownership, IReadOnlyCollection<string> chosenProjectIds)
+    {
+        private readonly HashSet<string> _chosen = chosenProjectIds.Select(OctopusImportPriorMappings.Normalize).ToHashSet(StringComparer.Ordinal);
+
+        /// <summary>What the selection may reach: anything no project owns, or a chosen project and what it owns.</summary>
+        public bool MayReach(string sourceId) => ownership.ProjectOf(sourceId) is not { } projectId || _chosen.Contains(projectId);
+    }
+
+    /// <summary>The Config-as-Code projects the import would otherwise take: those chosen, or every one without a selection.</summary>
+    private sealed class ConfigAsCodeProjects
+    {
+        private readonly ProjectOwnership _ownership;
+        private readonly HashSet<string> _projectIds;
+
+        public ConfigAsCodeProjects(ProjectOwnership ownership, IReadOnlyCollection<string> chosenProjectIds)
+        {
+            var chosen = chosenProjectIds?.Select(OctopusImportPriorMappings.Normalize).ToHashSet(StringComparer.Ordinal);
+
+            _ownership = ownership;
+            _projectIds = ownership.Graph.Resources.Where(r => r.Kind == OctopusResourceKind.Project && OctopusConfigAsCode.IsVersionControlled(r.GetSource<OctopusProjectDto>())).Select(r => OctopusImportPriorMappings.Normalize(r.SourceId)).Where(id => chosen == null || chosen.Contains(id)).ToHashSet(StringComparer.Ordinal);
+        }
+
+        public bool Owns(string sourceId) => _projectIds.Count > 0 && _ownership.ProjectOf(sourceId) is { } projectId && _projectIds.Contains(projectId);
+
+        public bool MayEnter(string sourceId) => !Owns(sourceId);
     }
 }

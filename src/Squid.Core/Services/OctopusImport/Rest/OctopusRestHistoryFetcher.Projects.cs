@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
@@ -27,7 +28,7 @@ public sealed partial class OctopusRestHistoryFetcher : IOctopusRestProjectListe
         => groups.Select(g => new OctopusRestProjectGroupItem(ReadString(g, "Id"), ReadString(g, "Name"))).Where(g => OctopusRestPathPolicy.IsValidId(g.Id)).ToList();
 
     private static List<OctopusRestProjectItem> ListedProjects(IEnumerable<JsonObject> projects)
-        => projects.Select(p => new OctopusRestProjectItem(ReadString(p, "Id"), ReadString(p, "Name"), ReadString(p, "ProjectGroupId"), ReadBool(p, "IsDisabled"))).Where(p => OctopusRestPathPolicy.IsValidId(p.Id)).ToList();
+        => projects.Select(p => new OctopusRestProjectItem(ReadString(p, "Id"), ReadString(p, "Name"), ReadString(p, "ProjectGroupId"), ReadBool(p, "IsDisabled"), OctopusConfigAsCode.IsVersionControlled(p))).Where(p => OctopusRestPathPolicy.IsValidId(p.Id)).ToList();
 
     private static bool ReadBool(JsonObject node, string member) => node?[member] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
 }

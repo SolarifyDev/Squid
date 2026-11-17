@@ -61,7 +61,7 @@ public sealed class OctopusImportProjectSelectionService(IOctopusRestProjectList
         => CurrentNodes(graph, OctopusResourceKind.ProjectGroup).Select(n => new OctopusRestProjectGroupItem(n.SourceId, n.Name)).ToList();
 
     private static List<OctopusRestProjectItem> ProjectsOf(OctopusResourceGraph graph)
-        => CurrentNodes(graph, OctopusResourceKind.Project).Select(n => n.GetSource<OctopusProjectDto>()).Where(p => p != null).Select(p => new OctopusRestProjectItem(p.Id, p.Name, p.ProjectGroupId, p.IsDisabled)).ToList();
+        => CurrentNodes(graph, OctopusResourceKind.Project).Select(n => n.GetSource<OctopusProjectDto>()).Where(p => p != null).Select(p => new OctopusRestProjectItem(p.Id, p.Name, p.ProjectGroupId, p.IsDisabled, OctopusConfigAsCode.IsVersionControlled(p))).ToList();
 
     private static IEnumerable<OctopusResourceNode> CurrentNodes(OctopusResourceGraph graph, OctopusResourceKind kind)
         => graph.Resources.Where(r => r.Kind == kind && !r.IsHistorical).GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).Select(g => g.First());
@@ -71,7 +71,7 @@ public sealed class OctopusImportProjectSelectionService(IOctopusRestProjectList
         => new()
         {
             Groups = groups.Select(g => new OctopusImportProjectGroupOptionDto { Id = g.Id, Name = g.Name }).OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList(),
-            Projects = projects.Select(p => new OctopusImportProjectOptionDto { Id = p.Id, Name = p.Name, ProjectGroupId = p.ProjectGroupId, IsDisabled = p.IsDisabled, PreviouslyImported = prior.TryGet(nameof(OctopusResourceKind.Project), p.Id, out _) }).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList(),
+            Projects = projects.Select(p => new OctopusImportProjectOptionDto { Id = p.Id, Name = p.Name, ProjectGroupId = p.ProjectGroupId, IsDisabled = p.IsDisabled, PreviouslyImported = prior.TryGet(nameof(OctopusResourceKind.Project), p.Id, out _), IsConfigAsCode = p.IsConfigAsCode }).OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList(),
             SelectedProjectIds = selected
         };
 

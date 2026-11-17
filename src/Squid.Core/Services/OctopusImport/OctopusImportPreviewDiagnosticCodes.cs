@@ -52,6 +52,8 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string NotUsedByChosenProjects = "octopus.preview.not_used_by_chosen_projects";
     public const string ResourcesNotUsedByChosenProjects = "octopus.preview.resources_not_used_by_chosen_projects";
     public const string ProjectsNotChosen = "octopus.preview.projects_not_chosen";
+    public const string ConfigAsCodeNotSupported = "octopus.preview.config_as_code_not_supported";
+    public const string ConfigAsCodeProjectsNotImported = "octopus.preview.config_as_code_projects_not_imported";
     public const string SecretsWithheldByServer = "octopus.preview.secrets_withheld_by_server";
     public const string SecretFillFromExport = "octopus.preview.secret_fill_from_export";
     public const string SecretSetInSquid = "octopus.preview.secret_set_in_squid";
@@ -88,4 +90,6 @@ public static class OctopusImportPreviewDiagnosticCodes
     public const string NotUsedByChosenProjectsMessage = "Not used by the chosen projects, so it is not imported.";
 
     public const string HistoryOfProjectNotChosenMessage = "Belongs to the history of an Octopus project that was not chosen for this import.";
+
+    public const string ConfigAsCodeProjectMessage = "This Octopus project is version-controlled (Config as Code): its process and settings live in a git repository, not in Octopus, so Squid does not import Config-as-Code projects.";
 }

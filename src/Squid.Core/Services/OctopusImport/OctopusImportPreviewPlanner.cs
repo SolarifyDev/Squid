@@ -48,12 +48,13 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         AddSkipReasons(resources);
 
         var diagnostics = dependencyPlan.Diagnostics
-            .Where(d => !context.IsOutsideSelection(d.SourceId))
+            .Where(d => !context.IsLeftOut(d.SourceId))
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
             .Concat(OriginDiagnostics(context))
             .Concat(GroupedScopeDiagnostics(resources))
             .Concat(SelectionDiagnostics(resources))
+            .Concat(ConfigAsCodeDiagnostics(resources))
             .Concat(WithheldSecretsSummary(resources))
             .Concat(SecretFillSummary(context))
             .ToList();
@@ -100,6 +101,8 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
         };
 
         if (context.IsOutsideSelection(resource)) return OutsideSelection(result, resource, context);
+
+        if (context.IsConfigAsCode(resource)) return ConfigAsCodeSkip(result, resource, context);
 
         if (context.IsBlocked(resource.SourceId))
         {

@@ -117,6 +117,18 @@ internal sealed class OctopusImportScenario
         return Add($"deploymentprocess-{id}", "DeploymentProcess", new { Id = $"deploymentprocess-{id}", OwnerId = id, Steps = steps });
     }
 
+    /// <summary>
+    /// An Octopus Config-as-Code project as an export or the API carries it: the project document names a process and settings that
+    /// live in git, so no process document is present. Its variables (still in Octopus) and a channel are.
+    /// </summary>
+    public OctopusImportScenario ConfigAsCodeProject(string id, string name, string lifecycleId, string[] libraryIds, params object[] variables)
+    {
+        Add(id, "Project", new { Id = id, Name = name, Slug = name.ToLowerInvariant(), LifecycleId = lifecycleId, VariableSetId = ProjectVariableSetId(id), DeploymentProcessId = $"deploymentprocess-{id}", DeploymentSettingsId = $"deploymentsettings-{id}", IncludedLibraryVariableSetIds = libraryIds, IsVersionControlled = true, PersistenceSettings = new { Type = "VersionControlled" } });
+        Add(ProjectVariableSetId(id), "ProjectVariables", new { Id = ProjectVariableSetId(id), OwnerId = id, OwnerType = "Project", Variables = variables });
+
+        return Channel($"{id}-channel", id, "Default");
+    }
+
     // ── REST-shaped resources: written through the REAL normaliser, exactly as the server source stages them ──
 
     /// <summary>A Docker feed as the Octopus API returns it; with <paramref name="hasPassword"/> its password is withheld.</summary>
