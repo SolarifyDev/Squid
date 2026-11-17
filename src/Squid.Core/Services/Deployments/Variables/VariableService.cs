@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Security;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
@@ -76,6 +77,8 @@ public class VariableService : IVariableService
     {
         var variableSet = await GetAndValidateVariableSet(command.Id, cancellationToken).ConfigureAwait(false);
 
+        EnsureVersionUnchanged(variableSet, command.Version);
+
         variableSet.Name = command.Name;
         variableSet.Description = command.Description;
         variableSet.OwnerId = command.OwnerId;
@@ -96,6 +99,13 @@ public class VariableService : IVariableService
         await SettleImportedSecretsSetInSquidAsync(variableSet, cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<VariableSetDto>(variableSet);
+    }
+
+    // Read under the set's lock: a save based on an older version would delete and re-insert over another writer's variables.
+    private static void EnsureVersionUnchanged(VariableSet variableSet, int? expectedVersion)
+    {
+        if (expectedVersion is { } expected && expected != variableSet.Version)
+            throw new VariableSetVersionConflictException(variableSet.Id, expected, variableSet.Version);
     }
 
     // A secret an Octopus import left missing that this save gives a value is the user's from now on: clearing it later is an edit too.
@@ -194,7 +204,8 @@ public class VariableService : IVariableService
         return written == 0 ? SecretSlotState.Empty : SecretSlotState.Filled;
     }
 
-    // Locked like a save (the set's variables, then the set): a concurrent save never re-inserts the set over the appended variables.
+    // Locked like a save (the set's variables, then the set) and the version moved: a save based on the version before the append is
+    // refused (when it says which version it read) instead of re-inserting the set over the appended variables.
     public Task<IReadOnlyList<int>> AddVariablesAsync(int variableSetId, IReadOnlyList<VariableModel> variables, CancellationToken cancellationToken)
         => _variableDataProvider.ExecuteWithVariableSetLockedAsync(variableSetId, ct => AppendVariablesAsync(variableSetId, variables, ct), cancellationToken);
 

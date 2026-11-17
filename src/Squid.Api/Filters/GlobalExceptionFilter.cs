@@ -5,6 +5,7 @@ using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
@@ -28,6 +29,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
             ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
+            VariableSetVersionConflictException => HttpStatusCode.Conflict,
             OctopusRestException => HttpStatusCode.BadRequest,
             OctopusImportSessionNotServerSourceException => HttpStatusCode.BadRequest,
             OctopusImportHistoryServerMismatchException => HttpStatusCode.BadRequest,

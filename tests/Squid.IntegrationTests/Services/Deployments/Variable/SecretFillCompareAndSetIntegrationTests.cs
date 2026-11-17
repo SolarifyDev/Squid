@@ -89,6 +89,32 @@ public class SecretFillCompareAndSetIntegrationTests : TestBase
         firstId.ShouldBeLessThan(secondId);
     }
 
+    // A Variables page read the set, then an Octopus import appended a variable to it (and moved its version). The page's save posts
+    // the version it read: it is refused, so the delete-and-re-insert never erases the imported variable; a save at the new version works.
+    [Fact]
+    public async Task SaveReadBeforeAnImportAppended_PostingItsVersion_RefusedAndTheImportedVariableKept()
+    {
+        var (setId, _) = await SeedVariableAsync("", true, environmentScope: "7");
+        var readVersion = await VersionAsync(setId);
+
+        await Run<IVariableService>(v => v.AddVariablesAsync(setId, [new VariableModel { Name = "Imported", Type = VariableType.String, Value = "from-octopus" }], CancellationToken.None));
+
+        var stale = Run<IVariableService>(v => v.UpdateVariableSetAsync(PageSave(setId, readVersion), CancellationToken.None));
+
+        await Should.ThrowAsync<Core.Services.Deployments.Variables.Exceptions.VariableSetVersionConflictException>(() => stale);
+        (await VariableNamesAsync(setId)).ShouldBe(["Db.Password", "Imported"]);
+
+        await Run<IVariableService>(v => v.UpdateVariableSetAsync(PageSave(setId, readVersion + 1), CancellationToken.None));
+
+        (await VariableNamesAsync(setId)).ShouldBe(["Db.Password"], "a save at the current version replaces the set as before");
+    }
+
+    private static UpdateVariableSetCommand PageSave(int setId, int version)
+        => new() { Id = setId, Name = "Project variables", OwnerType = VariableSetOwnerType.Project, SpaceId = 1, Version = version, Variables = [new VariableModel { Name = "Db.Password", Value = MaskedSensitiveValues.Mask, Type = VariableType.Password, IsSensitive = true, Scopes = [new VariableScopeModel { ScopeType = VariableScopeType.Environment, ScopeValue = "7" }] }] };
+
+    private Task<List<string>> VariableNamesAsync(int setId)
+        => Run<SquidDbContext, List<string>>(db => db.Set<Core.Persistence.Entities.Deployments.Variable>().AsNoTracking().Where(v => v.VariableSetId == setId).OrderBy(v => v.Name).Select(v => v.Name).ToListAsync());
+
     private static VariableIdentity DbPasswordIn(string environment) => VariableIdentity.Of("Db.Password", VariableType.Password, [(VariableScopeType.Environment, environment)]);
 
     private Task SaveMaskedAsync(int setId)
