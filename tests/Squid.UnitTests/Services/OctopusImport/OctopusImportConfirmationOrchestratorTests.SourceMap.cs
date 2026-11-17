@@ -281,11 +281,11 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var history = HistoryScenario(storedTaskFingerprint: "changed-in-octopus");
         var details = new OctopusTaskHistoryDetails { ActivityLogs = [new OctopusActivityLogDto { Name = "Task" }] };
         var store = new Mock<IOctopusImportHistoryDetailsStore>();
-        store.Setup(s => s.ReadAsync("/sessions/abc", "ServerTasks-1", It.IsAny<CancellationToken>())).ReturnsAsync(details);
         var upserted = new List<OctopusImportSourceMapRow>();
         var harness = CreateHistoryHarness(history, OctopusImportPreviewAction.Update, 5001, 6001, upserted, CaptureUnits(out var units), store.Object);
+        store.Setup(s => s.ReadAsync(harness.Request.SessionId, "ServerTasks-1", It.IsAny<CancellationToken>())).ReturnsAsync(details);
 
-        var result = await harness.Sut.ConfirmAsync(harness.Request with { SessionDirectory = "/sessions/abc" }, CancellationToken.None);
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
         var expectedDetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details);
 
@@ -313,7 +313,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
         var upserted = new List<OctopusImportSourceMapRow>();
         var harness = CreateHistoryHarness(history, OctopusImportPreviewAction.Create, null, null, upserted, CaptureUnits(out var units), Mock.Of<IOctopusImportHistoryDetailsStore>());
 
-        var result = await harness.Sut.ConfirmAsync(harness.Request with { SessionDirectory = "/sessions/abc" }, CancellationToken.None);
+        var result = await harness.Sut.ConfirmAsync(harness.Request, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Succeeded);
         units.ShouldHaveSingleItem().Details.ShouldBeNull();

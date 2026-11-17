@@ -46,10 +46,16 @@ public class OctopusImportHistoryFetchDto
     public Dictionary<string, int> AbandonCounts { get; set; } = [];
 
     /// <summary>
-    /// The id the first chunk stamped into the session directory it staged into; every later chunk finds the same id there or refuses
-    /// (the directory is gone or another one: a restart on temporary storage, another replica). Null on a cursor no chunk has run yet.
+    /// The id the first chunk stored with the session's staged documents; every later chunk finds the same id stored or refuses (the
+    /// staging is gone: the session was cleaned up, or an earlier Squid kept it on one server's disk). Null on a cursor no chunk has run yet.
     /// </summary>
     public string StagingId { get; set; }
+
+    /// <summary>Per kind, how many documents committed items stored for the first time; bundling refuses when fewer are stored.</summary>
+    public Dictionary<string, int> StagedDocumentCounts { get; set; } = [];
+
+    /// <summary>How many tasks' details committed items stored for the first time; bundling refuses when fewer are stored.</summary>
+    public int StagedDetails { get; set; }
 
     // Progress
     public OctopusHistoryFetchCountsDto Counts { get; set; } = new();

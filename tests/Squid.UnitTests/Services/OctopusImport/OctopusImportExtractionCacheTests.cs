@@ -8,6 +8,8 @@ using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport;
 
 /// <summary>
@@ -71,7 +73,7 @@ public sealed class OctopusImportExtractionCacheTests : IDisposable
         inventory.Setup(b => b.Build(It.IsAny<OctopusInputExtractionResult>())).Returns(new OctopusManifestInventoryResult(new OctopusExportManifestDto(), [], [], []));
         var graph = new Mock<IOctopusResourceGraphBuilder>();
         graph.Setup(b => b.Build(It.IsAny<OctopusManifestInventoryResult>())).Returns(new OctopusResourceGraph([], [], [], []));
-        var handler = new ExtractOctopusImportCommandHandler(sessions.Object, Mock.Of<IOctopusImportSessionService>(), user.Object, reader, inventory.Object, graph.Object, _cache);
+        var handler = new ExtractOctopusImportCommandHandler(sessions.Object, Mock.Of<IOctopusImportSessionService>(), user.Object, reader, inventory.Object, graph.Object, TestUploadStores.LocalOnly(), _cache);
         var context = new Mock<IReceiveContext<ExtractOctopusImportCommand>>();
         context.SetupGet(c => c.Message).Returns(new ExtractOctopusImportCommand { SessionId = sessionId, SpaceId = 7 });
 

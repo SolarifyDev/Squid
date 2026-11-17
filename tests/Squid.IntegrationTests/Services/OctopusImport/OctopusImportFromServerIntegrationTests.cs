@@ -70,7 +70,7 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
             progress.Counts.Deployments.ShouldBe(1);
             progress.Counts.DetailsFetched.ShouldBe(1);
             File.Exists(Path.Combine(sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName)).ShouldBeTrue();
-            (await detailsStore.ReadAsync(sessionDirectory, "ServerTasks-1")).ShouldNotBeNull();
+            (await detailsStore.ReadAsync(session.SessionId, "ServerTasks-1")).ShouldNotBeNull();
         });
 
         octopus.Requests.ShouldAllBe(r => r.ApiKey == ApiKey);
@@ -79,7 +79,8 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         await ExpireAllSessionsAsync();
         await Run<IOctopusImportTemporaryUploadCleanupService>(cleanup => cleanup.EnforceCleanupAsync());
 
-        Directory.Exists(sessionDirectory).ShouldBeFalse("the expired server session's directory (bundle, staging, task details) must be securely deleted");
+        Directory.Exists(sessionDirectory).ShouldBeFalse("the expired server session's directory (bundle) must be securely deleted");
+        (await StoredFileCountAsync()).ShouldBe(0, "the session's stored files (bundle, staging, task details) must be deleted with it");
     }
 
     // A session at its expiry when a chunk claims it is in use, not abandoned: the expiry sweep running while the chunk
@@ -647,6 +648,9 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
 
     private Task<OctopusImportSessionState> SessionStateAsync(Guid sessionId)
         => Run<SquidDbContext, OctopusImportSessionState>(async db => Enum.Parse<OctopusImportSessionState>((await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).State));
+
+    private Task<int> StoredFileCountAsync()
+        => Run<SquidDbContext, int>(async db => (await db.Database.SqlQuery<int>($"SELECT count(*)::int AS \"Value\" FROM octopus_import_session_file").ToListAsync()).Single());
 
     private Task ExpireAllSessionsAsync()
         => Run<SquidDbContext>(db => db.Set<OctopusImportSession>().ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, DateTimeOffset.UtcNow.AddMinutes(-1)).SetProperty(x => x.TemporaryUploadCleanupAfter, DateTimeOffset.UtcNow.AddMinutes(-1))));

@@ -18,6 +18,8 @@ using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class ConfirmOctopusImportCommandHandlerTests
@@ -500,7 +502,7 @@ public class ConfirmOctopusImportCommandHandlerTests
             => new(CurrentUser.Object, CreateRunner(secretStore, accessor));
 
         public OctopusImportConfirmationRunner CreateRunner(IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor accessor = null)
-            => new(SessionDataProvider.Object, SessionService.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, BackgroundJobClient.Object, TemporaryUploadSettings.Object, secretStore, accessor);
+            => new(SessionDataProvider.Object, SessionService.Object, AuthorizationService.Object, PlanningPipeline.Object, ConfirmationOrchestrator.Object, BackgroundJobClient.Object, TemporaryUploadSettings.Object, TestUploadStores.LocalOnly(), secretStore, accessor);
 
         public Mock<ISquidBackgroundJobClient> BackgroundJobClient { get; } = new();
 

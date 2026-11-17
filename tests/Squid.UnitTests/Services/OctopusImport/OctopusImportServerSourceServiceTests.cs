@@ -22,6 +22,8 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
     private readonly Mock<IOctopusImportSessionDataProvider> _dataProvider = new();
     private readonly Mock<IOctopusImportSessionService> _sessionService = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
+    private const string ThisServerDirectory = "/this-server/session";
+
     private readonly Mock<IOctopusImportTemporaryUploadStore> _uploadStore = new();
     private readonly Mock<IOctopusRestHistoryFetcher> _fetcher = new();
     private readonly Mock<IOctopusImportSourceMapDataProvider> _sourceMap = new();
@@ -36,6 +38,7 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
             .Callback((Guid _, int _, OctopusImportHistoryFetchDto dto, Guid? expected, CancellationToken _) => _updates.Add((Snapshot(dto), expected)))
             .ReturnsAsync(new OctopusImportSessionDto());
         _fetcher.Setup(f => f.FetchChunkAsync(It.IsAny<OctopusHistoryFetchContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusHistoryFetchProgressDto());
+        _uploadStore.Setup(s => s.GetSessionDirectory(It.IsAny<Guid>())).Returns(ThisServerDirectory);
         _service = new OctopusImportServerSourceService(_dataProvider.Object, _sessionService.Object, _currentUser.Object, _uploadStore.Object, _fetcher.Object, _sourceMap.Object, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(20) });
     }
 
@@ -104,7 +107,8 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         releaseExpected.ShouldBe(claimed.ChunkId);
         released.LeaseExpiresAt.ShouldBeNull();
         seen.ApiKey.ShouldBe("API-KEY");
-        seen.SessionDirectory.ShouldBe(Path.GetDirectoryName(Path.GetFullPath(session.TemporaryUploadPath)));
+        seen.SessionId.ShouldBe(session.SessionId);
+        seen.SessionDirectory.ShouldBe(ThisServerDirectory, "this server's directory, never the registered path: another replica may have registered it");
     }
 
     [Fact]

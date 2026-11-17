@@ -31,7 +31,11 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         if (details == null) return;
 
-        _ctx.Cursor.DetailsBytes += await detailsStore.WriteAsync(_ctx.Context.SessionDirectory, task.Id, details, ct).ConfigureAwait(false);
+        var write = await detailsStore.WriteAsync(_ctx.Context.SessionId, task.Id, details, ct).ConfigureAwait(false);
+
+        _ctx.Cursor.DetailsBytes += write.Growth;
+
+        if (write.Created) _ctx.PendingStagedDetails++;
 
         task.DetailLevel = 1;
         task.DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details, OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTask());

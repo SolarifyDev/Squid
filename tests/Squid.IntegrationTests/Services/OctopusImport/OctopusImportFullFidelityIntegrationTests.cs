@@ -10,6 +10,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.Security;
 using Squid.Message.Commands.Deployments.Deployment;
@@ -277,7 +278,7 @@ public class OctopusImportFullFidelityIntegrationTests : TestBase
 
             var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
             await provider.ExpireSessionsAsync(DateTimeOffset.UtcNow);
-            await provider.MarkTemporaryUploadCleanedAsync(purgedId, "/tmp/purged.zip", DateTimeOffset.UtcNow);
+            await scope.Resolve<IOctopusImportSessionFileStore>().PurgeAndMarkCleanedAsync(purgedId, "/tmp/purged.zip", DateTimeOffset.UtcNow);
             await provider.MarkInterruptedImportsFailedAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(-1), TimeSpan.FromHours(6));
 
             (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == expiredId)).ProtectedExportPassword.ShouldBeNull();

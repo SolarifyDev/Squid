@@ -46,16 +46,16 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private async Task WriteReleaseAsync(ReleaseRead read, CancellationToken ct)
     {
-        EnrichFeedIds(read.Release, read.Process);
+        await EnrichFeedIdsAsync(read.Release, read.Process, ct).ConfigureAwait(false);
 
         await WriteAsync(OctopusResourceKind.Release, read.Release, ct).ConfigureAwait(false);
-        RecordReference(OctopusResourceKind.Channel, read.Release.ChannelId);
+        await RecordReferenceAsync(OctopusResourceKind.Channel, read.Release.ChannelId, ct).ConfigureAwait(false);
 
         _ctx.Pending.Releases++;
     }
 
     // The export's release documents carry no feed per package; the importer needs it to create the release.
-    private void EnrichFeedIds(OctopusReleaseDto release, OctopusDeploymentProcessDto process)
+    private async Task EnrichFeedIdsAsync(OctopusReleaseDto release, OctopusDeploymentProcessDto process, CancellationToken ct)
     {
         foreach (var package in PackagesWithoutFeed(release))
         {
@@ -63,7 +63,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
             if (feedId == null) continue;
 
-            RecordReference(OctopusResourceKind.Feed, feedId);
+            await RecordReferenceAsync(OctopusResourceKind.Feed, feedId, ct).ConfigureAwait(false);
 
             package.ExtensionData ??= [];
             package.ExtensionData[FeedIdProperty] = JsonSerializer.SerializeToElement(feedId);
@@ -124,8 +124,8 @@ public sealed partial class OctopusRestHistoryFetcher
         await WriteTaskAsync(read.Task, read.Details, ct).ConfigureAwait(false);
         await WriteAsync(OctopusResourceKind.Deployment, read.Deployment, ct).ConfigureAwait(false);
 
-        RecordReference(OctopusResourceKind.Environment, read.Deployment.EnvironmentId);
-        RecordReference(OctopusResourceKind.Channel, read.Deployment.ChannelId);
+        await RecordReferenceAsync(OctopusResourceKind.Environment, read.Deployment.EnvironmentId, ct).ConfigureAwait(false);
+        await RecordReferenceAsync(OctopusResourceKind.Channel, read.Deployment.ChannelId, ct).ConfigureAwait(false);
 
         _ctx.Pending.Deployments++;
     }
@@ -178,7 +178,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
     private async Task<string> ReadStagedMachineNameAsync(string machineId, CancellationToken ct)
     {
-        var machine = await bundleWriter.ReadStagedAsync(_ctx.Context.SessionDirectory, OctopusResourceKind.Machine, machineId, ct).ConfigureAwait(false);
+        var machine = await bundleWriter.ReadStagedAsync(_ctx.Context.SessionId, OctopusResourceKind.Machine, machineId, ct).ConfigureAwait(false);
 
         return machine?["Name"] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text : null;
     }
@@ -208,15 +208,33 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         _ctx.Pending = new OctopusHistoryFetchCountsDto();
         _ctx.PendingSkipped = [];
+        _ctx.PendingStaged = [];
+        _ctx.PendingStagedDetails = 0;
     }
 
     private void CommitPending()
     {
         AddCounts(_ctx.Cursor.Counts, _ctx.Pending);
         AddSkipped(_ctx.Cursor, _ctx.PendingSkipped);
+        AddStaged(_ctx.Cursor);
 
         _ctx.Pending = new OctopusHistoryFetchCountsDto();
         _ctx.PendingSkipped = [];
+        _ctx.PendingStaged = [];
+        _ctx.PendingStagedDetails = 0;
+    }
+
+    // Only paths the item stored for the first time are counted, and only once it commits: what the integrity check before bundling expects.
+    private void AddStaged(OctopusImportHistoryFetchDto cursor)
+    {
+        foreach (var (kind, count) in _ctx.PendingStaged) cursor.StagedDocumentCounts[kind] = cursor.StagedDocumentCounts.GetValueOrDefault(kind) + count;
+
+        cursor.StagedDetails += _ctx.PendingStagedDetails;
+    }
+
+    private void CountStaged(OctopusResourceKind kind, OctopusImportSessionFileWrite write)
+    {
+        if (write.Created) _ctx.PendingStaged[kind.ToString()] = _ctx.PendingStaged.GetValueOrDefault(kind.ToString()) + 1;
     }
 
     private static void AddCounts(OctopusHistoryFetchCountsDto total, OctopusHistoryFetchCountsDto item)
@@ -346,7 +364,7 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         if (string.IsNullOrWhiteSpace(document?.Id)) return;
 
-        await bundleWriter.WriteDocumentAsync(_ctx.Context.SessionDirectory, kind, document, ct).ConfigureAwait(false);
+        CountStaged(kind, await bundleWriter.WriteDocumentAsync(_ctx.Context.SessionId, kind, document, ct).ConfigureAwait(false));
     }
 
     // ── Paths ──────────────────────────────────────────────────────────────

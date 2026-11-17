@@ -19,6 +19,7 @@ public class ExtractOctopusImportCommandHandler(
     IOctopusImportSourceReader sourceReader,
     IOctopusManifestInventoryBuilder inventoryBuilder,
     IOctopusResourceGraphBuilder graphBuilder,
+    IOctopusImportTemporaryUploadStore uploadStore,
     IOctopusImportExtractionCache extractionCache = null)
     : ICommandHandler<ExtractOctopusImportCommand, ExtractOctopusImportResponse>
 {
@@ -47,7 +48,9 @@ public class ExtractOctopusImportCommandHandler(
         if (IsHistoryFetchIncomplete(session))
             return BadRequest(command, HistoryFetchIncompleteMessage, [Diagnostic(OctopusImportCompatibilitySeverity.Blocker, HistoryFetchIncompleteCode, HistoryFetchIncompleteMessage)]);
 
-        if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
+        var sourcePath = await uploadStore.MaterializeAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (sourcePath == null)
             return BadRequest(command, "Octopus import session does not have an available temporary upload.", [
                 Diagnostic(
                     OctopusImportCompatibilitySeverity.Blocker,
@@ -59,7 +62,7 @@ public class ExtractOctopusImportCommandHandler(
 
         try
         {
-            extraction = await ReadSourceAsync(session.TemporaryUploadPath, cancellationToken).ConfigureAwait(false);
+            extraction = await ReadSourceAsync(sourcePath, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

@@ -12,6 +12,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Rollback;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.DeploymentExecution;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.E2ETests.Helpers;
@@ -42,6 +43,7 @@ public class OctopusHistoryImportE2ETests : IClassFixture<OctopusHistoryImportE2
 {
     private const string ApiKey = "API-E2ESTUBKEY000000000001";
     private const string ImportedVersion = "0.9.0";
+    private const string MultiServerVersion = "0.9.7";
 
     private readonly ImportFixture _fixture;
 
@@ -80,6 +82,59 @@ public class OctopusHistoryImportE2ETests : IClassFixture<OctopusHistoryImportE2
 
         var after = await ImportedTaskAsync(ImportedVersion);
         (after.Id, after.State, after.LastModifiedDate, after.JSON, after.ConcurrencyTag).ShouldBe((imported.Id, imported.State, imported.LastModifiedDate, imported.JSON, imported.ConcurrencyTag), "the imported task row is read-only history: deploying, rolling back and previewing never touch it");
+    }
+
+    // Several Squid servers behind one database (each its own temporary root, GUID-named, nothing shared on disk): the history fetch's
+    // chunks alternate between two of them and the confirmation runs on a third that never saw a file of the session. The imported
+    // history is whole (task details included) and drives the lifecycle gate exactly as a single server's import does.
+    [Fact]
+    public async Task ImportedHistory_FetchedAcrossTwoServers_ConfirmedOnAThird_DrivesProgression()
+    {
+        using var servers = new ServerRoots();
+        var scenario = await SeedPreviouslyImportedProjectAsync($"squid-e2e-{Guid.NewGuid():N}"[..18]);
+        await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-7", MultiServerVersion).Deployment("Projects-1", "Deployments-7", "Releases-7", "ServerTasks-7");
+
+        var sessionId = await _fixture.Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, 1, octopus.BaseUri, ApiKey)).Data.Session.SessionId, servers.On(0));
+        var fetch = await FetchAlternatingAsync(sessionId, octopus, servers);
+        var import = await _fixture.Run<IMediator, OctopusImportFlowResult>(mediator => OctopusImportHandlerFlow.FinishServerImportAsync(mediator, 1, sessionId, fetch), servers.On(2));
+
+        import.Confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(import));
+        fetch.Counts.DetailsFetched.ShouldBe(1);
+        var imported = await ImportedTaskAsync(MultiServerVersion);
+        (imported.State, imported.JSON.Contains("\"Details\"")).ShouldBe((TaskState.Success, true), "the task and its details, stored by the servers that fetched them, were imported by one that did not");
+
+        var promoted = await PreviewAsync(await ReleaseIdAsync(MultiServerVersion), scenario.ProdEnvironmentId);
+        promoted.AllowedEnvironmentIds.ShouldContain(scenario.ProdEnvironmentId, customMessage: "the imported success in TEST, fetched across servers, completes phase 1");
+        servers.HasBundle(2, sessionId).ShouldBeTrue("the confirming server worked from its own copy of the stored bundle");
+    }
+
+    // One page per chunk is not configurable through the handler, so chunks run until done, alternating between the first two servers.
+    private async Task<OctopusHistoryFetchProgressDto> FetchAlternatingAsync(Guid sessionId, StubOctopusServer octopus, ServerRoots servers)
+    {
+        for (var chunk = 0; chunk < 200; chunk++)
+        {
+            var progress = await _fixture.Run<IMediator, OctopusHistoryFetchProgressDto>(async mediator => (await OctopusImportHandlerFlow.FetchHistoryAsync(mediator, 1, sessionId, octopus.BaseUri, ApiKey)).Data, servers.On(chunk % 2));
+
+            if (progress.Done) return progress;
+        }
+
+        throw new InvalidOperationException("The history fetch did not finish within 200 chunks; check the stub's request log.");
+    }
+
+    // Three temporary roots, one per simulated server, each GUID-named and removed however the test ends.
+    private sealed class ServerRoots : IDisposable
+    {
+        private readonly string[] _roots = Enumerable.Range(0, 3).Select(_ => Path.Combine(Path.GetTempPath(), $"squid-e2e-server-{Guid.NewGuid():N}")).ToArray();
+
+        public Action<ContainerBuilder> On(int server)
+            => builder => builder.RegisterInstance<IOctopusImportTemporaryUploadSettings>(new OctopusImportTemporaryUploadSettings(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string> { ["OctopusImport:TemporaryUploads:RootPath"] = _roots[server] }).Build()));
+
+        public bool HasBundle(int server, Guid sessionId) => File.Exists(Path.Combine(_roots[server], sessionId.ToString("N"), OctopusImportSourceReader.HistoryBundleFileName));
+
+        public void Dispose()
+        {
+            foreach (var root in _roots.Where(Directory.Exists)) Directory.Delete(root, recursive: true);
+        }
     }
 
     // ── Seeding ──────────────────────────────────────────────────────────

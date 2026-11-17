@@ -44,7 +44,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         if (settings != null || _ctx.Pending.ItemsRejected != rejectedBefore) return settings;
 
-        return await bundleWriter.ReadStagedAsync(_ctx.Context.SessionDirectory, OctopusResourceKind.Project, projectId, ct).ConfigureAwait(false);
+        return await bundleWriter.ReadStagedAsync(_ctx.Context.SessionId, OctopusResourceKind.Project, projectId, ct).ConfigureAwait(false);
     }
 
     private async Task StageProjectConfigurationAsync(ProjectConfigurationDocuments configuration, CancellationToken ct)
@@ -52,7 +52,7 @@ public sealed partial class OctopusRestHistoryFetcher
         var projectId = configuration.ProjectId;
         var process = await StageAsync(OctopusResourceKind.DeploymentProcess, configuration.Process, projectId, ct).ConfigureAwait(false);
 
-        RecordProcessReferences(process);
+        await RecordProcessReferencesAsync(process, ct).ConfigureAwait(false);
 
         await StageAsync(OctopusResourceKind.DeploymentSettings, configuration.Settings, projectId, ct).ConfigureAwait(false);
         await StageAsync(OctopusResourceKind.VariableSet, configuration.Variables, projectId, ct).ConfigureAwait(false);
@@ -84,18 +84,18 @@ public sealed partial class OctopusRestHistoryFetcher
 
     // Teams a manual intervention names, feeds a package comes from and environments an action is scoped to; any not staged
     // (a system team, a resource created during the fetch) is fetched by the Closure phase.
-    private void RecordProcessReferences(JsonObject process)
+    private async Task RecordProcessReferencesAsync(JsonObject process, CancellationToken ct)
     {
         foreach (var action in ProcessActions(process))
         {
             foreach (var teamId in (ReadString(action["Properties"] as JsonObject, ResponsibleTeamIdsProperty) ?? string.Empty).Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-                RecordReference(OctopusResourceKind.Team, teamId);
+                await RecordReferenceAsync(OctopusResourceKind.Team, teamId, ct).ConfigureAwait(false);
 
             foreach (var package in (action["Packages"] as JsonArray ?? []).OfType<JsonObject>())
-                RecordReference(OctopusResourceKind.Feed, ReadString(package, "FeedId"));
+                await RecordReferenceAsync(OctopusResourceKind.Feed, ReadString(package, "FeedId"), ct).ConfigureAwait(false);
 
             foreach (var environmentId in ReadStrings(action, "Environments").Concat(ReadStrings(action, "ExcludedEnvironments")))
-                RecordReference(OctopusResourceKind.Environment, environmentId);
+                await RecordReferenceAsync(OctopusResourceKind.Environment, environmentId, ct).ConfigureAwait(false);
         }
     }
 

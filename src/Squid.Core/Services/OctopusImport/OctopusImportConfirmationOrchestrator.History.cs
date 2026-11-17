@@ -159,9 +159,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator
 
     private async Task<OctopusTaskHistoryDetails> ReadHistoryDetailsAsync(ConfirmationExecutionContext execution, string taskId, CancellationToken ct)
     {
-        if (_historyDetailsStore == null || string.IsNullOrWhiteSpace(execution.Request.SessionDirectory)) return null;
+        if (_historyDetailsStore == null) return null;
 
-        return await _historyDetailsStore.ReadAsync(execution.Request.SessionDirectory, taskId, ct).ConfigureAwait(false);
+        return await _historyDetailsStore.ReadAsync(execution.Request.SessionId, taskId, ct).ConfigureAwait(false);
     }
 
     private static OctopusImportHistoryUnit BuildHistoryUnit(ConfirmationExecutionContext execution, HistoryUnitSource source, int? existingDeploymentId, int? existingTaskId)

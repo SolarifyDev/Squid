@@ -68,12 +68,6 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
         int limit,
         CancellationToken ct = default);
 
-    Task<int> MarkTemporaryUploadCleanedAsync(
-        Guid sessionId,
-        string temporaryUploadPath,
-        DateTimeOffset cleanedAt,
-        CancellationToken ct = default);
-
     Task<int> MarkTemporaryUploadCleanupFailedAsync(
         Guid sessionId,
         string temporaryUploadPath,
@@ -353,28 +347,6 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 Enum.Parse<OctopusImportSessionState>(s.State),
                 s.TemporaryUploadCleanupAfter))
             .ToList();
-    }
-
-    public Task<int> MarkTemporaryUploadCleanedAsync(
-        Guid sessionId,
-        string temporaryUploadPath,
-        DateTimeOffset cleanedAt,
-        CancellationToken ct = default)
-    {
-        var dataVersion = Guid.NewGuid().ToByteArray();
-
-        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
-            s => s.SessionId == sessionId &&
-                 s.TemporaryUploadPath == temporaryUploadPath &&
-                 s.TemporaryUploadCleanedAt == null,
-            setters => setters
-                .SetProperty(s => s.DataVersion, dataVersion)
-                .SetProperty(s => s.LastModifiedDate, cleanedAt)
-                .SetProperty(s => s.TemporaryUploadPath, (string)null)
-                .SetProperty(s => s.TemporaryUploadCleanedAt, cleanedAt)
-                .SetProperty(s => s.TemporaryUploadCleanupError, (string)null)
-                .SetProperty(s => s.ProtectedExportPassword, (string)null),
-            ct);
     }
 
     public Task<int> MarkTemporaryUploadCleanupFailedAsync(

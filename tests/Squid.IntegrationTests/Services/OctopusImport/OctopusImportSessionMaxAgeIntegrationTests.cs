@@ -82,8 +82,9 @@ public class OctopusImportSessionMaxAgeIntegrationTests : TestBase
     public async Task Sweep_OverAgeSession_UploadSecurelyDeletedInSameSweep()
     {
         var sessionId = Guid.NewGuid();
+        var uploadPath = await Run<IOctopusImportTemporaryUploadStore, string>(store => Task.FromResult(store.GetLocalPath(sessionId, "export.zip")));
+        await SeedAsync(OctopusImportSessionState.Uploaded, MaxAge.Add(TimeSpan.FromHours(1)), sessionId, uploadPath);
         var upload = await Run<IOctopusImportTemporaryUploadStore, OctopusImportTemporaryUpload>(store => store.SaveAsync(sessionId, "export.zip", new MemoryStream([1, 2, 3])));
-        await SeedAsync(OctopusImportSessionState.Uploaded, MaxAge.Add(TimeSpan.FromHours(1)), sessionId, upload.Path);
 
         var outcome = await Run<IOctopusImportTemporaryUploadCleanupService, OctopusImportTemporaryUploadCleanupOutcome>(c => c.EnforceCleanupAsync());
 

@@ -26,7 +26,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         if (string.IsNullOrWhiteSpace(normalized?.Id)) return null;
 
-        await bundleWriter.WriteJsonAsync(_ctx.Context.SessionDirectory, kind, normalized.Document, ct).ConfigureAwait(false);
+        CountStaged(kind, await bundleWriter.WriteJsonAsync(_ctx.Context.SessionId, kind, normalized.Document, ct).ConfigureAwait(false));
 
         _ctx.Pending.ConfigurationDocuments++;
         _ctx.Pending.SecretsWithheld += normalized.WithheldSecrets.Count;
@@ -45,9 +45,9 @@ public sealed partial class OctopusRestHistoryFetcher
 
     // Only a reference the session has not staged is kept, so the list holds just what the catalog could not have seen.
     // An id that is not a plain Octopus id (a variable expression) is not a resource the server can be asked for.
-    private void RecordReference(OctopusResourceKind kind, string id)
+    private async Task RecordReferenceAsync(OctopusResourceKind kind, string id, CancellationToken ct)
     {
-        if (!OctopusRestPathPolicy.IsValidId(id) || bundleWriter.IsStaged(_ctx.Context.SessionDirectory, kind, id)) return;
+        if (!OctopusRestPathPolicy.IsValidId(id) || await bundleWriter.IsStagedAsync(_ctx.Context.SessionId, kind, id, ct).ConfigureAwait(false)) return;
 
         var key = ClosureKey(kind, id);
         var references = _ctx.Cursor.ClosureReferences;
@@ -73,10 +73,20 @@ public sealed partial class OctopusRestHistoryFetcher
         _ctx.InItem = true;
         _ctx.ClosureBatch = batch.Select(id => ClosureKey(collection.Kind, id)).ToList();
 
-        await StageClosureBatchAsync(collection, batch.Where(id => !bundleWriter.IsStaged(_ctx.Context.SessionDirectory, collection.Kind, id)).ToList(), ct).ConfigureAwait(false);
+        await StageClosureBatchAsync(collection, await NotStagedAsync(collection.Kind, batch, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
 
         ForgetClosureBatch();
         CommitItem();
+    }
+
+    private async Task<List<string>> NotStagedAsync(OctopusResourceKind kind, IEnumerable<string> ids, CancellationToken ct)
+    {
+        var notStaged = new List<string>();
+
+        foreach (var id in ids)
+            if (!await bundleWriter.IsStagedAsync(_ctx.Context.SessionId, kind, id, ct).ConfigureAwait(false)) notStaged.Add(id);
+
+        return notStaged;
     }
 
     private async Task StageClosureBatchAsync(OctopusRestCollection collection, IReadOnlyCollection<string> ids, CancellationToken ct)

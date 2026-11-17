@@ -9,6 +9,8 @@ using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport;
 
 public sealed class OctopusImportSourceReaderTests : IDisposable
@@ -20,9 +22,9 @@ public sealed class OctopusImportSourceReaderTests : IDisposable
     public async Task BundleBesideAnExport_NotRead()
     {
         var exportPath = WriteZip("export.zip", ("Projects/Projects-1.json", new { Id = "Projects-1", Name = "Web" }, "Project"));
-        var writer = new OctopusHistoryBundleWriter();
-        await writer.WriteDocumentAsync(_sessionDirectory, OctopusResourceKind.Release, new OctopusReleaseDto { Id = "Releases-1", ProjectId = "Projects-1", Version = "1.0.0" });
-        await writer.BuildBundleAsync(_sessionDirectory, "inst-1");
+        var writer = TestSessionFiles.Writer();
+        await writer.WriteDocumentAsync(TestSessionFiles.IdOf(_sessionDirectory), OctopusResourceKind.Release, new OctopusReleaseDto { Id = "Releases-1", ProjectId = "Projects-1", Version = "1.0.0" });
+        await writer.BuildBundleAsync(TestSessionFiles.IdOf(_sessionDirectory), _sessionDirectory, "inst-1");
 
         var extraction = await Reader().ReadAsync(exportPath);
 
@@ -42,9 +44,9 @@ public sealed class OctopusImportSourceReaderTests : IDisposable
     [Fact]
     public async Task MainFileIsTheBundle_ReadWithTheHistoryLimits()
     {
-        var writer = new OctopusHistoryBundleWriter();
-        foreach (var n in Enumerable.Range(1, 5)) await writer.WriteDocumentAsync(_sessionDirectory, OctopusResourceKind.Release, new OctopusReleaseDto { Id = $"Releases-{n}", Version = $"1.0.{n}" });
-        var bundlePath = await writer.BuildBundleAsync(_sessionDirectory, "inst-1");
+        var writer = TestSessionFiles.Writer();
+        foreach (var n in Enumerable.Range(1, 5)) await writer.WriteDocumentAsync(TestSessionFiles.IdOf(_sessionDirectory), OctopusResourceKind.Release, new OctopusReleaseDto { Id = $"Releases-{n}", Version = $"1.0.{n}" });
+        var bundlePath = await writer.BuildBundleAsync(TestSessionFiles.IdOf(_sessionDirectory), _sessionDirectory, "inst-1");
         var tightExportLimits = new OctopusArchiveExtractionOptions { MaxEntryCount = 2 };
 
         var extraction = await new OctopusImportSourceReader(new OctopusArchiveExtractor(tightExportLimits), new OctopusInputExtractor()).ReadAsync(bundlePath);

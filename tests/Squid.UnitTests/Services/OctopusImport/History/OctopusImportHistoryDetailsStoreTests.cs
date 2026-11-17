@@ -1,75 +1,58 @@
 using System.IO;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SessionFiles;
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
 
 namespace Squid.UnitTests.Services.OctopusImport.History;
 
-public class OctopusImportHistoryDetailsStoreTests : IDisposable
+public class OctopusImportHistoryDetailsStoreTests
 {
-    private readonly string _sessionDirectory = Path.Combine(Path.GetTempPath(), $"squid-history-details-{Guid.NewGuid():N}");
+    private readonly InMemoryOctopusImportSessionFileStore _files = new();
+    private readonly Guid _sessionId = Guid.NewGuid();
 
     [Fact]
     public async Task WriteThenRead_RoundTripsTheDetails()
     {
-        var store = new OctopusImportHistoryDetailsStore();
+        var store = new OctopusImportHistoryDetailsStore(_files);
         var details = new OctopusTaskHistoryDetails { ActivityLogs = [new OctopusActivityLogDto { Name = "Task", LogElements = [new OctopusLogElementDto { MessageText = "hello" }] }], Artifacts = [new OctopusArtifactDto { Filename = "a.txt" }] };
 
-        await store.WriteAsync(_sessionDirectory, "ServerTasks-1", details);
-        var read = await store.ReadAsync(_sessionDirectory, "servertasks-1 ");
+        await store.WriteAsync(_sessionId, "ServerTasks-1", details);
+        var read = await store.ReadAsync(_sessionId, "servertasks-1 ");
 
         read.RootActivities.ShouldHaveSingleItem().LogElements.ShouldHaveSingleItem().MessageText.ShouldBe("hello");
         read.Artifacts.ShouldHaveSingleItem().Filename.ShouldBe("a.txt");
     }
 
-    // The fetch caps stored details by what each write adds: a task written again (a retried chunk) adds only its change in size.
+    // The fetch caps stored details by what each write adds: a task written again (a retried chunk) adds only its change in size,
+    // and is not a newly stored task.
     [Fact]
-    public async Task Write_ReturnsWhatTheStoreGrewBy()
+    public async Task Write_ReportsWhatTheStoreGrewBy_AndWhetherTheTaskIsNew()
     {
-        var store = new OctopusImportHistoryDetailsStore();
+        var store = new OctopusImportHistoryDetailsStore(_files);
         var details = new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "a.txt" }] };
 
-        var first = await store.WriteAsync(_sessionDirectory, "ServerTasks-1", details);
-        var again = await store.WriteAsync(_sessionDirectory, "ServerTasks-1", details);
+        var first = await store.WriteAsync(_sessionId, "ServerTasks-1", details);
+        var again = await store.WriteAsync(_sessionId, "ServerTasks-1", details);
 
-        first.ShouldBe(new FileInfo(OctopusImportHistoryDetailsStore.PathFor(_sessionDirectory, "ServerTasks-1")).Length);
-        again.ShouldBe(0);
-    }
-
-    // A rewrite cut off part way (the chunk deadline, a full disk) must not leave a truncated file the import later fails to read:
-    // the details written before stay readable until the new ones are complete.
-    [Fact]
-    public async Task RewriteCutOff_PreviousDetailsStayReadable()
-    {
-        var store = new OctopusImportHistoryDetailsStore();
-        await store.WriteAsync(_sessionDirectory, "ServerTasks-1", new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "a.txt" }] });
-        using var cancelled = new CancellationTokenSource();
-        cancelled.Cancel();
-
-        await Should.ThrowAsync<OperationCanceledException>(() => store.WriteAsync(_sessionDirectory, "ServerTasks-1", new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "b.txt" }] }, cancelled.Token));
-
-        (await store.ReadAsync(_sessionDirectory, "ServerTasks-1")).Artifacts.ShouldHaveSingleItem().Filename.ShouldBe("a.txt");
-        Directory.GetFiles(Path.Combine(_sessionDirectory, OctopusImportHistoryDetailsStore.DirectoryName)).ShouldHaveSingleItem("no partial file is left behind");
+        (first.Growth, first.Created).ShouldBe(((await _files.ReadAsync(_sessionId, OctopusImportHistoryDetailsStore.PathFor("ServerTasks-1"))).LongLength, true));
+        (again.Growth, again.Created).ShouldBe((0L, false));
+        (await store.CountAsync(_sessionId)).ShouldBe(1);
     }
 
     [Theory]
-    [InlineData(null, "ServerTasks-1")]
-    [InlineData("", "ServerTasks-1")]
-    [InlineData("dir", null)]
-    [InlineData("dir", "ServerTasks-404")]
-    public async Task Read_WhenNothingWasStored_ReturnsNull(string sessionDirectory, string taskId)
-        => (await new OctopusImportHistoryDetailsStore().ReadAsync(sessionDirectory == "dir" ? _sessionDirectory : sessionDirectory, taskId)).ShouldBeNull();
+    [InlineData(false, "ServerTasks-1")]
+    [InlineData(true, null)]
+    [InlineData(true, "ServerTasks-404")]
+    public async Task Read_WhenNothingWasStored_ReturnsNull(bool session, string taskId)
+        => (await new OctopusImportHistoryDetailsStore(_files).ReadAsync(session ? _sessionId : Guid.Empty, taskId)).ShouldBeNull();
 
     [Fact]
     public void PathFor_NeverUsesTheRawTaskId()
     {
-        var path = OctopusImportHistoryDetailsStore.PathFor(_sessionDirectory, "../../etc/passwd");
+        var path = OctopusImportHistoryDetailsStore.PathFor("../../etc/passwd");
 
-        Path.GetDirectoryName(path).ShouldBe(Path.Combine(_sessionDirectory, OctopusImportHistoryDetailsStore.DirectoryName));
-        Path.GetFileName(path).ShouldMatch("^[0-9a-f]{64}\\.json\\.gz$");
-    }
-
-    public void Dispose()
-    {
-        if (Directory.Exists(_sessionDirectory)) Directory.Delete(_sessionDirectory, recursive: true);
+        path.ShouldStartWith(OctopusImportSessionFilePaths.DetailsPrefix);
+        path[OctopusImportSessionFilePaths.DetailsPrefix.Length..].ShouldMatch("^[0-9a-f]{64}\\.json\\.gz$");
     }
 }

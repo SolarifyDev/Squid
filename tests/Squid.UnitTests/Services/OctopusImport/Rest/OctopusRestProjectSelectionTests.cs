@@ -10,6 +10,8 @@ using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
@@ -144,7 +146,7 @@ public sealed class OctopusRestProjectSelectionTests : IDisposable
 
     private static OctopusServerConnection Connection(string space = null) => new(FakeOctopusServer.Url, FakeOctopusServer.ApiKey, space);
 
-    private static IOctopusRestProjectLister Lister(FakeOctopusServer server) => new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore());
+    private static IOctopusRestProjectLister Lister(FakeOctopusServer server) => new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store);
 
     private static JsonObject Project(string id, string name, bool disabled = false) => new() { ["Id"] = id, ["Name"] = name, ["ProjectGroupId"] = "ProjectGroups-1", ["IsDisabled"] = disabled };
 
@@ -157,10 +159,10 @@ public sealed class OctopusRestProjectSelectionTests : IDisposable
 
     private static async Task FetchUntilDoneAsync(FakeOctopusServer server, string directory, OctopusImportHistoryFetchDto cursor, IReadOnlyCollection<string> chosen)
     {
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(5) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(5) });
 
         for (var chunk = 0; !cursor.Done && chunk < 50; chunk++)
-            await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionDirectory = directory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty, ChosenProjectIds = chosen });
+            await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionId = TestSessionFiles.IdOf(directory), SessionDirectory = directory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty, ChosenProjectIds = chosen });
 
         cursor.Done.ShouldBeTrue();
     }

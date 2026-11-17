@@ -3,60 +3,61 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SessionFiles;
+using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.History;
 
-public sealed class OctopusImportHistoryDetailsStore : IOctopusImportHistoryDetailsStore
+public sealed class OctopusImportHistoryDetailsStore(IOctopusImportSessionFileStore files) : IOctopusImportHistoryDetailsStore
 {
-    public const string DirectoryName = "history-details";
-
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public async Task<long> WriteAsync(string sessionDirectory, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default)
+    public async Task<OctopusImportSessionFileWrite> WriteAsync(Guid sessionId, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(details);
 
-        var path = PathFor(sessionDirectory, taskId);
-        var previous = File.Exists(path) ? new FileInfo(path).Length : 0;
+        var path = PathFor(taskId);
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var content = await CompressAsync(details, ct).ConfigureAwait(false);
 
-        await OctopusImportAtomicFile.WriteAsync(path, (stream, token) => WriteDetailsAsync(stream, details, token), ct).ConfigureAwait(false);
-
-        return new FileInfo(path).Length - previous;
+        return await files.WriteAsync(sessionId, path, content, OctopusImportSessionFileEncoding.Identity, ct).ConfigureAwait(false);
     }
 
-    private static async Task WriteDetailsAsync(Stream file, OctopusTaskHistoryDetails details, CancellationToken ct)
+    private static async Task<MemoryStream> CompressAsync(OctopusTaskHistoryDetails details, CancellationToken ct)
     {
-        await using var gzip = new GZipStream(file, CompressionLevel.Optimal, leaveOpen: true);
+        var content = new MemoryStream();
 
-        await JsonSerializer.SerializeAsync(gzip, details, JsonOptions, ct).ConfigureAwait(false);
+        await using (var gzip = new GZipStream(content, CompressionLevel.Optimal, leaveOpen: true))
+            await JsonSerializer.SerializeAsync(gzip, details, JsonOptions, ct).ConfigureAwait(false);
+
+        content.Position = 0;
+
+        return content;
     }
 
-    public async Task<OctopusTaskHistoryDetails> ReadAsync(string sessionDirectory, string taskId, CancellationToken ct = default)
+    public async Task<OctopusTaskHistoryDetails> ReadAsync(Guid sessionId, string taskId, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(sessionDirectory) || string.IsNullOrWhiteSpace(taskId)) return null;
+        if (sessionId == Guid.Empty || string.IsNullOrWhiteSpace(taskId)) return null;
 
-        var path = PathFor(sessionDirectory, taskId);
+        var stored = await files.ReadAsync(sessionId, PathFor(taskId), ct).ConfigureAwait(false);
 
-        if (!File.Exists(path)) return null;
+        if (stored == null) return null;
 
-        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
-        await using var gzip = new GZipStream(file, CompressionMode.Decompress);
+        await using var gzip = new GZipStream(new MemoryStream(stored, writable: false), CompressionMode.Decompress);
 
         return await JsonSerializer.DeserializeAsync<OctopusTaskHistoryDetails>(gzip, JsonOptions, ct).ConfigureAwait(false);
     }
 
-    /// <summary>File names are a hash of the normalised task id, never the raw id, so a hostile id cannot steer the path.</summary>
-    public static string PathFor(string sessionDirectory, string taskId)
-    {
-        if (string.IsNullOrWhiteSpace(sessionDirectory))
-            throw new ArgumentException("A session directory is required.", nameof(sessionDirectory));
+    public async Task<int> CountAsync(Guid sessionId, CancellationToken ct = default) => (await files.TotalsAsync(sessionId, OctopusImportSessionFilePaths.DetailsPrefix, ct).ConfigureAwait(false)).Files;
 
+    /// <summary>Stored under a hash of the normalised task id, never the raw id, so a hostile id cannot steer the path.</summary>
+    public static string PathFor(string taskId)
+    {
         if (string.IsNullOrWhiteSpace(taskId))
             throw new ArgumentException("A task id is required.", nameof(taskId));
 
-        return Path.Combine(sessionDirectory, DirectoryName, $"{FileKey(taskId)}.json.gz");
+        return $"{OctopusImportSessionFilePaths.DetailsPrefix}{FileKey(taskId)}.json.gz";
     }
 
     private static string FileKey(string taskId)

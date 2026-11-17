@@ -32,7 +32,7 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         EnsureValidated();
         EnsureWithinMaxAge();
-        EnsureTemporaryUpload();
+        await EnsureSourceAvailableAsync(ct).ConfigureAwait(false);
         ReadValidatedPlan();
         EnsurePlanMatchesSelection();
 
@@ -54,9 +54,12 @@ public sealed partial class OctopusImportConfirmationRunner
             throw new OctopusImportSessionExpiredException(_ctx.SessionId, OctopusImportSessionExpiry.Deadline(_ctx.Session.CreatedDate, maxAge), maxAge);
     }
 
-    private void EnsureTemporaryUpload()
+    // Any server may run the confirmation: the source is read from the session's stored copy when this server has none.
+    private async Task EnsureSourceAvailableAsync(CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_ctx.Session.TemporaryUploadPath) || !File.Exists(_ctx.Session.TemporaryUploadPath))
+        _ctx.SourcePath = await uploadStore.MaterializeAsync(_ctx.Session, ct).ConfigureAwait(false);
+
+        if (_ctx.SourcePath == null)
             throw new OctopusImportConfirmationRejectedException("Octopus import session does not have an available temporary upload.");
     }
 
@@ -95,7 +98,7 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         try
         {
-            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.Session.TemporaryUploadPath, _ctx.SpaceId, chosenProjectIds: OctopusImportSourceSummaries.ChosenProjectIds(_ctx.Session.SourceSummaryJson), ct: ct).ConfigureAwait(false);
+            _ctx.Snapshot = await planningPipeline.BuildPreviewAsync(_ctx.SourcePath, _ctx.SpaceId, chosenProjectIds: OctopusImportSourceSummaries.ChosenProjectIds(_ctx.Session.SourceSummaryJson), ct: ct).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

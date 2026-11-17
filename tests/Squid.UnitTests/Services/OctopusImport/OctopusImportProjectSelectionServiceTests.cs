@@ -24,14 +24,16 @@ public class OctopusImportProjectSelectionServiceTests
     private readonly Mock<IOctopusImportSessionDataProvider> _sessions = new();
     private readonly Mock<IOctopusImportSessionService> _sessionService = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
+    private readonly Mock<IOctopusImportTemporaryUploadStore> _uploadStore = new();
     private readonly OctopusImportProjectSelectionService _service;
 
     public OctopusImportProjectSelectionServiceTests()
     {
         _currentUser.SetupGet(u => u.Id).Returns(42);
+        _uploadStore.Setup(u => u.MaterializeAsync(It.IsAny<OctopusImportSession>(), It.IsAny<CancellationToken>())).ReturnsAsync((OctopusImportSession session, CancellationToken _) => session.TemporaryUploadPath);
         _sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Prior(("Project", "Projects-1")));
         _sessionService.Setup(s => s.UpdateProjectSelectionAsync(It.IsAny<Guid>(), SpaceId, It.IsAny<List<string>>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto());
-        _service = new OctopusImportProjectSelectionService(_lister.Object, _pipeline.Object, _sourceMap.Object, _sessions.Object, _sessionService.Object, _currentUser.Object);
+        _service = new OctopusImportProjectSelectionService(_lister.Object, _pipeline.Object, _sourceMap.Object, _sessions.Object, _sessionService.Object, _currentUser.Object, _uploadStore.Object);
     }
 
     [Fact]

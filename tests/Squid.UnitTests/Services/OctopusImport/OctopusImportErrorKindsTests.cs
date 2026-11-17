@@ -34,6 +34,7 @@ public class OctopusImportErrorKindsTests
         yield return [new OctopusImportProjectSelectionInvalidException(OctopusImportProjectSelectionProblem.Empty, "none"), "ProjectSelection"];
         yield return [new OctopusImportProjectSelectionBeyondReadException(Guid.NewGuid()), "ProjectSelectionBeyondRead"];
         yield return [new OctopusImportHistoryStagingLostException(), "StagingLost"];
+        yield return [new OctopusImportHistoryStagingIncompleteException("Release", 4999, 5000), "StagingLost"];
         yield return [new OctopusImportStorageException(), "Storage"];
         yield return [new OctopusImportSessionExpiredException(Guid.Empty, default, TimeSpan.FromHours(168)), "SessionExpired"];
     }
@@ -68,5 +69,19 @@ public class OctopusImportErrorKindsTests
     public void Of_OtherFailure_IsNull(Exception exception)
     {
         OctopusImportErrorKinds.Of(exception).ShouldBeNull();
+    }
+
+    // Staging lives in the database: losing it means the session was cleaned up (or an earlier Squid started it), never "point every
+    // replica at a shared volume". The incomplete variant names the kind and the counts only.
+    [Fact]
+    public void StagingLost_SaysStartANewSession_WithoutSharedVolumeAdvice()
+    {
+        var lost = new OctopusImportHistoryStagingLostException().Message;
+        var incomplete = new OctopusImportHistoryStagingIncompleteException("Release", 4999, 5000).Message;
+
+        lost.ShouldContain("start a new import session");
+        lost.ShouldNotContain("RootPath");
+        lost.ShouldNotContain("replica");
+        incomplete.ShouldEndWith("Release: 4999 stored, 5000 read.");
     }
 }

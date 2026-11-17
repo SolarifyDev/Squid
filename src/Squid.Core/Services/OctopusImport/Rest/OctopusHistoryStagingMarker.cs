@@ -1,42 +1,47 @@
+using System.Text;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.OctopusImport.SessionFiles;
+using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
 
 /// <summary>
-/// Ties a history fetch's cursor (kept in the database) to the session directory its documents are staged in (kept on one server's
-/// disk). The first chunk writes a random id into the directory and onto the cursor; every later chunk must find that id there before
-/// it reads or stages anything. A directory that is gone (restart on temporary storage) or another one (another replica) is refused,
+/// Ties a history fetch's cursor to the staged documents it counted, both kept in the database. The first chunk stores a random id with
+/// the session's files and on the cursor; every later chunk, on whichever server, must find that id stored before it reads or stages
+/// anything. A staging that is gone (the session was cleaned up) or that an earlier Squid version kept on one server's disk is refused,
 /// so a bundle is never built from a staging that silently lacks what earlier chunks counted.
 /// </summary>
 public static class OctopusHistoryStagingMarker
 {
-    public const string FileName = "staging.id";
+    public const string FileName = OctopusImportSessionFilePaths.Marker;
 
-    public static void EnsureIntact(string sessionDirectory, OctopusImportHistoryFetchDto cursor)
+    public static async Task EnsureIntactAsync(IOctopusImportSessionFileStore files, Guid sessionId, OctopusImportHistoryFetchDto cursor, CancellationToken ct)
     {
-        var path = Path.Combine(sessionDirectory, FileName);
-
         if (string.IsNullOrWhiteSpace(cursor.StagingId))
         {
-            Stamp(path, cursor);
+            await StampAsync(files, sessionId, cursor, ct).ConfigureAwait(false);
             return;
         }
 
-        if (ReadOrNull(path) != cursor.StagingId)
+        if (await ReadOrNullAsync(files, sessionId, ct).ConfigureAwait(false) != cursor.StagingId)
             throw new OctopusImportHistoryStagingLostException();
     }
 
-    // A cursor no chunk has stamped: a new fetch, or one an older Squid started (it cannot be checked, so it is stamped, never refused).
-    private static void Stamp(string path, OctopusImportHistoryFetchDto cursor)
+    // A cursor no chunk has stamped: a new fetch, or one an older Squid created before its first chunk ran (it cannot be checked, so it is stamped).
+    private static async Task StampAsync(IOctopusImportSessionFileStore files, Guid sessionId, OctopusImportHistoryFetchDto cursor, CancellationToken ct)
     {
         var stagingId = Guid.NewGuid().ToString("N");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, stagingId);
+        await files.WriteAsync(sessionId, FileName, new MemoryStream(Encoding.UTF8.GetBytes(stagingId)), OctopusImportSessionFileEncoding.Identity, ct).ConfigureAwait(false);
 
         cursor.StagingId = stagingId;
     }
 
-    private static string ReadOrNull(string path) => File.Exists(path) ? File.ReadAllText(path).Trim() : null;
+    private static async Task<string> ReadOrNullAsync(IOctopusImportSessionFileStore files, Guid sessionId, CancellationToken ct)
+    {
+        var stored = await files.ReadAsync(sessionId, FileName, ct).ConfigureAwait(false);
+
+        return stored == null ? null : Encoding.UTF8.GetString(stored).Trim();
+    }
 }

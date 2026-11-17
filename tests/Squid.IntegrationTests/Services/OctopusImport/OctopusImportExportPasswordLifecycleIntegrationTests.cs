@@ -7,6 +7,7 @@ using Squid.Core.Services.Authorization;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Services.Security;
 using Squid.Core.Settings.Security;
 using Squid.Message.Constants;
@@ -43,7 +44,6 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetTemporaryUploadCleanupCandidatesAsync)}"] = false,
-        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanupFailedAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetLatestHistoryFetchAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.CreateSessionAsync)}"] = false,
@@ -101,9 +101,9 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
 
         data.Add(nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
 
-        // The upload purge only runs for terminal sessions, but must not trust that they were cleared.
+        // The upload purge (stored files and the mark, one transaction) only runs for terminal sessions, but must not trust that they were cleared.
         foreach (var terminal in states.Where(OctopusImportSessionStateMachine.IsTerminal))
-            data.Add(nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync), terminal, terminal);
+            data.Add(nameof(IOctopusImportSessionFileStore.PurgeAndMarkCleanedAsync), terminal, terminal);
 
         return data;
     }
@@ -325,8 +325,8 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             case nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync):
                 (await provider.MarkInterruptedImportsFailedAsync(now, now.AddHours(-1), TimeSpan.FromHours(6))).ShouldBeGreaterThanOrEqualTo(1);
                 break;
-            case nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync):
-                (await provider.MarkTemporaryUploadCleanedAsync(sessionId, uploadPath, now)).ShouldBe(1);
+            case nameof(IOctopusImportSessionFileStore.PurgeAndMarkCleanedAsync):
+                (await scope.Resolve<IOctopusImportSessionFileStore>().PurgeAndMarkCleanedAsync(sessionId, uploadPath, now)).ShouldBeTrue();
                 break;
             default:
                 throw new InvalidOperationException($"Unknown session-ending path {path}");

@@ -10,12 +10,14 @@ using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 public sealed class OctopusRestHistoryFetcherTests : IDisposable
 {
     private readonly string _sessionDirectory = Path.Combine(Path.GetTempPath(), $"squid-history-fetch-{Guid.NewGuid():N}");
-    private readonly OctopusImportHistoryDetailsStore _detailsStore = new();
+    private readonly OctopusImportHistoryDetailsStore _detailsStore = TestSessionFiles.Details();
 
     [Fact]
     public async Task ChunkResumesFromCursor()
@@ -207,7 +209,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var refused = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"]));
 
         (refused.Counts.ServerTasks, refused.Counts.DetailsFetched, refused.Counts.ItemsRejected).ShouldBe((1, 0, 1));
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull("a partial set must never be stored as the task's details");
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1")).ShouldBeNull("a partial set must never be stored as the task's details");
         var task = await BundledTaskAsync("ServerTasks-1");
         (task.DetailLevel, task.DetailFingerprint, task.DetailsIncomplete).ShouldBe((0, null, true));
 
@@ -216,7 +218,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var refilled = await Fetcher(server).FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), prior));
 
         (refilled.Counts.DetailsFetched, refilled.Counts.DetailsSkipped, refilled.Counts.ItemsRejected).ShouldBe((1, 0, 0));
-        var details = await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1");
+        var details = await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1");
         (details.Interruptions.Count, details.Events.Count, details.Artifacts.Count).ShouldBe((1, 1, 1));
         var complete = await BundledTaskAsync("ServerTasks-1");
         (complete.DetailFingerprint, complete.DetailsIncomplete).ShouldBe((OctopusImportFingerprint.ForTaskDetails(details), false));
@@ -326,7 +328,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         var writer = new SlowBundleWriter(TimeSpan.FromMilliseconds(900));
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Closure, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", LeaseExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5) };
         using var request = new CancellationTokenSource();
 
@@ -345,7 +347,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         var writer = new SlowBundleWriter(TimeSpan.FromSeconds(30));
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Closure, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", LeaseExpiresAt = DateTimeOffset.UtcNow + OctopusRestHistoryFetcher.BundleLeaseSafety + TimeSpan.FromMilliseconds(500) };
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(20)));
@@ -361,7 +363,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Release("Projects-1", 1);
         var fullDisk = new IOException($"No space left on device : '{Path.Combine(_sessionDirectory, "history-staging", "Release", "abc.json")}'");
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new FailingBundleWriter(fullDisk), _detailsStore, new OctopusRestOptions());
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new FailingBundleWriter(fullDisk), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions());
 
         var ex = await Should.ThrowAsync<OctopusImportStorageException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
 
@@ -373,51 +375,55 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
     private sealed class FailingBundleWriter(IOException failure) : IOctopusHistoryBundleWriter
     {
-        private readonly OctopusHistoryBundleWriter _inner = new();
+        private readonly OctopusHistoryBundleWriter _inner = TestSessionFiles.Writer();
 
-        public Task<long> WriteDocumentAsync(string sessionDirectory, OctopusResourceKind kind, OctopusDocumentDto document, CancellationToken ct = default) => throw failure;
+        public Task<OctopusImportSessionFileWrite> WriteDocumentAsync(Guid sessionId, OctopusResourceKind kind, OctopusDocumentDto document, CancellationToken ct = default) => throw failure;
 
-        public Task<long> WriteJsonAsync(string sessionDirectory, OctopusResourceKind kind, System.Text.Json.Nodes.JsonObject document, CancellationToken ct = default) => throw failure;
+        public Task<OctopusImportSessionFileWrite> WriteJsonAsync(Guid sessionId, OctopusResourceKind kind, System.Text.Json.Nodes.JsonObject document, CancellationToken ct = default) => throw failure;
 
-        public bool IsStaged(string sessionDirectory, OctopusResourceKind kind, string sourceId) => _inner.IsStaged(sessionDirectory, kind, sourceId);
+        public Task<bool> IsStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.IsStagedAsync(sessionId, kind, sourceId, ct);
 
-        public Task<System.Text.Json.Nodes.JsonObject> ReadStagedAsync(string sessionDirectory, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.ReadStagedAsync(sessionDirectory, kind, sourceId, ct);
+        public Task<System.Text.Json.Nodes.JsonObject> ReadStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.ReadStagedAsync(sessionId, kind, sourceId, ct);
 
-        public Task<string> BuildBundleAsync(string sessionDirectory, string installationId, CancellationToken ct = default) => throw failure;
+        public Task<IReadOnlyDictionary<OctopusResourceKind, int>> CountStagedAsync(Guid sessionId, CancellationToken ct = default) => _inner.CountStagedAsync(sessionId, ct);
+
+        public Task<string> BuildBundleAsync(Guid sessionId, string sessionDirectory, string installationId, CancellationToken ct = default) => throw failure;
     }
 
     private sealed class SlowBundleWriter(TimeSpan delay) : IOctopusHistoryBundleWriter
     {
-        private readonly OctopusHistoryBundleWriter _inner = new();
+        private readonly OctopusHistoryBundleWriter _inner = TestSessionFiles.Writer();
 
         public Action Started { get; set; }
 
-        public Task<long> WriteDocumentAsync(string sessionDirectory, OctopusResourceKind kind, OctopusDocumentDto document, CancellationToken ct = default) => _inner.WriteDocumentAsync(sessionDirectory, kind, document, ct);
+        public Task<OctopusImportSessionFileWrite> WriteDocumentAsync(Guid sessionId, OctopusResourceKind kind, OctopusDocumentDto document, CancellationToken ct = default) => _inner.WriteDocumentAsync(sessionId, kind, document, ct);
 
-        public Task<long> WriteJsonAsync(string sessionDirectory, OctopusResourceKind kind, System.Text.Json.Nodes.JsonObject document, CancellationToken ct = default) => _inner.WriteJsonAsync(sessionDirectory, kind, document, ct);
+        public Task<OctopusImportSessionFileWrite> WriteJsonAsync(Guid sessionId, OctopusResourceKind kind, System.Text.Json.Nodes.JsonObject document, CancellationToken ct = default) => _inner.WriteJsonAsync(sessionId, kind, document, ct);
 
-        public bool IsStaged(string sessionDirectory, OctopusResourceKind kind, string sourceId) => _inner.IsStaged(sessionDirectory, kind, sourceId);
+        public Task<bool> IsStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.IsStagedAsync(sessionId, kind, sourceId, ct);
 
-        public Task<System.Text.Json.Nodes.JsonObject> ReadStagedAsync(string sessionDirectory, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.ReadStagedAsync(sessionDirectory, kind, sourceId, ct);
+        public Task<System.Text.Json.Nodes.JsonObject> ReadStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => _inner.ReadStagedAsync(sessionId, kind, sourceId, ct);
 
-        public async Task<string> BuildBundleAsync(string sessionDirectory, string installationId, CancellationToken ct = default)
+        public Task<IReadOnlyDictionary<OctopusResourceKind, int>> CountStagedAsync(Guid sessionId, CancellationToken ct = default) => _inner.CountStagedAsync(sessionId, ct);
+
+        public async Task<string> BuildBundleAsync(Guid sessionId, string sessionDirectory, string installationId, CancellationToken ct = default)
         {
             Started?.Invoke();
 
             await Task.Delay(delay, ct);
 
-            return await _inner.BuildBundleAsync(sessionDirectory, installationId, ct);
+            return await _inner.BuildBundleAsync(sessionId, sessionDirectory, installationId, ct);
         }
     }
 
     // ── Staging continuity ────────────────────────────────────────────────
 
-    // The cursor lives in the database, the staged documents on this server's disk. A chunk that finds the directory earlier chunks
-    // staged into gone (a restart on ephemeral storage) or another one (another replica) refuses to go on: resuming from the cursor
-    // would build a bundle silently missing everything staged before. Nothing is read from Octopus and the cursor is left as it was.
+    // The cursor and the staged documents both live in the database, so any server continues a fetch. A chunk that finds the staging
+    // earlier chunks counted gone (the session was cleaned up) or not its own (the marker of another fetch) refuses to go on: resuming
+    // from the cursor would build a bundle silently missing everything staged before. Nothing is read from Octopus and the cursor is
+    // left as it was. Another server's directory is no loss: it reads the same stored staging.
     [Theory]
-    [InlineData("directory-deleted")]
-    [InlineData("other-replica")]
+    [InlineData("staging-deleted")]
     [InlineData("marker-of-another-fetch")]
     public async Task StagingLostBetweenChunks_ChunkRefused_NothingReadOrStaged_CursorUnchanged(string loss)
     {
@@ -425,36 +431,165 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         foreach (var n in Enumerable.Range(1, 3)) server.Deployment("Projects-1", n);
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
         var fetcher = Fetcher(server, oneItemPerChunk: true);
+        var sessionId = TestSessionFiles.IdOf(_sessionDirectory);
 
         await fetcher.FetchChunkAsync(Context(cursor));
 
         cursor.StagingId.ShouldNotBeNullOrWhiteSpace();
-        var otherDirectory = Path.Combine(Path.GetTempPath(), $"squid-history-fetch-{Guid.NewGuid():N}");
-        var context = Context(cursor, sessionDirectory: loss == "other-replica" ? otherDirectory : null);
+
+        if (loss == "staging-deleted") TestSessionFiles.Store.DeleteSession(sessionId);
+        else TestSessionFiles.Store.Put(sessionId, OctopusHistoryStagingMarker.FileName, System.Text.Encoding.UTF8.GetBytes(Guid.NewGuid().ToString("N")));
+
+        var before = (cursor.Skip, cursor.Counts.Deployments, cursor.StagingId);
+        var staged = TestSessionFiles.Staged(_sessionDirectory).Count;
+        var requests = server.Paths.Count();
+
+        await Should.ThrowAsync<OctopusImportHistoryStagingLostException>(() => fetcher.FetchChunkAsync(Context(cursor)));
+        await Should.ThrowAsync<OctopusImportHistoryStagingLostException>(() => fetcher.FetchChunkAsync(Context(cursor)));
+
+        (cursor.Skip, cursor.Counts.Deployments, cursor.StagingId).ShouldBe(before);
+        server.Paths.Count().ShouldBe(requests, "a chunk that cannot trust its staging reads nothing from Octopus");
+        TestSessionFiles.Staged(_sessionDirectory).Count.ShouldBe(staged, "nothing is staged into a staging the fetch cannot vouch for");
+    }
+
+    // Each chunk on another server (its own directory, its own RootPath): the staging is the session's, so the fetch completes with every item.
+    [Fact]
+    public async Task ChunksOnAlternatingServers_FetchCompletes_EveryItemStaged()
+    {
+        var server = new FakeOctopusServer();
+        foreach (var n in Enumerable.Range(1, 4)) server.Deployment("Projects-1", n);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server, oneItemPerChunk: true);
+        var serverB = Path.Combine(Path.GetTempPath(), $"squid-history-fetch-{Guid.NewGuid():N}");
 
         try
         {
-            switch (loss)
-            {
-                case "directory-deleted": Directory.Delete(_sessionDirectory, recursive: true); break;
-                case "other-replica": break;
-                default: File.WriteAllText(Path.Combine(_sessionDirectory, OctopusHistoryStagingMarker.FileName), Guid.NewGuid().ToString("N")); break;
-            }
+            for (var chunk = 0; chunk < 20 && !cursor.Done; chunk++)
+                await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionId = TestSessionFiles.IdOf(_sessionDirectory), SessionDirectory = chunk % 2 == 0 ? _sessionDirectory : serverB, Cursor = cursor });
 
-            var before = (cursor.Skip, cursor.Counts.Deployments, cursor.StagingId);
-            var requests = server.Paths.Count();
-
-            await Should.ThrowAsync<OctopusImportHistoryStagingLostException>(() => fetcher.FetchChunkAsync(context));
-            await Should.ThrowAsync<OctopusImportHistoryStagingLostException>(() => fetcher.FetchChunkAsync(context));
-
-            (cursor.Skip, cursor.Counts.Deployments, cursor.StagingId).ShouldBe(before);
-            server.Paths.Count().ShouldBe(requests, "a chunk that cannot trust its staging reads nothing from Octopus");
-            Directory.Exists(Path.Combine(context.SessionDirectory, OctopusHistoryBundleWriter.StagingDirectoryName)).ShouldBe(loss == "marker-of-another-fetch", "nothing is staged into a directory the fetch cannot vouch for");
+            cursor.Done.ShouldBeTrue();
+            TestSessionFiles.Staged(_sessionDirectory, nameof(OctopusResourceKind.Deployment)).Count.ShouldBe(4);
         }
         finally
         {
-            if (Directory.Exists(otherDirectory)) Directory.Delete(otherDirectory, recursive: true);
+            if (Directory.Exists(serverB)) Directory.Delete(serverB, recursive: true);
         }
+    }
+
+    // Before anything is bundled, every document a committed item stored must still be stored: fewer is data lost, and the fetch fails
+    // loudly and never reaches Done (so nothing can be imported from a partial bundle). Retrying fails the same way.
+    [Fact]
+    public async Task StagedDocumentLostBeforeBundling_StagingIncomplete_NeverDone()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server, oneItemPerChunk: true);
+
+        await FetchUntilOnlyBundlingIsLeftAsync(fetcher, cursor);
+
+        cursor.StagedDocumentCounts[nameof(OctopusResourceKind.Deployment)].ShouldBe(2);
+        TestSessionFiles.Store.Delete(TestSessionFiles.IdOf(_sessionDirectory), TestSessionFiles.Staged(_sessionDirectory, nameof(OctopusResourceKind.Deployment))[0]);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var ex = await Should.ThrowAsync<OctopusImportHistoryStagingIncompleteException>(() => fetcher.FetchChunkAsync(Context(cursor)));
+
+            (ex.Kind, ex.Stored, ex.Expected).ShouldBe((nameof(OctopusResourceKind.Deployment), 1, 2));
+            OctopusImportErrorKinds.Of(ex).ShouldBe(OctopusImportErrorKinds.StagingLost);
+        }
+
+        cursor.Done.ShouldBeFalse();
+        File.Exists(Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName)).ShouldBeFalse();
+    }
+
+    // Lost task details fail the same way: confirmation would otherwise import the history without them.
+    [Fact]
+    public async Task StagedDetailsLostBeforeBundling_StagingIncomplete_NeverDone()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server, oneItemPerChunk: true);
+
+        await FetchUntilOnlyBundlingIsLeftAsync(fetcher, cursor);
+
+        cursor.StagedDetails.ShouldBe(1);
+        TestSessionFiles.Store.Delete(TestSessionFiles.IdOf(_sessionDirectory), TestSessionFiles.Details(_sessionDirectory)[0]);
+
+        var ex = await Should.ThrowAsync<OctopusImportHistoryStagingIncompleteException>(() => fetcher.FetchChunkAsync(Context(cursor)));
+
+        (ex.Stored, ex.Expected).ShouldBe((0, 1));
+        cursor.Done.ShouldBeFalse();
+    }
+
+    // A document an item stored but never committed (it failed part way, or was read again after its list shrank) is not counted, so more
+    // stored than committed is no loss: the fetch bundles.
+    [Fact]
+    public async Task MoreStagedThanCommitted_Bundles()
+    {
+        var server = new FakeOctopusServer().Deployment("Projects-1", 1);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server, oneItemPerChunk: true);
+
+        await FetchUntilOnlyBundlingIsLeftAsync(fetcher, cursor);
+
+        await TestSessionFiles.Writer().WriteJsonAsync(TestSessionFiles.IdOf(_sessionDirectory), OctopusResourceKind.Deployment, new System.Text.Json.Nodes.JsonObject { ["Id"] = "Deployments-99" });
+
+        while (!cursor.Done) await fetcher.FetchChunkAsync(Context(cursor));
+
+        File.Exists(Path.Combine(_sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName)).ShouldBeTrue();
+    }
+
+    // Staged counts join the cursor only with their item: a chunk abandoned mid-item counts nothing, and the retried item counts its documents once.
+    [Fact]
+    public async Task StagedCounts_JoinTheCursorOnlyWhenTheItemCommits()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1).Release("Projects-1", 2);
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Releases, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
+        var fetcher = Fetcher(server, oneItemPerChunk: true);
+
+        await fetcher.FetchChunkAsync(Context(cursor));
+        cursor.StagedDocumentCounts[nameof(OctopusResourceKind.Release)].ShouldBe(1);
+
+        cursor.Skip = 0;
+        await fetcher.FetchChunkAsync(Context(cursor));
+        cursor.StagedDocumentCounts[nameof(OctopusResourceKind.Release)].ShouldBe(1, "a document stored again is not counted again");
+    }
+
+    // A database failure is this Squid server's problem: its own kind, a fixed message, no inner exception the API would echo.
+    [Fact]
+    public async Task DatabaseFailureWhileStaging_StorageFailure_FixedMessage()
+    {
+        var server = new FakeOctopusServer().Release("Projects-1", 1);
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new DatabaseFailingBundleWriter(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions());
+
+        var ex = await Should.ThrowAsync<OctopusImportStorageException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
+
+        ex.Message.ShouldBe(OctopusImportStorageException.DatabaseMessage);
+        ex.InnerException.ShouldBeNull();
+        OctopusImportErrorKinds.Of(ex).ShouldBe(OctopusImportErrorKinds.Storage);
+    }
+
+    // One item per chunk: every item is read and committed, the bundle (the next chunk) is not built yet.
+    private async Task FetchUntilOnlyBundlingIsLeftAsync(OctopusRestHistoryFetcher fetcher, OctopusImportHistoryFetchDto cursor)
+    {
+        while (cursor.Phase != OctopusHistoryFetchPhase.Closure || cursor.ClosureReferences.Count > 0) await fetcher.FetchChunkAsync(Context(cursor));
+    }
+
+    private sealed class DatabaseFailingBundleWriter : IOctopusHistoryBundleWriter
+    {
+        private static Npgsql.NpgsqlException Failure() => new("connection to server at \"db.internal\" failed");
+
+        public Task<OctopusImportSessionFileWrite> WriteDocumentAsync(Guid sessionId, OctopusResourceKind kind, OctopusDocumentDto document, CancellationToken ct = default) => throw Failure();
+
+        public Task<OctopusImportSessionFileWrite> WriteJsonAsync(Guid sessionId, OctopusResourceKind kind, System.Text.Json.Nodes.JsonObject document, CancellationToken ct = default) => throw Failure();
+
+        public Task<bool> IsStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => throw Failure();
+
+        public Task<System.Text.Json.Nodes.JsonObject> ReadStagedAsync(Guid sessionId, OctopusResourceKind kind, string sourceId, CancellationToken ct = default) => throw Failure();
+
+        public Task<IReadOnlyDictionary<OctopusResourceKind, int>> CountStagedAsync(Guid sessionId, CancellationToken ct = default) => throw Failure();
+
+        public Task<string> BuildBundleAsync(Guid sessionId, string sessionDirectory, string installationId, CancellationToken ct = default) => throw Failure();
     }
 
     // A cursor saved before staging was stamped (an older Squid) is stamped by its next chunk and goes on: it cannot be checked, never refused.
@@ -467,7 +602,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         await Fetcher(server).FetchChunkAsync(Context(cursor));
 
         cursor.Done.ShouldBeTrue();
-        File.ReadAllText(Path.Combine(_sessionDirectory, OctopusHistoryStagingMarker.FileName)).ShouldBe(cursor.StagingId);
+        System.Text.Encoding.UTF8.GetString(TestSessionFiles.Store.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), OctopusHistoryStagingMarker.FileName).Result).ShouldBe(cursor.StagingId);
     }
 
     // ── Lists changing while they are paged ───────────────────────────────
@@ -488,8 +623,8 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         }
 
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = phase, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var writer = new OctopusHistoryBundleWriter();
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
+        var writer = TestSessionFiles.Writer();
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, writer, _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
         var kind = phase == OctopusHistoryFetchPhase.Releases ? OctopusResourceKind.Release : OctopusResourceKind.Deployment;
         var prefix = phase == OctopusHistoryFetchPhase.Releases ? "Releases" : "Deployments";
 
@@ -502,7 +637,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         for (var chunk = 0; chunk < 10 && cursor.Phase == phase; chunk++) await fetcher.FetchChunkAsync(Context(cursor));
 
         cursor.Phase.ShouldNotBe(phase);
-        new[] { 1, 2, 3 }.Where(n => !writer.IsStaged(_sessionDirectory, kind, $"{prefix}-{n}")).ShouldBeEmpty("an item removed after it was read must not make the fetch pass over the next one");
+        new[] { 1, 2, 3 }.Where(n => !writer.IsStagedAsync(TestSessionFiles.IdOf(_sessionDirectory), kind, $"{prefix}-{n}").GetAwaiter().GetResult()).ShouldBeEmpty("an item removed after it was read must not make the fetch pass over the next one");
     }
 
     // A list that grows, or keeps its size, continues where it stopped: nothing is read again.
@@ -511,7 +646,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
 
         await fetcher.FetchChunkAsync(Context(cursor));
         server.Deployment("Projects-1", 3);
@@ -532,7 +667,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains(stalledPath, StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = phase, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
         {
@@ -564,7 +699,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains("/events?regarding=Deployments-1", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMinutes(10) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMinutes(10) });
 
         for (var attempt = 1; attempt <= OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
         {
@@ -588,7 +723,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer { WaitsOutDelays = true }.Deployment("Projects-1", 1).Deployment("Projects-1", 2);
         server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains("/events?regarding=Deployments-1", StringComparison.Ordinal) ? Throttled(TimeSpan.FromSeconds(1)) : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(1500) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(1500) });
 
         for (var attempt = 0; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
             (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
@@ -605,7 +740,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer { WaitsOutDelays = true }.Deployment("Projects-1", 1);
         server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains("/events?regarding=Deployments-1", StringComparison.Ordinal) ? Interlocked.Increment(ref throttled) == 1 ? Throttled(TimeSpan.FromSeconds(1)) : OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromSeconds(3) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromSeconds(3) });
 
         (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
 
@@ -626,7 +761,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         server.Override = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains("/events?regarding=Deployments-1", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.FromMinutes(10), ChunkOverrun = TimeSpan.FromMinutes(10) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.FromMinutes(10), ChunkOverrun = TimeSpan.FromMinutes(10) });
 
         for (var attempt = 0; attempt <= OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
         {
@@ -702,7 +837,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath == stalledPath ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         for (var attempt = 0; attempt <= OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
             (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
@@ -718,7 +853,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/deployments", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(1), ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.FromSeconds(1), ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
 
@@ -735,7 +870,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var stalls = 0;
         server.Override = request => request.RequestUri!.Query.Contains("regarding=ServerTasks-1", StringComparison.Ordinal) && request.RequestUri.AbsolutePath.EndsWith("/artifacts", StringComparison.Ordinal) && stalls++ < OctopusRestHistoryFetcher.MaxAbandonments ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
             await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)));
@@ -747,7 +882,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         bundled.ShouldContain("ServerTasks-2");
         bundled.ShouldNotContain("ServerTasks-1");
         bundled.ShouldNotContain("Deployments-1");
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull();
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1")).ShouldBeNull();
     }
 
     [Fact]
@@ -777,8 +912,8 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         progress.Done.ShouldBeTrue();
         (progress.Counts.Deployments, progress.Counts.ServerTasks, progress.Counts.DetailsFetched, progress.Counts.DetailsTooLarge).ShouldBe((2, 2, 1, 1));
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull();
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-2")).ShouldNotBeNull();
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1")).ShouldBeNull();
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-2")).ShouldNotBeNull();
         server.Paths.ShouldNotContain(p => p.Contains("regarding=ServerTasks-1"));
     }
 
@@ -802,7 +937,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.Deployments, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor)).WaitAsync(TimeSpan.FromSeconds(30)));
 
@@ -816,7 +951,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         var server = new FakeOctopusServer().Deployment("Projects-1", 1);
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/events", StringComparison.Ordinal) ? EndlessEventsPage(request) : null;
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 50_000 });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 50_000 });
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
 
@@ -858,8 +993,8 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         server.Paths.ShouldContain(p => p.Contains("ServerTasks-2/details"));
         progress.Counts.DetailsSkipped.ShouldBe(1);
         progress.Counts.DetailsFetched.ShouldBe(1);
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1")).ShouldBeNull();
-        (await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-2")).ShouldNotBeNull();
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1")).ShouldBeNull();
+        (await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-2")).ShouldNotBeNull();
     }
 
     [Theory]
@@ -896,7 +1031,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         var manifest = ReadBundleManifest();
         manifest.Entries.Select(e => e.Id).ShouldBe(["Releases-1", "Releases-2", "Deployments-1", "ServerTasks-1"], ignoreOrder: true);
-        Directory.EnumerateFiles(Path.Combine(_sessionDirectory, OctopusHistoryBundleWriter.StagingDirectoryName), "*.json", SearchOption.AllDirectories).Count().ShouldBe(4);
+        TestSessionFiles.Staged(_sessionDirectory).Count.ShouldBe(4);
     }
 
     [Fact]
@@ -955,7 +1090,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         inventory.Diagnostics.ShouldNotContain(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
         graph.InstallationId.ShouldBe("inst-1");
         var task = graph.Resources.Single(r => r.SourceId == "ServerTasks-1").GetSource<OctopusServerTaskDto>();
-        var details = await _detailsStore.ReadAsync(_sessionDirectory, "ServerTasks-1");
+        var details = await _detailsStore.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), "ServerTasks-1");
         task.DetailLevel.ShouldBe(1);
         task.DetailFingerprint.ShouldBe(OctopusImportFingerprint.ForTaskDetails(details));
         task.ProjectId.ShouldBe("Projects-1");
@@ -976,7 +1111,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
         var server = new FakeOctopusServer().Release("Projects-1", 1).Deployment("Projects-1", 1);
         const long cap = 10_000_000;
         var cursor = new OctopusImportHistoryFetchDto { TotalBytes = cap - 10 };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = cap });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = cap });
 
         await fetcher.FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
@@ -993,12 +1128,12 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
 
         await Fetcher(server).FetchChunkAsync(Context(cursor, projects: ["Projects-1"]));
 
-        var stored = Directory.GetFiles(Path.Combine(_sessionDirectory, OctopusImportHistoryDetailsStore.DirectoryName)).Sum(f => new FileInfo(f).Length);
+        var stored = TestSessionFiles.Details(_sessionDirectory).Sum(p => TestSessionFiles.Store.ReadAsync(TestSessionFiles.IdOf(_sessionDirectory), p).Result.LongLength);
         stored.ShouldBeGreaterThan(0);
         cursor.DetailsBytes.ShouldBe(stored);
 
         var full = new OctopusImportHistoryFetchDto { DetailsBytes = 10_000_000 - 1 };
-        var capped = new OctopusRestHistoryFetcher(new FakeOctopusServer().Deployment("Projects-1", 2).Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 10_000_000 });
+        var capped = new OctopusRestHistoryFetcher(new FakeOctopusServer().Deployment("Projects-1", 2).Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 10_000_000 });
 
         (await Should.ThrowAsync<OctopusRestException>(() => capped.FetchChunkAsync(Context(full, projects: ["Projects-1"])))).Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
     }
@@ -1007,7 +1142,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     public async Task HistoryOverTheByteCap_TooLarge()
     {
         var server = new FakeOctopusServer().Release("Projects-1", 1);
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 64 });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions(), new OctopusImportSizeLimits { MaxBytes = 64 });
 
         var ex = await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(new OctopusImportHistoryFetchDto(), projects: ["Projects-1"])));
 
@@ -1020,7 +1155,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     }
 
     private OctopusRestHistoryFetcher Fetcher(FakeOctopusServer server, bool oneItemPerChunk = false)
-        => new(server.Factory, new OctopusHistoryBundleWriter(), _detailsStore, new OctopusRestOptions { ChunkDuration = oneItemPerChunk ? TimeSpan.Zero : TimeSpan.FromSeconds(5) });
+        => new(server.Factory, TestSessionFiles.Writer(), _detailsStore, TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = oneItemPerChunk ? TimeSpan.Zero : TimeSpan.FromSeconds(5) });
 
     private static System.Net.Http.HttpResponseMessage DeclaredTooLarge()
     {
@@ -1042,7 +1177,7 @@ public sealed class OctopusRestHistoryFetcherTests : IDisposable
     {
         if (cursor.ProjectIds.Count == 0) cursor.ProjectIds = [.. projects ?? ["Projects-1"]];
 
-        return new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionDirectory = sessionDirectory ?? _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty };
+        return new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionId = TestSessionFiles.IdOf(sessionDirectory ?? _sessionDirectory), SessionDirectory = sessionDirectory ?? _sessionDirectory, Cursor = cursor, PriorMappings = prior ?? OctopusImportPriorMappings.Empty };
     }
 
     private static OctopusImportPriorMappings Prior(params (string Type, string Id, string Fingerprint, string DetailFingerprint)[] rows) => Prior("inst-1", rows);

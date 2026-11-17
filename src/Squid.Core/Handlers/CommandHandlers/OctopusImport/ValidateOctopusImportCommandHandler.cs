@@ -19,6 +19,7 @@ public class ValidateOctopusImportCommandHandler(
     ICurrentUser currentUser,
     IOctopusImportPlanningPipeline planningPipeline,
     IOctopusImportPreviewValidator previewValidator,
+    IOctopusImportTemporaryUploadStore uploadStore,
     IOctopusImportExportSecretStore secretStore = null,
     IOctopusExportSecretsAccessor secretsAccessor = null)
     : ICommandHandler<ValidateOctopusImportCommand, ValidateOctopusImportResponse>
@@ -40,7 +41,9 @@ public class ValidateOctopusImportCommandHandler(
         var state = ParseState(session.State);
         EnsureValidateAllowed(state);
 
-        if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
+        var sourcePath = await uploadStore.MaterializeAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (sourcePath == null)
             return BadRequest(command, state, command.PreviewPlan, new OctopusImportValidationResultDto(), "Octopus import session does not have an available temporary upload.");
 
         await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
@@ -52,7 +55,7 @@ public class ValidateOctopusImportCommandHandler(
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline.BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, selections, chosenProjectIds, cancellationToken).ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(sourcePath, destinationSpaceId, selections, chosenProjectIds, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {

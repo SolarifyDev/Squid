@@ -7,7 +7,7 @@ using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
 
-public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, IAuthorizationService authorizationService, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportConfirmationOrchestrator confirmationOrchestrator, ISquidBackgroundJobClient backgroundJobClient, IOctopusImportTemporaryUploadSettings temporaryUploadSettings, IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor secretsAccessor = null) : IOctopusImportConfirmationRunner
+public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, IAuthorizationService authorizationService, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportConfirmationOrchestrator confirmationOrchestrator, ISquidBackgroundJobClient backgroundJobClient, IOctopusImportTemporaryUploadSettings temporaryUploadSettings, IOctopusImportTemporaryUploadStore uploadStore, IOctopusImportExportSecretStore secretStore = null, IOctopusExportSecretsAccessor secretsAccessor = null) : IOctopusImportConfirmationRunner
 {
     private RunContext _ctx;
 
@@ -62,7 +62,7 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
 
     private async Task<OctopusImportConfirmationOutcome> ConfirmAsync(CancellationToken ct)
     {
-        var request = new OctopusImportConfirmationRequest(_ctx.SessionId, _ctx.SpaceId, _ctx.Snapshot.Graph, _ctx.Snapshot.DependencyPlan, _ctx.ValidatedPlan.PreviewPlan) { SessionDirectory = Path.GetDirectoryName(_ctx.Session.TemporaryUploadPath), ValidatedDataVersion = _ctx.Session.DataVersion };
+        var request = new OctopusImportConfirmationRequest(_ctx.SessionId, _ctx.SpaceId, _ctx.Snapshot.Graph, _ctx.Snapshot.DependencyPlan, _ctx.ValidatedPlan.PreviewPlan) { ValidatedDataVersion = _ctx.Session.DataVersion };
         var session = await confirmationOrchestrator.ConfirmAsync(request, ct).ConfigureAwait(false);
 
         EnsureNotValidatedAgain(session);

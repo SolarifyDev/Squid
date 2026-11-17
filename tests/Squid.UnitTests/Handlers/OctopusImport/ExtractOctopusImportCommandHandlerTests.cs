@@ -12,6 +12,8 @@ using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class ExtractOctopusImportCommandHandlerTests
@@ -195,7 +197,8 @@ public class ExtractOctopusImportCommandHandlerTests
                 CurrentUser.Object,
                 new OctopusImportSourceReader(ArchiveExtractor.Object, InputExtractor.Object),
                 InventoryBuilder.Object,
-                GraphBuilder.Object);
+                GraphBuilder.Object,
+                TestUploadStores.LocalOnly());
         }
 
         public Mock<IOctopusImportSessionDataProvider> SessionDataProvider { get; } = new();

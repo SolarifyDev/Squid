@@ -12,7 +12,7 @@ namespace Squid.Core.Services.OctopusImport.Exceptions;
 /// <item>Fix the server address or space: <c>NotOctopus</c>, <c>Denied</c>, <c>NotFound</c>, <c>ServerMismatch</c>.</item>
 /// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>SessionExpired</c> (the session
 /// reached its maximum age), <c>NotServerSource</c>,
-/// <c>StagingLost</c> (what earlier chunks read is not on this server's disk any more);
+/// <c>StagingLost</c> (what earlier chunks read is no longer stored, or less of it than was read: the session was cleaned up);
 /// <c>TooLarge</c> repeats until an operator raises the named limit; <c>Storage</c> (this Squid server's disk is full) repeats until an
 /// operator frees space; <c>Tls</c> repeats until the Squid host trusts the Octopus certificate.</item>
 /// <item>Choose projects again: <c>ProjectSelection</c> (none, too many or a malformed id); <c>ProjectSelectionBeyondRead</c> (the

@@ -1,14 +1,16 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Npgsql;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Rest;
 
-public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory clientFactory, IOctopusHistoryBundleWriter bundleWriter, IOctopusImportHistoryDetailsStore detailsStore, OctopusRestOptions options = null, OctopusImportSizeLimits limits = null) : IOctopusRestHistoryFetcher
+public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory clientFactory, IOctopusHistoryBundleWriter bundleWriter, IOctopusImportHistoryDetailsStore detailsStore, IOctopusImportSessionFileStore files, OctopusRestOptions options = null, OctopusImportSizeLimits limits = null) : IOctopusRestHistoryFetcher
 {
     /// <summary>How often the chunk deadline may abandon the same item before it is skipped.</summary>
     public const int MaxAbandonments = 3;
@@ -36,6 +38,14 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         {
             throw StorageFailure(ex, context.SessionDirectory);
         }
+        catch (NpgsqlException ex)
+        {
+            throw DatabaseFailure(ex, context.SessionId);
+        }
+        catch (OctopusImportSessionFileUnreadableException)
+        {
+            throw new OctopusImportHistoryStagingLostException();
+        }
     }
 
     // The client turns every network I/O failure into an OctopusRestException, so an IOException here is this server's own disk (full,
@@ -47,9 +57,17 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         return new OctopusImportStorageException();
     }
 
+    // The database's message may name the server or the statement: it is logged for the operator and replaced by a fixed one.
+    private static OctopusImportStorageException DatabaseFailure(NpgsqlException ex, Guid sessionId)
+    {
+        Log.Error(ex, "Octopus import history fetch of session {SessionId} could not store or read its staged documents in the database", sessionId);
+
+        return OctopusImportStorageException.Database();
+    }
+
     private async Task<OctopusHistoryFetchProgressDto> FetchStagedChunkAsync(OctopusHistoryFetchContext context, CancellationToken ct)
     {
-        OctopusHistoryStagingMarker.EnsureIntact(context.SessionDirectory, context.Cursor);
+        await OctopusHistoryStagingMarker.EnsureIntactAsync(files, context.SessionId, context.Cursor, ct).ConfigureAwait(false);
 
         using var client = clientFactory.Create(context.ServerUrl, context.ApiKey);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -178,6 +196,7 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     {
         var cursor = _ctx.Cursor;
 
+        await EnsureStagingCompleteAsync(ct).ConfigureAwait(false);
         await BuildBundleWithinLeaseAsync(cursor).ConfigureAwait(false);
 
         cursor.Phase = OctopusHistoryFetchPhase.Done;
@@ -191,12 +210,34 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
         try
         {
-            await bundleWriter.BuildBundleAsync(_ctx.Context.SessionDirectory, cursor.InstallationId, budget.Token).ConfigureAwait(false);
+            await bundleWriter.BuildBundleAsync(_ctx.Context.SessionId, _ctx.Context.SessionDirectory, cursor.InstallationId, budget.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (budget.IsCancellationRequested)
         {
             throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusRestOptions.ChunkSecondsEnvVar);
         }
+    }
+
+    // Every document and task detail the fetch committed must still be stored before anything is bundled; fewer means data was lost and
+    // nothing is imported. At least, not exactly: an item that failed part way may have left a valid document no count includes, and a
+    // list re-read after it shrank stages nothing new, so what was committed is a lower bound of what is stored.
+    private async Task EnsureStagingCompleteAsync(CancellationToken ct)
+    {
+        var cursor = _ctx.Cursor;
+        var staged = await bundleWriter.CountStagedAsync(_ctx.Context.SessionId, ct).ConfigureAwait(false);
+
+        foreach (var (kind, committed) in cursor.StagedDocumentCounts)
+        {
+            var stored = Enum.TryParse<OctopusResourceKind>(kind, out var parsed) ? staged.GetValueOrDefault(parsed) : 0;
+
+            if (stored < committed)
+                throw new OctopusImportHistoryStagingIncompleteException(kind, stored, committed);
+        }
+
+        var details = await detailsStore.CountAsync(_ctx.Context.SessionId, ct).ConfigureAwait(false);
+
+        if (details < cursor.StagedDetails)
+            throw new OctopusImportHistoryStagingIncompleteException("TaskDetails", details, cursor.StagedDetails);
     }
 
     // A cursor without a lease (no claim recorded) gets what any chunk gets.
@@ -236,6 +277,8 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         // The item being written: its counts and skipped requests join the cursor only when it commits
         public OctopusHistoryFetchCountsDto Pending { get; set; } = new();
         public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
+        public Dictionary<string, int> PendingStaged { get; set; } = [];
+        public int PendingStagedDetails { get; set; }
         public int ItemsCommitted { get; set; }
         public bool InItem { get; set; }
         public object CurrentItem { get; set; }

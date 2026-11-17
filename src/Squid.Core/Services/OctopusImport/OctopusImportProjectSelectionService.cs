@@ -25,7 +25,7 @@ public interface IOctopusImportProjectSelectionService : IScopedDependency
     Task<OctopusImportSessionDto> SelectProjectsAsync(Guid sessionId, int spaceId, IReadOnlyCollection<string> projectIds, CancellationToken ct = default);
 }
 
-public sealed class OctopusImportProjectSelectionService(IOctopusRestProjectLister lister, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportSourceMapDataProvider sourceMap, IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, ICurrentUser currentUser) : IOctopusImportProjectSelectionService
+public sealed class OctopusImportProjectSelectionService(IOctopusRestProjectLister lister, IOctopusImportPlanningPipeline planningPipeline, IOctopusImportSourceMapDataProvider sourceMap, IOctopusImportSessionDataProvider sessionDataProvider, IOctopusImportSessionService sessionService, ICurrentUser currentUser, IOctopusImportTemporaryUploadStore uploadStore) : IOctopusImportProjectSelectionService
 {
     /// <summary>The most projects one selection may name.</summary>
     public const int MaxSelectedProjects = 5000;
@@ -51,7 +51,8 @@ public sealed class OctopusImportProjectSelectionService(IOctopusRestProjectList
     public async Task<OctopusImportProjectListDto> ListSessionProjectsAsync(Guid sessionId, int spaceId, CancellationToken ct = default)
     {
         var session = await LoadOwnedSessionAsync(sessionId, spaceId, ListableStates, ct).ConfigureAwait(false);
-        var graph = await planningPipeline.BuildGraphAsync(session.TemporaryUploadPath, ct).ConfigureAwait(false);
+        var source = await uploadStore.MaterializeAsync(session, ct).ConfigureAwait(false) ?? throw new OctopusImportSessionNotFoundException(sessionId);
+        var graph = await planningPipeline.BuildGraphAsync(source, ct).ConfigureAwait(false);
         var prior = await sourceMap.LoadAsync(spaceId, ct).ConfigureAwait(false);
 
         return ToProjectList(GroupsOf(graph), ProjectsOf(graph), prior, OctopusImportSourceSummaries.Parse(session.SourceSummaryJson)?.SelectedProjectIds);

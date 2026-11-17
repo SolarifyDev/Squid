@@ -175,12 +175,10 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     [Fact]
     public async Task DetailsNeverDowngraded_ByFileReimport()
     {
-        var sessionDirectory = SessionDirectory();
         var details = Details();
-        await StoreDetailsAsync(sessionDirectory, details);
         var detailFingerprint = OctopusImportFingerprint.ForTaskDetails(details);
 
-        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = detailFingerprint }), sessionDirectory);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = detailFingerprint }), details);
         var detailedNodes = await CountAsync<ActivityLog>();
         detailedNodes.ShouldBe(3);
         (await CountAsync<DeploymentInterruption>()).ShouldBe(1);
@@ -203,11 +201,9 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         await ConfirmSucceededAsync(Archive(new HistorySpec()));
         var task = await SingleAsync<ServerTaskEntity>();
         var completion = await SingleAsync<DeploymentCompletion>();
-        var sessionDirectory = SessionDirectory();
         var details = Details();
-        await StoreDetailsAsync(sessionDirectory, details);
 
-        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        var (snapshot, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), details);
 
         snapshot.PreviewPlan.Resources.Single(r => r.SourceType == "Deployment").PreviewAction.ShouldBe(OctopusImportPreviewAction.Update);
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
@@ -220,11 +216,9 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     [Fact]
     public async Task DetailLevel_WritesTreeLogsInterruptionsAndOctopusEvents()
     {
-        var sessionDirectory = SessionDirectory();
         var details = Details();
-        await StoreDetailsAsync(sessionDirectory, details);
 
-        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), details);
 
         var nodes = await ListAsync<ActivityLog>();
         nodes.Single(n => n.ParentId == null).NodeType.ShouldBe(DeploymentActivityLogNodeType.Task);
@@ -245,11 +239,9 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     [Fact]
     public async Task DetailLevel_TextWithNul_ImportsWithoutTheNul()
     {
-        var sessionDirectory = SessionDirectory();
         var details = DetailsWithNul();
-        await StoreDetailsAsync(sessionDirectory, details);
 
-        await ConfirmSucceededAsync(Archive(new HistorySpec { ErrorMessage = "warn\0ing", DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { ErrorMessage = "warn\0ing", DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), details);
 
         (await SingleAsync<ServerTaskEntity>()).ErrorMessage.ShouldBe("warning");
         var logs = await ListAsync<ServerTaskLog>();
@@ -264,10 +256,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     [Fact]
     public async Task ExecutingWithDetails_ThenSuccessWithoutDetails_RefreshesWhatTheKeptChildrenDeriveFromTheTask()
     {
-        var sessionDirectory = SessionDirectory();
         var details = ExecutingDetails();
-        await StoreDetailsAsync(sessionDirectory, details);
-        await ConfirmSucceededAsync(Archive(new HistorySpec { State = "Executing", CompletedTime = null, DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { State = "Executing", CompletedTime = null, DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), details);
         var running = (await ListAsync<ActivityLog>()).Single(n => n.ParentId == null);
         running.Status.ShouldBe(DeploymentActivityLogNodeStatus.Running);
         running.EndedAt.ShouldBeNull();
@@ -355,10 +345,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
     [Fact]
     public async Task TaskRowGone_ReimportWithoutDetails_ClearsTheStoredDetailFingerprint()
     {
-        var sessionDirectory = SessionDirectory();
         var details = Details();
-        await StoreDetailsAsync(sessionDirectory, details);
-        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), sessionDirectory);
+        await ConfirmSucceededAsync(Archive(new HistorySpec { DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details) }), details);
         await DeleteTaskAsync((await SingleAsync<Deployment>()).TaskId ?? 0);
 
         await ConfirmSucceededAsync(Archive(new HistorySpec()));
@@ -514,22 +502,25 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
 
     // ── Flow ───────────────────────────────────────────────────────────────
 
-    private async Task ConfirmSucceededAsync(string archivePath, string sessionDirectory = null)
+    // Details, when given, are stored with the confirmed session as its history fetch stores them.
+    private async Task ConfirmSucceededAsync(string archivePath, OctopusTaskHistoryDetails storedDetails = null)
     {
-        var (_, result) = await PreviewAndConfirmAsync(archivePath, sessionDirectory);
+        var (_, result) = await PreviewAndConfirmAsync(archivePath, storedDetails);
 
         result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
     }
 
     // With choices: the user's selection posted back, as validation plans it (the plan is built again with the selection).
-    private async Task<(OctopusImportPlanningSnapshot Snapshot, OctopusImportSessionDto Result)> PreviewAndConfirmAsync(string archivePath, string sessionDirectory = null, IReadOnlyDictionary<string, bool> choices = null)
+    private async Task<(OctopusImportPlanningSnapshot Snapshot, OctopusImportSessionDto Result)> PreviewAndConfirmAsync(string archivePath, OctopusTaskHistoryDetails storedDetails = null, IReadOnlyDictionary<string, bool> choices = null)
     {
         var snapshot = await PreviewAsync(archivePath, choices);
         var sessionId = await SeedValidatedSessionAsync();
 
         snapshot.PreviewPlan.HasBlockers.ShouldBeFalse(Describe(snapshot.PreviewPlan));
 
-        return (snapshot, await ConfirmAsync(sessionId, snapshot, sessionDirectory));
+        if (storedDetails != null) await StoreDetailsAsync(sessionId, storedDetails);
+
+        return (snapshot, await ConfirmAsync(sessionId, snapshot));
     }
 
     private async Task<OctopusImportPlanningSnapshot> PreviewAsync(string archivePath, IReadOnlyDictionary<string, bool> choices = null)
@@ -551,8 +542,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         return OctopusImportChoiceSelections.From(plan);
     }
 
-    private Task<OctopusImportSessionDto> ConfirmAsync(Guid sessionId, OctopusImportPlanningSnapshot snapshot, string sessionDirectory = null)
-        => Run<IOctopusImportConfirmationOrchestrator, OctopusImportSessionDto>(orchestrator => orchestrator.ConfirmAsync(new OctopusImportConfirmationRequest(sessionId, SpaceId, snapshot.Graph, snapshot.DependencyPlan, snapshot.PreviewPlan) { SessionDirectory = sessionDirectory }));
+    private Task<OctopusImportSessionDto> ConfirmAsync(Guid sessionId, OctopusImportPlanningSnapshot snapshot)
+        => Run<IOctopusImportConfirmationOrchestrator, OctopusImportSessionDto>(orchestrator => orchestrator.ConfirmAsync(new OctopusImportConfirmationRequest(sessionId, SpaceId, snapshot.Graph, snapshot.DependencyPlan, snapshot.PreviewPlan)));
 
     private async Task<Guid> SeedValidatedSessionAsync()
     {
@@ -667,18 +658,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         public IReadOnlyList<(string Id, string DocumentType, string Json)> ExtraDocuments { get; init; } = [];
     }
 
-    private string SessionDirectory()
-    {
-        var directory = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}");
-
-        Directory.CreateDirectory(directory);
-        _paths.Add(directory);
-
-        return directory;
-    }
-
-    private Task StoreDetailsAsync(string sessionDirectory, OctopusTaskHistoryDetails details)
-        => Run<IOctopusImportHistoryDetailsStore>(store => store.WriteAsync(sessionDirectory, "ServerTasks-1", details));
+    private Task StoreDetailsAsync(Guid sessionId, OctopusTaskHistoryDetails details)
+        => Run<IOctopusImportHistoryDetailsStore>(store => store.WriteAsync(sessionId, "ServerTasks-1", details));
 
     private static OctopusTaskHistoryDetails Details()
         => new()

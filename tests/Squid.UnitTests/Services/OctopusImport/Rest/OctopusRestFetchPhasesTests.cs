@@ -15,6 +15,8 @@ using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
@@ -294,7 +296,7 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         };
         var directory = NewSessionDirectory();
         var cursor = new OctopusImportHistoryFetchDto { Phase = OctopusHistoryFetchPhase.Closure, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1", ClosureReferences = [OctopusRestHistoryFetcher.ClosureKey(OctopusResourceKind.Environment, "Environments-8"), OctopusRestHistoryFetcher.ClosureKey(OctopusResourceKind.Environment, "Environments-9")] };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300), PageSize = 1 });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300), PageSize = 1 });
         var failures = 0;
 
         for (var chunk = 0; !cursor.Done && chunk < 20; chunk++)
@@ -390,7 +392,7 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         server.Override = request => refusing && request.RequestUri!.PathAndQuery.Contains("/projects?skip=1", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(HttpStatusCode.Forbidden) : null;
         var cursor = CatalogCursor();
         var directory = NewSessionDirectory();
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { PageSize = 1, ChunkDuration = TimeSpan.FromSeconds(5) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { PageSize = 1, ChunkDuration = TimeSpan.FromSeconds(5) });
 
         (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor, directory)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
 
@@ -413,7 +415,7 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         server.Override = request => request.RequestUri!.AbsolutePath.EndsWith("/projects/Projects-1/variables", StringComparison.Ordinal) ? OctopusRestStubHandler.StalledBody() : null;
         var directory = NewSessionDirectory();
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = OctopusHistoryFetchPhase.ProjectConfiguration, InstallationId = "inst-1", OctopusSpaceId = "Spaces-1" };
-        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, ChunkOverrun = TimeSpan.FromMilliseconds(300) });
 
         for (var attempt = 1; attempt < OctopusRestHistoryFetcher.MaxAbandonments; attempt++)
             (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor, directory)).WaitAsync(TimeSpan.FromSeconds(30)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
@@ -423,7 +425,7 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         (cursor.Phase, cursor.Skip, cursor.Counts.ItemsAbandoned, cursor.Counts.ConfigurationDocuments).ShouldBe((OctopusHistoryFetchPhase.Releases, 0, 1, 0));
         var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
         (skipped.ProjectId, skipped.Reason).ShouldBe(("Projects-1", OctopusHistoryFetchSkipReason.Abandoned));
-        Directory.Exists(Path.Combine(directory, OctopusHistoryBundleWriter.StagingDirectoryName, nameof(OctopusResourceKind.DeploymentProcess))).ShouldBeFalse("every read of the configuration comes before its first write");
+        TestSessionFiles.Staged(directory, nameof(OctopusResourceKind.DeploymentProcess)).ShouldBeEmpty("every read of the configuration comes before its first write");
     }
 
     // ── Resume (H5) ────────────────────────────────────────────────────────
@@ -477,10 +479,10 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
     }
 
     private static (OctopusRestHistoryFetcher Fetcher, Func<OctopusImportHistoryFetchDto, OctopusHistoryFetchContext> Context) Fetcher(FakeOctopusServer server, string directory, bool oneItemPerChunk = false)
-        => (new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = oneItemPerChunk ? TimeSpan.Zero : TimeSpan.FromSeconds(5) }), cursor => Context(cursor, directory));
+        => (new OctopusRestHistoryFetcher(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = oneItemPerChunk ? TimeSpan.Zero : TimeSpan.FromSeconds(5) }), cursor => Context(cursor, directory));
 
     private static OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, string directory)
-        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionDirectory = directory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
+        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionId = TestSessionFiles.IdOf(directory), SessionDirectory = directory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
 
     private static async Task FetchUntilDoneAsync(FakeOctopusServer server, string directory, OctopusImportHistoryFetchDto cursor)
     {

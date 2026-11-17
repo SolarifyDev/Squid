@@ -9,6 +9,8 @@ using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
@@ -148,17 +150,17 @@ public sealed class OctopusRestBundleSeamTests : IDisposable
 
     private async Task<(OctopusManifestInventoryResult Inventory, OctopusResourceGraph Graph)> BuildGraphAsync()
     {
-        var writer = new OctopusHistoryBundleWriter(new OctopusImportSizeLimits());
+        var writer = TestSessionFiles.Writer(new OctopusImportSizeLimits());
 
         foreach (var (fixture, kind) in OctopusRestFixtureKinds.All)
         foreach (var resource in OctopusServer2026Fixtures.Resources(fixture))
         {
             var normalized = OctopusRestDocumentNormalizer.Normalize(kind, resource, OctopusRestFixtureKinds.OwnerOf(fixture));
 
-            if (normalized != null) await writer.WriteJsonAsync(_sessionDirectory, kind, normalized.Document);
+            if (normalized != null) await writer.WriteJsonAsync(TestSessionFiles.IdOf(_sessionDirectory), kind, normalized.Document);
         }
 
-        var bundle = await writer.BuildBundleAsync(_sessionDirectory, "inst-1");
+        var bundle = await writer.BuildBundleAsync(TestSessionFiles.IdOf(_sessionDirectory), _sessionDirectory, "inst-1");
         var extraction = await new OctopusImportSourceReader(new OctopusArchiveExtractor(), new OctopusInputExtractor(), new OctopusImportSizeLimits()).ReadAsync(bundle);
         var inventory = new OctopusManifestInventoryBuilder().Build(extraction);
 

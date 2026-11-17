@@ -12,6 +12,8 @@ using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class GetOctopusImportPreviewRequestHandlerTests
@@ -160,6 +162,7 @@ public class GetOctopusImportPreviewRequestHandlerTests
                 SessionService.Object,
                 CurrentUser.Object,
                 PlanningPipeline.Object,
+                TestUploadStores.LocalOnly(),
                 SecretStore.Object,
                 SecretsAccessor);
         }

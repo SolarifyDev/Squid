@@ -46,9 +46,6 @@ public sealed record OctopusImportConfirmationRequest(
     OctopusImportDependencyPlan DependencyPlan,
     OctopusImportPreviewPlanDto PreviewPlan)
 {
-    /// <summary>The session's working directory, where the history fetch stored task details; null for a file-only import.</summary>
-    public string SessionDirectory { get; init; }
-
     /// <summary>
     /// The session's data version read together with <see cref="PreviewPlan"/>: the import starts only while the session still holds
     /// that version, so a plan validated again meanwhile is never imported in place of the newer one. Null admits the current version.

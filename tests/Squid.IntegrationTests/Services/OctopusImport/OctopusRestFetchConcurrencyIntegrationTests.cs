@@ -4,6 +4,7 @@ using System.Text.Json;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Rest;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
@@ -14,7 +15,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// <summary>
 /// High-fidelity tier for the read-ahead of the REST history fetch: the production client factory (real sockets, the
 /// address guard, the connection pool), fetcher and bundle writer against a real-socket stub Octopus that answers with a
-/// latency and counts the requests it serves at once. No database: the fetch only stages files in the session directory.
+/// latency and counts the requests it serves at once. No database: the session's staged files go to an in-memory session file store.
 /// </summary>
 [Trait("Category", "OctopusImportRest")]
 public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelper output) : IDisposable
@@ -22,6 +23,7 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
     private const string ApiKey = "API-STUBKEY0000000000000001";
 
     private readonly List<string> _sessionDirectories = [];
+    private readonly InMemoryOctopusImportSessionFileStore _files = new();
 
     [Theory]
     [InlineData(1)]
@@ -95,8 +97,8 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
         await using var measured = Octopus(deployments: 30, releases: 10);
         var uncapped = await FetchOneItemPerChunkAsync(measured, new OctopusImportSizeLimits());
         var session = _sessionDirectories[^1];
-        var staged = StoredBytes(session, OctopusHistoryBundleWriter.StagingDirectoryName);
-        var details = StoredBytes(session, OctopusImportHistoryDetailsStore.DirectoryName);
+        var staged = StoredBytes(SessionIdOf(session), OctopusImportSessionFilePaths.StagingPrefix);
+        var details = StoredBytes(SessionIdOf(session), OctopusImportSessionFilePaths.DetailsPrefix);
         var cap = Math.Max(staged, details) * 2;
 
         uncapped.DetailsBytes.ShouldBe(details, "every stored detail byte is counted");
@@ -146,13 +148,13 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
     private async Task<OctopusImportHistoryFetchDto> FetchUntilDoneAsync(StubOctopusServer octopus, int concurrency, OctopusHistoryFetchPhase phase = OctopusHistoryFetchPhase.Releases)
     {
         var options = new OctopusRestOptions { AllowLoopback = true, Concurrency = concurrency, ChunkDuration = TimeSpan.FromSeconds(60) };
-        var fetcher = new OctopusRestHistoryFetcher(new OctopusRestClientFactory(null, options), new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), options);
+        var fetcher = new OctopusRestHistoryFetcher(new OctopusRestClientFactory(null, options), new OctopusHistoryBundleWriter(_files), new OctopusImportHistoryDetailsStore(_files), _files, options);
         var session = Path.Combine(Path.GetTempPath(), $"squid-it-rest-concurrency-{Guid.NewGuid():N}");
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], Phase = phase, OctopusSpaceId = "Spaces-1" };
 
         _sessionDirectories.Add(session);
 
-        while (!cursor.Done) await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = octopus.BaseUri.ToString(), ApiKey = ApiKey, SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty }).WaitAsync(TimeSpan.FromMinutes(2));
+        while (!cursor.Done) await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = octopus.BaseUri.ToString(), ApiKey = ApiKey, SessionId = SessionIdOf(session), SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty }).WaitAsync(TimeSpan.FromMinutes(2));
 
         return cursor;
     }
@@ -160,19 +162,21 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
     private async Task<OctopusImportHistoryFetchDto> FetchOneItemPerChunkAsync(StubOctopusServer octopus, OctopusImportSizeLimits limits)
     {
         var options = new OctopusRestOptions { AllowLoopback = true, ChunkDuration = TimeSpan.Zero };
-        var fetcher = new OctopusRestHistoryFetcher(new OctopusRestClientFactory(null, options), new OctopusHistoryBundleWriter(limits), new OctopusImportHistoryDetailsStore(), options, limits);
+        var fetcher = new OctopusRestHistoryFetcher(new OctopusRestClientFactory(null, options), new OctopusHistoryBundleWriter(_files, limits), new OctopusImportHistoryDetailsStore(_files), _files, options, limits);
         var session = Path.Combine(Path.GetTempPath(), $"squid-it-rest-bytes-{Guid.NewGuid():N}");
         var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], OctopusSpaceId = "Spaces-1" };
 
         _sessionDirectories.Add(session);
 
-        while (!cursor.Done) await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = octopus.BaseUri.ToString(), ApiKey = ApiKey, SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty }).WaitAsync(TimeSpan.FromMinutes(2));
+        while (!cursor.Done) await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = octopus.BaseUri.ToString(), ApiKey = ApiKey, SessionId = SessionIdOf(session), SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty }).WaitAsync(TimeSpan.FromMinutes(2));
 
         return cursor;
     }
 
-    private static long StoredBytes(string session, string directory)
-        => Directory.EnumerateFiles(Path.Combine(session, directory), "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+    // Each fetch of a test has its own directory and so its own session.
+    private static Guid SessionIdOf(string session) => new(MD5.HashData(Encoding.UTF8.GetBytes(session)));
+
+    private long StoredBytes(Guid sessionId, string prefix) => _files.TotalsAsync(sessionId, prefix).Result.Bytes;
 
     private static string CursorJson(OctopusImportHistoryFetchDto cursor)
     {
@@ -183,6 +187,12 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
         return node.ToJsonString();
     }
 
-    private static List<string> SessionFiles(string session)
-        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Where(f => Path.GetFileName(f) != OctopusHistoryStagingMarker.FileName).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
+    // The stored files (but the random staging id) and this server's own (the bundle).
+    private List<string> SessionFiles(string session)
+    {
+        var stored = _files.Paths(SessionIdOf(session)).Where(p => p != OctopusHistoryStagingMarker.FileName).Select(p => $"{p}:{Convert.ToHexString(SHA256.HashData(_files.ReadAsync(SessionIdOf(session), p).Result))}");
+        var local = Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}");
+
+        return stored.Concat(local).ToList();
+    }
 }

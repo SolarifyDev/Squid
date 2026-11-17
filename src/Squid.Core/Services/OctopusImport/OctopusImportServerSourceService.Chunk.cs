@@ -25,13 +25,15 @@ public sealed partial class OctopusImportServerSourceService
         }
     }
 
-    // The project selection is the claimed session's, never the request's.
+    // The project selection is the claimed session's, never the request's. The directory is this server's, never the registered path:
+    // another replica may have registered it, and the staged documents themselves are stored with the session.
     private async Task<OctopusHistoryFetchContext> BuildContextAsync(OctopusHistoryFetchRequest request, OctopusImportSession session, OctopusImportHistoryFetchDto cursor, IReadOnlyCollection<string> chosenProjectIds, CancellationToken ct)
         => new()
         {
             ServerUrl = request.ServerUrl,
             ApiKey = request.ApiKey,
-            SessionDirectory = Path.GetDirectoryName(Path.GetFullPath(session.TemporaryUploadPath)),
+            SessionId = session.SessionId,
+            SessionDirectory = uploadStore.GetSessionDirectory(session.SessionId),
             Cursor = cursor,
             PriorMappings = await sourceMap.LoadKindsAsync(request.SpaceId, OctopusRestHistoryFetcher.PriorMappingKinds, ct).ConfigureAwait(false),
             ChosenProjectIds = chosenProjectIds

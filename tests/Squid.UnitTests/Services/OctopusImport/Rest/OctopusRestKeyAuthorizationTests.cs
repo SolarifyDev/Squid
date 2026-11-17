@@ -9,6 +9,8 @@ using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
@@ -192,7 +194,7 @@ public sealed class OctopusRestKeyAuthorizationTests : IDisposable
     private static OctopusImportHistoryFetchDto CatalogCursor() => new() { Phase = OctopusHistoryFetchPhase.Catalog };
 
     private OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, string apiKey)
-        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
+        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = apiKey, SessionId = TestSessionFiles.IdOf(_sessionDirectory), SessionDirectory = _sessionDirectory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
 
-    private static OctopusRestHistoryFetcher Fetcher(FakeOctopusServer server) => new(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
+    private static OctopusRestHistoryFetcher Fetcher(FakeOctopusServer server) => new(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, new OctopusRestOptions { ChunkDuration = TimeSpan.Zero });
 }

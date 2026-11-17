@@ -12,6 +12,8 @@ using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport;
 
 /// <summary>
@@ -46,7 +48,7 @@ public class OctopusImportConfirmationRunnerTests
         outcome.Session.State.ShouldBe(OctopusImportSessionState.Succeeded);
         _sessionDataProvider.Verify(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>()), Times.Once);
         _authorization.Verify(a => a.EnsurePermissionAsync(It.Is<PermissionCheckRequest>(r => r.UserId == OwnerUserId && r.SpaceId == SpaceId && r.Permission == Permission.ProjectCreate), It.IsAny<CancellationToken>()), Times.Once);
-        _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.SessionId == sessionId && r.DestinationSpaceId == SpaceId && r.SessionDirectory == Path.GetDirectoryName(uploadPath)), It.IsAny<CancellationToken>()), Times.Once);
+        _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.SessionId == sessionId && r.DestinationSpaceId == SpaceId), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // Confirmation plans again with the session's own project selection (the one the plan was validated with), never a request's.
@@ -248,7 +250,7 @@ public class OctopusImportConfirmationRunnerTests
     }
 
     private OctopusImportConfirmationRunner CreateRunner()
-        => new(_sessionDataProvider.Object, _sessionService.Object, _authorization.Object, _planningPipeline.Object, _orchestrator.Object, _backgroundJobClient.Object, Settings());
+        => new(_sessionDataProvider.Object, _sessionService.Object, _authorization.Object, _planningPipeline.Object, _orchestrator.Object, _backgroundJobClient.Object, Settings(), TestUploadStores.LocalOnly());
 
     private static IOctopusImportTemporaryUploadSettings Settings()
     {

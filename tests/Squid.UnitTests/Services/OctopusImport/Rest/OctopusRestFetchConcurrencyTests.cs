@@ -9,6 +9,8 @@ using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
 /// <summary>
@@ -89,7 +91,7 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
         (cursor.Counts.Deployments, cursor.Counts.ItemsAbandoned).ShouldBe((11, 1));
         var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
         Uri.UnescapeDataString(skipped.Path).ShouldContain("events?regarding=Deployments-4", customMessage: "the skipped item names the request it was stuck on, not whichever request was made last");
-        new OctopusHistoryBundleWriter().IsStaged(session, OctopusResourceKind.Deployment, "Deployments-4").ShouldBeFalse();
+        (await TestSessionFiles.Writer().IsStagedAsync(TestSessionFiles.IdOf(session), OctopusResourceKind.Deployment, "Deployments-4")).ShouldBeFalse();
     }
 
     // Requests of deployments read ahead (made before the stuck one) are still waiting when the chunk is abandoned: the
@@ -315,7 +317,7 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
 
     private static OctopusRestOptions Options(int concurrency, int chunkMilliseconds = 60_000) => new() { Concurrency = concurrency, ChunkDuration = TimeSpan.FromMilliseconds(chunkMilliseconds) };
 
-    private OctopusRestHistoryFetcher Fetcher(FakeOctopusServer server, OctopusRestOptions options) => new(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), options);
+    private OctopusRestHistoryFetcher Fetcher(FakeOctopusServer server, OctopusRestOptions options) => new(server.Factory, TestSessionFiles.Writer(), TestSessionFiles.Details(), TestSessionFiles.Store, options);
 
     private async Task<OctopusImportHistoryFetchDto> FetchUntilDoneAsync(FakeOctopusServer server, OctopusRestOptions options, OctopusImportHistoryFetchDto cursor = null)
     {
@@ -341,7 +343,7 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
     }
 
     private static OctopusHistoryFetchContext Context(OctopusImportHistoryFetchDto cursor, string session)
-        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
+        => new() { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionId = TestSessionFiles.IdOf(session), SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty };
 
     // ── Comparison ─────────────────────────────────────────────────────────
 
@@ -358,11 +360,17 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
     }
 
     private static List<string> Staged(string session, OctopusResourceKind kind, string prefix)
-        => Enumerable.Range(1, 12).Select(n => $"{prefix}-{n}").Where(id => new OctopusHistoryBundleWriter().IsStaged(session, kind, id)).ToList();
+        => Enumerable.Range(1, 12).Select(n => $"{prefix}-{n}").Where(id => TestSessionFiles.Writer().IsStagedAsync(TestSessionFiles.IdOf(session), kind, id).GetAwaiter().GetResult()).ToList();
 
     private static List<string> ClosureRequests(FakeOctopusServer server) => server.Paths.Where(p => p.Contains("ids=") && !p.StartsWith("/api/tasks", StringComparison.Ordinal)).ToList();
 
-    // The staging id is random per fetch (it ties the cursor to its directory), so it is the one file two fetches never share.
+    // The staging id is random per fetch (it ties the cursor to its staging), so it is the one file two fetches never share. The stored
+    // files and this server's own (the bundle) are both compared.
     private static List<string> SessionFiles(string session)
-        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Where(f => Path.GetFileName(f) != OctopusHistoryStagingMarker.FileName).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
+    {
+        var stored = TestSessionFiles.Store.Paths(TestSessionFiles.IdOf(session)).Where(p => p != OctopusHistoryStagingMarker.FileName).Select(p => $"{p}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(TestSessionFiles.Store.ReadAsync(TestSessionFiles.IdOf(session), p).Result))}");
+        var local = Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))}");
+
+        return stored.Concat(local).ToList();
+    }
 }

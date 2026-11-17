@@ -13,6 +13,8 @@ using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class ValidateOctopusImportCommandHandlerTests
@@ -344,6 +346,7 @@ public class ValidateOctopusImportCommandHandlerTests
                 CurrentUser.Object,
                 PlanningPipeline.Object,
                 PreviewValidator.Object,
+                TestUploadStores.LocalOnly(),
                 SecretStore.Object,
                 SecretsAccessor);
         }

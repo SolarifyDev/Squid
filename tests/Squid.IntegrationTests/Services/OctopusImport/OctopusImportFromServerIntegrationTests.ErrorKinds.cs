@@ -70,16 +70,16 @@ public partial class OctopusImportFromServerIntegrationTests
         octopus.Requests.ShouldNotContain(r => r.PathAndQuery.StartsWith("/api/Spaces-1/"), "a session that cannot be resumed reads nothing from the space");
     }
 
-    // The session's staged documents are lost between chunks (a restart on temporary storage, another replica answering): the fetch is
-    // refused with its own kind however often it is resumed, reads nothing more from Octopus, and the session never reaches a bundle
-    // that would silently lack what the cursor already counted.
+    // The session's stored staging is lost between chunks (its rows deleted, as only a cleanup does): the fetch is refused with its own
+    // kind however often it is resumed, reads nothing more from Octopus, and the session never reaches a bundle that would silently lack
+    // what the cursor already counted. A server's own directory going away is no loss any more (see the multi-server tests).
     [Fact]
     public async Task StagingLostBetweenChunks_NamesItsKind_ReadsNothingMore_NeverCompletes()
     {
         await using var octopus = OneDeployment();
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
         (await Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey))).Data.Done.ShouldBeFalse();
-        Directory.Delete(await SessionDirectoryAsync(sessionId), recursive: true);
+        await Run<SquidDbContext>(db => db.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM octopus_import_session_file WHERE session_id = {sessionId}"));
         var requests = octopus.Requests.Count(r => r.PathAndQuery.StartsWith("/api/Spaces-1/"));
 
         for (var attempt = 0; attempt < 2; attempt++)

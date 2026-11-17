@@ -7,6 +7,10 @@ public sealed class OctopusHistoryFetchContext
 
     public string ApiKey { get; init; }
 
+    /// <summary>The import session whose stored files the fetch stages into.</summary>
+    public Guid SessionId { get; init; }
+
+    /// <summary>This server's directory of the session: where the finished bundle is written before it is stored with the session.</summary>
     public string SessionDirectory { get; init; }
 
     public OctopusImportHistoryFetchDto Cursor { get; init; } = new();

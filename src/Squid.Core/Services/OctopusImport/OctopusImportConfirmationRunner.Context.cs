@@ -17,6 +17,7 @@ public sealed partial class OctopusImportConfirmationRunner
         public OctopusImportSession Session { get; set; }
         public OctopusImportSessionState State { get; set; }
         public OctopusImportValidatedPlanDto ValidatedPlan { get; set; }
+        public string SourcePath { get; set; }
 
         // Plan
         public OctopusImportPlanningSnapshot Snapshot { get; set; }
