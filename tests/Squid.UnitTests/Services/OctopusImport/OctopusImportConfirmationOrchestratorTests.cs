@@ -759,7 +759,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         IOctopusExportSecretsAccessor secretsAccessor = null,
         Squid.Core.Services.Deployments.Variables.IVariableService variableService = null,
         Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedService externalFeedService = null,
-        string graphInstallationId = InstallationId)
+        string graphInstallationId = InstallationId,
+        IEnumerable<Squid.Core.Services.OctopusImport.ChildInsert.IOctopusImportChildInserter> childInserters = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -842,6 +843,7 @@ public partial class OctopusImportConfirmationOrchestratorTests
             secretsAccessor,
             variableService,
             externalFeedService,
+            childInserters,
             destinationDataProvider: VariableRowsOf(nodes).Object);
 
         return new TestHarness(

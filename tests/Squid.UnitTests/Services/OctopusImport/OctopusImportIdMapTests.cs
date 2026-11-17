@@ -244,6 +244,20 @@ public class OctopusImportIdMapTests
     private static OctopusImportPriorMappings Prior(params (string Type, string Id, int DestinationId)[] rows)
         => new(rows.ToDictionary(r => (r.Type, r.Id), r => new OctopusImportPriorMapping(r.DestinationId, "Created", null, null)), null);
 
+    [Fact]
+    public void HasSessionDestination_OnlyThisConfirmationsRowsOfThatType()
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [(nameof(OctopusResourceKind.Variable), "Variables-9")] = new(909, "Created", null, null) }, "inst-1");
+        var map = new OctopusImportIdMap(prior);
+
+        map.AddCreated(Resource("Variables-1", OctopusResourceKind.Variable, "ApiKey"), 101);
+        map.AddCreated(Resource("Environments-1", OctopusResourceKind.Environment, "Production"), 202);
+
+        map.HasSessionDestination(nameof(OctopusResourceKind.Variable), 101).ShouldBeTrue();
+        map.HasSessionDestination(nameof(OctopusResourceKind.Variable), 202).ShouldBeFalse("a row of another type is not a variable row");
+        map.HasSessionDestination(nameof(OctopusResourceKind.Variable), 909).ShouldBeFalse("the prior layer never counts as a session mapping");
+    }
+
     private static OctopusResourceNode Resource(string sourceId, OctopusResourceKind kind, string name)
         => new(
             sourceId,

@@ -12,9 +12,9 @@ namespace Squid.Core.Services.OctopusImport;
 /// </summary>
 public partial class OctopusImportPreviewValidator
 {
-    private void ValidateChoices(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, OctopusImportValidationResultDto result)
+    private void ValidateChoices(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, OctopusImportPreviewPlanDto serverPlan, OctopusImportValidationResultDto result)
     {
-        var fresh = ById(_previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts, OctopusImportChoiceSelections.From(previewPlan)).Resources);
+        var fresh = ById((serverPlan ?? _previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts, OctopusImportChoiceSelections.From(previewPlan))).Resources);
         var posted = ById(previewPlan.Resources);
 
         foreach (var sourceId in ChoiceRowIds(posted).Union(ChoiceRowIds(fresh), StringComparer.OrdinalIgnoreCase).Union(CreatedChildIds(posted), StringComparer.OrdinalIgnoreCase))

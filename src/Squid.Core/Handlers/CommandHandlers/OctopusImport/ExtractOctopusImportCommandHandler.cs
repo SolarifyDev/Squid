@@ -18,7 +18,8 @@ public class ExtractOctopusImportCommandHandler(
     ICurrentUser currentUser,
     IOctopusImportSourceReader sourceReader,
     IOctopusManifestInventoryBuilder inventoryBuilder,
-    IOctopusResourceGraphBuilder graphBuilder)
+    IOctopusResourceGraphBuilder graphBuilder,
+    IOctopusImportExtractionCache extractionCache = null)
     : ICommandHandler<ExtractOctopusImportCommand, ExtractOctopusImportResponse>
 {
     public const string HistoryFetchIncompleteCode = "OctopusImport.Extraction.HistoryFetchIncomplete";
@@ -58,7 +59,7 @@ public class ExtractOctopusImportCommandHandler(
 
         try
         {
-            extraction = await sourceReader.ReadAsync(session.TemporaryUploadPath, cancellationToken).ConfigureAwait(false);
+            extraction = await ReadSourceAsync(session.TemporaryUploadPath, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
@@ -100,6 +101,10 @@ public class ExtractOctopusImportCommandHandler(
             }
         };
     }
+
+    // Read through the shared cache, so the project picker and preview that follow reuse this parse instead of repeating it.
+    private Task<OctopusInputExtractionResult> ReadSourceAsync(string path, CancellationToken ct)
+        => (extractionCache ?? OctopusImportExtractionCache.Shared).GetOrReadAsync(path, () => sourceReader.ReadAsync(path, CancellationToken.None), ct);
 
     private async Task<OctopusImportSession> GetOwnedSessionAsync(ExtractOctopusImportCommand command, CancellationToken ct)
     {

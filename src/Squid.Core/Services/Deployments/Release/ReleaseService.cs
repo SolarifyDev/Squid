@@ -111,14 +111,8 @@ public partial class ReleaseService : IReleaseService
 
         release.SpaceId = project.SpaceId;
         
-        var variableSetSnapshot = await _deploymentSnapshotService
-            .SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
-        var deploymentProcessSnapshot = await _deploymentSnapshotService
-            .SnapshotProcessFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
-        
-        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
-        release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
-        
+        var deploymentProcessSnapshot = await AttachSnapshotsAsync(release, command, cancellationToken).ConfigureAwait(false);
+
         await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (command.HistoricalCreatedDate is { } historicalCreatedDate)
@@ -140,6 +134,25 @@ public partial class ReleaseService : IReleaseService
         {
             Release = _mapper.Map<ReleaseDto>(release)
         };
+    }
+
+    // Returns the process snapshot it took, or null when a historical import reused the snapshots of its earlier release.
+    private async Task<DeploymentProcessSnapshotDto> AttachSnapshotsAsync(ReleaseEntity release, CreateReleaseCommand command, CancellationToken cancellationToken)
+    {
+        if (command.IsHistoricalImport && command.HistoricalSnapshots is { } reused)
+        {
+            release.ProjectVariableSetSnapshotId = reused.VariableSetSnapshotId;
+            release.ProjectDeploymentProcessSnapshotId = reused.DeploymentProcessSnapshotId;
+            return null;
+        }
+
+        var variableSetSnapshot = await _deploymentSnapshotService.SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+        var deploymentProcessSnapshot = await _deploymentSnapshotService.SnapshotProcessFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+
+        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
+        release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
+
+        return deploymentProcessSnapshot;
     }
 
     // A historical import bypasses both today's channel rules and the project's ignore-rules permission.

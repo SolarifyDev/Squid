@@ -84,23 +84,21 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
         }
 
         var ordered = new List<OctopusResourceNode>();
-        var ready = resources.Values
-            .Where(r => incoming[r.SourceId].Count == 0)
-            .ToList();
+        var ready = new PriorityQueue<OctopusResourceNode, OctopusResourceNode>(Comparer<OctopusResourceNode>.Create(CompareResources));
 
-        while (ready.Count > 0)
+        foreach (var resource in resources.Values.Where(r => incoming[r.SourceId].Count == 0))
+            ready.Enqueue(resource, resource);
+
+        while (ready.TryDequeue(out var next, out _))
         {
-            ready.Sort(CompareResources);
-            var next = ready[0];
-            ready.RemoveAt(0);
             ordered.Add(next);
 
-            foreach (var dependentId in outgoing[next.SourceId].OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList())
+            foreach (var dependentId in outgoing[next.SourceId])
             {
                 incoming[dependentId].Remove(next.SourceId);
 
                 if (incoming[dependentId].Count == 0)
-                    ready.Add(resources[dependentId]);
+                    ready.Enqueue(resources[dependentId], resources[dependentId]);
             }
         }
 

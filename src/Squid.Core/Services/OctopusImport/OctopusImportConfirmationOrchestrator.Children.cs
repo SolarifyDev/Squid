@@ -45,7 +45,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         await EnsureNoNamesakeUnderImportedOwnerAsync(execution, resource, ownerId, ct).ConfigureAwait(false);
 
         var order = await PlaceAsync(execution, inserter, resource, ownerId, ct).ConfigureAwait(false);
-        var inserted = await inserter.InsertAsync(new OctopusImportChildInsert(resource, ownerId, order, execution.IdMap, execution.DestinationSpaceId, execution.Request.Graph), ct).ConfigureAwait(false);
+        var inserted = await inserter.InsertAsync(new OctopusImportChildInsert(resource, ownerId, order, execution.IdMap, execution.DestinationSpaceId, execution.Request.Graph, execution.CurrentGraphNode), ct).ConfigureAwait(false);
 
         RecordInserted(execution, resource, inserted);
     }
@@ -81,20 +81,11 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     {
         if (resource.Kind != OctopusResourceKind.Variable) return children.Any(c => c.Name == resource.Name);
 
-        var claimed = ClaimedVariableRows(execution);
-
-        return OctopusImportVariableMatching.Pair(UnmappedVariablesBeside(execution, resource), children.Where(c => !claimed.Contains(c.Id)), execution.DestinationOf).ContainsKey(resource.SourceId);
+        return OctopusImportVariableMatching.Pair(UnmappedVariablesBeside(execution, resource), children.Where(c => !execution.IsClaimedVariableRow(c.Id)), execution.DestinationOf).ContainsKey(resource.SourceId);
     }
 
     private static IEnumerable<OctopusResourceNode> UnmappedVariablesBeside(ConfirmationExecutionContext execution, OctopusResourceNode variable)
-        => execution.CurrentResources.Where(r => r.Kind == OctopusResourceKind.Variable && string.Equals(r.ParentSourceId, variable.ParentSourceId, StringComparison.OrdinalIgnoreCase) && !execution.IdMap.TryGetDestinationId(r, out _));
-
-    private static IReadOnlySet<int> ClaimedVariableRows(ConfirmationExecutionContext execution)
-    {
-        var variableType = OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Variable));
-
-        return execution.Prior.Mappings.Where(m => m.Key.Type == variableType).Select(m => m.Value.DestinationId).Concat(execution.IdMap.Mappings.Where(m => m.SourceType == nameof(OctopusResourceKind.Variable)).Select(m => m.DestinationId)).ToHashSet();
-    }
+        => execution.CurrentVariablesOf(variable.ParentSourceId).Where(r => !execution.IdMap.TryGetDestinationId(r, out _));
 
     // The variables written together with their set are recorded like any create, so one later deleted in Squid is told apart from one
     // added in Octopus. The set's rows are read back and paired by the same rule (the save returns no variable ids).

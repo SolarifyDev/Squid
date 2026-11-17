@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Models.OctopusImport;
 
@@ -26,10 +25,12 @@ public class OctopusImportPlanningPipeline(
     IOctopusResourceGraphBuilder graphBuilder,
     IOctopusImportDependencyPlanner dependencyPlanner,
     IOctopusImportConflictDiscoveryService conflictDiscoveryService,
-    IOctopusImportPreviewPlanner previewPlanner)
+    IOctopusImportPreviewPlanner previewPlanner,
+    IOctopusImportExtractionCache extractionCache = null)
     : IOctopusImportPlanningPipeline
 {
-    private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
+    // The pipeline lives for one request; the parsed source must outlive it, or every request of a flow parses it again.
+    private readonly IOctopusImportExtractionCache _extractions = extractionCache ?? OctopusImportExtractionCache.Shared;
 
     public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null, CancellationToken ct = default)
     {
@@ -56,32 +57,7 @@ public class OctopusImportPlanningPipeline(
         return graphBuilder.Build(inventoryBuilder.Build(extraction));
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
-    {
-        var fileInfo = new FileInfo(temporaryUploadPath);
-        var cacheKey = new ExtractionCacheKey(Path.GetFullPath(temporaryUploadPath), fileInfo.Length, fileInfo.LastWriteTimeUtc);
-
-        var extraction = _extractions.GetOrAdd(
-            cacheKey,
-            _ => new Lazy<Task<OctopusInputExtractionResult>>(
-                () => sourceReader.ReadAsync(temporaryUploadPath, CancellationToken.None),
-                LazyThreadSafetyMode.ExecutionAndPublication));
-
-        try
-        {
-            return await extraction.Value.WaitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!extraction.Value.IsCompleted)
-        {
-            throw;
-        }
-        catch
-        {
-            _extractions.TryRemove(cacheKey, out _);
-            throw;
-        }
-    }
-
-    // The history bundle beside the main file is part of the input: a finished REST fetch must invalidate the cache.
-    private sealed record ExtractionCacheKey(string FullPath, long Length, DateTime LastWriteTimeUtc);
+    // The history bundle is the session's source file itself, so a finished REST fetch (a new file) is read again.
+    private Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
+        => _extractions.GetOrReadAsync(temporaryUploadPath, () => sourceReader.ReadAsync(temporaryUploadPath, CancellationToken.None), ct);
 }

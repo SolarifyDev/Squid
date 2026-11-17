@@ -115,7 +115,7 @@ public sealed class OctopusImportReferenceScope
     // A release pulls its packages from the feeds of its process snapshot, which are not graph references.
     private static IEnumerable<(string ReleaseId, string FeedId)> ReleasePackageFeeds(OctopusResourceGraph graph)
     {
-        var current = graph.Resources.Where(r => !r.IsHistorical).ToList();
+        var feeds = new OctopusImportReleasePackageFeedLookup(graph, graph.Resources.Where(r => !r.IsHistorical));
 
         foreach (var node in graph.Resources.Where(r => r.Kind == OctopusResourceKind.Release))
         {
@@ -123,7 +123,7 @@ public sealed class OctopusImportReferenceScope
 
             foreach (var package in release?.SelectedPackages ?? [])
             {
-                var feedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(graph, current, release, package);
+                var feedId = feeds.GetSourceFeedId(release, package);
 
                 if (!string.IsNullOrWhiteSpace(feedId)) yield return (node.SourceId, feedId);
             }

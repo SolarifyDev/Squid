@@ -84,6 +84,35 @@ public class OctopusImportPreviewValidatorChoicesTests
         stale.ShouldNotBeEmpty($"a forged {forgery} was accepted");
     }
 
+    // Given the plan the server already built from the posted selection, the validator checks against it and never builds it
+    // again; what it accepts and refuses is unchanged.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("action")]
+    [InlineData("reason")]
+    [InlineData("choiceOnImportedRow")]
+    [InlineData("createOnImportedRow")]
+    public async Task ServerPlanHandedOver_NotBuiltAgain_SameVerdict(string forgery)
+    {
+        var scenario = await StepScenarioAsync(deleted: true);
+        var server = await scenario.PlanAsync();
+        var posted = (await scenario.PlanAsync()).Preview;
+        var step = posted.Resources.Single(r => r.SourceId == AddedStep);
+        var imported = posted.Resources.Single(r => r.SourceId == "Projects-1-step-1");
+        var planner = new Mock<IOctopusImportPreviewPlanner>(MockBehavior.Strict);
+
+        if (forgery == "action") step.PreviewAction = OctopusImportPreviewAction.Create;
+        if (forgery == "reason") step.Choice.Reason = OctopusImportChoiceReason.AddedInOctopus;
+        if (forgery == "choiceOnImportedRow") imported.Choice = new OctopusImportChoiceDto { Reason = OctopusImportChoiceReason.DeletedInSquid, Selected = true };
+        if (forgery == "createOnImportedRow") imported.PreviewAction = OctopusImportPreviewAction.Create;
+
+        var validation = new OctopusImportPreviewValidator(previewPlanner: planner.Object).Validate(server.Graph, server.DependencyPlan, server.Conflicts, posted, server.Preview);
+        var stale = validation.Diagnostics.Where(d => d.Code == OctopusImportPreviewDiagnosticCodes.StalePreviewPlan && d.Severity == OctopusImportCompatibilitySeverity.Blocker).ToList();
+
+        (stale.Count > 0).ShouldBe(forgery != null, $"forgery '{forgery}': {string.Join(" | ", stale.Select(d => d.Message))}");
+        (await ValidateAgainstAsync(scenario, posted)).Count.ShouldBe(stale.Count, "the handed-over plan must give the verdict a rebuilt plan gives");
+    }
+
     // An old client's plan with nothing to decide on validates exactly as before.
     [Fact]
     public async Task NothingToDecide_NoChoiceDiagnostic()

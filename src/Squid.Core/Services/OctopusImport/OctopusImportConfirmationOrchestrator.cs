@@ -25,6 +25,8 @@ using Squid.Message.Commands.Teams;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.Deployments.Channel;
+using Squid.Message.Models.Deployments.LifeCycle;
+using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Models.Deployments.ProjectGroup;
 using Squid.Message.Models.OctopusImport;
 
@@ -188,6 +190,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         }
         catch (Exception ex)
         {
+            Log.Error(ex, "Octopus import confirmation {SessionId} failed and was rolled back", request.SessionId);
+
             result ??= new OctopusImportSessionResultDto();
             MarkRolledBack(result, ex);
             result.Succeeded = false;
@@ -502,15 +506,21 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         var detail = response.Data.LifecyclePhase;
         execution.AddCreated(resource, detail.Lifecycle.Id);
 
-        var phases = execution.CurrentResources
-            .Where(r => r.Kind == OctopusResourceKind.LifecyclePhase
-                        && string.Equals(r.ParentSourceId, resource.SourceId, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(r => r.GetSource<OctopusLifecyclePhaseDto>()?.Id, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        RecordCreatedPhases(execution, resource, detail.Phases);
+    }
 
-        for (var i = 0; i < phases.Count && i < detail.Phases.Count; i++)
-            execution.AddCreated(phases[i], detail.Phases[i].Id);
+    // The created phases come back in the lifecycle's Octopus list order (the mapper keeps it), so each pairs with the Octopus phase at
+    // the same position. Octopus phase ids are random GUIDs, so their sort order says nothing about the phase order.
+    private static void RecordCreatedPhases(ConfirmationExecutionContext execution, OctopusResourceNode lifecycle, IReadOnlyList<LifecyclePhaseDto> createdPhases)
+    {
+        var phaseSourceIds = OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.LifecyclePhase, lifecycle);
+
+        for (var i = 0; i < phaseSourceIds.Count && i < createdPhases.Count; i++)
+        {
+            var phase = execution.FindResource(phaseSourceIds[i], OctopusResourceKind.LifecyclePhase);
+
+            if (phase != null) execution.AddCreated(phase, createdPhases[i].Id);
+        }
     }
 
     private async Task CreateFeedAsync(
@@ -895,7 +905,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
                     ReleaseNote = source.ReleaseNotes,
                     SelectedPackages = selectedPackages,
                     HistoricalCreatedDate = source.Assembled,
-                    IsHistoricalImport = true
+                    IsHistoricalImport = true,
+                    HistoricalSnapshots = execution.ReleaseSnapshots.GetValueOrDefault(projectId)
                 },
                 ct)
             .ConfigureAwait(false);
@@ -904,6 +915,15 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
             throw new OctopusImportConfirmationException("Create release command did not return a destination release id.");
 
         execution.AddCreated(resource, response.Data.Id);
+        RememberReleaseSnapshots(execution, projectId, response.Data);
+    }
+
+    // Configuration ranks before history, so a project's configuration is final once its first release is created: every later release
+    // of it in this confirmation reuses that release's snapshots instead of rebuilding identical ones.
+    private static void RememberReleaseSnapshots(ConfirmationExecutionContext execution, int projectId, ReleaseDto release)
+    {
+        if (release.ProjectVariableSetSnapshotId > 0 && release.ProjectDeploymentProcessSnapshotId > 0)
+            execution.ReleaseSnapshots.TryAdd(projectId, new HistoricalReleaseSnapshots(release.ProjectVariableSetSnapshotId, release.ProjectDeploymentProcessSnapshotId));
     }
 
     private static List<CreateReleaseSelectedPackageDto> BuildReleaseSelectedPackages(
@@ -946,11 +966,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         OctopusSelectedPackageDto selectedPackage,
         out int feedId)
     {
-        var sourceFeedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(
-            execution.Request.Graph,
-            execution.CurrentResources,
-            release,
-            selectedPackage);
+        var sourceFeedId = execution.ReleasePackageFeeds.GetSourceFeedId(release, selectedPackage);
 
         return OctopusImportKubernetesActionMapperSupport.TryResolveFeedId(sourceFeedId, execution.IdMap, out feedId);
     }
@@ -1115,6 +1131,9 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         /// <summary>The Squid row a resource maps to (written by this confirmation, else by an earlier import), or null.</summary>
         public int? DestinationOf(string sourceId, OctopusResourceKind kind) => IdMap.TryGetDestinationId(sourceId, kind.ToString(), out var id) ? id : null;
 
+        /// <summary>The snapshots of the first release this confirmation created per Squid project, reused by its later releases.</summary>
+        public Dictionary<int, HistoricalReleaseSnapshots> ReleaseSnapshots { get; } = new();
+
         /// <summary>Task and detail fingerprints of the history units this confirmation wrote, keyed by deployment source id.</summary>
         public Dictionary<string, (string Fingerprint, string DetailFingerprint)> HistoryFingerprints { get; } = new(StringComparer.OrdinalIgnoreCase);
 
@@ -1130,6 +1149,11 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         public Dictionary<(string SourceType, string Key), (int DestinationId, string Outcome)> SettledSecretRows { get; } = new();
 
         public IReadOnlyList<OctopusResourceNode> CurrentResources { get; }
+
+        private OctopusImportReleasePackageFeedLookup _releasePackageFeeds;
+
+        /// <summary>Release package feed resolution over <see cref="CurrentResources"/>, indexed once for every release this confirmation writes.</summary>
+        public OctopusImportReleasePackageFeedLookup ReleasePackageFeeds => _releasePackageFeeds ??= new OctopusImportReleasePackageFeedLookup(Request.Graph, CurrentResources);
 
         public OctopusImportResourceResultDto GetPreview(OctopusResourceNode resource)
             => _resultsBySourceId.TryGetValue(resource.SourceId, out var result) ? result : null;
@@ -1148,6 +1172,55 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
         public OctopusResourceNode FindResource(string sourceId, OctopusResourceKind kind)
             => _resourcesByKey.TryGetValue(Key(sourceId, kind), out var resource) ? resource : null;
+
+        private Dictionary<string, OctopusResourceNode> _graphNodesByKey;
+        private Dictionary<string, OctopusResourceNode> _graphNodesById;
+        private OctopusImportFillEvidence _fillEvidence;
+
+        /// <summary>A node of the whole graph (history included) by kind and source id; the graph is indexed once, never scanned per lookup.</summary>
+        public OctopusResourceNode GraphNode(string sourceId, OctopusResourceKind kind)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_graphNodesByKey ??= IndexGraph(r => Key(r.SourceId, r.Kind))).GetValueOrDefault(Key(sourceId, kind));
+
+        private Dictionary<string, OctopusResourceNode> _currentGraphNodesByKey;
+        private ILookup<string, OctopusResourceNode> _currentVariablesByParent;
+        private HashSet<int> _priorVariableRows;
+
+        /// <summary>A current (not historical) node of the whole graph by source id and kind, the first in graph order; indexed once.</summary>
+        public OctopusResourceNode CurrentGraphNode(string sourceId, OctopusResourceKind kind)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_currentGraphNodesByKey ??= IndexGraph(r => r.IsHistorical ? null : Key(r.SourceId, r.Kind))).GetValueOrDefault(Key(sourceId, kind));
+
+        /// <summary>The current variables of one variable set, in plan order; indexed once.</summary>
+        public IEnumerable<OctopusResourceNode> CurrentVariablesOf(string variableSetSourceId)
+            => (_currentVariablesByParent ??= CurrentResources.Where(r => r.Kind == OctopusResourceKind.Variable && r.ParentSourceId != null).ToLookup(r => r.ParentSourceId, StringComparer.OrdinalIgnoreCase))[variableSetSourceId ?? string.Empty];
+
+        /// <summary>A Squid variable row an earlier import or this confirmation linked to an Octopus variable (so it holds that one).</summary>
+        public bool IsClaimedVariableRow(int destinationId)
+            => (_priorVariableRows ??= PriorVariableRows()).Contains(destinationId) || IdMap.HasSessionDestination(nameof(OctopusResourceKind.Variable), destinationId);
+
+        private HashSet<int> PriorVariableRows()
+        {
+            var variableType = OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Variable));
+
+            return Prior.Mappings.Where(m => m.Key.Type == variableType).Select(m => m.Value.DestinationId).ToHashSet();
+        }
+
+        /// <summary>The first node of the whole graph with this source id, whatever its kind.</summary>
+        public OctopusResourceNode GraphNodeById(string sourceId)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_graphNodesById ??= IndexGraph(r => r.SourceId)).GetValueOrDefault(sourceId);
+
+        /// <summary>The installation evidence for linking and filling: its inputs (the graph, the prior rows reloaded under the lock and the user's pairing confirmation) are fixed for the confirmation, so it is evaluated once.</summary>
+        public OctopusImportFillEvidence FillEvidence => _fillEvidence ??= OctopusImportFillEvidences.Evaluate(Request.Graph.InstallationId, Request.Graph.ExportSourceId, Request.Graph.Resources, Prior, Request.PreviewPlan.FillPairing?.Confirmed == true);
+
+        // The first node per key wins, as a scan in graph order would find it.
+        private Dictionary<string, OctopusResourceNode> IndexGraph(Func<OctopusResourceNode, string> key)
+        {
+            var index = new Dictionary<string, OctopusResourceNode>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var resource in Request.Graph.Resources.Where(r => !string.IsNullOrWhiteSpace(r.SourceId)))
+                if (key(resource) is { } k) index.TryAdd(k, resource);
+
+            return index;
+        }
 
         /// <summary>Octopus machine id → name, from the graph's machine nodes (machines are never imported).</summary>
         public IReadOnlyDictionary<string, string> MachineNames => _machineNames ??= Request.Graph.Resources.Where(r => r.Kind == OctopusResourceKind.Machine).GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);

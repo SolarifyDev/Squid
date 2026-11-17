@@ -64,7 +64,8 @@ public class ValidateOctopusImportCommandHandler(
             snapshot.Graph,
             snapshot.DependencyPlan,
             snapshot.Conflicts,
-            previewPlan));
+            previewPlan,
+            snapshot.PreviewPlan));
 
         if (previewPlan.HasBlockers || validation.HasBlockers)
         {

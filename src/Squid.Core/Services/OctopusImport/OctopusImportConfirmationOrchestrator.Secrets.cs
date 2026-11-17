@@ -32,7 +32,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator
                 yield return SecretRow(execution, OctopusImportSourceMapQueries.FeedSecretSourceType, feed.SourceId, feedId);
         }
 
-        // Missing rows of earlier imports this confirmation filled or settled (Missing → Filled / Superseded; never back).
+        // Missing rows of earlier imports this confirmation filled or settled (Missing → Filled / Superseded; back to Missing only when a
+        // later confirmation re-creates the row empty, above).
         foreach (var ((sourceType, key), (destinationId, outcome)) in execution.SettledSecretRows)
             yield return SecretRow(execution, sourceType, key, destinationId, outcome);
     }
@@ -118,13 +119,12 @@ public sealed partial class OctopusImportConfirmationOrchestrator
     private static int? DestinationOf(ConfirmationExecutionContext execution, OctopusResourceNode resource)
         => execution.IdMap.TryGetDestinationId(resource, out var id) ? id : null;
 
-    private static OctopusResourceNode GraphNode(ConfirmationExecutionContext execution, string sourceId, OctopusResourceKind kind)
-        => string.IsNullOrWhiteSpace(sourceId) ? null : execution.Request.Graph.Resources.FirstOrDefault(r => r.Kind == kind && string.Equals(r.SourceId, sourceId, StringComparison.OrdinalIgnoreCase));
+    private static OctopusResourceNode GraphNode(ConfirmationExecutionContext execution, string sourceId, OctopusResourceKind kind) => execution.GraphNode(sourceId, kind);
 
     // "Environment: Production, Staging; Role: web" — scope targets by name where the export/API carries them.
     private static string ScopeSummary(ConfirmationExecutionContext execution, OctopusVariableDto variable)
         => string.Join("; ", (variable.Scope ?? []).Where(s => s.Value is { Count: > 0 }).OrderBy(s => s.Key, StringComparer.OrdinalIgnoreCase).Select(s => $"{s.Key}: {string.Join(", ", s.Value.Select(v => ScopeValueName(execution, v)))}"));
 
     private static string ScopeValueName(ConfirmationExecutionContext execution, string value)
-        => execution.Request.Graph.Resources.FirstOrDefault(r => string.Equals(r.SourceId, value, StringComparison.OrdinalIgnoreCase))?.Name ?? value;
+        => execution.GraphNodeById(value)?.Name ?? value;
 }

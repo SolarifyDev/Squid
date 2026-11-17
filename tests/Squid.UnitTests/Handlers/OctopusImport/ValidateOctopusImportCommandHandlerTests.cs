@@ -30,13 +30,34 @@ public class ValidateOctopusImportCommandHandlerTests
         harness.SecretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
         harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).Callback(() => secretsAvailableWhenPlanning = harness.SecretsAccessor.Secrets.IsAvailable).ReturnsAsync(Snapshot(preview));
-        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback(() => secretsAvailableWhenValidating = harness.SecretsAccessor.Secrets.IsAvailable).Returns(new OctopusImportValidationResultDto());
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback(() => secretsAvailableWhenValidating = harness.SecretsAccessor.Secrets.IsAvailable).Returns(new OctopusImportValidationResultDto());
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
 
         await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
 
         secretsAvailableWhenPlanning.ShouldBeTrue();
         secretsAvailableWhenValidating.ShouldBeTrue();
+    }
+
+    // The server's plan was just built from the posted selection; the validator checks the posted choices against it
+    // instead of building the same plan a second time.
+    [Fact]
+    public async Task Handle_HandsTheServerBuiltPlanToTheValidator()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var serverPlan = Preview();
+        OctopusImportPreviewPlanDto handedOver = null;
+
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(serverPlan));
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto>((_, _, _, _, server) => handedOver = server).Returns(new OctopusImportValidationResultDto());
+        harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
+
+        await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        handedOver.ShouldBeSameAs(serverPlan);
     }
 
     [Fact]
@@ -58,7 +79,7 @@ public class ValidateOctopusImportCommandHandlerTests
                 It.IsAny<OctopusResourceGraph>(),
                 It.IsAny<OctopusImportDependencyPlan>(),
                 It.IsAny<OctopusImportConflictDiscoveryResult>(),
-                It.IsAny<OctopusImportPreviewPlanDto>()))
+                It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>()))
             .Returns(new OctopusImportValidationResultDto());
         harness.SessionService
             .Setup(s => s.UpdatePayloadAndTransitionAsync(
@@ -126,7 +147,7 @@ public class ValidateOctopusImportCommandHandlerTests
                 It.IsAny<OctopusResourceGraph>(),
                 It.IsAny<OctopusImportDependencyPlan>(),
                 It.IsAny<OctopusImportConflictDiscoveryResult>(),
-                It.IsAny<OctopusImportPreviewPlanDto>()))
+                It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>()))
             .Returns(validation);
 
         var response = await harness.Sut.Handle(Context(new ValidateOctopusImportCommand
@@ -164,7 +185,7 @@ public class ValidateOctopusImportCommandHandlerTests
 
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
         harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(serverPlan));
-        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto>((_, _, _, plan) => validatedPlan = plan).Returns(new OctopusImportValidationResultDto());
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto>((_, _, _, plan, _) => validatedPlan = plan).Returns(new OctopusImportValidationResultDto());
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
 
         var response = await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7, PreviewPlan = clientPlan }), CancellationToken.None);
@@ -192,7 +213,7 @@ public class ValidateOctopusImportCommandHandlerTests
 
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Previewed));
         harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).Callback<string, int, OctopusImportChoiceSelections, IReadOnlyCollection<string>, CancellationToken>((_, _, selections, _, _) => planned = selections).ReturnsAsync(Snapshot(serverPlan));
-        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto>((_, _, _, plan) => validatedPlan = plan).Returns(new OctopusImportValidationResultDto());
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Callback<OctopusResourceGraph, OctopusImportDependencyPlan, OctopusImportConflictDiscoveryResult, OctopusImportPreviewPlanDto, OctopusImportPreviewPlanDto>((_, _, _, plan, _) => validatedPlan = plan).Returns(new OctopusImportValidationResultDto());
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
 
         var response = await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7, PreviewPlan = clientPlan }), CancellationToken.None);
@@ -217,7 +238,7 @@ public class ValidateOctopusImportCommandHandlerTests
 
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
         harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(Preview()));
-        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Returns(new OctopusImportValidationResultDto());
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Returns(new OctopusImportValidationResultDto());
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback<Guid, int, OctopusImportSessionState, OctopusImportSessionState, string, string, CancellationToken>((_, _, _, _, _, json, _) => storedJson = json).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Validated });
 
         await harness.Sut.Handle(Context(new ValidateOctopusImportCommand { SessionId = sessionId, SpaceId = 7, PreviewPlan = Preview() }), CancellationToken.None);
@@ -243,7 +264,7 @@ public class ValidateOctopusImportCommandHandlerTests
 
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, state));
         harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(Preview()));
-        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>())).Returns(validation);
+        harness.PreviewValidator.Setup(v => v.Validate(It.IsAny<OctopusResourceGraph>(), It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportPreviewPlanDto>(), It.IsAny<OctopusImportPreviewPlanDto>())).Returns(validation);
         harness.SessionService.Setup(s => s.ReplaceValidatedPlanAsync(sessionId, 7, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Validated });
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, null, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Validated });
 

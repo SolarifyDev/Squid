@@ -106,8 +106,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         => OctopusImportSecretFills.Candidate(resource, execution.Prior, Secrets, execution.VariableKeyCounts);
 
     // The pairing confirmation is the user's: it travels in the validated plan. Everything else is the server's own data.
-    private static OctopusImportFillEvidence FillEvidence(ConfirmationExecutionContext execution)
-        => OctopusImportFillEvidences.Evaluate(execution.Request.Graph.InstallationId, execution.Request.Graph.ExportSourceId, execution.Request.Graph.Resources, execution.Prior, execution.Request.PreviewPlan.FillPairing?.Confirmed == true);
+    private static OctopusImportFillEvidence FillEvidence(ConfirmationExecutionContext execution) => execution.FillEvidence;
 
     private static void Settle(ConfirmationExecutionContext execution, OctopusImportSecretFillCandidate candidate, string outcome)
         => execution.SettledSecretRows[(candidate.RowSourceType, OctopusImportPriorMappings.Normalize(candidate.RowKey))] = (candidate.DestinationId, outcome);

@@ -229,7 +229,8 @@ public class OctopusImportPlanningPipelineTests
                 GraphBuilder.Object,
                 DependencyPlanner.Object,
                 ConflictDiscoveryService.Object,
-                PreviewPlanner.Object);
+                PreviewPlanner.Object,
+                new OctopusImportExtractionCache());
         }
 
         public Mock<IOctopusArchiveExtractor> ArchiveExtractor { get; } = new();

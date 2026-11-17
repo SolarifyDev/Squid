@@ -14,6 +14,10 @@ public interface IOctopusImportPreviewValidator : IScopedDependency
         OctopusImportDependencyPlan dependencyPlan,
         OctopusImportConflictDiscoveryResult conflicts,
         OctopusImportPreviewPlanDto previewPlan);
+
+    /// <param name="serverPlan">The plan the server built from these same inputs and the posted selection; the posted choices are
+    /// checked against it instead of building it again. Null builds it.</param>
+    OctopusImportValidationResultDto Validate(OctopusResourceGraph graph, OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, OctopusImportPreviewPlanDto serverPlan);
 }
 
 public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValidator
@@ -48,6 +52,9 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         OctopusImportDependencyPlan dependencyPlan,
         OctopusImportConflictDiscoveryResult conflicts,
         OctopusImportPreviewPlanDto previewPlan)
+        => Validate(graph, dependencyPlan, conflicts, previewPlan, null);
+
+    public OctopusImportValidationResultDto Validate(OctopusResourceGraph graph, OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportPreviewPlanDto previewPlan, OctopusImportPreviewPlanDto serverPlan)
     {
         ArgumentNullException.ThrowIfNull(graph);
         ArgumentNullException.ThrowIfNull(dependencyPlan);
@@ -79,7 +86,7 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
         ValidateOrigin(graph, conflicts, previewPlan, result);
         ValidateProjectConflicts(conflictsBySourceId, previewResources, result);
         ValidateReuse(conflictsBySourceId, previewResources, previewPlan.GeneratedAt, result);
-        ValidateChoices(dependencyPlan, conflicts, previewPlan, result);
+        ValidateChoices(dependencyPlan, conflicts, previewPlan, serverPlan, result);
         // Server-built inputs come first so their severity (not a client-posted IsRequired) wins the de-duplication.
         result.RequiredInputs = BuildRequiredInputs(plan)
             .Concat(previewPlan.RequiredInputs)
@@ -130,6 +137,8 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
     {
         var selectedResources = plan.Selected;
         var previewResources = plan.Previews;
+        var feeds = new OctopusImportReleasePackageFeedLookup(graph, selectedResources.Values);
+        var plannedFeeds = new OctopusImportPlannedFeedIndex(previewResources, plan.Prior);
 
         foreach (var releaseResource in selectedResources.Values.Where(resource => resource.Kind == OctopusResourceKind.Release))
         {
@@ -147,12 +156,8 @@ public partial class OctopusImportPreviewValidator : IOctopusImportPreviewValida
                          !string.IsNullOrWhiteSpace(package.ActionName)
                          && !string.IsNullOrWhiteSpace(package.Version)))
             {
-                var sourceFeedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(
-                    graph,
-                    selectedResources.Values,
-                    release,
-                    selectedPackage);
-                if (OctopusImportReleasePackageFeedResolver.HasPlannedDestination(sourceFeedId, previewResources, plan.Prior))
+                var sourceFeedId = feeds.GetSourceFeedId(release, selectedPackage);
+                if (plannedFeeds.HasPlannedDestination(sourceFeedId))
                     continue;
 
                 if (OctopusBuiltInFeeds.IsBuiltInId(sourceFeedId))

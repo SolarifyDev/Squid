@@ -12,6 +12,7 @@ namespace Squid.Core.Services.OctopusImport;
 public sealed class OctopusImportIdMap
 {
     private readonly Dictionary<OctopusImportIdMapKey, OctopusImportIdMappingDto> _mappings;
+    private readonly HashSet<(string SourceType, int DestinationId)> _sessionDestinations = new();
     private readonly OctopusImportPriorMappings _prior;
 
     public OctopusImportIdMap()
@@ -60,6 +61,9 @@ public sealed class OctopusImportIdMap
 
         return TryGetPriorDestinationId(sourceId, sourceType, out destinationId);
     }
+
+    /// <summary>True when THIS confirmation mapped a source of <paramref name="sourceType"/> (exact, as recorded) to <paramref name="destinationId"/>; the prior layer never counts.</summary>
+    public bool HasSessionDestination(string sourceType, int destinationId) => _sessionDestinations.Contains((sourceType, destinationId));
 
     /// <summary>True only when THIS confirmation already mapped the resource; a prior-layer hit never counts, so it never suppresses a session write.</summary>
     public bool ContainsSessionMapping(OctopusResourceNode source)
@@ -123,6 +127,7 @@ public sealed class OctopusImportIdMap
             throw new InvalidOperationException($"Octopus import source '{mapping.SourceType}:{mapping.SourceId}' has already been mapped.");
 
         _mappings.Add(key, mapping);
+        _sessionDestinations.Add((mapping.SourceType, mapping.DestinationId));
     }
 
     private static void Validate(OctopusImportIdMappingDto mapping)
