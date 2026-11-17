@@ -111,9 +111,13 @@ public partial class TestBase
     {
         var baseConnectionString = new SquidConnectionString(configuration).Value;
 
+        // Every test class keeps its own pool for the whole run. Npgsql's default 300s idle lifetime lets finished classes hold their
+        // connections, and the sum crosses Postgres's max_connections (100) → "53300: too many clients". Release idle ones quickly.
         var builder = new NpgsqlConnectionStringBuilder(baseConnectionString)
         {
-            Database = _databaseName
+            Database = _databaseName,
+            ConnectionIdleLifetime = 2,
+            ConnectionPruningInterval = 1
         };
 
         return builder.ToString();
