@@ -5,6 +5,9 @@ public static class OctopusImportConfirmationDiagnosticCodes
     public const string ConfirmationAlreadyRunning = "OctopusImport.Confirmation.AlreadyRunning";
     public const string ConfirmationAlreadyCompleted = "OctopusImport.Confirmation.AlreadyCompleted";
     public const string ConfirmationRequiresValidatedSession = "OctopusImport.Confirmation.RequiresValidatedSession";
+
+    /// <summary>The plan read for this confirmation was replaced (validated again, or the project selection changed): the session stays Validated.</summary>
+    public const string ConfirmationSuperseded = "OctopusImport.Confirmation.Superseded";
     public const string BackgroundConfirmationFailed = "OctopusImport.Confirmation.BackgroundFailed";
     public const string ValidationBlockedConfirmation = "OctopusImport.Confirmation.ValidationBlocked";
     public const string MappingBlockedConfirmation = "OctopusImport.Confirmation.MappingBlocked";

@@ -52,6 +52,21 @@ public class OctopusImportConfirmationJobTests
         _sessionUsers.ShouldAllBe(user => user.Id == OwnerUserId && !user.IsInternal);
     }
 
+    // The plan this run read was replaced while it built its snapshot (another tab validated again, or changed the projects): the
+    // session still holds a plan the user can import, so the run leaves it Validated instead of ending it.
+    [Fact]
+    public async Task RunAsOwner_PlanSupersededMeanwhile_LeavesTheSessionValidated()
+    {
+        var sessionId = Guid.NewGuid();
+        var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded, Message = "validated again" };
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
+        _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
+
+        await RunJobAsync(sessionId);
+
+        _sessions.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportSessionState>(), It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task RunAsOwner_RunnerThrowsBeforeTheImport_EndsTheSessionAsBackgroundFailed()
     {

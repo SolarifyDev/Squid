@@ -62,7 +62,7 @@ public sealed partial class OctopusImportConfirmationRunner
     private void EnsurePlanMatchesSelection()
     {
         if (!IsSameSelection(_ctx.ValidatedPlan.SelectedProjectIds, OctopusImportSourceSummaries.ChosenProjectIds(_ctx.Session.SourceSummaryJson)))
-            throw new OctopusImportConfirmationRejectedException(SelectionChangedMessage);
+            throw new OctopusImportConfirmationRejectedException(SelectionChangedMessage, OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
     private static bool IsSameSelection(IReadOnlyCollection<string> validated, IReadOnlyCollection<string> current)

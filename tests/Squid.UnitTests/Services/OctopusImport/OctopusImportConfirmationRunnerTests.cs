@@ -96,6 +96,7 @@ public class OctopusImportConfirmationRunnerTests
         outcome.IsRejected.ShouldBe(rejected);
         _orchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), rejected ? Times.Never() : Times.Once());
         if (rejected) outcome.Rejection.Message.ShouldBe(OctopusImportConfirmationRunner.SelectionChangedMessage);
+        if (rejected) outcome.Rejection.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
     // The plan is imported only while the session still holds the version it was read with; a plan validated again meanwhile (the
@@ -119,6 +120,7 @@ public class OctopusImportConfirmationRunnerTests
         _orchestrator.Verify(o => o.ConfirmAsync(It.Is<OctopusImportConfirmationRequest>(r => r.ValidatedDataVersion.SequenceEqual(new byte[] { 4, 2 })), It.IsAny<CancellationToken>()), Times.Once);
         outcome.IsRejected.ShouldBe(rejected);
         if (rejected) outcome.Rejection.Message.ShouldContain("validated again");
+        if (rejected) outcome.Rejection.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
     // An Octopus default channel takes over the default channel of a project created by this import (an edit); under a

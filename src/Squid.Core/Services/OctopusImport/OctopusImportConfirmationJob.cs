@@ -41,9 +41,12 @@ public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) :
     }
 
     // Nobody waits on the request that queued this run: a refusal that leaves the session Validated would keep the
-    // caller polling forever, so end the session with the reason. A session the orchestrator already ended is left alone.
+    // caller polling forever, so end the session with the reason. A session the orchestrator already ended is left alone,
+    // and so is one whose plan was replaced meanwhile (validated again, selection changed): that newer plan is still importable.
     private async Task RecordRejectionAsync(Guid sessionId, int spaceId, int ownerUserId, OctopusImportDiagnosticDto rejection)
     {
+        if (rejection.Code == OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded) return;
+
         await using var scope = BeginOwnerScope(ownerUserId);
 
         var sessions = scope.Resolve<IOctopusImportSessionService>();

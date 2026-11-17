@@ -74,7 +74,7 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
     private static void EnsureNotValidatedAgain(OctopusImportSessionDto session)
     {
         if (session?.State == OctopusImportSessionState.Validated)
-            throw new OctopusImportConfirmationRejectedException("The preview plan was validated again while this import was starting, so nothing was imported. Import again to import the latest validated plan.");
+            throw new OctopusImportConfirmationRejectedException("The preview plan was validated again while this import was starting, so nothing was imported. Import again to import the latest validated plan.", OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
     // The job reopens a scope as the owner: Hangfire scopes run as the internal user, which owns no import session.
