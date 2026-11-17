@@ -49,12 +49,15 @@ public sealed class OctopusImportConfirmationRecoveryService : IOctopusImportCon
     // The heartbeat cut-off is an age the database measures on its own clock; only the legacy rule uses this server's clock (hours of grace).
     internal OctopusImportInterruptedConfirmationCutoffs Cutoffs(DateTimeOffset now) => new(_resilience.HeartbeatStale, now.Subtract(_settings.InterruptedImportGracePeriod));
 
+    // A recovered session is kept a retention period from now (within its maximum age): its import may have outlasted the idle expiry.
+    internal OctopusImportValidatedReturn ValidatedReturn(DateTimeOffset now) => new(now, _settings.DefaultRetentionPeriod, _settings.MaxSessionAge);
+
     private async Task<int> RecoverAllAsync(IReadOnlyList<OctopusImportInterruptedConfirmation> interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, DateTimeOffset now, CancellationToken ct)
     {
         var recovered = 0;
 
         foreach (var session in interrupted)
-            recovered += await _dataProvider.RecoverInterruptedConfirmationAsync(session, cutoffs, InterruptedFailure(session, now), now, ct).ConfigureAwait(false);
+            recovered += await _dataProvider.RecoverInterruptedConfirmationAsync(session, cutoffs, InterruptedFailure(session, now), ValidatedReturn(now), ct).ConfigureAwait(false);
 
         return recovered;
     }

@@ -61,12 +61,14 @@ public class OctopusImportSessionServiceConfirmationTests
         var session = Session(OctopusImportSessionState.Validated, null);
         var failure = new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack, Diagnostics = [new OctopusImportDiagnosticDto { Code = "x", Message = "failed with Password=hunter2" }] };
         string stored = null;
-        _dataProvider.Setup(p => p.ReturnConfirmationToValidatedAsync(session.SessionId, failure.AttemptId, It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).Callback<Guid, Guid, string, DateTimeOffset, CancellationToken>((_, _, json, _, _) => { stored = json; session.LastConfirmationFailureJson = json; }).ReturnsAsync(1);
+        OctopusImportValidatedReturn validatedReturn = null;
+        _dataProvider.Setup(p => p.ReturnConfirmationToValidatedAsync(session.SessionId, failure.AttemptId, It.IsAny<string>(), It.IsAny<OctopusImportValidatedReturn>(), It.IsAny<CancellationToken>())).Callback<Guid, Guid, string, OctopusImportValidatedReturn, CancellationToken>((_, _, json, slide, _) => { stored = json; validatedReturn = slide; session.LastConfirmationFailureJson = json; }).ReturnsAsync(1);
         _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         var returned = await _service.ReturnConfirmationToValidatedAsync(session.SessionId, 7, failure);
 
         stored.ShouldNotContain("hunter2");
+        validatedReturn.ShouldNotBeNull().ShouldSatisfyAllConditions(r => r.Retention.ShouldBe(TimeSpan.FromHours(24), "an import can outlast the idle expiry: the session is kept a retention period for Import again"), r => r.MaxAge.ShouldBe(TimeSpan.FromHours(168), "never past the session's maximum age"), r => r.Now.ShouldBe(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(1)));
         returned.LastConfirmationFailure.ShouldNotBeNull().AttemptId.ShouldBe(failure.AttemptId);
         returned.LastConfirmationFailure.Reason.ShouldBe(OctopusImportConfirmationFailureReason.RolledBack);
     }

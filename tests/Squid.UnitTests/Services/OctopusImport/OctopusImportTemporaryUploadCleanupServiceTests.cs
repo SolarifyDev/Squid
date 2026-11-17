@@ -48,7 +48,7 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
         outcome.ExpiredSessions.ShouldBe(2);
         outcome.InterruptedImportsFailed.ShouldBe(0);
         _dataProvider.Verify(p => p.GetInterruptedConfirmationsAsync(It.IsAny<OctopusImportInterruptedConfirmationCutoffs>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
-        _dataProvider.Verify(p => p.RecoverInterruptedConfirmationAsync(It.IsAny<OctopusImportInterruptedConfirmation>(), It.IsAny<OctopusImportInterruptedConfirmationCutoffs>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(p => p.RecoverInterruptedConfirmationAsync(It.IsAny<OctopusImportInterruptedConfirmation>(), It.IsAny<OctopusImportInterruptedConfirmationCutoffs>(), It.IsAny<string>(), It.IsAny<OctopusImportValidatedReturn>(), It.IsAny<CancellationToken>()), Times.Never);
         _dataProvider.Verify(p => p.GetTemporaryUploadCleanupCandidatesAsync(
             It.IsAny<DateTimeOffset>(),
             25,

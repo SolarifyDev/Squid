@@ -393,7 +393,7 @@ public class OctopusImportTransactionIntegrationTests : TestBase
             var interrupted = (await provider.GetInterruptedConfirmationsAsync(cutoffs, 10)).ShouldHaveSingleItem();
             interrupted.ShouldBe(new OctopusImportInterruptedConfirmation(sessionId, attemptId));
 
-            (await provider.RecoverInterruptedConfirmationAsync(interrupted, cutoffs, "{}", now)).ShouldBe(1);
+            (await provider.RecoverInterruptedConfirmationAsync(interrupted, cutoffs, "{}", new OctopusImportValidatedReturn(now, TimeSpan.FromHours(24), TimeSpan.FromHours(168)))).ShouldBe(1);
         });
 
         await Run<SquidDbContext>(async db =>

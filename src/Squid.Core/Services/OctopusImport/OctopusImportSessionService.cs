@@ -322,7 +322,7 @@ public partial class OctopusImportSessionService : IOctopusImportSessionService
     {
         ArgumentNullException.ThrowIfNull(failure);
 
-        await _dataProvider.ReturnConfirmationToValidatedAsync(sessionId, failure.AttemptId, SerializeFailure(failure), DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+        await _dataProvider.ReturnConfirmationToValidatedAsync(sessionId, failure.AttemptId, SerializeFailure(failure), ValidatedReturn(DateTimeOffset.UtcNow), ct).ConfigureAwait(false);
 
         return await GetSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
     }
@@ -543,6 +543,9 @@ public partial class OctopusImportSessionService : IOctopusImportSessionService
             _ => completedAt
         };
     }
+
+    // The return to Validated keeps the session a retention period from now, within its maximum age (the same rule as SlideExpiryAhead).
+    internal OctopusImportValidatedReturn ValidatedReturn(DateTimeOffset now) => new(now, _temporaryUploadSettings.DefaultRetentionPeriod, _temporaryUploadSettings.MaxSessionAge);
 
     // A fetch in progress is in use: each chunk claim and release keeps the session (and its upload) a full retention
     // period away from expiry, so the expiry sweep never deletes a directory a running chunk is writing to. Never past the

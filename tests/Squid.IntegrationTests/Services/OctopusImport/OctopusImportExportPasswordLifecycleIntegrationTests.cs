@@ -193,9 +193,10 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
             var now = DateTimeOffset.UtcNow;
             var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(TimeSpan.FromMinutes(5), now.AddHours(-6));
+            var validatedReturn = new OctopusImportValidatedReturn(now, TimeSpan.FromHours(24), TimeSpan.FromHours(168));
             var changed = recovered
-                ? await provider.RecoverInterruptedConfirmationAsync(new OctopusImportInterruptedConfirmation(sessionId, attemptId), cutoffs, "{}", now)
-                : await provider.ReturnConfirmationToValidatedAsync(sessionId, attemptId, "{}", now);
+                ? await provider.RecoverInterruptedConfirmationAsync(new OctopusImportInterruptedConfirmation(sessionId, attemptId), cutoffs, "{}", validatedReturn)
+                : await provider.ReturnConfirmationToValidatedAsync(sessionId, attemptId, "{}", validatedReturn);
 
             changed.ShouldBe(1);
             var stored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);

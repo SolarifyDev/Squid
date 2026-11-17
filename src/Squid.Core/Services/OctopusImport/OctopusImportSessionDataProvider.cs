@@ -70,7 +70,7 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// Returns the session the attempt holds to Validated with <paramref name="failureJson"/>, keeping the export password (the session is
     /// not over); 0 when the attempt no longer holds it (it committed, or was recovered and another attempt started).
     /// </summary>
-    Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, DateTimeOffset now, CancellationToken ct = default);
+    Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, OctopusImportValidatedReturn validatedReturn, CancellationToken ct = default);
 
     /// <summary>Records why a Validated session's confirmation never started; nothing else changes (not even the data version).</summary>
     Task<int> RecordConfirmationFailureAsync(Guid sessionId, string failureJson, CancellationToken ct = default);
@@ -79,7 +79,7 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     Task<IReadOnlyList<OctopusImportInterruptedConfirmation>> GetInterruptedConfirmationsAsync(OctopusImportInterruptedConfirmationCutoffs cutoffs, int limit, CancellationToken ct = default);
 
     /// <summary>Returns one interrupted session to Validated, only while it is still the same attempt and still stale (a late beat wins).</summary>
-    Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, DateTimeOffset now, CancellationToken ct = default);
+    Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, OctopusImportValidatedReturn validatedReturn, CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
 
@@ -122,6 +122,9 @@ public sealed record OctopusImportInterruptedConfirmation(Guid SessionId, Guid? 
 /// <param name="HeartbeatStale">A heartbeat at least this old, by the database clock that stamped it, is stale.</param>
 /// <param name="LegacyStaleBefore">A session with no heartbeat (started by an older server) is stale once its state changed at or before this.</param>
 public sealed record OctopusImportInterruptedConfirmationCutoffs(TimeSpan HeartbeatStale, DateTimeOffset LegacyStaleBefore);
+
+/// <summary>When a session returns to Validated and how far its idle expiry slides: <see cref="Retention"/> ahead, never past <see cref="MaxAge"/> from creation.</summary>
+public sealed record OctopusImportValidatedReturn(DateTimeOffset Now, TimeSpan Retention, TimeSpan MaxAge);
 
 /// <summary>The columns of a session the resumable-session list reads: never the source data, the plan, the result or anything secret.</summary>
 public sealed record OctopusImportResumableSessionRow(Guid SessionId, string State, string SourceSummaryJson, bool HasUpload, bool HasConfirmationFailure, DateTimeOffset CreatedDate, DateTimeOffset LastModifiedDate, DateTimeOffset LastStateChangedAt, DateTimeOffset ExpiresAt);
@@ -319,8 +322,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
         => _repository.QueryNoTracking(HeldBy(sessionId, attemptId)).AnyAsync(ct);
 
-    public Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, DateTimeOffset now, CancellationToken ct = default)
-        => ReturnToValidatedAsync(HeldBy(sessionId, attemptId), failureJson, now, ct);
+    public Task<int> ReturnConfirmationToValidatedAsync(Guid sessionId, Guid attemptId, string failureJson, OctopusImportValidatedReturn validatedReturn, CancellationToken ct = default)
+        => ReturnToValidatedAsync(HeldBy(sessionId, attemptId), failureJson, validatedReturn, ct);
 
     public Task<int> RecordConfirmationFailureAsync(Guid sessionId, string failureJson, CancellationToken ct = default)
     {
@@ -336,12 +339,12 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         return rows.Select(r => new OctopusImportInterruptedConfirmation(r.SessionId, r.ConfirmationAttemptId)).ToList();
     }
 
-    public Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, DateTimeOffset now, CancellationToken ct = default)
+    public Task<int> RecoverInterruptedConfirmationAsync(OctopusImportInterruptedConfirmation interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, string failureJson, OctopusImportValidatedReturn validatedReturn, CancellationToken ct = default)
     {
         var stale = Interrupted(cutoffs);
         var attemptId = interrupted.AttemptId;
 
-        return ReturnToValidatedAsync(And(stale, s => s.SessionId == interrupted.SessionId && s.ConfirmationAttemptId == attemptId), failureJson, now, ct);
+        return ReturnToValidatedAsync(And(stale, s => s.SessionId == interrupted.SessionId && s.ConfirmationAttemptId == attemptId), failureJson, validatedReturn, ct);
     }
 
     // The attempt still holds the session: Importing, under that attempt's fencing token.
@@ -363,10 +366,14 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     }
 
     // Validated again under a new data version (a plan read before is not imported in its place), the password kept, the attempt released.
-    private Task<int> ReturnToValidatedAsync(Expression<Func<OctopusImportSession, bool>> predicate, string failureJson, DateTimeOffset now, CancellationToken ct)
+    // An import can outlast the idle expiry, so the session (and its upload) is kept a retention period from now, for "Import again" —
+    // never past its maximum age (the over-age sweep still closes it on time), never earlier than it was. Per row, in the database, as
+    // SlideExpiryAhead does for one session: GREATEST(expires_at, LEAST(now + retention, created_date + max age)).
+    private Task<int> ReturnToValidatedAsync(Expression<Func<OctopusImportSession, bool>> predicate, string failureJson, OctopusImportValidatedReturn validatedReturn, CancellationToken ct)
     {
         var dataVersion = Guid.NewGuid().ToByteArray();
         var validated = OctopusImportSessionState.Validated.ToString();
+        var (now, slid, maxAge) = (validatedReturn.Now, validatedReturn.Now.Add(validatedReturn.Retention), validatedReturn.MaxAge);
 
         return _repository.ExecuteUpdateAsync(
             predicate,
@@ -377,7 +384,9 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.LastConfirmationFailureJson, failureJson)
                 .SetProperty(s => s.ConfirmationAttemptId, (Guid?)null)
-                .SetProperty(s => s.ImportHeartbeatAt, (DateTimeOffset?)null),
+                .SetProperty(s => s.ImportHeartbeatAt, (DateTimeOffset?)null)
+                .SetProperty(s => s.ExpiresAt, s => s.ExpiresAt >= (slid <= s.CreatedDate + maxAge ? slid : s.CreatedDate + maxAge) ? s.ExpiresAt : (slid <= s.CreatedDate + maxAge ? slid : s.CreatedDate + maxAge))
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, s => s.ExpiresAt >= (slid <= s.CreatedDate + maxAge ? slid : s.CreatedDate + maxAge) ? s.TemporaryUploadCleanupAfter : (slid <= s.CreatedDate + maxAge ? slid : s.CreatedDate + maxAge)),
             ct);
     }
 

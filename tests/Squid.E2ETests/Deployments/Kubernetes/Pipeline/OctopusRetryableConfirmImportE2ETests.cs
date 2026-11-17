@@ -76,6 +76,35 @@ public class OctopusRetryableConfirmImportE2ETests : IClassFixture<OctopusRetrya
         (await ImportedProjectsAsync()).ShouldBe(1);
     }
 
+    // An import that ran past the session's idle expiry and rolled back: the return to Validated keeps the session a retention period,
+    // so the real expiry sweep (the recurring cleanup command) leaves it, the reloaded page still lists it, and Import again succeeds.
+    [Fact]
+    public async Task PersistentFault_SessionPastIdleExpiry_SweepRuns_ImportAgainSucceeds()
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0");
+        var sessionId = await ReadAndValidateAsync(octopus);
+
+        try
+        {
+            await _fixture.Run<SquidDbContext>(db => db.Database.ExecuteSqlInterpolatedAsync($"UPDATE octopus_import_session SET expires_at = now() - interval '5 minutes', temporary_upload_cleanup_after = now() - interval '5 minutes' WHERE session_id = {sessionId}"));
+            await InjectFaultAsync("RAISE EXCEPTION 'injected bug' USING ERRCODE = 'P0001'", int.MaxValue);
+
+            (await ConfirmAsync(sessionId)).Data.Session.State.ShouldBe(OctopusImportSessionState.Validated, customMessage: "a rolled-back import leaves the session importable again");
+        }
+        finally
+        {
+            await DropFaultAsync();
+        }
+
+        await _fixture.Run<IMediator>(mediator => mediator.SendAsync<EnforceOctopusImportTemporaryUploadCleanupCommand, EnforceOctopusImportTemporaryUploadCleanupResponse>(new EnforceOctopusImportTemporaryUploadCleanupCommand()));
+
+        (await StatusAsync(sessionId)).Data.Session.State.ShouldBe(OctopusImportSessionState.Validated, customMessage: "the expiry sweep must not close a session that just rolled back; check octopus_import_session.expires_at");
+        (await ResumableSessionsAsync()).ShouldContain(r => r.SessionId == sessionId, customMessage: "the reloaded page must still offer the session for Import again");
+        var again = await ConfirmAsync(sessionId);
+        again.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: again.Msg);
+        (await ImportedProjectsAsync()).ShouldBe(1);
+    }
+
     [Fact]
     public async Task TransientFault_RetriedByTheConfirmation_SucceedsWithoutUserAction()
     {
@@ -120,6 +149,8 @@ public class OctopusRetryableConfirmImportE2ETests : IClassFixture<OctopusRetrya
     }
 
     private Task<ConfirmOctopusImportResponse> ConfirmAsync(Guid sessionId) => _fixture.Run<IMediator, ConfirmOctopusImportResponse>(mediator => OctopusImportHandlerFlow.ConfirmAsync(mediator, SpaceId, sessionId));
+
+    private async Task<List<OctopusImportResumableSessionDto>> ResumableSessionsAsync() => (await _fixture.Run<IMediator, ListOctopusImportSessionsResponse>(mediator => mediator.RequestAsync<ListOctopusImportSessionsRequest, ListOctopusImportSessionsResponse>(new ListOctopusImportSessionsRequest { SpaceId = SpaceId }))).Data;
 
     private Task<GetOctopusImportStatusResponse> StatusAsync(Guid sessionId) => _fixture.Run<IMediator, GetOctopusImportStatusResponse>(mediator => mediator.RequestAsync<GetOctopusImportStatusRequest, GetOctopusImportStatusResponse>(new GetOctopusImportStatusRequest { SpaceId = SpaceId, SessionId = sessionId }));
 
