@@ -18,6 +18,9 @@ public class OctopusImportProjectSelectionServiceTests
     private const int SpaceId = 7;
     private const string Suffix = "00112233445566778899AABBCCDDEEFF";
 
+    // This server's copy of the session's source, never the path registered by whichever server took the upload.
+    private const string Materialized = "/tmp/squid-selection/this-server/export.zip";
+
     private readonly Mock<IOctopusRestProjectLister> _lister = new();
     private readonly Mock<IOctopusImportPlanningPipeline> _pipeline = new();
     private readonly Mock<IOctopusImportSourceMapDataProvider> _sourceMap = new();
@@ -30,7 +33,7 @@ public class OctopusImportProjectSelectionServiceTests
     public OctopusImportProjectSelectionServiceTests()
     {
         _currentUser.SetupGet(u => u.Id).Returns(42);
-        _uploadStore.Setup(u => u.MaterializeAsync(It.IsAny<OctopusImportSession>(), It.IsAny<CancellationToken>())).ReturnsAsync((OctopusImportSession session, CancellationToken _) => session.TemporaryUploadPath);
+        _uploadStore.Setup(u => u.MaterializeAsync(It.IsAny<OctopusImportSession>(), It.IsAny<CancellationToken>())).ReturnsAsync(Materialized);
         _sourceMap.Setup(s => s.LoadAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Prior(("Project", "Projects-1")));
         _sessionService.Setup(s => s.UpdateProjectSelectionAsync(It.IsAny<Guid>(), SpaceId, It.IsAny<List<string>>(), It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto());
         _service = new OctopusImportProjectSelectionService(_lister.Object, _pipeline.Object, _sourceMap.Object, _sessions.Object, _sessionService.Object, _currentUser.Object, _uploadStore.Object);
@@ -179,7 +182,7 @@ public class OctopusImportProjectSelectionServiceTests
     public async Task SessionListing_ReadsTheSourceGraph_MarksImportedAcrossTheExportSuffix_ReturnsTheSelection()
     {
         var session = Session(OctopusImportSessionState.Previewed, selected: [$"Projects-2-{Suffix}"]);
-        _pipeline.Setup(p => p.BuildGraphAsync(session.TemporaryUploadPath, It.IsAny<CancellationToken>())).ReturnsAsync(await new OctopusImportScenario().Project($"Projects-1-{Suffix}", "Api", [], []).Project($"Projects-2-{Suffix}", "Web", [], []).BuildGraphAsync());
+        _pipeline.Setup(p => p.BuildGraphAsync(Materialized, It.IsAny<CancellationToken>())).ReturnsAsync(await new OctopusImportScenario().Project($"Projects-1-{Suffix}", "Api", [], []).Project($"Projects-2-{Suffix}", "Web", [], []).BuildGraphAsync());
 
         var list = await _service.ListSessionProjectsAsync(session.SessionId, SpaceId);
 
@@ -202,7 +205,7 @@ public class OctopusImportProjectSelectionServiceTests
     public async Task SessionListing_ConfigAsCodeFlaggedFromTheSourceGraph()
     {
         var session = Session(OctopusImportSessionState.Extracted);
-        _pipeline.Setup(p => p.BuildGraphAsync(session.TemporaryUploadPath, It.IsAny<CancellationToken>())).ReturnsAsync(await new OctopusImportScenario().Project("Projects-1", "Api", [], []).ConfigAsCodeProject("Projects-2", "Git", null, []).BuildGraphAsync());
+        _pipeline.Setup(p => p.BuildGraphAsync(Materialized, It.IsAny<CancellationToken>())).ReturnsAsync(await new OctopusImportScenario().Project("Projects-1", "Api", [], []).ConfigAsCodeProject("Projects-2", "Git", null, []).BuildGraphAsync());
 
         var list = await _service.ListSessionProjectsAsync(session.SessionId, SpaceId);
 
@@ -226,6 +229,18 @@ public class OctopusImportProjectSelectionServiceTests
         var session = Session(OctopusImportSessionState.Uploaded);
 
         await Should.ThrowAsync<OctopusImportSessionStateTransitionException>(() => _service.ListSessionProjectsAsync(session.SessionId, SpaceId));
+    }
+
+    // The session exists but neither this server nor the database holds its source any more: the listing says so instead of reading nothing.
+    [Fact]
+    public async Task SessionListing_SourceGone_SessionNotFound()
+    {
+        var session = Session(OctopusImportSessionState.Extracted);
+        _uploadStore.Setup(u => u.MaterializeAsync(It.Is<OctopusImportSession>(s => s.SessionId == session.SessionId), It.IsAny<CancellationToken>())).ReturnsAsync((string)null);
+
+        await Should.ThrowAsync<OctopusImportSessionNotFoundException>(() => _service.ListSessionProjectsAsync(session.SessionId, SpaceId));
+
+        _pipeline.Verify(p => p.BuildGraphAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

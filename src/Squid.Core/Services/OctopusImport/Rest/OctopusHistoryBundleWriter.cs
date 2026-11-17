@@ -116,9 +116,9 @@ public sealed class OctopusHistoryBundleWriter(IOctopusImportSessionFileStore fi
 
     public async Task<IReadOnlyDictionary<OctopusResourceKind, int>> CountStagedAsync(Guid sessionId, CancellationToken ct = default)
     {
-        var headers = await files.ListAsync(sessionId, OctopusImportSessionFilePaths.StagingPrefix, ct).ConfigureAwait(false);
+        var perFolder = await files.CountByFolderAsync(sessionId, OctopusImportSessionFilePaths.StagingPrefix, ct).ConfigureAwait(false);
 
-        return ManifestDocumentTypes.Keys.ToDictionary(kind => kind, kind => headers.Count(h => h.Path.StartsWith(KindPrefix(kind), StringComparison.Ordinal)));
+        return ManifestDocumentTypes.Keys.ToDictionary(kind => kind, kind => perFolder.GetValueOrDefault(kind.ToString()));
     }
 
     public async Task<string> BuildBundleAsync(Guid sessionId, string sessionDirectory, string installationId, CancellationToken ct = default)

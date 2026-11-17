@@ -1,4 +1,5 @@
 using System.IO;
+using Autofac;
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.SessionFiles;
@@ -34,6 +35,23 @@ public sealed class OctopusImportLocalCacheSweepTests : IDisposable
     [Fact]
     public async Task Sweep_NoRootYet_RemovesNothing()
         => (await new OctopusImportLocalCacheSweep(Settings(Path.Combine(_root, "missing")), Uploads(Path.Combine(_root, "missing")), _files).SweepAsync()).ShouldBe(0);
+
+    // Starting the sweeper (what the container does on every server) schedules the sweep; nothing else runs it.
+    [Fact]
+    public async Task Start_SchedulesTheSweep()
+    {
+        var swept = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sweep = new Mock<IOctopusImportLocalCacheSweep>();
+        sweep.Setup(s => s.SweepAsync(It.IsAny<CancellationToken>())).Callback(() => swept.TrySetResult()).ReturnsAsync(0);
+        var builder = new ContainerBuilder();
+        builder.RegisterInstance(sweep.Object).As<IOctopusImportLocalCacheSweep>();
+        await using var container = builder.Build();
+        using var sweeper = new OctopusImportLocalCacheSweeper(container, TimeSpan.FromMilliseconds(20));
+
+        sweeper.Start();
+
+        (await Task.WhenAny(swept.Task, Task.Delay(TimeSpan.FromSeconds(10)))).ShouldBe(swept.Task, "the sweep did not run within 10s of Start");
+    }
 
     [Fact]
     public void Interval_Pinned() => OctopusImportLocalCacheSweeper.Interval.ShouldBe(TimeSpan.FromMinutes(15));

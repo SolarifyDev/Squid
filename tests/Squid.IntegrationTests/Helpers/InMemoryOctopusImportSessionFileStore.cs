@@ -94,6 +94,13 @@ public sealed class InMemoryOctopusImportSessionFileStore : IOctopusImportSessio
         return new OctopusImportSessionFileTotals(headers.Sum(h => h.Length), headers.Count);
     }
 
+    public async Task<IReadOnlyDictionary<string, int>> CountByFolderAsync(Guid sessionId, string prefix, CancellationToken ct = default)
+    {
+        var headers = await ListAsync(sessionId, prefix, ct).ConfigureAwait(false);
+
+        return headers.GroupBy(h => h.Path[prefix.Length..].Split('/')[0], StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+    }
+
     public Task<bool> PurgeAndMarkCleanedAsync(Guid sessionId, string temporaryUploadPath, DateTimeOffset cleanedAt, CancellationToken ct = default)
     {
         Purge(sessionId);

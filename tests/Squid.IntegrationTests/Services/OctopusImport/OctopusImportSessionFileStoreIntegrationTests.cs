@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Settings.Security;
@@ -170,6 +171,57 @@ public class OctopusImportSessionFileStoreIntegrationTests : TestBase
         (await StoredSessionAsync(sessionId)).TemporaryUploadCleanedAt.ShouldBeNull();
     }
 
+    // The upload request stored the export, then failed (or its pod died) before registering it: the session closes without a path,
+    // and the cleanup still deletes its stored files, its key and this server's copy, and marks it cleaned so other servers sweep theirs.
+    [Fact]
+    public async Task Cleanup_ClosedSessionWithoutRegisteredUpload_PurgesItsFilesAndLocalCopy()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded, uploadPath: null);
+        await WriteAsync(sessionId, "export.zip", [1, 2, 3]);
+        var directory = await Run<IOctopusImportTemporaryUploadStore, string>(u => Task.FromResult(u.GetSessionDirectory(sessionId)));
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "export.zip"), "password=secret");
+        await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.State, OctopusImportSessionState.Expired.ToString())));
+
+        await Run<IOctopusImportTemporaryUploadCleanupService>(cleanup => cleanup.EnforceCleanupAsync());
+
+        (await StoredSessionAsync(sessionId)).TemporaryUploadCleanedAt.ShouldNotBeNull("a closed session without a registered upload must still be cleaned");
+        (await FileCountAsync(sessionId)).ShouldBe(0);
+        (await WrappedKeyAsync(sessionId)).ShouldBeNull();
+        Directory.Exists(directory).ShouldBeFalse();
+    }
+
+    // ".." inside a name is an ordinary file name; a whole ".." segment is refused.
+    [Fact]
+    public async Task DotsInsideAName_Stored_ADotDotSegmentRefused()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded);
+
+        await WriteAsync(sessionId, "Octopus..export.zip", [4, 2]);
+
+        (await Run<IOctopusImportSessionFileStore, byte[]>(s => s.ReadAsync(sessionId, "Octopus..export.zip"))).ShouldBe([4, 2]);
+        await Should.ThrowAsync<ArgumentException>(() => WriteAsync(sessionId, "history-staging/../export.zip", [1]));
+    }
+
+    // Staged documents are counted per kind folder by the database, without listing a header per document.
+    [Fact]
+    public async Task CountByFolder_CountsFilesPerFirstSegmentUnderThePrefix()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded);
+
+        foreach (var path in new[] { "history-staging/Release/a.json", "history-staging/Release/b.json", "history-staging/Project/c.json", "history-details/Release/d.json", "export.zip" })
+            await WriteAsync(sessionId, path, [1]);
+
+        var counts = await Run<IOctopusImportSessionFileStore, IReadOnlyDictionary<string, int>>(s => s.CountByFolderAsync(sessionId, OctopusImportSessionFilePaths.StagingPrefix));
+
+        counts.OrderBy(c => c.Key, StringComparer.Ordinal).ShouldBe([new("Project", 1), new("Release", 2)]);
+        (await Run<IOctopusImportSessionFileStore, IReadOnlyDictionary<string, int>>(s => s.CountByFolderAsync(sessionId, "history-staging/Release/"))).ShouldBe(new Dictionary<string, int> { ["a.json"] = 1, ["b.json"] = 1 });
+    }
+
+    // The cache sweep runs on every server only because the container starts it.
+    [Fact]
+    public void LocalCacheSweeper_RegisteredAsStartable() => CurrentScope.Resolve<IEnumerable<IStartable>>().OfType<OctopusImportLocalCacheSweeper>().ShouldHaveSingleItem();
+
     // Once purged, nothing can be stored for the session again: a chunk still running is refused, never leaves rows behind.
     [Fact]
     public async Task WriteAfterPurge_RefusedAsStagingLost_NoRowsLeft()
@@ -244,13 +296,13 @@ public class OctopusImportSessionFileStoreIntegrationTests : TestBase
     private Task<Squid.Message.Models.OctopusImport.OctopusImportSessionFileWrite> WriteAsync(Guid sessionId, string path, byte[] content)
         => Run<IOctopusImportSessionFileStore, Squid.Message.Models.OctopusImport.OctopusImportSessionFileWrite>(s => s.WriteAsync(sessionId, path, new MemoryStream(content), OctopusImportSessionFileEncoding.Identity));
 
-    private async Task<Guid> SeedAsync(OctopusImportSessionState state, string protectedExportPassword = null)
+    private async Task<Guid> SeedAsync(OctopusImportSessionState state, string protectedExportPassword = null, string uploadPath = UploadPath)
     {
         var sessionId = Guid.NewGuid();
 
         await Run<SquidDbContext>(async db =>
         {
-            db.Set<OctopusImportSession>().Add(new OctopusImportSession { SessionId = sessionId, DestinationSpaceId = SpaceId, OwnerUserId = CurrentUsers.InternalUser.Id, State = state.ToString(), SourceSummaryJson = "{}", TemporaryUploadPath = UploadPath, ProtectedExportPassword = protectedExportPassword, DataVersion = Guid.NewGuid().ToByteArray(), ExpiresAt = DateTimeOffset.UtcNow.AddHours(1), LastStateChangedAt = DateTimeOffset.UtcNow });
+            db.Set<OctopusImportSession>().Add(new OctopusImportSession { SessionId = sessionId, DestinationSpaceId = SpaceId, OwnerUserId = CurrentUsers.InternalUser.Id, State = state.ToString(), SourceSummaryJson = "{}", TemporaryUploadPath = uploadPath, ProtectedExportPassword = protectedExportPassword, DataVersion = Guid.NewGuid().ToByteArray(), ExpiresAt = DateTimeOffset.UtcNow.AddHours(1), LastStateChangedAt = DateTimeOffset.UtcNow });
             await db.SaveChangesAsync();
         });
 

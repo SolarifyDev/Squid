@@ -30,9 +30,13 @@ public interface IOctopusImportSessionFileStore : IScopedDependency
 
     Task<OctopusImportSessionFileTotals> TotalsAsync(Guid sessionId, string prefix, CancellationToken ct = default);
 
+    /// <summary>How many files lie under <paramref name="prefix"/>, per first path segment after it (keys compared ordinally); counted without reading a header per file.</summary>
+    Task<IReadOnlyDictionary<string, int>> CountByFolderAsync(Guid sessionId, string prefix, CancellationToken ct = default);
+
     /// <summary>
-    /// Deletes every file of a closed session (Succeeded, Failed or Expired, still holding <paramref name="temporaryUploadPath"/>) together
-    /// with its file key and export password, and marks its upload cleaned, in one transaction. False when the session is not such a one.
+    /// Deletes every file of a closed session (Succeeded, Failed or Expired, still holding <paramref name="temporaryUploadPath"/>, null for one
+    /// whose upload was never registered) together with its file key and export password, and marks its upload cleaned, in one transaction.
+    /// False when the session is not such a one.
     /// </summary>
     Task<bool> PurgeAndMarkCleanedAsync(Guid sessionId, string temporaryUploadPath, DateTimeOffset cleanedAt, CancellationToken ct = default);
 

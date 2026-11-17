@@ -6,7 +6,7 @@ namespace Squid.Core.Services.OctopusImport.SessionFiles;
 public sealed partial class OctopusImportSessionFileStore
 {
     // FOR UPDATE waits for every write in flight (they hold FOR KEY SHARE) and keeps new ones out until the session is marked cleaned.
-    private const string LockClosedSessionSql = "SELECT 1 FROM octopus_import_session WHERE session_id = $1 AND temporary_upload_path = $2 AND temporary_upload_cleaned_at IS NULL AND state = ANY($3) FOR UPDATE";
+    private const string LockClosedSessionSql = "SELECT 1 FROM octopus_import_session WHERE session_id = $1 AND temporary_upload_path IS NOT DISTINCT FROM $2 AND temporary_upload_cleaned_at IS NULL AND state = ANY($3) FOR UPDATE";
     private const string DeleteFilesSql = "DELETE FROM octopus_import_session_file WHERE session_id = $1";
     private const string MarkCleanedSql = "UPDATE octopus_import_session SET protected_file_key = NULL, protected_export_password = NULL, temporary_upload_path = NULL, temporary_upload_cleaned_at = $2, temporary_upload_cleanup_error = NULL, last_modified_date = $2, data_version = $3 WHERE session_id = $1";
     private const string PurgedAmongSql = "SELECT session_id FROM octopus_import_session WHERE session_id = ANY($1) AND temporary_upload_cleaned_at IS NOT NULL";

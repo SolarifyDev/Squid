@@ -121,6 +121,22 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
         calls.ShouldBe(["local", "purge"]);
     }
 
+    // A closed session whose upload was never registered (the request failed or the pod died after storing it) is still cleaned:
+    // its session directory here and its stored files go, and the mark lets every other server sweep its copy.
+    [Fact]
+    public async Task EnforceCleanup_SessionWithoutRegisteredUpload_DeletesItsDirectoryAndPurges()
+    {
+        var sessionId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetTemporaryUploadCleanupCandidatesAsync(It.IsAny<DateTimeOffset>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([new OctopusImportTemporaryUploadCleanupCandidate(sessionId, null, OctopusImportSessionState.Expired, null)]);
+        _uploadStore.Setup(s => s.SecureDeleteSessionDirectoryAsync(sessionId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportTemporaryUploadDeleteResult(true, 1, 1));
+
+        var outcome = await _service.EnforceCleanupAsync(CancellationToken.None);
+
+        (outcome.Cleaned, outcome.Failed).ShouldBe((1, 0));
+        _uploadStore.Verify(s => s.SecureDeleteSessionDirectoryAsync(sessionId, It.IsAny<CancellationToken>()), Times.Once);
+        _files.Verify(f => f.PurgeAndMarkCleanedAsync(sessionId, null, It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task EnforceCleanupAsync_WhenDeleteFails_RecordsFailureAndLeavesCandidateForRetry()
     {

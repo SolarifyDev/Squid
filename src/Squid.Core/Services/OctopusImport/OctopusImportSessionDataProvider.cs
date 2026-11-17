@@ -320,9 +320,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     {
         var effectiveLimit = Math.Max(1, limit);
 
+        // A closed session with no registered upload is a candidate too: its upload may have been stored before the request registering it failed.
         var sessions = await _repository.QueryNoTracking<OctopusImportSession>(s =>
-                s.TemporaryUploadPath != null &&
-                s.TemporaryUploadPath != "" &&
                 s.TemporaryUploadCleanedAt == null &&
                 (s.TemporaryUploadCleanupAfter == null || s.TemporaryUploadCleanupAfter <= now) &&
                 (s.State == OctopusImportSessionState.Succeeded.ToString() ||

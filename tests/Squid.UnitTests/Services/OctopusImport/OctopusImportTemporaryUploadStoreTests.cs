@@ -52,6 +52,35 @@ public class OctopusImportTemporaryUploadStoreTests : IDisposable
         Path.GetFileName(upload.Path).ShouldBe(storedName);
     }
 
+    // ".." inside a name is an ordinary file name: the upload is stored with the session and any server reads it back.
+    [Fact]
+    public async Task SaveAsync_DotsInsideTheName_StoredAndReadBackElsewhere()
+    {
+        var sessionId = Guid.NewGuid();
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes("export"));
+
+        var upload = await _store.SaveAsync(sessionId, "Octopus..export.zip", stream, CancellationToken.None);
+        var elsewhere = await StoreOn(_otherServerRoot).MaterializeAsync(new OctopusImportSession { SessionId = sessionId, TemporaryUploadPath = upload.Path });
+
+        Path.GetFileName(upload.Path).ShouldBe("Octopus..export.zip");
+        (await File.ReadAllTextAsync(elsewhere)).ShouldBe("export");
+    }
+
+    // The export holds secrets: when it cannot be stored with the session, this server's copy is not left behind for nothing to remove.
+    [Fact]
+    public async Task SaveAsync_StoreFails_LeavesNoCopyOnDisk()
+    {
+        var sessionId = Guid.NewGuid();
+        var failing = new Mock<IOctopusImportSessionFileStore>();
+        failing.Setup(f => f.WriteAsync(sessionId, It.IsAny<string>(), It.IsAny<Stream>(), It.IsAny<OctopusImportSessionFileEncoding>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("database unavailable"));
+        var store = new OctopusImportTemporaryUploadStore(Settings(_rootPath), failing.Object);
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes("password=secret"));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => store.SaveAsync(sessionId, "export.zip", stream, CancellationToken.None));
+
+        Directory.Exists(store.GetSessionDirectory(sessionId)).ShouldBeFalse();
+    }
+
     [Fact]
     public async Task SecureDeleteAsync_DeletesUploadFileAndSessionDirectory()
     {

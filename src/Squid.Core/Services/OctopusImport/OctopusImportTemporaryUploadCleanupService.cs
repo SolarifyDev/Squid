@@ -71,9 +71,18 @@ public sealed class OctopusImportTemporaryUploadCleanupService(IOctopusImportSes
     // are gone from the database. Copies other servers cached are removed by their own OctopusImportLocalCacheSweeper.
     private async Task<bool> CleanAsync(OctopusImportTemporaryUploadCleanupCandidate candidate, DateTimeOffset now, CancellationToken ct)
     {
-        await uploadStore.SecureDeleteAsync(candidate.SessionId, uploadStore.GetLocalPath(candidate.SessionId, candidate.TemporaryUploadPath), ct).ConfigureAwait(false);
+        await DeleteLocalCopyAsync(candidate, ct).ConfigureAwait(false);
 
         return await files.PurgeAndMarkCleanedAsync(candidate.SessionId, candidate.TemporaryUploadPath, now, ct).ConfigureAwait(false);
+    }
+
+    // A session closed without a registered upload (stored, then the request failed or its pod died) has only its directory to go by.
+    private async Task DeleteLocalCopyAsync(OctopusImportTemporaryUploadCleanupCandidate candidate, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(candidate.TemporaryUploadPath))
+            await uploadStore.SecureDeleteSessionDirectoryAsync(candidate.SessionId, ct).ConfigureAwait(false);
+        else
+            await uploadStore.SecureDeleteAsync(candidate.SessionId, uploadStore.GetLocalPath(candidate.SessionId, candidate.TemporaryUploadPath), ct).ConfigureAwait(false);
     }
 
     // Runs before plain idle expiry, so a session past its maximum age is closed with that reason rather than as a silent idle expiry.

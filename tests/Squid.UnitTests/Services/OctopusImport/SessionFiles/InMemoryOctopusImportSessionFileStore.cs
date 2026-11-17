@@ -40,6 +40,8 @@ public sealed class InMemoryOctopusImportSessionFileStore : IOctopusImportSessio
 
     public async Task<OctopusImportSessionFileWrite> WriteAsync(Guid sessionId, string path, Stream content, OctopusImportSessionFileEncoding encoding, CancellationToken ct = default)
     {
+        OctopusImportSessionFilePaths.EnsureRelative(path);
+
         if (_purged.ContainsKey(sessionId))
             throw new OctopusImportHistoryStagingLostException();
 
@@ -93,6 +95,13 @@ public sealed class InMemoryOctopusImportSessionFileStore : IOctopusImportSessio
         var headers = await ListAsync(sessionId, prefix, ct).ConfigureAwait(false);
 
         return new OctopusImportSessionFileTotals(headers.Sum(h => h.Length), headers.Count);
+    }
+
+    public async Task<IReadOnlyDictionary<string, int>> CountByFolderAsync(Guid sessionId, string prefix, CancellationToken ct = default)
+    {
+        var headers = await ListAsync(sessionId, prefix, ct).ConfigureAwait(false);
+
+        return headers.GroupBy(h => h.Path[prefix.Length..].Split('/')[0], StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
     }
 
     public Task<bool> PurgeAndMarkCleanedAsync(Guid sessionId, string temporaryUploadPath, DateTimeOffset cleanedAt, CancellationToken ct = default)

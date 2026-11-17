@@ -54,6 +54,19 @@ public sealed class OctopusImportTemporaryUploadStore(IOctopusImportTemporaryUpl
         if (content == null)
             throw new ArgumentNullException(nameof(content));
 
+        try
+        {
+            return await WriteAndStoreAsync(sessionId, sourceFileName, content, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            await DiscardSessionDirectoryAsync(sessionId).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task<OctopusImportTemporaryUpload> WriteAndStoreAsync(Guid sessionId, string sourceFileName, Stream content, CancellationToken ct)
+    {
         var directory = GetSessionDirectory(sessionId);
         Directory.CreateDirectory(directory);
 
@@ -85,6 +98,20 @@ public sealed class OctopusImportTemporaryUploadStore(IOctopusImportTemporaryUpl
         await StoreAsync(sessionId, destinationPath, sha256, ct).ConfigureAwait(false);
 
         return new OctopusImportTemporaryUpload(destinationPath, new FileInfo(destinationPath).Length, sha256);
+    }
+
+    // An upload that could not be stored with the session is never registered, so no cleanup would ever find this server's copy (an export
+    // with secrets): it goes now. Uncancellable, and a failure here never masks why the upload failed.
+    private async Task DiscardSessionDirectoryAsync(Guid sessionId)
+    {
+        try
+        {
+            await SecureDeleteSessionDirectoryAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Octopus import session {SessionId} could not remove its unstored upload from this server ({ExceptionType})", sessionId, ex.GetType().Name);
+        }
     }
 
     // The written file is stored with the session, read back from disk, so the upload is never held in memory whole.

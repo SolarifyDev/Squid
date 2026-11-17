@@ -160,6 +160,19 @@ public sealed class OctopusHistoryBundleWriterTests : IDisposable
     }
 
     // Resuming a fetch must not change the bundle: same staged documents → byte-identical archive.
+    // A bundle may stage hundreds of thousands of documents: they are counted by the store, never listed into memory to be counted here.
+    [Fact]
+    public async Task CountStaged_CountedByTheStorePerKind_NoHeadersListed()
+    {
+        var store = new Mock<IOctopusImportSessionFileStore>();
+        store.Setup(s => s.CountByFolderAsync(_sessionId, OctopusImportSessionFilePaths.StagingPrefix, It.IsAny<CancellationToken>())).ReturnsAsync(new Dictionary<string, int> { ["Release"] = 2, ["Project"] = 1, ["NotAKind"] = 9 });
+
+        var staged = await new OctopusHistoryBundleWriter(store.Object).CountStagedAsync(_sessionId);
+
+        (staged[OctopusResourceKind.Release], staged[OctopusResourceKind.Project], staged[OctopusResourceKind.Environment]).ShouldBe((2, 1, 0));
+        store.Verify(s => s.ListAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task SameStagedDocuments_ByteIdenticalBundle()
     {
@@ -305,6 +318,8 @@ public sealed class OctopusHistoryBundleWriterTests : IDisposable
         public Task<IReadOnlyList<OctopusImportSessionFileHeader>> ListAsync(Guid sessionId, string prefix, CancellationToken ct = default) => inner.ListAsync(sessionId, prefix, ct);
 
         public Task<OctopusImportSessionFileTotals> TotalsAsync(Guid sessionId, string prefix, CancellationToken ct = default) => inner.TotalsAsync(sessionId, prefix, ct);
+
+        public Task<IReadOnlyDictionary<string, int>> CountByFolderAsync(Guid sessionId, string prefix, CancellationToken ct = default) => inner.CountByFolderAsync(sessionId, prefix, ct);
 
         public Task<bool> PurgeAndMarkCleanedAsync(Guid sessionId, string temporaryUploadPath, DateTimeOffset cleanedAt, CancellationToken ct = default) => inner.PurgeAndMarkCleanedAsync(sessionId, temporaryUploadPath, cleanedAt, ct);
 

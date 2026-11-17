@@ -16,6 +16,7 @@ public sealed partial class OctopusImportSessionFileStore
     private const string HeaderSql = $"SELECT {HeaderColumns} FROM octopus_import_session_file f WHERE f.session_id = $1 AND f.path = $2";
     private const string PrefixHeadersSql = $"SELECT {HeaderColumns} FROM octopus_import_session_file f WHERE f.session_id = $1 AND f.path LIKE $2 ORDER BY f.path";
     private const string PrefixTotalsSql = "SELECT count(*)::int, coalesce(sum(length), 0)::bigint FROM octopus_import_session_file WHERE session_id = $1 AND path LIKE $2";
+    private const string PrefixFolderCountsSql = "SELECT split_part(substr(path, $3), '/', 1), count(*)::int FROM octopus_import_session_file WHERE session_id = $1 AND path LIKE $2 GROUP BY 1";
 
     public async Task<OctopusImportSessionFileHeader> GetHeaderAsync(Guid sessionId, string path, CancellationToken ct = default)
     {
@@ -103,6 +104,21 @@ public sealed partial class OctopusImportSessionFileStore
         await reader.ReadAsync(ct).ConfigureAwait(false);
 
         return new OctopusImportSessionFileTotals(reader.GetInt64(1), reader.GetInt32(0));
+    }
+
+    public async Task<IReadOnlyDictionary<string, int>> CountByFolderAsync(Guid sessionId, string prefix, CancellationToken ct = default)
+    {
+        await using var connection = await OpenAsync(ct).ConfigureAwait(false);
+        await using var command = Command(connection, PrefixFolderCountsSql, sessionId, PrefixPattern(prefix), (prefix ?? string.Empty).Length + 1);
+
+        command.CommandTimeout = LongCommandSeconds;
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        while (await reader.ReadAsync(ct).ConfigureAwait(false)) counts[reader.GetString(0)] = reader.GetInt32(1);
+
+        return counts;
     }
 
     private static OctopusImportSessionFileHeader ReadHeader(NpgsqlDataReader reader)

@@ -55,11 +55,7 @@ public sealed partial class OctopusImportSessionFileStore(SquidDbContext db, Laz
             throw new ArgumentException("A session id is required.", nameof(sessionId));
     }
 
-    private static void EnsurePath(string path)
-    {
-        if (string.IsNullOrWhiteSpace(path) || path.Length > 512 || path.StartsWith('/') || path.Contains(".."))
-            throw new ArgumentException("A relative session file path is required.", nameof(path));
-    }
+    private static void EnsurePath(string path) => OctopusImportSessionFilePaths.EnsureRelative(path);
 
     // LIKE with the prefix taken literally; the "C" collation makes it a range scan on the primary key.
     private static string PrefixPattern(string prefix) => (prefix ?? string.Empty).Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_") + "%";

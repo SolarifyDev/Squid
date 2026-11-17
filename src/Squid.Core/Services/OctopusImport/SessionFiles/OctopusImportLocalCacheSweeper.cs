@@ -40,19 +40,32 @@ public sealed class OctopusImportLocalCacheSweep(IOctopusImportTemporaryUploadSe
 }
 
 /// <summary>Runs <see cref="IOctopusImportLocalCacheSweep"/> on every server, every <see cref="Interval"/>; a failed sweep is logged and retried next time.</summary>
-public sealed class OctopusImportLocalCacheSweeper(ILifetimeScope container) : IStartable, IDisposable
+public sealed class OctopusImportLocalCacheSweeper : IStartable, IDisposable
 {
     public static readonly TimeSpan Interval = TimeSpan.FromMinutes(15);
 
+    private readonly ILifetimeScope _container;
+    private readonly TimeSpan _interval;
     private Timer _timer;
 
-    public void Start() => _timer = new Timer(_ => _ = SweepSafelyAsync(), null, Interval, Interval);
+    public OctopusImportLocalCacheSweeper(ILifetimeScope container) : this(container, Interval)
+    {
+    }
+
+    // Tests start it on a short interval; the container only sees the public constructor.
+    internal OctopusImportLocalCacheSweeper(ILifetimeScope container, TimeSpan interval)
+    {
+        _container = container;
+        _interval = interval;
+    }
+
+    public void Start() => _timer = new Timer(_ => _ = SweepSafelyAsync(), null, _interval, _interval);
 
     private async Task SweepSafelyAsync()
     {
         try
         {
-            await using var scope = container.BeginLifetimeScope();
+            await using var scope = _container.BeginLifetimeScope();
 
             var removed = await scope.Resolve<IOctopusImportLocalCacheSweep>().SweepAsync().ConfigureAwait(false);
 
