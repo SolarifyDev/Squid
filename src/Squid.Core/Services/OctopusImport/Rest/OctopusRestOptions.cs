@@ -10,10 +10,13 @@ public sealed class OctopusRestOptions
     public const string AllowedHostsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_ALLOWED_HOSTS";
     public const string MaxResponseBytesEnvVar = "SQUID_OCTOPUS_IMPORT_REST_MAX_RESPONSE_BYTES";
     public const string ChunkSecondsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_CHUNK_SECONDS";
+    public const string ConcurrencyEnvVar = "SQUID_OCTOPUS_IMPORT_REST_CONCURRENCY";
     public const string MaxLogLinesPerTaskEnvVar = OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTaskEnvVar;
 
     public const long DefaultMaxResponseBytes = 50L * 1024 * 1024;
     public const int DefaultChunkSeconds = 20;
+    public const int DefaultConcurrency = 8;
+    public const int MaxConcurrency = 64;
 
     // Network policy
     public bool AllowLoopback { get; init; }
@@ -22,6 +25,9 @@ public sealed class OctopusRestOptions
     // Limits
     public long MaxResponseBytes { get; init; } = DefaultMaxResponseBytes;
     public TimeSpan ChunkDuration { get; init; } = TimeSpan.FromSeconds(DefaultChunkSeconds);
+
+    /// <summary>The most requests one fetch has on the wire at once, and how many history items it reads ahead; 1 reads one request at a time. The environment value is held at <see cref="MaxConcurrency"/>.</summary>
+    public int Concurrency { get; init; } = DefaultConcurrency;
 
     /// <summary>How long one in-flight item may run past <see cref="ChunkDuration"/> before the chunk is abandoned; must stay under the lease margin.</summary>
     public TimeSpan ChunkOverrun { get; init; } = TimeSpan.FromMinutes(2);
@@ -43,7 +49,8 @@ public sealed class OctopusRestOptions
             AllowLoopback = ReadBool(AllowLoopbackEnvVar),
             AllowedHosts = ReadList(AllowedHostsEnvVar),
             MaxResponseBytes = ReadPositiveLong(MaxResponseBytesEnvVar, DefaultMaxResponseBytes),
-            ChunkDuration = TimeSpan.FromSeconds(ReadPositiveLong(ChunkSecondsEnvVar, DefaultChunkSeconds))
+            ChunkDuration = TimeSpan.FromSeconds(ReadPositiveLong(ChunkSecondsEnvVar, DefaultChunkSeconds)),
+            Concurrency = (int)Math.Min(ReadPositiveLong(ConcurrencyEnvVar, DefaultConcurrency), MaxConcurrency)
         };
 
     private static bool ReadBool(string name) => bool.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value;

@@ -13,6 +13,7 @@ public class OctopusRestOptionsTests
     [InlineData(OctopusRestOptions.MaxResponseBytesEnvVar, "SQUID_OCTOPUS_IMPORT_REST_MAX_RESPONSE_BYTES")]
     [InlineData(OctopusRestOptions.ChunkSecondsEnvVar, "SQUID_OCTOPUS_IMPORT_REST_CHUNK_SECONDS")]
     [InlineData(OctopusRestOptions.MaxLogLinesPerTaskEnvVar, "SQUID_OCTOPUS_IMPORT_MAX_LOG_LINES_PER_TASK")]
+    [InlineData(OctopusRestOptions.ConcurrencyEnvVar, "SQUID_OCTOPUS_IMPORT_REST_CONCURRENCY")]
     public void EnvVarNames_Pinned(string actual, string expected) => actual.ShouldBe(expected);
 
     [Fact]
@@ -29,6 +30,36 @@ public class OctopusRestOptionsTests
         options.MaxRedirects.ShouldBe(3);
         options.MaxListItems.ShouldBe(10_000);
         options.ChunkOverrun.ShouldBe(TimeSpan.FromMinutes(2));
+        options.Concurrency.ShouldBe(8);
+        OctopusRestOptions.MaxConcurrency.ShouldBe(64);
+    }
+
+    // 1 is the operator's way back to one request at a time; nonsense falls back to the default rather than to zero slots,
+    // and a typo such as 10000 is held at the cap rather than opening that many requests against the Octopus server.
+    [Theory]
+    [InlineData("1", 1)]
+    [InlineData("16", 16)]
+    [InlineData("64", 64)]
+    [InlineData("65", OctopusRestOptions.MaxConcurrency)]
+    [InlineData("10000", OctopusRestOptions.MaxConcurrency)]
+    [InlineData("99999999999", OctopusRestOptions.MaxConcurrency)]
+    [InlineData("0", OctopusRestOptions.DefaultConcurrency)]
+    [InlineData("-3", OctopusRestOptions.DefaultConcurrency)]
+    [InlineData("many", OctopusRestOptions.DefaultConcurrency)]
+    public void FromEnvironment_Concurrency(string value, int expected)
+    {
+        var saved = Environment.GetEnvironmentVariable(OctopusRestOptions.ConcurrencyEnvVar);
+
+        try
+        {
+            Environment.SetEnvironmentVariable(OctopusRestOptions.ConcurrencyEnvVar, value);
+
+            OctopusRestOptions.FromEnvironment().Concurrency.ShouldBe(expected);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(OctopusRestOptions.ConcurrencyEnvVar, saved);
+        }
     }
 
     // A chunk that outlives its lease lets a second chunk start against the same session; the hard deadline must end it first.

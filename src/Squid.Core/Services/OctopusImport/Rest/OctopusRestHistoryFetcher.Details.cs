@@ -12,14 +12,14 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         if (IsUnchangedWithStoredDetails(deployment, task))
         {
-            _ctx.Pending.DetailsSkipped++;
+            ReadCounts.DetailsSkipped++;
             return null;
         }
 
-        var rejectedBefore = _ctx.Pending.ItemsRejected;
+        var rejectedBefore = ReadCounts.ItemsRejected;
         var details = await FetchDetailsAsync(deployment, task, ct).ConfigureAwait(false);
 
-        if (_ctx.Pending.ItemsRejected == rejectedBefore) return details;
+        if (ReadCounts.ItemsRejected == rejectedBefore) return details;
 
         task.DetailsIncomplete = true;
 
@@ -46,20 +46,44 @@ public sealed partial class OctopusRestHistoryFetcher
     private bool IsUnchangedWithStoredDetails(OctopusDeploymentDto deployment, OctopusServerTaskDto task)
         => IsUnchangedWithStoredDetails(_ctx.Context.PriorMappings ?? OctopusImportPriorMappings.Empty, deployment, task);
 
+    // The three lists are read side by side once the task's details are in; a task without details asks for none of them.
     private async Task<OctopusTaskHistoryDetails> FetchDetailsAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
     {
         var taskDetails = await TaskDetailsOrNullAsync(task.Id, ct).ConfigureAwait(false);
 
         if (taskDetails == null) return null;
 
+        using var lists = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+        var interruptions = ReadListAsync<OctopusInterruptionDto>(InterruptionsPath(task.Id), lists);
+        var events = ReadListAsync<OctopusEventDto>(EventsPath(deployment.Id), lists);
+        var artifacts = ReadListAsync<OctopusArtifactDto>(ArtifactsPath(task.Id), lists);
+
+        await Task.WhenAll(interruptions, events, artifacts).ConfigureAwait(false);
+
         return new OctopusTaskHistoryDetails
         {
             ActivityLogs = taskDetails.ActivityLogs ?? [],
             ActivityLog = taskDetails.ActivityLog,
-            Interruptions = await GetAllPagesOrEmptyAsync<OctopusInterruptionDto>(InterruptionsPath(task.Id), ct).ConfigureAwait(false),
-            Events = await GetAllPagesOrEmptyAsync<OctopusEventDto>(EventsPath(deployment.Id), ct).ConfigureAwait(false),
-            Artifacts = await GetAllPagesOrEmptyAsync<OctopusArtifactDto>(ArtifactsPath(task.Id), ct).ConfigureAwait(false)
+            Interruptions = AddToCurrentScope(await interruptions.ConfigureAwait(false)),
+            Events = AddToCurrentScope(await events.ConfigureAwait(false)),
+            Artifacts = AddToCurrentScope(await artifacts.ConfigureAwait(false))
         };
+    }
+
+    // A list that fails cancels its siblings, so the item fails as soon as one list does, not after the others have paged on.
+    // The siblings it cuts off end cancelled, not failed, so Task.WhenAll rethrows the first failed list in the order above.
+    private async Task<Scoped<List<T>>> ReadListAsync<T>(string path, CancellationTokenSource siblings)
+    {
+        try
+        {
+            return await InNewScopeAsync(() => GetAllPagesOrEmptyAsync<T>(path, siblings.Token)).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await siblings.CancelAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     // A task whose log is over the per-response cap even after the tail is imported without details, not fatal.
@@ -72,7 +96,7 @@ public sealed partial class OctopusRestHistoryFetcher
         }
         catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.TooLarge)
         {
-            _ctx.Pending.DetailsTooLarge++;
+            ReadCounts.DetailsTooLarge++;
             return null;
         }
     }

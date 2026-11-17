@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using Squid.Message.Enums.OctopusImport;
@@ -8,7 +9,9 @@ namespace Squid.Core.Services.OctopusImport.Rest;
 /// GET-only client for one Octopus server. Only paths <see cref="OctopusRestPathPolicy"/> allows are requested.
 /// Redirects are followed by hand, only within the same origin and only to the same resource, so the API key header
 /// is never sent to another host or another endpoint. Bodies are bounded, never logged, and every failure is an
-/// <see cref="OctopusRestException"/> with a fixed message.
+/// <see cref="OctopusRestException"/> with a fixed message. Safe for concurrent use: at most
+/// <see cref="OctopusRestOptions.Concurrency"/> requests are on the wire at once, and a 429/5xx back-off pauses every
+/// request of the client, not only the one that was throttled.
 /// </summary>
 public sealed class OctopusRestClient : IDisposable
 {
@@ -20,6 +23,13 @@ public sealed class OctopusRestClient : IDisposable
     private readonly string _apiKey;
     private readonly OctopusRestOptions _options;
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+    private readonly SemaphoreSlim _requestSlots;
+    private readonly ConcurrentDictionary<long, InFlightRequest> _inFlight = new();
+    private readonly AsyncLocal<object> _requestOwner = new();
+
+    private long _bytesRead;
+    private long _requestSequence;
+    private long _resumeAtMs;
 
     public OctopusRestClient(string serverUrl, string apiKey, OctopusRestOptions options, HttpMessageHandler handler, Func<TimeSpan, CancellationToken, Task> delay = null)
     {
@@ -31,19 +41,35 @@ public sealed class OctopusRestClient : IDisposable
         _apiKey = apiKey.Trim();
         _delay = delay ?? Task.Delay;
         _http = new HttpClient(handler ?? throw new ArgumentNullException(nameof(handler))) { Timeout = options.RequestTimeout };
+        _requestSlots = new SemaphoreSlim(Math.Max(1, options.Concurrency));
     }
 
     /// <summary>The server address; a same-host redirect from http to https upgrades it, so later requests go to https directly.</summary>
     public Uri BaseUri { get; private set; }
 
     /// <summary>Response bytes read by this client so far; the history fetch caps its total on it.</summary>
-    public long BytesRead { get; private set; }
+    public long BytesRead => Interlocked.Read(ref _bytesRead);
 
     /// <summary>The key as <see cref="OctopusRestKeyBinding.Fingerprint"/> sees it; set by the factory, so the key never has to leave the client.</summary>
     public string KeyFingerprint { get; init; }
 
     /// <summary>The last path requested (relative, with its query); names the request a chunk was waiting on when it was abandoned.</summary>
     public string LastRequestedPath { get; private set; }
+
+    /// <summary>Who the requests made on this async flow belong to (the history item being read), or null; set by the caller, it flows into the calls it makes.</summary>
+    public object RequestOwner
+    {
+        get => _requestOwner.Value;
+        set => _requestOwner.Value = value;
+    }
+
+    /// <summary>The oldest request of <paramref name="owner"/> still waiting for its answer (one cut off by the caller's cancellation stays listed), else <see cref="LastRequestedPath"/>.</summary>
+    public string OldestInFlightPathOf(object owner)
+    {
+        var owned = _inFlight.Where(r => ReferenceEquals(r.Value.Owner, owner)).ToList();
+
+        return owned.Count == 0 ? LastRequestedPath : owned.MinBy(r => r.Key).Value.Path;
+    }
 
     /// <summary>The most bytes a paged list may read in total (<see cref="BytesRead"/> included); the history fetch sets what is left of its budget.</summary>
     public long ByteBudget { get; set; } = long.MaxValue;
@@ -108,7 +134,11 @@ public sealed class OctopusRestClient : IDisposable
 
     public static string WithQuery(string relativePath, string query) => relativePath + (relativePath.Contains('?') ? "&" : "?") + query;
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _http.Dispose();
+        _requestSlots.Dispose();
+    }
 
     private string PagePath(string relativePath, int skip) => WithQuery(relativePath, $"skip={skip}&take={_options.PageSize}");
 
@@ -135,21 +165,81 @@ public sealed class OctopusRestClient : IDisposable
     {
         OctopusRestPathPolicy.EnsureAllowed(relativePath);
 
-        LastRequestedPath = relativePath.TrimStart('/');
+        var path = relativePath.TrimStart('/');
+        var request = Interlocked.Increment(ref _requestSequence);
 
+        LastRequestedPath = path;
+        _inFlight[request] = new InFlightRequest(path, RequestOwner);
+
+        try
+        {
+            return await GetWithRetriesAsync(path, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!ct.IsCancellationRequested) _inFlight.TryRemove(request, out _);
+        }
+    }
+
+    private async Task<byte[]> GetWithRetriesAsync(string path, CancellationToken ct)
+    {
         for (var attempt = 0; ; attempt++)
         {
-            var (body, retryDelay) = await AttemptAsync(new Uri(BaseUri, LastRequestedPath), attempt, ct).ConfigureAwait(false);
+            var (body, retryDelay) = await AttemptInSlotAsync(path, attempt, ct).ConfigureAwait(false);
 
             if (body != null) return body;
 
-            await _delay(retryDelay, ct).ConfigureAwait(false);
+            await _delay(Throttle(retryDelay), ct).ConfigureAwait(false);
+        }
+    }
+
+    // A retry gives its slot up while it waits out its back-off. A first attempt that finds the client paused waits in its
+    // slot, so requests queued for a slot cannot slip out while the server has asked for a pause.
+    private async Task<(byte[] Body, TimeSpan RetryDelay)> AttemptInSlotAsync(string path, int attempt, CancellationToken ct)
+    {
+        await _requestSlots.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            if (attempt == 0) await WaitWhileThrottledAsync(ct).ConfigureAwait(false);
+
+            return await AttemptAsync(path, attempt, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _requestSlots.Release();
+        }
+    }
+
+    // A server that asked one request to back off is asked nothing else until then.
+    private async Task WaitWhileThrottledAsync(CancellationToken ct)
+    {
+        var remaining = Interlocked.Read(ref _resumeAtMs) - Environment.TickCount64;
+
+        if (remaining <= 0) return;
+
+        await _delay(TimeSpan.FromMilliseconds(remaining), ct).ConfigureAwait(false);
+    }
+
+    // Extends the client-wide pause to cover this back-off; a retry waits the longer of its own back-off and the pause.
+    private TimeSpan Throttle(TimeSpan delay)
+    {
+        var now = Environment.TickCount64;
+        var until = now + (long)delay.TotalMilliseconds;
+
+        while (true)
+        {
+            var current = Interlocked.Read(ref _resumeAtMs);
+
+            if (current >= until) return TimeSpan.FromMilliseconds(current - now);
+
+            if (Interlocked.CompareExchange(ref _resumeAtMs, until, current) == current) return delay;
         }
     }
 
     // One request under its own timeout, which covers the body as well as the headers. Returns the body, or the
     // delay before the next attempt when the failure is transient (a 429/5xx, or a transport failure at any point).
-    private async Task<(byte[] Body, TimeSpan RetryDelay)> AttemptAsync(Uri uri, int attempt, CancellationToken ct)
+    private async Task<(byte[] Body, TimeSpan RetryDelay)> AttemptAsync(string path, int attempt, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -157,7 +247,7 @@ public sealed class OctopusRestClient : IDisposable
 
         try
         {
-            return await SendAndReadAsync(uri, attempt, timeout.Token).ConfigureAwait(false);
+            return await SendAndReadAsync(path, attempt, timeout.Token).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.InnerException is OctopusRestException rest)
         {
@@ -172,13 +262,13 @@ public sealed class OctopusRestClient : IDisposable
         }
     }
 
-    private async Task<(byte[] Body, TimeSpan RetryDelay)> SendAndReadAsync(Uri uri, int attempt, CancellationToken ct)
+    private async Task<(byte[] Body, TimeSpan RetryDelay)> SendAndReadAsync(string path, int attempt, CancellationToken ct)
     {
-        using var response = await SendFollowingRedirectsAsync(uri, ct).ConfigureAwait(false);
+        using var response = await SendFollowingRedirectsAsync(path, ct).ConfigureAwait(false);
 
         if (IsRetryable(response) && attempt < _options.MaxRetries) return (null, RetryDelay(response, attempt));
 
-        EnsureSuccess(response, LastRequestedPath);
+        EnsureSuccess(response, path);
 
         return (await ReadBoundedAsync(response, ct).ConfigureAwait(false), TimeSpan.Zero);
     }
@@ -186,8 +276,10 @@ public sealed class OctopusRestClient : IDisposable
     // Refused, reset or timed out, before the headers or part way through the body; the caller's own cancellation is not one.
     private static bool IsTransportFailure(Exception ex, CancellationToken ct) => ex is HttpRequestException or IOException || (ex is OperationCanceledException && !ct.IsCancellationRequested);
 
-    private async Task<HttpResponseMessage> SendFollowingRedirectsAsync(Uri uri, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendFollowingRedirectsAsync(string path, CancellationToken ct)
     {
+        var uri = new Uri(BaseUri, path);
+
         for (var hop = 0; hop <= _options.MaxRedirects; hop++)
         {
             var response = await SendOnceAsync(uri, ct).ConfigureAwait(false);
@@ -196,7 +288,7 @@ public sealed class OctopusRestClient : IDisposable
 
             var target = RedirectTarget(uri, response);
 
-            EnsureSameResource(target);
+            EnsureSameResource(path, target);
 
             response.Dispose();
             UpgradeBaseUriIfSecured(uri, target);
@@ -233,9 +325,9 @@ public sealed class OctopusRestClient : IDisposable
 
     // A redirect may move the API under a prefix or onto https, never to another endpoint: the requested path must end the
     // target's, and the target's own query must pass the same allowlist as a request this client makes.
-    private void EnsureSameResource(Uri target)
+    private static void EnsureSameResource(string path, Uri target)
     {
-        var requested = OctopusRestPathPolicy.PathOf(LastRequestedPath);
+        var requested = OctopusRestPathPolicy.PathOf(path);
 
         if (!target.AbsolutePath.EndsWith("/" + requested, StringComparison.OrdinalIgnoreCase) || !OctopusRestPathPolicy.IsAllowed(requested + target.Query))
             throw new OctopusRestException(OctopusRestErrorKind.Denied);
@@ -303,7 +395,7 @@ public sealed class OctopusRestClient : IDisposable
 
         await CopyBoundedAsync(body, buffer, ct).ConfigureAwait(false);
 
-        BytesRead += buffer.Length;
+        Interlocked.Add(ref _bytesRead, buffer.Length);
 
         return buffer.ToArray();
     }
@@ -324,4 +416,6 @@ public sealed class OctopusRestClient : IDisposable
             destination.Write(chunk, 0, read);
         }
     }
+
+    private sealed record InFlightRequest(string Path, object Owner);
 }

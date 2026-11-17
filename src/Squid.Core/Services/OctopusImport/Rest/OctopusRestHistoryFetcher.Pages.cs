@@ -17,18 +17,9 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         var page = await ReleasePageAsync(ct).ConfigureAwait(false);
 
-        foreach (var release in page.Items)
-        {
-            if (ChunkBudgetSpent()) return;
+        RecordPhaseTotal(page);
 
-            _ctx.InItem = true;
-            await EnrichFeedIdsAsync(release, ct).ConfigureAwait(false);
-            await WriteAsync(OctopusResourceKind.Release, release, ct).ConfigureAwait(false);
-            RecordReference(OctopusResourceKind.Channel, release.ChannelId);
-
-            _ctx.Pending.Releases++;
-            CommitItem();
-        }
+        if (!await ReadAheadThenWriteInOrderAsync(page.Items, new ItemSteps<OctopusReleaseDto, ReleaseRead>(ReadReleaseAsync, WriteReleaseAsync), ct).ConfigureAwait(false)) return;
 
         Advance(page, OctopusHistoryFetchPhase.Deployments);
     }
@@ -45,12 +36,29 @@ public sealed partial class OctopusRestHistoryFetcher
         return new OctopusRestPage<OctopusReleaseDto>();
     }
 
-    // The export's release documents carry no feed per package; the importer needs it to create the release.
-    private async Task EnrichFeedIdsAsync(OctopusReleaseDto release, CancellationToken ct)
+    // The process snapshot is read only for a release with a package whose feed the export does not carry.
+    private async Task<ReleaseRead> ReadReleaseAsync(OctopusReleaseDto release, CancellationToken ct)
     {
-        foreach (var package in (release.SelectedPackages ?? []).Where(p => !(p.ExtensionData ?? []).ContainsKey(FeedIdProperty)))
+        var process = PackagesWithoutFeed(release).Any() ? await ProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, ct).ConfigureAwait(false) : null;
+
+        return new ReleaseRead(release, process);
+    }
+
+    private async Task WriteReleaseAsync(ReleaseRead read, CancellationToken ct)
+    {
+        EnrichFeedIds(read.Release, read.Process);
+
+        await WriteAsync(OctopusResourceKind.Release, read.Release, ct).ConfigureAwait(false);
+        RecordReference(OctopusResourceKind.Channel, read.Release.ChannelId);
+
+        _ctx.Pending.Releases++;
+    }
+
+    // The export's release documents carry no feed per package; the importer needs it to create the release.
+    private void EnrichFeedIds(OctopusReleaseDto release, OctopusDeploymentProcessDto process)
+    {
+        foreach (var package in PackagesWithoutFeed(release))
         {
-            var process = await ProcessSnapshotAsync(release.ProjectDeploymentProcessSnapshotId, ct).ConfigureAwait(false);
             var feedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedIdFromProcess(process, package);
 
             if (feedId == null) continue;
@@ -62,17 +70,13 @@ public sealed partial class OctopusRestHistoryFetcher
         }
     }
 
-    private async Task<OctopusDeploymentProcessDto> ProcessSnapshotAsync(string snapshotId, CancellationToken ct)
+    private static IEnumerable<OctopusSelectedPackageDto> PackagesWithoutFeed(OctopusReleaseDto release) => (release.SelectedPackages ?? []).Where(p => !(p.ExtensionData ?? []).ContainsKey(FeedIdProperty));
+
+    private Task<OctopusDeploymentProcessDto> ProcessSnapshotAsync(string snapshotId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(snapshotId)) return null;
+        if (string.IsNullOrWhiteSpace(snapshotId)) return Task.FromResult<OctopusDeploymentProcessDto>(null);
 
-        if (_ctx.ProcessSnapshots.TryGetValue(snapshotId, out var cached)) return cached;
-
-        var process = await GetOrNullAsync<OctopusDeploymentProcessDto>($"{SpacePrefix}deploymentprocesses/{Escape(snapshotId)}", ct).ConfigureAwait(false);
-
-        _ctx.ProcessSnapshots[snapshotId] = process;
-
-        return process;
+        return ReadOnceAsync(_ctx.ProcessSnapshots, snapshotId, () => GetOrNullAsync<OctopusDeploymentProcessDto>($"{SpacePrefix}deploymentprocesses/{Escape(snapshotId)}", ct));
     }
 
     // ── Deployments and their tasks ───────────────────────────────────────
@@ -82,14 +86,11 @@ public sealed partial class OctopusRestHistoryFetcher
         var page = await GetPageOrNullAsync<OctopusDeploymentDto>(DeploymentsPath(CurrentProjectId), ct).ConfigureAwait(false) ?? new OctopusRestPage<OctopusDeploymentDto>();
         var tasks = await TaskSummariesAsync(page.Items, ct).ConfigureAwait(false);
 
-        foreach (var deployment in page.Items)
-        {
-            if (ChunkBudgetSpent()) return;
+        RecordPhaseTotal(page);
 
-            _ctx.InItem = true;
-            await WriteDeploymentUnitAsync(deployment, tasks.GetValueOrDefault(deployment.TaskId ?? string.Empty), ct).ConfigureAwait(false);
-            CommitItem();
-        }
+        Task<DeploymentRead> Read(OctopusDeploymentDto deployment, CancellationToken readCt) => ReadDeploymentAsync(deployment, tasks.GetValueOrDefault(deployment.TaskId ?? string.Empty), readCt);
+
+        if (!await ReadAheadThenWriteInOrderAsync(page.Items, new ItemSteps<OctopusDeploymentDto, DeploymentRead>(Read, WriteDeploymentAsync), ct).ConfigureAwait(false)) return;
 
         Advance(page, OctopusHistoryFetchPhase.ProjectConfiguration);
     }
@@ -105,19 +106,25 @@ public sealed partial class OctopusRestHistoryFetcher
         return (page?.Items ?? []).Where(t => !string.IsNullOrWhiteSpace(t.Id)).DistinctBy(t => t.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
     }
 
-    // A deployment and its task are always written together, so a re-page rewrites both or neither. Every read comes
-    // first: an item abandoned while reading leaves none of its documents in the bundle.
-    private async Task WriteDeploymentUnitAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
+    // Every read of a deployment unit (its task's details, its machine names) happens before any of its writes.
+    private async Task<DeploymentRead> ReadDeploymentAsync(OctopusDeploymentDto deployment, OctopusServerTaskDto task, CancellationToken ct)
     {
-        var details = await ReadTaskDetailsAsync(deployment, task, ct).ConfigureAwait(false);
+        var details = ReadTaskDetailsAsync(deployment, task, ct);
+        var machineNames = AttachMachineNamesAsync(deployment, ct);
 
-        await AttachMachineNamesAsync(deployment, ct).ConfigureAwait(false);
+        await Task.WhenAll(details, machineNames).ConfigureAwait(false);
 
-        await WriteTaskAsync(task, details, ct).ConfigureAwait(false);
-        await WriteAsync(OctopusResourceKind.Deployment, deployment, ct).ConfigureAwait(false);
+        return new DeploymentRead(deployment, task, await details.ConfigureAwait(false));
+    }
 
-        RecordReference(OctopusResourceKind.Environment, deployment.EnvironmentId);
-        RecordReference(OctopusResourceKind.Channel, deployment.ChannelId);
+    // A deployment and its task are always written together, so a re-page rewrites both or neither.
+    private async Task WriteDeploymentAsync(DeploymentRead read, CancellationToken ct)
+    {
+        await WriteTaskAsync(read.Task, read.Details, ct).ConfigureAwait(false);
+        await WriteAsync(OctopusResourceKind.Deployment, read.Deployment, ct).ConfigureAwait(false);
+
+        RecordReference(OctopusResourceKind.Environment, read.Deployment.EnvironmentId);
+        RecordReference(OctopusResourceKind.Channel, read.Deployment.ChannelId);
 
         _ctx.Pending.Deployments++;
     }
@@ -161,18 +168,18 @@ public sealed partial class OctopusRestHistoryFetcher
         deployment.ExtensionData[DeployedToMachineNamesProperty] = JsonSerializer.SerializeToElement(names);
     }
 
-    private async Task<string> StagedMachineNameAsync(string machineId, CancellationToken ct)
+    private Task<string> StagedMachineNameAsync(string machineId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(machineId)) return null;
+        if (string.IsNullOrWhiteSpace(machineId)) return Task.FromResult<string>(null);
 
-        if (_ctx.MachineNames.TryGetValue(machineId, out var cached)) return cached;
+        return ReadOnceAsync(_ctx.MachineNames, machineId, () => ReadStagedMachineNameAsync(machineId, ct));
+    }
 
+    private async Task<string> ReadStagedMachineNameAsync(string machineId, CancellationToken ct)
+    {
         var machine = await bundleWriter.ReadStagedAsync(_ctx.Context.SessionDirectory, OctopusResourceKind.Machine, machineId, ct).ConfigureAwait(false);
-        var name = machine?["Name"] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text : null;
 
-        _ctx.MachineNames[machineId] = name;
-
-        return name;
+        return machine?["Name"] is JsonValue value && value.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text) ? text : null;
     }
 
     // ── Paging ─────────────────────────────────────────────────────────────
@@ -188,6 +195,7 @@ public sealed partial class OctopusRestHistoryFetcher
         CommitPending();
 
         _ctx.InItem = false;
+        _ctx.CurrentItem = null;
         _ctx.Cursor.Skip++;
         _ctx.ItemsCommitted++;
 
@@ -237,6 +245,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         cursor.Phase = nextPhase;
         cursor.Skip = 0;
+        cursor.PhaseTotalResults = null;
 
         if (nextPhase != OctopusHistoryFetchPhase.ProjectConfiguration) return;
 
@@ -244,6 +253,9 @@ public sealed partial class OctopusRestHistoryFetcher
 
         if (!HasCurrentProject) cursor.Phase = OctopusHistoryFetchPhase.Closure;
     }
+
+    // What Octopus reports this page's list holds in all, for the progress shown while the phase runs.
+    private void RecordPhaseTotal<T>(OctopusRestPage<T> page) => _ctx.Cursor.PhaseTotalResults = page.TotalResults;
 
     // Not found is null: a deleted project, or one the chosen space does not have. A refused page is an empty page, recorded.
     private async Task<OctopusRestPage<T>> GetPageOrNullAsync<T>(string path, CancellationToken ct)

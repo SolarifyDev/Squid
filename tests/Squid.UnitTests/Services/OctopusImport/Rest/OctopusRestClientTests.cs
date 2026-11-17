@@ -519,10 +519,83 @@ public class OctopusRestClientTests
         handler.Requests.Count.ShouldBe(3);
     }
 
+    // ── Concurrent use ─────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task ConcurrentRequests_NeverMoreOnTheWireThanConcurrency(int concurrency)
+    {
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(new { Id = "Users-7" })) { Latency = _ => TimeSpan.FromMilliseconds(30) };
+        using var client = Client(handler, new OctopusRestOptions { Concurrency = concurrency });
+
+        await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => client.GetAsync<Dictionary<string, string>>("api/users/me", CancellationToken.None)));
+
+        handler.Requests.Count.ShouldBe(12);
+        handler.MaxInFlight.ShouldBe(concurrency, customMessage: "every slot is used and none is exceeded");
+    }
+
+    // The history byte budget is enforced on BytesRead, so no concurrent response may be lost from it.
+    [Fact]
+    public async Task ConcurrentRequests_EveryResponseCountedInBytesRead()
+    {
+        var bodyLength = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { Id = "Users-7" }).Length;
+        var handler = new OctopusRestStubHandler(_ => OctopusRestStubHandler.Json(new { Id = "Users-7" })) { Latency = _ => TimeSpan.FromMilliseconds(1) };
+        using var client = Client(handler, new OctopusRestOptions { Concurrency = 16 });
+
+        await Task.WhenAll(Enumerable.Range(0, 200).Select(_ => client.GetAsync<Dictionary<string, string>>("api/users/me", CancellationToken.None)));
+
+        client.BytesRead.ShouldBe(200L * bodyLength);
+    }
+
+    // A server that throttled one request is not hammered by the others: every later request waits out the same back-off.
+    [Fact]
+    public async Task Throttled_LaterRequestsWaitOutTheSameBackOff()
+    {
+        var calls = 0;
+        var handler = new OctopusRestStubHandler(_ =>
+        {
+            if (Interlocked.Increment(ref calls) > 1) return OctopusRestStubHandler.Json(OctopusRestStubHandler.Root());
+
+            var throttled = OctopusRestStubHandler.Status(HttpStatusCode.TooManyRequests);
+            throttled.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+            return throttled;
+        });
+        using var client = Client(handler);
+
+        await client.GetRootAsync(CancellationToken.None);
+        await client.GetRootAsync(CancellationToken.None);
+
+        _delays.Count.ShouldBe(2);
+        _delays[0].ShouldBe(TimeSpan.FromSeconds(30));
+        _delays[1].ShouldBeInRange(TimeSpan.FromSeconds(25), TimeSpan.FromSeconds(30), "the second request starts inside the first one's pause");
+    }
+
+    // Each request checks a redirect against its own path, not whichever path another request asked for last.
+    [Fact]
+    public async Task ConcurrentRedirect_CheckedAgainstItsOwnPath()
+    {
+        var handler = new OctopusRestStubHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/users/me" => Redirect("/octopus/api/users/me"),
+            "/octopus/api/users/me" => OctopusRestStubHandler.Json(new { Id = "Users-7" }),
+            _ => OctopusRestStubHandler.Json(OctopusRestStubHandler.Root())
+        }) { Latency = request => request.RequestUri!.AbsolutePath == "/api/users/me" ? TimeSpan.FromMilliseconds(200) : TimeSpan.Zero };
+        using var client = Client(handler);
+
+        var user = client.GetCurrentUserAsync(CancellationToken.None);
+        await Task.Delay(50);
+        var root = await client.GetRootAsync(CancellationToken.None);
+
+        (await user).Id.ShouldBe("Users-7");
+        root.InstallationId.ShouldBe("inst-1");
+        client.LastRequestedPath.ShouldBe("api", "the root request was made while the redirected one was still on the wire");
+    }
+
     private OctopusRestClient Client(OctopusRestStubHandler handler, OctopusRestOptions options = null)
         => new(ServerUrl, ApiKey, options ?? new OctopusRestOptions(), handler, (delay, _) =>
         {
-            _delays.Add(delay);
+            lock (_delays) _delays.Add(delay);
             return Task.CompletedTask;
         });
 

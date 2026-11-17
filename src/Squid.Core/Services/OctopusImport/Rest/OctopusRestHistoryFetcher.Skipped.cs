@@ -7,11 +7,11 @@ public sealed partial class OctopusRestHistoryFetcher
 {
     // ── Skipped items ──────────────────────────────────────────────────────
 
-    // A refused request belongs to the item being written: it is recorded only when that item commits.
+    // A refused request belongs to the item whose read made it: it is recorded only when that item commits.
     private void RecordRejected(string path)
     {
-        _ctx.Pending.ItemsRejected++;
-        _ctx.PendingSkipped.Add(SkippedItem(path, OctopusHistoryFetchSkipReason.Rejected));
+        ReadCounts.ItemsRejected++;
+        ReadSkipped.Add(SkippedItem(path, OctopusHistoryFetchSkipReason.Rejected));
     }
 
     // The abandoned chunk is over, so the skip is committed straight to the cursor that is persisted next. A chunk stuck
@@ -31,7 +31,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         cursor.AbandonCounts.Remove(key);
         cursor.Counts.ItemsAbandoned++;
-        AddSkipped(cursor, [SkippedItem(_ctx.Client.LastRequestedPath, OctopusHistoryFetchSkipReason.Abandoned)]);
+        AddSkipped(cursor, [SkippedItem(_ctx.Client.OldestInFlightPathOf(_ctx.CurrentItem), OctopusHistoryFetchSkipReason.Abandoned)]);
         MovePastCurrentItem(cursor);
 
         return true;

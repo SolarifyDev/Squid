@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.History;
@@ -37,7 +38,18 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     }
 
     public static OctopusHistoryFetchProgressDto Progress(OctopusImportHistoryFetchDto cursor)
-        => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, CatalogIndex = cursor.CatalogIndex, CatalogKindCount = CatalogCollections.Count, Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
+        => new() { Phase = cursor.Phase, ProjectIndex = cursor.ProjectIndex, ProjectCount = cursor.ProjectIds.Count, CatalogIndex = cursor.CatalogIndex, CatalogKindCount = CatalogCollections.Count, PhaseItemsDone = PhaseItemsDone(cursor), PhaseItemsTotal = PhaseItemsTotal(cursor), Counts = cursor.Counts, TotalBytes = cursor.TotalBytes, Done = cursor.Done };
+
+    // Skip counts the items committed in the paged phases; the other phases have no item list to measure.
+    private static int PhaseItemsDone(OctopusImportHistoryFetchDto cursor) => PhaseItemsTotal(cursor) == null ? 0 : cursor.Skip;
+
+    private static int? PhaseItemsTotal(OctopusImportHistoryFetchDto cursor)
+        => cursor.Phase switch
+        {
+            OctopusHistoryFetchPhase.Catalog => cursor.CatalogTotalResults,
+            OctopusHistoryFetchPhase.Releases or OctopusHistoryFetchPhase.Deployments => cursor.PhaseTotalResults,
+            _ => null
+        };
 
     // A chunk still running past its deadline is abandoned before its lease lapses, so no second chunk can overlap it.
     // The item it was on is skipped once it has been abandoned MaxAbandonments times, so one stuck item cannot stall the fetch.
@@ -141,16 +153,22 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         public long BytesBeforeChunk { get; } = bytesBeforeChunk;
 
         // Per-chunk caches
-        public Dictionary<string, OctopusDeploymentProcessDto> ProcessSnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, string> MachineNames { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public ConcurrentDictionary<string, Lazy<Task<OctopusDeploymentProcessDto>>> ProcessSnapshots { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public ConcurrentDictionary<string, Lazy<Task<string>>> MachineNames { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         // The item being written: its counts and skipped requests join the cursor only when it commits
         public OctopusHistoryFetchCountsDto Pending { get; set; } = new();
         public List<OctopusHistoryFetchSkippedItemDto> PendingSkipped { get; set; } = [];
         public int ItemsCommitted { get; set; }
         public bool InItem { get; set; }
+        public object CurrentItem { get; set; }
         public string OctopusUserId { get; set; }
         public bool KeyIsNew { get; set; }
         public List<string> ClosureBatch { get; set; } = [];
     }
+
+    // What an item's reads produced, handed to its write
+    private sealed record ReleaseRead(OctopusReleaseDto Release, OctopusDeploymentProcessDto Process);
+
+    private sealed record DeploymentRead(OctopusDeploymentDto Deployment, OctopusServerTaskDto Task, OctopusTaskHistoryDetails Details);
 }

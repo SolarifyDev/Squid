@@ -8,20 +8,56 @@ using Squid.Core.Services.OctopusImport.Rest;
 
 namespace Squid.UnitTests.Services.OctopusImport.Rest;
 
-/// <summary>In-memory Octopus server: answers each GET from a route function and records what was asked.</summary>
+/// <summary>
+/// In-memory Octopus server: answers each GET from a route function and records what was asked. <see cref="Latency"/>
+/// makes every answer take that long (per request, so concurrent requests overlap), and <see cref="MaxInFlight"/> is
+/// the most requests it was answering at once.
+/// </summary>
 internal sealed class OctopusRestStubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
 {
+    private int _inFlight;
+    private int _maxInFlight;
+
     public List<(Uri Uri, string ApiKey)> Requests { get; } = [];
 
-    public IEnumerable<string> PathsAndQueries => Requests.Select(r => r.Uri.PathAndQuery);
+    public IEnumerable<string> PathsAndQueries
+    {
+        get
+        {
+            lock (Requests) return Requests.Select(r => r.Uri.PathAndQuery).ToList();
+        }
+    }
 
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    /// <summary>How long each request takes; a function so a test can vary it by request (scrambling completion order).</summary>
+    public Func<HttpRequestMessage, TimeSpan> Latency { get; set; }
+
+    public int MaxInFlight => Volatile.Read(ref _maxInFlight);
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var apiKey = request.Headers.TryGetValues(OctopusRestClient.ApiKeyHeader, out var values) ? values.Single() : null;
 
         lock (Requests) Requests.Add((request.RequestUri, apiKey));
 
-        return Task.FromResult(respond(request));
+        TrackMax(Interlocked.Increment(ref _inFlight));
+
+        try
+        {
+            if (Latency?.Invoke(request) is { } latency && latency > TimeSpan.Zero) await Task.Delay(latency, cancellationToken).ConfigureAwait(false);
+
+            return respond(request);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlight);
+        }
+    }
+
+    private void TrackMax(int inFlight)
+    {
+        var max = Volatile.Read(ref _maxInFlight);
+
+        while (inFlight > max && Interlocked.CompareExchange(ref _maxInFlight, inFlight, max) != max) max = Volatile.Read(ref _maxInFlight);
     }
 
     public static HttpResponseMessage Json(object body, HttpStatusCode status = HttpStatusCode.OK)

@@ -15,7 +15,9 @@ namespace Squid.IntegrationTests.Helpers;
 /// interruptions, events, artifacts and machines (all mutable between fetches, so a test can change Octopus and
 /// re-import it). Every request is recorded; a request without an accepted <c>X-Octopus-ApiKey</c> gets 401, and
 /// <c>users/me</c> answers the user the key belongs to. <see cref="HoldPath"/> parks requests to one path until
-/// <see cref="ReleaseHeldRequests"/>, so a test can observe a chunk that is still running.
+/// <see cref="ReleaseHeldRequests"/>, so a test can observe a chunk that is still running. <see cref="Latency"/> makes every
+/// answer take that long; <see cref="MaxInFlight"/> is the most requests it was answering at once, and <see cref="Arrivals"/>
+/// when each request arrived, so a test can see how hard the fetch drives the server.
 /// </summary>
 public sealed class StubOctopusServer : IAsyncDisposable
 {
@@ -81,6 +83,21 @@ public sealed class StubOctopusServer : IAsyncDisposable
     public string HoldPath { get; set; }
 
     private readonly Dictionary<string, (int Times, HttpStatusCode Status)> _failures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Times, TimeSpan RetryAfter)> _throttles = new(StringComparer.Ordinal);
+    private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+    private int _inFlight;
+    private int _maxInFlight;
+
+    /// <summary>How long every answer takes (after the request arrived, before it is routed).</summary>
+    public TimeSpan Latency { get; set; }
+
+    public int MaxInFlight => Volatile.Read(ref _maxInFlight);
+
+    /// <summary>Each request's path and query with the time it arrived, in milliseconds since the stub started.</summary>
+    public ConcurrentQueue<(string PathAndQuery, long ArrivedMs)> Arrivals { get; } = new();
+
+    /// <summary>When each 429 was answered, in milliseconds since the stub started.</summary>
+    public ConcurrentQueue<long> ThrottledAtMs { get; } = new();
 
     /// <summary>Completes when a request to <see cref="HoldPath"/> arrives.</summary>
     public Task HeldPathRequested => _heldRequested.Task;
@@ -168,6 +185,30 @@ public sealed class StubOctopusServer : IAsyncDisposable
         return this;
     }
 
+    /// <summary>The next <paramref name="times"/> requests whose path ends with <paramref name="pathSuffix"/> get 429 with <c>Retry-After</c>.</summary>
+    public StubOctopusServer ThrottleNext(string pathSuffix, int times, TimeSpan retryAfter)
+    {
+        lock (_throttles) _throttles[pathSuffix] = (times, retryAfter);
+
+        return this;
+    }
+
+    private TimeSpan? ThrottleFor(string path)
+    {
+        lock (_throttles)
+        {
+            var suffix = _throttles.Keys.FirstOrDefault(k => _throttles[k].Times > 0 && path.EndsWith(k, StringComparison.Ordinal));
+
+            if (suffix == null) return null;
+
+            var (times, retryAfter) = _throttles[suffix];
+
+            _throttles[suffix] = (times - 1, retryAfter);
+
+            return retryAfter;
+        }
+    }
+
     private HttpStatusCode? FailureFor(string path)
     {
         lock (_failures)
@@ -205,10 +246,23 @@ public sealed class StubOctopusServer : IAsyncDisposable
 
     private async Task HandleAsync(HttpListenerContext context)
     {
+        TrackMax(Interlocked.Increment(ref _inFlight));
+
         try
         {
             var apiKey = context.Request.Headers["X-Octopus-ApiKey"];
             Requests.Enqueue((context.Request.Url!.PathAndQuery, apiKey));
+            Arrivals.Enqueue((context.Request.Url.PathAndQuery, _clock.ElapsedMilliseconds));
+
+            if (Latency > TimeSpan.Zero) await Task.Delay(Latency).ConfigureAwait(false);
+
+            if (ThrottleFor(context.Request.Url.AbsolutePath) is { } retryAfter)
+            {
+                context.Response.Headers["Retry-After"] = ((int)retryAfter.TotalSeconds).ToString();
+                ThrottledAtMs.Enqueue(_clock.ElapsedMilliseconds);
+                Write(context, HttpStatusCode.TooManyRequests, new { });
+                return;
+            }
 
             if (apiKey == null || !_keyUsers.TryGetValue(apiKey, out var userId))
             {
@@ -223,6 +277,17 @@ public sealed class StubOctopusServer : IAsyncDisposable
         {
             try { context.Response.Abort(); } catch { /* ignore */ }
         }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlight);
+        }
+    }
+
+    private void TrackMax(int inFlight)
+    {
+        var max = Volatile.Read(ref _maxInFlight);
+
+        while (inFlight > max && Interlocked.CompareExchange(ref _maxInFlight, inFlight, max) != max) max = Volatile.Read(ref _maxInFlight);
     }
 
     private async Task<(HttpStatusCode, object)> RouteAsync(string path, NameValueCollection query, string userId, string apiKey)
