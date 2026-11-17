@@ -35,7 +35,7 @@ public sealed class OctopusImportConfirmationHeartbeat : IOctopusImportConfirmat
         {
             await using var scope = _lifetimeScope.BeginLifetimeScope();
 
-            await scope.Resolve<IOctopusImportSessionDataProvider>().TouchConfirmationHeartbeatAsync(sessionId, attemptId, _time.GetUtcNow(), ct).ConfigureAwait(false);
+            await scope.Resolve<IOctopusImportSessionDataProvider>().TouchConfirmationHeartbeatAsync(sessionId, attemptId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

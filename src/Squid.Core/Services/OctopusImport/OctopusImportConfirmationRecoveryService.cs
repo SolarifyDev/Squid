@@ -41,12 +41,13 @@ public sealed class OctopusImportConfirmationRecoveryService : IOctopusImportCon
         var interrupted = await _dataProvider.GetInterruptedConfirmationsAsync(cutoffs, _settings.CleanupBatchSize, ct).ConfigureAwait(false);
         var recovered = await RecoverAllAsync(interrupted, cutoffs, now, ct).ConfigureAwait(false);
 
-        if (recovered > 0) Log.Warning("Recovered {Count} interrupted Octopus import confirmation(s) whose heartbeat stopped before {StaleBefore}", recovered, cutoffs.StaleBefore);
+        if (recovered > 0) Log.Warning("Recovered {Count} interrupted Octopus import confirmation(s) whose heartbeat is older than {HeartbeatStale}", recovered, cutoffs.HeartbeatStale);
 
         return recovered;
     }
 
-    internal OctopusImportInterruptedConfirmationCutoffs Cutoffs(DateTimeOffset now) => new(now.Subtract(_resilience.HeartbeatStale), now.Subtract(_settings.InterruptedImportGracePeriod));
+    // The heartbeat cut-off is an age the database measures on its own clock; only the legacy rule uses this server's clock (hours of grace).
+    internal OctopusImportInterruptedConfirmationCutoffs Cutoffs(DateTimeOffset now) => new(_resilience.HeartbeatStale, now.Subtract(_settings.InterruptedImportGracePeriod));
 
     private async Task<int> RecoverAllAsync(IReadOnlyList<OctopusImportInterruptedConfirmation> interrupted, OctopusImportInterruptedConfirmationCutoffs cutoffs, DateTimeOffset now, CancellationToken ct)
     {

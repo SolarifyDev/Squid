@@ -10,6 +10,8 @@ namespace Squid.Core.Services.OctopusImport;
 
 public sealed partial class OctopusImportConfirmationRunner
 {
+    public const string SupersededSinceQueuedMessage = "The session changed after this import was queued, so nothing was imported. Import again to import the current validated plan.";
+
     public const string SelectionChangedMessage = "The projects to import changed after the preview was validated, so nothing was imported. Validate the preview again, then import.";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -31,6 +33,7 @@ public sealed partial class OctopusImportConfirmationRunner
     private async Task EnsureConfirmableAsync(CancellationToken ct)
     {
         EnsureValidated();
+        EnsureStillTheAdmittedPlan();
         EnsureWithinMaxAge();
         await EnsureSourceAvailableAsync(ct).ConfigureAwait(false);
         ReadValidatedPlan();
@@ -43,6 +46,13 @@ public sealed partial class OctopusImportConfirmationRunner
     {
         if (_ctx.State != OctopusImportSessionState.Validated)
             throw new OctopusImportConfirmationRejectedException("Octopus import confirmation requires a validated session.");
+    }
+
+    // A queued run imports the plan the user confirmed, never one validated (or recovered) after Import was pressed.
+    private void EnsureStillTheAdmittedPlan()
+    {
+        if (_ctx.AdmittedDataVersion != null && !_ctx.AdmittedDataVersion.AsSpan().SequenceEqual(_ctx.Session.DataVersion))
+            throw new OctopusImportConfirmationRejectedException(SupersededSinceQueuedMessage, OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
     // Refused before planning or queueing, as SessionExpired (409): a queued run would otherwise only fail later as a generic background failure.

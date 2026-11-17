@@ -275,6 +275,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         EnsureWithinMaxAge(session);
 
         session.ValidatedPlanJson = validatedPlanJson == null ? null : OctopusImportRedaction.RedactJson(validatedPlanJson);
+        ForgetConfirmationFailure(session);
 
         await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
 
@@ -374,6 +375,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(summary));
 
         if (ParseState(session.State) == OctopusImportSessionState.Validated) session.ValidatedPlanJson = null;
+
+        ForgetConfirmationFailure(session);
 
         await _dataProvider.UpdateSessionAsync(session, expectedDataVersion, ct: ct).ConfigureAwait(false);
 
@@ -477,6 +480,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             LastConfirmationFailure = RetryableFailure(session)
         };
     }
+
+    // A replaced plan or selection was never tried: the failure of an attempt at the plan before it no longer describes the session.
+    private static void ForgetConfirmationFailure(OctopusImportSession session) => session.LastConfirmationFailureJson = null;
 
     // Only a Validated session can be imported again; once the session moves on, an older attempt's failure no longer describes it.
     private static OctopusImportConfirmationFailureDto RetryableFailure(OctopusImportSession session)

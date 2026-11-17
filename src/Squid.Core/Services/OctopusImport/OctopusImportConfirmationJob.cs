@@ -9,27 +9,33 @@ namespace Squid.Core.Services.OctopusImport;
 /// <summary>The background job a queued confirmation runs as: the runner, inside a scope that acts as the session owner.</summary>
 public interface IOctopusImportConfirmationJob : IScopedDependency
 {
+    /// <summary>A job queued by an older server, which carries no data version: kept so those jobs still deserialize and run.</summary>
     Task RunAsOwnerAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct);
+
+    /// <summary>Runs only while the session still holds <paramref name="admittedDataVersion"/>, the version confirmed when it was queued.</summary>
+    Task RunAsOwnerAsync(Guid sessionId, int spaceId, int ownerUserId, byte[] admittedDataVersion, CancellationToken ct);
 }
 
 public sealed class OctopusImportConfirmationJob(ILifetimeScope lifetimeScope) : IOctopusImportConfirmationJob
 {
-    public async Task RunAsOwnerAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct)
+    public Task RunAsOwnerAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct) => RunAsOwnerAsync(sessionId, spaceId, ownerUserId, null, ct);
+
+    public async Task RunAsOwnerAsync(Guid sessionId, int spaceId, int ownerUserId, byte[] admittedDataVersion, CancellationToken ct)
     {
-        var rejection = await RunCapturingRejectionAsync(sessionId, spaceId, ownerUserId, ct).ConfigureAwait(false);
+        var rejection = await RunCapturingRejectionAsync(sessionId, spaceId, ownerUserId, admittedDataVersion, ct).ConfigureAwait(false);
 
         if (rejection == null) return;
 
         await RecordRejectionAsync(sessionId, spaceId, ownerUserId, rejection).ConfigureAwait(false);
     }
 
-    private async Task<OctopusImportDiagnosticDto> RunCapturingRejectionAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct)
+    private async Task<OctopusImportDiagnosticDto> RunCapturingRejectionAsync(Guid sessionId, int spaceId, int ownerUserId, byte[] admittedDataVersion, CancellationToken ct)
     {
         try
         {
             await using var scope = BeginOwnerScope(ownerUserId);
 
-            var outcome = await scope.Resolve<IOctopusImportConfirmationRunner>().RunAsync(sessionId, spaceId, ownerUserId, ct).ConfigureAwait(false);
+            var outcome = await scope.Resolve<IOctopusImportConfirmationRunner>().RunAsync(sessionId, spaceId, ownerUserId, admittedDataVersion, ct).ConfigureAwait(false);
 
             return outcome.Rejection;
         }

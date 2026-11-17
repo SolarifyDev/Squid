@@ -26,7 +26,7 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_RunsTheRunnerInAScopeActingAsTheOwner_NotTheInternalUser()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Succeeded)));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Succeeded)));
 
         await RunJobAsync(sessionId);
 
@@ -34,6 +34,22 @@ public class OctopusImportConfirmationJobTests
         user.Id.ShouldBe(OwnerUserId);
         user.IsInternal.ShouldBeFalse("the owner's permissions must be checked, exactly as in a synchronous confirmation");
         _sessions.Verify(s => s.RecordResultAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<OctopusImportSessionState>(), It.IsAny<OctopusImportSessionResultDto>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // The data version admitted when Import was pressed travels with the job, so a job requeued after its server died imports nothing
+    // the user did not confirm; a job queued by an older server carries none and runs as before.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsOwner_PassesTheAdmittedDataVersionToTheRunner(bool versioned)
+    {
+        var sessionId = Guid.NewGuid();
+        byte[] admitted = versioned ? [1, 2, 3] : null;
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Succeeded)));
+
+        await RunJobAsync(sessionId, admitted);
+
+        _runner.Verify(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, admitted, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Theory]
@@ -44,7 +60,7 @@ public class OctopusImportConfirmationJobTests
     {
         var sessionId = Guid.NewGuid();
         var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportPreviewDiagnosticCodes.ExportPasswordUnavailable, Message = "password unreadable" };
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, currentState));
 
         await RunJobAsync(sessionId);
@@ -60,7 +76,7 @@ public class OctopusImportConfirmationJobTests
     {
         var sessionId = Guid.NewGuid();
         var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded, Message = "validated again" };
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -72,7 +88,7 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_RunnerThrowsBeforeTheImport_EndsTheSessionAsBackgroundFailed()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new UnauthorizedAccessException("permission denied"));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ThrowsAsync(new UnauthorizedAccessException("permission denied"));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -86,7 +102,7 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_SessionReachedMaxAge_EndsTheSessionExpiredWithTheMaxAgeReason()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusImportSessionExpiredException(sessionId, DateTimeOffset.UtcNow, TimeSpan.FromHours(168)));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ThrowsAsync(new OctopusImportSessionExpiredException(sessionId, DateTimeOffset.UtcNow, TimeSpan.FromHours(168)));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -100,7 +116,7 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_RunnerThrowsWithASecretInTheMessage_StoredRedacted()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("connect failed: Password=hunter2 Host=db"));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("connect failed: Password=hunter2 Host=db"));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -114,7 +130,7 @@ public class OctopusImportConfirmationJobTests
     {
         var sessionId = Guid.NewGuid();
         var rejection = new OctopusImportDiagnosticDto { Severity = OctopusImportCompatibilitySeverity.Blocker, Code = OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable, Message = "rolled back" };
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportConfirmationOutcome(Session(sessionId, OctopusImportSessionState.Validated), rejection));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -128,7 +144,7 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_TransientPreImportFailure_RecordsNotStartedAndStaysValidated()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new Npgsql.PostgresException("Password=hunter2", "FATAL", "FATAL", "57P01"));
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ThrowsAsync(new Npgsql.PostgresException("Password=hunter2", "FATAL", "FATAL", "57P01"));
         _sessions.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, OctopusImportSessionState.Validated));
 
         await RunJobAsync(sessionId);
@@ -141,14 +157,14 @@ public class OctopusImportConfirmationJobTests
     public async Task RunAsOwner_Cancelled_PropagatesAndLeavesTheSessionAlone()
     {
         var sessionId = Guid.NewGuid();
-        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
+        _runner.Setup(r => r.RunAsync(sessionId, SpaceId, OwnerUserId, It.IsAny<byte[]>(), It.IsAny<CancellationToken>())).ThrowsAsync(new OperationCanceledException());
 
         await Should.ThrowAsync<OperationCanceledException>(() => RunJobAsync(sessionId));
 
         _sessions.VerifyNoOtherCalls();
     }
 
-    private async Task RunJobAsync(Guid sessionId)
+    private async Task RunJobAsync(Guid sessionId, byte[] admittedDataVersion = null)
     {
         var builder = new ContainerBuilder();
         builder.RegisterInstance<ICurrentUser>(new InternalUser());
@@ -158,7 +174,10 @@ public class OctopusImportConfirmationJobTests
         await using var container = builder.Build();
         await using var jobScope = container.BeginLifetimeScope();
 
-        await new OctopusImportConfirmationJob(jobScope).RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, CancellationToken.None);
+        var job = new OctopusImportConfirmationJob(jobScope);
+
+        if (admittedDataVersion == null) await job.RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, CancellationToken.None);
+        else await job.RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, admittedDataVersion, CancellationToken.None);
     }
 
     private static OctopusImportSessionDto Session(Guid sessionId, OctopusImportSessionState state) => new() { SessionId = sessionId, DestinationSpaceId = SpaceId, State = state };

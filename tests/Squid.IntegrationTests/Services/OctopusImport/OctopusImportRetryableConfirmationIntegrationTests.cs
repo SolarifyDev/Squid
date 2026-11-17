@@ -116,6 +116,41 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
         });
     }
 
+    // A rolled-back attempt's failure describes the plan it tried: once the plan is validated again or the selection changes, the
+    // status reports the new plan's state, never "rolled back, import again" for a plan nobody tried.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PlanReplacedAfterRollback_StatusNoLongerReportsTheOldFailure(bool revalidate)
+    {
+        await WithArchiveAsync(async (archivePath, _) =>
+        {
+            var sessionId = await ValidateAsync(archivePath);
+            await InjectFaultAsync("RAISE EXCEPTION 'injected bug' USING ERRCODE = 'P0001'", times: int.MaxValue);
+            (await ConfirmAsync(sessionId)).Data.Session.LastConfirmationFailure.ShouldNotBeNull();
+
+            if (revalidate) await RevalidateAsync(sessionId);
+            else await Run<IOctopusImportSessionService>(async s => await s.UpdateProjectSelectionAsync(sessionId, SpaceId, null, (await StoredAsync(sessionId)).DataVersion));
+
+            var status = await StatusAsync(sessionId);
+            status.Session.State.ShouldBe(OctopusImportSessionState.Validated);
+            status.Session.LastConfirmationFailure.ShouldBeNull("the failure belonged to the replaced plan");
+            status.BlockerSummary.BlockingReasons.ShouldBeEmpty("no blocker may come from the replaced plan's rolled-back attempt");
+            (await StoredAsync(sessionId)).LastConfirmationFailureJson.ShouldBeNull();
+        });
+    }
+
+    // A new attempt holds the session: the previous attempt's failure is history, not the state of the session.
+    [Fact]
+    public async Task Admission_ForgetsThePreviousAttemptsFailure()
+    {
+        var (sessionId, _) = await SeedImportingAsync(null, state: OctopusImportSessionState.Validated, failureJson: OctopusImportSessionService.SerializeFailure(new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack }));
+
+        (await Run<IOctopusImportSessionService, bool>(s => s.TryStartConfirmationAsync(sessionId, SpaceId, Guid.NewGuid(), null))).ShouldBeTrue();
+
+        (await StoredAsync(sessionId)).LastConfirmationFailureJson.ShouldBeNull();
+    }
+
     // ── Heartbeat ──────────────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -123,13 +158,13 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
     {
         var (sessionId, attemptId) = await SeedImportingAsync(DateTimeOffset.UtcNow.AddMinutes(-1));
         var before = await StoredAsync(sessionId);
-        var beat = DateTimeOffset.UtcNow;
+        var databaseBefore = await DatabaseNowAsync();
 
-        (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId, beat))).ShouldBe(1);
-        (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, Guid.NewGuid(), beat))).ShouldBe(0, "another attempt's beat never touches the session");
+        (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId))).ShouldBe(1);
+        (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, Guid.NewGuid()))).ShouldBe(0, "another attempt's beat never touches the session");
 
         var after = await StoredAsync(sessionId);
-        after.ImportHeartbeatAt.ShouldNotBeNull().ShouldBe(beat, TimeSpan.FromMilliseconds(1));
+        after.ImportHeartbeatAt.ShouldNotBeNull().ShouldBeInRange(databaseBefore, await DatabaseNowAsync(), "stamped by the database clock, the one the recovery sweep measures it against");
         after.DataVersion.ShouldBe(before.DataVersion);
         after.LastModifiedDate.ShouldBe(before.LastModifiedDate);
         after.State.ShouldBe(OctopusImportSessionState.Importing.ToString());
@@ -141,7 +176,7 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
     public async Task Heartbeat_VisibleWhileImportTransactionOpen_AndFinalSettleStillCommits()
     {
         var (sessionId, attemptId) = await SeedImportingAsync(DateTimeOffset.UtcNow.AddMinutes(-1));
-        var beat = DateTimeOffset.UtcNow;
+        var databaseBefore = await DatabaseNowAsync();
 
         await Run<IOctopusImportTransactionExecutor, IOctopusImportSessionService>(async (executor, sessions) =>
         {
@@ -149,14 +184,38 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
             {
                 await sessions.GetSessionAsync(sessionId, SpaceId, ct);
 
-                (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId, beat))).ShouldBe(1);
-                (await StoredAsync(sessionId)).ImportHeartbeatAt.ShouldNotBeNull().ShouldBe(beat, TimeSpan.FromMilliseconds(1));
+                (await Run<IOctopusImportSessionDataProvider, int>(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId))).ShouldBe(1);
+                (await StoredAsync(sessionId)).ImportHeartbeatAt.ShouldNotBeNull().ShouldBeGreaterThanOrEqualTo(databaseBefore);
 
                 return await sessions.SettleConfirmationAsync(sessionId, SpaceId, attemptId, OctopusImportSessionState.Succeeded, new OctopusImportSessionResultDto(), ct);
             });
         });
 
         (await StoredAsync(sessionId)).State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
+    }
+
+    // The orchestrator takes the heartbeat as an optional dependency: only the real container proves it is registered and injected, and
+    // without it every import longer than the stale threshold would be recovered mid-flight and rolled back at its settle.
+    [Fact]
+    public async Task Container_RegistersTheHeartbeat_AndARealConfirmationBeatsForItsAttempt()
+    {
+        (await Run<IOctopusImportConfirmationHeartbeat, Type>(heartbeat => Task.FromResult(heartbeat.GetType()))).ShouldBe(typeof(OctopusImportConfirmationHeartbeat));
+
+        await WithArchiveAsync(async (archivePath, _) =>
+        {
+            var sessionId = await ValidateAsync(archivePath);
+            var recording = new RecordingHeartbeat();
+
+            var confirm = await Run<IMediator, Squid.Message.Commands.OctopusImport.ConfirmOctopusImportResponse>(mediator => OctopusImportHandlerFlow.ConfirmAsync(mediator, SpaceId, sessionId), builder =>
+            {
+                builder.RegisterInstance(AllowAllAuthorization()).As<IAuthorizationService>();
+                builder.RegisterInstance(recording).As<IOctopusImportConfirmationHeartbeat>();
+            });
+
+            confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: confirm.Msg);
+            recording.Started.ShouldHaveSingleItem().SessionId.ShouldBe(sessionId);
+            recording.Disposed.ShouldBe(1, "the beat stops when the confirmation ends");
+        });
     }
 
     [Fact]
@@ -339,10 +398,10 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
 
     private Task<long> FaultsRaisedAsync() => Run<SquidDbContext, long>(db => db.Database.SqlQueryRaw<long>("SELECT last_value AS \"Value\" FROM it_injected_fault_seq").SingleAsync());
 
-    private async Task<(Guid SessionId, Guid AttemptId)> SeedImportingAsync(DateTimeOffset? heartbeat, DateTimeOffset? stateChangedAt = null, bool legacy = false, OctopusImportSessionState state = OctopusImportSessionState.Importing)
+    private async Task<(Guid SessionId, Guid AttemptId)> SeedImportingAsync(DateTimeOffset? heartbeat, DateTimeOffset? stateChangedAt = null, bool legacy = false, OctopusImportSessionState state = OctopusImportSessionState.Importing, string failureJson = null)
     {
         var (sessionId, attemptId) = (Guid.NewGuid(), Guid.NewGuid());
-        var session = new OctopusImportSession { SessionId = sessionId, DestinationSpaceId = SpaceId, OwnerUserId = CurrentUsers.InternalUser.Id, State = state.ToString(), SourceSummaryJson = "{}", DataVersion = Guid.NewGuid().ToByteArray(), ExpiresAt = DateTimeOffset.UtcNow.AddHours(1), LastStateChangedAt = stateChangedAt ?? DateTimeOffset.UtcNow, ProtectedExportPassword = OctopusImportSessionStateMachine.IsTerminal(state) ? null : "SQUID_ENCRYPTED_V2:retained", ConfirmationAttemptId = legacy ? null : attemptId, ImportHeartbeatAt = heartbeat };
+        var session = new OctopusImportSession { SessionId = sessionId, DestinationSpaceId = SpaceId, OwnerUserId = CurrentUsers.InternalUser.Id, State = state.ToString(), SourceSummaryJson = "{}", DataVersion = Guid.NewGuid().ToByteArray(), ExpiresAt = DateTimeOffset.UtcNow.AddHours(1), LastStateChangedAt = stateChangedAt ?? DateTimeOffset.UtcNow, ProtectedExportPassword = OctopusImportSessionStateMachine.IsTerminal(state) ? null : "SQUID_ENCRYPTED_V2:retained", ConfirmationAttemptId = legacy ? null : attemptId, ImportHeartbeatAt = heartbeat, LastConfirmationFailureJson = failureJson };
 
         await Run<SquidDbContext>(async db =>
         {
@@ -351,6 +410,41 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
         });
 
         return (sessionId, attemptId);
+    }
+
+    private Task RevalidateAsync(Guid sessionId) => Run<IMediator>(async mediator =>
+    {
+        var preview = await OctopusImportHandlerFlow.PreviewAsync(mediator, SpaceId, sessionId);
+        var validate = await OctopusImportHandlerFlow.ValidateAsync(mediator, SpaceId, sessionId, preview.Data.PreviewPlan);
+        validate.Code.ShouldBe(HttpStatusCode.OK, customMessage: validate.Msg);
+    });
+
+    private async Task<Squid.Message.Requests.OctopusImport.GetOctopusImportStatusResponseData> StatusAsync(Guid sessionId)
+        => (await Run<IMediator, Squid.Message.Requests.OctopusImport.GetOctopusImportStatusResponse>(mediator => mediator.RequestAsync<Squid.Message.Requests.OctopusImport.GetOctopusImportStatusRequest, Squid.Message.Requests.OctopusImport.GetOctopusImportStatusResponse>(new Squid.Message.Requests.OctopusImport.GetOctopusImportStatusRequest { SpaceId = SpaceId, SessionId = sessionId }), builder => builder.RegisterInstance(AllowAllAuthorization()).As<IAuthorizationService>())).Data;
+
+    private Task<DateTimeOffset> DatabaseNowAsync() => Run<SquidDbContext, DateTimeOffset>(db => db.Database.SqlQueryRaw<DateTimeOffset>("SELECT clock_timestamp() AS \"Value\"").SingleAsync());
+
+    private sealed class RecordingHeartbeat : IOctopusImportConfirmationHeartbeat
+    {
+        public List<(Guid SessionId, Guid AttemptId)> Started { get; } = [];
+        public int Disposed { get; private set; }
+
+        public IAsyncDisposable Start(Guid sessionId, Guid attemptId)
+        {
+            Started.Add((sessionId, attemptId));
+
+            return new Handle(this);
+        }
+
+        private sealed class Handle(RecordingHeartbeat owner) : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync()
+            {
+                owner.Disposed++;
+
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 
     private Task<int> CountAsync<T>(System.Linq.Expressions.Expression<Func<T, bool>> predicate) where T : class => Run<SquidDbContext, int>(db => db.Set<T>().CountAsync(predicate));

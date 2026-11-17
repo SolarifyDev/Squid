@@ -333,7 +333,7 @@ public class ConfirmOctopusImportCommandHandlerTests
 
         var job = new Mock<IOctopusImportConfirmationJob>();
         await queued.Compile()(job.Object);
-        job.Verify(j => j.RunAsOwnerAsync(sessionId, 7, 42, CancellationToken.None), Times.Once);
+        job.Verify(j => j.RunAsOwnerAsync(sessionId, 7, 42, It.IsAny<byte[]>(), CancellationToken.None), Times.Once);
     }
 
     [Theory]

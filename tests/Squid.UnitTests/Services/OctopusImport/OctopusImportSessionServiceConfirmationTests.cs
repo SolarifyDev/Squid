@@ -88,6 +88,22 @@ public class OctopusImportSessionServiceConfirmationTests
         (dto.LastConfirmationFailure != null).ShouldBe(expected);
     }
 
+    // A plan or selection replaced after a failed attempt is a plan nobody tried: the older attempt's failure must not describe it.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ReplacingThePlanOrSelection_ForgetsTheLastConfirmationFailure(bool replacePlan)
+    {
+        var session = Session(OctopusImportSessionState.Validated, null);
+        session.LastConfirmationFailureJson = OctopusImportSessionService.SerializeFailure(new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack });
+        _dataProvider.Setup(p => p.GetSessionAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var dto = replacePlan ? await _service.ReplaceValidatedPlanAsync(session.SessionId, 7, null) : await _service.UpdateProjectSelectionAsync(session.SessionId, 7, ["Projects-1"], session.DataVersion);
+
+        dto.LastConfirmationFailure.ShouldBeNull();
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.Is<OctopusImportSession>(s => s.LastConfirmationFailureJson == null), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task RecordConfirmationNotStarted_WritesOnlyTheFailure()
     {

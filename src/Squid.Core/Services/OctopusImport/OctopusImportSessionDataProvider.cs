@@ -50,8 +50,11 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// </summary>
     Task<bool> TryStartConfirmationAsync(OctopusImportConfirmationAdmission admission, CancellationToken ct = default);
 
-    /// <summary>Refreshes only the heartbeat of the attempt that still holds the session: no data version, no modification date.</summary>
-    Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, DateTimeOffset now, CancellationToken ct = default);
+    /// <summary>
+    /// Refreshes only the heartbeat of the attempt that still holds the session (no data version, no modification date), stamped by the
+    /// database clock: the recovery sweep measures its age on that same clock, so the servers' clocks never have to agree.
+    /// </summary>
+    Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
 
     /// <summary>Whether <paramref name="attemptId"/> still holds the session as Importing (read without tracking, outside any transaction it is not in).</summary>
     Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
@@ -103,9 +106,9 @@ public sealed record OctopusImportConfirmationAdmission(Guid SessionId, int Owne
 /// <summary>An Importing session whose heartbeat stopped; <see cref="AttemptId"/> is null for one started by an older server.</summary>
 public sealed record OctopusImportInterruptedConfirmation(Guid SessionId, Guid? AttemptId);
 
-/// <param name="StaleBefore">A heartbeat at or before this is stale.</param>
+/// <param name="HeartbeatStale">A heartbeat at least this old, by the database clock that stamped it, is stale.</param>
 /// <param name="LegacyStaleBefore">A session with no heartbeat (started by an older server) is stale once its state changed at or before this.</param>
-public sealed record OctopusImportInterruptedConfirmationCutoffs(DateTimeOffset StaleBefore, DateTimeOffset LegacyStaleBefore);
+public sealed record OctopusImportInterruptedConfirmationCutoffs(TimeSpan HeartbeatStale, DateTimeOffset LegacyStaleBefore);
 
 public sealed record OctopusImportTemporaryUploadCleanupCandidate(
     Guid SessionId,
@@ -189,6 +192,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.ExpiresAt, session.ExpiresAt)
                 .SetProperty(s => s.CompletedAt, session.CompletedAt)
                 .SetProperty(s => s.LastStateChangedAt, session.LastStateChangedAt)
+                .SetProperty(s => s.LastConfirmationFailureJson, session.LastConfirmationFailureJson)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.DataVersion, dataVersion),
             ct).ConfigureAwait(false);
@@ -281,14 +285,16 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, (DateTimeOffset?)null)
                 .SetProperty(s => s.ConfirmationAttemptId, admission.AttemptId)
-                .SetProperty(s => s.ImportHeartbeatAt, now),
+                .SetProperty(s => s.LastConfirmationFailureJson, (string)null)
+                .SetProperty(s => s.ImportHeartbeatAt, s => DateTimeOffset.UtcNow),
             ct).ConfigureAwait(false);
 
         return rowsAffected == 1;
     }
 
-    public Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, DateTimeOffset now, CancellationToken ct = default)
-        => _repository.ExecuteUpdateAsync<OctopusImportSession>(HeldBy(sessionId, attemptId), setters => setters.SetProperty(s => s.ImportHeartbeatAt, now), ct);
+    // DateTimeOffset.UtcNow inside the query is translated to the database's now(), never sent as this server's time.
+    public Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
+        => _repository.ExecuteUpdateAsync<OctopusImportSession>(HeldBy(sessionId, attemptId), setters => setters.SetProperty(s => s.ImportHeartbeatAt, s => DateTimeOffset.UtcNow), ct);
 
     public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
         => _repository.QueryNoTracking(HeldBy(sessionId, attemptId)).AnyAsync(ct);
@@ -329,9 +335,11 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     private static Expression<Func<OctopusImportSession, bool>> Interrupted(OctopusImportInterruptedConfirmationCutoffs cutoffs)
     {
         var importing = OctopusImportSessionState.Importing.ToString();
-        var (staleBefore, legacyStaleBefore) = (cutoffs.StaleBefore, cutoffs.LegacyStaleBefore);
+        var (heartbeatStale, legacyStaleBefore) = (cutoffs.HeartbeatStale, cutoffs.LegacyStaleBefore);
 
-        return s => s.State == importing && ((s.ImportHeartbeatAt != null && s.ImportHeartbeatAt <= staleBefore) || (s.ImportHeartbeatAt == null && s.LastStateChangedAt <= legacyStaleBefore));
+        // The heartbeat's age on the database clock that stamped it (now() in the query), so a sweeping server whose clock runs ahead of
+        // the importing server's never mistakes a live import for a dead one.
+        return s => s.State == importing && ((s.ImportHeartbeatAt != null && s.ImportHeartbeatAt <= DateTimeOffset.UtcNow - heartbeatStale) || (s.ImportHeartbeatAt == null && s.LastStateChangedAt <= legacyStaleBefore));
     }
 
     // Validated again under a new data version (a plan read before is not imported in its place), the password kept, the attempt released.

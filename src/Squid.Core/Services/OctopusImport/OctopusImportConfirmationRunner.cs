@@ -11,9 +11,11 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
 {
     private RunContext _ctx;
 
-    public async Task<OctopusImportConfirmationOutcome> RunAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct = default)
+    public Task<OctopusImportConfirmationOutcome> RunAsync(Guid sessionId, int spaceId, int ownerUserId, CancellationToken ct = default) => RunAsync(sessionId, spaceId, ownerUserId, null, ct);
+
+    public async Task<OctopusImportConfirmationOutcome> RunAsync(Guid sessionId, int spaceId, int ownerUserId, byte[] admittedDataVersion, CancellationToken ct)
     {
-        _ctx = new RunContext(sessionId, spaceId, ownerUserId);
+        _ctx = new RunContext(sessionId, spaceId, ownerUserId, admittedDataVersion);
 
         try
         {
@@ -91,12 +93,13 @@ public sealed partial class OctopusImportConfirmationRunner(IOctopusImportSessio
         return $"The import was rolled back and nothing was imported{(string.IsNullOrWhiteSpace(cause) ? "." : $": {cause}")} Import again to retry the same plan.";
     }
 
-    // The job reopens a scope as the owner: Hangfire scopes run as the internal user, which owns no import session.
+    // The job reopens a scope as the owner: Hangfire scopes run as the internal user, which owns no import session. It carries the data
+    // version confirmed here, so a job requeued after its server died never imports a plan validated after this one.
     private void EnqueueBackgroundRun()
     {
-        var (sessionId, spaceId, ownerUserId) = (_ctx.SessionId, _ctx.SpaceId, _ctx.OwnerUserId);
+        var (sessionId, spaceId, ownerUserId, admittedDataVersion) = (_ctx.SessionId, _ctx.SpaceId, _ctx.OwnerUserId, _ctx.Session.DataVersion);
 
-        backgroundJobClient.Enqueue<IOctopusImportConfirmationJob>(job => job.RunAsOwnerAsync(sessionId, spaceId, ownerUserId, CancellationToken.None));
+        backgroundJobClient.Enqueue<IOctopusImportConfirmationJob>(job => job.RunAsOwnerAsync(sessionId, spaceId, ownerUserId, admittedDataVersion, CancellationToken.None));
     }
 
     private OctopusImportConfirmationOutcome Rejected(OctopusImportConfirmationRejectedException ex)

@@ -22,13 +22,14 @@ public class OctopusImportConfirmationRecoveryServiceTests
         _settings.SetupGet(s => s.CleanupBatchSize).Returns(25);
     }
 
-    // A heartbeat is stale after the stale threshold; only a session with no heartbeat at all (an older server's) gets the long grace.
+    // A heartbeat is stale after the stale threshold, measured by the database clock that stamped it (never this server's clock, which
+    // may run ahead of the importing server's); only a session with no heartbeat at all (an older server's) gets the long grace.
     [Fact]
-    public void Cutoffs_StaleFromTheHeartbeatThreshold_LegacyFromTheGracePeriod()
+    public void Cutoffs_StaleIsAnAgeOnTheDatabaseClock_LegacyFromTheGracePeriod()
     {
         var cutoffs = Service().Cutoffs(Now);
 
-        cutoffs.StaleBefore.ShouldBe(Now.AddMinutes(-5));
+        cutoffs.HeartbeatStale.ShouldBe(TimeSpan.FromMinutes(5));
         cutoffs.LegacyStaleBefore.ShouldBe(Now.AddHours(-6));
     }
 
@@ -44,7 +45,7 @@ public class OctopusImportConfirmationRecoveryServiceTests
         var recovered = await Service().RecoverInterruptedAsync();
 
         recovered.ShouldBe(2);
-        var expectedCutoffs = new OctopusImportInterruptedConfirmationCutoffs(Now.AddMinutes(-5), Now.AddHours(-6));
+        var expectedCutoffs = new OctopusImportInterruptedConfirmationCutoffs(TimeSpan.FromMinutes(5), Now.AddHours(-6));
         _dataProvider.Verify(p => p.GetInterruptedConfirmationsAsync(expectedCutoffs, 25, It.IsAny<CancellationToken>()), Times.Once);
         _dataProvider.Verify(p => p.RecoverInterruptedConfirmationAsync(withHeartbeat, expectedCutoffs, It.IsAny<string>(), Now, It.IsAny<CancellationToken>()), Times.Once);
         _dataProvider.Verify(p => p.RecoverInterruptedConfirmationAsync(legacy, expectedCutoffs, It.IsAny<string>(), Now, It.IsAny<CancellationToken>()), Times.Once);

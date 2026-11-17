@@ -189,7 +189,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
 
             var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
             var now = DateTimeOffset.UtcNow;
-            var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(now.AddMinutes(-5), now.AddHours(-6));
+            var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(TimeSpan.FromMinutes(5), now.AddHours(-6));
             var changed = recovered
                 ? await provider.RecoverInterruptedConfirmationAsync(new OctopusImportInterruptedConfirmation(sessionId, attemptId), cutoffs, "{}", now)
                 : await provider.ReturnConfirmationToValidatedAsync(sessionId, attemptId, "{}", now);

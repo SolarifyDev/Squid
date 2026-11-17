@@ -4,8 +4,9 @@ namespace Squid.Core.Persistence.Db;
 
 /// <summary>
 /// Tells a database failure that may succeed when the same work runs again (serialization failure, deadlock, lost connection, server
-/// restarting, command timeout) from one that will fail again. The SQLSTATE list is explicit, not Npgsql's own <c>IsTransient</c>, so a
-/// driver upgrade cannot silently change what a caller retries; it is pinned by a test.
+/// restarting, command timeout) from one that will fail again. The server-side SQLSTATE list is explicit, not Npgsql's own
+/// <c>IsTransient</c>, so a driver upgrade cannot silently change which server errors a caller retries; it is pinned by a test. A
+/// client-side <c>NpgsqlException</c> (lost connection, I/O, timeout) has no SQLSTATE and falls back to Npgsql's <c>IsTransient</c>.
 /// </summary>
 public static class PostgresTransientFailureClassifier
 {

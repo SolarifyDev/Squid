@@ -386,7 +386,7 @@ public class OctopusImportTransactionIntegrationTests : TestBase
             await db.SaveChangesAsync();
         });
 
-        var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(now.AddMinutes(-5), now.AddHours(-6));
+        var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(TimeSpan.FromMinutes(5), now.AddHours(-6));
 
         await Run<IOctopusImportSessionDataProvider>(async provider =>
         {

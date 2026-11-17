@@ -14,7 +14,7 @@ public class OctopusImportConfirmationHeartbeatTests
 
     public OctopusImportConfirmationHeartbeatTests()
     {
-        _dataProvider.Setup(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).ReturnsAsync(1).Callback(() => _touched.Release());
+        _dataProvider.Setup(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(1).Callback(() => _touched.Release());
     }
 
     // Each beat resolves the data provider in a scope of its own: its own DbContext and connection, never the import transaction's.
@@ -29,7 +29,7 @@ public class OctopusImportConfirmationHeartbeatTests
             for (var i = 0; i < 3; i++) await TickAndWaitAsync();
         }
 
-        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId, _time.GetUtcNow(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(sessionId, attemptId, It.IsAny<CancellationToken>()), Times.Exactly(3));
         _scopes.ShouldBe(3);
         _time.Periods.ShouldContain(Options.HeartbeatInterval);
     }
@@ -45,14 +45,14 @@ public class OctopusImportConfirmationHeartbeatTests
         _time.Tick();
 
         (await _touched.WaitAsync(TimeSpan.FromMilliseconds(200))).ShouldBeFalse("no beat after the handle is disposed");
-        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // A failed beat (the database blipped) must not stop the import, nor the beats after it.
     [Fact]
     public async Task BeatFailure_LoggedAndLoopContinues()
     {
-        _dataProvider.SetupSequence(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+        _dataProvider.SetupSequence(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .Returns(() => { _touched.Release(); return Task.FromException<int>(new InvalidOperationException("db down")); })
             .Returns(() => { _touched.Release(); return Task.FromResult(1); });
         await using var container = Container();
@@ -63,7 +63,7 @@ public class OctopusImportConfirmationHeartbeatTests
             await TickAndWaitAsync();
         }
 
-        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        _dataProvider.Verify(p => p.TouchConfirmationHeartbeatAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private async Task TickAndWaitAsync()

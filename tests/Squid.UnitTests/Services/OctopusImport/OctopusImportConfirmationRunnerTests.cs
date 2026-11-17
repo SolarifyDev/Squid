@@ -125,6 +125,29 @@ public class OctopusImportConfirmationRunnerTests
         if (rejected) outcome.Rejection.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
     }
 
+    // A queued run imports only the plan that was Validated when Import was pressed: a job requeued after its server died, run after
+    // the session was recovered and validated again, finds another data version and imports nothing (the newer plan was never confirmed).
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Runner_QueuedRun_ImportsOnlyThePlanAdmittedAtEnqueue(bool sameVersion, bool superseded)
+    {
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var session = ValidatedSession(sessionId, uploadPath);
+        session.DataVersion = [1, 2, 3];
+
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _planningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, SpaceId, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot());
+        _orchestrator.Setup(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Succeeded });
+
+        var outcome = await CreateRunner().RunAsync(sessionId, SpaceId, OwnerUserId, sameVersion ? [1, 2, 3] : [9, 9, 9], CancellationToken.None);
+
+        outcome.IsRejected.ShouldBe(superseded);
+        if (superseded) outcome.Rejection.Code.ShouldBe(OctopusImportConfirmationDiagnosticCodes.ConfirmationSuperseded);
+        _orchestrator.Verify(o => o.ConfirmAsync(It.IsAny<OctopusImportConfirmationRequest>(), It.IsAny<CancellationToken>()), superseded ? Times.Never() : Times.Once());
+    }
+
     // Validated again with THIS attempt's failure: the import rolled back and can be imported again (retryable). Validated with another
     // attempt's failure, or none, means the plan read here was replaced before it was admitted (superseded).
     [Theory]
@@ -232,7 +255,9 @@ public class OctopusImportConfirmationRunnerTests
         var sessionId = Guid.NewGuid();
         System.Linq.Expressions.Expression<Func<IOctopusImportConfirmationJob, Task>> queued = null;
 
-        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(ValidatedSession(sessionId, CreateTempFile()));
+        var session = ValidatedSession(sessionId, CreateTempFile());
+        session.DataVersion = [4, 5, 6];
+        _sessionDataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, OwnerUserId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
         _sessionService.Setup(s => s.GetSessionAsync(sessionId, SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, State = OctopusImportSessionState.Validated });
         _backgroundJobClient
             .Setup(c => c.Enqueue(It.IsAny<System.Linq.Expressions.Expression<Func<IOctopusImportConfirmationJob, Task>>>(), It.IsAny<string>()))
@@ -247,7 +272,7 @@ public class OctopusImportConfirmationRunnerTests
 
         var job = new Mock<IOctopusImportConfirmationJob>();
         await queued.Compile()(job.Object);
-        job.Verify(j => j.RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, CancellationToken.None), Times.Once);
+        job.Verify(j => j.RunAsOwnerAsync(sessionId, SpaceId, OwnerUserId, It.Is<byte[]>(v => v.SequenceEqual(new byte[] { 4, 5, 6 })), CancellationToken.None), Times.Once);
     }
 
     // Past its maximum age the session takes no more work: both confirmation paths refuse with SessionExpired (409) before planning,

@@ -6,12 +6,13 @@ namespace Squid.Core.Services.OctopusImport;
 
 public sealed partial class OctopusImportConfirmationRunner
 {
-    private sealed class RunContext(Guid sessionId, int spaceId, int ownerUserId)
+    private sealed class RunContext(Guid sessionId, int spaceId, int ownerUserId, byte[] admittedDataVersion = null)
     {
         // Request
         public Guid SessionId { get; } = sessionId;
         public int SpaceId { get; } = spaceId;
         public int OwnerUserId { get; } = ownerUserId;
+        public byte[] AdmittedDataVersion { get; } = admittedDataVersion;
 
         // Session
         public OctopusImportSession Session { get; set; }
