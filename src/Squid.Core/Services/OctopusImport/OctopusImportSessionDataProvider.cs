@@ -448,13 +448,19 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     }
 
     // An open session is resumable while it lasts; a running import is followed until it ends, whatever its expiry (the sweep never expires it).
+    // An export file whose upload was never registered has nothing to continue (OctopusImportResumeSteps): it is left out here, before
+    // the row cap, so such orphans never crowd out older sessions that can be continued.
     private static Expression<Func<OctopusImportSession, bool>> Resumable(int ownerUserId, int destinationSpaceId, DateTimeOffset now)
     {
         var open = new[] { OctopusImportSessionState.Uploaded, OctopusImportSessionState.Extracted, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated }.Select(state => state.ToString()).ToList();
         var importing = OctopusImportSessionState.Importing.ToString();
+        var uploaded = OctopusImportSessionState.Uploaded.ToString();
 
-        return s => s.OwnerUserId == ownerUserId && s.DestinationSpaceId == destinationSpaceId && ((open.Contains(s.State) && s.ExpiresAt > now && s.TemporaryUploadCleanedAt == null) || s.State == importing);
+        return s => s.OwnerUserId == ownerUserId && s.DestinationSpaceId == destinationSpaceId && ((open.Contains(s.State) && s.ExpiresAt > now && s.TemporaryUploadCleanedAt == null && !(s.State == uploaded && s.TemporaryUploadPath == null && !EF.Functions.JsonContains(s.SourceSummaryJson, ServerSourceSummaryMarker))) || s.State == importing);
     }
+
+    // The jsonb fragment every read from Octopus carries in its source summary (camelCase, as the session service writes it).
+    private static readonly string ServerSourceSummaryMarker = $$"""{"detectedFormat":"{{OctopusImportServerSourceService.ServerSourceFormat}}"}""";
 
     public async Task<IReadOnlyList<OctopusImportTemporaryUploadCleanupCandidate>> GetTemporaryUploadCleanupCandidatesAsync(
         DateTimeOffset now,

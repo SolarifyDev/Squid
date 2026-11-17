@@ -12,6 +12,7 @@ using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
+using Squid.Message.Requests.OctopusImport;
 
 namespace Squid.UnitTests.Controllers;
 
@@ -153,5 +154,23 @@ public class OctopusImportControllerTests
 
         method.GetCustomAttribute<HttpPostAttribute>().ShouldNotBeNull().Template.ShouldBe(template);
         method.GetCustomAttribute<HttpGetAttribute>().ShouldBeNull();
+    }
+
+    // The web client lists sessions with GET {IMPORT_API_ROOT}/sessions (SquidWeb octopusImport.ts): the route is pinned on both sides.
+    [Fact]
+    public async Task SessionsAsync_IsAGetOnTheSessionsRoute_AndDispatchesTheBoundRequest()
+    {
+        var method = typeof(OctopusImportController).GetMethod(nameof(OctopusImportController.SessionsAsync))!;
+        var mediator = new Mock<IMediator>();
+        var request = new ListOctopusImportSessionsRequest { SpaceId = 7 };
+        mediator.Setup(m => m.RequestAsync<ListOctopusImportSessionsRequest, ListOctopusImportSessionsResponse>(request, It.IsAny<CancellationToken>())).ReturnsAsync(new ListOctopusImportSessionsResponse());
+
+        var result = await new OctopusImportController(mediator.Object).SessionsAsync(request, CancellationToken.None);
+
+        typeof(OctopusImportController).GetCustomAttribute<RouteAttribute>().ShouldNotBeNull().Template.ShouldBe("api/octopus-import");
+        method.GetCustomAttribute<HttpGetAttribute>().ShouldNotBeNull().Template.ShouldBe("sessions");
+        method.GetParameters()[0].GetCustomAttribute<FromQueryAttribute>().ShouldNotBeNull();
+        result.ShouldBeOfType<OkObjectResult>();
+        mediator.VerifyAll();
     }
 }

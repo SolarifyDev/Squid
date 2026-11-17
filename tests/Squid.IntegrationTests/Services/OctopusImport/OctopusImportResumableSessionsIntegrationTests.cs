@@ -39,6 +39,29 @@ public class OctopusImportResumableSessionsIntegrationTests : TestBase
         listed.Select(s => s.SessionId).ShouldBe(Enumerable.Reverse(ids).Take(20));
     }
 
+    // An export file whose upload was never registered cannot be continued: it must not use up the twenty rows before older sessions that can.
+    [Fact]
+    public async Task List_NewerExportFilesWithoutAnUpload_DoNotCrowdOutAnOlderResumableSession()
+    {
+        var older = await SeedAsync(OctopusImportSessionState.Previewed, modifiedAgo: TimeSpan.FromHours(2));
+
+        for (var i = 0; i < OctopusImportSessionService.MaxListedSessions; i++)
+            await SeedWithoutUploadAsync(ExportFileSummary, TimeSpan.FromMinutes(60 - i));
+
+        (await ListAsync()).ShouldHaveSingleItem().SessionId.ShouldBe(older);
+    }
+
+    // A read from Octopus with no registered bundle yet still resumes its read (OctopusImportResumeSteps), so the SQL keeps it.
+    [Fact]
+    public async Task List_ServerReadWithoutAnUpload_StillListedToResumeTheRead()
+    {
+        var sessionId = await SeedWithoutUploadAsync(ServerSourceSummary, TimeSpan.FromMinutes(1));
+
+        var listed = (await ListAsync()).ShouldHaveSingleItem();
+        listed.SessionId.ShouldBe(sessionId);
+        listed.ResumeStep.ShouldBe(OctopusImportResumeStep.ResumeRead);
+    }
+
     [Fact]
     public async Task List_AnotherUsersSession_NotListed()
     {
@@ -135,6 +158,18 @@ public class OctopusImportResumableSessionsIntegrationTests : TestBase
         });
 
         if (modifiedAgo != null) await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.LastModifiedDate, now.Subtract(modifiedAgo.Value))));
+
+        return sessionId;
+    }
+
+    private const string ExportFileSummary = """{"fileName":"export.zip","detectedFormat":"OctopusExport"}""";
+    private const string ServerSourceSummary = """{"fileName":"history.zip","detectedFormat":"OctopusServer","historyFetch":{"serverHost":"octopus.example.com","phase":"Catalog"}}""";
+
+    private async Task<Guid> SeedWithoutUploadAsync(string summary, TimeSpan modifiedAgo)
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded, modifiedAgo: modifiedAgo);
+
+        await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.TemporaryUploadPath, (string)null).SetProperty(x => x.SourceSummaryJson, summary)));
 
         return sessionId;
     }
