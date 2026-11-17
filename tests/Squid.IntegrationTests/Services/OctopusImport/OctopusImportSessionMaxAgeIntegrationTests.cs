@@ -155,6 +155,36 @@ public class OctopusImportSessionMaxAgeIntegrationTests : TestBase
         after.SourceSummaryJson.ShouldBe(before.SourceSummaryJson);
     }
 
+    // The cap refuses only what outlives it: a lease ending before the deadline is claimed and stored on the real row.
+    [Fact]
+    public async Task UpdateHistoryFetch_RealRow_ClaimWhoseLeaseEndsBeforeTheCap_StoredWithLease()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded, TimeSpan.FromHours(1));
+        var lease = (await StoredAsync(sessionId)).CreatedDate.AddHours(2).AddMinutes(-30);
+
+        await ClaimAsync(sessionId, lease);
+
+        (await StoredLeaseAsync(sessionId)).ShouldBe(lease);
+    }
+
+    // The boundary is inclusive, as everywhere the cap is checked: a lease ending exactly at the deadline is still claimed. Postgres stores
+    // microseconds, so the stored creation date plus the cap is the deadline the service computes, to the tick.
+    [Fact]
+    public async Task UpdateHistoryFetch_RealRow_LeaseEndingExactlyAtDeadline_Claimed()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Uploaded, TimeSpan.FromHours(1));
+        var deadline = (await StoredAsync(sessionId)).CreatedDate.AddHours(2);
+
+        await ClaimAsync(sessionId, deadline);
+
+        (await StoredLeaseAsync(sessionId)).ShouldBe(deadline);
+    }
+
+    private Task ClaimAsync(Guid sessionId, DateTimeOffset leaseExpiresAt)
+        => Run<IOctopusImportSessionService, OctopusImportSessionDto>(s => s.UpdateHistoryFetchAsync(sessionId, SpaceId, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), LeaseExpiresAt = leaseExpiresAt }, null), TwoHourCap);
+
+    private async Task<DateTimeOffset?> StoredLeaseAsync(Guid sessionId) => OctopusImportSourceSummaries.Parse((await StoredAsync(sessionId)).SourceSummaryJson)?.HistoryFetch?.LeaseExpiresAt;
+
     private static void TwoHourCap(ContainerBuilder builder)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string> { [OctopusImportTemporaryUploadSettings.MaxSessionAgeHoursConfigKey] = "2" }).Build();
