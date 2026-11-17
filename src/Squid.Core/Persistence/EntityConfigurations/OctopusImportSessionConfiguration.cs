@@ -29,6 +29,7 @@ public class OctopusImportSessionConfiguration : IEntityTypeConfiguration<Octopu
         builder.Property(s => s.ConfirmationAttemptId);
         builder.Property(s => s.ImportHeartbeatAt);
         builder.Property(s => s.LastConfirmationFailureJson).HasColumnType("jsonb");
+        builder.Property(s => s.ConfirmationProgressJson).HasColumnType("jsonb");
         builder.Property(s => s.ExpiresAt).IsRequired();
         builder.Property(s => s.LastStateChangedAt).IsRequired();
 

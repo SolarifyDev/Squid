@@ -9,6 +9,7 @@ public class OctopusImportConfirmationResilienceOptionsTests
     [InlineData(OctopusImportConfirmationResilienceOptions.TransientRetriesEnvVar, "SQUID_OCTOPUS_IMPORT_CONFIRM_TRANSIENT_RETRIES")]
     [InlineData(OctopusImportConfirmationResilienceOptions.HeartbeatIntervalSecondsEnvVar, "SQUID_OCTOPUS_IMPORT_CONFIRM_HEARTBEAT_INTERVAL_SECONDS")]
     [InlineData(OctopusImportConfirmationResilienceOptions.HeartbeatStaleSecondsEnvVar, "SQUID_OCTOPUS_IMPORT_CONFIRM_HEARTBEAT_STALE_SECONDS")]
+    [InlineData(OctopusImportConfirmationResilienceOptions.ProgressIntervalMillisecondsEnvVar, "SQUID_OCTOPUS_IMPORT_CONFIRM_PROGRESS_INTERVAL_MS")]
     public void EnvVar_ConstantNamePinned(string actual, string expected)
     {
         actual.ShouldBe(expected);
@@ -37,6 +38,19 @@ public class OctopusImportConfirmationResilienceOptionsTests
         options.MaxAttempts.ShouldBe(expectedRetries + 1);
         options.HeartbeatInterval.ShouldBe(TimeSpan.FromSeconds(expectedIntervalSeconds));
         options.HeartbeatStale.ShouldBe(TimeSpan.FromSeconds(expectedStaleSeconds));
+    }
+
+    [Theory]
+    [InlineData(null, 500)]      // unset: the default
+    [InlineData("abc", 500)]     // unparsable falls back to the default
+    [InlineData("100", 250)]     // below the floor is raised to it: progress never writes more than four times a second
+    [InlineData("2000", 2000)]
+    public void ProgressInterval_DefaultsAndFloor(string configured, int expectedMilliseconds)
+    {
+        var options = OctopusImportConfirmationResilienceOptions.From(name => name == OctopusImportConfirmationResilienceOptions.ProgressIntervalMillisecondsEnvVar ? configured : null);
+
+        options.ProgressInterval.ShouldBe(TimeSpan.FromMilliseconds(expectedMilliseconds));
+        new OctopusImportConfirmationResilienceOptions().ProgressInterval.ShouldBe(TimeSpan.FromMilliseconds(500));
     }
 
     [Theory]

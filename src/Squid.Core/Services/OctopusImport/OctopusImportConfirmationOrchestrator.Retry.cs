@@ -23,6 +23,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator
             OctopusImportSessionResultDto result = null;
             Exception failure;
 
+            _tracker.BeginAttempt(attempt);
+
             try
             {
                 result = BuildInitialResult(request.PreviewPlan);
@@ -126,6 +128,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator
         var failure = BuildFailure(request, result, exception, attempts);
 
         Log.Error(exception, "Octopus import confirmation {SessionId} attempt {AttemptId} rolled back; the session is Validated again and can be imported again ({Reason})", request.SessionId, request.AttemptId, failure.Reason);
+
+        await FlushRolledBackProgressAsync().ConfigureAwait(false);
 
         return await _sessionService.ReturnConfirmationToValidatedAsync(request.SessionId, request.DestinationSpaceId, failure, CancellationToken.None).ConfigureAwait(false);
     }

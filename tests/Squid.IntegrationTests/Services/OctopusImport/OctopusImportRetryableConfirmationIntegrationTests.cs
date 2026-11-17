@@ -16,7 +16,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 /// <c>PostgresException</c>s raised by a trigger on a destination table inside the real import transaction, so the rollback, the
 /// automatic retry, the return to Validated, the heartbeat on its own connection and the recovery sweep all run against real rows.
 /// </summary>
-public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
+public partial class OctopusImportRetryableConfirmationIntegrationTests : TestBase
 {
     private const int SpaceId = 7;
     private const string ExportPassword = "fake-export-password-for-tests";
@@ -339,6 +339,7 @@ public class OctopusImportRetryableConfirmationIntegrationTests : TestBase
         {
             File.Delete(archivePath);
             await DropFaultAsync();
+            await DropProjectInsertGateAsync();
         }
     }
 

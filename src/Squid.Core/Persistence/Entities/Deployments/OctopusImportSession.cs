@@ -42,6 +42,9 @@ public class OctopusImportSession : IEntity<int>, IAuditable
 
     public string LastConfirmationFailureJson { get; set; }
 
+    /// <summary>Live progress of the attempt in <see cref="ConfirmationAttemptId"/>, written on its own connection; never changes <see cref="DataVersion"/>.</summary>
+    public string ConfirmationProgressJson { get; set; }
+
     public DateTimeOffset ExpiresAt { get; set; }
 
     public DateTimeOffset? CompletedAt { get; set; }

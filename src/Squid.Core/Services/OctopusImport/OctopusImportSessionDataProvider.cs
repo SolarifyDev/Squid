@@ -56,6 +56,13 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
     /// </summary>
     Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Writes the live progress of <paramref name="attemptId"/>, on whatever connection the caller's scope holds. Fenced on the attempt only
+    /// (not the state), so the attempt's final snapshot still lands after its own Succeeded or Failed settle; never changes the data version
+    /// or the modification date (the settle's concurrency check and the resumable list's ordering depend on both).
+    /// </summary>
+    Task<int> WriteConfirmationProgressAsync(Guid sessionId, Guid attemptId, string progressJson, CancellationToken ct = default);
+
     /// <summary>Whether <paramref name="attemptId"/> still holds the session as Importing (read without tracking, outside any transaction it is not in).</summary>
     Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default);
 
@@ -295,6 +302,7 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.CompletedAt, (DateTimeOffset?)null)
                 .SetProperty(s => s.ConfirmationAttemptId, admission.AttemptId)
                 .SetProperty(s => s.LastConfirmationFailureJson, (string)null)
+                .SetProperty(s => s.ConfirmationProgressJson, (string)null)
                 .SetProperty(s => s.ImportHeartbeatAt, s => DateTimeOffset.UtcNow),
             ct).ConfigureAwait(false);
 
@@ -304,6 +312,9 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     // DateTimeOffset.UtcNow inside the query is translated to the database's now(), never sent as this server's time.
     public Task<int> TouchConfirmationHeartbeatAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
         => _repository.ExecuteUpdateAsync<OctopusImportSession>(HeldBy(sessionId, attemptId), setters => setters.SetProperty(s => s.ImportHeartbeatAt, s => DateTimeOffset.UtcNow), ct);
+
+    public Task<int> WriteConfirmationProgressAsync(Guid sessionId, Guid attemptId, string progressJson, CancellationToken ct = default)
+        => _repository.ExecuteUpdateAsync<OctopusImportSession>(s => s.SessionId == sessionId && s.ConfirmationAttemptId == attemptId, setters => setters.SetProperty(s => s.ConfirmationProgressJson, progressJson), ct);
 
     public Task<bool> IsConfirmationHeldAsync(Guid sessionId, Guid attemptId, CancellationToken ct = default)
         => _repository.QueryNoTracking(HeldBy(sessionId, attemptId)).AnyAsync(ct);

@@ -85,6 +85,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
     private readonly IOctopusImportConfirmationHeartbeat _heartbeat;
     private readonly TimeProvider _time;
     private readonly OctopusImportConfirmationResilienceOptions _resilience;
+    private readonly IOctopusImportConfirmationProgress _progress;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -113,7 +114,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         IOctopusImportDestinationDataProvider destinationDataProvider = null,
         IOctopusImportConfirmationHeartbeat heartbeat = null,
         TimeProvider time = null,
-        OctopusImportConfirmationResilienceOptions resilience = null)
+        OctopusImportConfirmationResilienceOptions resilience = null,
+        IOctopusImportConfirmationProgress progress = null)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -142,6 +144,7 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         _heartbeat = heartbeat;
         _time = time ?? TimeProvider.System;
         _resilience = resilience ?? OctopusImportConfirmationResilienceOptions.FromEnvironment();
+        _progress = progress;
     }
 
     public async Task<OctopusImportSessionDto> ConfirmAsync(OctopusImportConfirmationRequest request, CancellationToken ct = default)
@@ -157,8 +160,13 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         if (!await TryAdmitAsync(request, ct).ConfigureAwait(false)) return await CurrentAsync(request).ConfigureAwait(false);
 
         await using var beat = StartHeartbeat(request);
+        await using var progress = StartProgress(request);
 
-        return await RunAttemptsAsync(request, ct).ConfigureAwait(false);
+        var session = await RunAttemptsAsync(request, ct).ConfigureAwait(false);
+
+        _tracker.Finish(FinalStageOf(session.State));
+
+        return session;
     }
 
     private static bool IsSettledOrImporting(OctopusImportSessionDto session) => OctopusImportSessionStateMachine.IsTerminal(session.State) || session.State == OctopusImportSessionState.Importing;
@@ -176,6 +184,8 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
     // One attempt: confirmation-time validation, then the import and its Succeeded record in one transaction. Blockers end the session Failed.
     private async Task<OctopusImportSessionDto> RunAttemptAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
     {
+        _tracker.EnterStage(OctopusImportConfirmationStage.Validating);
+
         var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
 
         if (HasBlockers(request, validation, result)) return await SettleAsync(request, OctopusImportSessionState.Failed, result, CancellationToken.None).ConfigureAwait(false);
@@ -190,11 +200,15 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
     private async Task<OctopusImportSessionDto> ImportAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
     {
+        _tracker.EnterStage(OctopusImportConfirmationStage.WaitingForSpaceLock);
+
         var prior = await LockSpaceAndLoadPriorMappingsAsync(request.DestinationSpaceId, ct).ConfigureAwait(false);
 
         await ExecuteAsync(request, result, prior, ct).ConfigureAwait(false);
 
         result.Succeeded = true;
+
+        _tracker.EnterStage(OctopusImportConfirmationStage.Committing);
 
         return await SettleAsync(request, OctopusImportSessionState.Succeeded, result, ct).ConfigureAwait(false);
     }
@@ -234,18 +248,20 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
 
             await LockCreatedLibraryNamesAsync(execution, ct).ConfigureAwait(false);
 
-            foreach (var resource in request.DependencyPlan.OrderedResources)
-            {
-                if (execution.IsAlreadyCompleted(resource))
-                    continue;
+            _tracker.EnterStage(OctopusImportConfirmationStage.Importing);
 
-                await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
-            }
+            foreach (var resource in request.DependencyPlan.OrderedResources)
+                await ExecuteOrderedResourceAsync(execution, resource, ct).ConfigureAwait(false);
 
             foreach (var resource in request.DependencyPlan.OutOfScopeResources)
                 execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
 
+            _tracker.EnterStage(OctopusImportConfirmationStage.FillingSecrets);
+
             await SettleMissingSecretsAsync(execution, ct).ConfigureAwait(false);
+
+            _tracker.EnterStage(OctopusImportConfirmationStage.RecordingSourceMap);
+
             await PersistSourceMapAsync(execution, ct).ConfigureAwait(false);
 
             RecordMissingSensitiveValues(execution);
@@ -256,6 +272,16 @@ public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImpo
         {
             execution.CopyMappingsToResult();
         }
+    }
+
+    // An item an earlier pass already completed still counts, or the run never reaches its total.
+    private async Task ExecuteOrderedResourceAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
+    {
+        _tracker.BeginItem(resource);
+
+        if (!execution.IsAlreadyCompleted(resource)) await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
+
+        _tracker.CompleteItem(resource, execution.OutcomeOf(resource.SourceId));
     }
 
     private async Task ExecuteResourceAsync(

@@ -30,4 +30,10 @@ public class OctopusImportSessionDto
     /// the plan can be imported again as it is.
     /// </summary>
     public OctopusImportConfirmationFailureDto LastConfirmationFailure { get; set; }
+
+    /// <summary>
+    /// Live progress of the running confirmation, or the final progress of the attempt that last ended (succeeded, failed, or rolled
+    /// back with the session Validated again); null when there is none to show.
+    /// </summary>
+    public OctopusImportConfirmationProgressDto ConfirmationProgress { get; set; }
 }

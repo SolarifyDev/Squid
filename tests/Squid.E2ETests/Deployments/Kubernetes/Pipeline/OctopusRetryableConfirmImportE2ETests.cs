@@ -59,6 +59,7 @@ public class OctopusRetryableConfirmImportE2ETests : IClassFixture<OctopusRetrya
             var status = await StatusAsync(sessionId);
             status.Data.Session.LastConfirmationFailure.ShouldNotBeNull("the page reopened after a reload still sees why");
             status.Data.BlockerSummary.HasBlockers.ShouldBeTrue();
+            status.Data.Session.ConfirmationProgress.ShouldNotBeNull("the page shows how far the rolled-back attempt got").ShouldSatisfyAllConditions(p => p.Stage.ShouldBe(OctopusImportConfirmationStage.RolledBack), p => p.Finished.ShouldBeTrue(), p => p.AttemptId.ShouldBe(status.Data.Session.LastConfirmationFailure.AttemptId));
             (await ImportedProjectsAsync()).ShouldBe(0, "nothing was written by the rolled-back attempt");
         }
         finally
@@ -70,6 +71,7 @@ public class OctopusRetryableConfirmImportE2ETests : IClassFixture<OctopusRetrya
 
         again.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: again.Msg);
         again.Data.Session.LastConfirmationFailure.ShouldBeNull();
+        (await StatusAsync(sessionId)).Data.Session.ConfirmationProgress.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.Stage.ShouldBe(OctopusImportConfirmationStage.Succeeded), p => p.Attempt.ShouldBe(1), p => p.ItemsDone.ShouldBe(p.ItemsTotal));
         octopus.Requests.Count.ShouldBe(reads, "importing again uses the staged read, never the Octopus server");
         (await ImportedProjectsAsync()).ShouldBe(1);
     }
@@ -87,6 +89,7 @@ public class OctopusRetryableConfirmImportE2ETests : IClassFixture<OctopusRetrya
             var confirm = await ConfirmAsync(sessionId);
 
             confirm.Data.Session.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: confirm.Msg);
+            (await StatusAsync(sessionId)).Data.Session.ConfirmationProgress.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.Stage.ShouldBe(OctopusImportConfirmationStage.Succeeded), p => p.Attempt.ShouldBe(2, "the transient retry counted again from zero"), p => p.ItemsDone.ShouldBe(p.ItemsTotal));
         }
         finally
         {

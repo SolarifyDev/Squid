@@ -480,8 +480,24 @@ public partial class OctopusImportSessionService : IOctopusImportSessionService
             MaxExpiresAt = OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge),
             CompletedAt = session.CompletedAt,
             LastStateChangedAt = session.LastStateChangedAt,
-            LastConfirmationFailure = RetryableFailure(session)
+            LastConfirmationFailure = RetryableFailure(session),
+            ConfirmationProgress = VisibleProgress(session)
         };
+    }
+
+    // Only the progress of the attempt the session's state is about; redacted like the result it describes.
+    private static OctopusImportConfirmationProgressDto VisibleProgress(OctopusImportSession session)
+    {
+        var progress = Deserialize<OctopusImportConfirmationProgressDto>(session.ConfirmationProgressJson);
+
+        if (progress == null) return null;
+
+        var state = ParseState(session.State);
+        var failureAttemptId = Deserialize<OctopusImportConfirmationFailureDto>(session.LastConfirmationFailureJson)?.AttemptId;
+
+        if (!OctopusImportConfirmationProgresses.Describes(state, session.ConfirmationAttemptId, failureAttemptId, progress.AttemptId)) return null;
+
+        return OctopusImportRedaction.RedactDto(OctopusImportConfirmationProgresses.Settled(progress, state));
     }
 
     // A replaced plan or selection was never tried: the failure of an attempt at the plan before it no longer describes the session.
@@ -510,6 +526,9 @@ public partial class OctopusImportSessionService : IOctopusImportSessionService
 
     /// <summary>A session result in the shape <see cref="RecordResultAsync"/> stores, for writers that bypass it (the over-age sweep).</summary>
     public static string SerializeResult(OctopusImportSessionResultDto result) => Serialize(OctopusImportRedaction.RedactDto(result));
+
+    /// <summary>A confirmation's live progress in the shape the session stores it, for its writer on a connection of its own.</summary>
+    public static string SerializeProgress(OctopusImportConfirmationProgressDto progress) => Serialize(OctopusImportRedaction.RedactDto(progress));
 
     /// <summary>A confirmation failure in the shape the session stores it, redacted, for writers that bypass this service (the recovery sweep).</summary>
     public static string SerializeFailure(OctopusImportConfirmationFailureDto failure) => Serialize(OctopusImportRedaction.RedactDto(failure));

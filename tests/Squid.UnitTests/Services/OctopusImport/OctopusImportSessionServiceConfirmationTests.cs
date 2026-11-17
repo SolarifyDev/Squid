@@ -116,6 +116,65 @@ public class OctopusImportSessionServiceConfirmationTests
         _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // The progress shown is the one the session's state is about, redacted like the result; any other attempt's is stale and hidden.
+    [Theory]
+    [InlineData(OctopusImportSessionState.Importing, true)]
+    [InlineData(OctopusImportSessionState.Succeeded, true)]
+    [InlineData(OctopusImportSessionState.Importing, false)]
+    public async Task Map_ConfirmationProgress_OnlyTheHoldingAttempts_Redacted(OctopusImportSessionState state, bool sameAttempt)
+    {
+        var attemptId = Guid.NewGuid();
+        var session = Session(state, attemptId);
+        // Raw, as a writer that bypassed the service's serializer would leave it: the read redacts on its own.
+        session.ConfirmationProgressJson = $$"""{"attemptId":"{{(sameAttempt ? attemptId : Guid.NewGuid())}}","stage":"Importing","itemsDone":3,"itemsTotal":9,"recentLog":[{"name":"connect with Password=hunter2"}]}""";
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var dto = await _service.GetSessionAsync(session.SessionId, 7);
+
+        if (!sameAttempt)
+        {
+            dto.ConfirmationProgress.ShouldBeNull();
+            return;
+        }
+
+        dto.ConfirmationProgress.ShouldNotBeNull().ShouldSatisfyAllConditions(p => p.ItemsDone.ShouldBe(3), p => p.ItemsTotal.ShouldBe(9), p => p.AttemptId.ShouldBe(attemptId));
+        dto.ConfirmationProgress.RecentLog.Single().Name.ShouldNotContain("hunter2");
+    }
+
+    // Rolled back: the session no longer holds an attempt, and the failure names the one whose progress is shown.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Map_ConfirmationProgress_Validated_OnlyTheRolledBackAttempts(bool failureNamesTheAttempt)
+    {
+        var attemptId = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Validated, null);
+        session.LastConfirmationFailureJson = OctopusImportSessionService.SerializeFailure(new OctopusImportConfirmationFailureDto { AttemptId = failureNamesTheAttempt ? attemptId : Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack });
+        session.ConfirmationProgressJson = OctopusImportSessionService.SerializeProgress(new OctopusImportConfirmationProgressDto { AttemptId = attemptId, Stage = OctopusImportConfirmationStage.RolledBack, Finished = true });
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var dto = await _service.GetSessionAsync(session.SessionId, 7);
+
+        (dto.ConfirmationProgress?.Stage).ShouldBe(failureNamesTheAttempt ? OctopusImportConfirmationStage.RolledBack : null);
+    }
+
+    [Fact]
+    public void SerializeProgress_Redacts()
+    {
+        var json = OctopusImportSessionService.SerializeProgress(new OctopusImportConfirmationProgressDto { Current = new OctopusImportConfirmationItemDto { Name = "connect with Password=hunter2" } });
+
+        json.ShouldNotContain("hunter2");
+    }
+
+    [Fact]
+    public async Task Map_NoProgress_Null()
+    {
+        var session = Session(OctopusImportSessionState.Importing, Guid.NewGuid());
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        (await _service.GetSessionAsync(session.SessionId, 7)).ConfirmationProgress.ShouldBeNull();
+    }
+
     private static OctopusImportSession Session(OctopusImportSessionState state, Guid? attemptId) => new()
     {
         SessionId = Guid.NewGuid(),

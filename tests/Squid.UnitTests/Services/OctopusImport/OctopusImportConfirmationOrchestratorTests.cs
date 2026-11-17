@@ -704,7 +704,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         bool withTransactionGate = false,
         bool includeReusedEnvironment = false,
         IOctopusImportConfirmationHeartbeat heartbeat = null,
-        TimeProvider time = null)
+        TimeProvider time = null,
+        IOctopusImportConfirmationProgress progress = null)
     {
         var nodes = BuildMinimalNodes();
         return CreateHarness(
@@ -717,7 +718,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
             throwAfterAction,
             withTransactionGate,
             heartbeat: heartbeat,
-            time: time);
+            time: time,
+            progress: progress);
     }
 
     private static TestHarness CreateLibraryHarness(Mock<IOctopusImportLibraryVariableSetNameLock> nameLock)
@@ -770,7 +772,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
         string graphInstallationId = InstallationId,
         IEnumerable<Squid.Core.Services.OctopusImport.ChildInsert.IOctopusImportChildInserter> childInserters = null,
         IOctopusImportConfirmationHeartbeat heartbeat = null,
-        TimeProvider time = null)
+        TimeProvider time = null,
+        IOctopusImportConfirmationProgress progress = null)
     {
         var sessionService = new TestOctopusImportSessionService(
             nodes.SessionId,
@@ -858,7 +861,8 @@ public partial class OctopusImportConfirmationOrchestratorTests
             destinationDataProvider: VariableRowsOf(nodes).Object,
             heartbeat: heartbeat,
             time: time ?? new ImmediateTime(),
-            resilience: new OctopusImportConfirmationResilienceOptions());
+            resilience: new OctopusImportConfirmationResilienceOptions(),
+            progress: progress);
 
         return new TestHarness(
             orchestrator,

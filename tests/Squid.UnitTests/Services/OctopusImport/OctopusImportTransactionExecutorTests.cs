@@ -212,6 +212,7 @@ public class OctopusImportTransactionExecutorTests
                 confirmation_attempt_id TEXT NULL,
                 import_heartbeat_at TEXT NULL,
                 last_confirmation_failure_json TEXT NULL,
+                confirmation_progress_json TEXT NULL,
                 expires_at TEXT NOT NULL,
                 completed_at TEXT NULL,
                 last_state_changed_at TEXT NOT NULL,
