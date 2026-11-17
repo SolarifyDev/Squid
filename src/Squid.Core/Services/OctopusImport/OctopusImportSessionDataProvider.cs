@@ -15,6 +15,12 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
 
     Task<OctopusImportSession> GetSessionNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
 
+    /// <summary>
+    /// The session as its status shows it, polled every two seconds while an import runs: only the small columns are read, never the
+    /// source data, the plan, the export password or the upload's bookkeeping.
+    /// </summary>
+    Task<OctopusImportSession> GetSessionStatusNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default);
+
     Task UpdateSessionAsync(
         OctopusImportSession session,
         byte[] expectedDataVersion,
@@ -173,6 +179,13 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 s.SessionId == sessionId &&
                 s.OwnerUserId == ownerUserId &&
                 s.DestinationSpaceId == destinationSpaceId)
+            .FirstOrDefaultAsync(ct);
+    }
+
+    public Task<OctopusImportSession> GetSessionStatusNoTrackingAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, CancellationToken ct = default)
+    {
+        return _repository.QueryNoTracking<OctopusImportSession>(s => s.SessionId == sessionId && s.OwnerUserId == ownerUserId && s.DestinationSpaceId == destinationSpaceId)
+            .Select(s => new OctopusImportSession { SessionId = s.SessionId, DestinationSpaceId = s.DestinationSpaceId, OwnerUserId = s.OwnerUserId, State = s.State, SourceSummaryJson = s.SourceSummaryJson, ResultJson = s.ResultJson, ConfirmationAttemptId = s.ConfirmationAttemptId, LastConfirmationFailureJson = s.LastConfirmationFailureJson, ConfirmationProgressJson = s.ConfirmationProgressJson, ExpiresAt = s.ExpiresAt, CompletedAt = s.CompletedAt, LastStateChangedAt = s.LastStateChangedAt, CreatedDate = s.CreatedDate })
             .FirstOrDefaultAsync(ct);
     }
 

@@ -171,9 +171,7 @@ public partial class OctopusImportSessionService : IOctopusImportSessionService
 
     public async Task<OctopusImportSessionDto> GetSessionAsync(Guid sessionId, int destinationSpaceId, CancellationToken ct = default)
     {
-        var session = await _dataProvider
-            .GetSessionNoTrackingAsync(sessionId, GetCurrentUserId(), destinationSpaceId, ct)
-            .ConfigureAwait(false);
+        var session = await _dataProvider.GetSessionStatusNoTrackingAsync(sessionId, GetCurrentUserId(), destinationSpaceId, ct).ConfigureAwait(false);
 
         if (session == null)
             throw new OctopusImportSessionNotFoundException(sessionId);

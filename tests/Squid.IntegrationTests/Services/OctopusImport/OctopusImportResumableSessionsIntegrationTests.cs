@@ -14,7 +14,7 @@ namespace Squid.IntegrationTests.Services.OctopusImport;
 
 /// <summary>
 /// Integration tier (REAL Postgres) for the list of import sessions a reloaded page can continue: owner and space scoping, which states
-/// are listed, newest first and capped, read-only, and never reading the large source-data and plan columns.
+/// are listed, newest first and capped, read-only, and never reading the large source-data and plan columns; nor does the polled status of one session.
 /// </summary>
 public class OctopusImportResumableSessionsIntegrationTests : TestBase
 {
@@ -139,10 +139,48 @@ public class OctopusImportResumableSessionsIntegrationTests : TestBase
         query.ShouldNotContain("protected_export_password");
     }
 
+    // The page polls a running import's status every two seconds: each read returns the progress without the source data or plan (megabytes on a large space).
+    [Fact]
+    public async Task Status_ImportingSession_ReturnsProgressWithoutLoadingSourceDataOrPlanColumns()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Importing, large: true);
+        var attemptId = Guid.NewGuid();
+        await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.ConfirmationAttemptId, attemptId).SetProperty(x => x.ConfirmationProgressJson, OctopusImportSessionService.SerializeProgress(new OctopusImportConfirmationProgressDto { AttemptId = attemptId, Stage = OctopusImportConfirmationStage.Importing, ItemsDone = 3, ItemsTotal = 10 }))));
+
+        var (status, query) = await StatusAsync(sessionId);
+
+        status.ShouldSatisfyAllConditions(s => s.State.ShouldBe(OctopusImportSessionState.Importing), s => s.SourceSummary.FileName.ShouldBe("export.zip"), s => s.ConfirmationProgress.ItemsDone.ShouldBe(3), s => s.ExpiresAt.ShouldBeGreaterThan(DateTimeOffset.UtcNow));
+        query.ShouldNotContain("redacted_normalized_data_json");
+        query.ShouldNotContain("validated_plan_json");
+        query.ShouldNotContain("protected_export_password");
+    }
+
+    // A rolled-back attempt's failure is read from its own small column, so the retry offer survives the narrowed read.
+    [Fact]
+    public async Task Status_ValidatedAfterAFailedAttempt_KeepsTheFailure()
+    {
+        var sessionId = await SeedAsync(OctopusImportSessionState.Validated, confirmationFailure: true, large: true);
+
+        var (status, query) = await StatusAsync(sessionId);
+
+        status.LastConfirmationFailure.AttemptId.ShouldBe(Guid.Parse("00000000-0000-0000-0000-000000000001"));
+        query.ShouldNotContain("redacted_normalized_data_json");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private Task<IReadOnlyList<OctopusImportResumableSessionDto>> ListAsync(int? userId = null)
         => Run<IOctopusImportSessionService, IReadOnlyList<OctopusImportResumableSessionDto>>(s => s.ListResumableSessionsAsync(SpaceId), userId == null ? null : b => b.RegisterInstance<ICurrentUser>(new ListingUser(userId.Value)).SingleInstance());
+
+    private async Task<(OctopusImportSessionDto Status, string Query)> StatusAsync(Guid sessionId)
+    {
+        var commands = new CapturingCommands();
+        var connectionString = await Run<SquidDbContext, string>(db => Task.FromResult(db.Database.GetConnectionString()));
+
+        var status = await Run<IOctopusImportSessionService, OctopusImportSessionDto>(s => s.GetSessionAsync(sessionId, SpaceId), b => CaptureCommands(b, connectionString, commands));
+
+        return (status, commands.Texts.ShouldHaveSingleItem());
+    }
 
     private async Task<Guid> SeedAsync(OctopusImportSessionState state, int spaceId = SpaceId, bool pastExpiry = false, bool cleaned = false, bool confirmationFailure = false, bool large = false, TimeSpan? modifiedAgo = null)
     {

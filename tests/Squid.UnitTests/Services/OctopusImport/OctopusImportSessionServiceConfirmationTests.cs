@@ -63,7 +63,7 @@ public class OctopusImportSessionServiceConfirmationTests
         string stored = null;
         OctopusImportValidatedReturn validatedReturn = null;
         _dataProvider.Setup(p => p.ReturnConfirmationToValidatedAsync(session.SessionId, failure.AttemptId, It.IsAny<string>(), It.IsAny<OctopusImportValidatedReturn>(), It.IsAny<CancellationToken>())).Callback<Guid, Guid, string, OctopusImportValidatedReturn, CancellationToken>((_, _, json, slide, _) => { stored = json; validatedReturn = slide; session.LastConfirmationFailureJson = json; }).ReturnsAsync(1);
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         var returned = await _service.ReturnConfirmationToValidatedAsync(session.SessionId, 7, failure);
 
@@ -83,7 +83,7 @@ public class OctopusImportSessionServiceConfirmationTests
     {
         var session = Session(state, null);
         session.LastConfirmationFailureJson = OctopusImportSessionService.SerializeFailure(new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.Interrupted });
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         var dto = await _service.GetSessionAsync(session.SessionId, 7);
 
@@ -110,7 +110,7 @@ public class OctopusImportSessionServiceConfirmationTests
     public async Task RecordConfirmationNotStarted_WritesOnlyTheFailure()
     {
         var session = Session(OctopusImportSessionState.Validated, null);
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         await _service.RecordConfirmationNotStartedAsync(session.SessionId, 7, new OctopusImportConfirmationFailureDto { AttemptId = Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.NotStarted });
 
@@ -129,7 +129,7 @@ public class OctopusImportSessionServiceConfirmationTests
         var session = Session(state, attemptId);
         // Raw, as a writer that bypassed the service's serializer would leave it: the read redacts on its own.
         session.ConfirmationProgressJson = $$"""{"attemptId":"{{(sameAttempt ? attemptId : Guid.NewGuid())}}","stage":"Importing","itemsDone":3,"itemsTotal":9,"recentLog":[{"name":"connect with Password=hunter2"}]}""";
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         var dto = await _service.GetSessionAsync(session.SessionId, 7);
 
@@ -153,7 +153,7 @@ public class OctopusImportSessionServiceConfirmationTests
         var session = Session(OctopusImportSessionState.Validated, null);
         session.LastConfirmationFailureJson = OctopusImportSessionService.SerializeFailure(new OctopusImportConfirmationFailureDto { AttemptId = failureNamesTheAttempt ? attemptId : Guid.NewGuid(), Reason = OctopusImportConfirmationFailureReason.RolledBack });
         session.ConfirmationProgressJson = OctopusImportSessionService.SerializeProgress(new OctopusImportConfirmationProgressDto { AttemptId = attemptId, Stage = OctopusImportConfirmationStage.RolledBack, Finished = true });
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         var dto = await _service.GetSessionAsync(session.SessionId, 7);
 
@@ -172,7 +172,7 @@ public class OctopusImportSessionServiceConfirmationTests
     public async Task Map_NoProgress_Null()
     {
         var session = Session(OctopusImportSessionState.Importing, Guid.NewGuid());
-        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
 
         (await _service.GetSessionAsync(session.SessionId, 7)).ConfirmationProgress.ShouldBeNull();
     }
