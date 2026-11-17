@@ -87,9 +87,20 @@ public sealed partial class OctopusRestHistoryFetcher
         await StageAsync(OctopusResourceKind.Project, resource, null, ct).ConfigureAwait(false);
 
         if (OctopusConfigAsCode.IsVersionControlled(resource))
-            _ctx.Pending.ConfigAsCodeProjects++;
+            CountConfigAsCodeProject(projectId);
         else
             AddProject(projectId);
+    }
+
+    // Kept on the cursor with the count it feeds, so a restarted kind, a retried item or a resumed fetch counts a project once.
+    private void CountConfigAsCodeProject(string projectId)
+    {
+        var seen = _ctx.Cursor.ConfigAsCodeProjectIds;
+
+        if (seen.Contains(projectId, StringComparer.OrdinalIgnoreCase)) return;
+
+        seen.Add(projectId);
+        _ctx.Pending.ConfigAsCodeProjects++;
     }
 
     private async Task<JsonObject> VariableSetOrNullAsync(string variableSetId, CancellationToken ct)

@@ -57,6 +57,31 @@ public sealed class OctopusRestConfigAsCodeFetchTests : IDisposable
         OctopusRestHistoryFetcher.Progress(cursor).ProjectCount.ShouldBe(1);
     }
 
+    // A project removed while the projects are paged restarts the kind from its first page; a Config-as-Code project read before
+    // the restart is read again but counted once, so the count stays a number of distinct projects.
+    [Fact]
+    public async Task ProjectsShrinkWhilePaged_ConfigAsCodeProjectReadAgain_CountedOnce()
+    {
+        var server = SpaceWithConfigAsCodeProject();
+        var projects = (JsonArray)server.Resources["projects"];
+        var cac = projects.OfType<JsonObject>().Single(p => p["Id"]!.GetValue<string>() == CacProject);
+        var removed = (JsonObject)cac.DeepClone();
+        var cursor = CatalogCursor();
+        var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { ChunkDuration = TimeSpan.Zero, PageSize = 1 });
+
+        removed["Id"] = "Projects-3";
+        projects.Remove(cac);
+        projects.Insert(0, cac);
+        projects.Insert(1, removed);
+
+        await FetchWhileAsync(fetcher, cursor, c => c.Phase == OctopusHistoryFetchPhase.Catalog && !(IsPagingProjects(c) && c.Skip == 2));
+        projects.Remove(removed);
+        await FetchWhileAsync(fetcher, cursor, c => !c.Done);
+
+        cursor.Counts.ConfigAsCodeProjects.ShouldBe(2);
+        cursor.ProjectIds.ShouldBe(["Projects-1"]);
+    }
+
     [Fact]
     public async Task MixedSpace_DatabaseProjectFetchedWhole()
     {
@@ -142,6 +167,18 @@ public sealed class OctopusRestConfigAsCodeFetchTests : IDisposable
 
         cursor.Done.ShouldBeTrue();
     }
+
+    private async Task FetchWhileAsync(OctopusRestHistoryFetcher fetcher, OctopusImportHistoryFetchDto cursor, Func<OctopusImportHistoryFetchDto, bool> condition)
+    {
+        var directory = _directories.LastOrDefault() ?? NewSessionDirectory();
+
+        for (var chunk = 0; condition(cursor) && chunk < 500; chunk++)
+            await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = FakeOctopusServer.Url, ApiKey = FakeOctopusServer.ApiKey, SessionDirectory = directory, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty });
+
+        condition(cursor).ShouldBeFalse("the fetch did not reach the expected point within 500 chunks");
+    }
+
+    private static bool IsPagingProjects(OctopusImportHistoryFetchDto cursor) => cursor.CatalogIndex == OctopusRestHistoryFetcher.CatalogCollections.Count - 1;
 
     private static string BundlePath(string directory) => Path.Combine(directory, OctopusImportSourceReader.HistoryBundleFileName);
 

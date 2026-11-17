@@ -142,9 +142,12 @@ public static partial class OctopusRestDocumentNormalizer
         document["DeploymentSettingsId"] = DeploymentSettingsIdPrefix + ReadString(document, "Id");
     }
 
-    // Only the persistence type is kept: a Config-as-Code project's git url, branch, path and credentials are never staged.
+    // Only the persistence type is kept: a Config-as-Code project's git url, branch, path and credentials are never staged (nor the
+    // VersionControlSettings an Octopus 2021.1–2021.2 server carried them in).
     private static void TrimPersistenceSettings(JsonObject document)
     {
+        document.Remove(OctopusConfigAsCode.LegacyVersionControlSettingsMember);
+
         if (document[OctopusConfigAsCode.PersistenceSettingsMember] is not JsonObject settings) return;
 
         document[OctopusConfigAsCode.PersistenceSettingsMember] = new JsonObject { [OctopusConfigAsCode.PersistenceTypeMember] = settings[OctopusConfigAsCode.PersistenceTypeMember]?.DeepClone() };

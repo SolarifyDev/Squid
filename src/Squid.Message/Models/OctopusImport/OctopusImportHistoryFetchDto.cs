@@ -36,6 +36,9 @@ public class OctopusImportHistoryFetchDto
     /// <summary>The total the current project's releases or deployments reported on the last page read; cleared when the phase moves on.</summary>
     public int? PhaseTotalResults { get; set; }
 
+    /// <summary>The Config-as-Code projects read so far, so a project read again after a catalog restart is counted once.</summary>
+    public List<string> ConfigAsCodeProjectIds { get; set; } = [];
+
     /// <summary>Resources referenced by fetched documents but not staged yet (<c>Kind|Id</c>); the Closure phase fetches them.</summary>
     public List<string> ClosureReferences { get; set; } = [];
 

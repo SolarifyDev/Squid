@@ -366,6 +366,21 @@ public class OctopusRestDocumentNormalizerTests
         normalized.Document.ToJsonString().ShouldNotContain("GitCredentials-1");
     }
 
+    // Octopus 2021.1–2021.2 carried the git connection as VersionControlSettings beside IsVersionControlled; none of it is staged.
+    [Fact]
+    public void Project_EarlyConfigAsCode_VersionControlSettingsDropped_NoWithheldSecrets()
+    {
+        var resource = Parse("""{"Id":"Projects-9","Name":"Cac","IsVersionControlled":true,"VersionControlSettings":{"Url":"https://git-user:token@git.example.com/acme/app.git","Username":"git-user","Password":{"HasValue":true,"NewValue":null,"Hint":null},"DefaultBranch":"main","BasePath":".octopus/app"}}""");
+
+        var normalized = Normalize(OctopusResourceKind.Project, resource);
+
+        normalized.Document.ContainsKey("VersionControlSettings").ShouldBeFalse();
+        normalized.Document["IsVersionControlled"]!.GetValue<bool>().ShouldBeTrue();
+        normalized.WithheldSecrets.ShouldBeEmpty();
+        normalized.Document.ToJsonString().ShouldNotContain("git.example.com");
+        normalized.Document.ToJsonString().ShouldNotContain("git-user");
+    }
+
     [Fact]
     public void Project_Database_PersistenceSettingsUnchanged()
     {

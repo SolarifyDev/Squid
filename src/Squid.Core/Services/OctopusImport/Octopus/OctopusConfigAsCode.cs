@@ -15,6 +15,9 @@ public static class OctopusConfigAsCode
     public const string PersistenceSettingsMember = "PersistenceSettings";
     public const string PersistenceTypeMember = "Type";
 
+    /// <summary>Where Octopus 2021.1–2021.2 kept a version-controlled project's git url and credentials; never read, never staged.</summary>
+    public const string LegacyVersionControlSettingsMember = "VersionControlSettings";
+
     public static bool IsVersionControlled(JsonObject project) => ReadBool(project, IsVersionControlledMember) || IsVersionControlledType(ReadString(project?[PersistenceSettingsMember] as JsonObject, PersistenceTypeMember));
 
     public static bool IsVersionControlled(OctopusProjectDto project) => project != null && (project.IsVersionControlled || IsVersionControlledType(project.PersistenceSettings?.Type));
