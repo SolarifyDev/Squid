@@ -40,6 +40,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TransitionStateAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TryStartConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetTemporaryUploadCleanupCandidatesAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync)}"] = true,
@@ -92,7 +93,10 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             }
 
             if (!OctopusImportSessionStateMachine.IsTerminal(from) && from != OctopusImportSessionState.Importing)
+            {
                 data.Add(nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync), from, OctopusImportSessionState.Expired);
+                data.Add(nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync), from, OctopusImportSessionState.Expired);
+            }
         }
 
         data.Add(nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
@@ -314,6 +318,9 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
                 break;
             case nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync):
                 (await sessions.ExpireSessionsAsync(now)).ShouldBeGreaterThanOrEqualTo(1);
+                break;
+            case nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync):
+                (await provider.ExpireOverAgeSessionsAsync(now, now.AddMinutes(1), "{\"succeeded\":false}")).ShouldBeGreaterThanOrEqualTo(1);
                 break;
             case nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync):
                 (await provider.MarkInterruptedImportsFailedAsync(now, now.AddHours(-1), TimeSpan.FromHours(6))).ShouldBeGreaterThanOrEqualTo(1);

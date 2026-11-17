@@ -20,6 +20,7 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
         _dataProvider
             .Setup(p => p.ExpireSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(0);
+        _dataProvider.Setup(p => p.ExpireOverAgeSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
         _dataProvider
             .Setup(p => p.MarkInterruptedImportsFailedAsync(
                 It.IsAny<DateTimeOffset>(),
@@ -140,6 +141,36 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // The over-age pass runs before plain idle expiry, so a session past its cap is closed with the reason, never as a silent idle expiry.
+    [Fact]
+    public async Task EnforceCleanup_ExpiresOverAgeBeforeIdle_PassesCreatedBeforeAndReasonJson()
+    {
+        _settings.MaxSessionAge = TimeSpan.FromHours(36);
+        var calls = new List<string>();
+        DateTimeOffset now = default, createdBefore = default;
+        string reasonJson = null;
+        _dataProvider.Setup(p => p.ExpireOverAgeSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback<DateTimeOffset, DateTimeOffset, string, CancellationToken>((n, before, json, _) => { calls.Add("overAge"); now = n; createdBefore = before; reasonJson = json; }).ReturnsAsync(0);
+        _dataProvider.Setup(p => p.ExpireSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>())).Callback(() => calls.Add("idle")).ReturnsAsync(0);
+
+        await _service.EnforceCleanupAsync(CancellationToken.None);
+
+        calls.ShouldBe(["overAge", "idle"]);
+        createdBefore.ShouldBe(now.AddHours(-36));
+        reasonJson.ShouldContain("\"code\":\"octopus.session.max_age_reached\"");
+        reasonJson.ShouldContain("\"severity\":\"Blocker\"");
+        reasonJson.ShouldContain("36 hours");
+    }
+
+    [Fact]
+    public async Task EnforceCleanup_OutcomeReportsOverAgeCount()
+    {
+        _dataProvider.Setup(p => p.ExpireOverAgeSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(3);
+
+        var outcome = await _service.EnforceCleanupAsync(CancellationToken.None);
+
+        outcome.OverAgeSessions.ShouldBe(3);
+    }
+
     private sealed class TestTemporaryUploadSettings : IOctopusImportTemporaryUploadSettings
     {
         public string RootPath { get; set; } = Path.Combine(Path.GetTempPath(), "squid-octopus-import-upload-tests");
@@ -149,6 +180,8 @@ public class OctopusImportTemporaryUploadCleanupServiceTests
         public TimeSpan FailedRetentionPeriod { get; set; } = TimeSpan.FromHours(24);
 
         public TimeSpan InterruptedImportGracePeriod { get; set; } = TimeSpan.FromHours(6);
+
+        public TimeSpan MaxSessionAge { get; set; } = TimeSpan.FromHours(168);
 
         public int CleanupBatchSize { get; set; } = 100;
 

@@ -26,4 +26,7 @@ public class EnforceOctopusImportTemporaryUploadCleanupResponseData
     public int Cleaned { get; set; }
 
     public int Failed { get; set; }
+
+    /// <summary>Sessions closed because they reached the maximum session age (counted separately from <see cref="ExpiredSessions"/>).</summary>
+    public int OverAgeSessions { get; set; }
 }

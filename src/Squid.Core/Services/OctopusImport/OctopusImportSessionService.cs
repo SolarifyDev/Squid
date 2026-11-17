@@ -124,7 +124,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             DataVersion = Guid.NewGuid().ToByteArray(),
             ExpiresAt = effectiveExpiresAt,
             TemporaryUploadCleanupAfter = effectiveExpiresAt,
-            LastStateChangedAt = now
+            LastStateChangedAt = now,
+            CreatedDate = now
         };
 
         await _dataProvider.AddSessionAsync(session, ct: ct).ConfigureAwait(false);
@@ -182,6 +183,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (currentState != OctopusImportSessionState.Uploaded)
             throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Uploaded);
 
+        EnsureWithinMaxAge(session);
+
         session.TemporaryUploadPath = temporaryUpload.Path;
         session.TemporaryUploadSizeBytes = temporaryUpload.SizeBytes;
         session.TemporaryUploadCleanupAfter = session.ExpiresAt;
@@ -215,6 +218,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (currentState != expectedState)
             throw new OctopusImportSessionStateTransitionException(currentState, newState);
 
+        if (!OctopusImportSessionStateMachine.IsTerminal(newState)) EnsureWithinMaxAge(session);
+
         session.State = newState.ToString();
         session.LastStateChangedAt = DateTimeOffset.UtcNow;
         session.RedactedNormalizedDataJson = redactedNormalizedDataJson == null
@@ -246,6 +251,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (currentState != OctopusImportSessionState.Validated)
             throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Validated);
 
+        EnsureWithinMaxAge(session);
+
         session.ValidatedPlanJson = validatedPlanJson == null ? null : OctopusImportRedaction.RedactJson(validatedPlanJson);
 
         await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
@@ -261,7 +268,11 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         if (session == null)
             throw new OctopusImportSessionNotFoundException(sessionId);
 
-        return await _dataProvider.TryStartConfirmationAsync(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion ?? session.DataVersion, ct).ConfigureAwait(false);
+        EnsureWithinMaxAge(session);
+
+        var createdAfter = DateTimeOffset.UtcNow.Subtract(_temporaryUploadSettings.MaxSessionAge);
+
+        return await _dataProvider.TryStartConfirmationAsync(sessionId, ownerUserId, destinationSpaceId, expectedDataVersion ?? session.DataVersion, createdAfter, ct).ConfigureAwait(false);
     }
 
     public async Task<OctopusImportSessionDto> UpdateHistoryFetchAsync(Guid sessionId, int destinationSpaceId, OctopusImportHistoryFetchDto historyFetch, Guid? expectedChunkId, CancellationToken ct = default)
@@ -273,6 +284,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
         if (currentState != OctopusImportSessionState.Uploaded)
             throw new OctopusImportSessionStateTransitionException(currentState, OctopusImportSessionState.Uploaded);
+
+        EnsureWithinMaxAge(session);
 
         var summary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson) ?? new OctopusImportSourceSummaryDto();
 
@@ -292,6 +305,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     public async Task<OctopusImportSessionDto> UpdateProjectSelectionAsync(Guid sessionId, int destinationSpaceId, List<string> projectIds, byte[] expectedDataVersion, CancellationToken ct = default)
     {
         var session = await GetOwnedSessionAsync(sessionId, destinationSpaceId, ct).ConfigureAwait(false);
+
+        EnsureWithinMaxAge(session);
+
         var summary = Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson) ?? new OctopusImportSourceSummaryDto();
 
         summary.SelectedProjectIds = projectIds;
@@ -370,7 +386,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         return _currentUser.Id.Value;
     }
 
-    private static OctopusImportSessionDto Map(OctopusImportSession session)
+    private OctopusImportSessionDto Map(OctopusImportSession session)
     {
         if (session == null)
             return null;
@@ -384,6 +400,7 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             SourceSummary = WithoutKeyBinding(OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSourceSummaryDto>(session.SourceSummaryJson))),
             Result = OctopusImportRedaction.RedactDto(Deserialize<OctopusImportSessionResultDto>(session.ResultJson)),
             ExpiresAt = session.ExpiresAt,
+            MaxExpiresAt = OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge),
             CompletedAt = session.CompletedAt,
             LastStateChangedAt = session.LastStateChangedAt
         };
@@ -406,6 +423,9 @@ public class OctopusImportSessionService : IOctopusImportSessionService
 
     private static string Serialize<T>(T value) => JsonSerializer.Serialize(value, JsonOptions);
 
+    /// <summary>A session result in the shape <see cref="RecordResultAsync"/> stores, for writers that bypass it (the over-age sweep).</summary>
+    public static string SerializeResult(OctopusImportSessionResultDto result) => Serialize(OctopusImportRedaction.RedactDto(result));
+
     private DateTimeOffset GetTerminalUploadCleanupAfter(OctopusImportSessionState terminalState, DateTimeOffset completedAt)
     {
         return terminalState switch
@@ -418,10 +438,11 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     }
 
     // A fetch in progress is in use: each chunk claim and release keeps the session (and its upload) a full retention
-    // period away from expiry, so the expiry sweep never deletes a directory a running chunk is writing to.
+    // period away from expiry, so the expiry sweep never deletes a directory a running chunk is writing to. Never past the
+    // session's maximum age, though: activity cannot keep a session alive forever.
     private void SlideExpiryAhead(OctopusImportSession session)
     {
-        var slid = DateTimeOffset.UtcNow.Add(_temporaryUploadSettings.DefaultRetentionPeriod);
+        var slid = OctopusImportSessionExpiry.Clamp(DateTimeOffset.UtcNow.Add(_temporaryUploadSettings.DefaultRetentionPeriod), session.CreatedDate, _temporaryUploadSettings.MaxSessionAge);
 
         if (slid <= session.ExpiresAt) return;
 
@@ -432,7 +453,20 @@ public class OctopusImportSessionService : IOctopusImportSessionService
     private DateTimeOffset GetEffectiveExpiresAt(DateTimeOffset requestedExpiresAt, DateTimeOffset now)
     {
         var maxExpiresAt = now.Add(_temporaryUploadSettings.DefaultRetentionPeriod);
-        return requestedExpiresAt <= maxExpiresAt ? requestedExpiresAt : maxExpiresAt;
+        var retained = requestedExpiresAt <= maxExpiresAt ? requestedExpiresAt : maxExpiresAt;
+
+        return OctopusImportSessionExpiry.Clamp(retained, now, _temporaryUploadSettings.MaxSessionAge);
+    }
+
+    // A running import (Importing) is never cut off and a closed session is past caring; any other session past its cap takes no more work.
+    private void EnsureWithinMaxAge(OctopusImportSession session)
+    {
+        var state = ParseState(session.State);
+
+        if (state == OctopusImportSessionState.Importing || OctopusImportSessionStateMachine.IsTerminal(state)) return;
+        if (!OctopusImportSessionExpiry.IsOverAge(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge, DateTimeOffset.UtcNow)) return;
+
+        throw new OctopusImportSessionExpiredException(session.SessionId, OctopusImportSessionExpiry.Deadline(session.CreatedDate, _temporaryUploadSettings.MaxSessionAge), _temporaryUploadSettings.MaxSessionAge);
     }
 
     private static T Deserialize<T>(string json) where T : class

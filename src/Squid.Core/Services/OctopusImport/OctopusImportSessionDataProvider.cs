@@ -37,14 +37,19 @@ public interface IOctopusImportSessionDataProvider : IScopedDependency
         byte[] expectedDataVersion,
         CancellationToken ct = default);
 
-    Task<bool> TryStartConfirmationAsync(
-        Guid sessionId,
-        int ownerUserId,
-        int destinationSpaceId,
-        byte[] expectedDataVersion,
-        CancellationToken ct = default);
+    /// <summary>
+    /// Moves a Validated session holding <paramref name="expectedDataVersion"/> to Importing, atomically; a session created at or before
+    /// <paramref name="createdAfter"/> (past its maximum age) is never admitted.
+    /// </summary>
+    Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, byte[] expectedDataVersion, DateTimeOffset createdAfter, CancellationToken ct = default);
 
     Task<int> ExpireSessionsAsync(DateTimeOffset now, CancellationToken ct = default);
+
+    /// <summary>
+    /// Expires every session created at or before <paramref name="createdBefore"/> (past its maximum age) that is not Importing or already
+    /// closed, recording <paramref name="resultJson"/> as the reason; it clears the export password and makes the upload eligible for cleanup.
+    /// </summary>
+    Task<int> ExpireOverAgeSessionsAsync(DateTimeOffset now, DateTimeOffset createdBefore, string resultJson, CancellationToken ct = default);
 
     /// <summary>
     /// The history fetch (server host, Octopus space, version — never the key) of the newest import session of the space that read the
@@ -196,6 +201,9 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
         OctopusImportSessionState newState,
         byte[] expectedDataVersion,
         CancellationToken ct = default)
+        => TransitionStateAsync(sessionId, ownerUserId, destinationSpaceId, expectedState, newState, expectedDataVersion, null, ct);
+
+    private Task<int> TransitionStateAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, OctopusImportSessionState expectedState, OctopusImportSessionState newState, byte[] expectedDataVersion, DateTimeOffset? createdAfter, CancellationToken ct)
     {
         OctopusImportSessionStateMachine.EnsureValidTransition(expectedState, newState);
 
@@ -209,7 +217,8 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                  s.OwnerUserId == ownerUserId &&
                  s.DestinationSpaceId == destinationSpaceId &&
                  s.State == expectedState.ToString() &&
-                 (expectedDataVersion == null || s.DataVersion == expectedDataVersion),
+                 (expectedDataVersion == null || s.DataVersion == expectedDataVersion) &&
+                 (createdAfter == null || s.CreatedDate > createdAfter),
             setters => setters
                 .SetProperty(s => s.State, newState.ToString())
                 .SetProperty(s => s.DataVersion, dataVersion)
@@ -225,23 +234,11 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
     private static string RetainedExportPassword(string state, string protectedExportPassword)
         => Enum.TryParse<OctopusImportSessionState>(state, ignoreCase: true, out var parsed) && OctopusImportSessionStateMachine.IsTerminal(parsed) ? null : protectedExportPassword;
 
-    public async Task<bool> TryStartConfirmationAsync(
-        Guid sessionId,
-        int ownerUserId,
-        int destinationSpaceId,
-        byte[] expectedDataVersion,
-        CancellationToken ct = default)
+    public async Task<bool> TryStartConfirmationAsync(Guid sessionId, int ownerUserId, int destinationSpaceId, byte[] expectedDataVersion, DateTimeOffset createdAfter, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(expectedDataVersion);
 
-        var rowsAffected = await TransitionStateAsync(
-            sessionId,
-            ownerUserId,
-            destinationSpaceId,
-            OctopusImportSessionState.Validated,
-            OctopusImportSessionState.Importing,
-            expectedDataVersion,
-            ct).ConfigureAwait(false);
+        var rowsAffected = await TransitionStateAsync(sessionId, ownerUserId, destinationSpaceId, OctopusImportSessionState.Validated, OctopusImportSessionState.Importing, expectedDataVersion, createdAfter, ct).ConfigureAwait(false);
 
         return rowsAffected == 1;
     }
@@ -271,6 +268,29 @@ public class OctopusImportSessionDataProvider : IOctopusImportSessionDataProvide
                 .SetProperty(s => s.LastStateChangedAt, now)
                 .SetProperty(s => s.LastModifiedDate, now)
                 .SetProperty(s => s.CompletedAt, now)
+                .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
+                .SetProperty(s => s.ProtectedExportPassword, (string)null),
+            ct);
+    }
+
+    public Task<int> ExpireOverAgeSessionsAsync(DateTimeOffset now, DateTimeOffset createdBefore, string resultJson, CancellationToken ct = default)
+    {
+        var dataVersion = Guid.NewGuid().ToByteArray();
+
+        return _repository.ExecuteUpdateAsync<OctopusImportSession>(
+            s => s.CreatedDate <= createdBefore &&
+                 s.State != OctopusImportSessionState.Succeeded.ToString() &&
+                 s.State != OctopusImportSessionState.Failed.ToString() &&
+                 s.State != OctopusImportSessionState.Expired.ToString() &&
+                 s.State != OctopusImportSessionState.Importing.ToString(),
+            setters => setters
+                .SetProperty(s => s.State, OctopusImportSessionState.Expired.ToString())
+                .SetProperty(s => s.DataVersion, dataVersion)
+                .SetProperty(s => s.LastStateChangedAt, now)
+                .SetProperty(s => s.LastModifiedDate, now)
+                .SetProperty(s => s.CompletedAt, now)
+                .SetProperty(s => s.ExpiresAt, now)
+                .SetProperty(s => s.ResultJson, resultJson)
                 .SetProperty(s => s.TemporaryUploadCleanupAfter, now)
                 .SetProperty(s => s.ProtectedExportPassword, (string)null),
             ct);

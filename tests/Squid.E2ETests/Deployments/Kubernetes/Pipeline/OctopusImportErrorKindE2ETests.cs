@@ -15,7 +15,11 @@ using Squid.Core.Services.OctopusImport.Rest;
 using Squid.E2ETests.Helpers;
 using Squid.IntegrationTests.Helpers;
 using Squid.IntegrationTests.Services.OctopusImport;
+using Microsoft.EntityFrameworkCore;
+using Squid.Core.Persistence;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Requests.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Response;
@@ -30,7 +34,8 @@ namespace Squid.E2ETests.Deployments.Kubernetes.Pipeline;
 /// <see cref="GlobalExceptionFilter"/> and are serialized with the API's web JSON defaults, exactly the body the import page
 /// reads: a restricted key is refused at connect as <c>KeyRestricted</c>; a fetch failing on an unreachable server answers
 /// <c>Unreachable</c>, is resumed on the same session and imports everything; the finished session then answers
-/// <c>SessionStateConflict</c> (not resumable). Its own class (own database).
+/// <c>SessionStateConflict</c> (not resumable); a session past its maximum age answers <c>SessionExpired</c> before the sweep closes
+/// it with the reason. Its own class (own database).
 /// </summary>
 [Trait("Category", "E2E")]
 public class OctopusImportErrorKindE2ETests : IClassFixture<OctopusImportErrorKindE2ETests.ImportFixture>
@@ -71,6 +76,32 @@ public class OctopusImportErrorKindE2ETests : IClassFixture<OctopusImportErrorKi
 
         finished.ShouldBe((HttpStatusCode.Conflict, "SessionStateConflict"), customMessage: "a finished session cannot be resumed; the page must start a new one");
     }
+
+    // A session past its maximum age is refused with its own kind before the sweep reaches it, writes nothing, and the next sweep closes
+    // it with the reason the page shows.
+    [Fact]
+    public async Task ServerFetch_SessionPastMaxAge_ChunkRefusedWithSessionExpiredKind()
+    {
+        await using var octopus = StubOctopusServer.Start(ApiKey).Release("Projects-1", "Releases-1", "1.0.0").Deployment("Projects-1", "Deployments-1", "Releases-1", "ServerTasks-1");
+        var sessionId = await _fixture.Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId, octopus.BaseUri, ApiKey)).Data.Session.SessionId);
+        var createdDate = DateTimeOffset.UtcNow.AddDays(-8);
+        await _fixture.Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedDate, createdDate)));
+        var versionBefore = await DataVersionAsync(sessionId);
+
+        var refused = await EnvelopeOfAsync(() => _fixture.Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey)));
+
+        refused.ShouldBe((HttpStatusCode.Conflict, "SessionExpired"), customMessage: "a session past its maximum age is not resumable; the page must start a new one");
+        (await DataVersionAsync(sessionId)).ShouldBe(versionBefore, "a refused chunk writes nothing to the session");
+
+        var sweep = await _fixture.Run<IMediator, EnforceOctopusImportTemporaryUploadCleanupResponse>(mediator => mediator.SendAsync<EnforceOctopusImportTemporaryUploadCleanupCommand, EnforceOctopusImportTemporaryUploadCleanupResponse>(new EnforceOctopusImportTemporaryUploadCleanupCommand()));
+        var session = await _fixture.Run<IMediator, GetOctopusImportStatusResponse>(mediator => mediator.RequestAsync<GetOctopusImportStatusRequest, GetOctopusImportStatusResponse>(new GetOctopusImportStatusRequest { SpaceId = SpaceId, SessionId = sessionId }));
+
+        sweep.Data.OverAgeSessions.ShouldBeGreaterThanOrEqualTo(1);
+        session.Data.Session.State.ShouldBe(OctopusImportSessionState.Expired);
+        session.Data.Session.Result.Diagnostics.ShouldContain(d => d.Code == "octopus.session.max_age_reached");
+    }
+
+    private Task<byte[]> DataVersionAsync(Guid sessionId) => _fixture.Run<SquidDbContext, byte[]>(async db => (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).DataVersion);
 
     // The body the API returns for the failure: the production exception filter, serialized as ASP.NET Core does.
     private static async Task<(HttpStatusCode Code, string ErrorKind)> EnvelopeOfAsync(Func<Task> call)

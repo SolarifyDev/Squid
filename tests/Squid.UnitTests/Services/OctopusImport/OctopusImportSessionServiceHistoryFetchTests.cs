@@ -11,14 +11,15 @@ public class OctopusImportSessionServiceHistoryFetchTests
 {
     private readonly Mock<IOctopusImportSessionDataProvider> _dataProvider = new();
     private readonly Mock<ICurrentUser> _currentUser = new();
+    private readonly Mock<IOctopusImportTemporaryUploadSettings> _settings = new();
     private readonly OctopusImportSessionService _service;
 
     public OctopusImportSessionServiceHistoryFetchTests()
     {
-        var settings = new Mock<IOctopusImportTemporaryUploadSettings>();
-        settings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
+        _settings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
+        _settings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
         _currentUser.SetupGet(u => u.Id).Returns(42);
-        _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, settings.Object);
+        _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _settings.Object);
     }
 
     [Fact]
@@ -93,6 +94,36 @@ public class OctopusImportSessionServiceHistoryFetchTests
 
         session.ExpiresAt.ShouldBe(later);
         session.TemporaryUploadCleanupAfter.ShouldBe(later);
+    }
+
+    // The sliding retention never carries a session past its maximum age: a fetch that keeps chunking still ends at the cap.
+    [Fact]
+    public async Task UpdateHistoryFetch_SlideBeyondDeadline_ClampedToDeadline()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-160);
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        var deadline = session.CreatedDate.AddHours(168);
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBe(deadline);
+        session.TemporaryUploadCleanupAfter.ShouldBe(deadline);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_SessionOverAge_ThrowsSessionExpiredWithoutWriting()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-169);
+
+        var exception = await Should.ThrowAsync<OctopusImportSessionExpiredException>(() => _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous));
+
+        exception.SessionId.ShouldBe(session.SessionId);
+        exception.Deadline.ShouldBe(session.CreatedDate.AddHours(168));
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -172,7 +203,8 @@ public class OctopusImportSessionServiceHistoryFetchTests
             SourceSummaryJson = System.Text.Json.JsonSerializer.Serialize(summary, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } }),
             DataVersion = Guid.NewGuid().ToByteArray(),
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-            LastStateChangedAt = DateTimeOffset.UtcNow
+            LastStateChangedAt = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow
         };
 
         _dataProvider.Setup(p => p.GetSessionAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);

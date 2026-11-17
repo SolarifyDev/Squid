@@ -10,7 +10,8 @@ namespace Squid.Core.Services.OctopusImport.Exceptions;
 /// <item>Resume with another API key: <c>Unauthorized</c> (key rejected), <c>KeyRestricted</c> (key cannot read the whole space),
 /// <c>KeyUserMismatch</c> (key of another Octopus user than the one the fetch started with).</item>
 /// <item>Fix the server address or space: <c>NotOctopus</c>, <c>Denied</c>, <c>NotFound</c>, <c>ServerMismatch</c>.</item>
-/// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>NotServerSource</c>,
+/// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>SessionExpired</c> (the session
+/// reached its maximum age), <c>NotServerSource</c>,
 /// <c>StagingLost</c> (what earlier chunks read is not on this server's disk any more);
 /// <c>TooLarge</c> repeats until an operator raises the named limit; <c>Storage</c> (this Squid server's disk is full) repeats until an
 /// operator frees space; <c>Tls</c> repeats until the Squid host trusts the Octopus certificate.</item>
@@ -27,6 +28,7 @@ public static class OctopusImportErrorKinds
     public const string NotServerSource = "NotServerSource";
     public const string SessionNotFound = "SessionNotFound";
     public const string SessionStateConflict = "SessionStateConflict";
+    public const string SessionExpired = "SessionExpired";
     public const string Concurrency = "Concurrency";
     public const string ProjectSelection = "ProjectSelection";
     public const string ProjectSelectionBeyondRead = "ProjectSelectionBeyondRead";
@@ -44,6 +46,7 @@ public static class OctopusImportErrorKinds
             OctopusImportSessionNotServerSourceException => NotServerSource,
             OctopusImportSessionNotFoundException => SessionNotFound,
             OctopusImportSessionStateTransitionException => SessionStateConflict,
+            OctopusImportSessionExpiredException => SessionExpired,
             OctopusImportSessionConcurrencyException => Concurrency,
             OctopusImportProjectSelectionInvalidException => ProjectSelection,
             OctopusImportProjectSelectionBeyondReadException => ProjectSelectionBeyondRead,

@@ -5,7 +5,8 @@ public sealed record OctopusImportTemporaryUploadCleanupOutcome(
     int InterruptedImportsFailed,
     int Scanned,
     int Cleaned,
-    int Failed);
+    int Failed,
+    int OverAgeSessions);
 
 public interface IOctopusImportTemporaryUploadCleanupService : IScopedDependency
 {
@@ -20,6 +21,7 @@ public sealed class OctopusImportTemporaryUploadCleanupService(
     public async Task<OctopusImportTemporaryUploadCleanupOutcome> EnforceCleanupAsync(CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
+        var overAge = await ExpireOverAgeAsync(now, ct).ConfigureAwait(false);
         var expired = await dataProvider.ExpireSessionsAsync(now, ct).ConfigureAwait(false);
         var interrupted = await dataProvider.MarkInterruptedImportsFailedAsync(
             now,
@@ -70,6 +72,18 @@ public sealed class OctopusImportTemporaryUploadCleanupService(
             }
         }
 
-        return new OctopusImportTemporaryUploadCleanupOutcome(expired, interrupted, candidates.Count, cleaned, failed);
+        return new OctopusImportTemporaryUploadCleanupOutcome(expired, interrupted, candidates.Count, cleaned, failed, overAge);
+    }
+
+    // Runs before plain idle expiry, so a session past its maximum age is closed with that reason rather than as a silent idle expiry.
+    private async Task<int> ExpireOverAgeAsync(DateTimeOffset now, CancellationToken ct)
+    {
+        var reason = OctopusImportSessionService.SerializeResult(OctopusImportSessionExpiry.MaxAgeReachedResult(settings.MaxSessionAge, now));
+
+        var count = await dataProvider.ExpireOverAgeSessionsAsync(now, now.Subtract(settings.MaxSessionAge), reason, ct).ConfigureAwait(false);
+
+        if (count > 0) Log.Information("[OctopusImport] Expired {Count} import session(s) that reached the maximum age of {MaxAgeHours}h", count, settings.MaxSessionAge.TotalHours);
+
+        return count;
     }
 }

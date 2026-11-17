@@ -92,6 +92,8 @@ public class OctopusImportTemporaryUploadStoreTests : IDisposable
 
         public TimeSpan InterruptedImportGracePeriod { get; set; } = TimeSpan.FromHours(6);
 
+        public TimeSpan MaxSessionAge { get; set; } = TimeSpan.FromHours(168);
+
         public int CleanupBatchSize { get; set; } = 100;
 
         public int SecureDeleteBufferBytes { get; set; } = 81920;

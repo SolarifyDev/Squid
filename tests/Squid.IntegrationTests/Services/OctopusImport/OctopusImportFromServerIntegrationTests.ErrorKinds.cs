@@ -1,3 +1,6 @@
+using Microsoft.EntityFrameworkCore;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.IntegrationTests.Helpers;
@@ -50,6 +53,7 @@ public partial class OctopusImportFromServerIntegrationTests
     [Theory]
     [InlineData("unknown-session", "SessionNotFound")]
     [InlineData("expired-session", "SessionStateConflict")]
+    [InlineData("over-age-session", "SessionExpired")]
     [InlineData("export-file-session", "NotServerSource")]
     public async Task NotResumableFailure_NamesItsKind_SessionStaysRefusedWithGoodInputs(string failure, string expectedKind)
     {
@@ -113,6 +117,13 @@ public partial class OctopusImportFromServerIntegrationTests
             return await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.UploadAsync(mediator, SpaceId, ExportArchive(), ExportPassword)).Data.Session.SessionId);
 
         var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+
+        // Past its maximum age but not yet swept: the chunk itself must refuse it.
+        if (failure == "over-age-session")
+        {
+            await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().Where(s => s.SessionId == sessionId).ExecuteUpdateAsync(s => s.SetProperty(x => x.CreatedDate, DateTimeOffset.UtcNow.AddDays(-8))));
+            return sessionId;
+        }
 
         await ExpireAllSessionsAsync();
         await Run<IOctopusImportTemporaryUploadCleanupService>(cleanup => cleanup.EnforceCleanupAsync());

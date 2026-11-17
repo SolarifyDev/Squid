@@ -18,6 +18,9 @@ public class OctopusImportSessionDto
 
     public DateTimeOffset ExpiresAt { get; set; }
 
+    /// <summary>The latest the session can ever be kept until (its creation plus the configured maximum age); activity never extends it.</summary>
+    public DateTimeOffset MaxExpiresAt { get; set; }
+
     public DateTimeOffset? CompletedAt { get; set; }
 
     public DateTimeOffset LastStateChangedAt { get; set; }

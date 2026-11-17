@@ -10,6 +10,9 @@ public interface IOctopusImportTemporaryUploadSettings : IScopedDependency
 
     TimeSpan InterruptedImportGracePeriod { get; }
 
+    /// <summary>The absolute upper bound on a session's life, counted from its creation; sliding retention never extends a session past it.</summary>
+    TimeSpan MaxSessionAge { get; }
+
     int CleanupBatchSize { get; }
 
     int SecureDeleteBufferBytes { get; }
@@ -17,9 +20,13 @@ public interface IOctopusImportTemporaryUploadSettings : IScopedDependency
 
 public sealed class OctopusImportTemporaryUploadSettings : IOctopusImportTemporaryUploadSettings
 {
+    public const string MaxSessionAgeHoursConfigKey = "OctopusImport:TemporaryUploads:MaxSessionAgeHours";
+    public const string MaxSessionAgeHoursEnvVar = "OctopusImport__TemporaryUploads__MaxSessionAgeHours";
+
     private const int DefaultRetentionHours = 24;
     private const int DefaultFailedRetentionHours = 24;
     private const int DefaultInterruptedImportGraceHours = 6;
+    private const int DefaultMaxSessionAgeHours = 168;
     private const int DefaultCleanupBatchSize = 100;
     private const int DefaultSecureDeleteBufferBytes = 81920;
 
@@ -37,6 +44,7 @@ public sealed class OctopusImportTemporaryUploadSettings : IOctopusImportTempora
         InterruptedImportGracePeriod = NonNegativeHours(
             configuration.GetValue<double?>("OctopusImport:TemporaryUploads:InterruptedImportGraceHours"),
             DefaultInterruptedImportGraceHours);
+        MaxSessionAge = PositiveHours(configuration.GetValue<double?>(MaxSessionAgeHoursConfigKey), DefaultMaxSessionAgeHours);
         CleanupBatchSize = Math.Clamp(
             configuration.GetValue<int?>("OctopusImport:TemporaryUploads:CleanupBatchSize") ?? DefaultCleanupBatchSize,
             1,
@@ -54,6 +62,8 @@ public sealed class OctopusImportTemporaryUploadSettings : IOctopusImportTempora
     public TimeSpan FailedRetentionPeriod { get; }
 
     public TimeSpan InterruptedImportGracePeriod { get; }
+
+    public TimeSpan MaxSessionAge { get; }
 
     public int CleanupBatchSize { get; }
 

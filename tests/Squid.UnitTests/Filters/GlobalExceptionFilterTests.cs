@@ -50,6 +50,17 @@ public class GlobalExceptionFilterTests
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
     }
 
+    // A session past its maximum age conflicts with the request like any other closed session: start a new one.
+    [Fact]
+    public void OnException_ImportSessionPastMaxAge_ReturnsConflictEnvelope()
+    {
+        var exception = new OctopusImportSessionExpiredException(Guid.NewGuid(), DateTimeOffset.UtcNow, TimeSpan.FromHours(168));
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
+    }
+
     [Theory]
     [InlineData(true, HttpStatusCode.BadRequest)]
     [InlineData(false, HttpStatusCode.Conflict)]

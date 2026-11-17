@@ -28,6 +28,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
+            OctopusImportSessionExpiredException => HttpStatusCode.Conflict,
             ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
             VariableSetVersionConflictException => HttpStatusCode.Conflict,
             OctopusRestException => HttpStatusCode.BadRequest,

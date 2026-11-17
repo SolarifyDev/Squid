@@ -35,6 +35,7 @@ public class OctopusImportErrorKindsTests
         yield return [new OctopusImportProjectSelectionBeyondReadException(Guid.NewGuid()), "ProjectSelectionBeyondRead"];
         yield return [new OctopusImportHistoryStagingLostException(), "StagingLost"];
         yield return [new OctopusImportStorageException(), "Storage"];
+        yield return [new OctopusImportSessionExpiredException(Guid.Empty, default, TimeSpan.FromHours(168)), "SessionExpired"];
     }
 
     [Theory]

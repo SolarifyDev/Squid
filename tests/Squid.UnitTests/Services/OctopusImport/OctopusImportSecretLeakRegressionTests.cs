@@ -42,6 +42,7 @@ public class OctopusImportSecretLeakRegressionTests
         _temporaryUploadSettings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
         _temporaryUploadSettings.SetupGet(s => s.CleanupBatchSize).Returns(25);
         _temporaryUploadSettings.SetupGet(s => s.InterruptedImportGracePeriod).Returns(TimeSpan.FromHours(2));
+        _temporaryUploadSettings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
 
         _sessionService = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _temporaryUploadSettings.Object);
         _cleanupService = new OctopusImportTemporaryUploadCleanupService(_dataProvider.Object, _uploadStore.Object, _temporaryUploadSettings.Object);
