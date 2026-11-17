@@ -91,9 +91,10 @@ public class ProjectController : ControllerBase
 
     [HttpGet("{projectId:int}/progression")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetProjectProgressionResponse))]
-    public async Task<IActionResult> GetProjectProgressionAsync(int projectId)
+    public async Task<IActionResult> GetProjectProgressionAsync([FromRoute] int projectId, [FromQuery] GetProjectProgressionRequest request)
     {
-        var request = new GetProjectProgressionRequest { ProjectId = projectId };
+        request.ProjectId = projectId;
+
         var response = await _mediator.RequestAsync<GetProjectProgressionRequest, GetProjectProgressionResponse>(request).ConfigureAwait(false);
 
         return Ok(response);
