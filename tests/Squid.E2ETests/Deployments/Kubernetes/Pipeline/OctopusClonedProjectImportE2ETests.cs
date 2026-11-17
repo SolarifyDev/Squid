@@ -11,6 +11,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport.Rest;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.IntegrationTests.Helpers;
 using Squid.IntegrationTests.Services.OctopusImport;
 using Squid.Message.Commands.Deployments.Deployment;
@@ -76,6 +77,7 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         }
 
         (await CountRowsAsync()).ShouldBe(before, customMessage: "a repeat import writes nothing");
+        (await ExportSourceRowsAsync()).ShouldBe([Fingerprint], "the first confirmed export file of the installation pins its fingerprint for the space");
     }
 
     // ── Steps ────────────────────────────────────────────────────────────
@@ -112,6 +114,14 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         return await _fixture.Run<SquidDbContext, string>(db => db.Set<ServerTask>().AsNoTracking().Where(t => t.Id == taskId).Select(t => t.State).SingleAsync());
     }
 
+    // The first confirmed export file pins its fingerprint for the space — a one-time origin row asserted on its own, so the
+    // "writes nothing" count leaves it out.
+    private static string ResourceRowsOnly(string table)
+        => table == "octopus_import_source_map" ? $" WHERE source_type <> '{OctopusImportSourceMapQueries.ExportSourceSourceType}'" : "";
+
+    private Task<List<string>> ExportSourceRowsAsync()
+        => _fixture.Run<SquidDbContext, List<string>>(db => db.Set<OctopusImportSourceMap>().AsNoTracking().Where(m => m.SourceType == OctopusImportSourceMapQueries.ExportSourceSourceType).Select(m => m.SourceId).ToListAsync());
+
     private async Task<Dictionary<string, int>> CountRowsAsync()
     {
         var counts = new Dictionary<string, int>();
@@ -119,7 +129,7 @@ public class OctopusClonedProjectImportE2ETests : IClassFixture<OctopusClonedPro
         await _fixture.Run<SquidDbContext>(async db =>
         {
             foreach (var table in CountedTables)
-                counts[table] = await db.Database.SqlQueryRaw<int>($"SELECT count(*)::int AS \"Value\" FROM {table}").SingleAsync();
+                counts[table] = await db.Database.SqlQueryRaw<int>($"SELECT count(*)::int AS \"Value\" FROM {table}{ResourceRowsOnly(table)}").SingleAsync();
         });
 
         return counts;
