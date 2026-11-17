@@ -27,6 +27,14 @@ public class SquidResponse : IResponse
     /// </summary>
     [JsonPropertyName("suggestedRoles")]
     public IReadOnlyList<string> SuggestedRoles { get; set; }
+
+    /// <summary>
+    /// Machine-readable kind of an Octopus import failure (e.g. <c>"Unreachable"</c>, <c>"Unauthorized"</c>,
+    /// <c>"KeyRestricted"</c>, <c>"SessionNotFound"</c>), so the import page can tell a failure it can resume from one
+    /// that needs a new key or a new session without parsing <see cref="Msg"/>. Null on success and on other failures.
+    /// </summary>
+    [JsonPropertyName("errorKind")]
+    public string ErrorKind { get; set; }
 }
 
 public class SquidResponse<T> : SquidResponse

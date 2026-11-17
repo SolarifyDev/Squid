@@ -1,0 +1,134 @@
+[
+  {
+    "Id": "teams-everyone",
+    "Name": "Everyone",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": false,
+    "CanBeRenamed": false,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": null,
+    "Slug": "everyone",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/teams-everyone"
+    }
+  },
+  {
+    "Id": "teams-administrators",
+    "Name": "Octopus Administrators",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": false,
+    "CanBeRenamed": false,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": null,
+    "Slug": "octopus-administrators",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/teams-administrators"
+    }
+  },
+  {
+    "Id": "teams-managers",
+    "Name": "Octopus Managers",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": false,
+    "CanBeRenamed": false,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": null,
+    "Slug": "octopus-managers",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/teams-managers"
+    }
+  },
+  {
+    "Id": "teams-spacemanagers-Spaces-1",
+    "Name": "Space Managers",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": false,
+    "CanBeRenamed": false,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": "Spaces-1",
+    "Slug": "space-managers",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/teams-spacemanagers-Spaces-1"
+    }
+  },
+  {
+    "Id": "Teams-1",
+    "Name": "Release Approvers",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": true,
+    "CanBeRenamed": true,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": "Spaces-1",
+    "Slug": "release-approvers",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/Teams-1"
+    }
+  },
+  {
+    "Id": "Teams-2",
+    "Name": "Directory Team",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [
+      {
+        "Id": "S-1-5-21-0000000000-0000000000-0000000000-1001",
+        "DisplayName": "Deployers",
+        "DisplayIdAndName": true
+      }
+    ],
+    "CanBeDeleted": true,
+    "CanBeRenamed": true,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": "Spaces-1",
+    "Slug": "directory-team",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/Teams-2"
+    }
+  },
+  {
+    "Id": "Teams-3",
+    "Name": "System Wide Team",
+    "MemberUserIds": [
+      "Users-7"
+    ],
+    "ExternalSecurityGroups": [],
+    "CanBeDeleted": true,
+    "CanBeRenamed": true,
+    "CanChangeRoles": true,
+    "CanChangeMembers": true,
+    "SpaceId": null,
+    "Slug": "system-wide-team",
+    "Description": "",
+    "Links": {
+      "Self": "/api/teams/Teams-3"
+    }
+  }
+]

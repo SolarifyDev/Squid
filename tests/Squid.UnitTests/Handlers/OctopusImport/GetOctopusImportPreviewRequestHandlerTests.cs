@@ -12,6 +12,8 @@ using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Handlers.OctopusImport;
 
 public class GetOctopusImportPreviewRequestHandlerTests
@@ -27,12 +29,30 @@ public class GetOctopusImportPreviewRequestHandlerTests
 
         harness.SecretStore.Setup(s => s.LoadAsync(sessionId, 7, It.IsAny<CancellationToken>())).ReturnsAsync(OctopusExportSecrets.FromPassword("pw"));
         harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Extracted));
-        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>())).Callback(() => secretsAvailableWhenPlanning = harness.SecretsAccessor.Secrets.IsAvailable).ReturnsAsync(Snapshot(preview));
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).Callback(() => secretsAvailableWhenPlanning = harness.SecretsAccessor.Secrets.IsAvailable).ReturnsAsync(Snapshot(preview));
         harness.SessionService.Setup(s => s.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Extracted, OctopusImportSessionState.Previewed, It.IsAny<string>(), null, It.IsAny<CancellationToken>())).ReturnsAsync(new OctopusImportSessionDto { SessionId = sessionId, DestinationSpaceId = 7, State = OctopusImportSessionState.Previewed });
 
         await harness.Sut.Handle(Context(new GetOctopusImportPreviewRequest { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
 
         secretsAvailableWhenPlanning.ShouldBeTrue();
+    }
+
+    // The preview plans with the session's project selection; the request carries none.
+    [Fact]
+    public async Task Handle_PlansWithTheSessionsProjectSelection()
+    {
+        var harness = new Harness();
+        var sessionId = Guid.NewGuid();
+        var uploadPath = CreateTempFile();
+        var session = Session(sessionId, uploadPath, OctopusImportSessionState.Previewed);
+        session.SourceSummaryJson = "{\"selectedProjectIds\":[\"Projects-2\"]}";
+
+        harness.SessionDataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        harness.PlanningPipeline.Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Snapshot(new OctopusImportPreviewPlanDto { GeneratedAt = DateTimeOffset.UtcNow, Resources = [] }));
+
+        await harness.Sut.Handle(Context(new GetOctopusImportPreviewRequest { SessionId = sessionId, SpaceId = 7 }), CancellationToken.None);
+
+        harness.PlanningPipeline.Verify(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.Is<IReadOnlyCollection<string>>(c => c.SequenceEqual(new[] { "Projects-2" })), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -61,7 +81,7 @@ public class GetOctopusImportPreviewRequestHandlerTests
             .Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(Session(sessionId, uploadPath, OctopusImportSessionState.Extracted));
         harness.PlanningPipeline
-            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.BuildPreviewAsync(uploadPath, 7, It.IsAny<OctopusImportChoiceSelections>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Snapshot(preview));
         harness.SessionService
             .Setup(s => s.UpdatePayloadAndTransitionAsync(
@@ -142,6 +162,7 @@ public class GetOctopusImportPreviewRequestHandlerTests
                 SessionService.Object,
                 CurrentUser.Object,
                 PlanningPipeline.Object,
+                TestUploadStores.LocalOnly(),
                 SecretStore.Object,
                 SecretsAccessor);
         }

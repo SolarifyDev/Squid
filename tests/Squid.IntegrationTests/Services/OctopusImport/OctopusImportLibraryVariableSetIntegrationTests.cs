@@ -63,7 +63,7 @@ public class OctopusImportLibraryVariableSetIntegrationTests : TestBase
             result.State.ShouldBe(OctopusImportSessionState.Succeeded, customMessage: Describe(result));
             var library = await db.Set<LibraryVariableSet>().AsNoTracking().SingleAsync(l => l.SpaceId == SpaceId && l.Name == libraryName);
             (await db.Set<Variable>().AsNoTracking().Where(v => v.VariableSetId == library.VariableSetId).Select(v => v.Name + "=" + v.Value).ToListAsync()).ShouldBe(["Issuer=https://issuer.first"]);
-            var libraryVariables = result.Result.Resources.Where(r => r.SourceType == nameof(OctopusResourceKind.Variable) && r.SourceId.StartsWith("var-L-") && r.SourceId.EndsWith(second.Suffix)).ToList();
+            var libraryVariables = result.Result.Resources.Where(r => r.SourceType == nameof(OctopusResourceKind.Variable) && r.SourceId.StartsWith($"{second.Id("L")}/variable/var-L-") && r.SourceId.EndsWith(second.Suffix)).ToList();
             libraryVariables.Count.ShouldBe(5);
             libraryVariables.ShouldAllBe(r => r.OutcomeState == OctopusImportResourceOutcomeState.Skipped);
             result.Result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportConfirmationDiagnosticCodes.ReusedLibraryVariableSetVariablesKept);
@@ -378,9 +378,9 @@ public class OctopusImportLibraryVariableSetIntegrationTests : TestBase
             (await db.Set<Variable>().AsNoTracking().Where(v => v.VariableSetId == l2.VariableSetId).Select(v => v.Name).ToListAsync()).ShouldBe(["Two", "TwoSecret"], ignoreOrder: true);
             (await VariableValuesAsync(db, l3.VariableSetId)).ShouldBe(["Three=3"]);
 
-            OutcomeOf(result, export.Id("var-L1-Keep")).ShouldBe(OctopusImportResourceOutcomeState.Skipped);
-            OutcomeOf(result, export.Id("var-L2-Two")).ShouldBe(OctopusImportResourceOutcomeState.Created);
-            OutcomeOf(result, export.Id("var-L3-Three")).ShouldBe(OctopusImportResourceOutcomeState.Created);
+            OutcomeOf(result, export.VariableId("L1", "Keep")).ShouldBe(OctopusImportResourceOutcomeState.Skipped);
+            OutcomeOf(result, export.VariableId("L2", "Two")).ShouldBe(OctopusImportResourceOutcomeState.Created);
+            OutcomeOf(result, export.VariableId("L3", "Three")).ShouldBe(OctopusImportResourceOutcomeState.Created);
         });
     }
 
@@ -455,7 +455,7 @@ public class OctopusImportLibraryVariableSetIntegrationTests : TestBase
             var snapshot = await PlanAsync(lifetime, export, OctopusExportSecrets.None);
             var validation = lifetime.Resolve<IOctopusImportPreviewValidator>().Validate(snapshot.Graph, snapshot.DependencyPlan, snapshot.Conflicts, snapshot.PreviewPlan);
 
-            validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.MissingTargetRole && d.SourceId == export.Id("var-L-PerRole"));
+            validation.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.MissingTargetRole && d.SourceId == export.VariableId("L", "PerRole"));
         });
     }
 
@@ -579,6 +579,9 @@ public class OctopusImportLibraryVariableSetIntegrationTests : TestBase
         public string EnvironmentName => $"TEST-{Suffix}";
 
         public string Id(string key) => $"{key}-{Suffix}";
+
+        /// <summary>A variable's graph source id: its owner's id, then its own (Octopus copies variable ids into a cloned project).</summary>
+        public string VariableId(string ownerKey, string name) => $"{Id(ownerKey)}/variable/{Id($"var-{ownerKey}-{name}")}";
 
         public Export Machine(string key, string name, params string[] roles)
             => Add(Id(key), "Machine", new { Id = Id(key), Name = $"{name}-{Suffix}", Roles = roles, EnvironmentIds = new[] { Id("Environments-TEST") } });

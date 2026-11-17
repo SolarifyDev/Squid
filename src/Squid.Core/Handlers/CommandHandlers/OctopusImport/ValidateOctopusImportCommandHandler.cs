@@ -19,6 +19,7 @@ public class ValidateOctopusImportCommandHandler(
     ICurrentUser currentUser,
     IOctopusImportPlanningPipeline planningPipeline,
     IOctopusImportPreviewValidator previewValidator,
+    IOctopusImportTemporaryUploadStore uploadStore,
     IOctopusImportExportSecretStore secretStore = null,
     IOctopusExportSecretsAccessor secretsAccessor = null)
     : ICommandHandler<ValidateOctopusImportCommand, ValidateOctopusImportResponse>
@@ -40,50 +41,50 @@ public class ValidateOctopusImportCommandHandler(
         var state = ParseState(session.State);
         EnsureValidateAllowed(state);
 
-        if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
+        var sourcePath = await uploadStore.MaterializeAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (sourcePath == null)
             return BadRequest(command, state, command.PreviewPlan, new OctopusImportValidationResultDto(), "Octopus import session does not have an available temporary upload.");
 
         await secretStore.ApplyToAsync(secretsAccessor, command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
+        // The user's selection is an input to the server's plan: the rows it decides come from that plan, never from the client.
+        var selections = OctopusImportChoiceSelections.From(command.PreviewPlan);
+        var chosenProjectIds = OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson);
+
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline
-                .BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, cancellationToken)
-                .ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(sourcePath, destinationSpaceId, selections, chosenProjectIds, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
             return BadRequest(command, state, command.PreviewPlan, new OctopusImportValidationResultDto(), ex.Message);
         }
 
-        var previewPlan = OctopusImportRedaction.RedactDto(command.PreviewPlan ?? snapshot.PreviewPlan);
+        var previewPlan = OctopusImportRedaction.RedactDto(OctopusImportServerOwnedRows.MergeServerOwnedRows(command.PreviewPlan, snapshot.PreviewPlan));
         var validation = OctopusImportRedaction.RedactDto(previewValidator.Validate(
             snapshot.Graph,
             snapshot.DependencyPlan,
             snapshot.Conflicts,
-            previewPlan));
+            previewPlan,
+            snapshot.PreviewPlan));
 
         if (previewPlan.HasBlockers || validation.HasBlockers)
+        {
+            await ClearValidatedPlanAsync(command, state, cancellationToken).ConfigureAwait(false);
+
             return BadRequest(command, state, previewPlan, validation, "Octopus import validation produced blocking diagnostics.");
+        }
 
         var validatedPlan = new OctopusImportValidatedPlanDto
         {
             PreviewPlan = previewPlan,
-            Validation = validation
+            Validation = validation,
+            SelectedProjectIds = chosenProjectIds?.ToList()
         };
 
-        var responseSession = state == OctopusImportSessionState.Previewed
-            ? await sessionService
-                .UpdatePayloadAndTransitionAsync(
-                    command.SessionId,
-                    destinationSpaceId,
-                    OctopusImportSessionState.Previewed,
-                    OctopusImportSessionState.Validated,
-                    validatedPlanJson: JsonSerializer.Serialize(validatedPlan, JsonOptions),
-                    ct: cancellationToken)
-                .ConfigureAwait(false)
-            : await sessionService.GetSessionAsync(command.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
+        var responseSession = await StoreValidatedPlanAsync(command, state, JsonSerializer.Serialize(validatedPlan, JsonOptions), cancellationToken).ConfigureAwait(false);
 
         return new ValidateOctopusImportResponse
         {
@@ -96,6 +97,25 @@ public class ValidateOctopusImportCommandHandler(
                 BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(previewPlan, validation)
             }
         };
+    }
+
+    // A validation in Validated (the user changed what to import after validating) replaces the plan confirmation imports.
+    private async Task<OctopusImportSessionDto> StoreValidatedPlanAsync(ValidateOctopusImportCommand command, OctopusImportSessionState state, string validatedPlanJson, CancellationToken ct)
+    {
+        var spaceId = GetSpaceId(command);
+
+        if (state == OctopusImportSessionState.Validated) return await sessionService.ReplaceValidatedPlanAsync(command.SessionId, spaceId, validatedPlanJson, ct).ConfigureAwait(false);
+
+        return await sessionService.UpdatePayloadAndTransitionAsync(command.SessionId, spaceId, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, validatedPlanJson: validatedPlanJson, ct: ct).ConfigureAwait(false);
+    }
+
+    // A blocked validation of a Validated session clears the plan it validated before: confirmation never imports a plan the user has
+    // since changed, and refuses until a validation passes again.
+    private async Task ClearValidatedPlanAsync(ValidateOctopusImportCommand command, OctopusImportSessionState state, CancellationToken ct)
+    {
+        if (state != OctopusImportSessionState.Validated) return;
+
+        await sessionService.ReplaceValidatedPlanAsync(command.SessionId, GetSpaceId(command), null, ct).ConfigureAwait(false);
     }
 
     private async Task<OctopusImportSession> GetOwnedSessionAsync(ValidateOctopusImportCommand command, CancellationToken ct)

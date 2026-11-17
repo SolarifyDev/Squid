@@ -1,0 +1,28 @@
+[
+  {
+    "Id": "LibraryVariableSets-1",
+    "SpaceId": "Spaces-1",
+    "Name": "Shared Settings",
+    "Description": "",
+    "VariableSetId": "variableset-LibraryVariableSets-1",
+    "ContentType": "Variables",
+    "Templates": [],
+    "Version": 3,
+    "Links": {
+      "Self": "/api/Spaces-1/libraryvariablesets/LibraryVariableSets-1"
+    }
+  },
+  {
+    "Id": "LibraryVariableSets-2",
+    "SpaceId": "Spaces-1",
+    "Name": "Deploy Helpers",
+    "Description": "",
+    "VariableSetId": "variableset-LibraryVariableSets-2",
+    "ContentType": "ScriptModule",
+    "Templates": [],
+    "Version": 1,
+    "Links": {
+      "Self": "/api/Spaces-1/libraryvariablesets/LibraryVariableSets-2"
+    }
+  }
+]

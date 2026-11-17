@@ -1,0 +1,248 @@
+using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Identity;
+using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
+
+namespace Squid.UnitTests.Services.OctopusImport;
+
+public class OctopusImportSessionServiceHistoryFetchTests
+{
+    private readonly Mock<IOctopusImportSessionDataProvider> _dataProvider = new();
+    private readonly Mock<ICurrentUser> _currentUser = new();
+    private readonly Mock<IOctopusImportTemporaryUploadSettings> _settings = new();
+    private readonly OctopusImportSessionService _service;
+
+    public OctopusImportSessionServiceHistoryFetchTests()
+    {
+        _settings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
+        _settings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
+        _currentUser.SetupGet(u => u.Id).Returns(42);
+        _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _settings.Object);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_ExpectedChunkMatches_StoresTheCursorUnderTheDataVersionGuard()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        var dataVersion = session.DataVersion;
+
+        var dto = await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), ProjectIds = ["Projects-1"], ProjectIndex = 1, Phase = OctopusHistoryFetchPhase.Deployments, ServerHost = "octopus.example.com" }, previous);
+
+        dto.SourceSummary.HistoryFetch.ProjectIndex.ShouldBe(1);
+        dto.SourceSummary.HistoryFetch.Phase.ShouldBe(OctopusHistoryFetchPhase.Deployments);
+        dto.SourceSummary.HistoryFetch.ServerHost.ShouldBe("octopus.example.com");
+        dto.SourceSummary.FileName.ShouldBe("export.zip");
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, dataVersion, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UpdateHistoryFetch_AnotherChunkOwnsTheFetch_ThrowsConcurrencyWithoutWriting(bool storedHasChunk)
+    {
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = storedHasChunk ? Guid.NewGuid() : null });
+
+        await Should.ThrowAsync<OctopusImportSessionConcurrencyException>(() => _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto(), Guid.NewGuid()));
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // The key fingerprint is stored for the next chunk's binding check but never handed back in a session response.
+    [Fact]
+    public async Task UpdateHistoryFetch_StoresTheKeyBinding_ButNeverReturnsTheFingerprint()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+
+        var dto = await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), UserId = "Users-7", KeyHmac = "0123abcd" }, previous);
+
+        dto.SourceSummary.HistoryFetch.UserId.ShouldBe("Users-7");
+        dto.SourceSummary.HistoryFetch.KeyHmac.ShouldBeNull();
+        session.SourceSummaryJson.ShouldContain("\"keyHmac\":\"0123abcd\"");
+    }
+
+    // A fetch in progress is in use: every chunk claim and release moves the session's expiry (and its upload's
+    // cleanup) a full retention period ahead, so the expiry sweep never deletes a directory a running chunk writes to.
+    [Fact]
+    public async Task UpdateHistoryFetch_SlidesTheExpiryAndCleanupAheadByTheRetentionPeriod()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        session.TemporaryUploadCleanupAfter = session.ExpiresAt;
+        var before = DateTimeOffset.UtcNow;
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBeGreaterThanOrEqualTo(before.AddHours(24));
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_ExpiryAlreadyFurtherAhead_NeverShortened()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        var later = DateTimeOffset.UtcNow.AddHours(48);
+        session.ExpiresAt = later;
+        session.TemporaryUploadCleanupAfter = later;
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBe(later);
+        session.TemporaryUploadCleanupAfter.ShouldBe(later);
+    }
+
+    // The sliding retention never carries a session past its maximum age: a fetch that keeps chunking still ends at the cap.
+    [Fact]
+    public async Task UpdateHistoryFetch_SlideBeyondDeadline_ClampedToDeadline()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-160);
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        var deadline = session.CreatedDate.AddHours(168);
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBe(deadline);
+        session.TemporaryUploadCleanupAfter.ShouldBe(deadline);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_SessionOverAge_ThrowsSessionExpiredWithoutWriting()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-169);
+
+        var exception = await Should.ThrowAsync<OctopusImportSessionExpiredException>(() => _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous));
+
+        exception.SessionId.ShouldBe(session.SessionId);
+        exception.Deadline.ShouldBe(session.CreatedDate.AddHours(168));
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // A chunk lease never outlives the session's maximum age: otherwise the over-age sweep would delete the staging directory while the
+    // chunk still writes to it, and the files written after the delete would stay on disk with no row pointing at them.
+    [Theory]
+    [InlineData(1, true)]    // the lease runs a minute past the deadline: refused
+    [InlineData(-1, false)]  // the lease ends a minute before the deadline: claimed
+    public async Task UpdateHistoryFetch_LeasePastDeadline_ThrowsSessionExpiredWithoutWriting(int leaseEndMinutesAfterDeadline, bool refused)
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-168).AddMinutes(10);
+        var deadline = session.CreatedDate.AddHours(168);
+        var claim = new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid(), LeaseExpiresAt = deadline.AddMinutes(leaseEndMinutesAfterDeadline) };
+
+        var act = () => _service.UpdateHistoryFetchAsync(session.SessionId, 7, claim, previous);
+
+        if (refused) (await Should.ThrowAsync<OctopusImportSessionExpiredException>(act)).Deadline.ShouldBe(deadline);
+        else await act();
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), refused ? Times.Never() : Times.Once());
+    }
+
+    // Releasing (no lease) right before the deadline still records the cursor: only a new lease is bounded.
+    [Fact]
+    public async Task UpdateHistoryFetch_ReleaseNearDeadline_Recorded()
+    {
+        var chunk = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = chunk });
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-168).AddSeconds(30);
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = chunk, LeaseExpiresAt = null }, chunk);
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_SessionAlreadyExtracted_Rejected()
+    {
+        var session = Session(OctopusImportSessionState.Extracted, null);
+
+        await Should.ThrowAsync<OctopusImportSessionStateTransitionException>(() => _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto(), null));
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RegisterTemporaryUpload_WithANewSummary_KeepsTheRecordedHistoryFetch()
+    {
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ServerHost = "octopus.example.com", Done = true });
+
+        var dto = await _service.RegisterTemporaryUploadAsync(session.SessionId, 7, new OctopusImportTemporaryUpload("/tmp/upload.zip", 10), new OctopusImportSourceSummaryDto { FileName = "second.zip" });
+
+        dto.SourceSummary.FileName.ShouldBe("second.zip");
+        dto.SourceSummary.HistoryFetch.ShouldNotBeNull().ServerHost.ShouldBe("octopus.example.com");
+        dto.SourceSummary.HistoryFetch.Done.ShouldBeTrue();
+    }
+
+    // ── Project selection ──────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(OctopusImportSessionState.Uploaded)]
+    [InlineData(OctopusImportSessionState.Previewed)]
+    public async Task UpdateProjectSelection_StoredWithTheCursorKept_UnderTheExpectedDataVersion(OctopusImportSessionState state)
+    {
+        var session = Session(state, new OctopusImportHistoryFetchDto { ServerHost = "octopus.example.com" });
+        session.ValidatedPlanJson = "{\"kept\":true}";
+        var expected = Guid.NewGuid().ToByteArray();
+
+        var dto = await _service.UpdateProjectSelectionAsync(session.SessionId, 7, ["Projects-1", "Projects-2"], expected);
+
+        dto.SourceSummary.SelectedProjectIds.ShouldBe(["Projects-1", "Projects-2"], "project ids are not redacted");
+        dto.SourceSummary.HistoryFetch.ServerHost.ShouldBe("octopus.example.com");
+        session.SourceSummaryJson.ShouldContain("\"selectedProjectIds\":[\"Projects-1\",\"Projects-2\"]");
+        session.ValidatedPlanJson.ShouldNotBeNull();
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, expected, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // A plan validated for one selection is never confirmed for another: confirmation refuses until a validation with it passes.
+    [Fact]
+    public async Task UpdateProjectSelection_Validated_ClearsTheValidatedPlan()
+    {
+        var session = Session(OctopusImportSessionState.Validated, null);
+        session.ValidatedPlanJson = "{}";
+
+        await _service.UpdateProjectSelectionAsync(session.SessionId, 7, ["Projects-1"], session.DataVersion);
+
+        session.ValidatedPlanJson.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdateProjectSelection_Null_IsTheWholeSpace()
+    {
+        var session = Session(OctopusImportSessionState.Extracted, null);
+
+        var dto = await _service.UpdateProjectSelectionAsync(session.SessionId, 7, null, session.DataVersion);
+
+        dto.SourceSummary.SelectedProjectIds.ShouldBeNull();
+        session.SourceSummaryJson.ShouldNotContain("selectedProjectIds");
+    }
+
+    private OctopusImportSession Session(OctopusImportSessionState state, OctopusImportHistoryFetchDto historyFetch)
+    {
+        var summary = new OctopusImportSourceSummaryDto { FileName = "export.zip", HistoryFetch = historyFetch };
+        var session = new OctopusImportSession
+        {
+            SessionId = Guid.NewGuid(),
+            OwnerUserId = 42,
+            DestinationSpaceId = 7,
+            State = state.ToString(),
+            SourceSummaryJson = System.Text.Json.JsonSerializer.Serialize(summary, new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } }),
+            DataVersion = Guid.NewGuid().ToByteArray(),
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            LastStateChangedAt = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow
+        };
+
+        _dataProvider.Setup(p => p.GetSessionAsync(session.SessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        return session;
+    }
+}

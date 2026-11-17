@@ -109,13 +109,13 @@ public class OctopusImportExtendedActionFixtureIntegrationTests : TestBase
 
                     result.Result.IdMappings.Single(mapping =>
                         mapping.SourceType == OctopusResourceKind.DeploymentAction.ToString()
-                        && mapping.SourceId == "Actions-RawYaml").DestinationId.ShouldBe(rawYamlAction.Id);
+                        && mapping.SourceId == "Projects-1/action/Actions-RawYaml").DestinationId.ShouldBe(rawYamlAction.Id);
                     result.Result.IdMappings.Single(mapping =>
                         mapping.SourceType == OctopusResourceKind.DeploymentAction.ToString()
-                        && mapping.SourceId == "Actions-Helm").DestinationId.ShouldBe(helmAction.Id);
+                        && mapping.SourceId == "Projects-1/action/Actions-Helm").DestinationId.ShouldBe(helmAction.Id);
                     result.Result.IdMappings.Single(mapping =>
                         mapping.SourceType == OctopusResourceKind.DeploymentAction.ToString()
-                        && mapping.SourceId == "Actions-Package").DestinationId.ShouldBe(packageAction.Id);
+                        && mapping.SourceId == "Projects-1/action/Actions-Package").DestinationId.ShouldBe(packageAction.Id);
                 });
         }
         finally

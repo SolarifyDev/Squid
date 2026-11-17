@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Security;
+using Squid.Message.Models.Deployments.ExternalFeed;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds;
 
@@ -17,6 +18,15 @@ public interface IExternalFeedDataProvider : IScopedDependency
     Task<List<Persistence.Entities.Deployments.ExternalFeed>> GetExternalFeedsByIdsAsync(List<int> ids, CancellationToken cancellationToken);
 
     Task<Persistence.Entities.Deployments.ExternalFeed> GetFeedByIdAsync(int feedId, CancellationToken cancellationToken = default);
+
+    /// <summary>Username and whether a password is stored, per feed; passwords are never read.</summary>
+    Task<List<ExternalFeedCredentialSlot>> GetCredentialSlotsAsync(IReadOnlyCollection<int> feedIds, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Compare-and-set: stores the credentials (password protected at rest) only while the feed has no password and its username is
+    /// empty or already <paramref name="username"/>. Returns the rows written (0 or 1).
+    /// </summary>
+    Task<int> SetCredentialsIfEmptyAsync(int feedId, string username, string password, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -98,6 +108,25 @@ public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository reposi
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
         return await DecryptPasswordAsync(feed).ConfigureAwait(false);
+    }
+
+    public async Task<List<ExternalFeedCredentialSlot>> GetCredentialSlotsAsync(IReadOnlyCollection<int> feedIds, CancellationToken cancellationToken = default)
+    {
+        if (feedIds == null || feedIds.Count == 0) return [];
+
+        var ids = feedIds.Distinct().ToList();
+
+        return await repository.QueryNoTracking<Persistence.Entities.Deployments.ExternalFeed>(f => ids.Contains(f.Id))
+            .Select(f => new ExternalFeedCredentialSlot(f.Id, f.Username, f.Password != null && f.Password != ""))
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<int> SetCredentialsIfEmptyAsync(int feedId, string username, string password, CancellationToken cancellationToken = default)
+    {
+        var protectedPassword = protector.Protect(password, PasswordKdfScope);
+        var fileUsername = string.IsNullOrEmpty(username) ? null : username;
+
+        return repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE external_feed SET username = COALESCE({fileUsername}, username), password = {protectedPassword}, last_modified_date = now() WHERE id = {feedId} AND (password IS NULL OR password = '') AND (username IS NULL OR username = '' OR username = {fileUsername})", cancellationToken);
     }
 
     // Protect is idempotent (null/empty/already-encrypted passes through), so a re-save never double-wraps.

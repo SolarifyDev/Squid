@@ -231,6 +231,70 @@ public class OctopusImportDependencyPlannerTests
         ordered.IndexOf("LibraryVariableSets-1").ShouldBeLessThan(ordered.IndexOf("variableset-LibraryVariableSets-1"));
     }
 
+    [Fact]
+    public void BuildCurrentConfigurationPlan_LargeHistory_OrdersWithinLinearithmicTime()
+    {
+        const int releases = 5000;
+        var (resources, dependencies) = LargeHistoryGraph(releases);
+        var graph = new OctopusResourceGraph(resources, [], dependencies, []);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var plan = _planner.BuildCurrentConfigurationPlan(graph);
+        stopwatch.Stop();
+
+        plan.OrderedResources.Count.ShouldBe(resources.Count);
+        plan.OrderedResources.ShouldRespectOrder("Channels-1", "Releases-4999");
+        plan.OrderedResources.ShouldRespectOrder("Releases-4999", "Deployments-4999");
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3), customMessage: $"Ordering {resources.Count} history nodes took {stopwatch.ElapsedMilliseconds} ms; the ready set must not be re-sorted per emitted node");
+    }
+
+    [Fact]
+    public void BuildCurrentConfigurationPlan_AlwaysEmitsLowestRankThenSourceIdAmongReadyNodes()
+    {
+        var (resources, dependencies) = LargeHistoryGraph(40);
+        var graph = new OctopusResourceGraph(resources, [], dependencies, []);
+
+        var plan = _planner.BuildCurrentConfigurationPlan(graph);
+
+        plan.OrderedResources.Select(r => r.SourceId).ShouldBe(ReferenceKahnOrder(resources, dependencies));
+    }
+
+    private static (List<OctopusResourceNode> Resources, List<OctopusResourceDependency> Dependencies) LargeHistoryGraph(int releases)
+    {
+        var resources = new List<OctopusResourceNode> { Node("Projects-1", OctopusResourceKind.Project, ownerProjectId: "Projects-1"), Node("Channels-1", OctopusResourceKind.Channel, ownerProjectId: "Projects-1"), Node("Environments-1", OctopusResourceKind.Environment) };
+        var dependencies = new List<OctopusResourceDependency> { Dependency("Channels-1", "Projects-1", OctopusResourceReferenceKind.Project, OctopusResourceKind.Project) };
+
+        for (var i = 0; i < releases; i++)
+        {
+            resources.Add(Node($"Releases-{i}", OctopusResourceKind.Release, ownerProjectId: "Projects-1", isHistorical: true));
+            resources.Add(Node($"Deployments-{i}", OctopusResourceKind.Deployment, ownerProjectId: "Projects-1", isHistorical: true));
+            resources.Add(Node($"ServerTasks-{i}", OctopusResourceKind.ServerTask, ownerProjectId: "Projects-1", isHistorical: true));
+            dependencies.Add(Dependency($"Releases-{i}", "Channels-1", OctopusResourceReferenceKind.Channel, OctopusResourceKind.Channel));
+            dependencies.Add(Dependency($"Deployments-{i}", $"Releases-{i}", OctopusResourceReferenceKind.Release, OctopusResourceKind.Release));
+            dependencies.Add(Dependency($"Deployments-{i}", "Environments-1", OctopusResourceReferenceKind.Environment, OctopusResourceKind.Environment));
+        }
+
+        return (resources, dependencies);
+    }
+
+    private static List<string> ReferenceKahnOrder(List<OctopusResourceNode> resources, List<OctopusResourceDependency> dependencies)
+    {
+        var pending = resources.ToDictionary(r => r.SourceId, r => dependencies.Where(d => d.SourceId == r.SourceId).Select(d => d.DependsOnSourceId).ToHashSet());
+        var order = new List<string>();
+
+        while (pending.Count > 0)
+        {
+            var next = resources.Where(r => pending.TryGetValue(r.SourceId, out var waits) && waits.Count == 0).OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank).ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).First();
+
+            order.Add(next.SourceId);
+            pending.Remove(next.SourceId);
+
+            foreach (var waits in pending.Values) waits.Remove(next.SourceId);
+        }
+
+        return order;
+    }
+
     private static OctopusResourceNode Node(
         string sourceId,
         OctopusResourceKind kind,

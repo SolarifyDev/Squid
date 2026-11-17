@@ -1,6 +1,8 @@
 using System.Linq;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.SourceMap;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.UnitTests.Services.OctopusImport;
 
@@ -181,6 +183,55 @@ public class OctopusImportConflictDiscoveryServiceTests
 
         result.Conflicts.Single().Matches.Select(m => m.Destination.Id).ShouldBe([20, 21]);
     }
+
+    [Fact]
+    public async Task DiscoverAsync_LoadsPriorMappings_AndReleaseKeysOnlyForPriorMappedProjects()
+    {
+        SetupDestinations([]);
+        var prior = Prior(("Project", "Projects-1", 100), ("Channel", "Channels-1", 200));
+        var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
+        sourceMap.Setup(s => s.LoadAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(prior);
+        _dataProvider.Setup(x => x.GetReleaseKeysAsync(7, It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>())).ReturnsAsync([new OctopusImportReleaseKey(100, 200, "1.0.0")]);
+        var graph = Graph([Release("Releases-1", "Projects-1"), Release("Releases-2", "Projects-1"), Release("Releases-3", "Projects-unmapped")]) with { InstallationId = "Installation-A" };
+
+        var result = await new OctopusImportConflictDiscoveryService(_dataProvider.Object, sourceMap.Object).DiscoverAsync(7, graph);
+
+        result.PriorMappings.ShouldBeSameAs(prior);
+        result.ExistingReleaseKeys.ShouldBe([new OctopusImportReleaseKey(100, 200, "1.0.0")]);
+        result.HistoryInstallationId.ShouldBe("Installation-A");
+        _dataProvider.Verify(x => x.GetReleaseKeysAsync(7, It.Is<IReadOnlyCollection<int>>(ids => ids.SequenceEqual(new[] { 100 })), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_NoPriorMappedReleaseProject_NeverQueriesReleaseKeys()
+    {
+        SetupDestinations([]);
+        var sourceMap = new Mock<IOctopusImportSourceMapDataProvider>();
+        sourceMap.Setup(s => s.LoadAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(Prior(("Environment", "Environments-1", 5)));
+
+        var result = await new OctopusImportConflictDiscoveryService(_dataProvider.Object, sourceMap.Object).DiscoverAsync(7, Graph([Release("Releases-1", "Projects-1")]));
+
+        result.ExistingReleaseKeys.ShouldBeEmpty();
+        _dataProvider.Verify(x => x.GetReleaseKeysAsync(It.IsAny<int>(), It.IsAny<IReadOnlyCollection<int>>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DiscoverAsync_WithoutASourceMap_HasNoPriorMappings()
+    {
+        SetupDestinations([]);
+
+        var result = await new OctopusImportConflictDiscoveryService(_dataProvider.Object).DiscoverAsync(7, Graph([Release("Releases-1", "Projects-1")]));
+
+        result.PriorMappings.Mappings.ShouldBeEmpty();
+        result.ExistingReleaseKeys.ShouldBeEmpty();
+        result.HistoryInstallationId.ShouldBeNull();
+    }
+
+    private static OctopusImportPriorMappings Prior(params (string Type, string Id, int DestinationId)[] rows)
+        => new(rows.ToDictionary(r => (r.Type, r.Id), r => new OctopusImportPriorMapping(r.DestinationId, "Created", null, null)), null);
+
+    private static OctopusResourceNode Release(string id, string projectId)
+        => new(id, "1.0.0", OctopusResourceKind.Release, OctopusDocumentKind.Release, $"{id}.json", projectId, null, false, new OctopusReleaseDto { Id = id, ProjectId = projectId, Version = "1.0.0" });
 
     private static OctopusImportDestinationResource TeamDestination(int id, int spaceId, string name, bool isBuiltIn = false, int memberCount = 0)
         => new(id, spaceId, OctopusResourceKind.Team, name, null, DateTimeOffset.UtcNow) { IsBuiltIn = isBuiltIn, MemberCount = memberCount };

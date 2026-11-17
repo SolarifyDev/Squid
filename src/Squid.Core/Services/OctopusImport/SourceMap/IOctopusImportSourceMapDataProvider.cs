@@ -1,0 +1,35 @@
+using Squid.Message.Models.OctopusImport;
+
+namespace Squid.Core.Services.OctopusImport.SourceMap;
+
+public interface IOctopusImportSourceMapDataProvider : IScopedDependency
+{
+    /// <summary>Every live source-map row of the space. Rows whose destination row no longer exists (or whose type has no known table) are dropped.</summary>
+    Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default);
+
+    /// <summary>
+    /// <see cref="LoadAsync"/> narrowed to the given source types, with the same liveness filter: for callers that read only a few
+    /// kinds (the history fetch's details skip reads deployments and tasks) and must not pay for a whole-space load on every call.
+    /// </summary>
+    Task<OctopusImportPriorMappings> LoadKindsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, CancellationToken ct = default);
+
+    /// <summary>
+    /// The space's rows of the given source types whose destination is one of the ids, without the liveness filter of
+    /// <see cref="LoadAsync"/>: for callers that already hold those destinations (a deployment holds its variable sets). Cheap — no
+    /// whole-space load.
+    /// </summary>
+    Task<List<OctopusImportSourceMapRow>> GetByDestinationsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, IReadOnlyCollection<int> destinationIds, CancellationToken ct = default);
+
+    /// <summary>
+    /// Inserts or updates the rows in batches. A row that was <c>Created</c> keeps that outcome when re-recorded against the
+    /// same destination, and a null incoming fingerprint keeps the stored one (details are monotonic). Call it only inside the
+    /// confirmation transaction, after <see cref="AcquireSpaceLockAsync"/>.
+    /// </summary>
+    Task UpsertAsync(IReadOnlyList<OctopusImportSourceMapRow> rows, Guid sessionId, CancellationToken ct = default);
+
+    /// <summary>Settles the given secret rows that are still <c>Missing</c> as <c>Superseded</c> (Squid holds a value for them now); other rows are untouched.</summary>
+    Task SupersedeMissingSecretsAsync(int spaceId, string sourceType, IReadOnlyCollection<string> sourceIds, CancellationToken ct = default);
+
+    /// <summary>Serialises confirmations of one space for the rest of the CURRENT transaction (released at commit or rollback).</summary>
+    Task AcquireSpaceLockAsync(int spaceId, CancellationToken ct = default);
+}

@@ -19,5 +19,8 @@ public sealed record OctopusImportDependencyPlan(
     {
     }
 
+    /// <summary>Which resources an imported project uses (D4). Hand-built plans treat everything as referenced.</summary>
+    public OctopusImportReferenceScope ReferenceScope { get; init; } = OctopusImportReferenceScope.Everything;
+
     public bool HasBlockers => Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
 }

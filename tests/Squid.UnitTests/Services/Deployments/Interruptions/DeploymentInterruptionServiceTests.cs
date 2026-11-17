@@ -1,3 +1,4 @@
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using System;
 using System.Collections.Generic;
 using Squid.Core.Persistence.Db;
@@ -80,5 +81,43 @@ public class DeploymentInterruptionServiceTests
         _repository.Verify(r => r.InsertAsync(
             It.Is<DeploymentInterruption>(i => i.ResponsibleTeamIds == responsibleTeamIds),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ========== Imported Octopus history is read-only ==========
+
+    [Fact]
+    public async Task Submit_ImportedTask_ThrowsBeforeMutation()
+    {
+        // Submit does not reject an already-resolved row, so the imported-task guard is what keeps an imported
+        // (resolved) interruption from being re-answered — and it must run before authorization or any write.
+        var interruption = new DeploymentInterruption { Id = 1, ServerTaskId = 10, Resolution = "Proceed", ResolvedAt = DateTimeOffset.Parse("2024-07-10T09:48:11Z") };
+        _repository.Setup(r => r.GetByIdAsync<DeploymentInterruption>(1, It.IsAny<CancellationToken>())).ReturnsAsync(interruption);
+        _serverTaskService.Setup(s => s.IsImportedAsync(10, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        _currentUser.SetupGet(u => u.Id).Returns(5);
+
+        var ex = await Should.ThrowAsync<ImportedServerTaskReadOnlyException>(() => _sut.SubmitInterruptionAsync(1, new Dictionary<string, string> { ["Result"] = "Abort" }));
+
+        ex.TaskId.ShouldBe(10);
+        interruption.Resolution.ShouldBe("Proceed");
+        interruption.SubmittedValuesJson.ShouldBeNull();
+        _authService.Verify(a => a.EnsureCanActAsync(It.IsAny<DeploymentInterruption>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _repository.Verify(r => r.UpdateAsync(It.IsAny<DeploymentInterruption>(), It.IsAny<CancellationToken>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.SetHasPendingInterruptionsAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TakeResponsibility_ImportedTask_Throws()
+    {
+        var interruption = new DeploymentInterruption { Id = 1, ServerTaskId = 10 };
+        _repository.Setup(r => r.GetByIdAsync<DeploymentInterruption>(1, It.IsAny<CancellationToken>())).ReturnsAsync(interruption);
+        _serverTaskService.Setup(s => s.IsImportedAsync(10, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await Should.ThrowAsync<ImportedServerTaskReadOnlyException>(() => _sut.TakeResponsibilityAsync(1, "5"));
+
+        interruption.ResponsibleUserId.ShouldBeNull();
+        _authService.Verify(a => a.EnsureCanActAsync(It.IsAny<DeploymentInterruption>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _repository.Verify(r => r.UpdateAsync(It.IsAny<DeploymentInterruption>(), It.IsAny<CancellationToken>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

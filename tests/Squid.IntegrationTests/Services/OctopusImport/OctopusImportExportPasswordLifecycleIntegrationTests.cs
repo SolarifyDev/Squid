@@ -7,6 +7,7 @@ using Squid.Core.Services.Authorization;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Services.Security;
 using Squid.Core.Settings.Security;
 using Squid.Message.Constants;
@@ -36,22 +37,41 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.AddSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetSessionNoTrackingAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetSessionStatusNoTrackingAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.UpdateSessionAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TransitionStateAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TryStartConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync)}"] = true,
-        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.TouchConfirmationHeartbeatAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.WriteConfirmationProgressAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.IsConfirmationHeldAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.ReturnConfirmationToValidatedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.RecordConfirmationFailureAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetInterruptedConfirmationsAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.RecoverInterruptedConfirmationAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetTemporaryUploadCleanupCandidatesAsync)}"] = false,
-        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync)}"] = true,
         [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanupFailedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetLatestHistoryFetchAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionDataProvider)}.{nameof(IOctopusImportSessionDataProvider.GetResumableSessionsNoTrackingAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.CreateSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.GetSessionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RegisterTemporaryUploadAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdatePayloadAndTransitionAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ReplaceValidatedPlanAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.TryStartConfirmationAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateHistoryFetchAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.UpdateProjectSelectionAsync)}"] = false,
         [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordResultAsync)}"] = true,
-        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.IsConfirmationHeldAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.SettleConfirmationAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ReturnConfirmationToValidatedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.RecordConfirmationNotStartedAsync)}"] = false,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ExpireSessionsAsync)}"] = true,
+        [$"{nameof(IOctopusImportSessionService)}.{nameof(IOctopusImportSessionService.ListResumableSessionsAsync)}"] = false
     };
+
+    private static readonly Guid SettlingAttemptId = Guid.NewGuid();
 
     public OctopusImportExportPasswordLifecycleIntegrationTests()
         : base("OctopusImportExportPasswordLifecycle", "squid_it_octopus_import_export_password_lifecycle")
@@ -88,14 +108,18 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             }
 
             if (!OctopusImportSessionStateMachine.IsTerminal(from) && from != OctopusImportSessionState.Importing)
+            {
                 data.Add(nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync), from, OctopusImportSessionState.Expired);
+                data.Add(nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync), from, OctopusImportSessionState.Expired);
+            }
         }
 
-        data.Add(nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
+        data.Add(nameof(IOctopusImportSessionService.SettleConfirmationAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Succeeded);
+        data.Add(nameof(IOctopusImportSessionService.SettleConfirmationAsync), OctopusImportSessionState.Importing, OctopusImportSessionState.Failed);
 
-        // The upload purge only runs for terminal sessions, but must not trust that they were cleared.
+        // The upload purge (stored files and the mark, one transaction) only runs for terminal sessions, but must not trust that they were cleared.
         foreach (var terminal in states.Where(OctopusImportSessionStateMachine.IsTerminal))
-            data.Add(nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync), terminal, terminal);
+            data.Add(nameof(IOctopusImportSessionFileStore.PurgeAndMarkCleanedAsync), terminal, terminal);
 
         return data;
     }
@@ -112,7 +136,7 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             var db = scope.Resolve<SquidDbContext>();
             var session = Session(sessionId, from, RetainedEnvelope, uploadPath);
             if (path == nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync)) session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1);
-            if (path == nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync)) session.LastStateChangedAt = DateTimeOffset.UtcNow.AddHours(-2);
+            if (path == nameof(IOctopusImportSessionService.SettleConfirmationAsync)) session.ConfirmationAttemptId = SettlingAttemptId;
             db.Set<OctopusImportSession>().Add(session);
             await db.SaveChangesAsync();
             db.ChangeTracker.Clear();
@@ -144,6 +168,67 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             (await sessions.TryStartConfirmationAsync(sessionId, SpaceId)).ShouldBeTrue();
 
             (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId)).ProtectedExportPassword.ShouldBe(RetainedEnvelope, "confirmation still needs it while the session is active");
+        });
+    }
+
+    // An attempt that imported nothing (rolled back, or recovered after its server died) leaves the session Validated and importable
+    // again: confirmation still needs the password, so neither path may clear it.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReturnedOrRecoveredToValidated_KeepsTheRetainedExportPassword(bool recovered)
+    {
+        var sessionId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var db = scope.Resolve<SquidDbContext>();
+            var session = Session(sessionId, OctopusImportSessionState.Importing, RetainedEnvelope, "/tmp/keep.zip");
+            session.ConfirmationAttemptId = attemptId;
+            session.ImportHeartbeatAt = DateTimeOffset.UtcNow.AddHours(-1);
+            db.Set<OctopusImportSession>().Add(session);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
+            var now = DateTimeOffset.UtcNow;
+            var cutoffs = new OctopusImportInterruptedConfirmationCutoffs(TimeSpan.FromMinutes(5), now.AddHours(-6));
+            var validatedReturn = new OctopusImportValidatedReturn(now, TimeSpan.FromHours(24), TimeSpan.FromHours(168));
+            var changed = recovered
+                ? await provider.RecoverInterruptedConfirmationAsync(new OctopusImportInterruptedConfirmation(sessionId, attemptId), cutoffs, "{}", validatedReturn)
+                : await provider.ReturnConfirmationToValidatedAsync(sessionId, attemptId, "{}", validatedReturn);
+
+            changed.ShouldBe(1);
+            var stored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+            stored.ProtectedExportPassword.ShouldBe(RetainedEnvelope);
+        });
+    }
+
+    // ── Expiry: a fetch in progress keeps its session ────────────────────────────────────────
+
+    [Fact]
+    public async Task HistoryFetchChunk_SlidesTheExpiry_SoTheSweepKeepsAResumableFetch()
+    {
+        var sessionId = Guid.NewGuid();
+
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var db = scope.Resolve<SquidDbContext>();
+            var session = Session(sessionId, OctopusImportSessionState.Uploaded, null, $"/tmp/{sessionId:N}");
+            session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+            session.TemporaryUploadCleanupAfter = session.ExpiresAt;
+            db.Set<OctopusImportSession>().Add(session);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            await scope.Resolve<IOctopusImportSessionService>().UpdateHistoryFetchAsync(sessionId, SpaceId, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, null);
+            await scope.Resolve<IOctopusImportSessionDataProvider>().ExpireSessionsAsync(DateTimeOffset.UtcNow.AddHours(1));
+
+            var stored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Uploaded.ToString(), "a chunk claim must push the expiry a retention period ahead, or the sweep wipes a running fetch");
+            stored.TemporaryUploadCleanupAfter.ShouldBe(stored.ExpiresAt);
         });
     }
 
@@ -285,11 +370,14 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
             case nameof(IOctopusImportSessionDataProvider.ExpireSessionsAsync):
                 (await sessions.ExpireSessionsAsync(now)).ShouldBeGreaterThanOrEqualTo(1);
                 break;
-            case nameof(IOctopusImportSessionDataProvider.MarkInterruptedImportsFailedAsync):
-                (await provider.MarkInterruptedImportsFailedAsync(now, now.AddHours(-1), TimeSpan.FromHours(6))).ShouldBeGreaterThanOrEqualTo(1);
+            case nameof(IOctopusImportSessionDataProvider.ExpireOverAgeSessionsAsync):
+                (await provider.ExpireOverAgeSessionsAsync(now, now.AddMinutes(1), "{\"succeeded\":false}")).ShouldBeGreaterThanOrEqualTo(1);
                 break;
-            case nameof(IOctopusImportSessionDataProvider.MarkTemporaryUploadCleanedAsync):
-                (await provider.MarkTemporaryUploadCleanedAsync(sessionId, uploadPath, now)).ShouldBe(1);
+            case nameof(IOctopusImportSessionService.SettleConfirmationAsync):
+                await sessions.SettleConfirmationAsync(sessionId, SpaceId, SettlingAttemptId, to, new OctopusImportSessionResultDto());
+                break;
+            case nameof(IOctopusImportSessionFileStore.PurgeAndMarkCleanedAsync):
+                (await scope.Resolve<IOctopusImportSessionFileStore>().PurgeAndMarkCleanedAsync(sessionId, uploadPath, now)).ShouldBeTrue();
                 break;
             default:
                 throw new InvalidOperationException($"Unknown session-ending path {path}");

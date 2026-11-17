@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Message.Enums.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport.Octopus;
 
@@ -31,14 +32,41 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             AddDocumentResource(context);
         }
 
+        AddReferencedBuiltInTeams(resources, references, resourceIndexes);
+
         var dependencies = references
             .Where(r => r.CreatesDependency && !string.IsNullOrWhiteSpace(r.ToSourceId))
             .Select(r => new OctopusResourceDependency(r.FromSourceId, r.ToSourceId, r.ReferenceKind, r.ToKind))
             .Distinct()
             .ToList();
 
-        return new OctopusResourceGraph(resources, references, dependencies, diagnostics);
+        return new OctopusResourceGraph(resources, references, dependencies, diagnostics) { InstallationId = inventory.Manifest?.InstallationId, ExportSourceId = ExportSourceId(resources) };
     }
+
+    // Every document of one export shares one suffixed SpaceId; anything else (REST ids, mixed suffixes) records none.
+    private static string ExportSourceId(IEnumerable<OctopusResourceNode> resources)
+    {
+        var suffixes = resources.Select(r => OctopusImportSourceIds.ExportSuffixOf(r.GetSource<OctopusDocumentDto>()?.SpaceId)).Where(s => s != null).Distinct().Take(2).ToList();
+
+        return suffixes.Count == 1 ? suffixes[0] : null;
+    }
+
+    // A zip export usually omits Octopus's built-in teams even when a manual intervention names one. The
+    // built-ins with a Squid equivalent are synthesized so they take the normal reuse path onto the Squid
+    // built-in team; every other missing team (managers, unknown ids) still fails closed in validation.
+    private static void AddReferencedBuiltInTeams(List<OctopusResourceNode> resources, IEnumerable<OctopusResourceReference> references, Dictionary<string, int> resourceIndexes)
+    {
+        foreach (var teamId in references.Where(r => r.ReferenceKind == OctopusResourceReferenceKind.Team).Select(r => r.ToSourceId).ToList())
+        {
+            if (resourceIndexes.ContainsKey(teamId) || !OctopusBuiltInTeams.TryGetSquidEquivalent(teamId, out var squidTeamName)) continue;
+
+            resourceIndexes[teamId] = resources.Count;
+            resources.Add(BuiltInTeamNode(teamId, squidTeamName));
+        }
+    }
+
+    private static OctopusResourceNode BuiltInTeamNode(string teamId, string squidTeamName)
+        => new(teamId, squidTeamName, OctopusResourceKind.Team, OctopusDocumentKind.Team, $"builtin/{teamId}", null, null, false, new OctopusTeamDto { Id = teamId, Name = squidTeamName });
 
     private static void AddDocumentResource(GraphBuildContext context)
     {
@@ -160,7 +188,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
         foreach (var phase in lifecycle.Phases.Select((value, index) => (value, index)))
         {
-            var sourceId = BuildChildSourceId(lifecycle.Id, "phase", phase.value.Id, phase.index);
+            var sourceId = OctopusImportChildSourceIds.Qualify(lifecycle.Id, lifecycle.Id, OctopusImportChildSourceIds.PhaseToken, phase.value.Id, phase.index);
             if (!AddNode(context, sourceId, phase.value.Name, OctopusResourceKind.LifecyclePhase, OctopusDocumentKind.Lifecycle, context.Document.SourcePath, null, lifecycle.Id, false, phase.value))
                 continue;
 
@@ -223,7 +251,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddDeploymentStep(GraphBuildContext context, OctopusDeploymentProcessDto process, OctopusResourceKind processKind, OctopusDeploymentStepDto step, int index)
     {
-        var sourceId = BuildChildSourceId(process.Id, "step", step.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Qualify(process.OwnerId, process.Id, OctopusImportChildSourceIds.StepToken, step.Id, index);
         if (!AddNode(context, sourceId, step.Name, OctopusResourceKind.DeploymentStep, context.Classification.Kind, context.Document.SourcePath, process.OwnerId, process.Id, context.Classification.IsOutOfScopeHistory, step))
             return;
 
@@ -235,7 +263,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddDeploymentAction(GraphBuildContext context, OctopusDeploymentProcessDto process, string stepId, OctopusDeploymentActionDto action, int index)
     {
-        var sourceId = BuildChildSourceId(stepId, "action", action.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Qualify(process.OwnerId, stepId, OctopusImportChildSourceIds.ActionToken, action.Id, index);
         if (!AddNode(context, sourceId, action.Name, OctopusResourceKind.DeploymentAction, context.Classification.Kind, context.Document.SourcePath, process.OwnerId, stepId, context.Classification.IsOutOfScopeHistory, action))
             return;
 
@@ -292,7 +320,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
 
     private static void AddVariable(GraphBuildContext context, OctopusVariableSetDto variableSet, OctopusResourceKind variableSetKind, OctopusVariableDto variable, int index)
     {
-        var sourceId = BuildChildSourceId(variableSet.Id, "variable", variable.Id, index);
+        var sourceId = OctopusImportChildSourceIds.Variable(variableSet, variable.Id, index);
         var ownerProjectId = IsLibraryVariableSetOwner(variableSet.OwnerType) ? null : variableSet.OwnerId;
 
         if (!AddNode(context, sourceId, variable.Name, OctopusResourceKind.Variable, context.Classification.Kind, context.Document.SourcePath, ownerProjectId, variableSet.Id, context.Classification.IsOutOfScopeHistory, variable))
@@ -363,6 +391,7 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Project, deployment.ProjectId, OctopusResourceKind.Project, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Environment, deployment.EnvironmentId, OctopusResourceKind.Environment, deployment.ProjectId, true);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Release, deployment.ReleaseId, OctopusResourceKind.Release, deployment.ProjectId, true);
+        AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.Channel, deployment.ChannelId, OctopusResourceKind.Channel, deployment.ProjectId, true, false);
         AddReference(context, deployment.Id, OctopusResourceKind.Deployment, OctopusResourceReferenceKind.ServerTask, deployment.TaskId, OctopusResourceKind.ServerTask, deployment.ProjectId, false, true);
     }
 
@@ -521,7 +550,9 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
             _ => (OctopusResourceKind?)null
         };
 
-        AddReference(context, variableId, OctopusResourceKind.Variable, referenceKind.Value, scopedValue, toKind, ownerProjectId, false);
+        var targetId = referenceKind == OctopusResourceReferenceKind.DeploymentAction ? OctopusImportChildSourceIds.ScopedAction(ownerProjectId, scopedValue) : scopedValue;
+
+        AddReference(context, variableId, OctopusResourceKind.Variable, referenceKind.Value, targetId, toKind, ownerProjectId, false);
     }
 
     private static void AddReference(
@@ -563,11 +594,6 @@ public class OctopusResourceGraphBuilder : IOctopusResourceGraphBuilder
         => variableSetKind == OctopusResourceKind.VariableSetSnapshot
             ? OctopusResourceReferenceKind.VariableSetSnapshot
             : OctopusResourceReferenceKind.VariableSet;
-
-    private static string BuildChildSourceId(string parentSourceId, string childKind, string sourceId, int index)
-        => string.IsNullOrWhiteSpace(sourceId)
-            ? $"{parentSourceId}/{childKind}-{index + 1}"
-            : sourceId;
 
     private static string GetProperty(Dictionary<string, string> properties, string key)
     {

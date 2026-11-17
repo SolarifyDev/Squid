@@ -9,12 +9,11 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportPreviewPlanner : IScopedDependency
 {
-    OctopusImportPreviewPlanDto BuildPreviewPlan(
-        OctopusImportDependencyPlan dependencyPlan,
-        OctopusImportConflictDiscoveryResult conflicts);
+    /// <param name="selections">What the user selected among the resources the plan offers to decide on; null means every server default.</param>
+    OctopusImportPreviewPlanDto BuildPreviewPlan(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportChoiceSelections selections = null);
 }
 
-public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
+public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 {
     private readonly IOctopusExportSecretsAccessor _secretsAccessor;
 
@@ -25,21 +24,10 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
     private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
 
-    public OctopusImportPreviewPlanDto BuildPreviewPlan(
-        OctopusImportDependencyPlan dependencyPlan,
-        OctopusImportConflictDiscoveryResult conflicts)
+    public OctopusImportPreviewPlanDto BuildPreviewPlan(OctopusImportDependencyPlan dependencyPlan, OctopusImportConflictDiscoveryResult conflicts, OctopusImportChoiceSelections selections = null)
     {
         ArgumentNullException.ThrowIfNull(dependencyPlan);
         ArgumentNullException.ThrowIfNull(conflicts);
-
-        var conflictsBySourceId = conflicts.Conflicts
-            .GroupBy(c => c.Source.SourceId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
-
-        var blockedSourceIds = dependencyPlan.Diagnostics
-            .Where(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker && !string.IsNullOrWhiteSpace(d.SourceId))
-            .Select(d => d.SourceId)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var nodes = dependencyPlan.OrderedResources
             .Concat(dependencyPlan.OutOfScopeResources)
@@ -48,42 +36,75 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             .OrderBy(r => OctopusResourceMetadata.For(r.Kind).Rank)
             .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var resources = nodes
-            .Select(resource => BuildResourcePreview(resource, conflictsBySourceId, blockedSourceIds))
-            .ToList();
+        var context = new PreviewPlanningContext(dependencyPlan, conflicts, nodes, selections ?? OctopusImportChoiceSelections.Empty);
+        var resources = BuildResourcePreviews(nodes, context);
+
+        MarkChoiceFollowers(nodes, resources);
 
         AddVariableDiagnostics(nodes, resources);
+        AddWithheldSecretDiagnostics(nodes, resources);
+        AddChanges(nodes, resources, context);
+        AttributeTasksToTheirDeploymentProject(nodes, resources);
+        AddSkipReasons(resources);
 
         var diagnostics = dependencyPlan.Diagnostics
+            .Where(d => !context.IsLeftOut(d.SourceId))
             .Select(MapDependencyDiagnostic)
             .Concat(OctopusImportExportSecretDiagnostics.Describe(Secrets))
+            .Concat(OriginDiagnostics(context))
+            .Concat(GroupedScopeDiagnostics(resources))
+            .Concat(SelectionDiagnostics(resources))
+            .Concat(ConfigAsCodeDiagnostics(resources))
+            .Concat(WithheldSecretsSummary(resources))
+            .Concat(SecretFillSummary(context))
             .ToList();
 
-        return new OctopusImportPreviewPlanDto
+        var plan = new OctopusImportPreviewPlanDto
         {
             GeneratedAt = DateTimeOffset.UtcNow,
             Resources = resources,
             RequiredInputs = resources
                 .SelectMany(r => r.RequiredInputs)
                 .ToList(),
-            Diagnostics = diagnostics
+            Diagnostics = diagnostics,
+            FillPairing = FillPairing(context),
+            Origin = OriginEvidence(context)
         };
+
+        plan.Summary = Summary(plan, context);
+
+        return plan;
     }
 
-    private OctopusImportResourceResultDto BuildResourcePreview(
-        OctopusResourceNode resource,
-        IReadOnlyDictionary<string, OctopusImportResourceConflict> conflictsBySourceId,
-        IReadOnlySet<string> blockedSourceIds)
+    // Rank order puts every owner before what it owns (project before channel, process before step,
+    // variable set before variable, release before deployment before task), so each decision can read
+    // the decisions already made for its owners.
+    private List<OctopusImportResourceResultDto> BuildResourcePreviews(IReadOnlyList<OctopusResourceNode> nodes, PreviewPlanningContext context)
+    {
+        var resources = new List<OctopusImportResourceResultDto>();
+
+        foreach (var resource in nodes)
+            resources.Add(context.Record(BuildResourcePreview(resource, context)));
+
+        return resources;
+    }
+
+    private OctopusImportResourceResultDto BuildResourcePreview(OctopusResourceNode resource, PreviewPlanningContext context)
     {
         var result = new OctopusImportResourceResultDto
         {
             SourceId = resource.SourceId,
             SourceType = resource.Kind.ToString(),
             SourceName = resource.Name,
+            OwnerProjectSourceId = resource.OwnerProjectId,
             OutcomeState = OctopusImportResourceOutcomeState.Pending
         };
 
-        if (blockedSourceIds.Contains(resource.SourceId))
+        if (context.IsOutsideSelection(resource)) return OutsideSelection(result, resource, context);
+
+        if (context.IsConfigAsCode(resource)) return ConfigAsCodeSkip(result, resource, context);
+
+        if (context.IsBlocked(resource.SourceId))
         {
             result.PreviewAction = OctopusImportPreviewAction.Blocked;
             result.OutcomeState = OctopusImportResourceOutcomeState.Blocked;
@@ -95,12 +116,10 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (resource.Kind is OctopusResourceKind.Release
-            or OctopusResourceKind.Deployment
-            or OctopusResourceKind.ServerTask)
+        if (IsHistoryKind(resource.Kind))
         {
-            result.PreviewAction = OctopusImportPreviewAction.Create;
-            AddManualConfigurationDiagnostics(result, resource);
+            ApplyDecision(result, DecideHistory(resource, context));
+            result.PriorImportFingerprint = PreviewedBasis(resource, result.PreviewAction, context);
             return result;
         }
 
@@ -130,7 +149,20 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (!conflictsBySourceId.TryGetValue(resource.SourceId, out var conflict))
+        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf, context.LegacyChildIds) is { } decided)
+        {
+            ApplyPriorDecision(result, resource, decided, context);
+            ApplySecretFill(result, resource, context);
+            return result;
+        }
+
+        if (DecideScope(resource, context) is { } scopeDecision)
+        {
+            ApplyScopeDecision(result, scopeDecision, context);
+            return result;
+        }
+
+        if (!context.TryGetConflict(resource.SourceId, out var conflict))
         {
             result.PreviewAction = OctopusImportPreviewAction.Create;
             AddTeamDiagnostics(result, resource);
@@ -156,8 +188,10 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
 
         foreach (var resource in nodes.Where(n => !n.IsHistorical && n.Kind == OctopusResourceKind.Variable))
         {
+            if (OctopusImportPreviewActions.IsImportedEarlier(PreviewAction(resource.SourceId)) || PreviewAction(resource.SourceId) == OctopusImportPreviewAction.Skip) continue;
+
             if (OctopusImportVariableOwnership.IsWrittenByImport(resource, FindNode, PreviewAction))
-                AddRequiredInputs(previewsById[resource.SourceId], resource);
+                AddWrittenVariableDiagnostics(previewsById[resource.SourceId], resource);
             else
                 previewsById[resource.SourceId].Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Info, OctopusImportPreviewDiagnosticCodes.ReusedLibraryVariableKept, "This variable belongs to a library variable set that is reused as-is; the destination keeps its existing value and this source value is not imported.", resource));
         }
@@ -237,6 +271,17 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
     private static bool IsEveryUserTeam(OctopusImportDestinationResource destination)
         => destination.IsBuiltIn && destination.SpaceId == 0 && destination.Name == BuiltInTeamNames.Everyone;
 
+    // A variable this import writes: Squid must be able to hold its type (the mapper's rule), and its value must resolve.
+    private void AddWrittenVariableDiagnostics(OctopusImportResourceResultDto result, OctopusResourceNode resource)
+    {
+        var variable = resource.GetSource<OctopusVariableDto>();
+
+        if (variable != null && OctopusImportVariableMapper.SquidVariableType(variable) == null)
+            result.Diagnostics.Add(Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType, OctopusImportVariableMapper.UnsupportedVariableTypeMessage(variable), resource));
+
+        AddRequiredInputs(result, resource);
+    }
+
     private void AddRequiredInputs(
         OctopusImportResourceResultDto result,
         OctopusResourceNode resource)
@@ -255,7 +300,14 @@ public class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return;
         }
 
-        result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable));
+        result.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(resource.SourceId, variable, Secrets));
+
+        if (OctopusImportSensitiveValues.IsWithheldByServer(variable, Secrets))
+        {
+            result.Diagnostics.Add(Diagnostic(OctopusImportSecretSeverity.For(withheld: true, Secrets), OctopusImportPreviewDiagnosticCodes.SecretWithheldByServer, OctopusImportPreviewDiagnosticCodes.VariableValueWithheldMessage, resource));
+            return;
+        }
+
         result.Diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportPreviewDiagnosticCodes.RequiredSensitiveVariableInputMissing,

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Identity;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Interruption;
@@ -78,6 +79,8 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
+        await EnsureTaskNotImportedAsync(interruption, ct).ConfigureAwait(false);
+
         var access = currentUser.Id.HasValue ? await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false) : (InterruptionAccess?)null;
 
         RecordAdministratorOverride(interruption, access, currentUser.Id, currentUser.Name);
@@ -104,6 +107,8 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
+        await EnsureTaskNotImportedAsync(interruption, ct).ConfigureAwait(false);
+
         if (int.TryParse(userId, out var uid))
         {
             var access = await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
@@ -114,6 +119,13 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
 
         await repository.UpdateAsync(interruption, ct).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    // An imported Octopus interruption is a resolved historical record; answering or claiming it would rewrite history.
+    private async Task EnsureTaskNotImportedAsync(DeploymentInterruption interruption, CancellationToken ct)
+    {
+        if (await serverTaskService.IsImportedAsync(interruption.ServerTaskId, ct).ConfigureAwait(false))
+            throw new ImportedServerTaskReadOnlyException(interruption.ServerTaskId);
     }
 
     // Every submission replaces the resolution, so it also replaces the audit fields: a later non-override

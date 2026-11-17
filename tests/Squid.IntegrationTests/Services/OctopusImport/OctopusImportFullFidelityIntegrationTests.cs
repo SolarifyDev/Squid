@@ -10,6 +10,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.Security;
 using Squid.Message.Commands.Deployments.Deployment;
@@ -258,7 +259,7 @@ public class OctopusImportFullFidelityIntegrationTests : TestBase
     }
 
     [Fact]
-    public async Task ExpiredInterruptedAndPurgedSessions_DropTheRetainedExportPassword()
+    public async Task ExpiredAndPurgedSessions_DropTheRetainedExportPassword_RecoveredInterruptedKeepsIt()
     {
         var expiredId = Guid.NewGuid();
         var purgedId = Guid.NewGuid();
@@ -271,18 +272,24 @@ public class OctopusImportFullFidelityIntegrationTests : TestBase
             var purged = Session(purgedId, OctopusImportSessionState.Failed, protectedPassword: "v2:anything", uploadPath: "/tmp/purged.zip");
             var interrupted = Session(interruptedId, OctopusImportSessionState.Importing, protectedPassword: "v2:anything");
             interrupted.LastStateChangedAt = DateTimeOffset.UtcNow.AddHours(-2);
+            interrupted.ConfirmationAttemptId = Guid.NewGuid();
+            interrupted.ImportHeartbeatAt = DateTimeOffset.UtcNow.AddHours(-2);
             db.Set<OctopusImportSession>().AddRange(expired, purged, interrupted);
             await db.SaveChangesAsync();
             db.ChangeTracker.Clear();
 
             var provider = scope.Resolve<IOctopusImportSessionDataProvider>();
             await provider.ExpireSessionsAsync(DateTimeOffset.UtcNow);
-            await provider.MarkTemporaryUploadCleanedAsync(purgedId, "/tmp/purged.zip", DateTimeOffset.UtcNow);
-            await provider.MarkInterruptedImportsFailedAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(-1), TimeSpan.FromHours(6));
+            await scope.Resolve<IOctopusImportSessionFileStore>().PurgeAndMarkCleanedAsync(purgedId, "/tmp/purged.zip", DateTimeOffset.UtcNow);
+            (await scope.Resolve<IOctopusImportConfirmationRecoveryService>().RecoverInterruptedAsync()).ShouldBe(1);
 
             (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == expiredId)).ProtectedExportPassword.ShouldBeNull();
             (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == purgedId)).ProtectedExportPassword.ShouldBeNull();
-            (await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == interruptedId)).ProtectedExportPassword.ShouldBeNull();
+
+            // An interrupted import committed nothing: it is Validated again and keeps the password the next attempt needs.
+            var interruptedStored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == interruptedId);
+            interruptedStored.State.ShouldBe(OctopusImportSessionState.Validated.ToString());
+            interruptedStored.ProtectedExportPassword.ShouldBe("v2:anything");
         });
     }
 

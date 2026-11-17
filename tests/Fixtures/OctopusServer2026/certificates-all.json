@@ -1,0 +1,88 @@
+[
+  {
+    "Id": "Certificates-1",
+    "Name": "Sample TLS",
+    "Notes": "",
+    "CertificateData": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Password": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "EnvironmentIds": [
+      "Environments-3"
+    ],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "CertificateDataFormat": "Pkcs12",
+    "Archived": null,
+    "ReplacedBy": null,
+    "SubjectDistinguishedName": "CN=app.example.com",
+    "SubjectCommonName": "app.example.com",
+    "SubjectOrganization": null,
+    "IssuerDistinguishedName": "CN=Example CA",
+    "IssuerCommonName": "Example CA",
+    "IssuerOrganization": null,
+    "SelfSigned": false,
+    "Thumbprint": "0000000000000000000000000000000000000001",
+    "NotAfter": "2030-01-01T00:00:00.000+00:00",
+    "NotBefore": "2025-01-01T00:00:00.000+00:00",
+    "IsExpired": false,
+    "HasPrivateKey": true,
+    "Version": 3,
+    "SerialNumber": "01",
+    "SignatureAlgorithmName": "sha256RSA",
+    "SubjectAlternativeNames": [
+      "app.example.com"
+    ],
+    "CertificateChain": [],
+    "SpaceId": "Spaces-1",
+    "Links": {
+      "Self": "/api/Spaces-1/certificates/Certificates-1"
+    }
+  },
+  {
+    "Id": "Certificates-2",
+    "Name": "Public Cert",
+    "Notes": "",
+    "CertificateData": {
+      "HasValue": true,
+      "NewValue": null,
+      "Hint": null
+    },
+    "Password": null,
+    "EnvironmentIds": [],
+    "TenantedDeploymentParticipation": "Untenanted",
+    "TenantIds": [],
+    "TenantTags": [],
+    "CertificateDataFormat": "Pem",
+    "Archived": null,
+    "ReplacedBy": null,
+    "SubjectDistinguishedName": "CN=public.example.com",
+    "SubjectCommonName": "public.example.com",
+    "SubjectOrganization": null,
+    "IssuerDistinguishedName": "CN=public.example.com",
+    "IssuerCommonName": "public.example.com",
+    "IssuerOrganization": null,
+    "SelfSigned": true,
+    "Thumbprint": "0000000000000000000000000000000000000002",
+    "NotAfter": "2030-01-01T00:00:00.000+00:00",
+    "NotBefore": "2025-01-01T00:00:00.000+00:00",
+    "IsExpired": false,
+    "HasPrivateKey": false,
+    "Version": 3,
+    "SerialNumber": "02",
+    "SignatureAlgorithmName": "sha256RSA",
+    "SubjectAlternativeNames": [],
+    "CertificateChain": [],
+    "SpaceId": "Spaces-1",
+    "Links": {
+      "Self": "/api/Spaces-1/certificates/Certificates-2"
+    }
+  }
+]

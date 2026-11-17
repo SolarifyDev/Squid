@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using Squid.Core.Services.DataSeeding;
 using Squid.Core.Services.OctopusImport.Octopus;
 
 namespace Squid.UnitTests.Services.OctopusImport.Octopus;
@@ -104,24 +105,24 @@ public class OctopusResourceGraphBuilderTests
         graph.Diagnostics.ShouldBeEmpty();
         graph.Resources.Single(r => r.SourceId == "Projects-1").Kind.ShouldBe(OctopusResourceKind.Project);
         graph.Resources.Single(r => r.SourceId == "deploymentprocess-Projects-1").OwnerProjectId.ShouldBe("Projects-1");
-        graph.Resources.Single(r => r.SourceId == "Steps-1").ParentSourceId.ShouldBe("deploymentprocess-Projects-1");
-        graph.Resources.Single(r => r.SourceId == "Actions-1").ParentSourceId.ShouldBe("Steps-1");
-        graph.Resources.Single(r => r.SourceId == "Variables-1").ParentSourceId.ShouldBe("variableset-Projects-1");
+        graph.Resources.Single(r => r.SourceId == "Projects-1/step/Steps-1").ParentSourceId.ShouldBe("deploymentprocess-Projects-1");
+        graph.Resources.Single(r => r.SourceId == "Projects-1/action/Actions-1").ParentSourceId.ShouldBe("Projects-1/step/Steps-1");
+        graph.Resources.Single(r => r.SourceId == "Projects-1/variable/Variables-1").ParentSourceId.ShouldBe("variableset-Projects-1");
 
         graph.References.ShouldContain(r =>
             r.FromSourceId == "Projects-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.ProjectGroup &&
             r.ToSourceId == "ProjectGroups-1");
         graph.References.ShouldContain(r =>
-            r.FromSourceId == "Actions-1" &&
+            r.FromSourceId == "Projects-1/action/Actions-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.Feed &&
             r.ToSourceId == "Feeds-1");
         graph.References.ShouldContain(r =>
-            r.FromSourceId == "Variables-1" &&
+            r.FromSourceId == "Projects-1/variable/Variables-1" &&
             r.ReferenceKind == OctopusResourceReferenceKind.TargetRole &&
             r.ToSourceId == "aws-eks-us");
         graph.Dependencies.ShouldContain(d =>
-            d.SourceId == "Actions-1" &&
+            d.SourceId == "Projects-1/action/Actions-1" &&
             d.ReferenceKind == OctopusResourceReferenceKind.Feed &&
             d.DependsOnSourceId == "Feeds-1");
         graph.Dependencies.ShouldContain(d =>
@@ -170,9 +171,9 @@ public class OctopusResourceGraphBuilderTests
 
         graph.Resources.Single(r => r.SourceId == "variableset-Projects-1-s-1-ABC").IsHistorical.ShouldBeTrue();
         graph.Resources.Single(r => r.SourceId == "deploymentprocess-Projects-1-s-1-ABC").IsHistorical.ShouldBeTrue();
-        graph.Resources.ShouldNotContain(r => r.SourceId == "Variables-1");
-        graph.Resources.ShouldNotContain(r => r.SourceId == "Steps-1");
-        graph.Resources.ShouldNotContain(r => r.SourceId == "Actions-1");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Projects-1/variable/Variables-1");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Projects-1/step/Steps-1");
+        graph.Resources.ShouldNotContain(r => r.SourceId == "Projects-1/action/Actions-1");
         graph.Resources.Single(r => r.SourceId == "Releases-1").IsHistorical.ShouldBeFalse();
         graph.Resources.Single(r => r.SourceId == "Deployments-1").IsHistorical.ShouldBeFalse();
         graph.Resources.Single(r => r.SourceId == "ServerTasks-1").IsHistorical.ShouldBeFalse();
@@ -271,7 +272,7 @@ public class OctopusResourceGraphBuilderTests
         graph.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId);
         graph.Resources.Count(r => r.SourceId == "deploymentprocess-Projects-1").ShouldBe(1);
         graph.Resources.Single(r => r.SourceId == "deploymentprocess-Projects-1").IsHistorical.ShouldBeFalse();
-        graph.Resources.ShouldContain(r => r.SourceId == "Steps-1");
+        graph.Resources.ShouldContain(r => r.SourceId == "Projects-1/step/Steps-1");
     }
 
     [Fact]
@@ -308,7 +309,7 @@ public class OctopusResourceGraphBuilderTests
         var graph = _graphBuilder.Build(inventory);
 
         var diagnostic = graph.Diagnostics.Single(d => d.Code == OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId);
-        diagnostic.SourceId.ShouldBe("Steps-1");
+        diagnostic.SourceId.ShouldBe("Projects-1/step/Steps-1");
         diagnostic.SourcePath.ShouldBe("deploymentprocess-Projects-1.json");
         graph.HasBlockers.ShouldBeTrue();
     }
@@ -370,7 +371,7 @@ public class OctopusResourceGraphBuilderTests
         variableSet.Kind.ShouldBe(OctopusResourceKind.VariableSet);
         variableSet.OwnerProjectId.ShouldBeNull();
         variableSet.ParentSourceId.ShouldBe("LibraryVariableSets-1");
-        graph.Resources.Single(r => r.SourceId == "lib-var-1").OwnerProjectId.ShouldBeNull();
+        graph.Resources.Single(r => r.SourceId == "LibraryVariableSets-1/variable/lib-var-1").OwnerProjectId.ShouldBeNull();
 
         graph.Dependencies.ShouldContain(new OctopusResourceDependency("Projects-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet));
         graph.Dependencies.ShouldContain(new OctopusResourceDependency("variableset-LibraryVariableSets-1", "LibraryVariableSets-1", OctopusResourceReferenceKind.LibraryVariableSet, OctopusResourceKind.LibraryVariableSet));
@@ -429,7 +430,7 @@ public class OctopusResourceGraphBuilderTests
 
         var teamReferences = graph.References.Where(r => r.ReferenceKind == OctopusResourceReferenceKind.Team).ToList();
         teamReferences.Select(r => r.ToSourceId).ShouldBe(expectedTeamIds, ignoreOrder: true);
-        teamReferences.ShouldAllBe(r => r.FromSourceId == "Actions-1" && r.FromKind == OctopusResourceKind.DeploymentAction && r.ToKind == OctopusResourceKind.Team && !r.IsRequired);
+        teamReferences.ShouldAllBe(r => r.FromSourceId == "Projects-1/action/Actions-1" && r.FromKind == OctopusResourceKind.DeploymentAction && r.ToKind == OctopusResourceKind.Team && !r.IsRequired);
     }
 
     [Fact]
@@ -442,6 +443,175 @@ public class OctopusResourceGraphBuilderTests
         var graph = _graphBuilder.Build(inventory);
 
         graph.References.ShouldNotContain(r => r.ReferenceKind == OctopusResourceReferenceKind.Team);
+    }
+
+    [Theory]
+    [InlineData("teams-everyone", true, BuiltInTeamNames.Everyone)]
+    [InlineData("TEAMS-ADMINISTRATORS", true, BuiltInTeamNames.Administrators)]
+    [InlineData("teams-managers", false, null)]
+    [InlineData("Teams-404", false, null)]
+    public async Task BuiltInTeam_Synthesized_Theory(string teamId, bool expectSynthesized, string expectedName)
+    {
+        var graph = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess(teamId)));
+
+        var team = graph.Resources.SingleOrDefault(r => r.Kind == OctopusResourceKind.Team);
+
+        if (!expectSynthesized)
+        {
+            team.ShouldBeNull(customMessage: "only built-in teams with a Squid equivalent are synthesized; the rest still fail closed in validation");
+            return;
+        }
+
+        team.ShouldNotBeNull();
+        team.SourceId.ShouldBe(teamId);
+        team.Name.ShouldBe(expectedName);
+        team.DocumentKind.ShouldBe(OctopusDocumentKind.Team);
+        team.IsHistorical.ShouldBeFalse();
+        team.SourcePath.ShouldBe($"builtin/{teamId}");
+        team.GetSource<OctopusTeamDto>().Id.ShouldBe(teamId);
+        graph.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task BuiltInTeam_ReferencedTwiceOrExported_IsNeverDuplicated()
+    {
+        var teamJson = """{"Id":"teams-everyone","Name":"Everyone","MemberUserIds":[],"ExternalSecurityGroups":[]}""";
+
+        var exported = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess("teams-everyone,Teams-everyone"), ("teams-everyone", "ConfigurableTeam", "teams-everyone.json", teamJson)));
+        var referencedTwice = _graphBuilder.Build(await BuildInventoryAsync(ManualProcess("teams-everyone, TEAMS-EVERYONE")));
+
+        exported.Resources.Single(r => r.Kind == OctopusResourceKind.Team).SourcePath.ShouldBe("teams-everyone.json");
+        referencedTwice.Resources.Count(r => r.Kind == OctopusResourceKind.Team).ShouldBe(1);
+        exported.Diagnostics.ShouldBeEmpty();
+        referencedTwice.Diagnostics.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Deployment_HasRequiredChannelReference()
+    {
+        var deploymentJson = """{"Id":"Deployments-1","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedToMachineIds":["Machines-1"]}""";
+
+        var graph = _graphBuilder.Build(await BuildInventoryAsync(("Deployments-1", "Deployment", "Deployments-1.json", deploymentJson)));
+
+        var channel = graph.References.Single(r => r.FromSourceId == "Deployments-1" && r.ReferenceKind == OctopusResourceReferenceKind.Channel);
+        channel.ToSourceId.ShouldBe("Channels-1");
+        channel.ToKind.ShouldBe(OctopusResourceKind.Channel);
+        channel.IsRequired.ShouldBeTrue();
+        channel.CreatesDependency.ShouldBeFalse();
+        graph.References.ShouldNotContain(r => r.FromSourceId == "Deployments-1" && r.ReferenceKind == OctopusResourceReferenceKind.Machine, customMessage: "unmapped machines stay raw data on the deployment");
+    }
+
+    [Theory]
+    [InlineData("8f3e-installation", "8f3e-installation")]
+    [InlineData(null, null)]
+    public async Task Build_ManifestInstallationId_IsCarriedOnTheGraph(string installationId, string expected)
+    {
+        var json = """{"Id":"Environments-1","Name":"Production"}""";
+        var manifest = JsonSerializer.Serialize(new { SchemaVersions = Array.Empty<string>(), InstallationId = installationId, Entries = new[] { new { Id = "Environments-1", Name = "Environments-1", DocumentType = "StaticDeploymentEnvironment", ExportType = "FullDocument", DocumentSource = "Environments-1.json", ParentId = (string)null, Hash = Sha1(json) } } });
+        var extraction = await _inputExtractor.ExtractJsonEntriesAsync([new("manifest.json", Encoding.UTF8.GetBytes(manifest)), new("Environments-1.json", Encoding.UTF8.GetBytes(json))]);
+
+        var graph = _graphBuilder.Build(_inventoryBuilder.Build(extraction));
+
+        graph.InstallationId.ShouldBe(expected);
+    }
+
+    // The export's id suffix is recorded as an export-source fingerprint only when the documents' SpaceId carries it;
+    // REST-shaped documents (bare "Spaces-1") and files mixing two suffixes record none.
+    [Theory]
+    [InlineData("Spaces-1-0123456789abcdef0123456789abcdef", "Spaces-1-0123456789ABCDEF0123456789ABCDEF", "0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("Spaces-1-0123456789ABCDEF0123456789ABCDEF", null, "0123456789ABCDEF0123456789ABCDEF")]
+    [InlineData("Spaces-1", "Spaces-1", null)]
+    [InlineData(null, null, null)]
+    [InlineData("Spaces-1-0123456789ABCDEF0123456789ABCDEF", "Spaces-1-FEDCBA9876543210FEDCBA9876543210", null)]
+    public async Task Build_ExportSourceId_IsTheSpaceIdSuffix(string firstSpaceId, string secondSpaceId, string expected)
+    {
+        var inventory = await BuildInventoryAsync(
+            ("Environments-1", "StaticDeploymentEnvironment", "Environments-1.json", JsonSerializer.Serialize(new { Id = "Environments-1", Name = "Production", SpaceId = firstSpaceId })),
+            ("Environments-2", "StaticDeploymentEnvironment", "Environments-2.json", JsonSerializer.Serialize(new { Id = "Environments-2", Name = "Staging", SpaceId = secondSpaceId })));
+
+        _graphBuilder.Build(inventory).ExportSourceId.ShouldBe(expected);
+    }
+
+    private static (string Id, string DocumentType, string DocumentSource, string Json) ManualProcess(string responsibleTeamIds)
+    {
+        var processJson = JsonSerializer.Serialize(new
+        {
+            Id = "deploymentprocess-Projects-1",
+            OwnerId = "Projects-1",
+            Steps = new[] { new { Id = "Steps-1", Name = "Approve", Actions = new[] { new { Id = "Actions-1", Name = "Approve", ActionType = "Octopus.Manual", Properties = new Dictionary<string, string> { ["Octopus.Action.Manual.ResponsibleTeamIds"] = responsibleTeamIds } } } } }
+        });
+
+        return ("deploymentprocess-Projects-1", "DeploymentProcess", "deploymentprocess-Projects-1.json", processJson);
+    }
+
+    // ── Cloned projects: Octopus copies step, action and variable ids verbatim ──
+
+    [Fact]
+    public async Task Build_ProjectAndClone_SameChildIds_NoDuplicateBlocker_DistinctIds()
+    {
+        var graph = _graphBuilder.Build(await BuildInventoryAsync([.. ProjectDocuments("Projects-1"), .. ProjectDocuments("Projects-2")]));
+
+        graph.Diagnostics.ShouldNotContain(d => d.Code == OctopusInputExtractionDiagnosticCodes.GraphDuplicateSourceId);
+        graph.HasBlockers.ShouldBeFalse();
+
+        foreach (var project in new[] { "Projects-1", "Projects-2" })
+        {
+            graph.Resources.Single(r => r.SourceId == $"{project}/step/{CloneStepId}").OwnerProjectId.ShouldBe(project);
+            graph.Resources.Single(r => r.SourceId == $"{project}/action/{CloneActionId}").ParentSourceId.ShouldBe($"{project}/step/{CloneStepId}");
+            graph.Resources.Single(r => r.SourceId == $"{project}/variable/{CloneVariableId}").ParentSourceId.ShouldBe($"variableset-{project}");
+        }
+    }
+
+    // An Action scope names the action of the variable's own project: the clone's variable is scoped to the clone's action.
+    [Fact]
+    public async Task Build_ActionScopedVariable_ReferencesItsOwnProjectsAction()
+    {
+        var graph = _graphBuilder.Build(await BuildInventoryAsync([.. ProjectDocuments("Projects-1"), .. ProjectDocuments("Projects-2")]));
+
+        var scopes = graph.References.Where(r => r.FromKind == OctopusResourceKind.Variable && r.ReferenceKind == OctopusResourceReferenceKind.DeploymentAction).ToList();
+
+        scopes.Select(r => (r.FromSourceId, r.ToSourceId)).ShouldBe([($"Projects-1/variable/{CloneVariableId}", $"Projects-1/action/{CloneActionId}"), ($"Projects-2/variable/{CloneVariableId}", $"Projects-2/action/{CloneActionId}")], ignoreOrder: true);
+    }
+
+    // A child Octopus gives no id keeps its position under its parent (an action under a qualified step inherits its prefix).
+    [Fact]
+    public async Task Build_ChildWithoutOctopusId_KeepsPositionalFallback()
+    {
+        var processJson = """{"Id":"deploymentprocess-Projects-1","OwnerId":"Projects-1","Steps":[{"Id":"S1","Actions":[{"Name":"a"}]},{"Name":"no-id","Actions":[{"Name":"b"}]}]}""";
+        var variablesJson = """{"Id":"variableset-Projects-1","OwnerId":"Projects-1","OwnerType":"Project","Variables":[{"Name":"NoId","Value":"x"}]}""";
+        var lifecycleJson = """{"Id":"Lifecycles-1","Name":"Default","Phases":[{"Name":"Dev"}]}""";
+
+        var graph = _graphBuilder.Build(await BuildInventoryAsync(("deploymentprocess-Projects-1", "DeploymentProcess", "p.json", processJson), ("variableset-Projects-1", "ProjectVariables", "v.json", variablesJson), ("Lifecycles-1", "Lifecycle", "l.json", lifecycleJson)));
+
+        graph.Resources.Select(r => r.SourceId).ShouldBe(["deploymentprocess-Projects-1", "Projects-1/step/S1", "Projects-1/step/S1/action-1", "deploymentprocess-Projects-1/step-2", "deploymentprocess-Projects-1/step-2/action-1", "variableset-Projects-1", "variableset-Projects-1/variable-1", "Lifecycles-1", "Lifecycles-1/phase-1"], ignoreOrder: true);
+    }
+
+    // An export suffixes every id ("Projects-1-<sfx>"), the API does not: a child of either source lands on one source-map key.
+    [Fact]
+    public async Task Build_SuffixedExportAndRest_NormalizeToSameKey()
+    {
+        const string suffix = "0123456789ABCDEF0123456789ABCDEF";
+        var bare = _graphBuilder.Build(await BuildInventoryAsync(ProjectDocuments("Projects-1")));
+        var suffixed = _graphBuilder.Build(await BuildInventoryAsync(ProjectDocuments($"Projects-1-{suffix}")));
+
+        ChildKeys(suffixed).ShouldBe(ChildKeys(bare));
+        ChildKeys(bare).ShouldBe([$"PROJECTS-1/ACTION/{CloneActionId.ToUpperInvariant()}", $"PROJECTS-1/STEP/{CloneStepId.ToUpperInvariant()}", $"PROJECTS-1/VARIABLE/{CloneVariableId.ToUpperInvariant()}"]);
+    }
+
+    private const string CloneStepId = "6a0b1c2d-0000-4000-8000-000000000001";
+    private const string CloneActionId = "6a0b1c2d-0000-4000-8000-000000000002";
+    private const string CloneVariableId = "6a0b1c2d-0000-4000-8000-000000000003";
+
+    private static List<string> ChildKeys(OctopusResourceGraph graph)
+        => graph.Resources.Where(r => r.Kind is OctopusResourceKind.DeploymentStep or OctopusResourceKind.DeploymentAction or OctopusResourceKind.Variable).Select(r => Squid.Message.Models.OctopusImport.OctopusImportPriorMappings.Normalize(r.SourceId)).Order(StringComparer.Ordinal).ToList();
+
+    // A project as Octopus clones it: the same step, action and variable ids under another project id.
+    private static (string Id, string DocumentType, string DocumentSource, string Json)[] ProjectDocuments(string projectId)
+    {
+        var process = JsonSerializer.Serialize(new { Id = $"deploymentprocess-{projectId}", OwnerId = projectId, Steps = new[] { new { Id = CloneStepId, Name = "Deploy", Actions = new[] { new { Id = CloneActionId, Name = "Run", ActionType = "Octopus.Script" } } } } });
+        var variables = JsonSerializer.Serialize(new { Id = $"variableset-{projectId}", OwnerId = projectId, OwnerType = "Project", Variables = new[] { new { Id = CloneVariableId, Name = "Url", Value = "x", Scope = new Dictionary<string, string[]> { ["Action"] = [CloneActionId] } } } });
+
+        return [($"deploymentprocess-{projectId}", "DeploymentProcess", $"deploymentprocess-{projectId}.json", process), ($"variableset-{projectId}", "ProjectVariables", $"variableset-{projectId}.json", variables)];
     }
 
     private async Task<OctopusManifestInventoryResult> BuildInventoryAsync(params (string Id, string DocumentType, string DocumentSource, string Json)[] documents)

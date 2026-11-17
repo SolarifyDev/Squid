@@ -16,20 +16,22 @@ public class ExtractOctopusImportCommandHandler(
     IOctopusImportSessionDataProvider sessionDataProvider,
     IOctopusImportSessionService sessionService,
     ICurrentUser currentUser,
-    IOctopusArchiveExtractor archiveExtractor,
-    IOctopusInputExtractor inputExtractor,
+    IOctopusImportSourceReader sourceReader,
     IOctopusManifestInventoryBuilder inventoryBuilder,
-    IOctopusResourceGraphBuilder graphBuilder)
+    IOctopusResourceGraphBuilder graphBuilder,
+    IOctopusImportTemporaryUploadStore uploadStore,
+    IOctopusImportExtractionCache extractionCache = null)
     : ICommandHandler<ExtractOctopusImportCommand, ExtractOctopusImportResponse>
 {
+    public const string HistoryFetchIncompleteCode = "OctopusImport.Extraction.HistoryFetchIncomplete";
+    public const string HistoryFetchIncompleteMessage = "The Octopus server history fetch for this session has not finished. Finish the fetch before extracting.";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() }
     };
-
-    private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
 
     public async Task<ExtractOctopusImportResponse> Handle(
         IReceiveContext<ExtractOctopusImportCommand> context,
@@ -42,7 +44,13 @@ public class ExtractOctopusImportCommandHandler(
         if (state != OctopusImportSessionState.Uploaded)
             throw new OctopusImportSessionStateTransitionException(state, OctopusImportSessionState.Extracted);
 
-        if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
+        // A server session has no file until its fetch finishes, so an unfinished fetch is the reason to report first.
+        if (IsHistoryFetchIncomplete(session))
+            return BadRequest(command, HistoryFetchIncompleteMessage, [Diagnostic(OctopusImportCompatibilitySeverity.Blocker, HistoryFetchIncompleteCode, HistoryFetchIncompleteMessage)]);
+
+        var sourcePath = await uploadStore.MaterializeAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (sourcePath == null)
             return BadRequest(command, "Octopus import session does not have an available temporary upload.", [
                 Diagnostic(
                     OctopusImportCompatibilitySeverity.Blocker,
@@ -54,7 +62,7 @@ public class ExtractOctopusImportCommandHandler(
 
         try
         {
-            extraction = await ExtractInputAsync(session.TemporaryUploadPath, cancellationToken).ConfigureAwait(false);
+            extraction = await ReadSourceAsync(sourcePath, cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
@@ -97,6 +105,10 @@ public class ExtractOctopusImportCommandHandler(
         };
     }
 
+    // Read through the shared cache, so the project picker and preview that follow reuse this parse instead of repeating it.
+    private Task<OctopusInputExtractionResult> ReadSourceAsync(string path, CancellationToken ct)
+        => (extractionCache ?? OctopusImportExtractionCache.Shared).GetOrReadAsync(path, () => sourceReader.ReadAsync(path, CancellationToken.None), ct);
+
     private async Task<OctopusImportSession> GetOwnedSessionAsync(ExtractOctopusImportCommand command, CancellationToken ct)
     {
         var destinationSpaceId = GetSpaceId(command);
@@ -113,38 +125,9 @@ public class ExtractOctopusImportCommandHandler(
         return session;
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
-    {
-        await using var stream = new FileStream(temporaryUploadPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
-
-        if (await LooksLikeZipAsync(stream, ct).ConfigureAwait(false))
-        {
-            var archive = await archiveExtractor.ExtractZipAsync(stream, ct: ct).ConfigureAwait(false);
-            return await inputExtractor.ExtractJsonEntriesAsync(archive.Entries, ct).ConfigureAwait(false);
-        }
-
-        return await inputExtractor
-            .ExtractStandaloneJsonAsync(stream, Path.GetFileName(temporaryUploadPath), ct: ct)
-            .ConfigureAwait(false);
-    }
-
-    private static async Task<bool> LooksLikeZipAsync(Stream stream, CancellationToken ct)
-    {
-        var header = new byte[ZipMagic.Length];
-        var read = await stream.ReadAsync(header.AsMemory(0, header.Length), ct).ConfigureAwait(false);
-        stream.Position = 0;
-
-        if (read < ZipMagic.Length)
-            return false;
-
-        for (var i = 0; i < ZipMagic.Length; i++)
-        {
-            if (header[i] != ZipMagic[i])
-                return false;
-        }
-
-        return true;
-    }
+    // Extracting while a REST history fetch is still running would plan from a bundle that does not exist yet.
+    private static bool IsHistoryFetchIncomplete(OctopusImportSession session)
+        => OctopusImportSourceSummaries.Parse(session.SourceSummaryJson)?.HistoryFetch is { Done: false };
 
     private static OctopusImportExtractionResultDto BuildResult(
         OctopusInputExtractionResult extraction,

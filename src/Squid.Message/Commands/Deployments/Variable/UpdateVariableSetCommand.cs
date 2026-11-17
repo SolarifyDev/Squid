@@ -22,6 +22,9 @@ public class UpdateVariableSetCommand : ICommand, ISpaceScoped
     int? ISpaceScoped.SpaceId => SpaceId;
 
     public List<VariableModel> Variables { get; set; } = new List<VariableModel>();
+
+    /// <summary>The set's version the posted variables were read at; when given, a save over a newer version is refused (409).</summary>
+    public int? Version { get; set; }
 }
 
 public class UpdateVariableSetResponse : SquidResponse<UpdateVariableSetResponseData>

@@ -1,0 +1,26 @@
+[
+  {
+    "Id": "ProjectGroups-1",
+    "Name": "Default Project Group",
+    "Description": "",
+    "EnvironmentIds": [],
+    "RetentionPolicyId": null,
+    "SpaceId": "Spaces-1",
+    "Slug": "default-project-group",
+    "Links": {
+      "Self": "/api/Spaces-1/projectgroups/ProjectGroups-1"
+    }
+  },
+  {
+    "Id": "ProjectGroups-2",
+    "Name": "Unused Group",
+    "Description": "No project uses this group",
+    "EnvironmentIds": [],
+    "RetentionPolicyId": null,
+    "SpaceId": "Spaces-1",
+    "Slug": "unused-group",
+    "Links": {
+      "Self": "/api/Spaces-1/projectgroups/ProjectGroups-2"
+    }
+  }
+]

@@ -129,33 +129,38 @@ public class OctopusImportFeedMapper : IOctopusImportFeedMapper
             markers);
     }
 
-    private static string MapFeedType(
-        OctopusFeedDto feed,
-        OctopusResourceNode feedResource,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    private static string MapFeedType(OctopusFeedDto feed, OctopusResourceNode feedResource, List<OctopusImportDiagnosticDto> diagnostics)
     {
-        var feedType = feed.FeedType ?? string.Empty;
-
-        if (ContainsAny(feedType, "Docker", "Container Registry", "OCI Registry", "ECR", "ACR", "GCR"))
-            return "Docker Registry";
-
-        if (ContainsAny(feedType, "NuGet"))
-            return "NuGet";
-
-        if (ContainsAny(feedType, "Helm"))
-            return "Helm";
-
-        if (ContainsAny(feedType, "GitHub") || IsGitHubUri(feed.FeedUri))
-            return "GitHub";
+        if (SquidFeedType(feed) is { } mapped) return mapped;
 
         diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportFeedMappingDiagnosticCodes.UnsupportedFeedType,
-            $"Octopus feed type '{feed.FeedType}' is not supported by the current Squid import feed mapper.",
+            UnsupportedFeedTypeMessage(feed),
             feedResource));
 
         return feed.FeedType;
     }
+
+    /// <summary>
+    /// The Squid feed type an Octopus feed is created as, or null when Squid cannot import it (Maven, npm, the
+    /// built-in repository, …). Preview asks the same rule, so it blocks or skips exactly what this mapper refuses.
+    /// </summary>
+    public static string SquidFeedType(OctopusFeedDto feed)
+    {
+        var feedType = feed?.FeedType ?? string.Empty;
+
+        if (OctopusBuiltInFeeds.IsBuiltInType(feedType)) return null;
+        if (ContainsAny(feedType, "Docker", "Container Registry", "OCI Registry", "ECR", "ACR", "GCR")) return "Docker Registry";
+        if (ContainsAny(feedType, "NuGet")) return "NuGet";
+        if (ContainsAny(feedType, "Helm")) return "Helm";
+        if (ContainsAny(feedType, "GitHub") || IsGitHubUri(feed?.FeedUri)) return "GitHub";
+
+        return null;
+    }
+
+    public static string UnsupportedFeedTypeMessage(OctopusFeedDto feed)
+        => $"Octopus feed type '{feed.FeedType}' is not supported by the current Squid import feed mapper.";
 
     private static Dictionary<string, string> BuildProperties(OctopusFeedDto feed)
     {

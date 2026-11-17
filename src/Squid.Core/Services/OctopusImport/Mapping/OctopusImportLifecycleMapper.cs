@@ -15,6 +15,9 @@ public interface IOctopusImportLifecycleMapper : IScopedDependency
         OctopusResourceNode lifecycleResource,
         OctopusImportIdMap idMap,
         int destinationSpaceId);
+
+    /// <summary>One phase of the lifecycle (by its position in Octopus), mapped exactly as <see cref="MapToCreateOrUpdateModel"/> maps it.</summary>
+    OctopusImportLifecyclePhaseMappingResult MapPhase(OctopusResourceNode lifecycleResource, int phaseIndex, OctopusImportIdMap idMap);
 }
 
 public class OctopusImportLifecycleMapper : IOctopusImportLifecycleMapper
@@ -61,73 +64,72 @@ public class OctopusImportLifecycleMapper : IOctopusImportLifecycleMapper
         model.Lifecycle.TentacleRetentionKeepForever = lifecycleRetention.TentacleKeepForever ?? true;
 
         foreach (var (phase, index) in lifecycle.Phases.Select((value, index) => (value, index)))
-        {
-            var mappedPhase = new LifecyclePhaseModel
-            {
-                Name = phase.Name,
-                SortOrder = index,
-                IsOptionalPhase = phase.IsOptionalPhase,
-                IsPriorityPhase = phase.IsPriorityPhase,
-                MinimumEnvironmentsBeforePromotion = phase.MinimumEnvironmentsBeforePromotion
-            };
-
-            mappedPhase.AutomaticDeploymentTargetIds.AddRange(MapEnvironmentTargetIds(
-                lifecycleResource,
-                phase.AutomaticDeploymentTargets,
-                idMap,
-                diagnostics,
-                OctopusImportLifecycleMappingDiagnosticCodes.MissingAutomaticDeploymentEnvironmentMapping,
-                "automatic deployment",
-                phase.Name));
-
-            mappedPhase.OptionalDeploymentTargetIds.AddRange(MapEnvironmentTargetIds(
-                lifecycleResource,
-                phase.OptionalDeploymentTargets,
-                idMap,
-                diagnostics,
-                OctopusImportLifecycleMappingDiagnosticCodes.MissingOptionalDeploymentEnvironmentMapping,
-                "optional deployment",
-                phase.Name));
-
-            var phaseRetention = MapPhaseRetentionPolicy(phase.ReleaseRetentionPolicy, phase.TentacleRetentionPolicy, diagnostics, lifecycleResource, phase.Name);
-            mappedPhase.ReleaseRetentionUnit = phaseRetention.ReleaseUnit;
-            mappedPhase.ReleaseRetentionQuantity = phaseRetention.ReleaseQuantity;
-            mappedPhase.ReleaseRetentionKeepForever = phaseRetention.ReleaseKeepForever;
-            mappedPhase.TentacleRetentionUnit = phaseRetention.TentacleUnit;
-            mappedPhase.TentacleRetentionQuantity = phaseRetention.TentacleQuantity;
-            mappedPhase.TentacleRetentionKeepForever = phaseRetention.TentacleKeepForever;
-
-            model.Phases.Add(mappedPhase);
-        }
+            model.Phases.Add(MapPhase(new PhaseMapping(lifecycleResource, phase, idMap, diagnostics), index));
 
         return new OctopusImportLifecycleMappingResult(model, diagnostics);
     }
 
-    private static IEnumerable<int> MapEnvironmentTargetIds(
-        OctopusResourceNode lifecycleResource,
-        IReadOnlyCollection<string> sourceEnvironmentIds,
-        OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics,
-        string missingMappingCode,
-        string targetLabel,
-        string phaseName)
+    public OctopusImportLifecyclePhaseMappingResult MapPhase(OctopusResourceNode lifecycleResource, int phaseIndex, OctopusImportIdMap idMap)
+    {
+        ArgumentNullException.ThrowIfNull(lifecycleResource);
+        ArgumentNullException.ThrowIfNull(idMap);
+
+        var lifecycle = lifecycleResource.GetSource<OctopusLifecycleDto>()
+            ?? throw new ArgumentException("Octopus lifecycle resource does not contain an OctopusLifecycleDto source.", nameof(lifecycleResource));
+
+        if (phaseIndex < 0 || phaseIndex >= lifecycle.Phases.Count)
+            throw new ArgumentOutOfRangeException(nameof(phaseIndex), phaseIndex, $"Octopus lifecycle '{lifecycle.Id}' has no phase at this position.");
+
+        var diagnostics = new List<OctopusImportDiagnosticDto>();
+
+        return new OctopusImportLifecyclePhaseMappingResult(MapPhase(new PhaseMapping(lifecycleResource, lifecycle.Phases[phaseIndex], idMap, diagnostics), phaseIndex), diagnostics);
+    }
+
+    private static LifecyclePhaseModel MapPhase(PhaseMapping mapping, int index)
+    {
+        var phase = mapping.Phase;
+
+        var mappedPhase = new LifecyclePhaseModel
+        {
+            Name = phase.Name,
+            SortOrder = index,
+            IsOptionalPhase = phase.IsOptionalPhase,
+            IsPriorityPhase = phase.IsPriorityPhase,
+            MinimumEnvironmentsBeforePromotion = phase.MinimumEnvironmentsBeforePromotion
+        };
+
+        mappedPhase.AutomaticDeploymentTargetIds.AddRange(MapEnvironmentTargetIds(mapping, phase.AutomaticDeploymentTargets, OctopusImportLifecycleMappingDiagnosticCodes.MissingAutomaticDeploymentEnvironmentMapping, "automatic deployment"));
+        mappedPhase.OptionalDeploymentTargetIds.AddRange(MapEnvironmentTargetIds(mapping, phase.OptionalDeploymentTargets, OctopusImportLifecycleMappingDiagnosticCodes.MissingOptionalDeploymentEnvironmentMapping, "optional deployment"));
+
+        var phaseRetention = MapPhaseRetentionPolicy(phase.ReleaseRetentionPolicy, phase.TentacleRetentionPolicy, mapping.Diagnostics, mapping.Lifecycle, phase.Name);
+        mappedPhase.ReleaseRetentionUnit = phaseRetention.ReleaseUnit;
+        mappedPhase.ReleaseRetentionQuantity = phaseRetention.ReleaseQuantity;
+        mappedPhase.ReleaseRetentionKeepForever = phaseRetention.ReleaseKeepForever;
+        mappedPhase.TentacleRetentionUnit = phaseRetention.TentacleUnit;
+        mappedPhase.TentacleRetentionQuantity = phaseRetention.TentacleQuantity;
+        mappedPhase.TentacleRetentionKeepForever = phaseRetention.TentacleKeepForever;
+
+        return mappedPhase;
+    }
+
+    private static IEnumerable<int> MapEnvironmentTargetIds(PhaseMapping mapping, IReadOnlyCollection<string> sourceEnvironmentIds, string missingMappingCode, string targetLabel)
     {
         foreach (var sourceEnvironmentId in sourceEnvironmentIds ?? [])
         {
-            if (idMap.TryGetDestinationId(sourceEnvironmentId, OctopusResourceKind.Environment.ToString(), out var destinationEnvironmentId))
+            if (mapping.IdMap.TryGetDestinationId(sourceEnvironmentId, OctopusResourceKind.Environment.ToString(), out var destinationEnvironmentId))
             {
                 yield return destinationEnvironmentId;
                 continue;
             }
 
-            diagnostics.Add(new OctopusImportDiagnosticDto
+            mapping.Diagnostics.Add(new OctopusImportDiagnosticDto
             {
                 Severity = OctopusImportCompatibilitySeverity.Blocker,
                 Code = missingMappingCode,
-                Message = $"Octopus lifecycle phase '{phaseName}' references {targetLabel} environment '{sourceEnvironmentId}', but no destination environment mapping exists.",
-                ResourceType = lifecycleResource.Kind.ToString(),
-                SourceId = lifecycleResource.SourceId,
-                ResourceName = lifecycleResource.Name
+                Message = $"Octopus lifecycle phase '{mapping.Phase.Name}' references {targetLabel} environment '{sourceEnvironmentId}', but no destination environment mapping exists.",
+                ResourceType = mapping.Lifecycle.Kind.ToString(),
+                SourceId = mapping.Lifecycle.SourceId,
+                ResourceName = mapping.Lifecycle.Name
             });
         }
     }
@@ -330,6 +332,9 @@ public class OctopusImportLifecycleMapper : IOctopusImportLifecycleMapper
 
         return null;
     }
+
+    // One phase being mapped: diagnostics are written against the lifecycle, naming the phase.
+    private sealed record PhaseMapping(OctopusResourceNode Lifecycle, OctopusLifecyclePhaseDto Phase, OctopusImportIdMap IdMap, List<OctopusImportDiagnosticDto> Diagnostics);
 
     private sealed record RetentionPolicyResult(
         RetentionPolicyUnit? Unit,

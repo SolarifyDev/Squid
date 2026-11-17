@@ -4,6 +4,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.OctopusImport;
+using Squid.Core.Services.OctopusImport.SessionFiles;
 using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Core.Services.Security;
 using Squid.Core.Settings.Security;
@@ -48,6 +49,7 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
 
                 var sessionId = upload.Data.Session.SessionId;
                 (await StoredPasswordAsync(scope, sessionId)).ShouldBeNull("an export without encrypted values is NotVerifiable, so its password is never retained");
+                (await StoredFileEncryptionAsync(scope, sessionId)).ShouldBe([OctopusImportSessionFileCodec.None], "without a master key the upload is stored unsealed, the documented default");
 
                 (await OctopusImportHandlerFlow.ExtractAsync(mediator, SpaceId, sessionId)).Code.ShouldBe(HttpStatusCode.OK);
 
@@ -173,6 +175,9 @@ public class OctopusImportEmptyMasterKeyIntegrationTests : TestBase
             File.Delete(archivePath);
         }
     }
+
+    private static async Task<List<string>> StoredFileEncryptionAsync(ILifetimeScope scope, Guid sessionId)
+        => await scope.Resolve<SquidDbContext>().Database.SqlQuery<string>($"SELECT encryption AS \"Value\" FROM octopus_import_session_file f JOIN octopus_import_session s USING (session_id) WHERE session_id = {sessionId} AND s.protected_file_key IS NULL").ToListAsync();
 
     private static void EnsureStrictEmptyMasterKey(ILifetimeScope scope)
     {

@@ -12,6 +12,8 @@ namespace Squid.Core.Services.OctopusImport.Secrets;
 /// so the import can say why it is missing: <see cref="Unreadable"/> = an envelope was written and cannot be
 /// read back with the current master key (restoring the original key recovers it); <see cref="NotRetained"/> =
 /// no master key existed at upload, so nothing was written and nothing can ever recover it.
+/// <see cref="WithheldByServer"/> is the session flag of an Octopus server (REST API) source: there is no export password
+/// at all, and every secret the server withheld is imported empty and reported, not blocked (see <see cref="OctopusImportSecretSeverity"/>).
 /// </summary>
 public sealed class OctopusExportSecrets
 {
@@ -21,13 +23,16 @@ public sealed class OctopusExportSecrets
 
     public static OctopusExportSecrets NotRetained { get; } = new(null, false, true);
 
+    public static OctopusExportSecrets WithheldByServer { get; } = new(null, false, false, isWithheldByServer: true);
+
     private readonly byte[] _key;
 
-    private OctopusExportSecrets(byte[] key, bool isUnreadable, bool isNotRetained)
+    private OctopusExportSecrets(byte[] key, bool isUnreadable, bool isNotRetained, bool isWithheldByServer = false)
     {
         _key = key;
         IsUnreadable = isUnreadable;
         IsNotRetained = isNotRetained;
+        IsWithheldByServer = isWithheldByServer;
     }
 
     public bool IsAvailable => _key != null;
@@ -35,6 +40,9 @@ public sealed class OctopusExportSecrets
     public bool IsUnreadable { get; }
 
     public bool IsNotRetained { get; }
+
+    /// <summary>The session reads an Octopus server, which never returns secrets: withheld ones are reported, not blocked.</summary>
+    public bool IsWithheldByServer { get; }
 
     public static OctopusExportSecrets FromPassword(string password) => string.IsNullOrEmpty(password) ? None : new OctopusExportSecrets(OctopusExportCipher.DeriveKey(password), false, false);
 
@@ -62,6 +70,7 @@ public sealed class OctopusExportSecrets
     {
         if (IsAvailable) return "available";
         if (IsUnreadable) return "unreadable";
+        if (IsWithheldByServer) return "withheld by server";
 
         return IsNotRetained ? "not retained" : "none";
     }

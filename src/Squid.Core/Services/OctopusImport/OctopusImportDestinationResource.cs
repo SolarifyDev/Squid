@@ -18,4 +18,10 @@ public sealed record OctopusImportDestinationResource(
 
     /// <summary>Fingerprint of WHO the members of a destination team are (null for every other kind); see <see cref="OctopusImportTeamMembership"/>.</summary>
     public string MemberFingerprint { get; init; }
+
+    /// <summary>The variable set a destination project or library variable set owns (null for every other kind).</summary>
+    public int? VariableSetId { get; init; }
+
+    /// <summary>The project a destination channel belongs to (null for every other kind): a channel's name is unique only within its project.</summary>
+    public int? ProjectId { get; init; }
 }

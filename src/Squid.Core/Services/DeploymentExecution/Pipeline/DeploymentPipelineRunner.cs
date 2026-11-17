@@ -69,7 +69,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             if (slot == SlotDecision.AlreadyResolved)
             {
-                Log.Information("[Deploy] Task {TaskId} is already in a terminal state; skipping re-dispatched run", serverTaskId);
+                Log.Information("[Deploy] Task {TaskId} is already resolved (terminal or imported from Octopus); skipping run", serverTaskId);
                 return;
             }
 
@@ -209,7 +209,9 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     // One read decides the cold-path outcome: (a) AlreadyResolved if the task is terminal —
     // covers a re-dispatched job whose task was cancelled while it sat re-enqueued, so it
-    // short-circuits instead of trying an illegal Cancelled→Executing claim; (b) SlotBusy if
+    // short-circuits instead of trying an illegal Cancelled→Executing claim — or was imported
+    // from Octopus (read-only history, never executed even when its original state was
+    // non-terminal); (b) SlotBusy if
     // another ACTIVE task (Executing/Paused/Cancelling) holds the same tag's slot; (c) Proceed
     // otherwise. A false negative on (b) under a race is harmless — LoadTaskPhase's atomic claim
     // (the unique index) still rejects an overlapping →Executing and re-enqueues. An untagged
@@ -221,6 +223,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         if (task == null) return SlotDecision.Proceed;
 
         if (TaskState.IsTerminal(task.State)) return SlotDecision.AlreadyResolved;
+
+        if (await serverTaskDataProvider.IsImportedAsync(serverTaskId, ct).ConfigureAwait(false)) return SlotDecision.AlreadyResolved;
 
         if (string.IsNullOrEmpty(task.ConcurrencyTag)) return SlotDecision.Proceed;
 

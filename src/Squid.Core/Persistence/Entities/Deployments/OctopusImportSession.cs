@@ -34,6 +34,17 @@ public class OctopusImportSession : IEntity<int>, IAuditable
 
     public byte[] DataVersion { get; set; }
 
+    /// <summary>The confirmation attempt that holds an Importing session; every write that ends the attempt is fenced on it.</summary>
+    public Guid? ConfirmationAttemptId { get; set; }
+
+    /// <summary>Refreshed by the running confirmation on its own connection; never changes <see cref="DataVersion"/>.</summary>
+    public DateTimeOffset? ImportHeartbeatAt { get; set; }
+
+    public string LastConfirmationFailureJson { get; set; }
+
+    /// <summary>Live progress of the attempt in <see cref="ConfirmationAttemptId"/>, written on its own connection; never changes <see cref="DataVersion"/>.</summary>
+    public string ConfirmationProgressJson { get; set; }
+
     public DateTimeOffset ExpiresAt { get; set; }
 
     public DateTimeOffset? CompletedAt { get; set; }

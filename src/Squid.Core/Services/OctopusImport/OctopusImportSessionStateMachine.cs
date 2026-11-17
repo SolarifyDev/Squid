@@ -38,8 +38,10 @@ public static class OctopusImportSessionStateMachine
             OctopusImportSessionState.Failed,
             OctopusImportSessionState.Expired
         ],
+        // Validated again: the attempt imported nothing (rolled back, or its server stopped before committing), so it can be retried.
         [OctopusImportSessionState.Importing] =
         [
+            OctopusImportSessionState.Validated,
             OctopusImportSessionState.Succeeded,
             OctopusImportSessionState.Failed
         ],

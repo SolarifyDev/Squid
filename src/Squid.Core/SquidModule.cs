@@ -177,6 +177,11 @@ public class SquidModule : Module
         builder.RegisterType<Squid.Core.Services.Machines.Upgrade.UpgradeTraceHydrator>()
             .As<IStartable>()
             .SingleInstance();
+
+        // Removes this server's cached copies of Octopus import session files once the session was cleaned up (on whichever server).
+        builder.RegisterType<Squid.Core.Services.OctopusImport.SessionFiles.OctopusImportLocalCacheSweeper>()
+            .As<IStartable>()
+            .SingleInstance();
     }
 
     private void RegisterDependency(ContainerBuilder builder)

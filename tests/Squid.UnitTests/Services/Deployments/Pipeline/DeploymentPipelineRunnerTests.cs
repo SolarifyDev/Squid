@@ -126,4 +126,30 @@ public class DeploymentPipelineRunnerTests
 
         completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // An imported Octopus task may keep a non-terminal state (R8). A stray dispatch of it must short-circuit exactly like a
+    // terminal task: no slot check, no phases, no completion, no re-enqueue.
+    [Theory]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Executing)]
+    [InlineData(TaskState.Cancelling)]
+    public async Task ImportedTask_AlreadyResolved(string state)
+    {
+        _taskDataProvider.Setup(p => p.GetServerTaskByIdNoTrackingAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new Squid.Core.Persistence.Entities.Deployments.ServerTask { Id = 1, State = state, ConcurrencyTag = "deploy:env-5" });
+        _taskDataProvider.Setup(p => p.IsImportedAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var lifecycle = new Mock<IDeploymentLifecycle>();
+        var completion = new Mock<IDeploymentCompletionHandler>();
+        var phase = new Mock<IDeploymentPipelinePhase>();
+        var jobClient = new Mock<ISquidBackgroundJobClient>();
+        var runner = new DeploymentPipelineRunner(new[] { phase.Object }, lifecycle.Object, completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, jobClient.Object);
+
+        await runner.ProcessAsync(1, CancellationToken.None);
+
+        phase.Verify(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        lifecycle.Verify(l => l.Initialize(It.IsAny<DeploymentTaskContext>()), Times.Never);
+        completion.VerifyNoOtherCalls();
+        _taskDataProvider.Verify(p => p.HasActiveTaskWithTagAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        jobClient.VerifyNoOtherCalls();
+    }
 }

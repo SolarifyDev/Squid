@@ -128,7 +128,7 @@ public class OctopusImportVariableMapperTests
         requiredInput.InputKey.ShouldStartWith("required-secret-input:SensitiveVariableValue:");
         requiredInput.InputKey.ShouldEndWith(":Value");
         requiredInput.Kind.ShouldBe(OctopusImportRequiredInputKind.SensitiveVariableValue);
-        requiredInput.SourceId.ShouldBe("Variables-Secret");
+        requiredInput.SourceId.ShouldBe("Projects-1/variable/Variables-Secret");
         requiredInput.SourceType.ShouldBe(OctopusResourceKind.Variable.ToString());
         requiredInput.Name.ShouldBe("ApiKey");
         requiredInput.FieldName.ShouldBe("Value");
@@ -245,25 +245,22 @@ public class OctopusImportVariableMapperTests
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType);
     }
 
-    [Fact]
-    public void MapToCreateCommand_WhenPromptDisplaySettingsArePresent_AddsWarning()
+    // Octopus sends DisplaySettings as an object (REST and newer exports); older documents carry JSON text. Both must bind.
+    [Theory]
+    [InlineData("""{"Octopus.ControlType":"Select","Octopus.SelectOptions":"a|A"}""", true)]
+    [InlineData("\"{\\\"Octopus.ControlType\\\":\\\"Select\\\"}\"", true)]
+    [InlineData("{}", false)]
+    [InlineData("\"\"", false)]
+    [InlineData("null", false)]
+    public void MapToCreateCommand_PromptDisplaySettingsShapes_WarnOnlyWhenPresent(string displaySettingsJson, bool expectWarning)
     {
-        var variableSet = VariableSet(new OctopusVariableDto
-        {
-            Id = "Variables-Prompt",
-            Name = "Prompted",
-            Prompt = new OctopusVariablePromptDto
-            {
-                Label = "Choose",
-                DisplaySettings = """{"Octopus.ControlType":"Select"}"""
-            }
-        });
+        var variable = JsonSerializer.Deserialize<OctopusVariableDto>($$$"""{"Id":"Variables-Prompt","Name":"Prompted","Value":"a","Prompt":{"Label":"Choose","Required":true,"DisplaySettings":{{{displaySettingsJson}}}}}""");
 
-        var result = _mapper.MapToCreateCommand(Resource(variableSet), IdMap(), 7);
+        var result = _mapper.MapToCreateCommand(Resource(VariableSet(variable)), IdMap(), 7);
 
         result.HasBlockers.ShouldBeFalse();
         result.CreateCommand.Variables.Single().PromptLabel.ShouldBe("Choose");
-        result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.PromptDisplaySettingsOmitted);
+        result.Diagnostics.Any(d => d.Code == OctopusImportVariableMappingDiagnosticCodes.PromptDisplaySettingsOmitted).ShouldBe(expectWarning);
     }
 
     [Fact]
@@ -330,7 +327,7 @@ public class OctopusImportVariableMapperTests
         result.HasBlockers.ShouldBeTrue();
         result.Diagnostics.Select(d => d.Code).ShouldContain(OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted);
         result.CreateCommand.Variables.Single().Value.ShouldBe(string.Empty);
-        result.RequiredInputs.Single().SourceId.ShouldBe("v-1");
+        result.RequiredInputs.Single().SourceId.ShouldBe("Projects-1/variable/v-1");
     }
 
     [Fact]
@@ -386,6 +383,40 @@ public class OctopusImportVariableMapperTests
         result.CreateCommand.Variables.Single().Value.ShouldBe("app:#{Squid.Release.Number}-#{Octopus.Unknown.Thing}");
     }
 
+    // A cloned project shares its variable ids with the original: the required input of each is keyed by the variable's graph id, so
+    // the two never collapse into one input, and the mapper names the same id the planner and validator do.
+    [Fact]
+    public void SensitiveInput_SourceIdEqualsGraphId_ProjectAndCloneDistinctKeys()
+    {
+        var mapper = MapperWithSecrets("export-pw");
+        var original = VariableSet(new OctopusVariableDto { Id = "v-1", Name = "Db:Password", Type = "Sensitive", Value = OctopusExportTestCipher.Encrypt("p@ss", "other-pw") });
+        var clone = new OctopusVariableSetDto { Id = "variableset-Projects-2", OwnerId = "Projects-2", OwnerType = "Project", Variables = original.Variables.ToList() };
+        var idMap = IdMap();
+        idMap.AddReused(Resource("Projects-2", OctopusResourceKind.Project, "Clone", new OctopusProjectDto()), 102);
+
+        var inputs = new[] { original, clone }.Select(set => mapper.MapToCreateCommand(Resource(set), idMap, 7).RequiredInputs.Single()).ToList();
+
+        inputs.Select(i => i.SourceId).ShouldBe(["Projects-1/variable/v-1", "Projects-2/variable/v-1"]);
+        inputs.Select(i => i.InputKey).Distinct().Count().ShouldBe(2);
+    }
+
+    // The clone's action-scoped variable is scoped to the clone's own Squid action, never to the original's.
+    [Theory]
+    [InlineData("Projects-1", "301")]
+    [InlineData("Projects-2", "302")]
+    public void MapScopes_ActionScope_TheVariablesOwnProjectsAction(string ownerProjectId, string expectedActionId)
+    {
+        var set = new OctopusVariableSetDto { Id = $"variableset-{ownerProjectId}", OwnerId = ownerProjectId, OwnerType = "Project", Variables = [new OctopusVariableDto { Id = "v-1", Name = "Url", Value = "x", Type = "String", Scope = { ["Action"] = ["Actions-1"] } }] };
+        var idMap = IdMap();
+        idMap.AddReused(Resource("Projects-2", OctopusResourceKind.Project, "Clone", new OctopusProjectDto()), 102);
+        idMap.AddReused(Resource("Projects-2/action/Actions-1", OctopusResourceKind.DeploymentAction, "Deploy", new OctopusDeploymentActionDto()), 302);
+
+        var result = _mapper.MapToCreateCommand(Resource(set), idMap, 7);
+
+        result.HasBlockers.ShouldBeFalse(string.Join("; ", result.Diagnostics.Select(d => d.Message)));
+        result.CreateCommand.Variables.Single().Scopes.Single().ScopeValue.ShouldBe(expectedActionId);
+    }
+
     private static OctopusImportVariableMapper MapperWithSecrets(string password)
         => new(new OctopusExportSecretsAccessor { Secrets = OctopusExportSecrets.FromPassword(password) });
 
@@ -417,7 +448,7 @@ public class OctopusImportVariableMapperTests
         idMap.AddReused(Resource("Projects-1", OctopusResourceKind.Project, "Project", new OctopusProjectDto()), 100);
         idMap.AddReused(Resource("Environments-1", OctopusResourceKind.Environment, "Production", new OctopusEnvironmentDto()), 101);
         idMap.AddReused(Resource("Channels-1", OctopusResourceKind.Channel, "Default", new OctopusChannelDto()), 201);
-        idMap.AddReused(Resource("Actions-1", OctopusResourceKind.DeploymentAction, "Deploy", new OctopusDeploymentActionDto()), 301);
+        idMap.AddReused(Resource("Projects-1/action/Actions-1", OctopusResourceKind.DeploymentAction, "Deploy", new OctopusDeploymentActionDto()), 301);
         idMap.AddReused(Resource("deploymentprocess-Projects-1", OctopusResourceKind.DeploymentProcess, "Process", new OctopusDeploymentProcessDto()), 401);
         return idMap;
     }

@@ -1,0 +1,100 @@
+{
+  "Id": "variableset-Projects-1",
+  "OwnerId": "Projects-1",
+  "Version": 6,
+  "Variables": [
+    {
+      "Id": "6a217283-0000-4000-8000-000000000701",
+      "Name": "App.LogLevel",
+      "Value": "Debug",
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-1"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "String",
+      "IsSensitive": false
+    },
+    {
+      "Id": "6a217283-0000-4000-8000-000000000702",
+      "Name": "App.LogLevel",
+      "Value": "Warning",
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-3"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "String",
+      "IsSensitive": false
+    },
+    {
+      "Id": "6a217283-0000-4000-8000-000000000703",
+      "Name": "Db.Password",
+      "Value": null,
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-1"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "Sensitive",
+      "IsSensitive": true
+    },
+    {
+      "Id": "6a217283-0000-4000-8000-000000000704",
+      "Name": "Db.Password",
+      "Value": null,
+      "Description": null,
+      "Scope": {
+        "Environment": [
+          "Environments-3"
+        ]
+      },
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "Sensitive",
+      "IsSensitive": true
+    },
+    {
+      "Id": "6a217283-0000-4000-8000-000000000705",
+      "Name": "Api.Token",
+      "Value": null,
+      "Description": null,
+      "Scope": {},
+      "IsEditable": true,
+      "Prompt": null,
+      "Type": "Sensitive",
+      "IsSensitive": true
+    }
+  ],
+  "ScopeValues": {
+    "Environments": [
+      {
+        "Id": "Environments-1",
+        "Name": "Dev"
+      },
+      {
+        "Id": "Environments-3",
+        "Name": "Prod"
+      }
+    ],
+    "Machines": [],
+    "Actions": [],
+    "Roles": [],
+    "Channels": [],
+    "TenantTags": [],
+    "Processes": []
+  },
+  "SpaceId": "Spaces-1",
+  "Links": {
+    "Self": "/api/Spaces-1/variables/variableset-Projects-1"
+  }
+}

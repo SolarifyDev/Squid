@@ -12,6 +12,15 @@ public interface IDeploymentStepService : IScopedDependency
 {
     Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Creates the step at <paramref name="stepOrder"/> of its process: only the step order of the steps at or after it moves up by one,
+    /// no other column of any existing step is written and their relative order is kept.
+    /// </summary>
+    Task<DeploymentStepCreatedEvent> InsertDeploymentStepAsync(CreateDeploymentStepCommand command, int stepOrder, CancellationToken cancellationToken);
+
+    /// <summary>Adds one action to an existing step at <paramref name="actionOrder"/>, the same way; the step and its other actions are never rewritten. Returns the action id.</summary>
+    Task<int> InsertActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken);
+
     Task<DeploymentStepUpdatedEvent> UpdateDeploymentStepAsync(UpdateDeploymentStepCommand command, CancellationToken cancellationToken);
 
     Task<DeploymentStepDeletedEvent> DeleteDeploymentStepsAsync(DeleteDeploymentStepCommand command, CancellationToken cancellationToken);
@@ -59,10 +68,31 @@ public class DeploymentStepService : IDeploymentStepService
 
     public async Task<DeploymentStepCreatedEvent> CreateDeploymentStepAsync(CreateDeploymentStepCommand command, CancellationToken cancellationToken)
     {
+        var stepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
+
+        return await AddDeploymentStepAsync(command, stepOrder, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<DeploymentStepCreatedEvent> InsertDeploymentStepAsync(CreateDeploymentStepCommand command, int stepOrder, CancellationToken cancellationToken)
+    {
+        await _stepDataProvider.OpenStepOrderGapAsync(command.ProcessId, stepOrder, cancellationToken).ConfigureAwait(false);
+
+        return await AddDeploymentStepAsync(command, stepOrder, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<int> InsertActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken)
+    {
+        await _actionDataProvider.OpenActionOrderGapAsync(stepId, actionOrder, cancellationToken).ConfigureAwait(false);
+
+        return await CreateActionAsync(stepId, action, actionOrder, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<DeploymentStepCreatedEvent> AddDeploymentStepAsync(CreateDeploymentStepCommand command, int stepOrder, CancellationToken cancellationToken)
+    {
         var step = _mapper.Map<DeploymentStep>(command.Step);
         
         step.ProcessId = command.ProcessId;
-        step.StepOrder = await ResolveNextStepOrderAsync(command.ProcessId, cancellationToken).ConfigureAwait(false);
+        step.StepOrder = stepOrder;
 
         await _stepDataProvider.AddDeploymentStepAsync(step, true, cancellationToken).ConfigureAwait(false);
 
@@ -387,7 +417,7 @@ public class DeploymentStepService : IDeploymentStepService
         await _actionMachineRoleDataProvider.DeleteActionMachineRolesByActionIdAsync(actionId, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task CreateActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken)
+    private async Task<int> CreateActionAsync(int stepId, CreateOrUpdateDeploymentActionModel action, int actionOrder, CancellationToken cancellationToken)
     {
         var mappedAction = _mapper.Map<DeploymentAction>(action);
 
@@ -400,6 +430,8 @@ public class DeploymentStepService : IDeploymentStepService
         await PersistActionEnvironmentsAsync(mappedAction.Id, action.Environments, cancellationToken).ConfigureAwait(false);
         await PersistActionExcludedEnvironmentsAsync(mappedAction.Id, action.ExcludedEnvironments, cancellationToken).ConfigureAwait(false);
         await PersistActionChannelsAsync(mappedAction.Id, action.Channels, cancellationToken).ConfigureAwait(false);
+
+        return mappedAction.Id;
     }
 
     private async Task PersistActionPropertiesAsync(int actionId, List<ActionPropertyModel> properties, CancellationToken cancellationToken)

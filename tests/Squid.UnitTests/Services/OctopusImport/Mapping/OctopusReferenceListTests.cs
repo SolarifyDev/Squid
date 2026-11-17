@@ -47,7 +47,7 @@ public class OctopusReferenceListTests
 
         var result = await scenario.PlanAsync();
 
-        var graphTeams = result.Graph.References.Where(r => r.FromSourceId == "Actions-1" && r.ReferenceKind == OctopusResourceReferenceKind.Team).Select(r => r.ToSourceId).ToList();
+        var graphTeams = result.Graph.References.Where(r => r.FromSourceId == "Projects-1/action/Actions-1" && r.ReferenceKind == OctopusResourceReferenceKind.Team).Select(r => r.ToSourceId).ToList();
         var mapped = MapManualAction(result.Graph, ("Teams-1", 501), ("Teams-2", 502));
 
         graphTeams.ShouldBe(["Teams-1", "Teams-2"]);
@@ -68,7 +68,7 @@ public class OctopusReferenceListTests
 
         var result = await scenario.PlanAsync();
 
-        result.Graph.References.Where(r => r.FromSourceId == "Actions-1" && r.ReferenceKind == OctopusResourceReferenceKind.TargetRole).Select(r => r.ToSourceId).ShouldBe(["web", "api"]);
+        result.Graph.References.Where(r => r.FromSourceId == "Projects-1/action/Actions-1" && r.ReferenceKind == OctopusResourceReferenceKind.TargetRole).Select(r => r.ToSourceId).ShouldBe(["web", "api"]);
         result.Blockers.Select(b => b.Code).ShouldNotContain(Squid.Core.Services.OctopusImport.OctopusImportPreviewDiagnosticCodes.MissingTargetRole);
     }
 
@@ -79,7 +79,7 @@ public class OctopusReferenceListTests
         foreach (var team in teams)
             idMap.AddCreated(graph.Resources.Single(r => r.SourceId == team.SourceId), team.DestinationId);
 
-        var action = graph.Resources.Single(r => r.SourceId == "Actions-1").GetSource<OctopusDeploymentActionDto>();
+        var action = graph.Resources.Single(r => r.SourceId == "Projects-1/action/Actions-1").GetSource<OctopusDeploymentActionDto>();
 
         return new OctopusManualActionMapper().Map(action, new OctopusImportActionMappingContext(idMap, 7));
     }

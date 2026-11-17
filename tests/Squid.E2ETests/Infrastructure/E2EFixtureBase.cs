@@ -115,6 +115,13 @@ public class E2EFixtureBase<TTestClass> : IAsyncLifetime
         return await action(scope.Resolve<T>()).ConfigureAwait(false);
     }
 
+    /// <summary>A scope with extra registrations, e.g. one Squid server of several sharing this database (its own temporary root).</summary>
+    public async Task<TR> Run<T, TR>(Func<T, Task<TR>> action, Action<ContainerBuilder> extraRegistration)
+    {
+        await using var scope = LifetimeScope.BeginLifetimeScope(extraRegistration);
+        return await action(scope.Resolve<T>()).ConfigureAwait(false);
+    }
+
     private string CreateIsolatedConnectionString(string baseConnectionString)
     {
         _databaseName = $"squid_e2e_{typeof(TTestClass).Name.ToLowerInvariant()}";
