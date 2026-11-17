@@ -96,7 +96,8 @@ public class KindClusterFixture : IAsyncLifetime
     /// multi-platform index whose non-host blobs are absent, and
     /// <c>kind load docker-image</c> imports with <c>--all-platforms</c> → "content
     /// digest not found". So we first save only the host platform and import it
-    /// straight into the node's containerd; if that path is unavailable (Docker
+    /// straight into the node's containerd (no <c>--digests</c>: Docker 29 archives
+    /// carry a non-runnable manifest that fails to unpack as a digest ref); if that path is unavailable (Docker
     /// older than 28 has no <c>docker save --platform</c>) we fall back to
     /// <c>kind load docker-image</c>. Mirrors the "Preload busybox into Kind"
     /// step in <c>.github/workflows/e2e-k8s-pipeline.yml</c>.</para>
@@ -141,7 +142,7 @@ public class KindClusterFixture : IAsyncLifetime
 
         if (pull.ExitCode != 0) return false;
 
-        var import = await RunProcessAsync("bash", $"-o pipefail -c \"docker save --platform {platform} {image} | docker exec -i {ControlPlaneNode} ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs -\"").ConfigureAwait(false);
+        var import = await RunProcessAsync("bash", $"-o pipefail -c \"docker save --platform {platform} {image} | docker exec -i {ControlPlaneNode} ctr --namespace=k8s.io images import --snapshotter=overlayfs -\"").ConfigureAwait(false);
 
         if (import.ExitCode == 0) return true;
 

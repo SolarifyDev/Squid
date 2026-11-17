@@ -113,8 +113,11 @@ jobs:
         # multi-platform index with only the host platform's blobs present;
         # `kind load docker-image` imports with `--all-platforms` and fails on
         # the missing digests. Save just the host platform and import it
-        # without --all-platforms. Fails the job only if busybox is genuinely
-        # absent from the node afterwards.
+        # without --all-platforms. No --digests either: it also creates
+        # import-<date>@sha256 refs for every manifest in the archive, and the
+        # non-runnable (attestation-style) manifest Docker 29 saves fails to unpack with
+        # "mismatched image rootfs and manifest layers". Fails the job only if
+        # busybox is genuinely absent from the node afterwards.
         run: |
           set -euo pipefail
           IMAGE=busybox:latest
@@ -123,7 +126,7 @@ jobs:
           docker pull --platform "$PLATFORM" "$IMAGE"
           for node in $(kind get nodes --name squid-e2e); do
             docker save --platform "$PLATFORM" "$IMAGE" \
-              | docker exec -i "$node" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs -
+              | docker exec -i "$node" ctr --namespace=k8s.io images import --snapshotter=overlayfs -
             docker exec "$node" crictl inspecti "$IMAGE" >/dev/null \
               || { echo "::error::$IMAGE not present on Kind node $node after import"; exit 1; }
             echo "$node has $IMAGE:"
