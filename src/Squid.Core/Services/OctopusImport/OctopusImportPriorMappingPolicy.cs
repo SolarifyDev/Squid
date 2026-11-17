@@ -30,7 +30,7 @@ public static class OctopusImportPriorMappingPolicy
         OctopusResourceKind.DeploymentStep, OctopusResourceKind.DeploymentAction, OctopusResourceKind.VariableSet, OctopusResourceKind.Variable
     ];
 
-    public static OctopusImportPriorDecision Decide(OctopusResourceNode node, OctopusImportPriorMappings prior, Func<string, OctopusImportPreviewAction?> ownerActionOf)
+    public static OctopusImportPriorDecision Decide(OctopusResourceNode node, OctopusImportPriorMappings prior, Func<string, OctopusImportPreviewAction?> ownerActionOf, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds = null)
     {
         ArgumentNullException.ThrowIfNull(node);
 
@@ -40,7 +40,7 @@ public static class OctopusImportPriorMappingPolicy
 
         if (MappedConfigurationKinds.Contains(node.Kind) && TryGetPrior(prior, node, out var mapping)) return AlreadyImported(node, mapping);
 
-        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node, prior) : null;
+        return IsUnderImportedOwner(node, ownerActionOf) ? DecideUnderImportedOwner(node, prior, sharedUnqualifiedIds) : null;
     }
 
     /// <summary>The owner an owned resource inherits from: its structural parent (lifecycle, library, variable set, process, step), else its project.</summary>
@@ -123,25 +123,43 @@ public static class OctopusImportPriorMappingPolicy
     // remapped (that would overwrite the project's default channel): confirmation creates it as a regular channel. Deployment settings
     // have no rows of their own: they are what the owner's import wrote. A process or variable set has no row only when Squid moved its
     // project onto another one; it is never written into the project again.
-    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node, OctopusImportPriorMappings prior)
+    private static OctopusImportPriorDecision DecideUnderImportedOwner(OctopusResourceNode node, OctopusImportPriorMappings prior, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds)
     {
         if (node.Kind == OctopusResourceKind.DeploymentSettings) return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, null);
         if (!IsChoosable(node.Kind)) return new OctopusImportPriorDecision(OctopusImportPreviewAction.Skip, null, NotInEarlierImport(node));
 
         var isDefaultChannel = node.Kind == OctopusResourceKind.Channel && node.GetSource<OctopusChannelDto>()?.IsDefault == true;
 
-        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefaultChannel ? DefaultChannelNotRemapped(node) : null, Choice(node, prior));
+        return new OctopusImportPriorDecision(OctopusImportPreviewAction.Create, null, isDefaultChannel ? DefaultChannelNotRemapped(node) : null, Choice(node, prior, sharedUnqualifiedIds));
     }
 
     /// <summary>The child kinds whose missing Squid row the user decides to import or not.</summary>
     public static bool IsChoosable(OctopusResourceKind kind) => OctopusImportSourceMapQueries.ChoosableChildSourceTypes.Contains(kind.ToString());
 
-    private static OctopusImportChoice Choice(OctopusResourceNode node, OctopusImportPriorMappings prior)
+    private static OctopusImportChoice Choice(OctopusResourceNode node, OctopusImportPriorMappings prior, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds)
     {
-        var reason = prior.IsDeletedInSquid(node.Kind.ToString(), node.SourceId) ? OctopusImportChoiceReason.DeletedInSquid : OctopusImportChoiceReason.AddedInOctopus;
+        var deleted = prior.IsDeletedInSquid(node.Kind.ToString(), node.SourceId) || WasDeletedBeforeQualifiedIds(node, prior, sharedUnqualifiedIds);
+        var reason = deleted ? OctopusImportChoiceReason.DeletedInSquid : OctopusImportChoiceReason.AddedInOctopus;
 
         return new OctopusImportChoice(reason, DefaultSelected(node.Kind, reason));
     }
+
+    // A child deleted in Squid before ids were owner-qualified keeps its bare-id row: the migration ties a row to its owner through the
+    // Squid row, which is gone. The bare id names the child only when no other child of the source shares it (a clone's would).
+    private static bool WasDeletedBeforeQualifiedIds(OctopusResourceNode node, OctopusImportPriorMappings prior, IReadOnlySet<(string Type, string Id)> sharedUnqualifiedIds)
+    {
+        var unqualified = OctopusImportChildSourceIds.Unqualified(node.SourceId);
+
+        if (unqualified == null) return false;
+
+        var key = OctopusImportPriorMappings.Key(node.Kind.ToString(), unqualified);
+
+        return sharedUnqualifiedIds?.Contains(key) != true && prior.IsDeletedInSquid(key.Type, key.Id);
+    }
+
+    /// <summary>The (kind, bare id) keys more than one choosable child of the source shares once their owner qualification is dropped.</summary>
+    public static IReadOnlySet<(string Type, string Id)> SharedUnqualifiedIds(IEnumerable<OctopusResourceNode> nodes)
+        => nodes.Where(n => IsChoosable(n.Kind)).Select(n => (Kind: n.Kind.ToString(), Id: OctopusImportChildSourceIds.Unqualified(n.SourceId))).Where(k => k.Id != null).GroupBy(k => OctopusImportPriorMappings.Key(k.Kind, k.Id)).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet();
 
     /// <summary>Nothing changes silently: only a channel added in Octopus is selected unless the user says otherwise.</summary>
     public static bool DefaultSelected(OctopusResourceKind kind, OctopusImportChoiceReason reason)

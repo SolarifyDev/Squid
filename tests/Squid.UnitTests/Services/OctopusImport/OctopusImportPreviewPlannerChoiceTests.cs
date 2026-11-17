@@ -55,6 +55,24 @@ public class OctopusImportPreviewPlannerChoiceTests
         plan.Preview.Summary.Counts.Create.ShouldBe(defaults.Preview.Summary.Counts.Create + (flipped ? 1 : -1) * (1 + FollowerCount(kind)), Describe(plan));
     }
 
+    // A variable deleted in Squid before owner-qualified ids left only a bare-id row (the migration ties rows to owners through their Squid
+    // rows): it is still offered as deleted in Squid, unless a clone in the source shares the bare id and nothing tells which one it was.
+    [Theory]
+    [InlineData(false, OctopusImportChoiceReason.DeletedInSquid)]
+    [InlineData(true, OctopusImportChoiceReason.AddedInOctopus)]
+    public async Task ChildDeletedBeforeOwnerQualifiedIds_BareRow_DeletedUnlessACloneSharesTheId(bool withClone, OctopusImportChoiceReason expectedReason)
+    {
+        var first = await Source(OctopusResourceKind.Variable, withChild: true).PlanAsync();
+        var source = withClone ? Source(OctopusResourceKind.Variable, withChild: true).Project("Projects-2", "Web clone", [], [OctopusImportScenario.Var("Variables-2", "Added", "later")], Script("Actions-1")) : Source(OctopusResourceKind.Variable, withChild: true);
+        var scenario = source.ImportedAs(first).WithoutMapping(OctopusResourceKind.Variable, RootOf(OctopusResourceKind.Variable)).DeletedInSquid(OctopusResourceKind.Variable, "Variables-2");
+
+        var plan = await scenario.PlanAsync();
+
+        var row = plan.Resource(RootOf(OctopusResourceKind.Variable));
+        row.Choice.ShouldNotBeNull(Describe(plan));
+        row.Choice.ShouldSatisfyAllConditions(c => c.Reason.ShouldBe(expectedReason), c => c.Selected.ShouldBe(false));
+    }
+
     // A flag on a row the server does not offer is never read: an AlreadyImported row cannot be turned into a create by the client.
     [Fact]
     public async Task SelectionOnARowThatIsNotOffered_ChangesNothing()

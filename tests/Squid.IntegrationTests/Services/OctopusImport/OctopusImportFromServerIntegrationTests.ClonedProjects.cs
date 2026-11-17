@@ -127,7 +127,7 @@ public partial class OctopusImportFromServerIntegrationTests
         (await ChildIdsAsync("DeploymentAction")).ShouldBe([$"PROJECTS-1/STEP/{raw}/ACTION-1"]);
     }
 
-    // A row whose Squid row is gone can never match again: it is left exactly as it was.
+    // A row whose Squid row is gone has no owner to qualify it by: it is left exactly as it was (it still names a child deleted in Squid).
     [Fact]
     public async Task ClonedProject_Migration_DeadRows_LeftInert()
     {
@@ -137,6 +137,29 @@ public partial class OctopusImportFromServerIntegrationTests
         await RunQualifyMigrationAsync();
 
         (await ChildIdsAsync("DeploymentStep")).ShouldBe(["DEAD0000-0000-4000-8000-000000000001", $"PROJECTS-1/STEP/{StepId.ToUpperInvariant()}"], ignoreOrder: true);
+    }
+
+    // Children deleted in Squid before the migration keep bare-id rows it cannot tie to an owner (their Squid rows are gone): the next
+    // preview, from either source, still names each one deleted in Squid (it stays deleted), not added in Octopus.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ClonedProject_ChildrenDeletedInSquidBeforeMigration_StillOfferedAsDeleted(bool fromServer)
+    {
+        await using var octopus = OneDeployment().WithOriginalOnly();
+        ShouldHaveSucceeded(await ImportFromServerAsync(octopus));
+        await RewriteChildRowsToLegacyAsync();
+        await ExecuteAsync("DELETE FROM deployment_action; DELETE FROM deployment_step; DELETE FROM phase; DELETE FROM variable_scope; DELETE FROM variable");
+        await RunQualifyMigrationAsync();
+        (await ChildRowsAsync()).ShouldAllBe(row => !row.Contains("/STEP/") && !row.Contains("/ACTION/") && !row.Contains("/VARIABLE/") && !row.Contains("/PHASE/"), "dead rows stay bare");
+
+        var again = fromServer ? await ImportFromServerAsync(octopus) : await ImportFromFileAsync(ExportArchive(withHistory: true, extra: OriginalOnlyDocuments()));
+
+        ShouldHaveSucceeded(again);
+        var expected = new[] { $"Projects-1/step/{StepId}", $"Projects-1/action/{ActionId}", $"Projects-1/variable/{VariableId}", $"Projects-1/variable/{ActionScopedVariableId}", "Lifecycles-1/phase/Phases-1" };
+        var offered = again.PreviewPlan.Resources.Where(r => expected.Contains(r.SourceId, StringComparer.OrdinalIgnoreCase)).ToList();
+        offered.Count.ShouldBe(expected.Length, Describe(again.PreviewPlan));
+        offered.ShouldAllBe(r => r.Choice != null && r.Choice.Reason == OctopusImportChoiceReason.DeletedInSquid && r.Choice.Selected == false, Describe(again.PreviewPlan));
     }
 
     // The qualified key already exists (recorded by an import after the upgrade): the raw row stays as it is, the script never fails.

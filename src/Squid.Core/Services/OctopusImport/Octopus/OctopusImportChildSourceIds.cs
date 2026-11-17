@@ -17,6 +17,8 @@ public static class OctopusImportChildSourceIds
 
     public const string PhaseToken = "phase";
 
+    private static readonly HashSet<string> Tokens = new([StepToken, ActionToken, VariableToken, PhaseToken], StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The child's graph source id: qualified by its owner (its parent when the owner is unknown), or positional when Octopus gives no id.</summary>
     public static string Qualify(string ownerId, string parentSourceId, string childToken, string octopusId, int index)
     {
@@ -42,6 +44,17 @@ public static class OctopusImportChildSourceIds
     /// </summary>
     public static string ScopedAction(string ownerProjectId, string actionId)
         => string.IsNullOrWhiteSpace(ownerProjectId) || string.IsNullOrWhiteSpace(actionId) ? actionId : Qualify(ownerProjectId, null, ActionToken, actionId, 0);
+
+    /// <summary>
+    /// The id an earlier import recorded for this child before ids were owner-qualified (<c>{owner}/{token}/{rest}</c> → <c>{rest}</c>),
+    /// or null when the id is not owner-qualified (a positional id never was).
+    /// </summary>
+    public static string Unqualified(string sourceId)
+    {
+        var parts = sourceId?.Split('/', 3);
+
+        return parts is { Length: 3 } && Tokens.Contains(parts[1]) ? parts[2] : null;
+    }
 
     /// <summary>The Octopus id inside a source id: the part after the last '/' (the whole value when it has none).</summary>
     public static string OctopusId(string sourceId)

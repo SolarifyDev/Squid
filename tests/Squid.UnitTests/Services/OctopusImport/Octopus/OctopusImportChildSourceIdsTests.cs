@@ -53,6 +53,23 @@ public class OctopusImportChildSourceIdsTests
         OctopusImportChildSourceIds.OctopusId(sourceId).ShouldBe(expected);
     }
 
+    // What the source map recorded for the child before owner-qualified ids: the bare id (a positional action under its bare step id).
+    [Theory]
+    [InlineData("Projects-1/step/a1", "a1")]
+    [InlineData("PROJECTS-1/ACTION/B2", "B2")]
+    [InlineData("Projects-1/variable/c3", "c3")]
+    [InlineData("Lifecycles-1/phase/d4", "d4")]
+    [InlineData("Projects-1/step/a1/action-2", "a1/action-2")]
+    [InlineData("deploymentprocess-Projects-1/step/a1", "a1")]   // no owner: qualified by its parent
+    [InlineData("deploymentprocess-Projects-1/step-2", null)]    // positional: never qualified
+    [InlineData("Projects-1/channel/x", null)]
+    [InlineData("a1", null)]
+    [InlineData(null, null)]
+    public void Unqualified_TheIdRecordedBeforeOwnerQualification(string sourceId, string expected)
+    {
+        OctopusImportChildSourceIds.Unqualified(sourceId).ShouldBe(expected);
+    }
+
     // Renaming a token changes every key the source map holds: earlier imports would stop matching. Hard-pinned.
     [Fact]
     public void Tokens_Pinned()

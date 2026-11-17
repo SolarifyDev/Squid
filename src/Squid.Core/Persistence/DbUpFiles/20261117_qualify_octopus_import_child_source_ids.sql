@@ -4,7 +4,8 @@
 -- script brings the rows written before into that form. The owner is the one the Squid row really belongs to: the source-map row of
 -- the project / library variable set / lifecycle that holds it (same session first, then the newest — the loader's newest-wins
 -- rule). Re-runnable: only raw ids (no '/') and action fallbacks under a raw step id match. A row whose destination or owner is gone
--- stays as it is (it can never match a qualified lookup). last_modified_date is left alone, so the loader's order is unchanged.
+-- stays as it is: it only still records a child deleted in Squid, which the preview finds by its bare id (OctopusImportPriorMappingPolicy).
+-- last_modified_date is left alone, so the loader's order is unchanged.
 
 -- 1. DeploymentStep: deployment_step -> project (deployment_process_id) -> Project row.
 WITH owner AS (

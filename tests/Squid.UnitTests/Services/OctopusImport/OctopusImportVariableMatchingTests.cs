@@ -51,6 +51,19 @@ public class OctopusImportVariableMatchingTests
         forward["V-a"].ShouldBe(3);
     }
 
+    // An action scope names the action of the variable's own project (Octopus copies action ids into a clone): namesakes scoped to two
+    // actions pair by the action, not by read order.
+    [Fact]
+    public void ActionScope_MapsThroughTheVariablesOwnProject_PairsByAction()
+    {
+        Func<string, OctopusResourceKind, int?> actions = (sourceId, kind) => kind == OctopusResourceKind.DeploymentAction ? sourceId switch { "Projects-1/action/act-1" => 21, "Projects-1/action/act-2" => 22, _ => null } : null;
+        var variables = new[] { ActionScoped("V-a", "ApiUrl", "act-1"), ActionScoped("V-b", "ApiUrl", "act-2") };
+
+        var paired = OctopusImportVariableMatching.Pair(variables, [Row(1, "ApiUrl", "Action:22")], actions);
+
+        paired.ShouldBe(new Dictionary<string, int> { ["V-b"] = 1 });
+    }
+
     [Fact]
     public void DifferentName_NeverPaired()
         => OctopusImportVariableMatching.Pair([Variable("V-a", "ApiUrl", null)], [Row(1, "apiurl"), Row(2, "Other")], Environments).ShouldBeEmpty();
@@ -61,6 +74,9 @@ public class OctopusImportVariableMatchingTests
 
         return new OctopusResourceNode(id, name, OctopusResourceKind.Variable, OctopusDocumentKind.VariableSet, "variables.json", "Projects-1", "variableset-Projects-1", false, new OctopusVariableDto { Id = id, Name = name, Value = "x", Type = "String", Scope = scope });
     }
+
+    private static OctopusResourceNode ActionScoped(string id, string name, string actionId)
+        => new(id, name, OctopusResourceKind.Variable, OctopusDocumentKind.VariableSet, "variables.json", "Projects-1", "variableset-Projects-1", false, new OctopusVariableDto { Id = id, Name = name, Value = "x", Type = "String", Scope = new Dictionary<string, List<string>> { ["Action"] = [actionId] } });
 
     private static OctopusImportDestinationChild Row(int id, string name, params string[] scopes)
         => new(nameof(OctopusResourceKind.Variable), 7, name) { Id = id, Scopes = scopes };

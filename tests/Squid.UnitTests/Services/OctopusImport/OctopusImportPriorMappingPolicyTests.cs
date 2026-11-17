@@ -84,6 +84,30 @@ public class OctopusImportPriorMappingPolicyTests
         decision.Choice.ShouldBe(new OctopusImportChoice(expectedReason, expectedDefault));
     }
 
+    // A child deleted in Squid before owner-qualified ids left a bare-id row the migration could not tie to an owner (its Squid row is
+    // gone): it still names the child as deleted, unless two children of the source share that bare id (then it names neither).
+    [Theory]
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-1/step/a1", "A1", false, OctopusImportChoiceReason.DeletedInSquid)]
+    [InlineData(OctopusResourceKind.DeploymentAction, "Projects-1/step/a1/action-2", "A1/ACTION-2", false, OctopusImportChoiceReason.DeletedInSquid)]
+    [InlineData(OctopusResourceKind.Variable, "Projects-1/variable/c3", "c3", false, OctopusImportChoiceReason.DeletedInSquid)]
+    [InlineData(OctopusResourceKind.LifecyclePhase, "Lifecycles-1/phase/d4", "d4", false, OctopusImportChoiceReason.DeletedInSquid)]
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-1/step/a1", "A1", true, OctopusImportChoiceReason.AddedInOctopus)]
+    [InlineData(OctopusResourceKind.DeploymentStep, "Projects-1/step/a1", "B9", false, OctopusImportChoiceReason.AddedInOctopus)]
+    [InlineData(OctopusResourceKind.DeploymentStep, "deploymentprocess-Projects-1/step-1", "STEP-1", false, OctopusImportChoiceReason.AddedInOctopus)]
+    [InlineData(OctopusResourceKind.Variable, "Projects-1/variable/a1", "A1", false, OctopusImportChoiceReason.AddedInOctopus)]   // a bare row of another kind
+    public void ChildDeletedBeforeOwnerQualifiedIds_BareRow_StillNamesItDeleted(OctopusResourceKind kind, string sourceId, string bareRecordedId, bool sharedInSource, OctopusImportChoiceReason expectedReason)
+    {
+        var node = Node(kind, sourceId, OwnerId, "Projects-1", new TestDocument { Id = sourceId });
+        var recordedKind = expectedReason == OctopusImportChoiceReason.AddedInOctopus && kind == OctopusResourceKind.Variable ? OctopusResourceKind.DeploymentStep : kind;
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping>(), null, deletedKeys: new HashSet<(string Type, string Id)> { (recordedKind.ToString(), bareRecordedId) });
+        var twin = Node(kind, sourceId.Replace("Projects-1", "Projects-2").Replace("Lifecycles-1", "Lifecycles-2"), OwnerId, "Projects-2", new TestDocument());
+        var shared = OctopusImportPriorMappingPolicy.SharedUnqualifiedIds(sharedInSource ? [node, twin] : [node]);
+
+        var decision = OctopusImportPriorMappingPolicy.Decide(node, prior, OwnerActionFor(PriorScenario.OwnerAlreadyImported), shared);
+
+        decision.Choice.ShouldBe(new OctopusImportChoice(expectedReason, false));
+    }
+
     [Fact]
     public void DefaultChannelUnderImportedProject_IsStillAChoice_AndKeepsItsNotRemappedNote()
     {

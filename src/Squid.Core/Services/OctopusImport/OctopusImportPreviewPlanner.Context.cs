@@ -56,6 +56,11 @@ public partial class OctopusImportPreviewPlanner
         private bool? _needsOriginProof;
         private IReadOnlyList<string> _otherOriginCreators;
 
+        private IReadOnlySet<(string Type, string Id)> _sharedUnqualifiedIds;
+
+        /// <summary>Bare child ids (as recorded before owner-qualified ids) more than one child of this source shares.</summary>
+        public IReadOnlySet<(string Type, string Id)> SharedUnqualifiedIds => _sharedUnqualifiedIds ??= OctopusImportPriorMappingPolicy.SharedUnqualifiedIds(Nodes);
+
         public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(Nodes, Prior);
 
         // A preview never carries the user's confirmation: a pairing is confirmed by posting the plan back to validation.

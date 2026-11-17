@@ -149,7 +149,7 @@ public partial class OctopusImportPreviewPlanner : IOctopusImportPreviewPlanner
             return result;
         }
 
-        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf) is { } decided)
+        if (OctopusImportPriorMappingPolicy.Decide(resource, context.Prior, context.PreviewActionOf, context.SharedUnqualifiedIds) is { } decided)
         {
             ApplyPriorDecision(result, resource, decided, context);
             ApplySecretFill(result, resource, context);
