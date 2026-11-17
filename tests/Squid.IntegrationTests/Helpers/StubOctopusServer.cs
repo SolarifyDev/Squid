@@ -248,6 +248,17 @@ public sealed class StubOctopusServer : IAsyncDisposable
     {
         TrackMax(Interlocked.Increment(ref _inFlight));
 
+        var answered = false;
+
+        // Leaves the in-flight count before the answer is sent: once the client has it, it may send its next request before
+        // this handler resumes, and counting both would report two requests at once for a client that never overlapped them.
+        void Answer(HttpStatusCode status, object body)
+        {
+            answered = true;
+            Interlocked.Decrement(ref _inFlight);
+            Write(context, status, body);
+        }
+
         try
         {
             var apiKey = context.Request.Headers["X-Octopus-ApiKey"];
@@ -260,18 +271,18 @@ public sealed class StubOctopusServer : IAsyncDisposable
             {
                 context.Response.Headers["Retry-After"] = ((int)retryAfter.TotalSeconds).ToString();
                 ThrottledAtMs.Enqueue(_clock.ElapsedMilliseconds);
-                Write(context, HttpStatusCode.TooManyRequests, new { });
+                Answer(HttpStatusCode.TooManyRequests, new { });
                 return;
             }
 
             if (apiKey == null || !_keyUsers.TryGetValue(apiKey, out var userId))
             {
-                Write(context, HttpStatusCode.Unauthorized, new { ErrorMessage = "Invalid API key" });
+                Answer(HttpStatusCode.Unauthorized, new { ErrorMessage = "Invalid API key" });
                 return;
             }
 
             var (status, body) = await RouteAsync(context.Request.Url.AbsolutePath.TrimEnd('/'), HttpUtility.ParseQueryString(context.Request.Url.Query), userId, apiKey).ConfigureAwait(false);
-            Write(context, status, body);
+            Answer(status, body);
         }
         catch
         {
@@ -279,7 +290,7 @@ public sealed class StubOctopusServer : IAsyncDisposable
         }
         finally
         {
-            Interlocked.Decrement(ref _inFlight);
+            if (!answered) Interlocked.Decrement(ref _inFlight);
         }
     }
 
