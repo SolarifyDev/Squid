@@ -151,6 +151,32 @@ public class OctopusImportExportPasswordLifecycleIntegrationTests : TestBase
         });
     }
 
+    // ── Expiry: a fetch in progress keeps its session ────────────────────────────────────────
+
+    [Fact]
+    public async Task HistoryFetchChunk_SlidesTheExpiry_SoTheSweepKeepsAResumableFetch()
+    {
+        var sessionId = Guid.NewGuid();
+
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var db = scope.Resolve<SquidDbContext>();
+            var session = Session(sessionId, OctopusImportSessionState.Uploaded, null, $"/tmp/{sessionId:N}");
+            session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+            session.TemporaryUploadCleanupAfter = session.ExpiresAt;
+            db.Set<OctopusImportSession>().Add(session);
+            await db.SaveChangesAsync();
+            db.ChangeTracker.Clear();
+
+            await scope.Resolve<IOctopusImportSessionService>().UpdateHistoryFetchAsync(sessionId, SpaceId, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, null);
+            await scope.Resolve<IOctopusImportSessionDataProvider>().ExpireSessionsAsync(DateTimeOffset.UtcNow.AddHours(1));
+
+            var stored = await db.Set<OctopusImportSession>().AsNoTracking().SingleAsync(s => s.SessionId == sessionId);
+            stored.State.ShouldBe(OctopusImportSessionState.Uploaded.ToString(), "a chunk claim must push the expiry a retention period ahead, or the sweep wipes a running fetch");
+            stored.TemporaryUploadCleanupAfter.ShouldBe(stored.ExpiresAt);
+        });
+    }
+
     // ── Upload: retention, failure compensation ──────────────────────────────────────────────
 
     [Fact]

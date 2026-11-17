@@ -63,6 +63,38 @@ public class OctopusImportSessionServiceHistoryFetchTests
         session.SourceSummaryJson.ShouldContain("\"keyHmac\":\"0123abcd\"");
     }
 
+    // A fetch in progress is in use: every chunk claim and release moves the session's expiry (and its upload's
+    // cleanup) a full retention period ahead, so the expiry sweep never deletes a directory a running chunk writes to.
+    [Fact]
+    public async Task UpdateHistoryFetch_SlidesTheExpiryAndCleanupAheadByTheRetentionPeriod()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        session.ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1);
+        session.TemporaryUploadCleanupAfter = session.ExpiresAt;
+        var before = DateTimeOffset.UtcNow;
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBeGreaterThanOrEqualTo(before.AddHours(24));
+        session.TemporaryUploadCleanupAfter.ShouldBe(session.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task UpdateHistoryFetch_ExpiryAlreadyFurtherAhead_NeverShortened()
+    {
+        var previous = Guid.NewGuid();
+        var session = Session(OctopusImportSessionState.Uploaded, new OctopusImportHistoryFetchDto { ChunkId = previous });
+        var later = DateTimeOffset.UtcNow.AddHours(48);
+        session.ExpiresAt = later;
+        session.TemporaryUploadCleanupAfter = later;
+
+        await _service.UpdateHistoryFetchAsync(session.SessionId, 7, new OctopusImportHistoryFetchDto { ChunkId = Guid.NewGuid() }, previous);
+
+        session.ExpiresAt.ShouldBe(later);
+        session.TemporaryUploadCleanupAfter.ShouldBe(later);
+    }
+
     [Fact]
     public async Task UpdateHistoryFetch_SessionAlreadyExtracted_Rejected()
     {

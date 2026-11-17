@@ -36,6 +36,8 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportApiKeyRestrictedException => HttpStatusCode.BadRequest,
             OctopusImportProjectSelectionInvalidException => HttpStatusCode.BadRequest,
             OctopusImportProjectSelectionBeyondReadException => HttpStatusCode.Conflict,
+            OctopusImportHistoryStagingLostException => HttpStatusCode.Conflict,
+            OctopusImportStorageException => HttpStatusCode.InsufficientStorage,
             _ => HttpStatusCode.InternalServerError
         };
 

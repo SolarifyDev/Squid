@@ -31,13 +31,16 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         if (details == null) return;
 
-        await detailsStore.WriteAsync(_ctx.Context.SessionDirectory, task.Id, details, ct).ConfigureAwait(false);
+        _ctx.Cursor.DetailsBytes += await detailsStore.WriteAsync(_ctx.Context.SessionDirectory, task.Id, details, ct).ConfigureAwait(false);
 
         task.DetailLevel = 1;
         task.DetailFingerprint = OctopusImportFingerprint.ForTaskDetails(details, OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTask());
 
         _ctx.Pending.DetailsFetched++;
     }
+
+    /// <summary>The only source-map kinds the fetch reads (<see cref="IsUnchangedWithStoredDetails(OctopusImportPriorMappings, OctopusDeploymentDto, OctopusServerTaskDto)"/>); every chunk loads these, never the whole space.</summary>
+    public static IReadOnlyList<string> PriorMappingKinds { get; } = [nameof(OctopusResourceKind.Deployment), nameof(OctopusResourceKind.ServerTask)];
 
     /// <summary>The incremental skip: the source map holds details for this deployment, its imported task row still exists and the task has not changed since.</summary>
     public static bool IsUnchangedWithStoredDetails(OctopusImportPriorMappings prior, OctopusDeploymentDto deployment, OctopusServerTaskDto task)

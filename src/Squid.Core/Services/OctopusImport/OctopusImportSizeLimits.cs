@@ -19,7 +19,7 @@ public sealed class OctopusImportSizeLimits
     /// <summary>Upper bound of one manifest entry (id, name, path, hash); the manifest is sized from it, not from the documents.</summary>
     public const int ManifestBytesPerDocument = 1024;
 
-    /// <summary>Bytes read from the server, and bytes of staged documents.</summary>
+    /// <summary>Bytes of staged documents, bytes of stored task details (each capped on its own), and bytes one fetch chunk may read.</summary>
     public long MaxBytes { get; init; } = DefaultMaxBytes;
 
     public int MaxDocumentCount { get; init; } = DefaultMaxDocumentCount;

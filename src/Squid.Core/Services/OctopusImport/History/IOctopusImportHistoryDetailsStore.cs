@@ -9,7 +9,8 @@ namespace Squid.Core.Services.OctopusImport.History;
 /// </summary>
 public interface IOctopusImportHistoryDetailsStore : IScopedDependency
 {
-    Task WriteAsync(string sessionDirectory, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default);
+    /// <returns>How many bytes the store grew by: the stored file's size, less the size of the one it replaced.</returns>
+    Task<long> WriteAsync(string sessionDirectory, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default);
 
     /// <summary>The stored details of the task, or null when none were stored.</summary>
     Task<OctopusTaskHistoryDetails> ReadAsync(string sessionDirectory, string taskId, CancellationToken ct = default);

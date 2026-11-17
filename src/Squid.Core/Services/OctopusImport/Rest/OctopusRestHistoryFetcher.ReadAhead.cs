@@ -13,7 +13,8 @@ public sealed partial class OctopusRestHistoryFetcher
     // The reads of the next items run ahead, up to OctopusRestOptions.Concurrency of them; each item is still written and
     // committed on this loop, one after another in page order, so the bundle and the cursor are what a one-by-one read
     // produces. A read never writes, so an item abandoned or failed while reading (or read ahead and never reached)
-    // leaves nothing of itself. Returns false when the chunk's time budget stopped the page part way.
+    // leaves nothing of itself. Returns false when the chunk's time budget stopped the page part way; items whose reads
+    // already finished by then are still written first.
     private async Task<bool> ReadAheadThenWriteInOrderAsync<TItem, TRead>(IReadOnlyList<TItem> items, ItemSteps<TItem, TRead> steps, CancellationToken ct)
     {
         using var readAhead = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -23,7 +24,7 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             for (var index = 0; index < items.Count; index++)
             {
-                if (ChunkBudgetSpent()) return false;
+                if (ChunkBudgetSpent() && !AlreadyRead(reads, index)) return false;
 
                 StartReadsAhead(items, index, reads, item => StartItemRead(() => steps.Read(item, readAhead.Token)));
                 EnterItem(reads[index].Scope);
@@ -37,6 +38,9 @@ public sealed partial class OctopusRestHistoryFetcher
             await StopReadsAheadAsync(readAhead, reads).ConfigureAwait(false);
         }
     }
+
+    // Once the budget is spent, an item whose read already finished is still written: dropping it would only read it again next chunk.
+    private static bool AlreadyRead<TRead>(List<ItemRead<TRead>> reads, int index) => index < reads.Count && reads[index].Read.IsCompletedSuccessfully;
 
     // The item's own read always starts; further ones only while the chunk can still commit more than this item.
     private void StartReadsAhead<TItem, TRead>(IReadOnlyList<TItem> items, int index, List<TRead> reads, Func<TItem, TRead> start)

@@ -30,6 +30,8 @@ public sealed class OctopusRestClient : IDisposable
     private long _bytesRead;
     private long _requestSequence;
     private long _resumeAtMs;
+    private long _serverPauseUntilMs;
+    private long _serverPausedMs;
 
     public OctopusRestClient(string serverUrl, string apiKey, OctopusRestOptions options, HttpMessageHandler handler, Func<TimeSpan, CancellationToken, Task> delay = null)
     {
@@ -71,7 +73,10 @@ public sealed class OctopusRestClient : IDisposable
         return owned.Count == 0 ? LastRequestedPath : owned.MinBy(r => r.Key).Value.Path;
     }
 
-    /// <summary>The most bytes a paged list may read in total (<see cref="BytesRead"/> included); the history fetch sets what is left of its budget.</summary>
+    /// <summary>How much wall-clock time the server's own Retry-After answers have asked this client to wait so far (overlapping pauses counted once).</summary>
+    public TimeSpan ServerRequestedPause => TimeSpan.FromMilliseconds(Interlocked.Read(ref _serverPausedMs));
+
+    /// <summary>The most bytes a paged list may read in total (<see cref="BytesRead"/> included); the history fetch sets what one chunk may read.</summary>
     public long ByteBudget { get; set; } = long.MaxValue;
 
     public async Task<OctopusRestRootDto> GetRootAsync(CancellationToken ct)
@@ -142,10 +147,14 @@ public sealed class OctopusRestClient : IDisposable
 
     private string PagePath(string relativePath, int skip) => WithQuery(relativePath, $"skip={skip}&take={_options.PageSize}");
 
+    // Each limit is named, so the operator is told which setting to raise.
     private void EnsureWithinListLimits(int itemCount)
     {
-        if (itemCount > _options.MaxListItems || BytesRead > ByteBudget)
-            throw new OctopusRestException(OctopusRestErrorKind.TooLarge);
+        if (itemCount > _options.MaxListItems)
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusRestOptions.MaxListItemsEnvVar);
+
+        if (BytesRead > ByteBudget)
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusImportSizeLimits.MaxBytesEnvVar);
     }
 
     private static T Deserialize<T>(byte[] body)
@@ -253,6 +262,10 @@ public sealed class OctopusRestClient : IDisposable
         {
             throw new OctopusRestException(rest.Kind);
         }
+        catch (HttpRequestException ex) when (IsTlsFailure(ex))
+        {
+            throw new OctopusRestException(OctopusRestErrorKind.Tls);
+        }
         catch (Exception ex) when (IsTransportFailure(ex, ct))
         {
             if (attempt >= _options.MaxRetries)
@@ -271,6 +284,15 @@ public sealed class OctopusRestClient : IDisposable
         EnsureSuccess(response, path);
 
         return (await ReadBoundedAsync(response, ct).ConfigureAwait(false), TimeSpan.Zero);
+    }
+
+    // An untrusted certificate or no common TLS version: the handshake fails the same way on every attempt.
+    private static bool IsTlsFailure(Exception ex)
+    {
+        for (var inner = ex.InnerException; inner != null; inner = inner.InnerException)
+            if (inner is System.Security.Authentication.AuthenticationException) return true;
+
+        return false;
     }
 
     // Refused, reset or timed out, before the headers or part way through the body; the caller's own cancellation is not one.
@@ -357,20 +379,43 @@ public sealed class OctopusRestClient : IDisposable
         var retryAfter = response?.Headers.RetryAfter;
         var requested = retryAfter?.Delta ?? (retryAfter?.Date - DateTimeOffset.UtcNow);
         var backoff = TimeSpan.FromTicks(_options.RetryBaseDelay.Ticks * (1L << Math.Min(attempt, 10)));
-        var delay = requested is { } honoured && honoured > TimeSpan.Zero ? honoured : backoff;
+        var serverAsked = requested is { } honoured && honoured > TimeSpan.Zero;
+        var delay = serverAsked ? requested.Value : backoff;
+        var capped = delay > _options.MaxRetryDelay ? _options.MaxRetryDelay : delay;
 
-        return delay > _options.MaxRetryDelay ? _options.MaxRetryDelay : delay;
+        if (serverAsked) RecordServerPause(capped);
+
+        return capped;
+    }
+
+    // Adds only the part of this pause not already covered by an earlier one, so concurrent requests throttled together count once.
+    private void RecordServerPause(TimeSpan pause)
+    {
+        var now = Environment.TickCount64;
+        var until = now + (long)pause.TotalMilliseconds;
+
+        while (true)
+        {
+            var current = Interlocked.Read(ref _serverPauseUntilMs);
+
+            if (current >= until) return;
+
+            if (Interlocked.CompareExchange(ref _serverPauseUntilMs, until, current) != current) continue;
+
+            Interlocked.Add(ref _serverPausedMs, until - Math.Max(current, now));
+            return;
+        }
     }
 
     private static void EnsureSuccess(HttpResponseMessage response, string relativePath)
     {
-        if (IsRetryable(response))
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
             throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
 
-        var kind = FailureKind(response, OctopusRestPathPolicy.IsIdentityPath(relativePath));
+        var kind = IsRetryable(response) ? OctopusRestErrorKind.Unreachable : FailureKind(response, OctopusRestPathPolicy.IsIdentityPath(relativePath));
 
         if (kind != null)
-            throw new OctopusRestException(kind.Value);
+            throw new OctopusRestException(kind.Value) { ServerErrorPath = kind == OctopusRestErrorKind.Unreachable ? relativePath : null };
     }
 
     // 401 always means the key; 403 means the key only on its own identity, elsewhere that one item is refused (as are 400/409/422).
@@ -388,7 +433,7 @@ public sealed class OctopusRestClient : IDisposable
     private async Task<byte[]> ReadBoundedAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.Content.Headers.ContentLength > _options.MaxResponseBytes)
-            throw new OctopusRestException(OctopusRestErrorKind.TooLarge);
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusRestOptions.MaxResponseBytesEnvVar);
 
         await using var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         using var buffer = new MemoryStream();
@@ -411,7 +456,7 @@ public sealed class OctopusRestClient : IDisposable
             if (read == 0) return;
 
             if (destination.Length + read > _options.MaxResponseBytes)
-                throw new OctopusRestException(OctopusRestErrorKind.TooLarge);
+                throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusRestOptions.MaxResponseBytesEnvVar);
 
             destination.Write(chunk, 0, read);
         }

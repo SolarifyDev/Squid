@@ -10,8 +10,10 @@ namespace Squid.Core.Services.OctopusImport.Exceptions;
 /// <item>Resume with another API key: <c>Unauthorized</c> (key rejected), <c>KeyRestricted</c> (key cannot read the whole space),
 /// <c>KeyUserMismatch</c> (key of another Octopus user than the one the fetch started with).</item>
 /// <item>Fix the server address or space: <c>NotOctopus</c>, <c>Denied</c>, <c>NotFound</c>, <c>ServerMismatch</c>.</item>
-/// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>NotServerSource</c>;
-/// <c>TooLarge</c> repeats until an operator raises the named limit.</item>
+/// <item>Not resumable, start a new session: <c>SessionNotFound</c>, <c>SessionStateConflict</c>, <c>NotServerSource</c>,
+/// <c>StagingLost</c> (what earlier chunks read is not on this server's disk any more);
+/// <c>TooLarge</c> repeats until an operator raises the named limit; <c>Storage</c> (this Squid server's disk is full) repeats until an
+/// operator frees space; <c>Tls</c> repeats until the Squid host trusts the Octopus certificate.</item>
 /// <item>Choose projects again: <c>ProjectSelection</c> (none, too many or a malformed id); <c>ProjectSelectionBeyondRead</c> (the
 /// session already reads its chosen projects; connect again to add others).</item>
 /// </list>
@@ -28,6 +30,8 @@ public static class OctopusImportErrorKinds
     public const string Concurrency = "Concurrency";
     public const string ProjectSelection = "ProjectSelection";
     public const string ProjectSelectionBeyondRead = "ProjectSelectionBeyondRead";
+    public const string StagingLost = "StagingLost";
+    public const string Storage = "Storage";
 
     /// <summary>The kind of <paramref name="exception"/> itself (never of an inner exception); null when it is not an import failure.</summary>
     public static string Of(Exception exception)
@@ -43,6 +47,8 @@ public static class OctopusImportErrorKinds
             OctopusImportSessionConcurrencyException => Concurrency,
             OctopusImportProjectSelectionInvalidException => ProjectSelection,
             OctopusImportProjectSelectionBeyondReadException => ProjectSelectionBeyondRead,
+            OctopusImportHistoryStagingLostException => StagingLost,
+            OctopusImportStorageException => Storage,
             _ => null
         };
 }

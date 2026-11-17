@@ -24,6 +24,12 @@ public sealed class OctopusRestException : InvalidOperationException
 
     public string LimitName { get; }
 
+    /// <summary>
+    /// The relative path the server answered with an error status (a 5xx after the retries, or a status this client does not map);
+    /// null for a transport failure or throttling. Names the request in a skipped-item record, never in the message.
+    /// </summary>
+    public string ServerErrorPath { get; init; }
+
     public static string MessageFor(OctopusRestErrorKind kind)
         => kind switch
         {
@@ -34,6 +40,7 @@ public sealed class OctopusRestException : InvalidOperationException
             OctopusRestErrorKind.Denied => "The Octopus server address or request is not allowed by this Squid server's policy.",
             OctopusRestErrorKind.NotFound => "The Octopus server does not have the requested item.",
             OctopusRestErrorKind.Rejected => "The Octopus server refused to return an item; it was skipped.",
+            OctopusRestErrorKind.Tls => "The secure connection to the Octopus server failed: this Squid server does not trust its certificate, or they share no TLS version. Install the certificate authority that issued the Octopus certificate in the Squid host's trust store, then connect again.",
             _ => "The Octopus server request failed."
         };
 }

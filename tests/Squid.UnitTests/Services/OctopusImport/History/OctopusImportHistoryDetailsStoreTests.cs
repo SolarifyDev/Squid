@@ -21,6 +21,36 @@ public class OctopusImportHistoryDetailsStoreTests : IDisposable
         read.Artifacts.ShouldHaveSingleItem().Filename.ShouldBe("a.txt");
     }
 
+    // The fetch caps stored details by what each write adds: a task written again (a retried chunk) adds only its change in size.
+    [Fact]
+    public async Task Write_ReturnsWhatTheStoreGrewBy()
+    {
+        var store = new OctopusImportHistoryDetailsStore();
+        var details = new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "a.txt" }] };
+
+        var first = await store.WriteAsync(_sessionDirectory, "ServerTasks-1", details);
+        var again = await store.WriteAsync(_sessionDirectory, "ServerTasks-1", details);
+
+        first.ShouldBe(new FileInfo(OctopusImportHistoryDetailsStore.PathFor(_sessionDirectory, "ServerTasks-1")).Length);
+        again.ShouldBe(0);
+    }
+
+    // A rewrite cut off part way (the chunk deadline, a full disk) must not leave a truncated file the import later fails to read:
+    // the details written before stay readable until the new ones are complete.
+    [Fact]
+    public async Task RewriteCutOff_PreviousDetailsStayReadable()
+    {
+        var store = new OctopusImportHistoryDetailsStore();
+        await store.WriteAsync(_sessionDirectory, "ServerTasks-1", new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "a.txt" }] });
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => store.WriteAsync(_sessionDirectory, "ServerTasks-1", new OctopusTaskHistoryDetails { Artifacts = [new OctopusArtifactDto { Filename = "b.txt" }] }, cancelled.Token));
+
+        (await store.ReadAsync(_sessionDirectory, "ServerTasks-1")).Artifacts.ShouldHaveSingleItem().Filename.ShouldBe("a.txt");
+        Directory.GetFiles(Path.Combine(_sessionDirectory, OctopusImportHistoryDetailsStore.DirectoryName)).ShouldHaveSingleItem("no partial file is left behind");
+    }
+
     [Theory]
     [InlineData(null, "ServerTasks-1")]
     [InlineData("", "ServerTasks-1")]

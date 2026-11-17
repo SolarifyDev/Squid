@@ -379,21 +379,29 @@ public sealed class OctopusRestFetchPhasesTests : IDisposable
         cursor.Counts.ItemsRejected.ShouldBe(1);
     }
 
-    // The projects kind is read after some project ids are known: a refused page of it is still the space's, not a project's.
+    // The projects kind refused on a later page is not cut short: every project after it would silently drop out of the fetch.
+    // The chunk fails with the cursor on that page; once the refusal clears the rest of the projects are listed, nothing skipped.
     [Fact]
-    public async Task RefusedCatalogPage_AfterProjectsWereListed_RecordedForTheSpace()
+    public async Task RefusedLaterCatalogPage_ChunkFailsOnThatPage_RestOfTheKindListedOnceTheRefusalClears()
     {
         var server = new FakeOctopusServer { ClientOptions = new OctopusRestOptions { PageSize = 1 } };
         server.Resources["projects"] = new JsonArray(Resource("Projects-1", "one"), Resource("Projects-2", "two"));
-        server.Override = request => request.RequestUri!.PathAndQuery.Contains("/projects?skip=1", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(HttpStatusCode.Forbidden) : null;
+        var refusing = true;
+        server.Override = request => refusing && request.RequestUri!.PathAndQuery.Contains("/projects?skip=1", StringComparison.Ordinal) ? OctopusRestStubHandler.Status(HttpStatusCode.Forbidden) : null;
         var cursor = CatalogCursor();
+        var directory = NewSessionDirectory();
         var fetcher = new OctopusRestHistoryFetcher(server.Factory, new OctopusHistoryBundleWriter(), new OctopusImportHistoryDetailsStore(), new OctopusRestOptions { PageSize = 1, ChunkDuration = TimeSpan.FromSeconds(5) });
 
-        await fetcher.FetchChunkAsync(Context(cursor, NewSessionDirectory()));
+        (await Should.ThrowAsync<OctopusRestException>(() => fetcher.FetchChunkAsync(Context(cursor, directory)))).Kind.ShouldBe(OctopusRestErrorKind.Unreachable);
 
-        var skipped = cursor.SkippedItems.ShouldHaveSingleItem();
-        (skipped.ProjectId, skipped.Path).ShouldBe((null, "api/Spaces-1/projects?skip=1&take=1"));
-        cursor.ProjectIds.ShouldBe(["Projects-1"]);
+        (cursor.Phase, cursor.Skip, cursor.Counts.ItemsRejected).ShouldBe((OctopusHistoryFetchPhase.Catalog, 1, 0));
+        cursor.SkippedItems.ShouldBeEmpty();
+
+        refusing = false;
+        await fetcher.FetchChunkAsync(Context(cursor, directory));
+
+        cursor.ProjectIds.ShouldBe(["Projects-1", "Projects-2"]);
+        cursor.SkippedItems.ShouldBeEmpty();
     }
 
     // A project configuration that keeps outliving the deadline is skipped as a whole: nothing of it is staged and the

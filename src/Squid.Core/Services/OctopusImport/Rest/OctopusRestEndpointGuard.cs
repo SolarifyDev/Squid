@@ -47,9 +47,12 @@ public static class OctopusRestEndpointGuard
         return IsUnspecified(candidate) || IsLinkLocal(candidate) || IsMulticastOrBroadcast(candidate) || MetadataAddresses.Contains(candidate);
     }
 
-    public static async ValueTask<Stream> ConnectAsync(DnsEndPoint endPoint, OctopusRestOptions options, CancellationToken ct)
+    public static ValueTask<Stream> ConnectAsync(DnsEndPoint endPoint, OctopusRestOptions options, CancellationToken ct) => ConnectAsync(endPoint, options, Dns.GetHostAddressesAsync, ct);
+
+    /// <summary>Connects through <paramref name="resolve"/> (the system resolver in production; a test injects its failures).</summary>
+    public static async ValueTask<Stream> ConnectAsync(DnsEndPoint endPoint, OctopusRestOptions options, Func<string, CancellationToken, Task<IPAddress[]>> resolve, CancellationToken ct)
     {
-        var addresses = await ResolveAsync(endPoint.Host, ct).ConfigureAwait(false);
+        var addresses = await ResolveAsync(endPoint.Host, resolve, ct).ConfigureAwait(false);
 
         if (addresses.Length == 0)
             throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
@@ -99,15 +102,17 @@ public static class OctopusRestEndpointGuard
     private static bool IsMulticastOrBroadcast(IPAddress address)
         => address.AddressFamily == AddressFamily.InterNetworkV6 ? address.IsIPv6Multicast : address.GetAddressBytes()[0] >= 224;
 
-    private static async Task<IPAddress[]> ResolveAsync(string host, CancellationToken ct)
+    // A resolver that could not answer now (EAI_AGAIN) is left to propagate, so the client retries it like a dropped connection;
+    // a name that does not resolve fails at once.
+    private static async Task<IPAddress[]> ResolveAsync(string host, Func<string, CancellationToken, Task<IPAddress[]>> resolve, CancellationToken ct)
     {
         if (IPAddress.TryParse(host.Trim('[', ']'), out var literal)) return [literal];
 
         try
         {
-            return await Dns.GetHostAddressesAsync(host, ct).ConfigureAwait(false);
+            return await resolve(host, ct).ConfigureAwait(false);
         }
-        catch (SocketException)
+        catch (SocketException ex) when (ex.SocketErrorCode != SocketError.TryAgain)
         {
             throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
         }

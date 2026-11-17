@@ -82,6 +82,19 @@ public class GlobalExceptionFilterTests
         AssertEnvelope(context, HttpStatusCode.BadRequest, exception.Message);
     }
 
+    // A full disk on this Squid server is not the caller's input error: the envelope says so (507) with a fixed message that never
+    // carries the server's file system layout.
+    [Fact]
+    public void OnException_ImportStorageFailure_InsufficientStorageEnvelope_NoPath()
+    {
+        var exception = new OctopusImportStorageException();
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.InsufficientStorage, exception.Message);
+        Response(context).Msg.ShouldNotContain("/");
+    }
+
     // The import page decides how to recover (resume, reconnect, start again) from errorKind, never from the message text.
     [Theory]
     [MemberData(nameof(OctopusImportErrorKindsTests.ImportFailures), MemberType = typeof(OctopusImportErrorKindsTests))]

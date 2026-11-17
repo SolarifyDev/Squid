@@ -16,6 +16,9 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     /// <summary>The most skipped items the cursor lists; further ones are only counted.</summary>
     public const int MaxRecordedSkippedItems = 500;
 
+    /// <summary>How long before the chunk's lease runs out bundling stops, so no next chunk can bundle into the same directory at the same time.</summary>
+    public static readonly TimeSpan BundleLeaseSafety = TimeSpan.FromSeconds(30);
+
     private readonly OctopusRestOptions _options = options ?? OctopusRestOptions.FromEnvironment();
     private readonly OctopusImportSizeLimits _limits = limits ?? OctopusImportSizeLimits.FromEnvironment();
 
@@ -25,12 +28,35 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        try
+        {
+            return await FetchStagedChunkAsync(context, ct).ConfigureAwait(false);
+        }
+        catch (IOException ex)
+        {
+            throw StorageFailure(ex, context.SessionDirectory);
+        }
+    }
+
+    // The client turns every network I/O failure into an OctopusRestException, so an IOException here is this server's own disk (full,
+    // most often). Its message names absolute server paths: it is logged for the operator and replaced by a fixed one for the caller.
+    private static OctopusImportStorageException StorageFailure(IOException ex, string sessionDirectory)
+    {
+        Log.Error(ex, "Octopus import history fetch could not write its temporary files in {SessionDirectory}", sessionDirectory);
+
+        return new OctopusImportStorageException();
+    }
+
+    private async Task<OctopusHistoryFetchProgressDto> FetchStagedChunkAsync(OctopusHistoryFetchContext context, CancellationToken ct)
+    {
+        OctopusHistoryStagingMarker.EnsureIntact(context.SessionDirectory, context.Cursor);
+
         using var client = clientFactory.Create(context.ServerUrl, context.ApiKey);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         deadline.CancelAfter(_options.ChunkDeadline);
         _ctx = new FetchRun(context, client, Stopwatch.StartNew(), context.Cursor.TotalBytes);
-        client.ByteBudget = _limits.MaxBytes - _ctx.BytesBeforeChunk;
+        client.ByteBudget = _limits.MaxBytes;
 
         await RunWithinDeadlineAsync(deadline, ct).ConfigureAwait(false);
 
@@ -52,19 +78,41 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
         };
 
     // A chunk still running past its deadline is abandoned before its lease lapses, so no second chunk can overlap it.
-    // The item it was on is skipped once it has been abandoned MaxAbandonments times, so one stuck item cannot stall the fetch.
+    // The item it was on is skipped once MaxAbandonments chunks failed on it (abandoned, or the server kept failing one of
+    // its requests), so one stuck or broken item cannot stall the fetch.
     private async Task RunWithinDeadlineAsync(CancellationTokenSource deadline, CancellationToken ct)
     {
         try
         {
             await RunChunkAsync(deadline.Token).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested && OverrunExplainedByServerPauses)
+        {
+            throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
+        }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            if (!SkipIfAbandonedTooOften())
+            if (!SkipIfFailedTooOften(OctopusHistoryFetchSkipReason.Abandoned, _ctx.InItem ? _ctx.Client.OldestInFlightPathOf(_ctx.CurrentItem) : null))
                 throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
         }
+        catch (OctopusRestException ex) when (ex.ServerErrorPath != null && !ct.IsCancellationRequested)
+        {
+            if (!SkipIfFailedTooOften(OctopusHistoryFetchSkipReason.ServerError, ex.ServerErrorPath)) throw;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested && OverranChunkBudget && !OverrunExplainedByServerPauses)
+        {
+            SkipIfFailedTooOften(OctopusHistoryFetchSkipReason.Abandoned, _ctx.InItem ? _ctx.Client.OldestInFlightPathOf(_ctx.CurrentItem) : null);
+            throw;
+        }
     }
+
+    // A proxy shorter than the chunk deadline (nginx-ingress: 60s) cuts the request first. An item still running past the chunk's
+    // budget when that happens counts as abandoned too, or it would be retried forever; a cut within the budget (a pause) does not.
+    private bool OverranChunkBudget => _ctx.Clock.Elapsed >= _options.ChunkDuration;
+
+    // Sustained throttling (429 + Retry-After) holds items in the server's own pauses. When those pauses cover the whole time
+    // the chunk ran past its budget, the overrun is the server's doing: the chunk fails retryably and no item is counted.
+    private bool OverrunExplainedByServerPauses => _ctx.Client.ServerRequestedPause >= _ctx.Clock.Elapsed - _options.ChunkDuration;
 
     private async Task RunChunkAsync(CancellationToken ct)
     {
@@ -124,22 +172,51 @@ public sealed partial class OctopusRestHistoryFetcher(IOctopusRestClientFactory 
 
     private bool HasCurrentProject => _ctx.Cursor.ProjectIndex < _ctx.Cursor.ProjectIds.Count;
 
+    // Bundling is no item: it runs to the chunk's lease, not to the item deadline or the request (a proxy may drop a long request), so a
+    // large bundle completes instead of being cut off and rebuilt from scratch on every resume. It never outlives the lease.
     private async Task CompleteAsync(CancellationToken ct)
     {
         var cursor = _ctx.Cursor;
 
-        await bundleWriter.BuildBundleAsync(_ctx.Context.SessionDirectory, cursor.InstallationId, ct).ConfigureAwait(false);
+        await BuildBundleWithinLeaseAsync(cursor).ConfigureAwait(false);
 
         cursor.Phase = OctopusHistoryFetchPhase.Done;
         cursor.Done = true;
         cursor.CompletedAt = DateTimeOffset.UtcNow;
     }
 
+    private async Task BuildBundleWithinLeaseAsync(OctopusImportHistoryFetchDto cursor)
+    {
+        using var budget = new CancellationTokenSource(BundleBudget(cursor));
+
+        try
+        {
+            await bundleWriter.BuildBundleAsync(_ctx.Context.SessionDirectory, cursor.InstallationId, budget.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (budget.IsCancellationRequested)
+        {
+            throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusRestOptions.ChunkSecondsEnvVar);
+        }
+    }
+
+    // A cursor without a lease (no claim recorded) gets what any chunk gets.
+    private TimeSpan BundleBudget(OctopusImportHistoryFetchDto cursor)
+    {
+        if (cursor.LeaseExpiresAt is not { } lease) return _options.ChunkDeadline;
+
+        var left = lease - DateTimeOffset.UtcNow - BundleLeaseSafety;
+
+        return left > TimeSpan.Zero ? left : TimeSpan.FromMilliseconds(1);
+    }
+
+    // What is stored is capped (staged documents by the bundle writer, task details here), not what was read: snapshots read for
+    // feed ids, task details, reads ahead a chunk discards and re-reads after an abandoned chunk are never staged. One chunk's
+    // reads stay bounded, so a hostile server cannot stream without end.
     private void TrackBytes()
     {
         _ctx.Cursor.TotalBytes = _ctx.BytesBeforeChunk + _ctx.Client.BytesRead;
 
-        if (_ctx.Cursor.TotalBytes > _limits.MaxBytes)
+        if (_ctx.Client.BytesRead > _limits.MaxBytes || _ctx.Cursor.DetailsBytes > _limits.MaxBytes)
             throw new OctopusRestException(OctopusRestErrorKind.TooLarge, OctopusImportSizeLimits.MaxBytesEnvVar);
     }
 

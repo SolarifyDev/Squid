@@ -8,6 +8,12 @@ public interface IOctopusImportSourceMapDataProvider : IScopedDependency
     Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default);
 
     /// <summary>
+    /// <see cref="LoadAsync"/> narrowed to the given source types, with the same liveness filter: for callers that read only a few
+    /// kinds (the history fetch's details skip reads deployments and tasks) and must not pay for a whole-space load on every call.
+    /// </summary>
+    Task<OctopusImportPriorMappings> LoadKindsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, CancellationToken ct = default);
+
+    /// <summary>
     /// The space's rows of the given source types whose destination is one of the ids, without the liveness filter of
     /// <see cref="LoadAsync"/>: for callers that already hold those destinations (a deployment holds its variable sets). Cheap — no
     /// whole-space load.

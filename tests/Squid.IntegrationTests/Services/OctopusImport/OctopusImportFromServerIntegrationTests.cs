@@ -82,6 +82,32 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         Directory.Exists(sessionDirectory).ShouldBeFalse("the expired server session's directory (bundle, staging, task details) must be securely deleted");
     }
 
+    // A session at its expiry when a chunk claims it is in use, not abandoned: the expiry sweep running while the chunk
+    // reads must neither expire the session nor delete the directory the chunk is writing to.
+    [Fact]
+    public async Task ExpirySweepDuringARunningChunk_KeepsTheSessionAndItsDirectory()
+    {
+        await using var octopus = OneDeployment();
+        octopus.HoldPath = "/projectgroups";
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+        var sessionDirectory = await SessionDirectoryAsync(sessionId);
+        await Run<SquidDbContext>(db => db.Set<OctopusImportSession>().ExecuteUpdateAsync(s => s.SetProperty(x => x.ExpiresAt, DateTimeOffset.UtcNow.AddSeconds(2)).SetProperty(x => x.TemporaryUploadCleanupAfter, DateTimeOffset.UtcNow.AddSeconds(2))));
+
+        var chunk = Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+        await octopus.HeldPathRequested.WaitAsync(TimeSpan.FromSeconds(30));
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        var sweep = await Run<IOctopusImportTemporaryUploadCleanupService, OctopusImportTemporaryUploadCleanupOutcome>(cleanup => cleanup.EnforceCleanupAsync());
+        octopus.ReleaseHeldRequests();
+        await chunk.WaitAsync(TimeSpan.FromSeconds(60));
+
+        sweep.ExpiredSessions.ShouldBe(0, "the chunk's claim moved the expiry ahead; a session in use is not expired");
+        (await SessionStateAsync(sessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
+        Directory.Exists(sessionDirectory).ShouldBeTrue("the running chunk's staging directory must survive the sweep");
+        var done = await Run<IMediator, OctopusHistoryFetchProgressDto>(mediator => OctopusImportHandlerFlow.FetchHistoryUntilDoneAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey));
+        done.Done.ShouldBeTrue("the read is not lost and the fetch resumes");
+    }
+
     [Fact]
     public async Task ConcurrentFetchChunks_409()
     {

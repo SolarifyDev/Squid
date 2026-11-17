@@ -11,11 +11,13 @@ public sealed class OctopusRestOptions
     public const string MaxResponseBytesEnvVar = "SQUID_OCTOPUS_IMPORT_REST_MAX_RESPONSE_BYTES";
     public const string ChunkSecondsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_CHUNK_SECONDS";
     public const string ConcurrencyEnvVar = "SQUID_OCTOPUS_IMPORT_REST_CONCURRENCY";
+    public const string MaxListItemsEnvVar = "SQUID_OCTOPUS_IMPORT_REST_MAX_LIST_ITEMS";
     public const string MaxLogLinesPerTaskEnvVar = OctopusImportDeploymentHistoryImporter.MaxLogLinesPerTaskEnvVar;
 
     public const long DefaultMaxResponseBytes = 50L * 1024 * 1024;
     public const int DefaultChunkSeconds = 20;
     public const int DefaultConcurrency = 8;
+    public const int DefaultMaxListItems = 10_000;
     public const int MaxConcurrency = 64;
 
     // Network policy
@@ -39,7 +41,7 @@ public sealed class OctopusRestOptions
     public int PageSize { get; init; } = 100;
     public int MaxRetries { get; init; } = 5;
     public int MaxRedirects { get; init; } = 3;
-    public int MaxListItems { get; init; } = 10_000;
+    public int MaxListItems { get; init; } = DefaultMaxListItems;
     public TimeSpan RetryBaseDelay { get; init; } = TimeSpan.FromSeconds(1);
     public TimeSpan MaxRetryDelay { get; init; } = TimeSpan.FromSeconds(60);
 
@@ -50,7 +52,8 @@ public sealed class OctopusRestOptions
             AllowedHosts = ReadList(AllowedHostsEnvVar),
             MaxResponseBytes = ReadPositiveLong(MaxResponseBytesEnvVar, DefaultMaxResponseBytes),
             ChunkDuration = TimeSpan.FromSeconds(ReadPositiveLong(ChunkSecondsEnvVar, DefaultChunkSeconds)),
-            Concurrency = (int)Math.Min(ReadPositiveLong(ConcurrencyEnvVar, DefaultConcurrency), MaxConcurrency)
+            Concurrency = (int)Math.Min(ReadPositiveLong(ConcurrencyEnvVar, DefaultConcurrency), MaxConcurrency),
+            MaxListItems = (int)Math.Min(ReadPositiveLong(MaxListItemsEnvVar, DefaultMaxListItems), int.MaxValue)
         };
 
     private static bool ReadBool(string name) => bool.TryParse(Environment.GetEnvironmentVariable(name), out var value) && value;

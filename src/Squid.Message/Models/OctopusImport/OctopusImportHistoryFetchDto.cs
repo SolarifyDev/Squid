@@ -39,15 +39,25 @@ public class OctopusImportHistoryFetchDto
     /// <summary>Resources referenced by fetched documents but not staged yet (<c>Kind|Id</c>); the Closure phase fetches them.</summary>
     public List<string> ClosureReferences { get; set; } = [];
 
-    /// <summary>How often the chunk deadline abandoned the item at a cursor position; the item is skipped at the limit.</summary>
+    /// <summary>How many chunks failed on the item at a cursor position (deadline abandoned it, or the server failed its request); the item is skipped at the limit.</summary>
     public Dictionary<string, int> AbandonCounts { get; set; } = [];
+
+    /// <summary>
+    /// The id the first chunk stamped into the session directory it staged into; every later chunk finds the same id there or refuses
+    /// (the directory is gone or another one: a restart on temporary storage, another replica). Null on a cursor no chunk has run yet.
+    /// </summary>
+    public string StagingId { get; set; }
 
     // Progress
     public OctopusHistoryFetchCountsDto Counts { get; set; } = new();
 
     /// <summary>The items left out, oldest first; the list is capped, the counts are not.</summary>
     public List<OctopusHistoryFetchSkippedItemDto> SkippedItems { get; set; } = [];
+    /// <summary>Bytes read from the server so far, every read counted (the progress shows it); never capped across chunks.</summary>
     public long TotalBytes { get; set; }
+
+    /// <summary>Bytes of task details stored beside the bundle; capped like the staged documents, which the bundle writer counts.</summary>
+    public long DetailsBytes { get; set; }
     public bool Done { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

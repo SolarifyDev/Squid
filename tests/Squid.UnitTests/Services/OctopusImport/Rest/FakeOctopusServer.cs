@@ -78,7 +78,10 @@ internal sealed class FakeOctopusServer
 
     public FakeOctopusServer() => Handler = new OctopusRestStubHandler(request => Override?.Invoke(request) ?? Respond(request));
 
-    public IOctopusRestClientFactory Factory => new StubFactory(Handler, ClientOptions, Delays);
+    public IOctopusRestClientFactory Factory => new StubFactory(Handler, ClientOptions, Delays, WaitsOutDelays);
+
+    /// <summary>Back-offs really elapse (default: recorded and skipped), for tests where the wait itself must meet the chunk deadline.</summary>
+    public bool WaitsOutDelays { get; init; }
 
     /// <summary>Every back-off a client of this server waited (answered at once, so tests stay fast).</summary>
     public System.Collections.Concurrent.ConcurrentQueue<TimeSpan> Delays { get; } = new();
@@ -174,14 +177,14 @@ internal sealed class FakeOctopusServer
         return OctopusRestStubHandler.Json(OctopusRestStubHandler.Page(items.Skip(skip).Take(take).ToList(), items.Count));
     }
 
-    private sealed class StubFactory(OctopusRestStubHandler handler, OctopusRestOptions options, System.Collections.Concurrent.ConcurrentQueue<TimeSpan> delays) : IOctopusRestClientFactory
+    private sealed class StubFactory(OctopusRestStubHandler handler, OctopusRestOptions options, System.Collections.Concurrent.ConcurrentQueue<TimeSpan> delays, bool waitsOutDelays) : IOctopusRestClientFactory
     {
         public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, options, new NonDisposingHandler(handler), RecordDelay) { KeyFingerprint = OctopusRestKeyBinding.Fingerprint(MasterKey, apiKey) };
 
         private Task RecordDelay(TimeSpan delay, CancellationToken ct)
         {
             delays.Enqueue(delay);
-            return Task.CompletedTask;
+            return waitsOutDelays ? Task.Delay(delay, ct) : Task.CompletedTask;
         }
     }
 

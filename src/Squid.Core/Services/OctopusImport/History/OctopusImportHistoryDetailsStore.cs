@@ -12,16 +12,23 @@ public sealed class OctopusImportHistoryDetailsStore : IOctopusImportHistoryDeta
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
-    public async Task WriteAsync(string sessionDirectory, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default)
+    public async Task<long> WriteAsync(string sessionDirectory, string taskId, OctopusTaskHistoryDetails details, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(details);
 
         var path = PathFor(sessionDirectory, taskId);
+        var previous = File.Exists(path) ? new FileInfo(path).Length : 0;
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
-        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-        await using var gzip = new GZipStream(file, CompressionLevel.Optimal);
+        await OctopusImportAtomicFile.WriteAsync(path, (stream, token) => WriteDetailsAsync(stream, details, token), ct).ConfigureAwait(false);
+
+        return new FileInfo(path).Length - previous;
+    }
+
+    private static async Task WriteDetailsAsync(Stream file, OctopusTaskHistoryDetails details, CancellationToken ct)
+    {
+        await using var gzip = new GZipStream(file, CompressionLevel.Optimal, leaveOpen: true);
 
         await JsonSerializer.SerializeAsync(gzip, details, JsonOptions, ct).ConfigureAwait(false);
     }

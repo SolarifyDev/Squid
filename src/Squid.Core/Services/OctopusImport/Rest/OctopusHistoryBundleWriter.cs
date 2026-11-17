@@ -105,10 +105,8 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
     {
         var bundlePath = Path.Combine(sessionDirectory, OctopusImportSourceReader.HistoryBundleFileName);
         var partialPath = bundlePath + ".partial";
-        var documents = await ReadStagedDocumentsAsync(sessionDirectory, ct).ConfigureAwait(false);
-        var manifest = SerializeManifest(documents, installationId);
 
-        await WriteZipAsync(partialPath, manifest, documents, ct).ConfigureAwait(false);
+        await WriteZipAsync(partialPath, installationId, StagedFiles(sessionDirectory), ct).ConfigureAwait(false);
 
         File.Move(partialPath, bundlePath, overwrite: true);
 
@@ -140,7 +138,7 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
-        await File.WriteAllBytesAsync(path, content, ct).ConfigureAwait(false);
+        await OctopusImportAtomicFile.WriteAsync(path, (stream, token) => stream.WriteAsync(content, token).AsTask(), ct).ConfigureAwait(false);
         await SaveTotalsAsync(sessionDirectory, next, ct).ConfigureAwait(false);
 
         return content.LongLength;
@@ -237,17 +235,6 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
         }
     }
 
-    // Reads one document at a time for its id, name and hash; the content is streamed into the zip later, never held.
-    private static async Task<List<StagedDocument>> ReadStagedDocumentsAsync(string sessionDirectory, CancellationToken ct)
-    {
-        var documents = new List<StagedDocument>();
-
-        foreach (var (kind, file) in StagedFiles(sessionDirectory))
-            documents.Add(ToStagedDocument(kind, file, await File.ReadAllBytesAsync(file, ct).ConfigureAwait(false)));
-
-        return documents;
-    }
-
     private static StagedDocument ToStagedDocument(OctopusResourceKind kind, string file, byte[] content)
     {
         using var json = JsonDocument.Parse(content);
@@ -255,7 +242,7 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
         var id = ReadString(json.RootElement, "Id");
         var name = kind == OctopusResourceKind.Release ? ReadString(json.RootElement, "Version") ?? ReadString(json.RootElement, "Name") : ReadString(json.RootElement, "Name");
 
-        return new StagedDocument(kind, id, name, $"{DocumentFolder}/{kind}/{Path.GetFileName(file)}", file, Sha1(content));
+        return new StagedDocument(kind, id, name, $"{DocumentFolder}/{kind}/{Path.GetFileName(file)}", Sha1(content));
     }
 
     private static string ReadString(JsonElement element, string property)
@@ -278,21 +265,36 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
 
     private static string Sha1(byte[] content) => Convert.ToHexString(SHA1.HashData(content)).ToLowerInvariant();
 
-    private static async Task WriteZipAsync(string path, byte[] manifest, IEnumerable<StagedDocument> documents, CancellationToken ct)
+    // One read per staged document, one document held at a time: its id, name and hash come from the bytes written into the zip, and
+    // the manifest, which needs every hash, is the last entry (readers find it by name). A bundle of a large space holds hundreds of
+    // thousands of documents, so the fast compression level keeps bundling within one chunk's lease.
+    private async Task WriteZipAsync(string path, string installationId, IEnumerable<(OctopusResourceKind Kind, string Path)> stagedFiles, CancellationToken ct)
     {
+        var documents = new List<StagedDocument>();
+
         await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
         using var zip = new ZipArchive(file, ZipArchiveMode.Create, leaveOpen: false);
 
-        await WriteEntryAsync(zip, "manifest.json", new MemoryStream(manifest), ct).ConfigureAwait(false);
+        foreach (var (kind, staged) in stagedFiles)
+            documents.Add(await WriteDocumentEntryAsync(zip, kind, staged, ct).ConfigureAwait(false));
 
-        foreach (var document in documents)
-            await WriteEntryAsync(zip, document.EntryPath, new FileStream(document.StagedPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true), ct).ConfigureAwait(false);
+        await WriteEntryAsync(zip, "manifest.json", new MemoryStream(SerializeManifest(documents, installationId)), ct).ConfigureAwait(false);
+    }
+
+    private static async Task<StagedDocument> WriteDocumentEntryAsync(ZipArchive zip, OctopusResourceKind kind, string staged, CancellationToken ct)
+    {
+        var content = await File.ReadAllBytesAsync(staged, ct).ConfigureAwait(false);
+        var document = ToStagedDocument(kind, staged, content);
+
+        await WriteEntryAsync(zip, document.EntryPath, new MemoryStream(content, writable: false), ct).ConfigureAwait(false);
+
+        return document;
     }
 
     private static async Task WriteEntryAsync(ZipArchive zip, string entryPath, Stream content, CancellationToken ct)
     {
         await using var source = content;
-        var entry = zip.CreateEntry(entryPath, CompressionLevel.Optimal);
+        var entry = zip.CreateEntry(entryPath, CompressionLevel.Fastest);
 
         entry.LastWriteTime = EntryTimestamp;
 
@@ -301,7 +303,7 @@ public sealed class OctopusHistoryBundleWriter(OctopusImportSizeLimits limits = 
         await source.CopyToAsync(destination, ct).ConfigureAwait(false);
     }
 
-    private sealed record StagedDocument(OctopusResourceKind Kind, string Id, string Name, string EntryPath, string StagedPath, string Hash);
+    private sealed record StagedDocument(OctopusResourceKind Kind, string Id, string Name, string EntryPath, string Hash);
 
     private sealed record StagingTotals(long Bytes, int Documents)
     {

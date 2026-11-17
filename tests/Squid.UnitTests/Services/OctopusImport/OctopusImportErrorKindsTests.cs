@@ -22,6 +22,7 @@ public class OctopusImportErrorKindsTests
         yield return [new OctopusRestException(OctopusRestErrorKind.Denied), "Denied"];
         yield return [new OctopusRestException(OctopusRestErrorKind.NotFound), "NotFound"];
         yield return [new OctopusRestException(OctopusRestErrorKind.Rejected), "Rejected"];
+        yield return [new OctopusRestException(OctopusRestErrorKind.Tls), "Tls"];
         yield return [new OctopusImportApiKeyRestrictedException(new OctopusServerPermissionsDto { OctopusSpaceId = "Spaces-1", Restricted = ["VariableView"] }), "KeyRestricted"];
         yield return [new OctopusImportHistoryServerMismatchException(OctopusRestKeyBinding.UserPinnedField), "KeyUserMismatch"];
         yield return [new OctopusImportHistoryServerMismatchException("server"), "ServerMismatch"];
@@ -32,6 +33,8 @@ public class OctopusImportErrorKindsTests
         yield return [new OctopusImportSessionConcurrencyException(Guid.NewGuid()), "Concurrency"];
         yield return [new OctopusImportProjectSelectionInvalidException(OctopusImportProjectSelectionProblem.Empty, "none"), "ProjectSelection"];
         yield return [new OctopusImportProjectSelectionBeyondReadException(Guid.NewGuid()), "ProjectSelectionBeyondRead"];
+        yield return [new OctopusImportHistoryStagingLostException(), "StagingLost"];
+        yield return [new OctopusImportStorageException(), "Storage"];
     }
 
     [Theory]

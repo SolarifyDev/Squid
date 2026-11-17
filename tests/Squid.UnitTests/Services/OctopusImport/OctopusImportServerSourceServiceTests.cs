@@ -66,6 +66,23 @@ public sealed class OctopusImportServerSourceServiceTests : IDisposable
         _fetcher.Verify(f => f.FetchChunkAsync(It.Is<OctopusHistoryFetchContext>(c => c.Cursor.OctopusSpaceId == "Spaces-1"), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // Every chunk reads only the source-map kinds the details skip uses, never the whole space: a re-import of a large space
+    // otherwise reloads every variable, step and action row on each 20-second chunk.
+    [Fact]
+    public async Task FetchHistory_EachChunk_LoadsOnlyTheDeploymentAndTaskSourceMapRows()
+    {
+        var prior = new OctopusImportPriorMappings(new Dictionary<(string Type, string Id), OctopusImportPriorMapping> { [("Deployment", "Deployments-1")] = new(5, OctopusImportSourceMapQueries.CreatedOutcome, "fp", "dfp") }, null);
+        _sourceMap.Setup(s => s.LoadKindsAsync(7, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>())).ReturnsAsync(prior);
+        OctopusHistoryFetchContext seen = null;
+        _fetcher.Setup(f => f.FetchChunkAsync(It.IsAny<OctopusHistoryFetchContext>(), It.IsAny<CancellationToken>())).Callback((OctopusHistoryFetchContext c, CancellationToken _) => seen = c).ReturnsAsync(new OctopusHistoryFetchProgressDto());
+
+        await _service.FetchHistoryAsync(Request(Session(null), ServerUrl, "Spaces-1"));
+
+        seen.PriorMappings.ShouldBeSameAs(prior);
+        _sourceMap.Verify(s => s.LoadKindsAsync(7, It.Is<IReadOnlyCollection<string>>(k => k.OrderBy(x => x).SequenceEqual(new[] { "Deployment", "ServerTask" })), It.IsAny<CancellationToken>()), Times.Once);
+        _sourceMap.Verify(s => s.LoadAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task FetchHistory_FirstChunk_PinsServerAndSpace_ClaimsRunsAndReleases()
     {

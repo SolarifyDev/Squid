@@ -14,10 +14,10 @@ public sealed partial class OctopusRestHistoryFetcher
         ReadSkipped.Add(SkippedItem(path, OctopusHistoryFetchSkipReason.Rejected));
     }
 
-    // The abandoned chunk is over, so the skip is committed straight to the cursor that is persisted next. A chunk stuck
-    // outside an item (pinning, binding, a page or its task summaries, bundling) has no item at fault and only
+    // The failed chunk is over, so the skip is committed straight to the cursor that is persisted next. A chunk stuck or
+    // failing outside an item (pinning, binding, a page or its task summaries, bundling) has no item at fault and only
     // fails: skipping the item the cursor points at would drop healthy data.
-    private bool SkipIfAbandonedTooOften()
+    private bool SkipIfFailedTooOften(OctopusHistoryFetchSkipReason reason, string failedPath)
     {
         if (!_ctx.InItem) return false;
 
@@ -31,7 +31,7 @@ public sealed partial class OctopusRestHistoryFetcher
 
         cursor.AbandonCounts.Remove(key);
         cursor.Counts.ItemsAbandoned++;
-        AddSkipped(cursor, [SkippedItem(_ctx.Client.OldestInFlightPathOf(_ctx.CurrentItem), OctopusHistoryFetchSkipReason.Abandoned)]);
+        AddSkipped(cursor, [SkippedItem(failedPath, reason)]);
         MovePastCurrentItem(cursor);
 
         return true;

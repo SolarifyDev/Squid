@@ -3,6 +3,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
 
@@ -75,6 +76,7 @@ public class OctopusRestClientTests
         var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        ex.LimitName.ShouldBe(OctopusRestOptions.MaxListItemsEnvVar);
         handler.Requests.Count.ShouldBe(3);
     }
 
@@ -88,6 +90,7 @@ public class OctopusRestClientTests
         var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAllPagesAsync<Dictionary<string, string>>("api/Spaces-1/events", CancellationToken.None));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        ex.LimitName.ShouldBe(OctopusImportSizeLimits.MaxBytesEnvVar);
         handler.Requests.Count.ShouldBe(1);
     }
 
@@ -162,6 +165,21 @@ public class OctopusRestClientTests
         root.InstallationId.ShouldBe("inst-1");
         _delays.ShouldBe([TimeSpan.FromSeconds(7)]);
         handler.Requests.Count.ShouldBe(2);
+        client.ServerRequestedPause.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(7) - TimeSpan.FromMilliseconds(50));
+    }
+
+    // Only the server's own Retry-After is a pause the server asked for; this client's back-off after a 5xx is not.
+    [Fact]
+    public async Task FiveXxBackOff_IsNotAServerRequestedPause()
+    {
+        var calls = 0;
+        var handler = new OctopusRestStubHandler(_ => calls++ < 2 ? OctopusRestStubHandler.Status(HttpStatusCode.ServiceUnavailable) : OctopusRestStubHandler.Json(OctopusRestStubHandler.Root()));
+        using var client = Client(handler);
+
+        await client.GetRootAsync(CancellationToken.None);
+
+        _delays.Count.ShouldBe(2);
+        client.ServerRequestedPause.ShouldBe(TimeSpan.Zero);
     }
 
     [Fact]
@@ -448,6 +466,7 @@ public class OctopusRestClientTests
         var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetAsync<Dictionary<string, string>>("api", CancellationToken.None));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        ex.LimitName.ShouldBe(OctopusRestOptions.MaxResponseBytesEnvVar);
     }
 
     [Theory]
@@ -462,6 +481,8 @@ public class OctopusRestClientTests
         var ex = await Should.ThrowAsync<OctopusRestException>(() => client.GetRootAsync(CancellationToken.None));
 
         ex.Kind.ShouldBe(OctopusRestErrorKind.TooLarge);
+        ex.LimitName.ShouldBe(OctopusRestOptions.MaxResponseBytesEnvVar);
+        ex.Message.ShouldContain(OctopusRestOptions.MaxResponseBytesEnvVar);
     }
 
     [Theory]

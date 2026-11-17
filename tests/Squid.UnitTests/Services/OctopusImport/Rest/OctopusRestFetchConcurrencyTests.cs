@@ -137,6 +137,28 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
         failure.Kind.ShouldBe(OctopusRestErrorKind.Unauthorized);
     }
 
+    // Items already read ahead when the chunk's time budget runs out are written and committed before the chunk returns,
+    // not dropped and read again by the next chunk: one slow item does not cost the reads of the items behind it.
+    [Fact]
+    public async Task BudgetSpentWhileReadsAheadAreDone_CompletedReadsCommitted_NoneReadTwice()
+    {
+        var server = Server(8, deployments: 12);
+        server.Override = null;
+        server.Handler.Latency = request => Uri.UnescapeDataString(request.RequestUri!.PathAndQuery).Contains("/events?regarding=Deployments-1&", StringComparison.Ordinal) ? TimeSpan.FromMilliseconds(600) : TimeSpan.Zero;
+        var cursor = DeploymentsCursor();
+        var fetcher = Fetcher(server, new OctopusRestOptions { Concurrency = 8, ChunkDuration = TimeSpan.FromMilliseconds(300), ChunkOverrun = TimeSpan.FromSeconds(30) });
+        var session = NewSession();
+
+        await fetcher.FetchChunkAsync(Context(cursor, session)).WaitAsync(TimeSpan.FromSeconds(30));
+
+        (cursor.Skip, cursor.Counts.Deployments).ShouldBe((8, 8), "the seven deployments read ahead behind the slow first one were already read");
+
+        while (!cursor.Done) await fetcher.FetchChunkAsync(Context(cursor, session)).WaitAsync(TimeSpan.FromSeconds(30));
+
+        cursor.Counts.Deployments.ShouldBe(12);
+        server.Paths.Count(p => p.Contains("/events?")).ShouldBe(12, "no deployment's lists are read twice");
+    }
+
     // A 429's Retry-After is still honoured with reads in flight side by side, and every throttled read is retried, not lost.
     [Fact]
     public async Task Throttled_RetryAfterHonoured_EveryItemStillFetched()
@@ -328,7 +350,7 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
     {
         var node = JsonSerializer.SerializeToNode(cursor)!.AsObject();
 
-        foreach (var name in new[] { "StartedAt", "CompletedAt", "ChunkId", "LeaseExpiresAt" }) node.Remove(name);
+        foreach (var name in new[] { "StartedAt", "CompletedAt", "ChunkId", "LeaseExpiresAt", "StagingId" }) node.Remove(name);
 
         if (ignoreBytes) node.Remove("TotalBytes");
 
@@ -340,6 +362,7 @@ public sealed class OctopusRestFetchConcurrencyTests : IDisposable
 
     private static List<string> ClosureRequests(FakeOctopusServer server) => server.Paths.Where(p => p.Contains("ids=") && !p.StartsWith("/api/tasks", StringComparison.Ordinal)).ToList();
 
+    // The staging id is random per fetch (it ties the cursor to its directory), so it is the one file two fetches never share.
     private static List<string> SessionFiles(string session)
-        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
+        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Where(f => Path.GetFileName(f) != OctopusHistoryStagingMarker.FileName).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
 }

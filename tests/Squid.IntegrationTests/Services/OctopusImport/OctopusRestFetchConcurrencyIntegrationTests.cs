@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.IntegrationTests.Helpers;
@@ -85,6 +86,28 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
         (concurrent / sequential).ShouldBeGreaterThan(3, $"concurrency 1 = {sequential:F1}/s, 8 = {concurrent:F1}/s");
     }
 
+    // Over real sockets, one item per chunk: every chunk re-reads /api and the key's identity, and details go to their own store, so
+    // the bytes read run far past what is stored. A cap that fits what is stored (staged documents, stored details) lets the fetch
+    // finish; charging the reads against it failed a real-size space with TooLarge long before its bundle was near the cap.
+    [Fact]
+    public async Task OneItemPerChunk_OverRealSockets_BytesReadPastTheCap_FetchFinishesWithinWhatIsStored()
+    {
+        await using var measured = Octopus(deployments: 30, releases: 10);
+        var uncapped = await FetchOneItemPerChunkAsync(measured, new OctopusImportSizeLimits());
+        var session = _sessionDirectories[^1];
+        var staged = StoredBytes(session, OctopusHistoryBundleWriter.StagingDirectoryName);
+        var details = StoredBytes(session, OctopusImportHistoryDetailsStore.DirectoryName);
+        var cap = Math.Max(staged, details) * 2;
+
+        uncapped.DetailsBytes.ShouldBe(details, "every stored detail byte is counted");
+        uncapped.TotalBytes.ShouldBeGreaterThan(cap, "precondition: the reads must run past a cap that fits what is stored");
+
+        await using var capped = Octopus(deployments: 30, releases: 10);
+        var cursor = await FetchOneItemPerChunkAsync(capped, new OctopusImportSizeLimits { MaxBytes = cap });
+
+        (cursor.Done, cursor.Counts.Deployments, cursor.Counts.Releases).ShouldBe((true, 30, 10));
+    }
+
     public void Dispose()
     {
         foreach (var directory in _sessionDirectories.Where(Directory.Exists)) Directory.Delete(directory, recursive: true);
@@ -134,15 +157,32 @@ public sealed class OctopusRestFetchConcurrencyIntegrationTests(ITestOutputHelpe
         return cursor;
     }
 
+    private async Task<OctopusImportHistoryFetchDto> FetchOneItemPerChunkAsync(StubOctopusServer octopus, OctopusImportSizeLimits limits)
+    {
+        var options = new OctopusRestOptions { AllowLoopback = true, ChunkDuration = TimeSpan.Zero };
+        var fetcher = new OctopusRestHistoryFetcher(new OctopusRestClientFactory(null, options), new OctopusHistoryBundleWriter(limits), new OctopusImportHistoryDetailsStore(), options, limits);
+        var session = Path.Combine(Path.GetTempPath(), $"squid-it-rest-bytes-{Guid.NewGuid():N}");
+        var cursor = new OctopusImportHistoryFetchDto { ProjectIds = ["Projects-1"], OctopusSpaceId = "Spaces-1" };
+
+        _sessionDirectories.Add(session);
+
+        while (!cursor.Done) await fetcher.FetchChunkAsync(new OctopusHistoryFetchContext { ServerUrl = octopus.BaseUri.ToString(), ApiKey = ApiKey, SessionDirectory = session, Cursor = cursor, PriorMappings = OctopusImportPriorMappings.Empty }).WaitAsync(TimeSpan.FromMinutes(2));
+
+        return cursor;
+    }
+
+    private static long StoredBytes(string session, string directory)
+        => Directory.EnumerateFiles(Path.Combine(session, directory), "*", SearchOption.AllDirectories).Sum(f => new FileInfo(f).Length);
+
     private static string CursorJson(OctopusImportHistoryFetchDto cursor)
     {
         var node = JsonSerializer.SerializeToNode(cursor)!.AsObject();
 
-        foreach (var name in new[] { "StartedAt", "CompletedAt", "ChunkId", "LeaseExpiresAt" }) node.Remove(name);
+        foreach (var name in new[] { "StartedAt", "CompletedAt", "ChunkId", "LeaseExpiresAt", "StagingId" }) node.Remove(name);
 
         return node.ToJsonString();
     }
 
     private static List<string> SessionFiles(string session)
-        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
+        => Directory.EnumerateFiles(session, "*", SearchOption.AllDirectories).Where(f => Path.GetFileName(f) != OctopusHistoryStagingMarker.FileName).Order(StringComparer.Ordinal).Select(f => $"{Path.GetRelativePath(session, f)}:{Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(f)))}").ToList();
 }

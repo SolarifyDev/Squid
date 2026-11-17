@@ -21,13 +21,16 @@ public sealed class OctopusRestClientFactory(SecuritySetting security, OctopusRe
 
     public OctopusRestClient Create(string serverUrl, string apiKey) => new(serverUrl, apiKey, _options, CreateHandler(_options)) { KeyFingerprint = OctopusRestKeyBinding.Fingerprint(_masterKey, apiKey) };
 
-    public static SocketsHttpHandler CreateHandler(OctopusRestOptions options)
+    public static SocketsHttpHandler CreateHandler(OctopusRestOptions options) => CreateHandler(options, Dns.GetHostAddressesAsync);
+
+    /// <summary>The production handler resolving names through <paramref name="resolve"/> (a test injects resolver failures).</summary>
+    public static SocketsHttpHandler CreateHandler(OctopusRestOptions options, Func<string, CancellationToken, Task<IPAddress[]>> resolve)
         => new()
         {
             AllowAutoRedirect = false,
             UseCookies = false,
             UseProxy = false,
             AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-            ConnectCallback = (context, ct) => OctopusRestEndpointGuard.ConnectAsync(context.DnsEndPoint, options, ct)
+            ConnectCallback = (context, ct) => OctopusRestEndpointGuard.ConnectAsync(context.DnsEndPoint, options, resolve, ct)
         };
 }

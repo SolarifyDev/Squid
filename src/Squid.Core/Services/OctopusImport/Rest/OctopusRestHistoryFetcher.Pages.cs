@@ -17,7 +17,7 @@ public sealed partial class OctopusRestHistoryFetcher
     {
         var page = await ReleasePageAsync(ct).ConfigureAwait(false);
 
-        RecordPhaseTotal(page);
+        if (StepBackIfShrunk(page)) return;
 
         if (!await ReadAheadThenWriteInOrderAsync(page.Items, new ItemSteps<OctopusReleaseDto, ReleaseRead>(ReadReleaseAsync, WriteReleaseAsync), ct).ConfigureAwait(false)) return;
 
@@ -84,9 +84,10 @@ public sealed partial class OctopusRestHistoryFetcher
     private async Task FetchDeploymentPageAsync(CancellationToken ct)
     {
         var page = await GetPageOrNullAsync<OctopusDeploymentDto>(DeploymentsPath(CurrentProjectId), ct).ConfigureAwait(false) ?? new OctopusRestPage<OctopusDeploymentDto>();
-        var tasks = await TaskSummariesAsync(page.Items, ct).ConfigureAwait(false);
 
-        RecordPhaseTotal(page);
+        if (StepBackIfShrunk(page)) return;
+
+        var tasks = await TaskSummariesAsync(page.Items, ct).ConfigureAwait(false);
 
         Task<DeploymentRead> Read(OctopusDeploymentDto deployment, CancellationToken readCt) => ReadDeploymentAsync(deployment, tasks.GetValueOrDefault(deployment.TaskId ?? string.Empty), readCt);
 
@@ -254,10 +255,25 @@ public sealed partial class OctopusRestHistoryFetcher
         if (!HasCurrentProject) cursor.Phase = OctopusHistoryFetchPhase.Closure;
     }
 
-    // What Octopus reports this page's list holds in all, for the progress shown while the phase runs.
-    private void RecordPhaseTotal<T>(OctopusRestPage<T> page) => _ctx.Cursor.PhaseTotalResults = page.TotalResults;
+    // Records what Octopus reports the list holds in all (shown as progress). Octopus pages by offset: items removed from the part
+    // already read shift the rest towards the front, so a smaller total than the previous page reported steps the offset back by
+    // the shrink and the page is read again from there. Staged documents are overwritten by kind and id, so an item read twice is
+    // harmless, while continuing would pass over an unread one. A list now empty (the project deleted) has nothing left to miss.
+    private bool StepBackIfShrunk<T>(OctopusRestPage<T> page)
+    {
+        var cursor = _ctx.Cursor;
+        var shrink = cursor.PhaseTotalResults is { } previous && page.TotalResults > 0 ? previous - page.TotalResults : 0;
 
-    // Not found is null: a deleted project, or one the chosen space does not have. A refused page is an empty page, recorded.
+        cursor.PhaseTotalResults = page.TotalResults;
+
+        if (shrink <= 0 || cursor.Skip == 0) return false;
+
+        cursor.Skip = Math.Max(0, cursor.Skip - shrink);
+
+        return true;
+    }
+
+    // Not found is null: a deleted project, or one the chosen space does not have. A refused first page is an empty list, recorded.
     private async Task<OctopusRestPage<T>> GetPageOrNullAsync<T>(string path, CancellationToken ct)
     {
         try
@@ -268,11 +284,26 @@ public sealed partial class OctopusRestHistoryFetcher
         {
             return null;
         }
-        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected && _ctx.Cursor.Skip == 0)
         {
             RecordRejected(_ctx.Client.LastRequestedPath);
             return new OctopusRestPage<T>();
         }
+        catch (OctopusRestException ex) when (ex.Kind == OctopusRestErrorKind.Rejected)
+        {
+            await EnsureKeyStillSufficientAsync(ct).ConfigureAwait(false);
+            throw new OctopusRestException(OctopusRestErrorKind.Unreachable);
+        }
+    }
+
+    // A refused page of a list whose earlier pages were read is not the list's end: treating it as one would drop the rest of the
+    // list. The key's permissions are checked again (a narrowed key fails as restricted); otherwise the chunk fails with the cursor
+    // still on this page, so the next chunk reads it again.
+    private async Task EnsureKeyStillSufficientAsync(CancellationToken ct)
+    {
+        var permissions = await ReadPermissionsAsync(_ctx.Client, _ctx.OctopusUserId, _ctx.Cursor.OctopusSpaceId, ct).ConfigureAwait(false);
+
+        OctopusRestPermissionGate.EnsureSufficient(permissions);
     }
 
     private async Task<T> GetOrNullAsync<T>(string path, CancellationToken ct, bool tolerateNotFound = true) where T : class

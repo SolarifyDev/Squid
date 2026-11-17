@@ -66,6 +66,29 @@ public partial class OctopusImportFromServerIntegrationTests
         octopus.Requests.ShouldNotContain(r => r.PathAndQuery.StartsWith("/api/Spaces-1/"), "a session that cannot be resumed reads nothing from the space");
     }
 
+    // The session's staged documents are lost between chunks (a restart on temporary storage, another replica answering): the fetch is
+    // refused with its own kind however often it is resumed, reads nothing more from Octopus, and the session never reaches a bundle
+    // that would silently lack what the cursor already counted.
+    [Fact]
+    public async Task StagingLostBetweenChunks_NamesItsKind_ReadsNothingMore_NeverCompletes()
+    {
+        await using var octopus = OneDeployment();
+        var sessionId = await Run<IMediator, Guid>(async mediator => (await OctopusImportHandlerFlow.ConnectAsync(mediator, SpaceId)).Data.Session.SessionId);
+        (await Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey))).Data.Done.ShouldBeFalse();
+        Directory.Delete(await SessionDirectoryAsync(sessionId), recursive: true);
+        var requests = octopus.Requests.Count(r => r.PathAndQuery.StartsWith("/api/Spaces-1/"));
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var ex = await Should.ThrowAsync<Exception>(() => Run<IMediator, FetchOctopusImportHistoryResponse>(mediator => OctopusImportHandlerFlow.FetchHistoryAsync(mediator, SpaceId, sessionId, octopus.BaseUri, ApiKey)));
+
+            OctopusImportErrorKinds.Of(ex).ShouldBe(OctopusImportErrorKinds.StagingLost, ex.ToString());
+        }
+
+        octopus.Requests.Count(r => r.PathAndQuery.StartsWith("/api/Spaces-1/")).ShouldBe(requests, "nothing is read into a staging the fetch cannot vouch for");
+        (await SessionStateAsync(sessionId)).ShouldBe(OctopusImportSessionState.Uploaded);
+    }
+
     [Theory]
     [InlineData("key-rejected", "Unauthorized")]
     [InlineData("key-restricted", "KeyRestricted")]

@@ -21,7 +21,7 @@ public class OctopusHistoryFetchCountsDto
     /// <summary>Requests the Octopus server refused; each item is skipped and listed in the cursor's skipped items.</summary>
     public int ItemsRejected { get; set; }
 
-    /// <summary>Items skipped after outliving the chunk deadline too many times.</summary>
+    /// <summary>Items skipped after failing too many chunks: outliving the chunk deadline, or the server failing one of their requests.</summary>
     public int ItemsAbandoned { get; set; }
 
     /// <summary>Configuration documents staged (everything but releases, deployments and tasks).</summary>

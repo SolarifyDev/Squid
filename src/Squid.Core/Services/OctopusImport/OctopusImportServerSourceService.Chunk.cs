@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Services.OctopusImport;
@@ -32,7 +33,7 @@ public sealed partial class OctopusImportServerSourceService
             ApiKey = request.ApiKey,
             SessionDirectory = Path.GetDirectoryName(Path.GetFullPath(session.TemporaryUploadPath)),
             Cursor = cursor,
-            PriorMappings = await sourceMap.LoadAsync(request.SpaceId, ct).ConfigureAwait(false),
+            PriorMappings = await sourceMap.LoadKindsAsync(request.SpaceId, OctopusRestHistoryFetcher.PriorMappingKinds, ct).ConfigureAwait(false),
             ChosenProjectIds = chosenProjectIds
         };
 

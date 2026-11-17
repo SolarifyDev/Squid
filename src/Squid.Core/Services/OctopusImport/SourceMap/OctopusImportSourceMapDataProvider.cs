@@ -15,18 +15,27 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
 
     private const int ParametersPerRow = 10;
 
-    public async Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default)
+    public Task<OctopusImportPriorMappings> LoadAsync(int spaceId, CancellationToken ct = default) => LoadKindsAsync(spaceId, OctopusImportSourceMapTables.ByKind.Keys.ToList(), ct);
+
+    public async Task<OctopusImportPriorMappings> LoadKindsAsync(int spaceId, IReadOnlyCollection<string> sourceTypes, CancellationToken ct = default)
     {
-        var rows = await repository.FromSqlRaw<OctopusImportSourceMap>(BuildLiveRowsSql(), spaceId).AsNoTracking().ToListAsync(ct).ConfigureAwait(false);
-        var recordedChildKeys = await LoadRecordedChildKeysAsync(spaceId, ct).ConfigureAwait(false);
+        var tables = OctopusImportSourceMapTables.ByKind.Where(pair => sourceTypes?.Contains(pair.Key) == true).ToList();
+
+        if (tables.Count == 0) return OctopusImportPriorMappings.Empty;
+
+        var rows = await repository.FromSqlRaw<OctopusImportSourceMap>(BuildLiveRowsSql(tables), spaceId).AsNoTracking().ToListAsync(ct).ConfigureAwait(false);
+        var recordedChildKeys = await LoadRecordedChildKeysAsync(spaceId, tables.Select(pair => pair.Key), ct).ConfigureAwait(false);
 
         return ToPriorMappings(rows, recordedChildKeys);
     }
 
-    // Every recorded row of the choosable child kinds, live or not: the prior mappings name the ones whose destination is gone.
-    private async Task<HashSet<(string Type, string Id)>> LoadRecordedChildKeysAsync(int spaceId, CancellationToken ct)
+    // Every recorded row of the requested choosable child kinds, live or not: the prior mappings name the ones whose destination is gone.
+    private async Task<HashSet<(string Type, string Id)>> LoadRecordedChildKeysAsync(int spaceId, IEnumerable<string> sourceTypes, CancellationToken ct)
     {
-        var types = OctopusImportSourceMapQueries.ChoosableChildSourceTypes.ToList();
+        var types = sourceTypes.Where(OctopusImportSourceMapQueries.ChoosableChildSourceTypes.Contains).ToList();
+
+        if (types.Count == 0) return [];
+
         var rows = await repository.QueryNoTracking<OctopusImportSourceMap>(m => m.SpaceId == spaceId && types.Contains(m.SourceType)).Select(m => new { m.SourceType, m.SourceId }).ToListAsync(ct).ConfigureAwait(false);
 
         return rows.Select(r => (r.SourceType, r.SourceId)).ToHashSet();
@@ -73,8 +82,8 @@ public sealed class OctopusImportSourceMapDataProvider(IRepository repository) :
     }
 
     // One EXISTS-filtered SELECT per known type, combined with UNION ALL: a row survives only while its destination row and that row's owners exist.
-    private static string BuildLiveRowsSql()
-        => string.Join("\nUNION ALL\n", OctopusImportSourceMapTables.ByKind.Select(pair => $"SELECT m.* FROM octopus_import_source_map m WHERE m.space_id = {{0}} AND m.source_type = '{pair.Key}' AND EXISTS (SELECT 1 FROM {pair.Value} d WHERE d.id = m.destination_id{OwnerCondition(pair.Key)})"));
+    private static string BuildLiveRowsSql(IEnumerable<KeyValuePair<string, string>> tables)
+        => string.Join("\nUNION ALL\n", tables.Select(pair => $"SELECT m.* FROM octopus_import_source_map m WHERE m.space_id = {{0}} AND m.source_type = '{pair.Key}' AND EXISTS (SELECT 1 FROM {pair.Value} d WHERE d.id = m.destination_id{OwnerCondition(pair.Key)})"));
 
     private static string OwnerCondition(string sourceType)
         => OctopusImportSourceMapTables.OwnerPredicates.TryGetValue(sourceType, out var predicate) ? $" AND {predicate}" : string.Empty;

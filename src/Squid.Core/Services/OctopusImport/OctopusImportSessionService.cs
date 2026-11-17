@@ -282,6 +282,8 @@ public class OctopusImportSessionService : IOctopusImportSessionService
         summary.HistoryFetch = historyFetch;
         session.SourceSummaryJson = Serialize(OctopusImportRedaction.RedactDto(summary));
 
+        SlideExpiryAhead(session);
+
         await _dataProvider.UpdateSessionAsync(session, session.DataVersion, ct: ct).ConfigureAwait(false);
 
         return Map(session);
@@ -413,6 +415,18 @@ public class OctopusImportSessionService : IOctopusImportSessionService
             OctopusImportSessionState.Failed => completedAt.Add(_temporaryUploadSettings.FailedRetentionPeriod),
             _ => completedAt
         };
+    }
+
+    // A fetch in progress is in use: each chunk claim and release keeps the session (and its upload) a full retention
+    // period away from expiry, so the expiry sweep never deletes a directory a running chunk is writing to.
+    private void SlideExpiryAhead(OctopusImportSession session)
+    {
+        var slid = DateTimeOffset.UtcNow.Add(_temporaryUploadSettings.DefaultRetentionPeriod);
+
+        if (slid <= session.ExpiresAt) return;
+
+        session.ExpiresAt = slid;
+        session.TemporaryUploadCleanupAfter = slid;
     }
 
     private DateTimeOffset GetEffectiveExpiresAt(DateTimeOffset requestedExpiresAt, DateTimeOffset now)

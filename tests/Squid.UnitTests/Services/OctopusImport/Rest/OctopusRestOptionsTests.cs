@@ -14,6 +14,7 @@ public class OctopusRestOptionsTests
     [InlineData(OctopusRestOptions.ChunkSecondsEnvVar, "SQUID_OCTOPUS_IMPORT_REST_CHUNK_SECONDS")]
     [InlineData(OctopusRestOptions.MaxLogLinesPerTaskEnvVar, "SQUID_OCTOPUS_IMPORT_MAX_LOG_LINES_PER_TASK")]
     [InlineData(OctopusRestOptions.ConcurrencyEnvVar, "SQUID_OCTOPUS_IMPORT_REST_CONCURRENCY")]
+    [InlineData(OctopusRestOptions.MaxListItemsEnvVar, "SQUID_OCTOPUS_IMPORT_REST_MAX_LIST_ITEMS")]
     public void EnvVarNames_Pinned(string actual, string expected) => actual.ShouldBe(expected);
 
     [Fact]
@@ -78,7 +79,7 @@ public class OctopusRestOptionsTests
     [Fact]
     public void FromEnvironment_ReadsEveryOverride()
     {
-        var names = new[] { OctopusRestOptions.AllowLoopbackEnvVar, OctopusRestOptions.AllowedHostsEnvVar, OctopusRestOptions.MaxResponseBytesEnvVar, OctopusRestOptions.ChunkSecondsEnvVar };
+        var names = new[] { OctopusRestOptions.AllowLoopbackEnvVar, OctopusRestOptions.AllowedHostsEnvVar, OctopusRestOptions.MaxResponseBytesEnvVar, OctopusRestOptions.ChunkSecondsEnvVar, OctopusRestOptions.MaxListItemsEnvVar };
         var saved = names.ToDictionary(n => n, Environment.GetEnvironmentVariable);
 
         try
@@ -87,6 +88,7 @@ public class OctopusRestOptionsTests
             Environment.SetEnvironmentVariable(OctopusRestOptions.AllowedHostsEnvVar, "octopus.example.com, *.corp.example");
             Environment.SetEnvironmentVariable(OctopusRestOptions.MaxResponseBytesEnvVar, "1234");
             Environment.SetEnvironmentVariable(OctopusRestOptions.ChunkSecondsEnvVar, "9");
+            Environment.SetEnvironmentVariable(OctopusRestOptions.MaxListItemsEnvVar, "25000");
 
             var options = OctopusRestOptions.FromEnvironment();
 
@@ -94,6 +96,7 @@ public class OctopusRestOptionsTests
             options.AllowedHosts.ShouldBe(["octopus.example.com", "*.corp.example"]);
             options.MaxResponseBytes.ShouldBe(1234);
             options.ChunkDuration.ShouldBe(TimeSpan.FromSeconds(9));
+            options.MaxListItems.ShouldBe(25_000);
         }
         finally
         {

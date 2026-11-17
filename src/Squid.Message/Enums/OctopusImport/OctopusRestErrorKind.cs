@@ -11,5 +11,8 @@ public enum OctopusRestErrorKind
     NotFound = 5,
 
     /// <summary>The server refused one item (400/409/422, or 403 on anything but the key's own identity); the item is skipped, the fetch goes on.</summary>
-    Rejected = 6
+    Rejected = 6,
+
+    /// <summary>The TLS handshake failed (a certificate this Squid host does not trust, or no common protocol); retrying cannot fix it.</summary>
+    Tls = 7
 }

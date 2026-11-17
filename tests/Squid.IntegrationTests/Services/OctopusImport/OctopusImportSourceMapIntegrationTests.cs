@@ -394,25 +394,25 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
         });
     }
 
-    // A filled or superseded secret is final for its destination: a later import that would record it Missing again (the
-    // same Squid row) never undoes it. Missing → Filled is the one move a fill makes; a new destination starts over.
+    // A secret row is what the last confirmation that touched it said. A confirmation records Missing only for a variable or feed it just
+    // CREATED empty, so a Missing after Filled/Superseded on the same destination is a re-created row (a variable deleted in Squid and
+    // re-added by a ticked import; its destination is the unchanged variable set) and must be fillable again. A value Squid holds is never
+    // at risk: the fill writes only an empty value (compare-and-set).
     [Theory]
     [InlineData("Filled")]
     [InlineData("Superseded")]
-    public async Task Upsert_SecretRow_TerminalOutcomeNeverRegressesToMissing_OnTheSameDestination(string terminal)
+    public async Task Upsert_SecretRow_RecordedMissingAgainForARecreatedRow_IsMissingAgain(string terminal)
     {
         await Run<SquidDbContext, IOctopusImportSourceMapDataProvider>(async (db, provider) =>
         {
             await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, "Missing"), Row("FeedSecret", "Feeds-1", 50, "Missing")], Guid.NewGuid());
-            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, terminal)], Guid.NewGuid());
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, terminal), Row("FeedSecret", "Feeds-1", 50, terminal)], Guid.NewGuid());
 
-            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, "Missing"), Row("FeedSecret", "Feeds-1", 50, "Missing")], Guid.NewGuid());
+            Describe(await LoadRawRowsAsync(db)).ShouldBe([$"{SpaceId}|VariableSecret|VS:ABC|40|{terminal}||", $"{SpaceId}|FeedSecret|FEEDS-1|50|{terminal}||"], ignoreOrder: true);
 
-            Describe(await LoadRawRowsAsync(db)).ShouldBe([$"{SpaceId}|VariableSecret|VS:ABC|40|{terminal}||", $"{SpaceId}|FeedSecret|FEEDS-1|50|Missing||"], ignoreOrder: true);
+            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 40, "Missing")], Guid.NewGuid());
 
-            await provider.UpsertAsync([Row("VariableSecret", "vs:abc", 41, "Missing")], Guid.NewGuid());
-
-            Describe(await LoadRawRowsAsync(db)).ShouldContain($"{SpaceId}|VariableSecret|VS:ABC|41|Missing||");
+            Describe(await LoadRawRowsAsync(db)).ShouldBe([$"{SpaceId}|VariableSecret|VS:ABC|40|Missing||", $"{SpaceId}|FeedSecret|FEEDS-1|50|{terminal}||"], ignoreOrder: true);
         });
     }
 
@@ -450,6 +450,32 @@ public class OctopusImportSourceMapIntegrationTests : TestBase
             prior.TryGet("Release", "Releases-3", out _).ShouldBeTrue(customMessage: "a release whose project was deleted is still in Squid: an import that re-creates the project moves it there, never imports it twice");
             prior.TryGet("Certificate", "Certificates-1", out _).ShouldBeFalse(customMessage: "a type with no known table can never be verified, so it is never trusted");
             prior.InstallationId.ShouldBeNull();
+        });
+    }
+
+    // The narrowed load reads only the named kinds, with the same liveness filter as the whole-space load.
+    [Fact]
+    public async Task LoadKinds_ReadsOnlyTheNamedKinds_DropsStaleRows()
+    {
+        await Run<IRepository, IUnitOfWork, IOctopusImportSourceMapDataProvider>(async (repository, unitOfWork, provider) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+            var environment = await builder.CreateEnvironmentAsync(Unique("Env"));
+            var project = await builder.CreateProjectAsync(0);
+            var channel = await builder.CreateChannelAsync(project.Id);
+            var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0");
+
+            await provider.UpsertAsync([
+                Row("Environment", "Environments-1", environment.Id, "Created"),
+                Row("Release", "Releases-1", release.Id, "Created", "fp-rel"),
+                Row("Release", "Releases-2", release.Id + 1000, "Created"),
+                Row("Release", "Releases-9", release.Id, "Created", spaceId: SpaceId + 1)], Guid.NewGuid());
+
+            var prior = await provider.LoadKindsAsync(SpaceId, ["Release", "Certificate"]);
+
+            prior.Mappings.Keys.ShouldBe([OctopusImportPriorMappings.Key("Release", "Releases-1")], customMessage: "only live rows of the named kinds of this space; an unknown kind is never trusted");
+            (await provider.LoadKindsAsync(SpaceId, [])).Mappings.ShouldBeEmpty();
+            (await provider.LoadAsync(SpaceId)).Mappings.Count.ShouldBe(2, "the whole-space load is unchanged");
         });
     }
 
