@@ -767,6 +767,95 @@ public class ProjectServiceProgressionTests : TestBase
     }
 
     [Fact]
+    public async Task GetProgression_NewestDeployedReleaseDeleted_PreviousDeploymentBecomesCurrent()
+    {
+        var seed = await SeedProjectWithLifecycleAsync().ConfigureAwait(false);
+        int survivingReleaseId = 0, survivingDeploymentId = 0, deletedReleaseId = 0;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var channel = await builder.CreateChannelAsync(seed.ProjectId, seed.LifecycleId).ConfigureAwait(false);
+
+            survivingReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, channel.Id, "1.0.4").ConfigureAwait(false)).Id;
+            survivingDeploymentId = (await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, survivingReleaseId, channel.Id, "Success").ConfigureAwait(false)).Id;
+
+            deletedReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, channel.Id, "1.0.5").ConfigureAwait(false)).Id;
+            await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, deletedReleaseId, channel.Id, "Success").ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await ExecuteSqlAsync("DELETE FROM release WHERE id = {0}", deletedReleaseId).ConfigureAwait(false);
+
+        var result = await GetProgressionAsync(seed.ProjectId).ConfigureAwait(false);
+
+        result.Data.Releases.Select(r => r.Release.Id).ShouldBe(new[] { survivingReleaseId });
+        result.Data.Releases[0].Deployments[seed.ProdEnvId].Single(d => d.DeploymentId == survivingDeploymentId).IsCurrent.ShouldBeTrue(customMessage: "deleting a release leaves its deployment rows behind (no FK); an orphaned deployment must not steal 'current' and leave Prod with no current marker");
+    }
+
+    [Fact]
+    public async Task GetProgression_PreviousSuccessfulReleaseDeleted_FallsBackToOlderSuccess()
+    {
+        var seed = await SeedProjectWithLifecycleAsync().ConfigureAwait(false);
+        int olderSuccessReleaseId = 0, deletedSuccessReleaseId = 0;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var channel = await builder.CreateChannelAsync(seed.ProjectId, seed.LifecycleId).ConfigureAwait(false);
+
+            olderSuccessReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, channel.Id, "0.1.0").ConfigureAwait(false)).Id;
+            await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, olderSuccessReleaseId, channel.Id, "Success").ConfigureAwait(false);
+
+            deletedSuccessReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, channel.Id, "0.2.0").ConfigureAwait(false)).Id;
+            await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, deletedSuccessReleaseId, channel.Id, "Success").ConfigureAwait(false);
+
+            var failedReleaseId = 0;
+
+            for (var i = 1; i <= 4; i++)
+                failedReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, channel.Id, $"1.0.{i}").ConfigureAwait(false)).Id;
+
+            await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, failedReleaseId, channel.Id, "Failed").ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await ExecuteSqlAsync("DELETE FROM release WHERE id = {0}", deletedSuccessReleaseId).ConfigureAwait(false);
+
+        var result = await GetProgressionAsync(seed.ProjectId).ConfigureAwait(false);
+
+        result.Data.Releases.Select(r => r.Release.Version).ShouldBe(new[] { "1.0.4", "1.0.3", "1.0.2", "0.1.0" }, customMessage: "an orphaned success (its release deleted) must not occupy the previous-successful slot; the newest success of a live release does");
+    }
+
+    [Fact]
+    public async Task GetProgression_ChannelOfNewestDeploymentDeleted_RemainingChannelDeploymentBecomesCurrent()
+    {
+        var seed = await SeedProjectWithLifecycleAsync().ConfigureAwait(false);
+        int keptReleaseId = 0, keptDeploymentId = 0, deletedChannelId = 0;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var builder = new TestDataBuilder(repository, unitOfWork);
+
+            var keptChannel = await builder.CreateChannelAsync(seed.ProjectId, seed.LifecycleId, "Default").ConfigureAwait(false);
+            var deletedChannel = await builder.CreateChannelAsync(seed.ProjectId, seed.LifecycleId, "Hotfix").ConfigureAwait(false);
+            deletedChannelId = deletedChannel.Id;
+
+            keptReleaseId = (await builder.CreateReleaseAsync(seed.ProjectId, keptChannel.Id, "1.0.0").ConfigureAwait(false)).Id;
+            keptDeploymentId = (await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, keptReleaseId, keptChannel.Id, "Success").ConfigureAwait(false)).Id;
+
+            var hotfixRelease = await builder.CreateReleaseAsync(seed.ProjectId, deletedChannel.Id, "1.0.1-hotfix").ConfigureAwait(false);
+            await DeployAsync(builder, seed.ProjectId, seed.ProdEnvId, hotfixRelease.Id, deletedChannel.Id, "Success").ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        await ExecuteSqlAsync("DELETE FROM channel WHERE id = {0}", deletedChannelId).ConfigureAwait(false);
+
+        var result = await GetProgressionAsync(seed.ProjectId).ConfigureAwait(false);
+
+        result.Data.Releases.Select(r => r.Release.Id).ShouldBe(new[] { keptReleaseId });
+        result.Data.Releases[0].Deployments[seed.ProdEnvId].Single(d => d.DeploymentId == keptDeploymentId).IsCurrent.ShouldBeTrue(customMessage: "a deployment whose release's channel no longer exists cannot be shown, so it must not count as current");
+    }
+
+    [Fact]
     public async Task GetProgression_LargeImportedHistory_ReturnsBoundedWindowQuickly()
     {
         var seed = await SeedLargeHistoryAsync(releaseCount: 5000, deploymentCount: 6500).ConfigureAwait(false);
@@ -801,6 +890,11 @@ public class ProjectServiceProgressionTests : TestBase
         var task = await builder.CreateServerTaskAsync(state).ConfigureAwait(false);
 
         return await builder.CreateDeploymentAsync(projectId, environmentId, releaseId, task.Id, channelId).ConfigureAwait(false);
+    }
+
+    private async Task ExecuteSqlAsync(string sql, int id)
+    {
+        await Run<DbContext>(async ctx => { await ctx.Database.ExecuteSqlRawAsync(sql, id).ConfigureAwait(false); }).ConfigureAwait(false);
     }
 
     private record LargeHistorySeed(int ProjectId, int DefaultChannelId, int HotfixChannelId, int[] EnvironmentIds);

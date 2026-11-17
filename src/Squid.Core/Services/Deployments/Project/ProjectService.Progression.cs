@@ -18,8 +18,8 @@ public partial class ProjectService
         var channels = await LoadChannelsByProjectAsync(projectId, cancellationToken).ConfigureAwait(false);
         var channelEnvMap = await BuildChannelEnvironmentsAsync(projectId, channels, cancellationToken).ConfigureAwait(false);
         var environments = await LoadProgressionEnvironmentsAsync(channelEnvMap, cancellationToken).ConfigureAwait(false);
-        var currentDeployments = await LoadCurrentDeploymentsAsync(projectId, cancellationToken).ConfigureAwait(false);
-        var previousSuccessfulReleaseIds = await LoadPreviousSuccessfulReleaseIdsAsync(projectId, currentDeployments, cancellationToken).ConfigureAwait(false);
+        var currentDeployments = await LoadCurrentDeploymentsAsync(projectId, channels, cancellationToken).ConfigureAwait(false);
+        var previousSuccessfulReleaseIds = await LoadPreviousSuccessfulReleaseIdsAsync(projectId, channels, currentDeployments, cancellationToken).ConfigureAwait(false);
         var recentReleaseIds = await LoadRecentReleaseIdsAsync(projectId, channels, releaseHistoryCount, cancellationToken).ConfigureAwait(false);
         var releaseIds = SelectDashboardReleaseIds(recentReleaseIds, currentDeployments.Select(d => d.ReleaseId).ToList(), previousSuccessfulReleaseIds);
         var releases = await LoadProgressionReleasesAsync(projectId, channels, releaseIds, cancellationToken).ConfigureAwait(false);
@@ -102,12 +102,23 @@ public partial class ProjectService
 
     private sealed record DashboardDeployment(int Id, int ReleaseId);
 
-    // Newest deployment per environment across ALL of the project's deployments (DISTINCT-ON style
-    // ROW_NUMBER in the database), so IsCurrent stays correct however few releases the window loads.
-    private async Task<List<DashboardDeployment>> LoadCurrentDeploymentsAsync(int projectId, CancellationToken ct)
+    // Deployment rows outlive their release (no FK; deleting a release or channel leaves them behind).
+    // Only deployments of releases the dashboard can still show may be "current" or "previous successful",
+    // otherwise an orphan steals the slot and the environment ends up with no current marker at all.
+    private IQueryable<Deployment> QueryDeploymentsOfLiveReleases(int projectId, List<Channel> channels)
     {
-        var rows = await _repository
-            .QueryNoTracking<Deployment>(d => d.ProjectId == projectId)
+        var channelIds = channels.Select(channel => channel.Id).ToList();
+
+        return from deployment in _repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId)
+            join release in _repository.QueryNoTracking<ReleaseEntity>(r => r.ProjectId == projectId && channelIds.Contains(r.ChannelId)) on deployment.ReleaseId equals release.Id
+            select deployment;
+    }
+
+    // Newest deployment per environment across ALL of the project's live deployments (DISTINCT-ON style
+    // ROW_NUMBER in the database), so IsCurrent stays correct however few releases the window loads.
+    private async Task<List<DashboardDeployment>> LoadCurrentDeploymentsAsync(int projectId, List<Channel> channels, CancellationToken ct)
+    {
+        var rows = await QueryDeploymentsOfLiveReleases(projectId, channels)
             .GroupBy(d => d.EnvironmentId)
             .Select(g => g.OrderByDescending(d => d.CreatedDate).ThenByDescending(d => d.Id).Select(d => new { d.Id, d.ReleaseId }).First())
             .ToListAsync(ct).ConfigureAwait(false);
@@ -117,12 +128,12 @@ public partial class ProjectService
 
     // Octopus' dashboard.Get(includePreviousSuccessful: true): per environment, the newest Success
     // deployment that is not the current one — i.e. what is still running when the latest deploy failed.
-    private async Task<List<int>> LoadPreviousSuccessfulReleaseIdsAsync(int projectId, List<DashboardDeployment> currentDeployments, CancellationToken ct)
+    private async Task<List<int>> LoadPreviousSuccessfulReleaseIdsAsync(int projectId, List<Channel> channels, List<DashboardDeployment> currentDeployments, CancellationToken ct)
     {
         var currentIds = currentDeployments.Select(d => d.Id).ToList();
 
         var successfulDeployments =
-            from deployment in _repository.QueryNoTracking<Deployment>(d => d.ProjectId == projectId && !currentIds.Contains(d.Id))
+            from deployment in QueryDeploymentsOfLiveReleases(projectId, channels).Where(d => !currentIds.Contains(d.Id))
             join task in _repository.QueryNoTracking<ServerTaskEntity>(t => t.State == TaskState.Success) on deployment.TaskId equals (int?)task.Id
             select deployment;
 
