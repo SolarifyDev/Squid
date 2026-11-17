@@ -39,8 +39,12 @@ public static class OctopusImportSourceMapQueries
     /// <summary>The only outcomes a secret row may carry — and only a secret row may carry them.</summary>
     public static IReadOnlySet<string> SecretOutcomes { get; } = new HashSet<string>([MissingOutcome, FilledOutcome, SupersededOutcome], StringComparer.Ordinal);
 
-    /// <summary>Outcomes a re-recorded row keeps when it still points at the same destination (an import only ever fills).</summary>
-    public static IReadOnlyList<string> StickyOutcomes { get; } = [CreatedOutcome, FilledOutcome, SupersededOutcome];
+    /// <summary>
+    /// Outcomes a re-recorded row keeps when it still points at the same destination (an import only ever fills). Secret outcomes are
+    /// not sticky: a confirmation records a secret Missing only for a row it just CREATED empty (a variable deleted in Squid and added
+    /// back keeps its variable set as destination), so its last word is the truth; the fill itself never overwrites a value (compare-and-set).
+    /// </summary>
+    public static IReadOnlyList<string> StickyOutcomes { get; } = [CreatedOutcome];
 
     /// <summary>The child kinds a re-import offers for the user to decide on when their Squid row is gone (deleted in Squid since the import).</summary>
     public static IReadOnlySet<string> ChoosableChildSourceTypes { get; } = new HashSet<string>([nameof(OctopusResourceKind.Channel), nameof(OctopusResourceKind.LifecyclePhase), nameof(OctopusResourceKind.DeploymentStep), nameof(OctopusResourceKind.DeploymentAction), nameof(OctopusResourceKind.Variable)], StringComparer.Ordinal);

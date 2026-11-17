@@ -40,7 +40,7 @@ public static class OctopusImportVariableScopeRule
 
             // Trimmed here, once, so preview's plan lookup and confirmation's id map see the same identity.
             foreach (var value in entry.Value ?? [])
-                yield return Resolve(entry.Key, scopeType.Value, value?.Trim(), hasDestination);
+                yield return Resolve(entry.Key, scopeType.Value, ScopedSourceId(entry.Key, value?.Trim()), hasDestination);
         }
     }
 
@@ -76,8 +76,19 @@ public static class OctopusImportVariableScopeRule
             "Channel" => VariableScopeType.Channel,
             "Action" => VariableScopeType.Action,
             "Process" => VariableScopeType.Process,
+            ProcessOwnerScopeKey => VariableScopeType.Process,
             _ => null
         };
+
+    /// <summary>The scope key Octopus (2019.11+) writes for "this project's deployment process" or "this runbook".</summary>
+    public const string ProcessOwnerScopeKey = "ProcessOwner";
+
+    // A ProcessOwner value names the process's owner. A project owns exactly one deployment process, which Octopus ids as
+    // "deploymentprocess-" + project id; a runbook id is kept as it is, and since runbooks are never imported it stays unmapped.
+    private static string ScopedSourceId(string scopeKey, string value)
+        => string.Equals(scopeKey?.Trim(), ProcessOwnerScopeKey, StringComparison.Ordinal) && value != null && value.StartsWith("Projects-", StringComparison.OrdinalIgnoreCase)
+            ? $"deploymentprocess-{value}"
+            : value;
 
     private static OctopusResourceKind? SourceKind(VariableScopeType scopeType)
         => scopeType switch

@@ -150,7 +150,7 @@ public static class OctopusImportActivityTreeMapper
         {
             var value = string.IsNullOrWhiteSpace(name) ? "Octopus activity" : name.Trim();
 
-            return value.Length <= NodeNameMaxLength ? value : value[..NodeNameMaxLength];
+            return OctopusImportText.Truncate(value, NodeNameMaxLength);
         }
     }
 }

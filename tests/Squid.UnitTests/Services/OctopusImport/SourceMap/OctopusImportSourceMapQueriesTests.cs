@@ -37,11 +37,11 @@ public class OctopusImportSourceMapQueriesTests
     }
 
     [Fact]
-    public void SecretOutcomes_AreTheThreeSecretStates_AndOnlyTerminalOnesAreSticky()
+    public void SecretOutcomes_AreTheThreeSecretStates_AndOnlyCreatedIsSticky()
     {
         OctopusImportSourceMapQueries.SecretOutcomes.Order().ShouldBe(["Filled", "Missing", "Superseded"]);
         OctopusImportSourceMapQueries.SecretSourceTypes.Order().ShouldBe(["FeedSecret", "VariableSecret"]);
-        OctopusImportSourceMapQueries.StickyOutcomes.ShouldBe(["Created", "Filled", "Superseded"]);
+        OctopusImportSourceMapQueries.StickyOutcomes.ShouldBe(["Created"]);
     }
 
     // "Imported rows" (retention exemption, read-only history) never include a secret row, whatever its outcome.

@@ -312,5 +312,5 @@ public sealed partial class OctopusImportDeploymentHistoryImporter
 
     private static DateTimeOffset Utc(DateTimeOffset value) => value.ToUniversalTime();
 
-    private static string Truncate(string value, int maxLength) => value.Length <= maxLength ? value : value[..maxLength];
+    private static string Truncate(string value, int maxLength) => OctopusImportText.Truncate(value, maxLength);
 }

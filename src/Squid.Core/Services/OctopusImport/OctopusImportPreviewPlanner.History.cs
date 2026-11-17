@@ -77,11 +77,9 @@ public partial class OctopusImportPreviewPlanner
         var storedTask = context.PriorFor(OctopusResourceKind.ServerTask, task.SourceId);
         var action = storedTask == null ? OctopusImportPreviewAction.Update : OctopusImportPriorMappingPolicy.DecideHistoryUnit(stored, task.GetSource<OctopusServerTaskDto>());
         var decision = KeepNewerHistory(deployment, task, storedTask, new OctopusImportPriorDecision(action, stored.DestinationId), context);
-        var source = deployment.GetSource<OctopusDeploymentDto>();
-
         var orphaned = context.Conflicts.OrphanedHistory.DeploymentIds.Contains(stored.DestinationId);
 
-        return RelinkToRecreatedOwners(deployment, decision, orphaned, context, source.ProjectId, source.ChannelId, source.ReleaseId, source.EnvironmentId);
+        return RelinkToRecreatedOwners(deployment, decision, orphaned);
     }
 
     // An older copy of a task Squid holds finished (the importer's own rule) is not an update: the newer imported history is kept.
@@ -96,12 +94,14 @@ public partial class OctopusImportPreviewPlanner
         return new OctopusImportPriorDecision(OctopusImportPreviewAction.AlreadyImported, decision.DestinationId, OlderHistoryKept(deployment));
     }
 
-    // Squid deletes do not cascade: history whose project, channel, release or environment was deleted in Squid is still there. When this
-    // plan creates that owner again (or links it to a Squid row by name), the history is moved onto it, never imported a second time.
+    // Squid deletes do not cascade: history whose project, channel, release or environment was deleted in Squid is still there. Once every
+    // owner resolves to a live Squid row again (this plan creates it, links it by name, or an earlier import re-created it: an export file
+    // or an import of other projects), the history is moved onto it, never imported a second time. The callers only get here when every
+    // owner resolves, and stale owner rows are never prior mappings, so an orphaned row always has somewhere new to go.
     // History whose owners all exist is never moved, whatever Octopus did to it since (a release moved to another channel stays put).
-    private static OctopusImportPriorDecision RelinkToRecreatedOwners(OctopusResourceNode resource, OctopusImportPriorDecision decision, bool orphaned, PreviewPlanningContext context, params string[] ownerSourceIds)
+    private static OctopusImportPriorDecision RelinkToRecreatedOwners(OctopusResourceNode resource, OctopusImportPriorDecision decision, bool orphaned)
     {
-        if (!orphaned || decision.DestinationId == null || !ownerSourceIds.Any(id => IsNewDestination(context.PreviewActionOf(id)))) return decision;
+        if (!orphaned || decision.DestinationId == null) return decision;
 
         return new OctopusImportPriorDecision(OctopusImportPreviewAction.Update, decision.DestinationId, HistoryRelinked(resource));
     }
@@ -113,10 +113,8 @@ public partial class OctopusImportPreviewPlanner
 
         if (orphaned && context.ReleaseVersionExists(release, ReleaseVersion(release, resource))) return decision with { Diagnostic = decision.Diagnostic ?? RelinkTargetHoldsTheVersion(resource) };
 
-        return RelinkToRecreatedOwners(resource, decision, orphaned, context, release.ProjectId, release.ChannelId);
+        return RelinkToRecreatedOwners(resource, decision, orphaned);
     }
-
-    private static bool IsNewDestination(OctopusImportPreviewAction? action) => action is OctopusImportPreviewAction.Create or OctopusImportPreviewAction.ReuseExisting;
 
     // What an Update was previewed against, so confirmation can refuse it once a later import has moved the record on.
     private static string PreviewedBasis(OctopusResourceNode resource, OctopusImportPreviewAction action, PreviewPlanningContext context)

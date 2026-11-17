@@ -130,6 +130,8 @@ public class OctopusImportLibraryVariableSetPreviewTests
     [InlineData("Role", "web", true, false)]
     [InlineData("Channel", "Channels-1", true, false)]
     [InlineData("Action", "Actions-1", true, false)]
+    [InlineData("ProcessOwner", "Projects-1", true, false)]
+    [InlineData("ProcessOwner", "Runbooks-1", true, true)]
     public async Task ScopedVariable_PreviewBlocksExactlyWhenConfirmationCannotMapTheScope(string scopeKey, string scopeValue, bool ownedByProject, bool expectBlocked)
     {
         var variable = Var("Variables-X", "Scoped", "v", Scope(scopeKey, scopeValue));
@@ -169,6 +171,27 @@ public class OctopusImportLibraryVariableSetPreviewTests
 
         result.Blockers.Any(b => b.Code == OctopusImportPreviewDiagnosticCodes.UnmappableVariableScope).ShouldBe(mapping.HasBlockers);
         mapping.CreateCommand.Variables.Single().Scopes.Count.ShouldBe(mapping.HasBlockers ? 0 : 1, customMessage: "a scope is either mapped faithfully or the import blocks — it is never silently dropped");
+    }
+
+    // Octopus (2019.11+) scopes a variable to the deployment process as "ProcessOwner": ["Projects-N"]. Squid maps it to that project's
+    // deployment process, the way the Squid Process scope matches it.
+    [Fact]
+    public async Task ProjectVariableScopedToItsDeploymentProcess_MapsToTheProcessScope_DoesNotBlock()
+    {
+        var result = await new OctopusImportScenario()
+            .Project(Project, "Api", [], [Var("Variables-X", "Scoped", "v", Scope("ProcessOwner", Project))], ScriptAction("Actions-1", "echo hi"))
+            .PlanAsync();
+        var variableSet = result.Graph.Resources.Single(r => r.Kind == OctopusResourceKind.VariableSet && r.OwnerProjectId == Project);
+        var idMap = IdMapWhenTheWriterRuns(result, variableSet.SourceId);
+        idMap.TryGetDestinationId("deploymentprocess-Projects-1", nameof(OctopusResourceKind.DeploymentProcess), out var processId).ShouldBeTrue();
+
+        var mapping = new OctopusImportVariableMapper().MapToCreateCommand(variableSet, idMap, SpaceId);
+
+        result.Blockers.ShouldBeEmpty();
+        mapping.HasBlockers.ShouldBeFalse(string.Join(", ", mapping.Diagnostics.Select(d => d.Message)));
+        var scope = mapping.CreateCommand.Variables.Single().Scopes.Single();
+        scope.ScopeType.ShouldBe(Squid.Message.Enums.VariableScopeType.Process);
+        scope.ScopeValue.ShouldBe(processId.ToString());
     }
 
     [Fact]

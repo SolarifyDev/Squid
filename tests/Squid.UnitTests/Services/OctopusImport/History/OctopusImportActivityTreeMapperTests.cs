@@ -119,6 +119,19 @@ public class OctopusImportActivityTreeMapperTests
     }
 
     [Fact]
+    public void LongNodeName_EmojiAtTheCut_IsTruncatedWithoutALoneSurrogate()
+    {
+        var name = new string('s', 499) + "\U0001F680" + " and more";
+        var details = new OctopusTaskHistoryDetails { ActivityLogs = [new OctopusActivityLogDto { Name = "Task", Children = [new OctopusActivityLogDto { Name = name }] }] };
+
+        var tree = OctopusImportActivityTreeMapper.Map(Root("Success"), details, 100);
+
+        var step = tree.Nodes[1].Name;
+        step.Length.ShouldBeLessThanOrEqualTo(500);
+        char.IsHighSurrogate(step[^1]).ShouldBeFalse();
+    }
+
+    [Fact]
     public void LogCap_NotReached_AddsNoWarning()
     {
         var tree = OctopusImportActivityTreeMapper.Map(Root("Success"), new OctopusTaskHistoryDetails { ActivityLogs = [OctopusRoot()] }, 3);

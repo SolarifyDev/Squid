@@ -24,4 +24,26 @@ public class OctopusImportTextTests
 
         cleaned.ShouldBe(new object[] { "ab", 42, null, bytes, time });
     }
+
+    [Theory]
+    [InlineData(null, 3, null)]
+    [InlineData("abc", 3, "abc")]
+    [InlineData("abcdef", 3, "abc")]
+    [InlineData("ab\U0001F600cd", 3, "ab")]
+    [InlineData("ab\U0001F600cd", 4, "ab\U0001F600")]
+    [InlineData("a\U0001F600", 1, "a")]
+    public void Truncate_NeverSplitsASurrogatePair(string value, int maxLength, string expected)
+        => OctopusImportText.Truncate(value, maxLength).ShouldBe(expected);
+
+    [Fact]
+    public void Truncate_EmojiAtTheCut_LeavesValidUtf16()
+    {
+        var value = new string('x', 199) + "\U0001F600" + "tail";
+
+        var truncated = OctopusImportText.Truncate(value, 200);
+
+        truncated.Length.ShouldBeLessThanOrEqualTo(200);
+        char.IsHighSurrogate(truncated[^1]).ShouldBeFalse();
+        Should.NotThrow(() => new System.Text.UTF8Encoding(false, true).GetBytes(truncated));
+    }
 }

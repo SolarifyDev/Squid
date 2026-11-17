@@ -41,6 +41,34 @@ public partial class OctopusImportFromServerIntegrationTests
         again.PreviewPlan.Resources.Single(r => r.SourceId == AddedSecretId).ShouldSatisfyAllConditions(r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(again.PreviewPlan)), r => r.Choice.ShouldBeNull());
     }
 
+    // Filled from the file, then deleted in Squid, then added back empty by an API import the user ticked: the re-created variable is
+    // missing again, so the next export-file import fills it, as the ticked import's preview promised. A settled row of the deleted
+    // variable (same variable set, same key) never stands in for the new, empty one.
+    [Fact]
+    public async Task SecretFilledThenDeletedInSquid_TickedBackByApi_NextFileFillsIt()
+    {
+        await using var octopus = await MatrixServerAsync();
+        var archive = MatrixExport();
+        ShouldHaveSucceeded(await ImportFromAsync(ApiSource, octopus, archive, interrupt: false));
+        ShouldHaveSucceeded(await ImportFromAsync(FileSource, octopus, archive, interrupt: false));
+        (await DbPasswordAsync()).ShouldBe(OctopusWithheldSecretResources.DbPassword);
+        await SaveProjectVariableSetInSquidAsync(keepDbPassword: false);
+
+        var ticked = await ImportWithChoicesAsync(octopus, plan => Tick(plan, SecretVariableId, true));
+
+        ShouldHaveSucceeded(ticked);
+        (await DbPasswordAsync()).ShouldBeNullOrEmpty("the API withholds the value, so the ticked variable is added empty");
+        ticked.Confirm.Data.Session.Result.MissingSensitiveValues.ShouldContain(m => m.Name == "Db.Password" && m.Fillable);
+        (await SecretRowsAsync()).Where(r => r.SourceType == OctopusImportSourceMapQueries.VariableSecretSourceType).Select(r => r.OutcomeState).ShouldContain(OctopusImportSourceMapQueries.MissingOutcome);
+
+        var file = await ImportFromAsync(FileSource, octopus, archive, interrupt: false);
+
+        ShouldHaveSucceeded(file);
+        file.PreviewPlan.Resources.Single(r => r.SourceId == SecretVariableId).PreviewAction.ShouldBe(OctopusImportPreviewAction.FillMissingSecret, Describe(file.PreviewPlan));
+        (await DbPasswordAsync()).ShouldBe(OctopusWithheldSecretResources.DbPassword);
+        (await VariableAsync(AddedInSquid)).Value.ShouldBe("user value");
+    }
+
     // The user ticked, validated, then unticked and validated again before importing: the second validation is what is imported (and the
     // other way round). Every validation of a Validated session replaces the plan confirmation imports.
     [Theory]

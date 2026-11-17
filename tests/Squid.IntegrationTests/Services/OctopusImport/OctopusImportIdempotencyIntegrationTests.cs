@@ -651,6 +651,9 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         /// <summary>A real Octopus export's manifest carries no installation id (only Squid-built bundles do).</summary>
         public bool WithoutInstallationId { get; init; }
 
+        /// <summary>Configuration only, as an export carries no history.</summary>
+        public bool WithoutHistory { get; init; }
+
         /// <summary>The process's steps (JSON array items); null: the configured step when <see cref="WithConfiguration"/>, else none.</summary>
         public string StepsJson { get; init; }
 
@@ -752,6 +755,8 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
             Document("ServerTasks-1", "ServerTask", $$"""{"Id":"ServerTasks-1","Name":"{{spec.TaskName}}","Description":"Deploy idempotent release","ProjectId":"Projects-1","EnvironmentId":"Environments-1","State":"{{spec.State}}","QueueTime":"2024-07-10T09:47:02+00:00","StartTime":"2024-07-10T09:47:03+00:00","CompletedTime":{{completed}},"ErrorMessage":{{JsonSerializer.Serialize(spec.ErrorMessage)}},"HasWarningsOrErrors":false,"DurationSeconds":68{{detail}}}"""),
             Document("Deployments-1", "Deployment", $$"""{"Id":"Deployments-1","Name":"Deploy to TEST","ProjectId":"Projects-1","ChannelId":"Channels-1","EnvironmentId":"Environments-1","ReleaseId":"Releases-1","TaskId":"ServerTasks-1","DeployedBy":"levi.y","DeployedById":"Users-608","DeployedToMachineIds":{{spec.DeployedToMachineIds}},"Created":"2024-07-10T09:47:02+00:00"}""")
         };
+
+        if (spec.WithoutHistory) documents = documents.Where(d => !IsHistoryDocument(d.Id)).ToArray();
 
         var path = Path.Combine(Path.GetTempPath(), $"squid-octopus-idempotency-{Guid.NewGuid():N}.zip");
         _paths.Add(path);

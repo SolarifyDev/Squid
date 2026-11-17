@@ -34,6 +34,30 @@ public partial class OctopusImportIdempotencyIntegrationTests
         await AssertHistoryPointsAtLiveOwnersAsync(imported.Id);
     }
 
+    // The owner is re-created by an import that carries no history (an export file holds none): the history a Squid delete orphaned
+    // stays where it is then, and the next import that does carry it moves it onto the re-created owner, never importing it twice.
+    [Theory]
+    [InlineData("channel")]
+    [InlineData("environment")]
+    public async Task OwnerDeletedInSquid_RecreatedByAnImportWithoutHistory_NextImportMovesTheHistoryOntoIt(string ownerTable)
+    {
+        await ConfirmSucceededAsync(Archive(new HistorySpec()));
+        var imported = await SingleAsync<Deployment>();
+        await DeleteOwnerRowAsync(ownerTable, imported);
+        var choices = ownerTable == "channel" ? new Dictionary<string, bool> { ["Channels-1"] = true } : null;
+
+        var (_, configuration) = await PreviewAndConfirmAsync(Archive(new HistorySpec { WithoutHistory = true }), choices: choices);
+        configuration.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(configuration.Result));
+        (await CountAsync<Deployment>()).ShouldBe(1);
+
+        var (_, result) = await PreviewAndConfirmAsync(Archive(new HistorySpec()));
+
+        result.State.ShouldBe(OctopusImportSessionState.Succeeded, Describe(result.Result));
+        (await CountAsync<Release>()).ShouldBe(1, "the release was imported a second time");
+        await AssertSingleHistoryUnitAsync();
+        await AssertHistoryPointsAtLiveOwnersAsync(imported.Id);
+    }
+
     // The relink still never rolls history back: an older export (task still running) re-imported after the delete moves the
     // deployment onto the re-created release, and the finished task Squid holds is kept.
     [Fact]
@@ -109,6 +133,8 @@ public partial class OctopusImportIdempotencyIntegrationTests
         (await ListAsync<EnvironmentEntity>()).Select(e => e.Id).ShouldContain(deployment.EnvironmentId);
         (task.ProjectId, task.EnvironmentId).ShouldBe((deployment.ProjectId, deployment.EnvironmentId));
     }
+
+    private static bool IsHistoryDocument(string id) => id.StartsWith("Releases-", StringComparison.Ordinal) || id.StartsWith("Deployments-", StringComparison.Ordinal) || id.StartsWith("ServerTasks-", StringComparison.Ordinal);
 
     private async Task AssertSingleHistoryUnitAsync()
     {

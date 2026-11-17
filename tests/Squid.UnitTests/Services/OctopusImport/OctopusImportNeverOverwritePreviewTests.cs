@@ -86,6 +86,34 @@ public class OctopusImportNeverOverwritePreviewTests
         plan.BlocksConfirmation.ShouldBeFalse(Describe(plan));
     }
 
+    // The owner was re-created by an EARLIER import (an export file, or an API import of fewer projects that re-created a shared
+    // environment): this plan sees it as already imported, yet the history a Squid delete orphaned must still move onto it.
+    [Theory]
+    [InlineData(OctopusResourceKind.Release, "Releases-1", "Deployments-1")]
+    [InlineData(OctopusResourceKind.Environment, "Environments-1", "Deployments-1")]
+    [InlineData(OctopusResourceKind.Channel, "Channels-1", "Releases-1,Deployments-1")]
+    public async Task OwnerDeletedInSquid_ReCreatedByAnEarlierImport_HistoryStillInSquidMovesOntoIt(OctopusResourceKind ownerKind, string ownerId, string relinked)
+    {
+        var first = await History().PlanAsync();
+        var scenario = History().ImportedAs(first);
+
+        foreach (var id in relinked.Split(',')) scenario.OrphanedInSquid(id.StartsWith("Releases") ? OctopusResourceKind.Release : OctopusResourceKind.Deployment, id);
+
+        var plan = await scenario.PlanAsync();
+
+        plan.Resource(ownerId).PreviewAction.ShouldBe(OctopusImportPreviewAction.AlreadyImported, Describe(plan));
+
+        foreach (var id in relinked.Split(','))
+        {
+            plan.Resource(id).ShouldSatisfyAllConditions(
+                r => r.PreviewAction.ShouldBe(OctopusImportPreviewAction.Update, Describe(plan)),
+                r => r.Diagnostics.ShouldContain(d => d.Code == OctopusImportPreviewDiagnosticCodes.HistoryRelinked),
+                r => r.Changes.Select(c => c.Field).ShouldBe([OctopusImportPreviewChanges.OwnerField]));
+        }
+
+        plan.BlocksConfirmation.ShouldBeFalse(Describe(plan));
+    }
+
     [Fact]
     public async Task NothingDeleted_HistoryStaysAlreadyImported()
     {
