@@ -176,16 +176,16 @@ public class DeployPackageMultiTargetE2ETests
 
         // Both targets share one host FS and the same CustomInstallationDirectory.
         // PreDeploy lets the first target commit, then fails the second target.
+        // The targets are dispatched concurrently, so the lock must be taken atomically: a test-then-create
+        // file lets both see "no lock" and both succeed. mkdir either creates the lock or fails — one winner.
         var preDeploy =
             "#!/usr/bin/env bash\n" +
             "set -euo pipefail\n" +
             "LOCK=\"$PWD/../.multi-target-first-success\"\n" +
-            "if [ -f \"$LOCK\" ]; then\n" +
+            "if ! mkdir \"$LOCK\" 2>/dev/null; then\n" +
             "  echo intentional-second-target-predeploy-failure\n" +
             "  exit 1\n" +
             "fi\n" +
-            "mkdir -p \"$(dirname \"$LOCK\")\"\n" +
-            "echo ok > \"$LOCK\"\n" +
             "echo pre-ok > pre.txt\n";
 
         var packageBytes = CreatePackageArchive(
