@@ -170,6 +170,54 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
     }
 
     // ========================================================================
+    // Versioned rollback to a broken previous version — current is repointed
+    // to V1, but V1 crashes on start. The Type=simple unit still reads
+    // `active` on the first probe after start, so the rollback must hold V1 to
+    // the same /healthz proof as the forward check (baseline was OK) and
+    // escalate to ROLLBACK_CRITICAL_FAILED (exit 9) instead of ROLLED_BACK.
+    // ========================================================================
+
+    [Fact]
+    public async Task Versioned_HealthzFails_PreviousVersionCrashesOnStart_ExitsNineWithCriticalFailedStatus()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(
+            ctx.TestServiceScript,
+            initialVersion: V1,
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string> { ["SQUID_TEST_SERVICE_HEALTHZ"] = "1" });
+
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running before the rollback scenario can be validated");
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: V2, failHealthz: true));
+
+        // Once V2 is running, V1 is stopped and nothing holds its binary open:
+        // break it so the rollback's repoint lands on a version that cannot start.
+        var v1Binary = Path.Combine(ctx.Fixture.VersionDir(V1), "Squid.Tentacle");
+        var v2Marker = ctx.Fixture.VersionedMarkerPath(V2);
+        var corruptionWatchdog = LinuxLifecycleContext.StartCorruptionWatchdog(() => File.Exists(v2Marker), v1Binary, LinuxLifecycleContext.CrashOnStartScript, TimeSpan.FromSeconds(60));
+
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2));
+
+        (await corruptionWatchdog).ShouldBeTrue("watchdog never saw V2 start — this run did not exercise a crashing previous version");
+
+        exitCode.ShouldBe(9, customMessage: Tail("versioned rollback onto a crashing V1 MUST exit 9 (ROLLBACK_CRITICAL_FAILED); 4 means the rollback trusted a single is-active probe", exitCode, output));
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: $"last-upgrade.json MUST be written. Path: {ctx.StatusFilePath}");
+        status.Status.ShouldBe("ROLLBACK_CRITICAL_FAILED", customMessage: $"Got '{status.Status}'. Detail: {status.Detail}");
+        status.Detail.ShouldContain("previous binaries intact", customMessage: $"Got: '{status.Detail}'");
+
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe(V1, customMessage: "the repoint itself succeeded — current must point at V1 even though V1 won't start");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Version GC — beyond the retention floor, the oldest version is pruned.
     // ========================================================================
 

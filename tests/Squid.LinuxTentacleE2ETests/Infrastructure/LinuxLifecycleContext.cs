@@ -459,18 +459,29 @@ public sealed class LinuxLifecycleContext : IDisposable
         return new FlockHolder(proc);
     }
 
+    /// <summary>Restored service that exits the moment systemd starts it.</summary>
+    public const string CrashOnStartScript = "#!/bin/bash\nexit 1\n";
+
+    /// <summary>
+    /// Restored service that starts, stays up for about a second, then dies.
+    /// systemd reports a Type=simple unit <c>active</c> for that whole second, so
+    /// only a health check that outlasts it (healthz, or a settle window) can tell
+    /// it from a healthy restore.
+    /// </summary>
+    public const string CrashAfterOneSecondScript = "#!/bin/bash\nsleep 1\nexit 1\n";
+
     /// <summary>
     /// Spawns a background watchdog Task that polls for the .bak directory
     /// (created by Phase B's `sudo mv $INSTALL_DIR $BAK_DIR`) and, on
-    /// detection, corrupts its embedded service script so any subsequent
-    /// rollback attempt's `systemctl start` fires the broken script and
-    /// exits 1 immediately.
+    /// detection, replaces its service script with <paramref name="brokenScript"/>
+    /// so the rollback's `systemctl start` restores a service that cannot stay
+    /// healthy.
     ///
     /// <para>Used by E1.uRollbackCritical-Linux to drive the worst-case
-    /// path: Phase B fails (failHealthz=true v2 triggers the rollback
-    /// chain) AND the rollback's restore-from-.bak ALSO fails (because
-    /// .bak's v1 is now corrupted) → ROLLBACK_OK=0 → exit 9 +
-    /// ROLLBACK_CRITICAL_FAILED status.</para>
+    /// path: Phase B fails (v2 never answers healthz, triggering the rollback
+    /// chain) AND the restore-from-.bak ALSO fails (because .bak's v1 is now
+    /// broken) → the restored service never passes the health predicate →
+    /// exit 9 + ROLLBACK_CRITICAL_FAILED status.</para>
     ///
     /// <para>Why a watchdog (not pre-corruption): the .bak directory is
     /// created at runtime by Phase B's mv. Pre-corrupting INSTALL_DIR's
@@ -481,19 +492,29 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// <para>Why ownership works: <c>sudo mv</c> preserves file ownership.
     /// The test process owns INSTALL_DIR (under /tmp). After mv, .bak
     /// is still owned by the test process — we can write to it without
-    /// sudo. Setting mode 0755 keeps the script executable so systemd
-    /// CAN run it (and observe the immediate exit-1).</para>
+    /// sudo.</para>
     ///
     /// <para>Returns a Task that completes when corruption is applied OR
     /// the deadline expires. Caller awaits it after the .sh returns to
     /// confirm the watchdog actually fired (vs the .sh somehow finishing
     /// before .bak was even created — which would invalidate the test).</para>
     /// </summary>
-    public Task<bool> StartBakCorruptionWatchdog(TimeSpan deadline)
+    public Task<bool> StartBakCorruptionWatchdog(TimeSpan deadline, string brokenScript = CrashOnStartScript)
     {
         var bakDir = Fixture.InstallDir + ".bak";
         var bakScriptPath = Path.Combine(bakDir, "squid-linux-test-service.sh");
 
+        return StartCorruptionWatchdog(() => Directory.Exists(bakDir) && File.Exists(bakScriptPath), bakScriptPath, brokenScript, deadline);
+    }
+
+    /// <summary>
+    /// Polls <paramref name="trigger"/> and, once it holds, overwrites
+    /// <paramref name="scriptPath"/> with <paramref name="brokenScript"/> (mode 0755
+    /// so systemd can still exec it). Completes true when the corruption was
+    /// applied, false when the deadline passed first.
+    /// </summary>
+    public static Task<bool> StartCorruptionWatchdog(Func<bool> trigger, string scriptPath, string brokenScript, TimeSpan deadline)
+    {
         return Task.Run(() =>
         {
             var stopAt = DateTime.UtcNow + deadline;
@@ -501,14 +522,10 @@ public sealed class LinuxLifecycleContext : IDisposable
             {
                 try
                 {
-                    if (Directory.Exists(bakDir) && File.Exists(bakScriptPath))
+                    if (trigger())
                     {
-                        // Replace the v1 script with a deliberately broken
-                        // one. systemctl start will exec bash on this →
-                        // bash exits 1 → systemd marks unit failed → rollback
-                        // wait loop never sees is-active, ROLLBACK_OK=0.
-                        File.WriteAllText(bakScriptPath, "#!/bin/bash\nexit 1\n");
-                        File.SetUnixFileMode(bakScriptPath,
+                        File.WriteAllText(scriptPath, brokenScript);
+                        File.SetUnixFileMode(scriptPath,
                             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
                             UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
                             UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
@@ -517,7 +534,7 @@ public sealed class LinuxLifecycleContext : IDisposable
                 }
                 catch
                 {
-                    // .bak might be in flux during Phase B's mv — retry.
+                    // The target might be in flux during Phase B's mv / repoint — retry.
                 }
                 Thread.Sleep(50);
             }
