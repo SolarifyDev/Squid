@@ -258,6 +258,7 @@ public sealed class LinuxInstallScriptContext : IDisposable
         TrySudoRm("/etc/apt/keyrings/squid.gpg");
         TrySudoRm("/etc/apt/apt.conf.d/99-squid-direct.conf");
         TrySudoRm("/etc/sudoers.d/squid-tentacle-upgrade");
+        TrySudoRm("/usr/libexec/squid-tentacle");
         TrySudoRm("/etc/systemd/system/squid-tentacle.service");
 
         // J.M.L.A.5: tests that enable CREATE_USER=yes leave the
@@ -385,6 +386,37 @@ public sealed class LinuxInstallScriptContext : IDisposable
         var stdout = proc.StandardOutput.ReadToEnd().Trim();
         proc.WaitForExit(5_000);
         return proc.ExitCode == 0 ? stdout : string.Empty;
+    }
+
+    /// <summary>
+    /// Sudo-wrapped <c>stat -c %U:%G:%a</c> — owner, group and octal mode,
+    /// e.g. <c>"root:root:755"</c>; empty on failure.
+    /// </summary>
+    public static string SudoFileOwnership(string path) => RunSudo(out var stdout, "stat", "-c", "%U:%G:%a", path) == 0 ? stdout.Trim() : string.Empty;
+
+    /// <summary>
+    /// Asks the host's own sudo whether <paramref name="user"/> may run
+    /// <paramref name="command"/> without a password (<c>sudo -n -l</c> run AS
+    /// that user). Returns the inner sudo's exit code — 0 means granted.
+    /// </summary>
+    public static int SudoListAsUser(string user, params string[] command) => RunSudo(out _, new[] { "-u", user, "sudo", "-n", "-l" }.Concat(command).ToArray());
+
+    private static int RunSudo(out string stdout, params string[] args)
+    {
+        var psi = new ProcessStartInfo { FileName = "sudo", UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        psi.ArgumentList.Add("-n");
+
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var proc = Process.Start(psi);
+        stdout = string.Empty;
+
+        if (proc == null) return -1;
+
+        stdout = proc.StandardOutput.ReadToEnd();
+        proc.StandardError.ReadToEnd();
+
+        return proc.WaitForExit(10_000) ? proc.ExitCode : -1;
     }
 
     private static void TrySudoUserDel(string username)

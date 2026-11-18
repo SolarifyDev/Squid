@@ -141,7 +141,11 @@ STATUS_JSON
   # never abort the upgrade itself. If sudoers is misconfigured the upgrade
   # still succeeds; only the "last upgrade" JSON won't update. Server falls
   # back to the next Capabilities health check to infer outcome from version.
-  sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
+  # Plain mv first: STATUS_DIR is owned by the service user on every install
+  # (install-tentacle.sh chowns it), so no privilege is needed. sudo mv stays
+  # as the fallback for hosts where it is root-owned; its sudoers rule uses an
+  # argument wildcard that sudo-rs rejects, so it cannot be the primary path.
+  mv "$tmp" "$STATUS_FILE" 2>/dev/null || sudo mv "$tmp" "$STATUS_FILE" 2>/dev/null || { rm -f "$tmp"; return; }
   sudo chown "$SERVICE_USER:$SERVICE_USER" "$STATUS_FILE" 2>/dev/null || true
 }
 

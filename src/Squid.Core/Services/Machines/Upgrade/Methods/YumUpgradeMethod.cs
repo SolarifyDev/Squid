@@ -52,12 +52,26 @@ public sealed class YumUpgradeMethod : ILinuxUpgradeMethod
                      echo "[upgrade-method:yum] Squid RPM repo configured — attempting \`$YUM_BIN install squid-tentacle-{{targetVersion}}-{{PackagingRelease}}\`"
                      OLD_VERSION_RPM=$(rpm -q squid-tentacle --qf '%{VERSION}-%{RELEASE}' 2>/dev/null || echo "<none>")
                      echo "[upgrade-method:yum] Pre-upgrade version: $OLD_VERSION_RPM"
-                     if sudo $YUM_BIN install -y "squid-tentacle-{{targetVersion}}-{{PackagingRelease}}"; then
-                       INSTALL_OK=1
-                       INSTALL_METHOD=yum
-                       echo "[upgrade-method:yum] Installed squid-tentacle-{{targetVersion}}-{{PackagingRelease}} via $YUM_BIN"
+                     # 1.9.9+ installs ship a root-owned helper granted by a wildcard-free
+                     # sudoers rule (sudo-rs rejects argument wildcards). Older installs
+                     # only have the legacy argument-wildcard rules, so their exact
+                     # command below stays unchanged.
+                     if [ -x "{{LinuxPackageInstallHelper.FilePath}}" ]; then
+                       if sudo -n "{{LinuxPackageInstallHelper.FilePath}}" "$YUM_BIN" "{{targetVersion}}-{{PackagingRelease}}"; then
+                         INSTALL_OK=1
+                         INSTALL_METHOD=yum
+                         echo "[upgrade-method:yum] Installed squid-tentacle-{{targetVersion}}-{{PackagingRelease}} via $YUM_BIN (package-install helper)"
+                       else
+                         echo "[upgrade-method:yum] package-install helper failed (exit $?); falling through to next method"
+                       fi
                      else
-                       echo "[upgrade-method:yum] $YUM_BIN install failed (exit $?); falling through to next method"
+                       if sudo $YUM_BIN install -y "squid-tentacle-{{targetVersion}}-{{PackagingRelease}}"; then
+                         INSTALL_OK=1
+                         INSTALL_METHOD=yum
+                         echo "[upgrade-method:yum] Installed squid-tentacle-{{targetVersion}}-{{PackagingRelease}} via $YUM_BIN"
+                       else
+                         echo "[upgrade-method:yum] $YUM_BIN install failed (exit $?); falling through to next method"
+                       fi
                      fi
                    else
                      echo "[upgrade-method:yum] Skipped: dnf/yum not found OR /etc/yum.repos.d/squid-tentacle.repo missing"

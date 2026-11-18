@@ -48,6 +48,7 @@ This is the authoritative ledger for **every** Tentacle E2E scenario across Wind
 | A10.h | apt repo configured: `/etc/apt/sources.list.d/squid.list` + key file | — | ✓ | 12.K | ⚪ | 🟢 | |
 | A10.u1 | apt repo unreachable → fallback to direct tarball, install still succeeds | — | ✓ | 12.K | ⚪ | 🟢 | |
 | A11.h | sudoers rule installed: `/etc/sudoers.d/squid-tentacle-upgrade` passes `visudo -c` | — | ✓ | 12.K | 🟢 | 🟢 | already covered by `InstallTentacleSudoersTests` (unit) — promote to E2E |
+| A11.h2 | sudoers + package-install helper work on classic sudo (1.8.31, 1.9.5, 1.9.15, 1.9.17) and sudo-rs (0.2.13; 0.2.5 helper only): CORE+LEGACY or CORE-only installed, server-rendered apt/yum snippets install through the helper, legacy commands still match on classic sudo, injected versions rejected | — | ✓ | 12.K | 🟢 | 🟢 | `SudoersCompatibilityE2ETests` (Docker) + `InstallTentacleSudoersTests` visudo theory (classic + sudo-rs) + `e2e-upgrade-matrix` real apt/dnf through the helper |
 | A11.u1 | Generated sudoers rule fails `visudo -c` → file NOT installed, warning logged | — | ✓ | 12.K | ⚪ | 🟢 | inject bad SERVICE_USER name |
 | A12.h | Service user `squid-tentacle` created via `useradd -r` | — | ✓ | 12.K | ⚪ | 🟢 | |
 | A12.u1 | Service user already exists → skip creation (idempotent) | — | ✓ | 12.K | ⚪ | 🟢 | |

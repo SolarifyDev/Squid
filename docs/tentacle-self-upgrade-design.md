@@ -288,43 +288,45 @@ file-system primitives. If sudo prompts for a password the script hangs at the
 first sudo call until the Halibut script timeout (5 min), then comes back as
 `Failed` with `(no log lines)`.
 
-**Configuration**: drop `/etc/sudoers.d/squid-tentacle-upgrade` on every
-Linux Tentacle host:
+**Configuration**: `install-tentacle.sh` writes this automatically when it
+creates the service user. It installs two things:
 
-```sudoers
-# /etc/sudoers.d/squid-tentacle-upgrade  (owner: root:root, mode: 0440)
-# squid-tentacle (the agent's service user) needs passwordless sudo for the
-# binary-swap commands the upgrade script issues. Scoped to the specific
-# binaries the script actually invokes — not blanket ALL — so an exploit of
-# the agent process can't pivot to an arbitrary root command.
-squid-tentacle ALL=(root) NOPASSWD: \
-    /bin/systemctl stop squid-tentacle, \
-    /bin/systemctl start squid-tentacle, \
-    /bin/systemctl is-active squid-tentacle, \
-    /bin/mkdir -p /var/lib/squid-tentacle, \
-    /usr/bin/touch /var/lib/squid-tentacle/upgrade-*.lock, \
-    /bin/rm -f /var/lib/squid-tentacle/upgrade-*.lock, \
-    /bin/mv /opt/squid-tentacle*, \
-    /bin/rm -rf /opt/squid-tentacle*, \
-    /bin/chmod +x /opt/squid-tentacle/*, \
-    /bin/chown -R squid-tentacle\:squid-tentacle /opt/squid-tentacle, \
-    /bin/ln -sf /opt/squid-tentacle/* /opt/squid-tentacle/squid-tentacle, \
-    /bin/ln -sf /opt/squid-tentacle/squid-tentacle /usr/local/bin/squid-tentacle
-```
+- `/usr/libexec/squid-tentacle/package-install` (root:root, 0755): the only
+  package-manager entry point the service user has. It takes exactly
+  `apt|dnf|yum VERSION`, rejects any version that is not
+  `[0-9][A-Za-z0-9._+~-]*` (64 chars max) and execs a fixed
+  `apt-get`/`dnf`/`yum` argv under `env -i`.
+- `/etc/sudoers.d/squid-tentacle-upgrade` (0440), in two blocks:
+  - **CORE** (always): `systemd-run --scope --collect --quiet *` for the
+    scope detach, the helper as a **bare path** (no arguments listed, so sudo
+    passes any and the helper validates them), plus `mkdir`/`chown` for the
+    state dir and `fuser` for the dpkg lock probe. No wildcard inside any
+    argument.
+  - **LEGACY** (only where `visudo -c` accepts it): the pre-1.9.9
+    `apt-get install … squid-tentacle=*`, `dnf/yum install squid-tentacle-*`,
+    `mv /tmp/squid-upgrade-status.* …` rules, verbatim, so servers older than
+    the installer keep upgrading the host.
 
-After dropping the file:
+Why the split: sudo-rs (the default sudo on Ubuntu 26.04+) rejects any
+wildcard inside a command argument ("wildcards are not allowed in command
+arguments"), and one rejected line makes `visudo` reject the whole file. On
+sudo-rs only CORE is installed; servers from 1.9.9 call the helper and work,
+older servers fall back to the tarball method. sudo-rs older than 0.2.13
+(Ubuntu 25.10, Debian 13's opt-in package) reads the trailing `*` on
+`systemd-run` literally, so the scope rule never matches there: in-UI upgrade
+is not supported on those hosts and the installer prints a warning.
+
+To re-check a host:
 ```bash
-sudo chmod 0440 /etc/sudoers.d/squid-tentacle-upgrade
-sudo visudo -c   # validates syntax — MUST report "parsed OK" before continuing
+sudo visudo -c -f /etc/sudoers.d/squid-tentacle-upgrade
+sudo -u squid-tentacle sudo -n -l /usr/libexec/squid-tentacle/package-install apt 1.0.0
+sudo -u squid-tentacle sudo -n -l /usr/bin/systemd-run --scope --collect --quiet /bin/true
 ```
 
-**Permissive alternative** (development / single-tenant boxes only):
-```sudoers
-squid-tentacle ALL=(ALL) NOPASSWD: ALL
-```
-
-The Tentacle install script will land sudoers configuration automatically in
-Phase 2; until then it's a manual step.
+A host installed before 1.9.9 that moves to sudo-rs (e.g. an LTS upgrade to
+26.04) keeps its old file: sudo-rs skips the wildcard lines, so package
+installs fall back to tarball. Re-run the current `install-tentacle.sh` to
+replace the file and add the helper.
 
 ### B. Server → Docker Hub reachability + rate limits
 

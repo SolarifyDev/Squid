@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Squid.Core.Services.Machines.Upgrade.Methods;
 
 namespace Squid.UnitTests.Services.Machines.Upgrade;
 
@@ -23,20 +24,34 @@ public sealed class InstallTentacleSudoersTests
     private static readonly string InstallScriptPath =
         Path.Combine(FindRepoRoot(), "deploy", "scripts", "install-tentacle.sh");
 
-    [Fact]
-    public void InstallScript_SudoersHeredoc_ValidatesUnderVisudo()
+    /// <summary>
+    /// The installer writes CORE+LEGACY where visudo accepts it and CORE alone
+    /// otherwise. Pins all four cells against BOTH real parsers:
+    /// classic sudo accepts both shapes; sudo-rs (Ubuntu 26.04+ default) accepts
+    /// CORE and REJECTS LEGACY ("wildcards are not allowed in command
+    /// arguments") — which is exactly why the CORE-only fallback must exist.
+    /// The GitHub ubuntu-latest runner ships both (sudo-rs as
+    /// <c>/usr/sbin/visudo</c>, classic as <c>/usr/sbin/visudo.ws</c>).
+    /// </summary>
+    [Theory]
+    [InlineData(VisudoFlavour.Classic, "core", true)]
+    [InlineData(VisudoFlavour.Classic, "core+legacy", true)]
+    [InlineData(VisudoFlavour.SudoRs, "core", true)]
+    [InlineData(VisudoFlavour.SudoRs, "core+legacy", false)]
+    public void InstallScript_SudoersHeredoc_ValidatesUnderVisudo(VisudoFlavour flavour, string block, bool expectAccepted)
     {
-        var visudo = ResolveVisudo();
+        var visudo = ResolveVisudo(flavour);
 
         if (visudo == null)
         {
-            Assert.Fail("visudo binary not found on PATH — cannot validate sudoers heredoc. " +
-                        "Install `sudo` (Linux: apt install sudo; macOS: brew install sudo).");
+            if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true" && OperatingSystem.IsLinux())
+                Assert.Fail($"{flavour} visudo not found on the Linux CI runner — the sudoers heredoc would ship unvalidated against it. Looked in: {string.Join(", ", VisudoCandidates(flavour))}");
+
             return;
         }
 
         var scriptContent = File.ReadAllText(InstallScriptPath);
-        var rendered = ExtractAndRenderSudoersBlock(scriptContent);
+        var rendered = block == "core" ? RenderCore(scriptContent) : RenderCore(scriptContent) + RenderLegacy(scriptContent);
 
         var tempPath = Path.Combine(Path.GetTempPath(), $"squid-sudoers-validation-{Guid.NewGuid():N}");
         File.WriteAllText(tempPath, rendered);
@@ -45,16 +60,85 @@ public sealed class InstallTentacleSudoersTests
         {
             var result = RunProcess(visudo, $"-c -f \"{tempPath}\"");
 
-            result.ExitCode.ShouldBe(0,
-                $"install-tentacle.sh's sudoers heredoc is syntactically invalid — " +
-                $"visudo would reject it and the script would silently skip installing " +
-                $"the upgrade rule, breaking in-UI upgrades for every new install.\n\n" +
-                $"visudo stderr:\n{result.Stderr}\n\nRendered heredoc:\n{rendered}");
+            (result.ExitCode == 0).ShouldBe(expectAccepted,
+                $"{flavour} visudo ({visudo}) on the {block} sudoers block: expected {(expectAccepted ? "ACCEPT" : "REJECT")}. " +
+                $"A rejected file is never installed and in-UI upgrades break on every new install with that sudo.\n\n" +
+                $"visudo stdout:\n{result.Stdout}\nvisudo stderr:\n{result.Stderr}\n\nRendered:\n{rendered}");
         }
         finally
         {
             File.Delete(tempPath);
         }
+    }
+
+    [Fact]
+    public void InstallScript_CoreSudoersBlock_HasNoInArgumentWildcardOrEquals()
+    {
+        // sudo-rs 0.2.13 rejects any '*' inside an argument; 0.2.5 also rejects
+        // '=' in arguments. CORE must parse on every supported sudo, so its
+        // only wildcard is the standalone trailing '*' of the systemd-run rule.
+        var commands = RuleCommands(ExtractHeredocBody(File.ReadAllText(InstallScriptPath), CoreDelimiter));
+
+        commands.ShouldNotBeEmpty();
+
+        foreach (var command in commands)
+        {
+            var withoutTrailingStar = command.EndsWith(" *", StringComparison.Ordinal) ? command[..^2] : command;
+
+            withoutTrailingStar.ShouldNotContain("*", customMessage: $"CORE rule '{command}' has a wildcard inside an argument — sudo-rs rejects the whole file. Move it to the LEGACY block.");
+            command.ShouldNotContain("=", customMessage: $"CORE rule '{command}' has '=' in its arguments — sudo-rs 0.2.5 rejects it. Move it to the LEGACY block.");
+        }
+    }
+
+    [Fact]
+    public void InstallScript_PackageInstallHelperRule_IsBarePathWithoutArguments()
+    {
+        // No arguments listed = any arguments, on classic sudo AND sudo-rs; the
+        // helper validates them itself. 'helper *' would silently never match
+        // on sudo-rs < 0.2.13 (it reads the '*' literally).
+        var core = ExtractHeredocBody(File.ReadAllText(InstallScriptPath), CoreDelimiter);
+
+        core.Split('\n').ShouldContain("${SERVICE_USER} ALL=(root) NOPASSWD: ${PACKAGE_INSTALL_HELPER}",
+            customMessage: "CORE must grant the package-install helper as a bare path with no arguments");
+    }
+
+    [Fact]
+    public void PackageInstallHelperPath_MatchesInstallScript()
+    {
+        // Producer (installer) and consumer (server-rendered apt/yum snippets)
+        // must name the same file, or every new install silently falls back to
+        // the legacy rules (classic sudo) or tarball (sudo-rs).
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+
+        scriptContent.ShouldContain($"PACKAGE_INSTALL_HELPER=\"{LinuxPackageInstallHelper.FilePath}\"\n",
+            customMessage: "install-tentacle.sh's PACKAGE_INSTALL_HELPER must equal LinuxPackageInstallHelper.FilePath");
+
+        LinuxPackageInstallHelper.FilePath.ShouldStartWith("/usr/libexec/",
+            customMessage: "the helper must live in a root-owned tree: NOT under /opt/squid-tentacle (chown'd to the service user) and NOT /usr/local (group-writable by 'staff' on Debian)");
+    }
+
+    [Fact]
+    public void InstallScript_HelperHeredoc_IsQuotedAndInstalledRootOwned()
+    {
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+
+        scriptContent.ShouldContain("<<'HELPER_EOF'",
+            customMessage: "the helper heredoc must be QUOTED so its $VERSION / $MANAGER checks are written verbatim, not expanded at install time");
+        scriptContent.ShouldContain("install -d -o 0 -g 0 -m 0755 \"$(dirname \"$PACKAGE_INSTALL_HELPER\")\"",
+            customMessage: "the helper's directory must be created root-owned 0755");
+        scriptContent.ShouldContain("chown 0:0 \"${PACKAGE_INSTALL_HELPER}.tmp\"", customMessage: "the helper must be root-owned");
+        scriptContent.ShouldContain("chmod 0755 \"${PACKAGE_INSTALL_HELPER}.tmp\"", customMessage: "the helper must not be writable by group/other");
+    }
+
+    [Fact]
+    public void InstallScript_FallsBackToCoreOnly_WhenLegacyRejected()
+    {
+        // Behaviour is proven against real sudo-rs by SudoersCompatibilityE2ETests;
+        // this pins the shape so a refactor can't quietly drop the fallback.
+        var scriptContent = File.ReadAllText(InstallScriptPath);
+
+        scriptContent.ShouldContain("if VISUDO_OUTPUT=$(visudo -c -f \"${SUDOERS_FILE}.tmp\" 2>&1); then");
+        scriptContent.ShouldContain("elif VISUDO_CORE_OUTPUT=$(visudo -c -f \"${SUDOERS_FILE}.core\" 2>&1); then");
     }
 
     [Fact]
@@ -304,53 +388,64 @@ public sealed class InstallTentacleSudoersTests
             "Could not locate repo root (no directory containing deploy/scripts/ found walking up from test assembly).");
     }
 
-    private static string ResolveVisudo()
-    {
-        foreach (var candidate in new[]
-        {
-            "/usr/sbin/visudo",
-            "/sbin/visudo",
-            "/usr/local/sbin/visudo",
-            "/opt/homebrew/sbin/visudo"
-        })
-        {
-            if (File.Exists(candidate)) return candidate;
-        }
+    public enum VisudoFlavour { Classic, SudoRs }
 
-        return null;
+    private const string CoreDelimiter = "SUDOERS_CORE_EOF";
+    private const string LegacyDelimiter = "SUDOERS_LEGACY_EOF";
+
+    private static IEnumerable<string> VisudoCandidates(VisudoFlavour flavour) => flavour == VisudoFlavour.SudoRs
+        ? new[] { "/usr/lib/cargo/bin/visudo", "/usr/sbin/visudo", "/sbin/visudo" }
+        : new[] { "/usr/sbin/visudo.ws", "/usr/sbin/visudo", "/sbin/visudo", "/usr/local/sbin/visudo", "/opt/homebrew/sbin/visudo" };
+
+    private static string ResolveVisudo(VisudoFlavour flavour) => VisudoCandidates(flavour).FirstOrDefault(c => File.Exists(c) && IsSudoRs(c) == (flavour == VisudoFlavour.SudoRs));
+
+    /// <summary>
+    /// Ubuntu 26.04 points <c>/usr/sbin/visudo</c> at sudo-rs through the
+    /// alternatives system (<c>/usr/lib/cargo/bin/visudo</c>), so the flavour is
+    /// decided by the final symlink target, not the path.
+    /// </summary>
+    private static bool IsSudoRs(string path)
+    {
+        var target = File.ResolveLinkTarget(path, returnFinalTarget: true)?.FullName ?? path;
+
+        return target.Contains("/cargo/", StringComparison.Ordinal);
     }
 
     /// <summary>
-    /// Pulls the text between <c>&lt;&lt;SUDOERS_EOF</c> and <c>SUDOERS_EOF</c>
-    /// markers, preserving it as-is (no shell-variable substitution).
+    /// The full sudoers text the installer can write (CORE then LEGACY), as
+    /// source — shell variables unexpanded. Used by the content pins.
     /// </summary>
-    private static string ExtractSudoersHeredocBody(string scriptContent)
+    private static string ExtractSudoersHeredocBody(string scriptContent) => ExtractHeredocBody(scriptContent, CoreDelimiter) + "\n" + ExtractHeredocBody(scriptContent, LegacyDelimiter);
+
+    private static string ExtractHeredocBody(string scriptContent, string delimiter)
     {
-        // Match `<<SUDOERS_EOF\n<body>\nSUDOERS_EOF` — DOTALL so .* spans newlines.
-        var match = Regex.Match(scriptContent, @"<<SUDOERS_EOF\s*\n(.*?)\nSUDOERS_EOF",
-            RegexOptions.Singleline);
+        var match = Regex.Match(scriptContent, $@"<<'?{delimiter}'?\s*\n(.*?)\n{delimiter}\n", RegexOptions.Singleline);
 
         if (!match.Success)
-            throw new InvalidOperationException(
-                "Could not locate `<<SUDOERS_EOF ... SUDOERS_EOF` heredoc in install-tentacle.sh. " +
-                "Either the heredoc delimiter was renamed or the script structure changed.");
+            throw new InvalidOperationException($"Could not locate the <<{delimiter} ... {delimiter} heredoc in install-tentacle.sh. Either the delimiter was renamed or the script structure changed.");
 
         return match.Groups[1].Value;
     }
 
-    /// <summary>
-    /// Extracts the heredoc body and substitutes shell vars a real install
-    /// would resolve (<c>${SERVICE_USER}</c>, <c>${STATE_DIR}</c>) so visudo
-    /// can parse the result as a plain sudoers file.
-    /// </summary>
-    private static string ExtractAndRenderSudoersBlock(string scriptContent)
-    {
-        var body = ExtractSudoersHeredocBody(scriptContent);
+    private static string RenderCore(string scriptContent) => Render(ExtractHeredocBody(scriptContent, CoreDelimiter));
 
-        return body
-            .Replace("${SERVICE_USER}", "squid-tentacle", StringComparison.Ordinal)
-            .Replace("${STATE_DIR}", "/var/lib/squid-tentacle", StringComparison.Ordinal);
-    }
+    private static string RenderLegacy(string scriptContent) => Render(ExtractHeredocBody(scriptContent, LegacyDelimiter));
+
+    /// <summary>
+    /// Expands the shell variables a real install resolves and appends the
+    /// final newline <c>cat &lt;&lt;EOF</c> always writes — sudo-rs rejects a
+    /// file without it ("missing line terminator at end of file").
+    /// </summary>
+    private static string Render(string body) => body
+        .Replace("${SERVICE_USER}", "squid-tentacle", StringComparison.Ordinal)
+        .Replace("${STATE_DIR}", "/var/lib/squid-tentacle", StringComparison.Ordinal)
+        .Replace("${PACKAGE_INSTALL_HELPER}", LinuxPackageInstallHelper.FilePath, StringComparison.Ordinal) + "\n";
+
+    /// <summary>The command part (after <c>NOPASSWD: </c>) of every rule line.</summary>
+    private static List<string> RuleCommands(string body) => body.Split('\n')
+        .Where(l => !l.TrimStart().StartsWith("#", StringComparison.Ordinal) && l.Contains("NOPASSWD: ", StringComparison.Ordinal))
+        .Select(l => l[(l.IndexOf("NOPASSWD: ", StringComparison.Ordinal) + "NOPASSWD: ".Length)..])
+        .ToList();
 
     private static (int ExitCode, string Stdout, string Stderr) RunProcess(string file, string args)
     {

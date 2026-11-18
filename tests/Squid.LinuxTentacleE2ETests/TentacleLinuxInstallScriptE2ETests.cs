@@ -768,6 +768,29 @@ public sealed class TentacleLinuxInstallScriptE2ETests
             customMessage: "sudoers file MUST contain the scope-detach rule (the SINGLE hard privilege the upgrade flow needs). " +
                           "If absent: upgrade-linux-tentacle.sh's `sudo systemd-run --scope` will prompt for password.");
 
+        // ── Package-install helper (1.9.9) ─────────────────────────────────
+        // The runner's default sudo is sudo-rs (ubuntu-latest = 26.04), which
+        // rejects argument wildcards: before 1.9.9 visudo rejected the WHOLE
+        // file here and this test was red. The helper + CORE block must now
+        // install, and sudo itself must grant both privileges the server uses.
+        const string helperPath = "/usr/libexec/squid-tentacle/package-install";
+
+        sudoersContent.ShouldContain($"squid-tentacle ALL=(root) NOPASSWD: {helperPath}\n",
+            customMessage: "sudoers MUST grant the package-install helper as a bare path (no arguments, no '*').");
+
+        LinuxInstallScriptContext.SudoFileOwnership(helperPath).ShouldBe("root:root:755",
+            customMessage: "the helper MUST be root-owned 0755 — a helper the service user can rewrite is a root shell.");
+        LinuxInstallScriptContext.SudoFileOwnership("/usr/libexec/squid-tentacle").ShouldBe("root:root:755",
+            customMessage: "the helper's directory MUST be root-owned so the service user cannot swap the helper out.");
+
+        LinuxInstallScriptContext.SudoListAsUser("squid-tentacle", helperPath, "apt", "1.6.0").ShouldBe(0,
+            customMessage: "host sudo MUST let the service user run the helper — check `sudo -u squid-tentacle sudo -n -l " + helperPath + " apt 1.6.0` manually.");
+        LinuxInstallScriptContext.SudoListAsUser("squid-tentacle", "/usr/bin/systemd-run", "--scope", "--collect", "--quiet", "/bin/true").ShouldBe(0,
+            customMessage: "host sudo MUST let the service user enter the upgrade scope — check `sudo -u squid-tentacle sudo -n -l /usr/bin/systemd-run --scope --collect --quiet /bin/true` manually.");
+
+        output.ShouldNotContain("Warning: sudo does not grant",
+            customMessage: "the installer's post-install sudo self-check flagged a rule that parses but never matches on this host.");
+
         ctx.MarkClean();
     }
 

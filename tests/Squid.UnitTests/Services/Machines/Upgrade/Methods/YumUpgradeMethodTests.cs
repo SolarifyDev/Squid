@@ -119,4 +119,22 @@ public sealed class YumUpgradeMethodTests
     {
         Method.RenderDetectAndInstall("1.4.0").ShouldContain("OLD_VERSION_RPM=$(rpm -q squid-tentacle");
     }
+
+    [Fact]
+    public void Render_UsesPackageInstallHelper_OnlyWhenItIsExecutable()
+    {
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+
+        snippet.ShouldContain($"if [ -x \"{LinuxPackageInstallHelper.FilePath}\" ]; then",
+            customMessage: "the helper call must be guarded by an executable check so pre-1.9.9 installs keep the legacy command");
+        snippet.ShouldContain($"sudo -n \"{LinuxPackageInstallHelper.FilePath}\" \"$YUM_BIN\" \"1.4.0-{YumUpgradeMethod.PackagingRelease}\"",
+            customMessage: "the helper gets the full VERSION-RELEASE so PackagingRelease stays the server's single source of truth");
+    }
+
+    [Fact]
+    public void Render_LegacyBranch_KeepsPre199CommandVerbatim()
+    {
+        // Pre-1.9.9 sudoers: '/usr/bin/dnf install -y squid-tentacle-*'.
+        Method.RenderDetectAndInstall("1.4.0").ShouldContain("if sudo $YUM_BIN install -y \"squid-tentacle-1.4.0-1\"; then");
+    }
 }
