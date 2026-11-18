@@ -776,9 +776,14 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
     //   3. Rollback's `sudo mv $BAK_DIR $INSTALL_DIR` succeeds (just a
     //      rename), but the contents are now broken.
     //   4. Rollback's `sudo systemctl start` fires the broken script →
-    //      bash exits 1 → unit failed → is-active never returns active.
-    //   5. .sh's 30-iteration is-active loop times out → ROLLBACK_OK=0
-    //      → emit_event B rollback-fail → write_status ROLLBACK_CRITICAL_FAILED
+    //      bash exits 1. NOTE: the Type=simple unit still reads `active`
+    //      for the first probe right after start (systemd marks it active
+    //      on fork) — which is how the old is-active-only rollback check
+    //      reported ROLLED_BACK here intermittently.
+    //   5. The baseline answered /healthz, so wait_for_restored_service
+    //      requires is-active AND /healthz — the broken script never
+    //      serves /healthz, so all 30 attempts fail on every run →
+    //      emit_event B rollback-fail → write_status ROLLBACK_CRITICAL_FAILED
     //      → exit 9.
     //
     // Why ownership works: `sudo mv` preserves file ownership. The test
@@ -790,7 +795,7 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
     // real bash + real watchdog corruption + real systemctl-start failure).
     //
     // Expected runtime: ~50s (Phase A ~2s + restart ~3s + 10s healthz
-    // retries + rollback's 30s is-active wait + write_status + exit).
+    // retries + rollback's 30-attempt health wait + write_status + exit).
     // Heaviest test in the suite, but the worst-case path coverage value
     // justifies it.
     // ========================================================================
@@ -876,6 +881,99 @@ public sealed class TentacleLinuxUpgradeLifecycleE2ETests
 
         ctx.MarkClean();
     }
+
+    // ========================================================================
+    // E1.uRollbackSettle-Linux — the restored version never answered /healthz
+    //                            (baseline FAIL), so the rollback can only
+    //                            trust a unit that STAYS active.
+    //
+    // Two halves of one contract (wait_for_restored_service's settle window):
+    //   - restored v1 is genuinely fine → ROLLED_BACK (exit 4); an agent
+    //     without /healthz must not be escalated to ROLLBACK_CRITICAL_FAILED
+    //     just for being restored to its pre-upgrade state.
+    //   - restored v1 starts, lives ~1s, then dies → ROLLBACK_CRITICAL_FAILED
+    //     (exit 9). systemd reports the Type=simple unit `active` for that
+    //     whole second, so an is-active probe right after start calls it
+    //     healthy every time; only the settle window (still active, same
+    //     MainPID, no restarts after 5s) catches it.
+    //
+    // Tier: 🟢 H — real prod .sh + real systemd + real crash timing.
+    // Expected runtime: ~20s (exit 4) / ~50s (exit 9).
+    // ========================================================================
+
+    [Fact]
+    public void E1uRollbackSettle_NoHealthzBaseline_RestoredServiceStaysUp_ExitsFourWithRolledBackStatus()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        // No SQUID_TEST_SERVICE_HEALTHZ → v1 (and v2, same unit) never serve
+        // /healthz: baseline=FAIL, and v2's forward check fails → rollback.
+        ctx.Fixture.InstallAndStart(ctx.TestServiceScript, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(15));
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before the rollback can be validated");
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test"));
+
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test"));
+
+        exitCode.ShouldBe(4,
+            customMessage: $"a restored v1 that stays up MUST count as ROLLED_BACK even though it never served /healthz. Got exit {exitCode}. " +
+                          $"If 9: the rollback demanded /healthz from a version that never had it (baseline=FAIL) — see restored_service_healthy. " +
+                          $"output tail (last 2k chars):\n{Tail(output)}");
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: "last-upgrade.json MUST be written on the rollback path");
+        status.Status.ShouldBe("ROLLED_BACK", customMessage: $"Got '{status.Status}'. Detail: {status.Detail}");
+        status.Detail.ShouldContain("healthz=FAIL", customMessage: $"detail MUST carry the FAIL baseline. Got: '{status.Detail}'");
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(30)).ShouldBeTrue(
+            "after rollback the v1 service MUST be running again (marker = 1.0.0)");
+
+        ctx.Fixture.IsActive().ShouldBeTrue(customMessage: "v1 MUST still be active after the rollback reported success — check `systemctl status` for the test unit");
+
+        ctx.MarkClean();
+    }
+
+    [Fact]
+    public async Task E1uRollbackSettle_NoHealthzBaseline_RestoredServiceDiesAfterOneSecond_ExitsNineWithCriticalFailedStatus()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallAndStart(ctx.TestServiceScript, initialVersion: "1.0.0", startTimeout: TimeSpan.FromSeconds(15));
+
+        WaitForFileContent(ctx.Fixture.MarkerFilePath, "1.0.0", TimeSpan.FromSeconds(15)).ShouldBeTrue(
+            "v1 service must be running with v1 marker before the rollback can be validated");
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: "2.0.0-test"));
+
+        var corruptionWatchdog = ctx.StartBakCorruptionWatchdog(TimeSpan.FromSeconds(60), LinuxLifecycleContext.CrashAfterOneSecondScript);
+
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: "2.0.0-test"));
+
+        (await corruptionWatchdog).ShouldBeTrue("watchdog never saw .bak appear — this run did not exercise a crashing restore");
+
+        exitCode.ShouldBe(9,
+            customMessage: $"a restored v1 that dies ~1s after start MUST be ROLLBACK_CRITICAL_FAILED. Got exit {exitCode}. " +
+                          $"If 4: the rollback trusted a single is-active probe (the unit reads active until the process exits) — the settle window is missing or broken. " +
+                          $"output tail (last 2k chars):\n{Tail(output)}");
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: "last-upgrade.json MUST be written on the critical-failed path");
+        status.Status.ShouldBe("ROLLBACK_CRITICAL_FAILED", customMessage: $"Got '{status.Status}'. Detail: {status.Detail}");
+
+        output.ShouldContain("CRITICAL: rollback also failed");
+
+        ctx.Fixture.IsActive().ShouldBeFalse(customMessage: "the restored unit crashed — it must not be active; check `systemctl status` for the test unit");
+
+        ctx.MarkClean();
+    }
+
+    private static string Tail(string output) => output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output;
 
     // ========================================================================
     // E1.uSystemdVersionTooOld — Pre-flight rejects systemd <v239 (exit 12)
