@@ -1,3 +1,5 @@
+using System.Linq;
+using System.Text.RegularExpressions;
 using Squid.Core.Services.Machines.Upgrade.Methods;
 
 namespace Squid.UnitTests.Services.Machines.Upgrade.Methods;
@@ -265,5 +267,58 @@ public sealed class AptUpgradeMethodTests
             customMessage: "apt-get install must cap per-connection timeout to 120s (.deb downloads are bigger than index files)");
         snippet.ShouldContain("-o Acquire::Retries=1",
             customMessage: "apt's default 3-retry policy + long timeouts = 10min+ hangs; single retry is sufficient for our flow");
+    }
+
+    [Fact]
+    public void Render_UsesPackageInstallHelper_OnlyWhenItIsExecutable()
+    {
+        // 1.9.9+ installs ship the helper (wildcard-free sudoers rule, works on
+        // sudo-rs). Installs without it must never be sent there: an absent
+        // helper would turn every apt upgrade into a tarball fallback.
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+
+        snippet.ShouldContain($"if [ -x \"{LinuxPackageInstallHelper.FilePath}\" ]; then",
+            customMessage: "the helper call must be guarded by an executable check");
+        snippet.ShouldContain($"sudo -n \"{LinuxPackageInstallHelper.FilePath}\" apt \"1.4.0\"",
+            customMessage: "the helper is called non-interactively with exactly (apt, target version)");
+        snippet.IndexOf($"[ -x \"{LinuxPackageInstallHelper.FilePath}\" ]", StringComparison.Ordinal)
+            .ShouldBeLessThan(snippet.IndexOf("sudo -n", StringComparison.Ordinal), "guard must precede the helper call");
+    }
+
+    [Fact]
+    public void Render_LegacyBranch_KeepsPre199CommandsVerbatim()
+    {
+        // Installs older than 1.9.9 only have argument-wildcard sudoers rules
+        // that match THIS exact argv. Any argument change (flag order, a new
+        // -o option) stops their rules matching and breaks upgrades for that
+        // fleet.
+        var snippet = Method.RenderDetectAndInstall("1.4.0");
+        var flattened = Regex.Replace(snippet.Replace("\\\n", " ", StringComparison.Ordinal), @"\s+", " ");
+
+        flattened.ShouldContain(
+            "else if sudo apt-get update -qq -o Dir::Etc::sourcelist=sources.list.d/squid.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 -o Acquire::http::Timeout=60 -o Acquire::Retries=1 && sudo apt-get install -y --allow-downgrades -o Acquire::http::Timeout=120 -o Acquire::Retries=1 \"squid-tentacle=1.4.0\"; then",
+            customMessage: "the legacy apt invocation (helper absent) must stay byte-for-byte what pre-1.9.9 sudoers rules match");
+    }
+
+    [Fact]
+    public void Render_SnapshotMove_TriesUnprivilegedMoveFirst()
+    {
+        // The rollback dir is owned by the service user (install-tentacle.sh
+        // pre-creates + chowns it), and the legacy 'sudo mv' rule uses an
+        // argument wildcard sudo-rs rejects — so plain mv must come first.
+        Method.RenderDetectAndInstall("1.4.0").ShouldContain(
+            "mv \"${SNAPSHOT_PATH}.tmp\" \"$SNAPSHOT_PATH\" 2>/dev/null || sudo mv \"${SNAPSHOT_PATH}.tmp\" \"$SNAPSHOT_PATH\" 2>/dev/null");
+    }
+
+    [Fact]
+    public void Render_EchoLines_ContainNoUnescapedBackticks()
+    {
+        // A backtick pair inside a double-quoted echo is command substitution:
+        // the "attempting `apt-get install …`" log line used to RUN apt-get
+        // install as the service user on every upgrade.
+        var echoLines = Method.RenderDetectAndInstall("1.4.0").Split('\n').Where(l => l.TrimStart().StartsWith("echo ", StringComparison.Ordinal));
+
+        foreach (var line in echoLines)
+            Regex.IsMatch(line, @"(?<!\\)`").ShouldBeFalse($"echo line runs a command substitution: {line.Trim()}");
     }
 }

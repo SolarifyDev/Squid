@@ -1099,6 +1099,18 @@ public sealed class UpgradeLinuxTentacleScriptTests
             customMessage: "trap inline commands → fragile to future additions; use cleanup() function");
     }
 
+    [Fact]
+    public void Script_WriteStatus_MovesStatusFileWithoutSudoFirst()
+    {
+        // STATUS_DIR is owned by the service user on every install, so the
+        // status file needs no privilege. The 'sudo mv' rule uses an argument
+        // wildcard (/tmp/squid-upgrade-status.*) that sudo-rs rejects, so it
+        // can only be the fallback — otherwise sudo-rs hosts lose every
+        // IN_PROGRESS / FAILED status the pre-scope phase writes.
+        RenderedScript.ShouldContain("mv \"$tmp\" \"$STATUS_FILE\" 2>/dev/null || sudo mv \"$tmp\" \"$STATUS_FILE\" 2>/dev/null || { rm -f \"$tmp\"; return; }",
+            customMessage: "write_status must try an unprivileged mv before sudo mv");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
 
     private static string ResolveBash()
