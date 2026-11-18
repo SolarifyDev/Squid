@@ -108,15 +108,30 @@ jobs:
           pg_isready -h localhost -U postgres || (echo "postgres not ready"; exit 1)
 
       - name: Preload busybox into Kind
-        # Mirrors KindClusterFixture.TryPreloadImagesAsync. Doing it here in
-        # CI ensures: (a) workflow fails fast with a clear step name if
-        # docker-pull is broken (vs failing inside a test); (b) first test
-        # doesn't pay the pull cost.
+        # Mirrors KindClusterFixture.TryPreloadImagesAsync. Docker 29 on the
+        # runner uses the containerd image store, so `docker save` writes a
+        # multi-platform index with only the host platform's blobs present;
+        # `kind load docker-image` imports with `--all-platforms` and fails on
+        # the missing digests. Save just the host platform and import it
+        # without --all-platforms. No --digests either: it also creates
+        # import-<date>@sha256 refs for every manifest in the archive, and the
+        # non-runnable (attestation-style) manifest Docker 29 saves fails to unpack with
+        # "mismatched image rootfs and manifest layers". Fails the job only if
+        # busybox is genuinely absent from the node afterwards.
         run: |
-          docker pull busybox:latest
-          kind load docker-image busybox:latest --name squid-e2e
-          echo "Kind nodes have busybox:"
-          docker exec squid-e2e-control-plane crictl images | grep busybox || echo "(image not visible via crictl — may still work via containerd cache)"
+          set -euo pipefail
+          IMAGE=busybox:latest
+          PLATFORM="$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')"
+          echo "Host docker platform: $PLATFORM"
+          docker pull --platform "$PLATFORM" "$IMAGE"
+          for node in $(kind get nodes --name squid-e2e); do
+            docker save --platform "$PLATFORM" "$IMAGE" \
+              | docker exec -i "$node" ctr --namespace=k8s.io images import --snapshotter=overlayfs -
+            docker exec "$node" crictl inspecti "$IMAGE" >/dev/null \
+              || { echo "::error::$IMAGE not present on Kind node $node after import"; exit 1; }
+            echo "$node has $IMAGE:"
+            docker exec "$node" crictl images | grep busybox
+          done
 
       - name: Disable unreachable NuGet source
         run: dotnet nuget disable source SJ.Nuget --configfile "$NUGET_CONFIG"
