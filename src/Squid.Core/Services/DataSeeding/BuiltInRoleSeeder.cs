@@ -99,6 +99,7 @@ public static class BuiltInRoles
         Permissions = new List<Permission>
         {
             Permission.ProjectView, Permission.ProcessView, Permission.ReleaseView,
+            Permission.RunbookView,
             Permission.DeploymentView, Permission.DeploymentCreate,
             Permission.EnvironmentView, Permission.MachineView,
             Permission.VariableView, Permission.AccountView, Permission.FeedView,
@@ -116,6 +117,7 @@ public static class BuiltInRoles
         {
             Permission.ProjectView, Permission.ProjectEdit,
             Permission.ProcessView, Permission.ProcessEdit,
+            Permission.RunbookView, Permission.RunbookEdit,
             Permission.VariableView, Permission.VariableEdit,
             Permission.ReleaseView, Permission.ReleaseCreate,
             Permission.ChannelView, Permission.ChannelCreate, Permission.ChannelEdit, Permission.ChannelDelete,
@@ -132,6 +134,7 @@ public static class BuiltInRoles
         Permissions = new List<Permission>
         {
             Permission.ProjectView, Permission.ProcessView, Permission.ReleaseView,
+            Permission.RunbookView,
             Permission.DeploymentView, Permission.EnvironmentView,
             Permission.VariableView, Permission.TaskView,
             Permission.LifecycleView, Permission.ChannelView,

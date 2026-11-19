@@ -68,6 +68,12 @@ public class DeploymentPackageReferenceService : IDeploymentPackageReferenceServ
         var process = await _processDataProvider.GetDeploymentProcessByIdAsync(project.DeploymentProcessId, ct).ConfigureAwait(false);
 
         if (process == null) return new List<PackageReferenceDto>();
+        if (process.ProcessKind != Squid.Message.Enums.DeploymentProcessKind.ProjectDeployment
+            || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {process.Id} is not the project's deployment process.");
+        }
 
         var steps = await _stepDataProvider.GetDeploymentStepsByProcessIdAsync(process.Id, ct).ConfigureAwait(false);
         var stepIds = steps.Select(s => s.Id).ToList();
