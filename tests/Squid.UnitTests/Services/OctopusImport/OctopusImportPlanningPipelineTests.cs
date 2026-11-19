@@ -1,3 +1,4 @@
+using System.Linq;
 using System.IO;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
@@ -137,6 +138,54 @@ public class OctopusImportPlanningPipelineTests
         }
     }
 
+    // One source per session: a bundle beside an uploaded export is not part of it, so the cached extraction stands.
+    [Fact]
+    public async Task BuildPreviewAsync_WhenAHistoryBundleAppearsBesideTheUpload_NeitherReadsItNorExtractsAgain()
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"squid-pipeline-{Guid.NewGuid():N}")).FullName;
+        var path = Path.Combine(directory, "export.json");
+        File.WriteAllText(path, "{}");
+        var harness = new Harness();
+        harness.InputExtractor.Setup(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), It.IsAny<string>(), null, It.IsAny<CancellationToken>())).ReturnsAsync(ExtractionResult());
+
+        try
+        {
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+            File.WriteAllText(Path.Combine(directory, OctopusImportSourceReader.HistoryBundleFileName), "{}");
+
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+            await harness.Pipeline.BuildPreviewAsync(path, 7);
+
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), "export.json", null, It.IsAny<CancellationToken>()), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), OctopusImportSourceReader.HistoryBundleFileName, null, It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    // The session's project selection scopes the plan; the picker reads the same cached graph without planning anything.
+    [Fact]
+    public async Task BuildPreviewAsync_PassesTheProjectSelectionToTheDependencyPlanner_GraphReusesTheExtraction()
+    {
+        var path = CreateTempFile();
+        var harness = new Harness();
+
+        try
+        {
+            await harness.Pipeline.BuildPreviewAsync(path, 7, chosenProjectIds: ["Projects-2"]);
+            await harness.Pipeline.BuildGraphAsync(path);
+
+            harness.DependencyPlanner.Verify(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>(), It.Is<IReadOnlyCollection<string>>(c => c.SequenceEqual(new[] { "Projects-2" }))), Times.Once);
+            harness.InputExtractor.Verify(e => e.ExtractStandaloneJsonAsync(It.IsAny<Stream>(), Path.GetFileName(path), null, It.IsAny<CancellationToken>()), Times.Once);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static string CreateTempFile()
     {
         var path = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.json");
@@ -165,23 +214,23 @@ public class OctopusImportPlanningPipelineTests
                 .Setup(b => b.Build(It.IsAny<OctopusManifestInventoryResult>()))
                 .Returns(new OctopusResourceGraph([], [], [], []));
             DependencyPlanner
-                .Setup(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>()))
+                .Setup(p => p.BuildCurrentConfigurationPlan(It.IsAny<OctopusResourceGraph>(), It.IsAny<IReadOnlyCollection<string>>()))
                 .Returns(new OctopusImportDependencyPlan([], [], [], []));
             ConflictDiscoveryService
                 .Setup(s => s.DiscoverAsync(It.IsAny<int>(), It.IsAny<OctopusResourceGraph>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new OctopusImportConflictDiscoveryResult([]));
             PreviewPlanner
-                .Setup(p => p.BuildPreviewPlan(It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>()))
+                .Setup(p => p.BuildPreviewPlan(It.IsAny<OctopusImportDependencyPlan>(), It.IsAny<OctopusImportConflictDiscoveryResult>(), It.IsAny<OctopusImportChoiceSelections>()))
                 .Returns(new OctopusImportPreviewPlanDto());
 
             Pipeline = new OctopusImportPlanningPipeline(
-                ArchiveExtractor.Object,
-                InputExtractor.Object,
+                new OctopusImportSourceReader(ArchiveExtractor.Object, InputExtractor.Object),
                 InventoryBuilder.Object,
                 GraphBuilder.Object,
                 DependencyPlanner.Object,
                 ConflictDiscoveryService.Object,
-                PreviewPlanner.Object);
+                PreviewPlanner.Object,
+                new OctopusImportExtractionCache());
         }
 
         public Mock<IOctopusArchiveExtractor> ArchiveExtractor { get; } = new();

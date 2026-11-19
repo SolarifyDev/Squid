@@ -1,9 +1,16 @@
-using System.Text.Json;
+using Squid.Core.Services.OctopusImport.ChildInsert;
+using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.OctopusImport.History;
 using Squid.Core.Services.OctopusImport.Mapping;
 using Squid.Core.Services.OctopusImport.Mapping.Actions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
+using Squid.Core.Services.OctopusImport.SourceMap;
 using Squid.Core.Services.Deployments.Channels;
+using Squid.Core.Services.Deployments.ExternalFeeds;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Core.Services.Deployments.Project;
+using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Deployments.Account;
 using Squid.Message.Commands.Deployments.Channel;
 using Squid.Message.Commands.Deployments.Environment;
@@ -14,8 +21,12 @@ using Squid.Message.Commands.Deployments.Project;
 using Squid.Message.Commands.Deployments.ProjectGroup;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Commands.Deployments.Variable;
+using Squid.Message.Commands.Teams;
+using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.Deployments.Channel;
+using Squid.Message.Models.Deployments.LifeCycle;
+using Squid.Message.Models.Deployments.Release;
 using Squid.Message.Models.Deployments.ProjectGroup;
 using Squid.Message.Models.OctopusImport;
 
@@ -33,9 +44,19 @@ public sealed record OctopusImportConfirmationRequest(
     int DestinationSpaceId,
     OctopusResourceGraph Graph,
     OctopusImportDependencyPlan DependencyPlan,
-    OctopusImportPreviewPlanDto PreviewPlan);
+    OctopusImportPreviewPlanDto PreviewPlan)
+{
+    /// <summary>
+    /// The session's data version read together with <see cref="PreviewPlan"/>: the import starts only while the session still holds
+    /// that version, so a plan validated again meanwhile is never imported in place of the newer one. Null admits the current version.
+    /// </summary>
+    public byte[] ValidatedDataVersion { get; init; }
 
-public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfirmationOrchestrator
+    /// <summary>The fencing token this confirmation holds the session under; a failure it records carries it, so the caller can tell it is its own.</summary>
+    public Guid AttemptId { get; init; } = Guid.NewGuid();
+}
+
+public sealed partial class OctopusImportConfirmationOrchestrator : IOctopusImportConfirmationOrchestrator
 {
     private readonly IOctopusImportSessionService _sessionService;
     private readonly IOctopusImportConflictDiscoveryService _conflictDiscoveryService;
@@ -49,9 +70,22 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
     private readonly IOctopusImportDeploymentProcessMapper _processMapper;
     private readonly IOctopusImportExternalResourceShellMapper _externalResourceShellMapper;
     private readonly IOctopusImportDeploymentHistoryImporter _deploymentHistoryImporter;
+    private readonly IOctopusImportLibraryVariableSetNameLock _libraryNameLock;
     private readonly IProjectDataProvider _projectDataProvider;
     private readonly IChannelDataProvider _channelDataProvider;
     private readonly IMediator _mediator;
+    private readonly ITeamService _teamService;
+    private readonly IOctopusImportSourceMapDataProvider _sourceMapDataProvider;
+    private readonly IOctopusImportHistoryDetailsStore _historyDetailsStore;
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+    private readonly IVariableService _variableService;
+    private readonly IExternalFeedService _externalFeedService;
+    private readonly IReadOnlyList<IOctopusImportChildInserter> _childInserters;
+    private readonly IOctopusImportDestinationDataProvider _destinationDataProvider;
+    private readonly IOctopusImportConfirmationHeartbeat _heartbeat;
+    private readonly TimeProvider _time;
+    private readonly OctopusImportConfirmationResilienceOptions _resilience;
+    private readonly IOctopusImportConfirmationProgress _progress;
 
     public OctopusImportConfirmationOrchestrator(
         IOctopusImportSessionService sessionService,
@@ -66,9 +100,22 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         IOctopusImportDeploymentProcessMapper processMapper,
         IOctopusImportExternalResourceShellMapper externalResourceShellMapper,
         IOctopusImportDeploymentHistoryImporter deploymentHistoryImporter,
+        IOctopusImportLibraryVariableSetNameLock libraryNameLock,
         IProjectDataProvider projectDataProvider,
         IChannelDataProvider channelDataProvider,
-        IMediator mediator)
+        IMediator mediator,
+        ITeamService teamService,
+        IOctopusImportSourceMapDataProvider sourceMapDataProvider = null,
+        IOctopusImportHistoryDetailsStore historyDetailsStore = null,
+        IOctopusExportSecretsAccessor secretsAccessor = null,
+        IVariableService variableService = null,
+        IExternalFeedService externalFeedService = null,
+        IEnumerable<IOctopusImportChildInserter> childInserters = null,
+        IOctopusImportDestinationDataProvider destinationDataProvider = null,
+        IOctopusImportConfirmationHeartbeat heartbeat = null,
+        TimeProvider time = null,
+        OctopusImportConfirmationResilienceOptions resilience = null,
+        IOctopusImportConfirmationProgress progress = null)
     {
         _sessionService = sessionService;
         _conflictDiscoveryService = conflictDiscoveryService;
@@ -82,81 +129,95 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         _processMapper = processMapper;
         _externalResourceShellMapper = externalResourceShellMapper;
         _deploymentHistoryImporter = deploymentHistoryImporter;
+        _libraryNameLock = libraryNameLock;
         _projectDataProvider = projectDataProvider;
         _channelDataProvider = channelDataProvider;
         _mediator = mediator;
+        _teamService = teamService;
+        _sourceMapDataProvider = sourceMapDataProvider;
+        _historyDetailsStore = historyDetailsStore;
+        _secretsAccessor = secretsAccessor;
+        _variableService = variableService;
+        _externalFeedService = externalFeedService;
+        _childInserters = childInserters?.ToList() ?? [];
+        _destinationDataProvider = destinationDataProvider;
+        _heartbeat = heartbeat;
+        _time = time ?? TimeProvider.System;
+        _resilience = resilience ?? OctopusImportConfirmationResilienceOptions.FromEnvironment();
+        _progress = progress;
     }
 
-    public async Task<OctopusImportSessionDto> ConfirmAsync(
-        OctopusImportConfirmationRequest request,
-        CancellationToken ct = default)
+    public async Task<OctopusImportSessionDto> ConfirmAsync(OctopusImportConfirmationRequest request, CancellationToken ct = default)
     {
         ValidateRequest(request);
 
-        var current = await _sessionService
-            .GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct)
-            .ConfigureAwait(false);
+        var current = await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
 
-        if (OctopusImportSessionStateMachine.IsTerminal(current.State) || current.State == OctopusImportSessionState.Importing)
-            return current;
+        if (IsSettledOrImporting(current)) return current;
 
-        if (current.State != OctopusImportSessionState.Validated)
-            throw new InvalidOperationException($"Octopus import confirmation requires a Validated session. Current state is '{current.State}'.");
+        EnsureValidated(current);
 
-        var admitted = await _sessionService
-            .TryStartConfirmationAsync(request.SessionId, request.DestinationSpaceId, ct)
-            .ConfigureAwait(false);
+        if (!await TryAdmitAsync(request, ct).ConfigureAwait(false)) return await CurrentAsync(request).ConfigureAwait(false);
 
-        if (!admitted)
-            return await _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, ct).ConfigureAwait(false);
+        await using var beat = StartHeartbeat(request);
+        await using var progress = StartProgress(request);
 
-        OctopusImportSessionResultDto result = null;
-        try
-        {
-            result = BuildInitialResult(request.PreviewPlan);
-            var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
-            if (request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker))
-                return await _sessionService
-                    .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
-                    .ConfigureAwait(false);
+        var session = await RunAttemptsAsync(request, ct).ConfigureAwait(false);
 
-            var context = new OctopusImportTransactionContext(request.SessionId, request.DestinationSpaceId);
-            return await _transactionExecutor
-                .ExecuteInImportTransactionAsync(
-                    context,
-                    async (_, transactionCt) =>
-                    {
-                        result = await ExecuteAsync(request, result, transactionCt).ConfigureAwait(false);
-                        result.Succeeded = true;
+        _tracker.Finish(FinalStageOf(session.State));
 
-                        return await _sessionService
-                            .RecordResultAsync(
-                                request.SessionId,
-                                request.DestinationSpaceId,
-                                OctopusImportSessionState.Succeeded,
-                                result,
-                                transactionCt)
-                            .ConfigureAwait(false);
-                    },
-                    ct)
-                .ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            result ??= new OctopusImportSessionResultDto();
-            MarkRolledBack(result, ex);
-            result.Succeeded = false;
-
-            return await _sessionService
-                .RecordResultAsync(request.SessionId, request.DestinationSpaceId, OctopusImportSessionState.Failed, result, CancellationToken.None)
-                .ConfigureAwait(false);
-        }
+        return session;
     }
 
-    private async Task<OctopusImportValidationResultDto> RevalidateAsync(
-        OctopusImportConfirmationRequest request,
-        OctopusImportSessionResultDto result,
-        CancellationToken ct)
+    private static bool IsSettledOrImporting(OctopusImportSessionDto session) => OctopusImportSessionStateMachine.IsTerminal(session.State) || session.State == OctopusImportSessionState.Importing;
+
+    private static void EnsureValidated(OctopusImportSessionDto session)
+    {
+        if (session.State != OctopusImportSessionState.Validated)
+            throw new InvalidOperationException($"Octopus import confirmation requires a Validated session. Current state is '{session.State}'.");
+    }
+
+    private Task<bool> TryAdmitAsync(OctopusImportConfirmationRequest request, CancellationToken ct) => _sessionService.TryStartConfirmationAsync(request.SessionId, request.DestinationSpaceId, request.AttemptId, request.ValidatedDataVersion, ct);
+
+    private Task<OctopusImportSessionDto> CurrentAsync(OctopusImportConfirmationRequest request) => _sessionService.GetSessionAsync(request.SessionId, request.DestinationSpaceId, CancellationToken.None);
+
+    // One attempt: confirmation-time validation, then the import and its Succeeded record in one transaction. Blockers end the session Failed.
+    private async Task<OctopusImportSessionDto> RunAttemptAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
+    {
+        _tracker.EnterStage(OctopusImportConfirmationStage.Validating);
+
+        var validation = await RevalidateAsync(request, result, ct).ConfigureAwait(false);
+
+        if (HasBlockers(request, validation, result)) return await SettleAsync(request, OctopusImportSessionState.Failed, result, CancellationToken.None).ConfigureAwait(false);
+
+        var context = new OctopusImportTransactionContext(request.SessionId, request.DestinationSpaceId) { IdleInTransactionTimeout = _resilience.HeartbeatStale };
+
+        return await _transactionExecutor.ExecuteInImportTransactionAsync(context, (_, transactionCt) => ImportAsync(request, result, transactionCt), ct).ConfigureAwait(false);
+    }
+
+    private static bool HasBlockers(OctopusImportConfirmationRequest request, OctopusImportValidationResultDto validation, OctopusImportSessionResultDto result)
+        => request.PreviewPlan.HasBlockers || validation.HasBlockers || result.Diagnostics.Any(d => d.Severity == OctopusImportCompatibilitySeverity.Blocker);
+
+    private async Task<OctopusImportSessionDto> ImportAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
+    {
+        _tracker.EnterStage(OctopusImportConfirmationStage.WaitingForSpaceLock);
+
+        var prior = await LockSpaceAndLoadPriorMappingsAsync(request.DestinationSpaceId, ct).ConfigureAwait(false);
+
+        await ExecuteAsync(request, result, prior, ct).ConfigureAwait(false);
+
+        result.Succeeded = true;
+
+        _tracker.EnterStage(OctopusImportConfirmationStage.Committing);
+
+        return await SettleAsync(request, OctopusImportSessionState.Succeeded, result, ct).ConfigureAwait(false);
+    }
+
+    // Fenced on the attempt: if the session was recovered (and maybe started again) meanwhile, this throws and the transaction rolls back.
+    private Task<OctopusImportSessionDto> SettleAsync(OctopusImportConfirmationRequest request, OctopusImportSessionState state, OctopusImportSessionResultDto result, CancellationToken ct)
+        => _sessionService.SettleConfirmationAsync(request.SessionId, request.DestinationSpaceId, request.AttemptId, state, result, ct);
+
+    private async Task<OctopusImportValidationResultDto> RevalidateAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, CancellationToken ct)
     {
         var conflicts = await _conflictDiscoveryService
             .DiscoverAsync(request.DestinationSpaceId, request.Graph, ct)
@@ -177,25 +238,33 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         return validation;
     }
 
-    private async Task<OctopusImportSessionResultDto> ExecuteAsync(
-        OctopusImportConfirmationRequest request,
-        OctopusImportSessionResultDto result,
-        CancellationToken ct)
+    private async Task<OctopusImportSessionResultDto> ExecuteAsync(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, OctopusImportPriorMappings prior, CancellationToken ct)
     {
-        var execution = new ConfirmationExecutionContext(request, result);
+        var execution = new ConfirmationExecutionContext(request, result, prior);
 
         try
         {
-            foreach (var resource in request.DependencyPlan.OrderedResources)
-            {
-                if (execution.IsAlreadyCompleted(resource))
-                    continue;
+            EnsureOriginStillProven(execution);
 
-                await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
-            }
+            await LockCreatedLibraryNamesAsync(execution, ct).ConfigureAwait(false);
+
+            _tracker.EnterStage(OctopusImportConfirmationStage.Importing);
+
+            foreach (var resource in request.DependencyPlan.OrderedResources)
+                await ExecuteOrderedResourceAsync(execution, resource, ct).ConfigureAwait(false);
 
             foreach (var resource in request.DependencyPlan.OutOfScopeResources)
                 execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
+
+            _tracker.EnterStage(OctopusImportConfirmationStage.FillingSecrets);
+
+            await SettleMissingSecretsAsync(execution, ct).ConfigureAwait(false);
+
+            _tracker.EnterStage(OctopusImportConfirmationStage.RecordingSourceMap);
+
+            await PersistSourceMapAsync(execution, ct).ConfigureAwait(false);
+
+            RecordMissingSensitiveValues(execution);
 
             return result;
         }
@@ -203,6 +272,16 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         {
             execution.CopyMappingsToResult();
         }
+    }
+
+    // An item an earlier pass already completed still counts, or the run never reaches its total.
+    private async Task ExecuteOrderedResourceAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
+    {
+        _tracker.BeginItem(resource);
+
+        if (!execution.IsAlreadyCompleted(resource)) await ExecuteResourceAsync(execution, resource, ct).ConfigureAwait(false);
+
+        _tracker.CompleteItem(resource, execution.OutcomeOf(resource.SourceId));
     }
 
     private async Task ExecuteResourceAsync(
@@ -237,7 +316,17 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Blocked);
                 return;
             case OctopusImportPreviewAction.Create:
+                EnsureCreateNotStale(execution, resource);
                 await CreateResourceAsync(execution, resource, ct).ConfigureAwait(false);
+                return;
+            case OctopusImportPreviewAction.AlreadyImported:
+                ReuseImportedResource(execution, resource, preview);
+                return;
+            case OctopusImportPreviewAction.Update:
+                await UpdateResourceAsync(execution, resource, preview, ct).ConfigureAwait(false);
+                return;
+            case OctopusImportPreviewAction.FillMissingSecret:
+                await FillMissingSecretAsync(execution, resource, preview, ct).ConfigureAwait(false);
                 return;
             default:
                 execution.MarkFailed(resource, Diagnostic(
@@ -267,6 +356,37 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         execution.AddReused(resource, preview.DestinationId.Value);
     }
 
+    // An earlier confirmation already wrote this resource. It maps to its prior destination; a child that
+    // only inherited "already imported" from its owner has no row of its own, so it is recorded without one.
+    private static void ReuseImportedResource(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
+    {
+        EnsureBackedBySourceMap(execution, resource, preview);
+
+        if (preview.DestinationId is > 0)
+            execution.AddReused(resource, preview.DestinationId.Value);
+        else
+            execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused);
+
+        execution.MarkImportedBefore(resource);
+    }
+
+    // The preview plan is posted by the client, so "already imported" and its destination id are trusted only
+    // when the server-side source map backs them; anything else would map Octopus ids onto arbitrary rows.
+    private static void EnsureBackedBySourceMap(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusImportResourceResultDto preview)
+    {
+        if (execution.IsBackedBySourceMap(resource, preview.DestinationId)) return;
+
+        throw StalePlan(execution, resource, "This resource is marked as already imported, but no earlier import of it into this destination is recorded. Re-run the preview.");
+    }
+
+    // Only history is updated in place (Squid owns configuration after the first import): every other kind is rejected explicitly.
+    private static void RejectUpdate(ConfirmationExecutionContext execution, OctopusResourceNode resource)
+    {
+        execution.MarkFailed(resource, Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportConfirmationDiagnosticCodes.ResourceActionUnsupported, $"Updating an imported Octopus {resource.Kind} is not supported by confirmation.", resource));
+
+        throw new OctopusImportConfirmationException("Unsupported update of an imported resource.");
+    }
+
     private async Task CreateResourceAsync(
         ConfirmationExecutionContext execution,
         OctopusResourceNode resource,
@@ -291,6 +411,12 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 case OctopusResourceKind.Account:
                     await CreateAccountShellAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
+                case OctopusResourceKind.Team:
+                    await CreateTeamAsync(execution, resource, ct).ConfigureAwait(false);
+                    return;
+                case OctopusResourceKind.LibraryVariableSet:
+                    await CreateLibraryVariableSetAsync(execution, resource, ct).ConfigureAwait(false);
+                    return;
                 case OctopusResourceKind.Project:
                     await CreateProjectAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
@@ -301,23 +427,23 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     MarkDeploymentSettingsHandled(execution, resource);
                     return;
                 case OctopusResourceKind.VariableSet:
-                    await UpdateProjectVariableSetAsync(execution, resource, ct).ConfigureAwait(false);
+                    await ImportVariableSetAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
                 case OctopusResourceKind.DeploymentProcess:
                     await CreateDeploymentStepsAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
-                case OctopusResourceKind.LifecyclePhase:
                 case OctopusResourceKind.Variable:
+                case OctopusResourceKind.LifecyclePhase:
                 case OctopusResourceKind.DeploymentStep:
                 case OctopusResourceKind.DeploymentAction:
-                    execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Created);
+                    await CreateChildAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
                 case OctopusResourceKind.Release:
                     await CreateReleaseAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
                 case OctopusResourceKind.ServerTask:
                 case OctopusResourceKind.Deployment:
-                    await ImportDeploymentHistoryAsync(execution, resource, ct).ConfigureAwait(false);
+                    await CreateHistoryUnitAsync(execution, resource, ct).ConfigureAwait(false);
                     return;
                 default:
                     execution.MarkFailed(resource, Diagnostic(
@@ -328,7 +454,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     throw new OctopusImportConfirmationException("Unsupported resource type.");
             }
         }
-        catch (Exception ex) when (ex is not OctopusImportConfirmationException)
+        catch (Exception ex) when (!IsExplained(ex))
         {
             Log.Error(
                 ex,
@@ -404,15 +530,21 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         var detail = response.Data.LifecyclePhase;
         execution.AddCreated(resource, detail.Lifecycle.Id);
 
-        var phases = execution.CurrentResources
-            .Where(r => r.Kind == OctopusResourceKind.LifecyclePhase
-                        && string.Equals(r.ParentSourceId, resource.SourceId, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(r => r.GetSource<OctopusLifecyclePhaseDto>()?.Id, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        RecordCreatedPhases(execution, resource, detail.Phases);
+    }
 
-        for (var i = 0; i < phases.Count && i < detail.Phases.Count; i++)
-            execution.AddCreated(phases[i], detail.Phases[i].Id);
+    // The created phases come back in the lifecycle's Octopus list order (the mapper keeps it), so each pairs with the Octopus phase at
+    // the same position. Octopus phase ids are random GUIDs, so their sort order says nothing about the phase order.
+    private static void RecordCreatedPhases(ConfirmationExecutionContext execution, OctopusResourceNode lifecycle, IReadOnlyList<LifecyclePhaseDto> createdPhases)
+    {
+        var phaseSourceIds = OctopusImportChildPlacement.OctopusSiblingIds(OctopusResourceKind.LifecyclePhase, lifecycle);
+
+        for (var i = 0; i < phaseSourceIds.Count && i < createdPhases.Count; i++)
+        {
+            var phase = execution.FindResource(phaseSourceIds[i], OctopusResourceKind.LifecyclePhase);
+
+            if (phase != null) execution.AddCreated(phase, createdPhases[i].Id);
+        }
     }
 
     private async Task CreateFeedAsync(
@@ -445,6 +577,111 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             .ConfigureAwait(false);
 
         execution.AddCreated(resource, response.Data.DeploymentAccount.Id);
+    }
+
+    private async Task CreateTeamAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
+    {
+        var team = resource.GetSource<OctopusTeamDto>()
+            ?? throw new OctopusImportConfirmationException("Team source payload is missing.");
+
+        // Created through the team service, NOT a nested CreateTeamCommand: that public command is not
+        // ISpaceScoped, so the authorization middleware would check TeamCreate at system scope and reject a
+        // space-scoped importer mid-transaction. ConfirmOctopusImportCommandHandler has already enforced
+        // TeamCreate for the destination space before any row was written, so no authorization is widened.
+        var command = new CreateTeamCommand { Name = team.Name, Description = team.Description ?? string.Empty, SpaceId = execution.DestinationSpaceId };
+        var created = await _teamService.CreateAsync(command, ct).ConfigureAwait(false);
+
+        if (created?.Id is not > 0)
+            throw new OctopusImportConfirmationException("Team creation did not return a destination team id.");
+
+        execution.AddCreated(resource, created.Id);
+
+        // Octopus users are not imported, so the team starts empty. That is deliberately fail-closed:
+        // an approval step restricted to this team stays restricted to the team (plus the explicit
+        // administrator override) instead of silently widening to "anyone".
+        execution.AddDiagnostic(resource, Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportConfirmationDiagnosticCodes.TeamCreatedWithoutMembers,
+            $"Team '{team.Name}' was created without members because Octopus users are not imported ({team.MemberUserIds?.Count ?? 0} source member(s), {team.ExternalSecurityGroups?.Count ?? 0} external group(s)). Add members so they can action manual interventions assigned to this team; until then a system administrator, or a user holding the {nameof(Permission.InterruptionSubmitOverride)} permission in this space (granted to Space Owner), can approve on the team's behalf.",
+            resource));
+    }
+
+    private async Task CreateLibraryVariableSetAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
+    {
+        var library = resource.GetSource<OctopusLibraryVariableSetDto>()
+            ?? throw new OctopusImportConfirmationException("Library variable set source payload is missing.");
+
+        var variableSetResource = execution.FindResource(library.VariableSetId, OctopusResourceKind.VariableSet);
+        var command = BuildLibraryVariableSetCommand(execution, resource, library, variableSetResource);
+
+        await EnsureLibraryNameStillFreeAsync(execution, resource, library, ct).ConfigureAwait(false);
+
+        var response = await _mediator.SendAsync<CreateVariableSetCommand, CreateVariableSetResponse>(command, ct).ConfigureAwait(false);
+        var created = response?.Data?.VariableSet;
+
+        if (created is not { Id: > 0, OwnerId: > 0 })
+            throw new OctopusImportConfirmationException("Create library variable set command did not return destination ids.");
+
+        execution.AddCreated(resource, created.OwnerId);
+
+        if (variableSetResource == null) return;
+
+        execution.AddCreated(variableSetResource, created.Id);
+
+        await MapVariablesWrittenWithSetAsync(execution, variableSetResource, created.Id, ct).ConfigureAwait(false);
+    }
+
+    // Every library name this confirmation will create is locked ONCE, up front and in the lock's canonical
+    // order, before anything is written. Locking per library in dependency order would let two confirmations
+    // hold shared names in opposite order and deadlock; the per-library re-check below then only re-enters.
+    private async Task LockCreatedLibraryNamesAsync(ConfirmationExecutionContext execution, CancellationToken ct)
+    {
+        var names = execution.Request.DependencyPlan.OrderedResources
+            .Where(r => r.Kind == OctopusResourceKind.LibraryVariableSet && !execution.IsAlreadyCompleted(r) && execution.GetPreview(r)?.PreviewAction == OctopusImportPreviewAction.Create)
+            .Select(r => r.GetSource<OctopusLibraryVariableSetDto>()?.Name)
+            .Where(n => n != null)
+            .ToList();
+
+        if (names.Count == 0) return;
+
+        await _libraryNameLock.LockNamesAsync(execution.DestinationSpaceId, names, ct).ConfigureAwait(false);
+    }
+
+    // Preview planned a CREATE, but another confirmation (or an earlier library in this one) may have created
+    // the same name since. The name lock serialises concurrent creators until commit, and the re-check turns
+    // the loser into a clean, explained failure instead of a duplicate shared library.
+    private async Task EnsureLibraryNameStillFreeAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusLibraryVariableSetDto library, CancellationToken ct)
+    {
+        var existingId = await _libraryNameLock.LockNameAndFindExistingAsync(execution.DestinationSpaceId, library.Name, ct).ConfigureAwait(false);
+
+        if (existingId == null) return;
+
+        var message = $"Library variable set '{library.Name}' was created in the destination space (id {existingId}) after this import was previewed. Nothing was imported; preview the export again to reuse the existing library.";
+
+        execution.MarkFailed(resource, Diagnostic(OctopusImportCompatibilitySeverity.Blocker, OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetCreatedConcurrently, message, resource));
+
+        throw new OctopusImportConfirmationException(message);
+    }
+
+    private CreateVariableSetCommand BuildLibraryVariableSetCommand(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusLibraryVariableSetDto library, OctopusResourceNode variableSetResource)
+    {
+        if (variableSetResource == null)
+        {
+            execution.AddDiagnostic(resource, Diagnostic(
+                OctopusImportCompatibilitySeverity.Warning,
+                OctopusImportConfirmationDiagnosticCodes.LibraryVariableSetVariablesMissing,
+                $"Library variable set '{library.Name}' was exported without its variables document; it was created empty.",
+                resource));
+
+            return new CreateVariableSetCommand { Name = library.Name, Description = library.Description, OwnerType = VariableSetOwnerType.LibraryVariableSet, SpaceId = execution.DestinationSpaceId, Variables = [] };
+        }
+
+        var mapping = _variableMapper.MapToCreateCommand(variableSetResource, execution.IdMap, execution.DestinationSpaceId, library.Name, library.Description);
+
+        execution.AddDiagnostics(variableSetResource, mapping.Diagnostics);
+        EnsureNoBlockers(mapping.Diagnostics);
+
+        return mapping.CreateCommand;
     }
 
     private async Task CreateProjectAsync(
@@ -489,6 +726,9 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         if (!execution.IdMap.TryGetDestinationId(channel.ProjectId, OctopusResourceKind.Project.ToString(), out var projectId))
             throw MappingBlocked(resource, $"Octopus channel project '{channel.ProjectId}' has not been mapped.");
 
+        if (IsProjectImportedBefore(execution, channel.ProjectId))
+            await EnsureNoChannelNamesakeAsync(execution, resource, projectId, ct).ConfigureAwait(false);
+
         int? lifecycleId = null;
         if (!string.IsNullOrWhiteSpace(channel.LifecycleId)
             && execution.IdMap.TryGetDestinationId(channel.LifecycleId, OctopusResourceKind.Lifecycle.ToString(), out var mappedLifecycleId))
@@ -505,7 +745,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 resource));
         }
 
-        if (channel.IsDefault)
+        if (channel.IsDefault && !IsProjectImportedBefore(execution, channel.ProjectId))
         {
             var defaultChannel = await _channelDataProvider
                 .GetDefaultChannelByProjectIdAsync(projectId, ct)
@@ -547,6 +787,10 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         execution.AddCreated(resource, response.Data.Id);
     }
 
+    // A project imported by an earlier confirmation keeps its default channel; only a project created now takes Octopus' default.
+    private static bool IsProjectImportedBefore(ConfirmationExecutionContext execution, string projectSourceId)
+        => execution.Prior.TryGet(OctopusResourceKind.Project.ToString(), projectSourceId, out _);
+
     private static void MarkDeploymentSettingsHandled(
         ConfirmationExecutionContext execution,
         OctopusResourceNode resource)
@@ -559,13 +803,41 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             resource));
     }
 
-    private async Task UpdateProjectVariableSetAsync(
-        ConfirmationExecutionContext execution,
-        OctopusResourceNode resource,
-        CancellationToken ct)
+    private async Task ImportVariableSetAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, CancellationToken ct)
     {
         var source = resource.GetSource<OctopusVariableSetDto>()
             ?? throw new OctopusImportConfirmationException("Variable set source payload is missing.");
+
+        if (!execution.IsWrittenByImport(resource))
+        {
+            KeepReusedLibraryVariables(execution, resource, source);
+            return;
+        }
+
+        await UpdateProjectVariableSetAsync(execution, resource, source, ct).ConfigureAwait(false);
+    }
+
+    // A library variable set's variables are written together with the set in
+    // CreateLibraryVariableSetAsync, so reaching here means the set itself was REUSED (or not
+    // created). Never rewrite an existing shared library's variables from an import.
+    private static void KeepReusedLibraryVariables(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusVariableSetDto source)
+    {
+        if (!execution.IdMap.TryGetDestinationId(source.OwnerId, OctopusResourceKind.LibraryVariableSet.ToString(), out _))
+            throw MappingBlocked(resource, $"Octopus library variable set '{source.OwnerId}' has not been mapped.");
+
+        execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Skipped);
+        execution.AddDiagnostic(resource, Diagnostic(
+            OctopusImportCompatibilitySeverity.Warning,
+            OctopusImportConfirmationDiagnosticCodes.ReusedLibraryVariableSetVariablesKept,
+            "The destination already has a library variable set with this name; it was linked as-is and its variables were not modified. Review it against the Octopus source values.",
+            resource));
+    }
+
+    private static void MarkVariableHandled(ConfirmationExecutionContext execution, OctopusResourceNode resource)
+        => execution.MarkOutcome(resource, execution.IsWrittenByImport(resource) ? OctopusImportResourceOutcomeState.Created : OctopusImportResourceOutcomeState.Skipped);
+
+    private async Task UpdateProjectVariableSetAsync(ConfirmationExecutionContext execution, OctopusResourceNode resource, OctopusVariableSetDto source, CancellationToken ct)
+    {
         if (!execution.IdMap.TryGetDestinationId(source.OwnerId, OctopusResourceKind.Project.ToString(), out var projectId))
             throw MappingBlocked(resource, "The destination project has not been mapped.");
         var project = await _projectDataProvider.GetProjectByIdAsync(projectId, ct).ConfigureAwait(false);
@@ -583,19 +855,11 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         execution.AddDiagnostics(resource, mapping.Diagnostics);
         EnsureNoBlockers(mapping.Diagnostics);
 
-        var response = await _mediator
-            .SendAsync<UpdateVariableSetCommand, UpdateVariableSetResponse>(mapping.UpdateCommand, ct)
-            .ConfigureAwait(false);
+        await _mediator.SendAsync<UpdateVariableSetCommand, UpdateVariableSetResponse>(mapping.UpdateCommand, ct).ConfigureAwait(false);
 
         execution.AddCreated(resource, variableSetId);
 
-        var variableResources = source.Variables
-            .Select((variable, index) => execution.FindResource(BuildChildSourceId(source.Id, "variable", variable.Id, index), OctopusResourceKind.Variable))
-            .Where(r => r != null)
-            .ToList();
-
-        for (var i = 0; i < variableResources.Count && i < response.Data.VariableSet.Variables.Count; i++)
-            execution.AddCreated(variableResources[i], response.Data.VariableSet.Variables[i].Id);
+        await MapVariablesWrittenWithSetAsync(execution, resource, variableSetId, ct).ConfigureAwait(false);
     }
 
     private async Task CreateDeploymentStepsAsync(
@@ -612,7 +876,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         if (processId <= 0)
             throw new OctopusImportConfirmationException("Destination project deployment process was not created.");
 
-        var mapping = _processMapper.MapToCreateStepCommands(resource, execution.IdMap, execution.DestinationSpaceId);
+        var mapping = _processMapper.MapToCreateStepCommands(resource, execution.IdMap, execution.DestinationSpaceId, OctopusImportActionTemplates.From(execution.Request.Graph));
         execution.AddDiagnostics(resource, mapping.Diagnostics);
         EnsureNoBlockers(mapping.Diagnostics);
 
@@ -624,7 +888,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 .SendAsync<CreateDeploymentStepCommand, CreateDeploymentStepResponse>(stepMapping.CreateCommand, ct)
                 .ConfigureAwait(false);
 
-            var stepResource = execution.FindResource(stepMapping.SourceStepId, OctopusResourceKind.DeploymentStep);
+            var stepSourceId = OctopusImportChildSourceIds.Step(resource, stepMapping.SourceStepId, stepMapping.SourceIndex);
+            var stepResource = execution.FindResource(stepSourceId, OctopusResourceKind.DeploymentStep);
             if (stepResource != null)
                 execution.AddCreated(stepResource, response.Data.Id);
 
@@ -632,7 +897,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             for (var i = 0; i < orderedActions.Count && i < response.Data.Actions.Count; i++)
             {
                 var actionMapping = orderedActions[i];
-                var actionResource = execution.FindResource(actionMapping.SourceActionId, OctopusResourceKind.DeploymentAction);
+                var actionResource = execution.FindResource(OctopusImportChildSourceIds.Action(resource, stepSourceId, actionMapping.SourceActionId, actionMapping.ActionIndex), OctopusResourceKind.DeploymentAction);
                 if (actionResource != null)
                     execution.AddCreated(actionResource, response.Data.Actions[i].Id);
             }
@@ -664,7 +929,9 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                     Version = string.IsNullOrWhiteSpace(source.Version) ? resource.Name : source.Version,
                     ReleaseNote = source.ReleaseNotes,
                     SelectedPackages = selectedPackages,
-                    HistoricalCreatedDate = source.Assembled
+                    HistoricalCreatedDate = source.Assembled,
+                    IsHistoricalImport = true,
+                    HistoricalSnapshots = execution.ReleaseSnapshots.GetValueOrDefault(projectId)
                 },
                 ct)
             .ConfigureAwait(false);
@@ -673,64 +940,15 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
             throw new OctopusImportConfirmationException("Create release command did not return a destination release id.");
 
         execution.AddCreated(resource, response.Data.Id);
+        RememberReleaseSnapshots(execution, projectId, response.Data);
     }
 
-    private async Task ImportDeploymentHistoryAsync(
-        ConfirmationExecutionContext execution,
-        OctopusResourceNode resource,
-        CancellationToken ct)
+    // Configuration ranks before history, so a project's configuration is final once its first release is created: every later release
+    // of it in this confirmation reuses that release's snapshots instead of rebuilding identical ones.
+    private static void RememberReleaseSnapshots(ConfirmationExecutionContext execution, int projectId, ReleaseDto release)
     {
-        if (resource.Kind == OctopusResourceKind.ServerTask)
-        {
-            execution.MarkOutcome(resource, OctopusImportResourceOutcomeState.Created);
-            return;
-        }
-
-        var deployment = resource.GetSource<OctopusDeploymentDto>()
-            ?? throw new OctopusImportConfirmationException("Deployment source payload is missing.");
-        var taskResource = execution.FindResource(deployment.TaskId, OctopusResourceKind.ServerTask);
-        var task = taskResource?.GetSource<OctopusServerTaskDto>()
-            ?? throw new OctopusImportConfirmationException("Octopus deployment server task source payload is missing.");
-
-        if (!execution.IdMap.TryGetDestinationId(deployment.ProjectId, OctopusResourceKind.Project.ToString(), out var projectId))
-            throw MappingBlocked(resource, $"Octopus deployment project '{deployment.ProjectId}' has not been mapped.");
-        if (!execution.IdMap.TryGetDestinationId(deployment.ChannelId, OctopusResourceKind.Channel.ToString(), out var channelId))
-            throw MappingBlocked(resource, $"Octopus deployment channel '{deployment.ChannelId}' has not been mapped.");
-        if (!execution.IdMap.TryGetDestinationId(deployment.ReleaseId, OctopusResourceKind.Release.ToString(), out var releaseId))
-            throw MappingBlocked(resource, $"Octopus deployment release '{deployment.ReleaseId}' has not been mapped.");
-        if (!execution.IdMap.TryGetDestinationId(deployment.EnvironmentId, OctopusResourceKind.Environment.ToString(), out var environmentId))
-            throw MappingBlocked(resource, $"Octopus deployment environment '{deployment.EnvironmentId}' has not been mapped.");
-
-        var created = deployment.Created ?? task.QueueTime ?? task.StartTime ?? DateTimeOffset.UtcNow;
-        var queueTime = task.QueueTime ?? created;
-        var result = await _deploymentHistoryImporter.ImportAsync(
-            new OctopusImportDeploymentHistoryRequest(
-                execution.DestinationSpaceId,
-                projectId,
-                channelId,
-                releaseId,
-                environmentId,
-                deployment.Name ?? resource.Name,
-                JsonSerializer.Serialize(deployment),
-                deployment.DeployedBy,
-                deployment.DeployedById,
-                JsonSerializer.Serialize(deployment.DeployedToMachineIds ?? []),
-                created,
-                task.Name,
-                task.Description ?? string.Empty,
-                queueTime,
-                task.StartTime,
-                task.CompletedTime,
-                task.State,
-                task.ErrorMessage ?? string.Empty,
-                task.HasWarningsOrErrors,
-                task.DurationSeconds),
-            ct)
-            .ConfigureAwait(false);
-
-        execution.AddCreated(resource, result.DeploymentId);
-        if (taskResource != null)
-            execution.AddCreated(taskResource, result.TaskId);
+        if (release.ProjectVariableSetSnapshotId > 0 && release.ProjectDeploymentProcessSnapshotId > 0)
+            execution.ReleaseSnapshots.TryAdd(projectId, new HistoricalReleaseSnapshots(release.ProjectVariableSetSnapshotId, release.ProjectDeploymentProcessSnapshotId));
     }
 
     private static List<CreateReleaseSelectedPackageDto> BuildReleaseSelectedPackages(
@@ -773,11 +991,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         OctopusSelectedPackageDto selectedPackage,
         out int feedId)
     {
-        var sourceFeedId = OctopusImportReleasePackageFeedResolver.GetSourceFeedId(
-            execution.Request.Graph,
-            execution.CurrentResources,
-            release,
-            selectedPackage);
+        var sourceFeedId = execution.ReleasePackageFeeds.GetSourceFeedId(release, selectedPackage);
 
         return OctopusImportKubernetesActionMapperSupport.TryResolveFeedId(sourceFeedId, execution.IdMap, out feedId);
     }
@@ -820,6 +1034,9 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                         ? OctopusImportResourceOutcomeState.Pending
                         : r.OutcomeState,
                     DestinationId = r.DestinationId,
+                    OwnerProjectSourceId = r.OwnerProjectSourceId,
+                    FillDestination = r.FillDestination,
+                    PriorImportFingerprint = r.PriorImportFingerprint,
                     RequiredInputs = r.RequiredInputs.ToList(),
                     Diagnostics = r.Diagnostics.Select(Redact).ToList()
                 })
@@ -838,13 +1055,16 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         result.IdMappings = result.IdMappings
             .Where(m => m.OutcomeState == OctopusImportResourceOutcomeState.Reused)
             .ToList();
+        result.MissingSensitiveValues = [];
 
         foreach (var resource in result.Resources.Where(r =>
-                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Pending))
+                     r.OutcomeState is OctopusImportResourceOutcomeState.Created or OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.SecretFilled or OctopusImportResourceOutcomeState.Pending))
         {
-            resource.OutcomeState = OctopusImportResourceOutcomeState.Failed;
-            if (resource.DestinationId.HasValue)
+            // An updated (or filled) row existed before the import and survives the rollback, so it keeps its id.
+            if (resource.OutcomeState is not (OctopusImportResourceOutcomeState.Updated or OctopusImportResourceOutcomeState.SecretFilled))
                 resource.DestinationId = null;
+
+            resource.OutcomeState = OctopusImportResourceOutcomeState.Failed;
 
             resource.Diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Blocker,
@@ -867,11 +1087,6 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         ArgumentNullException.ThrowIfNull(request.DependencyPlan);
         ArgumentNullException.ThrowIfNull(request.PreviewPlan);
     }
-
-    private static string BuildChildSourceId(string parentSourceId, string childKind, string sourceId, int index)
-        => string.IsNullOrWhiteSpace(sourceId)
-            ? $"{parentSourceId}/{childKind}-{index + 1}"
-            : sourceId;
 
     private static OctopusImportDiagnosticDto Diagnostic(
         OctopusImportCompatibilitySeverity severity,
@@ -905,14 +1120,15 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         private readonly Dictionary<string, OctopusImportResourceResultDto> _resultsBySourceId;
         private readonly Dictionary<string, OctopusResourceNode> _resourcesByKey;
         private readonly OctopusImportSessionResultDto _result;
+        private readonly HashSet<string> _importedBeforeSourceIds = new(StringComparer.OrdinalIgnoreCase);
+        private IReadOnlyDictionary<string, string> _machineNames;
 
-        public ConfirmationExecutionContext(
-            OctopusImportConfirmationRequest request,
-            OctopusImportSessionResultDto result)
+        public ConfirmationExecutionContext(OctopusImportConfirmationRequest request, OctopusImportSessionResultDto result, OctopusImportPriorMappings prior)
         {
             Request = request;
             _result = result;
-            IdMap = new OctopusImportIdMap();
+            Prior = prior ?? OctopusImportPriorMappings.Empty;
+            IdMap = new OctopusImportIdMap(Prior);
             _resultsBySourceId = result.Resources
                 .GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -928,11 +1144,41 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public OctopusImportConfirmationRequest Request { get; }
 
+        public OctopusImportSessionResultDto Result => _result;
+
         public int DestinationSpaceId => Request.DestinationSpaceId;
 
         public OctopusImportIdMap IdMap { get; }
 
+        /// <summary>What earlier confirmations recorded, reloaded under the space lock: the only trusted source of "imported before".</summary>
+        public OctopusImportPriorMappings Prior { get; }
+
+        /// <summary>The Squid row a resource maps to (written by this confirmation, else by an earlier import), or null.</summary>
+        public int? DestinationOf(string sourceId, OctopusResourceKind kind) => IdMap.TryGetDestinationId(sourceId, kind.ToString(), out var id) ? id : null;
+
+        /// <summary>The snapshots of the first release this confirmation created per Squid project, reused by its later releases.</summary>
+        public Dictionary<int, HistoricalReleaseSnapshots> ReleaseSnapshots { get; } = new();
+
+        /// <summary>Task and detail fingerprints of the history units this confirmation wrote, keyed by deployment source id.</summary>
+        public Dictionary<string, (string Fingerprint, string DetailFingerprint)> HistoryFingerprints { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Deployment source ids whose history unit was rewritten without details, so their stored detail fingerprint is cleared.</summary>
+        public HashSet<string> HistoryDetailsCleared { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        private IReadOnlyDictionary<string, int> _variableKeyCounts;
+
+        /// <summary>How many current variables share each secret key (more than one: ambiguous, never filled).</summary>
+        public IReadOnlyDictionary<string, int> VariableKeyCounts => _variableKeyCounts ??= OctopusImportSecretFills.VariableKeyCounts(CurrentResources, Prior);
+
+        /// <summary>Missing-secret rows this confirmation settled (Filled / Superseded), keyed by (source type, row key).</summary>
+        public Dictionary<(string SourceType, string Key), (int DestinationId, string Outcome)> SettledSecretRows { get; } = new();
+
         public IReadOnlyList<OctopusResourceNode> CurrentResources { get; }
+
+        private OctopusImportReleasePackageFeedLookup _releasePackageFeeds;
+
+        /// <summary>Release package feed resolution over <see cref="CurrentResources"/>, indexed once for every release this confirmation writes.</summary>
+        public OctopusImportReleasePackageFeedLookup ReleasePackageFeeds => _releasePackageFeeds ??= new OctopusImportReleasePackageFeedLookup(Request.Graph, CurrentResources);
 
         public OctopusImportResourceResultDto GetPreview(OctopusResourceNode resource)
             => _resultsBySourceId.TryGetValue(resource.SourceId, out var result) ? result : null;
@@ -941,6 +1187,8 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
         {
             var result = GetPreview(resource);
             return result?.OutcomeState is OctopusImportResourceOutcomeState.Created
+                or OctopusImportResourceOutcomeState.Updated
+                or OctopusImportResourceOutcomeState.SecretFilled
                 or OctopusImportResourceOutcomeState.Skipped
                 or OctopusImportResourceOutcomeState.Unsupported
                 or OctopusImportResourceOutcomeState.Blocked
@@ -949,6 +1197,83 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public OctopusResourceNode FindResource(string sourceId, OctopusResourceKind kind)
             => _resourcesByKey.TryGetValue(Key(sourceId, kind), out var resource) ? resource : null;
+
+        private Dictionary<string, OctopusResourceNode> _graphNodesByKey;
+        private Dictionary<string, OctopusResourceNode> _graphNodesById;
+        private OctopusImportFillEvidence _fillEvidence;
+
+        /// <summary>A node of the whole graph (history included) by kind and source id; the graph is indexed once, never scanned per lookup.</summary>
+        public OctopusResourceNode GraphNode(string sourceId, OctopusResourceKind kind)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_graphNodesByKey ??= IndexGraph(r => Key(r.SourceId, r.Kind))).GetValueOrDefault(Key(sourceId, kind));
+
+        private Dictionary<string, OctopusResourceNode> _currentGraphNodesByKey;
+        private ILookup<string, OctopusResourceNode> _currentVariablesByParent;
+        private HashSet<int> _priorVariableRows;
+
+        /// <summary>A current (not historical) node of the whole graph by source id and kind, the first in graph order; indexed once.</summary>
+        public OctopusResourceNode CurrentGraphNode(string sourceId, OctopusResourceKind kind)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_currentGraphNodesByKey ??= IndexGraph(r => r.IsHistorical ? null : Key(r.SourceId, r.Kind))).GetValueOrDefault(Key(sourceId, kind));
+
+        /// <summary>The current variables of one variable set, in plan order; indexed once.</summary>
+        public IEnumerable<OctopusResourceNode> CurrentVariablesOf(string variableSetSourceId)
+            => (_currentVariablesByParent ??= CurrentResources.Where(r => r.Kind == OctopusResourceKind.Variable && r.ParentSourceId != null).ToLookup(r => r.ParentSourceId, StringComparer.OrdinalIgnoreCase))[variableSetSourceId ?? string.Empty];
+
+        /// <summary>A Squid variable row an earlier import or this confirmation linked to an Octopus variable (so it holds that one).</summary>
+        public bool IsClaimedVariableRow(int destinationId)
+            => (_priorVariableRows ??= PriorVariableRows()).Contains(destinationId) || IdMap.HasSessionDestination(nameof(OctopusResourceKind.Variable), destinationId);
+
+        private HashSet<int> PriorVariableRows()
+        {
+            var variableType = OctopusImportPriorMappings.Normalize(nameof(OctopusResourceKind.Variable));
+
+            return Prior.Mappings.Where(m => m.Key.Type == variableType).Select(m => m.Value.DestinationId).ToHashSet();
+        }
+
+        /// <summary>The first node of the whole graph with this source id, whatever its kind.</summary>
+        public OctopusResourceNode GraphNodeById(string sourceId)
+            => string.IsNullOrWhiteSpace(sourceId) ? null : (_graphNodesById ??= IndexGraph(r => r.SourceId)).GetValueOrDefault(sourceId);
+
+        /// <summary>The installation evidence for linking and filling: its inputs (the graph, the prior rows reloaded under the lock and the user's pairing confirmation) are fixed for the confirmation, so it is evaluated once.</summary>
+        public OctopusImportFillEvidence FillEvidence => _fillEvidence ??= OctopusImportFillEvidences.Evaluate(Request.Graph.InstallationId, Request.Graph.ExportSourceId, Request.Graph.Resources, Prior, Request.PreviewPlan.FillPairing?.Confirmed == true);
+
+        // The first node per key wins, as a scan in graph order would find it.
+        private Dictionary<string, OctopusResourceNode> IndexGraph(Func<OctopusResourceNode, string> key)
+        {
+            var index = new Dictionary<string, OctopusResourceNode>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var resource in Request.Graph.Resources.Where(r => !string.IsNullOrWhiteSpace(r.SourceId)))
+                if (key(resource) is { } k) index.TryAdd(k, resource);
+
+            return index;
+        }
+
+        /// <summary>Octopus machine id → name, from the graph's machine nodes (machines are never imported).</summary>
+        public IReadOnlyDictionary<string, string> MachineNames => _machineNames ??= Request.Graph.Resources.Where(r => r.Kind == OctopusResourceKind.Machine).GroupBy(r => r.SourceId, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
+
+        public OctopusImportPriorMapping PriorFor(OctopusResourceNode resource)
+            => resource != null && Prior.TryGet(resource.Kind.ToString(), resource.SourceId, out var mapping) ? mapping : null;
+
+        public OctopusImportResourceOutcomeState? OutcomeOf(string sourceId) => _resultsBySourceId.GetValueOrDefault(sourceId)?.OutcomeState;
+
+        /// <summary>
+        /// A destination id must equal the one an earlier confirmation recorded for this resource. A resource without
+        /// one inherited "already imported" from its owner, which must itself have been verified in this confirmation.
+        /// </summary>
+        public bool IsBackedBySourceMap(OctopusResourceNode resource, int? destinationId)
+            => destinationId is > 0 ? IdMap.IsPriorDestination(resource, destinationId.Value) : IsOwnerImportedBefore(resource);
+
+        public void MarkImportedBefore(OctopusResourceNode resource) => _importedBeforeSourceIds.Add(resource.SourceId);
+
+        /// <summary>The resource's owner was imported by an earlier confirmation (verified in this one), so what it owns is inserted into it.</summary>
+        public bool IsOwnerImportedBefore(OctopusResourceNode resource)
+        {
+            var ownerSourceId = OctopusImportPriorMappingPolicy.OwnerSourceId(resource);
+
+            return !string.IsNullOrWhiteSpace(ownerSourceId) && _importedBeforeSourceIds.Contains(ownerSourceId);
+        }
+
+        public bool IsWrittenByImport(OctopusResourceNode resource)
+            => OctopusImportVariableOwnership.IsWrittenByImport(resource, sourceId => FindResource(sourceId, OctopusResourceKind.VariableSet), sourceId => _resultsBySourceId.GetValueOrDefault(sourceId)?.PreviewAction);
 
         public void AddCreatedIfPresent(string sourceId, OctopusResourceKind kind, int destinationId)
         {
@@ -963,13 +1288,13 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
                 return;
 
             var resource = FindResource(sourceId, kind);
-            if (resource != null && !IdMap.TryGetDestinationId(resource, out _))
+            if (resource != null && !IdMap.ContainsSessionMapping(resource))
                 IdMap.AddCreated(resource, destinationId);
         }
 
         public void AddCreated(OctopusResourceNode resource, int destinationId)
         {
-            if (!IdMap.TryGetDestinationId(resource, out _))
+            if (!IdMap.ContainsSessionMapping(resource))
                 IdMap.AddCreated(resource, destinationId);
 
             MarkOutcome(resource, OctopusImportResourceOutcomeState.Created, destinationId);
@@ -977,7 +1302,7 @@ public sealed class OctopusImportConfirmationOrchestrator : IOctopusImportConfir
 
         public void AddReused(OctopusResourceNode resource, int destinationId)
         {
-            if (!IdMap.TryGetDestinationId(resource, out _))
+            if (!IdMap.ContainsSessionMapping(resource))
                 IdMap.AddReused(resource, destinationId);
 
             MarkOutcome(resource, OctopusImportResourceOutcomeState.Reused, destinationId);

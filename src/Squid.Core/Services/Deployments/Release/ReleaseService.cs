@@ -101,15 +101,7 @@ public partial class ReleaseService : IReleaseService
         if (channel.SpaceId != project.SpaceId)
             throw new ReleaseSpaceMismatchException(project.Id, channel.Id, project.SpaceId, channel.SpaceId);
 
-        if (command.IgnoreChannelRules)
-        {
-            if (!project.AllowIgnoreChannelRules)
-                throw new ChannelRulesCannotBeIgnoredException(project.Id);
-        }
-        else
-        {
-            await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
-        }
+        await EnsureChannelRulesAsync(command, project, cancellationToken).ConfigureAwait(false);
 
         var existingRelease = await _releaseDataProvider
             .GetReleaseByVersionAsync(command.ProjectId, command.ChannelId, command.Version, cancellationToken).ConfigureAwait(false);
@@ -119,14 +111,8 @@ public partial class ReleaseService : IReleaseService
 
         release.SpaceId = project.SpaceId;
         
-        var variableSetSnapshot = await _deploymentSnapshotService
-            .SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
-        var deploymentProcessSnapshot = await _deploymentSnapshotService
-            .SnapshotProcessFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
-        
-        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
-        release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
-        
+        var deploymentProcessSnapshot = await AttachSnapshotsAsync(release, command, cancellationToken).ConfigureAwait(false);
+
         await _releaseDataProvider.CreateReleaseAsync(release, forceSave: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         if (command.HistoricalCreatedDate is { } historicalCreatedDate)
@@ -148,6 +134,40 @@ public partial class ReleaseService : IReleaseService
         {
             Release = _mapper.Map<ReleaseDto>(release)
         };
+    }
+
+    // Returns the process snapshot it took, or null when a historical import reused the snapshots of its earlier release.
+    private async Task<DeploymentProcessSnapshotDto> AttachSnapshotsAsync(ReleaseEntity release, CreateReleaseCommand command, CancellationToken cancellationToken)
+    {
+        if (command.IsHistoricalImport && command.HistoricalSnapshots is { } reused)
+        {
+            release.ProjectVariableSetSnapshotId = reused.VariableSetSnapshotId;
+            release.ProjectDeploymentProcessSnapshotId = reused.DeploymentProcessSnapshotId;
+            return null;
+        }
+
+        var variableSetSnapshot = await _deploymentSnapshotService.SnapshotVariableSetFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+        var deploymentProcessSnapshot = await _deploymentSnapshotService.SnapshotProcessFromReleaseAsync(release, cancellationToken).ConfigureAwait(false);
+
+        release.ProjectVariableSetSnapshotId = variableSetSnapshot.Id;
+        release.ProjectDeploymentProcessSnapshotId = deploymentProcessSnapshot.Id;
+
+        return deploymentProcessSnapshot;
+    }
+
+    // A historical import bypasses both today's channel rules and the project's ignore-rules permission.
+    private async Task EnsureChannelRulesAsync(CreateReleaseCommand command, Persistence.Entities.Deployments.Project project, CancellationToken cancellationToken)
+    {
+        if (command.IsHistoricalImport) return;
+
+        if (!command.IgnoreChannelRules)
+        {
+            await ValidateChannelVersionRulesAsync(command.ChannelId, command.SelectedPackages, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!project.AllowIgnoreChannelRules)
+            throw new ChannelRulesCannotBeIgnoredException(project.Id);
     }
 
     public async Task<ReleaseUpdatedEvent> UpdateReleaseAsync(UpdateReleaseCommand command, CancellationToken cancellationToken = default)

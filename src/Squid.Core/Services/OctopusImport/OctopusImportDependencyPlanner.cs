@@ -5,12 +5,13 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportDependencyPlanner : IScopedDependency
 {
-    OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph);
+    /// <param name="chosenProjectIds">The session's project selection; null plans the whole space.</param>
+    OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph, IReadOnlyCollection<string> chosenProjectIds = null);
 }
 
 public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
 {
-    public OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph)
+    public OctopusImportDependencyPlan BuildCurrentConfigurationPlan(OctopusResourceGraph graph, IReadOnlyCollection<string> chosenProjectIds = null)
     {
         ArgumentNullException.ThrowIfNull(graph);
 
@@ -42,7 +43,7 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
             .ThenBy(r => r.ToSourceId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources);
+        return new OctopusImportDependencyPlan(orderedResources, appliedDependencies, optionalReferences, diagnostics, outOfScopeResources) { ReferenceScope = OctopusImportReferenceScope.Build(graph, chosenProjectIds) };
     }
 
     private static IReadOnlyList<OrderingEdge> BuildOrderingEdges(OctopusResourceGraph graph, Dictionary<string, OctopusResourceNode> resources)
@@ -83,23 +84,21 @@ public class OctopusImportDependencyPlanner : IOctopusImportDependencyPlanner
         }
 
         var ordered = new List<OctopusResourceNode>();
-        var ready = resources.Values
-            .Where(r => incoming[r.SourceId].Count == 0)
-            .ToList();
+        var ready = new PriorityQueue<OctopusResourceNode, OctopusResourceNode>(Comparer<OctopusResourceNode>.Create(CompareResources));
 
-        while (ready.Count > 0)
+        foreach (var resource in resources.Values.Where(r => incoming[r.SourceId].Count == 0))
+            ready.Enqueue(resource, resource);
+
+        while (ready.TryDequeue(out var next, out _))
         {
-            ready.Sort(CompareResources);
-            var next = ready[0];
-            ready.RemoveAt(0);
             ordered.Add(next);
 
-            foreach (var dependentId in outgoing[next.SourceId].OrderBy(id => id, StringComparer.OrdinalIgnoreCase).ToList())
+            foreach (var dependentId in outgoing[next.SourceId])
             {
                 incoming[dependentId].Remove(next.SourceId);
 
                 if (incoming[dependentId].Count == 0)
-                    ready.Add(resources[dependentId]);
+                    ready.Enqueue(resources[dependentId], resources[dependentId]);
             }
         }
 

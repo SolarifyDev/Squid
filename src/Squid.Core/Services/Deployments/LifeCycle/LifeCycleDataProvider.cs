@@ -41,6 +41,12 @@ public interface ILifeCycleDataProvider : IScopedDependency
     Task AddPhaseEnvironmentsAsync(List<LifecyclePhaseEnvironment> phaseEnvironments, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task DeletePhaseEnvironmentsByPhaseIdAsync(int phaseId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Moves the sort order of every phase of the lifecycle at or after <paramref name="sortOrder"/> up by one, so a phase can be added there.
+    /// Only that column is written (no audit columns), and the relative order of the phases is kept.
+    /// </summary>
+    Task OpenPhaseOrderGapAsync(int lifecycleId, int sortOrder, CancellationToken cancellationToken = default);
 }
 
 public class LifeCycleDataProvider(IUnitOfWork unitOfWork, IRepository repository, IMapper mapper)
@@ -181,4 +187,7 @@ public class LifeCycleDataProvider(IUnitOfWork unitOfWork, IRepository repositor
             await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
     }
+
+    public async Task OpenPhaseOrderGapAsync(int lifecycleId, int sortOrder, CancellationToken cancellationToken = default)
+        => await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE phase SET sort_order = sort_order + 1 WHERE lifecycle_id = {lifecycleId} AND sort_order >= {sortOrder}", cancellationToken).ConfigureAwait(false);
 }

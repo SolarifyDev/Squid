@@ -92,4 +92,13 @@ public static class LinuxTentacleE2ECategories
     /// rendered deployment template with Calamari absent from PATH.
     /// </summary>
     public const string CalamariLookup = "LinuxTentacleCalamariLookupE2E";
+
+    /// <summary>
+    /// Real-sudo seam coverage for the upgrade sudoers rules: the production
+    /// installer's sudoers + package-install helper block is run inside
+    /// throwaway containers carrying classic sudo (1.8.x / 1.9.x) and sudo-rs,
+    /// then the server-rendered apt/yum snippets are run against it as the
+    /// service user. Needs Docker; PR-gated by <c>e2e-upgrade-matrix.yml</c>.
+    /// </summary>
+    public const string SudoersCompat = "LinuxTentacleSudoersCompatE2E";
 }

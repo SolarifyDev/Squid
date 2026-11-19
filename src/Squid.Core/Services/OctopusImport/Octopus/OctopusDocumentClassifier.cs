@@ -99,6 +99,8 @@ public static partial class OctopusDocumentClassifier
             "DeploymentProcess" => OctopusDocumentKind.DeploymentProcess,
             "ProjectVariables" => OctopusDocumentKind.VariableSet,
             "VariableSet" => OctopusDocumentKind.VariableSet,
+            "LibraryVariables" => OctopusDocumentKind.VariableSet,
+            "LibraryVariableSet" => OctopusDocumentKind.LibraryVariableSet,
             "DockerFeed" => OctopusDocumentKind.Feed,
             "NuGetFeed" => OctopusDocumentKind.Feed,
             "HelmFeed" => OctopusDocumentKind.Feed,
@@ -114,6 +116,8 @@ public static partial class OctopusDocumentClassifier
             "ServerTask" => OctopusDocumentKind.ServerTask,
             "ActionTemplate" => OctopusDocumentKind.ActionTemplate,
             "WorkerPool" => OctopusDocumentKind.WorkerPool,
+            "StaticWorkerPool" => OctopusDocumentKind.WorkerPool,
+            "DynamicWorkerPool" => OctopusDocumentKind.WorkerPool,
             "Tenant" => OctopusDocumentKind.Tenant,
             "Runbook" => OctopusDocumentKind.Runbook,
             "RunbookProcess" => OctopusDocumentKind.Runbook,
@@ -147,6 +151,8 @@ public static partial class OctopusDocumentClassifier
             return OctopusDocumentKind.DeploymentProcess;
         if (value.StartsWith("variableset-", StringComparison.OrdinalIgnoreCase))
             return OctopusDocumentKind.VariableSet;
+        if (value.StartsWith("LibraryVariableSets-", StringComparison.OrdinalIgnoreCase))
+            return OctopusDocumentKind.LibraryVariableSet;
         if (value.StartsWith("Projects-", StringComparison.OrdinalIgnoreCase))
             return OctopusDocumentKind.Project;
         if (value.StartsWith("ProjectGroups-", StringComparison.OrdinalIgnoreCase))

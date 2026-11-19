@@ -1,0 +1,19 @@
+{
+  "Application": "Octopus Deploy",
+  "Version": "2026.1.11242",
+  "ApiVersion": "3.0.0",
+  "InstallationId": "00000000-0000-4000-8000-000000000001",
+  "HasLongTermSupport": false,
+  "Links": {
+    "Self": "/api",
+    "CurrentUser": "/api/users/me",
+    "Spaces": "/api/spaces{/id}{?skip,ids,take,partialName}",
+    "SpaceHome": "/api/{spaceId}",
+    "Projects": "/api/Spaces-1/projects{/id}{?name,skip,ids,clone,take,partialName,clonedFromProjectId}",
+    "Variables": "/api/Spaces-1/variables{/id}{?ids}",
+    "Teams": "/api/teams{/id}{?skip,take,ids,partialName,spaces,includeSystem}",
+    "WorkerPools": "/api/Spaces-1/workerpools{/id}{?skip,ids,take,partialName}",
+    "ExportProjects": "/api/Spaces-1/projects/import-export/export",
+    "PermissionDescriptions": "/api/permissions/all"
+  }
+}

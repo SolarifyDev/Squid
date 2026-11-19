@@ -1,0 +1,46 @@
+{
+  "ItemType": "Release",
+  "TotalResults": 1,
+  "ItemsPerPage": 30,
+  "NumberOfPages": 1,
+  "LastPageNumber": 0,
+  "Items": [
+    {
+      "Id": "Releases-1",
+      "SpaceId": "Spaces-1",
+      "ProjectId": "Projects-1",
+      "Version": "1.0.1",
+      "ChannelId": "Channels-1",
+      "ReleaseNotes": null,
+      "ProjectDeploymentProcessSnapshotId": "deploymentprocess-Projects-1-s-4-ABCDE",
+      "IgnoreChannelRules": false,
+      "BuildInformation": [],
+      "Assembled": "2025-01-02T03:04:05.000+00:00",
+      "LibraryVariableSetSnapshotIds": [
+        "variableset-LibraryVariableSets-1-s-3-FGHIJ"
+      ],
+      "SelectedPackages": [
+        {
+          "StepName": "Deploy web",
+          "ActionName": "Deploy web",
+          "Version": "1.0.1",
+          "PackageReferenceName": "web"
+        }
+      ],
+      "SelectedGitResources": [],
+      "ProjectVariableSetSnapshotId": "variableset-Projects-1-s-6-KLMNO",
+      "VersionControlReference": null,
+      "CustomFields": {},
+      "Links": {
+        "Self": "/api/Spaces-1/releases/Releases-1"
+      }
+    }
+  ],
+  "Links": {
+    "Self": "/api/Spaces-1/projects/Projects-1/releases?skip=0&take=30",
+    "Template": "/api/Spaces-1/projects/Projects-1/releases{?skip,take}",
+    "Page.All": "/api/Spaces-1/projects/Projects-1/releases?skip=0&take=2147483647",
+    "Page.Current": "/api/Spaces-1/projects/Projects-1/releases?skip=0&take=30",
+    "Page.Last": "/api/Spaces-1/projects/Projects-1/releases?skip=0&take=30"
+  }
+}

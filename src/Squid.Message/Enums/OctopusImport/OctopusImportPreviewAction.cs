@@ -7,5 +7,12 @@ public enum OctopusImportPreviewAction
     RenameRequired,
     Skip,
     Unsupported,
-    Blocked
+    Blocked,
+
+    // Append-only: the SquidWeb mirror is ordinal.
+    AlreadyImported = 6,
+    Update = 7,
+
+    /// <summary>The resource was imported before and only its secret is written: a value the Octopus server withheld, now supplied by the export file into the still-empty Squid value.</summary>
+    FillMissingSecret = 8
 }

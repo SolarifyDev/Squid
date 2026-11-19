@@ -2,6 +2,7 @@ using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Identity;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.Interruption;
@@ -78,8 +79,11 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
-        if (currentUser.Id.HasValue)
-            await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false);
+        await EnsureTaskNotImportedAsync(interruption, ct).ConfigureAwait(false);
+
+        var access = currentUser.Id.HasValue ? await authService.EnsureCanActAsync(interruption, currentUser.Id.Value, ct).ConfigureAwait(false) : (InterruptionAccess?)null;
+
+        RecordAdministratorOverride(interruption, access, currentUser.Id, currentUser.Name);
 
         var outcome = InterruptionFormBuilder.ResolveOutcome(interruption.InterruptionType, values);
 
@@ -103,13 +107,46 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         if (interruption == null)
             throw new InvalidOperationException($"DeploymentInterruption {interruptionId} not found");
 
+        await EnsureTaskNotImportedAsync(interruption, ct).ConfigureAwait(false);
+
         if (int.TryParse(userId, out var uid))
-            await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
+        {
+            var access = await authService.EnsureCanActAsync(interruption, uid, ct).ConfigureAwait(false);
+            LogResponsibilityOverride(interruption, access, uid);
+        }
 
         interruption.ResponsibleUserId = userId;
 
         await repository.UpdateAsync(interruption, ct).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
+
+    // An imported Octopus interruption is a resolved historical record; answering or claiming it would rewrite history.
+    private async Task EnsureTaskNotImportedAsync(DeploymentInterruption interruption, CancellationToken ct)
+    {
+        if (await serverTaskService.IsImportedAsync(interruption.ServerTaskId, ct).ConfigureAwait(false))
+            throw new ImportedServerTaskReadOnlyException(interruption.ServerTaskId);
+    }
+
+    // Every submission replaces the resolution, so it also replaces the audit fields: a later non-override
+    // decision must not inherit an earlier administrator's name.
+    private static void RecordAdministratorOverride(DeploymentInterruption interruption, InterruptionAccess? access, int? userId, string userName)
+    {
+        var isOverride = access == InterruptionAccess.AdministratorOverride;
+
+        interruption.AdministratorOverrideUserId = isOverride ? userId : null;
+        interruption.AdministratorOverrideUserName = isOverride ? userName : null;
+
+        if (!isOverride) return;
+
+        Log.Warning("Interruption {InterruptionId} of task {ServerTaskId} ({StepName}) was resolved by user {UserId} via administrator override of responsible teams {ResponsibleTeamIds}", interruption.Id, interruption.ServerTaskId, interruption.StepName, userId, interruption.ResponsibleTeamIds);
+    }
+
+    private static void LogResponsibilityOverride(DeploymentInterruption interruption, InterruptionAccess access, int userId)
+    {
+        if (access != InterruptionAccess.AdministratorOverride) return;
+
+        Log.Warning("User {UserId} took responsibility for interruption {InterruptionId} of task {ServerTaskId} via administrator override of responsible teams {ResponsibleTeamIds}", userId, interruption.Id, interruption.ServerTaskId, interruption.ResponsibleTeamIds);
     }
 
     public async Task<InterruptionOutcome> WaitForInterruptionAsync(int interruptionId, CancellationToken ct)

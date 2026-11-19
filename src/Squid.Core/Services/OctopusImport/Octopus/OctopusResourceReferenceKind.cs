@@ -24,5 +24,6 @@ public enum OctopusResourceReferenceKind
     Parent,
     TargetRole,
     WorkerPool,
-    TenantTag
+    TenantTag,
+    LibraryVariableSet
 }

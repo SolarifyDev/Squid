@@ -43,4 +43,15 @@ internal static class KubernetesApplyIntentFactory
 
         return (enabled, timeoutSeconds);
     }
+
+    // Absent keeps the native default (wait on Jobs); any explicit value other than True turns it off,
+    // matching how Calamari reads Octopus.Action.Kubernetes.WaitForJobs (GetFlag).
+    internal static bool ReadWaitForJobs(DeploymentActionDto action)
+    {
+        var value = action?.GetProperty(KubernetesProperties.WaitForJobs);
+
+        if (string.IsNullOrWhiteSpace(value)) return true;
+
+        return string.Equals(value.Trim(), KubernetesBooleanValues.True, StringComparison.OrdinalIgnoreCase);
+    }
 }

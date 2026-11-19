@@ -14,6 +14,9 @@ public class InterruptionDto
     public string ResponsibleUserId { get; set; }
     public string ResponsibleTeamIds { get; set; }
     public bool CanTakeResponsibility { get; set; }
+
+    /// <summary>True when the current user may act only through the administrator approval override (not a member of any responsible team).</summary>
+    public bool IsAdministratorOverride { get; set; }
     public bool IsPending { get; set; }
     public DateTimeOffset CreatedDate { get; set; }
 }

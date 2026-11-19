@@ -400,7 +400,7 @@ public class ProjectServiceSummaryTests : TestBase
 
         if (discrete)
         {
-            result.Data.Items.Select(i => i.ChannelName).ToHashSet().ShouldBe(new HashSet<string> { "Channel A", "Channel B" });
+            result.Data.Items.Select(i => i.ChannelName).ShouldBe(["Channel A", "Channel B"], ignoreOrder: true);
         }
     }
 

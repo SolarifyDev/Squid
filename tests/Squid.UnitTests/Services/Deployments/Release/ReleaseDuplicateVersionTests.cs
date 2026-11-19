@@ -93,6 +93,40 @@ public class ReleaseDuplicateVersionTests
         await Should.NotThrowAsync(() => sut.CreateReleaseAsync(command, CancellationToken.None));
     }
 
+    // The Octopus history import creates thousands of releases of one project in one confirmation; the project's configuration does not
+    // change between them, so it hands the first one's snapshots to the rest instead of rebuilding (and re-hashing) the same snapshot.
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task CreateReleaseAsync_HistoricalSnapshotsGiven_ReusedOnlyForAHistoricalImport(bool isHistoricalImport, bool expectSnapshotTaken)
+    {
+        var sut = CreateSut();
+        var command = new CreateReleaseCommand { Version = "1.0.0", ProjectId = 1, ChannelId = 2, IsHistoricalImport = isHistoricalImport, HistoricalSnapshots = new HistoricalReleaseSnapshots(41, 42) };
+        ReleaseEntity created = null;
+
+        SetupValidProjectAndChannel(command);
+        _deploymentSnapshotService.Setup(x => x.SnapshotVariableSetFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>())).ReturnsAsync(new VariableSetSnapshotDto { Id = 7 });
+        _deploymentSnapshotService.Setup(x => x.SnapshotProcessFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>())).ReturnsAsync(new DeploymentProcessSnapshotDto { Id = 8 });
+        _releaseDataProvider.Setup(x => x.CreateReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback((ReleaseEntity release, bool _, CancellationToken _) => created = release);
+        _mapper.Setup(x => x.Map<Squid.Message.Models.Deployments.Release.ReleaseDto>(It.IsAny<ReleaseEntity>())).Returns(new Squid.Message.Models.Deployments.Release.ReleaseDto());
+
+        await sut.CreateReleaseAsync(command, CancellationToken.None);
+
+        (created.ProjectVariableSetSnapshotId, created.ProjectDeploymentProcessSnapshotId).ShouldBe(expectSnapshotTaken ? (7, 8) : (41, 42));
+        _deploymentSnapshotService.Verify(x => x.SnapshotVariableSetFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>()), expectSnapshotTaken ? Times.Once() : Times.Never());
+        _deploymentSnapshotService.Verify(x => x.SnapshotProcessFromReleaseAsync(It.IsAny<ReleaseEntity>(), It.IsAny<CancellationToken>()), expectSnapshotTaken ? Times.Once() : Times.Never());
+    }
+
+    // Never bound from the API: a client cannot point its release at another project's snapshots.
+    [Fact]
+    public void CreateReleaseCommand_HistoricalSnapshots_NeverBoundFromJson()
+    {
+        var command = System.Text.Json.JsonSerializer.Deserialize<CreateReleaseCommand>("""{"Version":"1.0.0","HistoricalSnapshots":{"VariableSetSnapshotId":1,"DeploymentProcessSnapshotId":2},"IsHistoricalImport":true}""");
+
+        command.HistoricalSnapshots.ShouldBeNull();
+        command.IsHistoricalImport.ShouldBeFalse();
+    }
+
     private void SetupValidProjectAndChannel(CreateReleaseCommand command)
     {
         _projectDataProvider.Setup(x => x.GetProjectByIdAsync(command.ProjectId, It.IsAny<CancellationToken>()))

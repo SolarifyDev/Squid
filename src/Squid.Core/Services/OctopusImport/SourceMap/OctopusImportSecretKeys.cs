@@ -1,0 +1,77 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using Squid.Core.Services.OctopusImport.Mapping;
+using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Message.Models.Deployments.Variable;
+using Squid.Message.Models.OctopusImport;
+
+namespace Squid.Core.Services.OctopusImport.SourceMap;
+
+/// <summary>
+/// The natural key of a sensitive variable value, used as the <c>VariableSecret</c> row's source id. An Octopus export may
+/// rewrite variable ids and Squid re-inserts variables on every save, so neither id can identify "this secret" across
+/// sources; <c>(owner variable set, name, type, scope)</c> can. Scope values are compared by the Squid row they map to (the
+/// same environment imported from either source is the same Squid environment); roles are compared as text. The same
+/// function is used when the row is written (server import) and when a file import looks for it (fill).
+/// </summary>
+public static class OctopusImportSecretKeys
+{
+    public const string VariablePrefix = "vs:";
+
+    /// <summary>The key, or null when a scope value cannot be mapped (such a secret cannot be identified, so it is never filled).</summary>
+    public static string ForVariable(string ownerSetSourceId, string ownerProjectId, OctopusVariableDto variable, Func<string, OctopusResourceKind, int?> destinationOf)
+    {
+        ArgumentNullException.ThrowIfNull(variable);
+
+        var scopes = CanonicalScopes(variable.Scope, ownerProjectId, destinationOf);
+
+        if (scopes == null) return null;
+
+        var type = OctopusImportVariableMapper.SquidVariableType(variable)?.ToString() ?? variable.Type;
+
+        return Compose(ownerSetSourceId, variable.Name, type, scopes);
+    }
+
+    /// <summary>
+    /// The key of the Squid variable a secret was imported as, given the source id of the Octopus variable set its owner set was
+    /// imported from. Equal to <see cref="ForVariable"/> of the source variable, so a deployment can tell which of its empty
+    /// sensitive values an import recorded as missing without the source document.
+    /// </summary>
+    public static string ForIdentity(string ownerSetSourceId, VariableIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+
+        return Compose(ownerSetSourceId, identity.Name, identity.Type.ToString(), identity.Scopes ?? []);
+    }
+
+    /// <summary>
+    /// Each scope as a <see cref="VariableIdentity"/> token (mapped scopes by Squid destination id), distinct and ordinal-sorted; null if
+    /// any value cannot be mapped. The tokens equal the ones Squid's stored scopes produce, so a source variable and the Squid variable
+    /// it was imported as have the same identity.
+    /// </summary>
+    public static IReadOnlyList<string> CanonicalScopes(Dictionary<string, List<string>> scope, string ownerProjectId, Func<string, OctopusResourceKind, int?> destinationOf)
+    {
+        ArgumentNullException.ThrowIfNull(destinationOf);
+
+        var values = new List<string>();
+
+        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(scope, ownerProjectId, (sourceId, kind) => destinationOf(sourceId, kind) is > 0))
+        {
+            if (resolution.Blocks) return null;
+            if (resolution.Outcome == OctopusImportScopeOutcome.EmptyValue) continue;
+
+            values.Add(VariableIdentity.ScopeToken(resolution.ScopeType!.Value, CanonicalValue(resolution, destinationOf)));
+        }
+
+        return VariableIdentity.Canonical(values);
+    }
+
+    private static string CanonicalValue(OctopusImportScopeResolution resolution, Func<string, OctopusResourceKind, int?> destinationOf)
+        => resolution.Outcome == OctopusImportScopeOutcome.Mapped ? destinationOf(resolution.ScopeValue, resolution.SourceKind!.Value)!.Value.ToString(CultureInfo.InvariantCulture) : resolution.ScopeValue;
+
+    private static string Compose(string ownerSetSourceId, string name, string type, IEnumerable<string> scopes)
+        => VariablePrefix + Hash($"{OctopusImportPriorMappings.Normalize(ownerSetSourceId)}|{name}|{type}|{string.Join(",", scopes)}");
+
+    private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+}

@@ -6,8 +6,11 @@ using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -30,6 +33,17 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
             OctopusImportSessionStateTransitionException => HttpStatusCode.Conflict,
             OctopusImportSessionConcurrencyException => HttpStatusCode.Conflict,
+            OctopusImportSessionExpiredException => HttpStatusCode.Conflict,
+            ImportedServerTaskReadOnlyException => HttpStatusCode.Conflict,
+            VariableSetVersionConflictException => HttpStatusCode.Conflict,
+            OctopusRestException => HttpStatusCode.BadRequest,
+            OctopusImportSessionNotServerSourceException => HttpStatusCode.BadRequest,
+            OctopusImportHistoryServerMismatchException => HttpStatusCode.BadRequest,
+            OctopusImportApiKeyRestrictedException => HttpStatusCode.BadRequest,
+            OctopusImportProjectSelectionInvalidException => HttpStatusCode.BadRequest,
+            OctopusImportProjectSelectionBeyondReadException => HttpStatusCode.Conflict,
+            OctopusImportHistoryStagingLostException => HttpStatusCode.Conflict,
+            OctopusImportStorageException => HttpStatusCode.InsufficientStorage,
             _ => HttpStatusCode.InternalServerError
         };
 
@@ -42,7 +56,8 @@ public class GlobalExceptionFilter : IExceptionFilter
         var response = new SquidResponse
         {
             Code = statusCode,
-            Msg = message
+            Msg = message,
+            ErrorKind = OctopusImportErrorKinds.Of(context.Exception)
         };
 
         // PR 2 (1.7.0): when the failure is a permission denial, enrich the

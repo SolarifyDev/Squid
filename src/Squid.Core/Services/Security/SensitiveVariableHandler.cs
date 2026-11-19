@@ -1,11 +1,12 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.Security;
 
 public class SensitiveVariableHandler : IScopedDependency
 {
-    private const string MASKED_VALUE = "***SENSITIVE***";
+    private const string MASKED_VALUE = MaskedSensitiveValues.Mask;
     
     public VariableDto MaskSensitiveValue(VariableDto variableDto, bool maskSensitiveValues = true)
     {

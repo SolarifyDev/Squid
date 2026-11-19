@@ -152,6 +152,38 @@ public class DeploymentStepServiceActionAssociationTests
         mocks.ActionChannel.Verify(p => p.AddActionChannelsAsync(It.Is<List<ActionChannel>>(list => list.Count == 1), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task InsertStep_WhenContextIsRejected_DoesNotMoveStepOrderOrInsertStep()
+    {
+        var (service, mocks, processContextGuard) = CreateServiceWithGuard();
+        processContextGuard
+            .Setup(guard => guard.ResolveForWriteAsync(It.IsAny<ProcessContextRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProcessContextMismatchException("Process context does not match."));
+
+        await Should.ThrowAsync<ProcessContextMismatchException>(() =>
+            service.InsertDeploymentStepAsync(BuildCreateCommand(), 1, CancellationToken.None));
+
+        mocks.Step.Verify(p => p.OpenStepOrderGapAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        mocks.Step.Verify(p => p.AddDeploymentStepAsync(It.IsAny<DeploymentStep>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InsertAction_WhenContextIsRejected_DoesNotMoveActionOrderOrInsertAction()
+    {
+        var (service, mocks, processContextGuard) = CreateServiceWithGuard();
+        mocks.Step.Setup(p => p.GetDeploymentStepByIdAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DeploymentStep { Id = 1, ProcessId = 1 });
+        processContextGuard
+            .Setup(guard => guard.ResolveForWriteAsync(It.IsAny<ProcessContextRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProcessContextMismatchException("Process context does not match."));
+
+        await Should.ThrowAsync<ProcessContextMismatchException>(() =>
+            service.InsertActionAsync(1, new CreateOrUpdateDeploymentActionModel { Name = "Action" }, 1, CancellationToken.None));
+
+        mocks.Action.Verify(p => p.OpenActionOrderGapAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        mocks.Action.Verify(p => p.AddDeploymentActionAsync(It.IsAny<DeploymentAction>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ========== Test Infrastructure ==========
 
     private record MockProviders(
@@ -165,6 +197,12 @@ public class DeploymentStepServiceActionAssociationTests
         Mock<IActionMachineRoleDataProvider> ActionMachineRole);
 
     private static (DeploymentStepService Service, MockProviders Mocks) CreateServiceWithMocks()
+    {
+        var (service, mocks, _) = CreateServiceWithGuard();
+        return (service, mocks);
+    }
+
+    private static (DeploymentStepService Service, MockProviders Mocks, Mock<IProcessContextGuard> Guard) CreateServiceWithGuard()
     {
         var mapper = new MapperConfiguration(cfg => cfg.AddProfile<DeploymentProcessMapping>()).CreateMapper();
 
@@ -244,7 +282,7 @@ public class DeploymentStepServiceActionAssociationTests
             processContextGuard.Object);
         var mocks = new MockProviders(stepProvider, stepPropertyProvider, actionProvider, actionPropertyProvider, actionEnvProvider, actionExEnvProvider, actionChannelProvider, actionMachineRoleProvider);
 
-        return (service, mocks);
+        return (service, mocks, processContextGuard);
     }
 
     private static CreateDeploymentStepCommand BuildCreateCommand(List<int> environments = null, List<int> excludedEnvironments = null, List<int> channels = null)

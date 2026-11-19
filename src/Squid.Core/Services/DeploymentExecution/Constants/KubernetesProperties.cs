@@ -67,6 +67,9 @@ internal static class KubernetesProperties
     // ObjectStatusCheck: reserved for future use — accepted from the frontend but not consumed by any generator.
     // When implemented, it will control whether the deployment waits for pod readiness before marking success.
     internal const string ObjectStatusCheck = "Squid.Action.KubernetesContainers.ObjectStatusCheck";
+    // WaitForJobs: when explicitly "False", the status check does not block on Jobs (Octopus' "Wait for
+    // jobs to complete" off). Absent keeps the native default of waiting. Written by the Octopus import.
+    internal const string WaitForJobs = "Squid.Action.Kubernetes.WaitForJobs";
     internal const string HostAliases = "Squid.Action.KubernetesContainers.HostAliases";
     internal const string Tolerations = "Squid.Action.KubernetesContainers.Tolerations";
     internal const string NodeAffinity = "Squid.Action.KubernetesContainers.NodeAffinity";

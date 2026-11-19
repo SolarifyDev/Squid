@@ -1,3 +1,5 @@
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Snapshots;
@@ -6,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Variables;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.DeploymentExecution.Handlers;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
@@ -15,7 +18,9 @@ public sealed class PrepareDeploymentPhase(
     IDeploymentVariableResolver variableResolver,
     IDeploymentTargetFinder targetFinder,
     IDeploymentDataProvider deploymentDataProvider,
-    IActionHandlerRegistry actionHandlerRegistry) : IDeploymentPipelinePhase
+    IActionHandlerRegistry actionHandlerRegistry,
+    IRepository repository = null,
+    IImportedSecretPreflight importedSecrets = null) : IDeploymentPipelinePhase
 {
     public int Order => 300;
 
@@ -25,6 +30,7 @@ public sealed class PrepareDeploymentPhase(
         await ResolveVariablesAsync(ctx, ct).ConfigureAwait(false);
         ValidatePromptedVariables(ctx);
         MergePromptedVariables(ctx);
+        await EnsureImportedSecretsPresentAsync(ctx, ct).ConfigureAwait(false);
 
         ConvertSnapshotToSteps(ctx);
         InjectPackageAcquisitionSteps(ctx);
@@ -59,6 +65,8 @@ public sealed class PrepareDeploymentPhase(
 
         ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.Id, Value = $"Deployments-{ctx.Deployment.Id}" });
 
+        await AddDeploymentCreatorVariablesAsync(ctx, ct).ConfigureAwait(false);
+
         // Built-in deployment context variables required by package install path planning
         // and variable substitution. These are not stored in project variable sets.
         if (ctx.Project != null)
@@ -84,6 +92,28 @@ public sealed class PrepareDeploymentPhase(
             ctx.Variables.AddRange(ctx.RestoredOutputVariables);
     }
 
+    // Who triggered the deployment (Octopus' Octopus.Deployment.CreatedBy.*). Always defined — a script that
+    // reads an undefined name gets the literal #{…} token — and always appended after the resolved variables,
+    // so precedence against a user-defined variable of the same name never depends on whether the user row
+    // still exists. No actor → all empty; deleted user or no repository → the id with empty names.
+    private async Task AddDeploymentCreatorVariablesAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        var userId = ctx.Deployment.DeployedBy > 0 ? ctx.Deployment.DeployedBy : ctx.Deployment.CreatedBy;
+        var user = await FindDeploymentCreatorAsync(userId, ct).ConfigureAwait(false);
+        var userName = user?.UserName ?? string.Empty;
+
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedById, Value = userId > 0 ? userId.ToString() : string.Empty });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByUsername, Value = userName });
+        ctx.Variables.Add(new VariableDto { Name = SpecialVariables.Deployment.CreatedByDisplayName, Value = string.IsNullOrWhiteSpace(user?.DisplayName) ? userName : user.DisplayName });
+    }
+
+    private async Task<UserAccount> FindDeploymentCreatorAsync(int userId, CancellationToken ct)
+    {
+        if (repository == null || userId <= 0) return null;
+
+        return await repository.QueryNoTracking<UserAccount>(u => u.Id == userId).Select(u => new UserAccount { Id = u.Id, UserName = u.UserName, DisplayName = u.DisplayName }).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+    }
+
     private static void ValidatePromptedVariables(DeploymentTaskContext ctx)
     {
         var formValues = ctx.Deployment?.DeploymentRequestPayload?.FormValues;
@@ -99,6 +129,21 @@ public sealed class PrepareDeploymentPhase(
 
         PromptedVariableMerger.MergePromptedValues(ctx.Variables, formValues);
     }
+
+    // D16: a sensitive value the Octopus API withheld and nothing has supplied since fails the deployment before any step runs,
+    // naming it — instead of every script silently reading an empty secret. Runs after prompted values are merged (a prompt answers it).
+    private async Task EnsureImportedSecretsPresentAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        if (importedSecrets == null) return;
+
+        var missing = await importedSecrets.FindMissingAsync(ctx.Deployment.SpaceId, ctx.Variables, DeploymentScope(ctx), ct).ConfigureAwait(false);
+
+        if (missing.Count > 0)
+            throw new ImportedSecretMissingException(ctx.Deployment.Id, missing);
+    }
+
+    private static VariableScopeContext DeploymentScope(DeploymentTaskContext ctx)
+        => new() { EnvironmentId = ctx.Environment?.Id, EnvironmentName = ctx.Environment?.Name, ChannelId = ctx.Channel?.Id, ChannelName = ctx.Channel?.Name };
 
     private void DetectServerOnlyDeployment(DeploymentTaskContext ctx)
     {

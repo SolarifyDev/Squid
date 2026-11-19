@@ -1,4 +1,5 @@
 using Squid.Message.Commands.Deployments.ExternalFeed;
+using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.ExternalFeed;
 using Squid.Message.Models.Deployments.ExternalFeed;
 using Squid.Message.Requests.Deployments.ExternalFeed;
@@ -14,6 +15,16 @@ public interface IExternalFeedService : IScopedDependency
     Task<ExternalFeedDeletedEvent> DeleteExternalFeedsAsync(DeleteExternalFeedsCommand command, CancellationToken cancellationToken);
 
     Task<GetExternalFeedsResponse> GetExternalFeedsAsync(GetExternalFeedsRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Username and whether a password is stored, per feed; passwords are never read.</summary>
+    Task<IReadOnlyList<ExternalFeedCredentialSlot>> GetCredentialSlotsAsync(IReadOnlyCollection<int> feedIds, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fills the feed's credentials only while it has no password and its username is empty or already <paramref name="username"/>
+    /// (compare-and-set): credentials set by anyone in the meantime are never overwritten. Returns <see cref="SecretSlotState.Filled"/>,
+    /// or why nothing was written.
+    /// </summary>
+    Task<SecretSlotState> FillMissingCredentialsAsync(int feedId, string username, string password, CancellationToken cancellationToken);
 }
 
 public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider externalFeedDataProvider) : IExternalFeedService
@@ -83,5 +94,23 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
                 ExternalFeeds = mapper.Map<List<ExternalFeedDto>>(data)
             }
         };
+    }
+
+    public async Task<IReadOnlyList<ExternalFeedCredentialSlot>> GetCredentialSlotsAsync(IReadOnlyCollection<int> feedIds, CancellationToken cancellationToken)
+        => await externalFeedDataProvider.GetCredentialSlotsAsync(feedIds, cancellationToken).ConfigureAwait(false);
+
+    public async Task<SecretSlotState> FillMissingCredentialsAsync(int feedId, string username, string password, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(password))
+            throw new ArgumentException("A fill needs a password: an empty source password is never written.", nameof(password));
+
+        var slots = await externalFeedDataProvider.GetCredentialSlotsAsync([feedId], cancellationToken).ConfigureAwait(false);
+        var state = ExternalFeedCredentialSlots.StateOf(slots.FirstOrDefault(), username);
+
+        if (state != SecretSlotState.Empty) return state;
+
+        var written = await externalFeedDataProvider.SetCredentialsIfEmptyAsync(feedId, username, password, cancellationToken).ConfigureAwait(false);
+
+        return written == 0 ? SecretSlotState.AlreadySet : SecretSlotState.Filled;
     }
 }

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Models.OctopusImport;
 
@@ -6,10 +5,12 @@ namespace Squid.Core.Services.OctopusImport;
 
 public interface IOctopusImportPlanningPipeline : IScopedDependency
 {
-    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
-        string temporaryUploadPath,
-        int destinationSpaceId,
-        CancellationToken ct = default);
+    /// <param name="selections">What the user selected among the resources the plan offers to decide on; null means every server default.</param>
+    /// <param name="chosenProjectIds">The session's project selection, read from the session and never from a request; null plans the whole space.</param>
+    Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null, CancellationToken ct = default);
+
+    /// <summary>The source's resource graph (the extraction is cached as for a preview): what a session's project picker lists.</summary>
+    Task<OctopusResourceGraph> BuildGraphAsync(string temporaryUploadPath, CancellationToken ct = default);
 }
 
 public sealed record OctopusImportPlanningSnapshot(
@@ -19,104 +20,44 @@ public sealed record OctopusImportPlanningSnapshot(
     OctopusImportPreviewPlanDto PreviewPlan);
 
 public class OctopusImportPlanningPipeline(
-    IOctopusArchiveExtractor archiveExtractor,
-    IOctopusInputExtractor inputExtractor,
+    IOctopusImportSourceReader sourceReader,
     IOctopusManifestInventoryBuilder inventoryBuilder,
     IOctopusResourceGraphBuilder graphBuilder,
     IOctopusImportDependencyPlanner dependencyPlanner,
     IOctopusImportConflictDiscoveryService conflictDiscoveryService,
-    IOctopusImportPreviewPlanner previewPlanner)
+    IOctopusImportPreviewPlanner previewPlanner,
+    IOctopusImportExtractionCache extractionCache = null)
     : IOctopusImportPlanningPipeline
 {
-    private static readonly byte[] ZipMagic = [0x50, 0x4B, 0x03, 0x04];
-    private readonly ConcurrentDictionary<ExtractionCacheKey, Lazy<Task<OctopusInputExtractionResult>>> _extractions = new();
+    // The pipeline lives for one request; the parsed source must outlive it, or every request of a flow parses it again.
+    private readonly IOctopusImportExtractionCache _extractions = extractionCache ?? OctopusImportExtractionCache.Shared;
 
-    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(
-        string temporaryUploadPath,
-        int destinationSpaceId,
-        CancellationToken ct = default)
+    public async Task<OctopusImportPlanningSnapshot> BuildPreviewAsync(string temporaryUploadPath, int destinationSpaceId, OctopusImportChoiceSelections selections = null, IReadOnlyCollection<string> chosenProjectIds = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(temporaryUploadPath))
-            throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUploadPath));
         if (destinationSpaceId <= 0)
             throw new ArgumentOutOfRangeException(nameof(destinationSpaceId), destinationSpaceId, "Destination space id must be positive.");
 
-        var extraction = await ExtractInputAsync(temporaryUploadPath, ct).ConfigureAwait(false);
-        var inventory = inventoryBuilder.Build(extraction);
-        var graph = graphBuilder.Build(inventory);
-        var dependencyPlan = dependencyPlanner.BuildCurrentConfigurationPlan(graph);
+        var graph = await BuildGraphAsync(temporaryUploadPath, ct).ConfigureAwait(false);
+        var dependencyPlan = dependencyPlanner.BuildCurrentConfigurationPlan(graph, chosenProjectIds);
         var conflicts = await conflictDiscoveryService
             .DiscoverAsync(destinationSpaceId, graph, ct)
             .ConfigureAwait(false);
-        var previewPlan = previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts);
+        var previewPlan = previewPlanner.BuildPreviewPlan(dependencyPlan, conflicts, selections);
 
         return new OctopusImportPlanningSnapshot(graph, dependencyPlan, conflicts, previewPlan);
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
+    public async Task<OctopusResourceGraph> BuildGraphAsync(string temporaryUploadPath, CancellationToken ct = default)
     {
-        var fileInfo = new FileInfo(temporaryUploadPath);
-        var cacheKey = new ExtractionCacheKey(
-            Path.GetFullPath(temporaryUploadPath),
-            fileInfo.Length,
-            fileInfo.LastWriteTimeUtc);
+        if (string.IsNullOrWhiteSpace(temporaryUploadPath))
+            throw new ArgumentException("Temporary upload path is required.", nameof(temporaryUploadPath));
 
-        var extraction = _extractions.GetOrAdd(
-            cacheKey,
-            _ => new Lazy<Task<OctopusInputExtractionResult>>(
-                () => ExtractInputCoreAsync(temporaryUploadPath, CancellationToken.None),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+        var extraction = await ExtractInputAsync(temporaryUploadPath, ct).ConfigureAwait(false);
 
-        try
-        {
-            return await extraction.Value.WaitAsync(ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!extraction.Value.IsCompleted)
-        {
-            throw;
-        }
-        catch
-        {
-            _extractions.TryRemove(cacheKey, out _);
-            throw;
-        }
+        return graphBuilder.Build(inventoryBuilder.Build(extraction));
     }
 
-    private async Task<OctopusInputExtractionResult> ExtractInputCoreAsync(string temporaryUploadPath, CancellationToken ct)
-    {
-        await using var stream = new FileStream(temporaryUploadPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
-
-        if (await LooksLikeZipAsync(stream, ct).ConfigureAwait(false))
-        {
-            var archive = await archiveExtractor.ExtractZipAsync(stream, ct: ct).ConfigureAwait(false);
-            return await inputExtractor.ExtractJsonEntriesAsync(archive.Entries, ct).ConfigureAwait(false);
-        }
-
-        return await inputExtractor
-            .ExtractStandaloneJsonAsync(stream, Path.GetFileName(temporaryUploadPath), ct: ct)
-            .ConfigureAwait(false);
-    }
-
-    private static async Task<bool> LooksLikeZipAsync(Stream stream, CancellationToken ct)
-    {
-        var header = new byte[ZipMagic.Length];
-        var read = await stream.ReadAsync(header.AsMemory(0, header.Length), ct).ConfigureAwait(false);
-        stream.Position = 0;
-
-        if (read < ZipMagic.Length)
-            return false;
-
-        for (var i = 0; i < ZipMagic.Length; i++)
-        {
-            if (header[i] != ZipMagic[i])
-                return false;
-        }
-
-        return true;
-    }
-
-    private sealed record ExtractionCacheKey(
-        string FullPath,
-        long Length,
-        DateTime LastWriteTimeUtc);
+    // The history bundle is the session's source file itself, so a finished REST fetch (a new file) is read again.
+    private Task<OctopusInputExtractionResult> ExtractInputAsync(string temporaryUploadPath, CancellationToken ct)
+        => _extractions.GetOrReadAsync(temporaryUploadPath, () => sourceReader.ReadAsync(temporaryUploadPath, CancellationToken.None), ct);
 }

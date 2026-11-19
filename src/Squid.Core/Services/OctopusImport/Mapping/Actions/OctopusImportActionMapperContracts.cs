@@ -10,8 +10,11 @@ public sealed class OctopusImportActionMappingContext
     public OctopusImportActionMappingContext(
         OctopusImportIdMap idMap,
         int destinationSpaceId,
-        OctopusImportUnsupportedActionHandling unsupportedActionHandling = OctopusImportUnsupportedActionHandling.Skip)
+        OctopusImportUnsupportedActionHandling unsupportedActionHandling = OctopusImportUnsupportedActionHandling.Skip,
+        IReadOnlyDictionary<string, OctopusActionTemplateDto> actionTemplates = null)
     {
+        ActionTemplates = actionTemplates ?? new Dictionary<string, OctopusActionTemplateDto>(StringComparer.OrdinalIgnoreCase);
+
         IdMap = idMap ?? throw new ArgumentNullException(nameof(idMap));
 
         if (destinationSpaceId <= 0)
@@ -26,6 +29,12 @@ public sealed class OctopusImportActionMappingContext
     public int DestinationSpaceId { get; }
 
     public OctopusImportUnsupportedActionHandling UnsupportedActionHandling { get; }
+
+    /// <summary>Step templates from the export, keyed by Octopus template id (case-insensitive).</summary>
+    public IReadOnlyDictionary<string, OctopusActionTemplateDto> ActionTemplates { get; }
+
+    public OctopusActionTemplateDto FindActionTemplate(string templateId)
+        => !string.IsNullOrWhiteSpace(templateId) && ActionTemplates.TryGetValue(templateId.Trim(), out var template) ? template : null;
 }
 
 public enum OctopusImportUnsupportedActionHandling

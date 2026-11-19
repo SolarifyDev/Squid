@@ -21,7 +21,8 @@ public class EnforceOctopusImportTemporaryUploadCleanupCommandHandler(
                 InterruptedImportsFailed = outcome.InterruptedImportsFailed,
                 Scanned = outcome.Scanned,
                 Cleaned = outcome.Cleaned,
-                Failed = outcome.Failed
+                Failed = outcome.Failed,
+                OverAgeSessions = outcome.OverAgeSessions
             }
         };
     }

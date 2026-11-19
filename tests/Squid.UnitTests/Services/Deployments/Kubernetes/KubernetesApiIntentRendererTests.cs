@@ -722,6 +722,49 @@ public class KubernetesApiIntentRendererTests
         captured.ShouldContain("kubectl rollout status \"deployment/api\" -n \"prod\" --timeout=120s");
     }
 
+    // ========== KubernetesApplyIntent: post-apply scripts (blue/green switch) ==========
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_PostApplyScripts_AppendedInsideKubectlContext()
+    {
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        var intent = NewKubernetesApplyIntent(files: new[]
+        {
+            DeploymentFile.Asset("service.yaml", BytesFor("kind: Service\nmetadata:\n  name: web\n"))
+        }) with
+        {
+            PostApplyScripts = new[] { DeploymentFile.Script("bluegreen.sh", BytesFor("echo SWITCH-MARKER\n")) }
+        };
+
+        await _renderer.RenderAsync(intent, NewContext(), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        var apply = captured!.IndexOf("kubectl apply -f \"./service.yaml\"", StringComparison.Ordinal);
+        var marker = captured.IndexOf("echo SWITCH-MARKER", StringComparison.Ordinal);
+        apply.ShouldBeGreaterThan(-1);
+        marker.ShouldBeGreaterThan(apply);
+    }
+
+    [Fact]
+    public async Task RenderAsync_KubernetesApplyIntent_NoPostApplyScripts_ScriptUnchanged()
+    {
+        string? captured = null;
+        _builderMock
+            .Setup(b => b.WrapWithContext(It.IsAny<string>(), It.IsAny<ScriptContext>(), It.IsAny<string>()))
+            .Callback<string, ScriptContext, string>((body, _, _) => captured = body)
+            .Returns("wrapped");
+
+        await _renderer.RenderAsync(NewKubernetesApplyIntent(), NewContext(), CancellationToken.None);
+
+        captured.ShouldNotBeNull();
+        captured!.ShouldNotContain("# --- Post-apply script");
+    }
+
     // ========== KubernetesApplyIntent: syntax-specific path separator ==========
 
     [Fact]

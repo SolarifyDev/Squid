@@ -123,20 +123,82 @@ public class OctopusImportController : ControllerBase
 
     [HttpPost("{sessionId:guid}/confirm")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ConfirmOctopusImportResponse))]
-    public async Task<IActionResult> ConfirmAsync(
-        Guid sessionId,
-        [FromQuery] int? spaceId,
-        CancellationToken cancellationToken)
+    public async Task<IActionResult> ConfirmAsync([FromRoute] Guid sessionId, [FromQuery] ConfirmOctopusImportCommand command, CancellationToken cancellationToken)
     {
-        var response = await _mediator
-            .SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(
-                new ConfirmOctopusImportCommand
-                {
-                    SessionId = sessionId,
-                    SpaceId = spaceId
-                },
-                cancellationToken)
-            .ConfigureAwait(false);
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("history/probe")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ProbeOctopusServerResponse))]
+    public async Task<IActionResult> ProbeServerAsync([FromBody] ProbeOctopusServerCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ProbeOctopusServerCommand, ProbeOctopusServerResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("connect")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ConnectOctopusImportResponse))]
+    public async Task<IActionResult> ConnectAsync([FromBody] ConnectOctopusImportCommand command, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("{sessionId:guid}/history/fetch")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(FetchOctopusImportHistoryResponse))]
+    public async Task<IActionResult> FetchHistoryAsync([FromRoute] Guid sessionId, [FromBody] FetchOctopusImportHistoryCommand command, CancellationToken cancellationToken)
+    {
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    // A POST, like the probe: the API key travels in the body, never in the query string.
+    [HttpPost("history/projects")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ListOctopusServerProjectsResponse))]
+    public async Task<IActionResult> ListServerProjectsAsync([FromBody] ListOctopusServerProjectsRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<ListOctopusServerProjectsRequest, ListOctopusServerProjectsResponse>(request, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpGet("{sessionId:guid}/projects")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetOctopusImportProjectsResponse))]
+    public async Task<IActionResult> ProjectsAsync([FromRoute] Guid sessionId, [FromQuery] GetOctopusImportProjectsRequest request, CancellationToken cancellationToken)
+    {
+        request.SessionId = sessionId;
+
+        var response = await _mediator.RequestAsync<GetOctopusImportProjectsRequest, GetOctopusImportProjectsResponse>(request, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPut("{sessionId:guid}/projects/selection")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(SelectOctopusImportProjectsResponse))]
+    public async Task<IActionResult> SelectProjectsAsync([FromRoute] Guid sessionId, [FromBody] SelectOctopusImportProjectsCommand command, CancellationToken cancellationToken)
+    {
+        command.SessionId = sessionId;
+
+        var response = await _mediator.SendAsync<SelectOctopusImportProjectsCommand, SelectOctopusImportProjectsResponse>(command, cancellationToken).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    // The current user's import sessions in the space that a reloaded page can continue; never the API key or anything secret.
+    [HttpGet("sessions")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ListOctopusImportSessionsResponse))]
+    public async Task<IActionResult> SessionsAsync([FromQuery] ListOctopusImportSessionsRequest request, CancellationToken cancellationToken)
+    {
+        var response = await _mediator.RequestAsync<ListOctopusImportSessionsRequest, ListOctopusImportSessionsResponse>(request, cancellationToken).ConfigureAwait(false);
 
         return Ok(response);
     }

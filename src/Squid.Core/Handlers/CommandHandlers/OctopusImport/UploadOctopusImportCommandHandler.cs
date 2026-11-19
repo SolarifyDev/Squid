@@ -1,7 +1,9 @@
 using System.Net;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 
 namespace Squid.Core.Handlers.CommandHandlers.OctopusImport;
@@ -10,7 +12,8 @@ public class UploadOctopusImportCommandHandler(
     IOctopusImportSessionService sessionService,
     IOctopusImportTemporaryUploadStore uploadStore,
     IOctopusExportPasswordValidator passwordValidator,
-    OctopusArchiveExtractionOptions limits = null)
+    OctopusArchiveExtractionOptions limits = null,
+    IOctopusImportExportSecretStore secretStore = null)
     : ICommandHandler<UploadOctopusImportCommand, UploadOctopusImportResponse>
 {
     private readonly OctopusArchiveExtractionOptions _limits = limits ?? OctopusArchiveExtractionOptions.Default;
@@ -71,6 +74,8 @@ public class UploadOctopusImportCommandHandler(
                 .RegisterTemporaryUploadAsync(session.SessionId, destinationSpaceId, upload, completedSummary, cancellationToken)
                 .ConfigureAwait(false);
 
+            await RetainExportPasswordAsync(passwordValidation, session.SessionId, destinationSpaceId, command.Password, cancellationToken).ConfigureAwait(false);
+
             return new UploadOctopusImportResponse
             {
                 Code = HttpStatusCode.OK,
@@ -86,6 +91,51 @@ public class UploadOctopusImportCommandHandler(
             if (bufferedContent != null)
                 await bufferedContent.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    // Only a password PROVEN correct against the archive's own ciphertext is retained — an export
+    // without encrypted values has nothing to decrypt, so there is no reason to keep its password.
+    private async Task RetainExportPasswordAsync(OctopusExportPasswordValidationResult validation, Guid sessionId, int destinationSpaceId, string password, CancellationToken ct)
+    {
+        if (secretStore == null || validation.Status != OctopusExportPasswordValidationStatus.Valid) return;
+
+        try
+        {
+            await secretStore.StoreAsync(sessionId, destinationSpaceId, password, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await AbandonSessionAsync(sessionId, destinationSpaceId, ex).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    // The session and its archive already exist, but without the proven password it would silently import
+    // every secret as a required input. Fail it (terminal: clears the password column, schedules the archive
+    // purge) rather than leave an importable-looking Uploaded session behind. Runs uncancellable so a
+    // cancelled request still compensates; a failing compensation never masks the original failure.
+    private async Task AbandonSessionAsync(Guid sessionId, int destinationSpaceId, Exception cause)
+    {
+        try
+        {
+            await sessionService.RecordResultAsync(sessionId, destinationSpaceId, OctopusImportSessionState.Failed, ExportPasswordNotRecordedResult(), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning("Octopus import session {SessionId} could not be failed after recording its export password failed ({CauseType}, then {CompensationType}); it will expire instead", sessionId, cause.GetType().Name, ex.GetType().Name);
+        }
+    }
+
+    private static OctopusImportSessionResultDto ExportPasswordNotRecordedResult()
+    {
+        var diagnostic = new OctopusImportDiagnosticDto
+        {
+            Severity = OctopusImportCompatibilitySeverity.Blocker,
+            Code = OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecorded,
+            Message = OctopusImportUploadDiagnosticCodes.ExportPasswordNotRecordedMessage
+        };
+
+        return new OctopusImportSessionResultDto { Diagnostics = [diagnostic] };
     }
 
     private static async Task<MemoryStream> BufferContentAsync(

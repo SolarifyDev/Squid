@@ -16,6 +16,8 @@ public class DeploymentInterruptionConfiguration : IEntityTypeConfiguration<Depl
         builder.Property(p => p.SubmittedValuesJson);
         builder.Property(p => p.ResponsibleUserId);
         builder.Property(p => p.ResponsibleTeamIds);
+        builder.Property(p => p.AdministratorOverrideUserId);
+        builder.Property(p => p.AdministratorOverrideUserName);
 
         builder.HasIndex(p => p.ServerTaskId);
     }

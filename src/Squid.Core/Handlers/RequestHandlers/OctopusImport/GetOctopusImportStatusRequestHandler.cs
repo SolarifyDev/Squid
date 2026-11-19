@@ -1,6 +1,7 @@
 using System.Net;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
+using Squid.Message.Models.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
 
 namespace Squid.Core.Handlers.RequestHandlers.OctopusImport;
@@ -25,10 +26,14 @@ public class GetOctopusImportStatusRequestHandler(
             Data = new GetOctopusImportStatusResponseData
             {
                 Session = response,
-                BlockerSummary = OctopusImportBlockerSummaryBuilder.Build(response?.Result)
+                BlockerSummary = BuildBlockerSummary(response)
             }
         };
     }
+
+    // A session Validated again after an attempt that imported nothing is described by that attempt's failure, not by an older result.
+    private static OctopusImportBlockerSummaryDto BuildBlockerSummary(OctopusImportSessionDto session)
+        => session?.LastConfirmationFailure != null ? OctopusImportBlockerSummaryBuilder.Build(session.LastConfirmationFailure.Diagnostics) : OctopusImportBlockerSummaryBuilder.Build(session?.Result);
 
     private static int GetSpaceId(GetOctopusImportStatusRequest request)
         => request.SpaceId

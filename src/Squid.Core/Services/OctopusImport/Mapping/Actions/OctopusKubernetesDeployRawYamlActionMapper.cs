@@ -29,6 +29,7 @@ public sealed class OctopusKubernetesDeployRawYamlActionMapper : IOctopusImportA
             OctopusImportPackageMapperSupport.LegacyNuGetPackageIdProperty,
             OctopusImportKubernetesActionMapperSupport.OctopusResourceStatusCheck,
             OctopusImportKubernetesActionMapperSupport.OctopusDeploymentTimeout,
+            OctopusImportKubernetesActionMapperSupport.OctopusWaitForJobs,
             KubernetesProperties.ServerSideApplyEnabled,
             KubernetesProperties.ServerSideApplyFieldManager,
             KubernetesProperties.ServerSideApplyForceConflicts

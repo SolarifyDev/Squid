@@ -1,0 +1,48 @@
+[
+  {
+    "Id": "ActionTemplates-1",
+    "Name": "Backup database",
+    "Description": null,
+    "ActionType": "Octopus.Script",
+    "Version": 2,
+    "CommunityActionTemplateId": null,
+    "Packages": [],
+    "GitDependencies": [],
+    "Properties": {
+      "Octopus.Action.Script.ScriptSource": "Inline",
+      "Octopus.Action.Script.Syntax": "Bash",
+      "Octopus.Action.Script.ScriptBody": "echo \"backing up #{DbName}\""
+    },
+    "Parameters": [
+      {
+        "Id": "2c8d3e4f-0000-4000-8000-000000000301",
+        "Name": "DbName",
+        "Label": "Database",
+        "HelpText": "Database name",
+        "DefaultValue": "app",
+        "DisplaySettings": {
+          "Octopus.ControlType": "SingleLineText"
+        }
+      },
+      {
+        "Id": "2c8d3e4f-0000-4000-8000-000000000302",
+        "Name": "DbPassword",
+        "Label": "Password",
+        "HelpText": "Database password",
+        "DefaultValue": {
+          "HasValue": true,
+          "NewValue": null,
+          "Hint": null
+        },
+        "DisplaySettings": {
+          "Octopus.ControlType": "Sensitive"
+        }
+      }
+    ],
+    "StepPackageId": "Octopus.Script",
+    "SpaceId": "Spaces-1",
+    "Links": {
+      "Self": "/api/Spaces-1/actiontemplates/ActionTemplates-1"
+    }
+  }
+]

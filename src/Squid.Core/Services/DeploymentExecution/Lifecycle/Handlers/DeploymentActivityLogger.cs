@@ -421,11 +421,15 @@ public sealed class DeploymentActivityLogger : DeploymentLifecycleHandlerBase
         return LogInfoAsync($"Manual intervention required for action \"{ctx.ActionName}\". Waiting for user response", SystemSource, ct, stepNodeId);
     }
 
-    protected override Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
+    protected override async Task OnManualInterventionResolvedAsync(DeploymentEventContext ctx, CancellationToken ct)
     {
         var stepNodeId = LookupStepNode(ctx.StepDisplayOrder);
 
-        return LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", SystemSource, ct, stepNodeId);
+        await LogInfoAsync($"Manual intervention resolved: {ctx.GuidedFailureResolution}", SystemSource, ct, stepNodeId).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(ctx.InterruptionAdministratorOverrideBy)) return;
+
+        await LogWarningAsync($"Manual intervention \"{ctx.ActionName}\" was resolved via administrator override by {ctx.InterruptionAdministratorOverrideBy} on behalf of its responsible team(s)", SystemSource, ct, stepNodeId).ConfigureAwait(false);
     }
 
     // === Cancellation / Pause ===

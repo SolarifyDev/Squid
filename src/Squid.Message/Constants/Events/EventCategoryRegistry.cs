@@ -31,7 +31,9 @@ public static class EventCategoryRegistry
         [EventCategory.DeploymentSucceeded] = new("Deployment succeeded", "Deploy to {Environment} succeeded for {Release}"),
         [EventCategory.DeploymentFailed] = new("Deployment failed", "Deploy to {Environment} failed for {Release}"),
         [EventCategory.DeploymentCanceled] = new("Deployment canceled", "Deploy to {Environment} canceled for {Release}"),
-        [EventCategory.DeploymentTimedOut] = new("Deployment timed out", "Deploy to {Environment} timed out for {Release}")
+        [EventCategory.DeploymentTimedOut] = new("Deployment timed out", "Deploy to {Environment} timed out for {Release}"),
+
+        [EventCategory.ImportedOctopusEvent] = new("Imported Octopus event", "Octopus event imported for {Release} to {Environment}")
     };
 
     public static Descriptor Describe(EventCategory category) =>

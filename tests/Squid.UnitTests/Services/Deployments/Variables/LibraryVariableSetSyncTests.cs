@@ -21,12 +21,14 @@ public class LibraryVariableSetSyncTests
 
     public LibraryVariableSetSyncTests()
     {
+        MaskedSensitiveValuesTests.RunLockedActions(_variableDataProvider);
+
         _service = new VariableService(
             _mapper.Object,
             _variableDataProvider.Object,
             _variableScopeDataProvider.Object,
-            _sensitiveVariableHandler,
-            _libraryVariableSetDataProvider.Object);
+            _libraryVariableSetDataProvider.Object,
+            new VariableSecretCollaborators(_sensitiveVariableHandler));
     }
 
     [Fact]

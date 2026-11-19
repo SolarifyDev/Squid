@@ -182,6 +182,34 @@ public class ReleaseServiceCreateReleaseExceptionTests
     }
 
     [Theory]
+    [InlineData(true, false)]   // historical Octopus import: today's channel rules and the ignore permission are both bypassed
+    [InlineData(false, true)]   // every other caller keeps today's behaviour: the rules still apply
+    public async Task HistoricalImport_BypassesChannelRules(bool isHistoricalImport, bool expectViolation)
+    {
+        var sut = CreateSut();
+        var command = ValidCommand();
+        command.IsHistoricalImport = isHistoricalImport;
+        command.SelectedPackages = new List<CreateReleaseSelectedPackageDto> { new() { ActionName = "Deploy", Version = "999.0.0-rc1" } };
+
+        SetupValidProjectAndChannel(new Project { Id = command.ProjectId, SpaceId = 1, AllowIgnoreChannelRules = false });
+        SetupRulesWithViolations();
+
+        var exception = await Record.ExceptionAsync(() => sut.CreateReleaseAsync(command, CancellationToken.None));
+
+        (exception is ReleaseVersionRuleViolationException).ShouldBe(expectViolation);
+        exception.ShouldNotBeOfType<ChannelRulesCannotBeIgnoredException>();
+        _channelVersionRuleDataProvider.Verify(x => x.GetRulesByChannelIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), isHistoricalImport ? Times.Never() : Times.Once());
+    }
+
+    [Fact]
+    public void IsHistoricalImport_IsNeverBoundFromTheApi()
+    {
+        var command = System.Text.Json.JsonSerializer.Deserialize<CreateReleaseCommand>("{\"IsHistoricalImport\":true,\"Version\":\"1.0.0\"}");
+
+        command.IsHistoricalImport.ShouldBeFalse();
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]

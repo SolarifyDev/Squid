@@ -70,6 +70,7 @@ public class DeploymentEventContext
 
     // Guided failure / Manual intervention
     public string GuidedFailureResolution { get; init; }
+    public string InterruptionAdministratorOverrideBy { get; init; }
     public InterruptionType? InterruptionType { get; init; }
 
     // Health check

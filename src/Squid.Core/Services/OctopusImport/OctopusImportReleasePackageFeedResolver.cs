@@ -8,79 +8,37 @@ namespace Squid.Core.Services.OctopusImport;
 
 internal static class OctopusImportReleasePackageFeedResolver
 {
-    public static string GetSourceFeedId(
-        OctopusResourceGraph graph,
-        IEnumerable<OctopusResourceNode> currentResources,
-        OctopusReleaseDto release,
-        OctopusSelectedPackageDto selectedPackage)
-    {
-        return GetExtensionString(selectedPackage.ExtensionData, "FeedId")
-               ?? GetSourceFeedIdFromAction(graph, currentResources, release, selectedPackage);
-    }
+    // A release package carries its feed (REST bundles stamp it); otherwise it is read from the release's process snapshot,
+    // then from the project's current actions.
+    internal static string GetSourceFeedId(OctopusSelectedPackageDto selectedPackage, Func<string, OctopusDeploymentProcessDto> snapshotOf, Func<string, IEnumerable<OctopusDeploymentActionDto>> currentActionsOf, OctopusReleaseDto release)
+        => GetExtensionString(selectedPackage.ExtensionData, "FeedId") ?? GetSourceFeedIdFromAction(snapshotOf(release.ProjectDeploymentProcessSnapshotId), currentActionsOf(release.ProjectId), selectedPackage);
 
-    public static bool HasPlannedDestination(
-        string sourceFeedId,
-        IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources)
-    {
-        if (string.IsNullOrWhiteSpace(sourceFeedId))
-            return false;
-
-        if (int.TryParse(sourceFeedId, out var destinationFeedId) && destinationFeedId > 0)
-            return true;
-
-        var actionableFeeds = previewResources.Values
-            .Where(IsActionableFeed)
-            .ToList();
-        var exactMatch = actionableFeeds.FirstOrDefault(feed =>
-            string.Equals(feed.SourceId, sourceFeedId, StringComparison.OrdinalIgnoreCase));
-        if (exactMatch != null)
-            return true;
-
-        var sourcePrefix = sourceFeedId.Trim();
-        return actionableFeeds.Count(feed =>
-            feed.SourceId.StartsWith($"{sourcePrefix}-", StringComparison.OrdinalIgnoreCase)) == 1;
-    }
-
-    private static bool IsActionableFeed(OctopusImportResourceResultDto resource)
+    internal static bool IsActionableFeed(OctopusImportResourceResultDto resource)
     {
         if (!string.Equals(resource.SourceType, OctopusResourceKind.Feed.ToString(), StringComparison.OrdinalIgnoreCase))
             return false;
 
-        return resource.PreviewAction == OctopusImportPreviewAction.Create
-               || resource.PreviewAction == OctopusImportPreviewAction.ReuseExisting
-               && resource.DestinationId is > 0;
+        return OctopusImportPreviewActions.ResolvesToDestination(resource.PreviewAction)
+               && (resource.PreviewAction == OctopusImportPreviewAction.Create || resource.DestinationId is > 0);
     }
 
-    private static string GetSourceFeedIdFromAction(
-        OctopusResourceGraph graph,
-        IEnumerable<OctopusResourceNode> currentResources,
-        OctopusReleaseDto release,
-        OctopusSelectedPackageDto selectedPackage)
+    private static string GetSourceFeedIdFromAction(OctopusDeploymentProcessDto snapshot, IEnumerable<OctopusDeploymentActionDto> currentActions, OctopusSelectedPackageDto selectedPackage)
     {
-        var snapshot = graph.Resources
-            .Where(resource => resource.Kind == OctopusResourceKind.DeploymentProcessSnapshot)
-            .FirstOrDefault(resource => string.Equals(
-                resource.SourceId,
-                release.ProjectDeploymentProcessSnapshotId,
-                StringComparison.OrdinalIgnoreCase))
-            ?.GetSource<OctopusDeploymentProcessDto>();
-        var action = FindReleaseAction(
-                         snapshot?.Steps.SelectMany(step => step.Actions) ?? [],
-                         selectedPackage)
-                     ?? FindReleaseAction(
-                         currentResources
-                             .Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction)
-                             .Where(resource => string.Equals(
-                                 resource.OwnerProjectId,
-                                 release.ProjectId,
-                                 StringComparison.OrdinalIgnoreCase))
-                             .Select(resource => resource.GetSource<OctopusDeploymentActionDto>())
-                             .Where(action => action != null),
-                         selectedPackage);
+        var action = FindReleaseAction(snapshot?.Steps.SelectMany(step => step.Actions) ?? [], selectedPackage) ?? FindReleaseAction(currentActions, selectedPackage);
 
-        if (action == null)
-            return null;
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
 
+    /// <summary>The feed of a release's selected package, read from the release's deployment process snapshot.</summary>
+    public static string GetSourceFeedIdFromProcess(OctopusDeploymentProcessDto process, OctopusSelectedPackageDto selectedPackage)
+    {
+        var action = FindReleaseAction(process?.Steps?.SelectMany(step => step.Actions ?? []) ?? [], selectedPackage);
+
+        return action == null ? null : FeedIdOf(action, selectedPackage);
+    }
+
+    private static string FeedIdOf(OctopusDeploymentActionDto action, OctopusSelectedPackageDto selectedPackage)
+    {
         var package = FindActionPackage(action, selectedPackage.PackageReferenceName);
         if (!string.IsNullOrWhiteSpace(package?.FeedId))
             return package.FeedId;
@@ -148,5 +106,75 @@ internal static class OctopusImportReleasePackageFeedResolver
         }
 
         return null;
+    }
+}
+
+/// <summary>
+/// What resolving a release package's source feed reads (process snapshots by id, current actions by project), indexed once per
+/// plan: a lookup per package would scan the whole graph for each of thousands of releases.
+/// </summary>
+internal sealed class OctopusImportReleasePackageFeedLookup
+{
+    private readonly Dictionary<string, OctopusResourceNode> _snapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ILookup<string, OctopusResourceNode> _actionsByProject;
+
+    public OctopusImportReleasePackageFeedLookup(OctopusResourceGraph graph, IEnumerable<OctopusResourceNode> currentResources)
+    {
+        foreach (var snapshot in graph.Resources.Where(resource => resource.Kind == OctopusResourceKind.DeploymentProcessSnapshot && resource.SourceId != null))
+            _snapshots.TryAdd(snapshot.SourceId, snapshot);
+
+        _actionsByProject = currentResources.Where(resource => resource.Kind == OctopusResourceKind.DeploymentAction).ToLookup(resource => resource.OwnerProjectId ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public string GetSourceFeedId(OctopusReleaseDto release, OctopusSelectedPackageDto selectedPackage)
+        => OctopusImportReleasePackageFeedResolver.GetSourceFeedId(selectedPackage, SnapshotOf, CurrentActionsOf, release);
+
+    private OctopusDeploymentProcessDto SnapshotOf(string snapshotId)
+        => snapshotId != null && _snapshots.TryGetValue(snapshotId, out var snapshot) ? snapshot.GetSource<OctopusDeploymentProcessDto>() : null;
+
+    private IEnumerable<OctopusDeploymentActionDto> CurrentActionsOf(string projectId)
+        => _actionsByProject[projectId ?? string.Empty].Select(resource => resource.GetSource<OctopusDeploymentActionDto>()).Where(action => action != null);
+}
+
+/// <summary>
+/// Whether a release package's source feed resolves to a Squid feed, indexed once per validation over the plan's actionable feeds:
+/// an exact source id, or a unique feed whose id starts with "{id}-" (an export id with its suffix).
+/// </summary>
+internal sealed class OctopusImportPlannedFeedIndex
+{
+    private readonly HashSet<string> _exact = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _prefixCounts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly OctopusImportPriorMappings _prior;
+
+    public OctopusImportPlannedFeedIndex(IReadOnlyDictionary<string, OctopusImportResourceResultDto> previewResources, OctopusImportPriorMappings prior = null)
+    {
+        _prior = prior;
+
+        foreach (var feed in previewResources.Values.Where(OctopusImportReleasePackageFeedResolver.IsActionableFeed).Where(feed => feed.SourceId != null))
+            Add(feed.SourceId);
+    }
+
+    public bool HasPlannedDestination(string sourceFeedId)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFeedId))
+            return false;
+
+        if (int.TryParse(sourceFeedId, out var destinationFeedId) && destinationFeedId > 0)
+            return true;
+
+        // A feed imported earlier resolves through the source map even when this source no longer carries it.
+        if (_prior != null && _prior.TryGet(OctopusResourceKind.Feed.ToString(), sourceFeedId, out _))
+            return true;
+
+        return _exact.Contains(sourceFeedId) || _prefixCounts.GetValueOrDefault(sourceFeedId.Trim()) == 1;
+    }
+
+    // Every "{prefix}-" the id starts with counts once for that prefix.
+    private void Add(string sourceId)
+    {
+        _exact.Add(sourceId);
+
+        for (var dash = sourceId.IndexOf('-'); dash >= 0; dash = sourceId.IndexOf('-', dash + 1))
+            _prefixCounts[sourceId[..dash]] = _prefixCounts.GetValueOrDefault(sourceId[..dash]) + 1;
     }
 }

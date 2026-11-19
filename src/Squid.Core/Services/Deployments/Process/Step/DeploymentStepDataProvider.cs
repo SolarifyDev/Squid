@@ -25,6 +25,12 @@ public interface IDeploymentStepDataProvider : IScopedDependency
     Task<(int Count, List<DeploymentStep> Data)> GetDeploymentStepPagingAsync(int processId, int pageIndex, int pageSize, CancellationToken cancellationToken = default);
 
     Task DeleteDeploymentStepsByProcessIdAsync(int processId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Moves the step order of every step of the process at or after <paramref name="stepOrder"/> up by one, so a step can be created there.
+    /// Only that column is written (no audit columns), and the relative order of the steps is kept.
+    /// </summary>
+    Task OpenStepOrderGapAsync(int processId, int stepOrder, CancellationToken cancellationToken = default);
 }
 
 public class DeploymentStepDataProvider(
@@ -129,5 +135,12 @@ public class DeploymentStepDataProvider(
         await repository.DeleteAllAsync(steps, cancellationToken).ConfigureAwait(false);
 
         await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    // (process_id, step_order) is unique and checked per row: the moved orders are negated first, then turned back one higher.
+    public async Task OpenStepOrderGapAsync(int processId, int stepOrder, CancellationToken cancellationToken = default)
+    {
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE deployment_step SET step_order = -step_order WHERE process_id = {processId} AND step_order >= {stepOrder}", cancellationToken).ConfigureAwait(false);
+        await repository.Database.ExecuteSqlInterpolatedAsync($"UPDATE deployment_step SET step_order = 1 - step_order WHERE process_id = {processId} AND step_order <= {-stepOrder}", cancellationToken).ConfigureAwait(false);
     }
 }

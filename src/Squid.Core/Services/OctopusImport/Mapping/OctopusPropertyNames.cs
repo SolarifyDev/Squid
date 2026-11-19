@@ -18,6 +18,8 @@ internal static class OctopusPropertyNames
     public const string ActionKubernetesResourceStatusCheck = "Octopus.Action.Kubernetes.ResourceStatusCheck";
     public const string ActionKubernetesDeploymentTimeout = "Octopus.Action.Kubernetes.DeploymentTimeout";
     public const string ActionEnabledFeatures = "Octopus.Action.EnabledFeatures";
+    public const string ActionTemplateId = "Octopus.Action.Template.Id";
+    public const string ActionTemplateVersion = "Octopus.Action.Template.Version";
     public const string StepConditionExpression = "Octopus.Step.ConditionExpression";
     public const string KubernetesContainersPrefix = "Octopus.Action.KubernetesContainers.";
     public const string KubernetesPrefix = "Octopus.Action.Kubernetes.";

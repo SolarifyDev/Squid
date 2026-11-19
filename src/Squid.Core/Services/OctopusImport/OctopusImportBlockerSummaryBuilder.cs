@@ -191,6 +191,8 @@ public static class OctopusImportBlockerSummaryBuilder
                 BuildResourceMessage(resources, "uses configuration that Squid cannot import."),
             OctopusImportActionMappingDiagnosticCodes.MissingRuntimeActionHandler =>
                 BuildResourceMessage(resources, "cannot be imported because Squid does not have a handler to run it."),
+            OctopusImportPreviewDiagnosticCodes.BuiltInTeamEquivalentMissing =>
+                BuildResourceMessage(resources, "is an Octopus built-in team whose Squid built-in equivalent is missing from the destination."),
             OctopusImportActionMappingDiagnosticCodes.MissingResponsibleTeamMapping =>
                 BuildResourceMessage(resources, "references a team that is not available in the destination."),
             OctopusImportActionMappingDiagnosticCodes.MissingFeedMapping or
@@ -220,6 +222,14 @@ public static class OctopusImportBlockerSummaryBuilder
                 "The import could not be completed because an error occurred. No changes were saved.",
             OctopusImportConfirmationDiagnosticCodes.ValidationBlockedConfirmation =>
                 "The import plan is no longer valid. Generate a new preview before importing.",
+            OctopusImportConfirmationDiagnosticCodes.TransientRetriesExhausted =>
+                "The database kept failing while importing, so nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationInterrupted =>
+                "The server running the import stopped before it finished, so nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationNotStarted =>
+                "The import did not start because the database failed. Nothing was saved. Import again.",
+            OctopusImportConfirmationDiagnosticCodes.ConfirmationRetryable =>
+                "The import was rolled back and nothing was saved. Import again.",
             _ when code.StartsWith("octopus.archive.", StringComparison.OrdinalIgnoreCase)
                 || code.StartsWith("octopus.input.", StringComparison.OrdinalIgnoreCase)
                 || code.StartsWith("octopus.manifest.", StringComparison.OrdinalIgnoreCase)

@@ -1,0 +1,57 @@
+[
+  {
+    "Id": "Lifecycles-1",
+    "SpaceId": "Spaces-1",
+    "Phases": [
+      {
+        "Id": "6f0b4b0e-3c1d-4a8e-9a43-1f3d1b8a0001",
+        "Name": "Dev",
+        "AutomaticDeploymentTargets": [
+          "Environments-1"
+        ],
+        "OptionalDeploymentTargets": [],
+        "MinimumEnvironmentsBeforePromotion": 0,
+        "IsOptionalPhase": false,
+        "IsPriorityPhase": false,
+        "ReleaseRetentionPolicy": null,
+        "TentacleRetentionPolicy": null
+      },
+      {
+        "Id": "6f0b4b0e-3c1d-4a8e-9a43-1f3d1b8a0002",
+        "Name": "Prod",
+        "AutomaticDeploymentTargets": [],
+        "OptionalDeploymentTargets": [
+          "Environments-3"
+        ],
+        "MinimumEnvironmentsBeforePromotion": 0,
+        "IsOptionalPhase": true,
+        "IsPriorityPhase": false,
+        "ReleaseRetentionPolicy": {
+          "Strategy": "Count",
+          "Unit": "Days",
+          "QuantityToKeep": 30,
+          "ShouldKeepForever": false
+        },
+        "TentacleRetentionPolicy": null
+      }
+    ],
+    "Slug": "default-lifecycle",
+    "Name": "Default Lifecycle",
+    "ReleaseRetentionPolicy": {
+      "Strategy": "Default",
+      "Unit": "Items",
+      "QuantityToKeep": 0,
+      "ShouldKeepForever": true
+    },
+    "TentacleRetentionPolicy": {
+      "Strategy": "Forever",
+      "Unit": "Items",
+      "QuantityToKeep": 0,
+      "ShouldKeepForever": true
+    },
+    "Description": "",
+    "Links": {
+      "Self": "/api/Spaces-1/lifecycles/Lifecycles-1"
+    }
+  }
+]

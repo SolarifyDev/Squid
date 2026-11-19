@@ -1,0 +1,96 @@
+{
+  "Task": {
+    "Id": "ServerTasks-1",
+    "SpaceId": "Spaces-1",
+    "EstimatedRemainingQueueDurationSeconds": 0,
+    "Name": "Deploy",
+    "Description": "Deploy Web App release 1.0.1 to Dev",
+    "Arguments": {
+      "DeploymentId": "Deployments-1"
+    },
+    "State": "Success",
+    "Completed": "Thursday, 02 January 2025 3:06:00 AM +00:00",
+    "QueueTime": "2025-01-02T03:05:00.000+00:00",
+    "QueueTimeExpiry": null,
+    "StartTime": "2025-01-02T03:05:01.000+00:00",
+    "LastUpdatedTime": "2025-01-02T03:06:00.000+00:00",
+    "CompletedTime": "2025-01-02T03:06:00.000+00:00",
+    "ServerNode": "OctopusServerNodes-node1",
+    "Duration": "59 seconds",
+    "ErrorMessage": "",
+    "HasBeenPickedUpByProcessor": true,
+    "IsCompleted": true,
+    "FinishedSuccessfully": true,
+    "HasPendingInterruptions": false,
+    "CanRerun": false,
+    "HasWarningsOrErrors": false,
+    "UnmetPreconditions": null,
+    "ProjectId": "Projects-1",
+    "PendingInterruptionTypes": [],
+    "Links": {
+      "Self": "/api/tasks/ServerTasks-1"
+    }
+  },
+  "ActivityLogs": [
+    {
+      "Id": "ServerTasks-1_ABCDEFGHIJ",
+      "Name": "Deploy Web App release 1.0.1 to Dev",
+      "Started": "2025-01-02T03:05:01.000+00:00",
+      "Ended": "2025-01-02T03:06:00.000+00:00",
+      "Status": "Success",
+      "ShowAtSummaryLevel": true,
+      "Children": [
+        {
+          "Id": "ServerTasks-1_ABCDEFGHIJ/0001",
+          "Name": "Step 1: Run migrations",
+          "Started": "2025-01-02T03:05:02.000+00:00",
+          "Ended": "2025-01-02T03:05:30.000+00:00",
+          "Status": "Success",
+          "ShowAtSummaryLevel": true,
+          "Children": [
+            {
+              "Id": "ServerTasks-1_ABCDEFGHIJ/0001/0001",
+              "Name": "dev-cluster",
+              "Started": "2025-01-02T03:05:03.000+00:00",
+              "Ended": "2025-01-02T03:05:30.000+00:00",
+              "Status": "Success",
+              "Children": [],
+              "LogElements": [
+                {
+                  "OccurredAt": "2025-01-02T03:05:04.000+00:00",
+                  "Category": "Info",
+                  "MessageText": "migrate https://api.example.com",
+                  "Number": 1
+                }
+              ]
+            }
+          ],
+          "LogElements": [
+            {
+              "OccurredAt": "2025-01-02T03:05:02.000+00:00",
+              "Category": "Info",
+              "MessageText": "Running step",
+              "Number": 1
+            }
+          ]
+        }
+      ],
+      "LogElements": [
+        {
+          "OccurredAt": "2025-01-02T03:05:01.000+00:00",
+          "Category": "Info",
+          "MessageText": "Deploying",
+          "Number": 1
+        }
+      ]
+    }
+  ],
+  "PhysicalLogSize": 2048,
+  "Progress": {
+    "ProgressPercentage": 100,
+    "EstimatedTimeRemaining": null
+  },
+  "Links": {
+    "Self": "/api/Spaces-1/tasks/ServerTasks-1/details"
+  }
+}

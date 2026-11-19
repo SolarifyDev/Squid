@@ -1,6 +1,8 @@
 using System.Globalization;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Mapping.Scripts;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Enums;
 using Squid.Message.Enums.OctopusImport;
@@ -29,6 +31,15 @@ public interface IOctopusImportVariableMapper : IScopedDependency
 
 public class OctopusImportVariableMapper : IOctopusImportVariableMapper
 {
+    private readonly IOctopusExportSecretsAccessor _secretsAccessor;
+
+    public OctopusImportVariableMapper(IOctopusExportSecretsAccessor secretsAccessor = null)
+    {
+        _secretsAccessor = secretsAccessor;
+    }
+
+    private OctopusExportSecrets Secrets => _secretsAccessor?.Secrets ?? OctopusExportSecrets.None;
+
     public OctopusImportVariableMappingResult MapToCreateCommand(
         OctopusResourceNode variableSetResource,
         OctopusImportIdMap idMap,
@@ -82,7 +93,7 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             mapping.Diagnostics);
     }
 
-    private static VariableSetCommandMapping Map(
+    private VariableSetCommandMapping Map(
         OctopusResourceNode variableSetResource,
         OctopusImportIdMap idMap,
         int destinationSpaceId,
@@ -103,10 +114,11 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
 
         var diagnostics = new List<OctopusImportDiagnosticDto>();
         var ownerType = MapOwnerType(variableSet, variableSetResource, diagnostics);
-        var ownerId = MapOwnerId(variableSet, idMap, variableSetResource, diagnostics);
+        var ownerId = MapOwnerId(variableSet, ownerType, idMap, variableSetResource, diagnostics);
         var requiredInputs = new List<OctopusImportRequiredInputDto>();
+        var secrets = Secrets;
         var variables = variableSet.Variables
-            .Select((variable, index) => MapVariable(variableSet, variable, index, idMap, diagnostics, requiredInputs))
+            .Select((variable, index) => MapVariable(new VariableMappingContext(variableSet, idMap, secrets, diagnostics, requiredInputs), variable, index))
             .ToList();
 
         return new VariableSetCommandMapping(
@@ -127,6 +139,9 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         if (string.Equals(variableSet.OwnerType, "Project", StringComparison.OrdinalIgnoreCase))
             return VariableSetOwnerType.Project;
 
+        if (OctopusResourceGraphBuilder.IsLibraryVariableSetOwner(variableSet.OwnerType))
+            return VariableSetOwnerType.LibraryVariableSet;
+
         diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableSetOwnerType,
@@ -138,10 +153,14 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
 
     private static int MapOwnerId(
         OctopusVariableSetDto variableSet,
+        VariableSetOwnerType ownerType,
         OctopusImportIdMap idMap,
         OctopusResourceNode variableSetResource,
         List<OctopusImportDiagnosticDto> diagnostics)
     {
+        if (ownerType == VariableSetOwnerType.LibraryVariableSet)
+            return MapLibraryVariableSetOwnerId(variableSet, idMap);
+
         if (idMap.TryGetDestinationId(variableSet.OwnerId, OctopusResourceKind.Project.ToString(), out var ownerId))
             return ownerId;
 
@@ -154,31 +173,20 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         return default;
     }
 
-    private static VariableModel MapVariable(
-        OctopusVariableSetDto variableSet,
-        OctopusVariableDto variable,
-        int index,
-        OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics,
-        List<OctopusImportRequiredInputDto> requiredInputs)
+    // A library variable set's owner is created by VariableService itself (it inserts the
+    // LibraryVariableSet row and back-fills OwnerId), so an unmapped owner on CREATE is expected
+    // and 0 is the correct placeholder; on UPDATE the confirmation flow has already mapped it.
+    private static int MapLibraryVariableSetOwnerId(OctopusVariableSetDto variableSet, OctopusImportIdMap idMap)
+        => idMap.TryGetDestinationId(variableSet.OwnerId, OctopusResourceKind.LibraryVariableSet.ToString(), out var ownerId) ? ownerId : default;
+
+    private static VariableModel MapVariable(VariableMappingContext context, OctopusVariableDto variable, int index)
     {
+        var diagnostics = context.Diagnostics;
         var variableType = MapVariableType(variable, diagnostics);
         var isSensitive = OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable);
+        var value = OctopusSystemVariables.RewriteReferences(isSensitive ? ResolveSensitiveValue(context, variable, index) : variable.Value);
 
-        if (isSensitive)
-        {
-            var variableSourceId = OctopusImportRequiredInputBuilder.BuildVariableSourceId(variableSet.Id, variable.Id, index);
-            requiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable));
-            diagnostics.Add(Diagnostic(
-                OctopusImportCompatibilitySeverity.Blocker,
-                OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
-                $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.",
-                OctopusResourceKind.Variable,
-                variableSourceId,
-                variable.Name));
-        }
-
-        if (!string.IsNullOrWhiteSpace(variable.Prompt?.DisplaySettings))
+        if (variable.Prompt?.HasDisplaySettings == true)
         {
             diagnostics.Add(Diagnostic(
                 OctopusImportCompatibilitySeverity.Warning,
@@ -193,48 +201,50 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         {
             Name = variable.Name,
             Description = variable.Description,
-            Value = isSensitive ? string.Empty : variable.Value,
+            Value = value,
             Type = variableType,
             IsSensitive = isSensitive,
             SortOrder = index,
             PromptLabel = variable.Prompt?.Label,
             PromptDescription = variable.Prompt?.Description,
             PromptRequired = variable.Prompt?.Required ?? false,
-            Scopes = MapScopes(variable, idMap, diagnostics)
+            Scopes = MapScopes(variable, OwnerProjectId(context.VariableSet), context.IdMap, diagnostics)
         };
     }
 
-    private static VariableType MapVariableType(
-        OctopusVariableDto variable,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    private static string ResolveSensitiveValue(VariableMappingContext context, OctopusVariableDto variable, int index)
     {
-        if (variable.IsSensitive || IsType(variable.Type, "Sensitive"))
-            return VariableType.Password;
+        if (OctopusImportSensitiveValues.TryResolve(variable, context.Secrets, out var plaintext)) return plaintext;
 
-        var type = variable.Type?.Trim();
+        var variableSourceId = OctopusImportChildSourceIds.Variable(context.VariableSet, variable.Id, index);
+        var withheld = OctopusImportSensitiveValues.IsWithheld(variable);
+        var withheldByServer = OctopusImportSecretSeverity.IsWithheldByServer(withheld, context.Secrets);
 
-        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String"))
-            return VariableType.String;
+        context.RequiredInputs.Add(OctopusImportRequiredInputBuilder.ForSensitiveVariable(variableSourceId, variable, context.Secrets));
+        context.Diagnostics.Add(Diagnostic(
+            OctopusImportSecretSeverity.For(withheld, context.Secrets),
+            withheldByServer ? OctopusImportVariableMappingDiagnosticCodes.SensitiveValueWithheldByServer : OctopusImportVariableMappingDiagnosticCodes.SensitiveValueOmitted,
+            SensitiveValueMessage(variable, withheldByServer),
+            OctopusResourceKind.Variable,
+            variableSourceId,
+            variable.Name));
 
-        if (IsType(type, "Certificate"))
-            return VariableType.Certificate;
+        return string.Empty;
+    }
 
-        if (IsType(type, "Boolean"))
-            return VariableType.Boolean;
+    private static string SensitiveValueMessage(OctopusVariableDto variable, bool withheldByServer)
+        => withheldByServer
+            ? $"The Octopus server did not return the value of sensitive variable '{variable.Name}'; it was imported empty and is listed as a missing secret."
+            : $"Sensitive Octopus variable '{variable.Name}' cannot be imported without its source value. Confirmation is blocked while this required input is unresolved.";
 
-        if (IsType(type, "Integer") || IsType(type, "Number"))
-            return VariableType.Number;
-
-        if (IsType(type, "MultiLineText"))
-            return VariableType.MultiLineText;
-
-        if (IsType(type, "SelectList") || IsType(type, "Select"))
-            return VariableType.SelectList;
+    private static VariableType MapVariableType(OctopusVariableDto variable, List<OctopusImportDiagnosticDto> diagnostics)
+    {
+        if (SquidVariableType(variable) is { } mapped) return mapped;
 
         diagnostics.Add(Diagnostic(
             OctopusImportCompatibilitySeverity.Blocker,
             OctopusImportVariableMappingDiagnosticCodes.UnsupportedVariableType,
-            $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.",
+            UnsupportedVariableTypeMessage(variable),
             OctopusResourceKind.Variable,
             variable.Id,
             variable.Name));
@@ -242,109 +252,67 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
         return VariableType.String;
     }
 
-    private static List<VariableScopeModel> MapScopes(
-        OctopusVariableDto variable,
-        OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics)
+    /// <summary>
+    /// The Squid type an Octopus variable is written as, or null when Squid has no such type (account, worker-pool,
+    /// certificate-like types it cannot hold). Preview asks the same rule, so it blocks or skips exactly what this
+    /// mapper would refuse.
+    /// </summary>
+    public static VariableType? SquidVariableType(OctopusVariableDto variable)
+    {
+        if (OctopusImportRequiredInputBuilder.IsSensitiveVariable(variable)) return VariableType.Password;
+
+        var type = variable.Type?.Trim();
+
+        if (string.IsNullOrWhiteSpace(type) || IsType(type, "String")) return VariableType.String;
+        if (IsType(type, "Certificate")) return VariableType.Certificate;
+        if (IsType(type, "Boolean")) return VariableType.Boolean;
+        if (IsType(type, "Integer") || IsType(type, "Number")) return VariableType.Number;
+        if (IsType(type, "MultiLineText")) return VariableType.MultiLineText;
+        if (IsType(type, "SelectList") || IsType(type, "Select")) return VariableType.SelectList;
+
+        return null;
+    }
+
+    public static string UnsupportedVariableTypeMessage(OctopusVariableDto variable)
+        => $"Octopus variable type '{variable.Type}' for variable '{variable.Name}' is not supported by the current Squid import variable mapper.";
+
+    private static string OwnerProjectId(OctopusVariableSetDto variableSet) => OctopusResourceGraphBuilder.IsLibraryVariableSetOwner(variableSet?.OwnerType) ? null : variableSet?.OwnerId;
+
+    private static List<VariableScopeModel> MapScopes(OctopusVariableDto variable, string ownerProjectId, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics)
     {
         var scopes = new List<VariableScopeModel>();
 
-        foreach (var scope in variable.Scope ?? [])
-        {
-            var scopeType = MapScopeType(scope.Key);
-
-            if (scopeType == null)
-            {
-                diagnostics.Add(Diagnostic(
-                    OctopusImportCompatibilitySeverity.Blocker,
-                    OctopusImportVariableMappingDiagnosticCodes.UnsupportedScopeType,
-                    $"Octopus variable scope type '{scope.Key}' for variable '{variable.Name}' is not supported by Squid variable commands.",
-                    OctopusResourceKind.Variable,
-                    variable.Id,
-                    variable.Name));
-                continue;
-            }
-
-            foreach (var sourceScopeValue in scope.Value ?? [])
-                AddScope(variable, scope.Key, scopeType.Value, sourceScopeValue, idMap, diagnostics, scopes);
-        }
+        foreach (var resolution in OctopusImportVariableScopeRule.ResolveAll(variable.Scope, ownerProjectId, (sourceId, kind) => idMap.TryGetDestinationId(sourceId, kind.ToString(), out _)))
+            AddScope(variable, resolution, idMap, diagnostics, scopes);
 
         return scopes;
     }
 
-    private static void AddScope(
-        OctopusVariableDto variable,
-        string octopusScopeType,
-        VariableScopeType scopeType,
-        string sourceScopeValue,
-        OctopusImportIdMap idMap,
-        List<OctopusImportDiagnosticDto> diagnostics,
-        List<VariableScopeModel> scopes)
+    private static void AddScope(OctopusVariableDto variable, OctopusImportScopeResolution resolution, OctopusImportIdMap idMap, List<OctopusImportDiagnosticDto> diagnostics, List<VariableScopeModel> scopes)
     {
-        if (string.IsNullOrWhiteSpace(sourceScopeValue))
+        switch (resolution.Outcome)
         {
-            diagnostics.Add(Diagnostic(
-                OctopusImportCompatibilitySeverity.Warning,
-                OctopusImportVariableMappingDiagnosticCodes.EmptyScopeValue,
-                $"Octopus variable '{variable.Name}' contains an empty '{octopusScopeType}' scope value that was omitted.",
-                OctopusResourceKind.Variable,
-                variable.Id,
-                variable.Name));
-            return;
+            case OctopusImportScopeOutcome.PassThrough:
+                scopes.Add(new VariableScopeModel { ScopeType = resolution.ScopeType!.Value, ScopeValue = resolution.ScopeValue });
+                return;
+            case OctopusImportScopeOutcome.Mapped:
+                idMap.TryGetDestinationId(resolution.ScopeValue, resolution.SourceKind!.Value.ToString(), out var destinationId);
+                scopes.Add(new VariableScopeModel { ScopeType = resolution.ScopeType!.Value, ScopeValue = destinationId.ToString(CultureInfo.InvariantCulture) });
+                return;
+            case OctopusImportScopeOutcome.EmptyValue:
+                diagnostics.Add(VariableDiagnostic(variable, OctopusImportCompatibilitySeverity.Warning, OctopusImportVariableMappingDiagnosticCodes.EmptyScopeValue, $"Octopus variable '{variable.Name}' contains an empty '{resolution.ScopeKey}' scope value that was omitted."));
+                return;
+            case OctopusImportScopeOutcome.UnsupportedType:
+                diagnostics.Add(VariableDiagnostic(variable, OctopusImportCompatibilitySeverity.Blocker, OctopusImportVariableMappingDiagnosticCodes.UnsupportedScopeType, $"Octopus variable scope type '{resolution.ScopeKey}' for variable '{variable.Name}' is not supported by Squid variable commands."));
+                return;
+            default:
+                diagnostics.Add(VariableDiagnostic(variable, OctopusImportCompatibilitySeverity.Blocker, OctopusImportVariableMappingDiagnosticCodes.MissingScopeMapping, $"Octopus variable scope '{resolution.ScopeKey}:{resolution.ScopeValue}' for variable '{variable.Name}' has not been mapped to a destination Squid scope value."));
+                return;
         }
-
-        if (scopeType == VariableScopeType.Role)
-        {
-            scopes.Add(new VariableScopeModel
-            {
-                ScopeType = scopeType,
-                ScopeValue = sourceScopeValue
-            });
-            return;
-        }
-
-        var sourceKind = ScopeSourceKind(scopeType);
-        if (sourceKind != null && idMap.TryGetDestinationId(sourceScopeValue, sourceKind.Value.ToString(), out var destinationId))
-        {
-            scopes.Add(new VariableScopeModel
-            {
-                ScopeType = scopeType,
-                ScopeValue = destinationId.ToString(CultureInfo.InvariantCulture)
-            });
-            return;
-        }
-
-        diagnostics.Add(Diagnostic(
-            OctopusImportCompatibilitySeverity.Blocker,
-            OctopusImportVariableMappingDiagnosticCodes.MissingScopeMapping,
-            $"Octopus variable scope '{octopusScopeType}:{sourceScopeValue}' for variable '{variable.Name}' has not been mapped to a destination Squid scope value.",
-            OctopusResourceKind.Variable,
-            variable.Id,
-            variable.Name));
     }
 
-    private static VariableScopeType? MapScopeType(string octopusScopeType)
-        => octopusScopeType?.Trim() switch
-        {
-            "Environment" => VariableScopeType.Environment,
-            "Machine" => VariableScopeType.Machine,
-            "Role" => VariableScopeType.Role,
-            "Channel" => VariableScopeType.Channel,
-            "Action" => VariableScopeType.Action,
-            "Process" => VariableScopeType.Process,
-            _ => null
-        };
-
-    private static OctopusResourceKind? ScopeSourceKind(VariableScopeType scopeType)
-        => scopeType switch
-        {
-            VariableScopeType.Environment => OctopusResourceKind.Environment,
-            VariableScopeType.Machine => OctopusResourceKind.Machine,
-            VariableScopeType.Channel => OctopusResourceKind.Channel,
-            VariableScopeType.Action => OctopusResourceKind.DeploymentAction,
-            VariableScopeType.Process => OctopusResourceKind.DeploymentProcess,
-            _ => null
-        };
+    private static OctopusImportDiagnosticDto VariableDiagnostic(OctopusVariableDto variable, OctopusImportCompatibilitySeverity severity, string code, string message)
+        => Diagnostic(severity, code, message, OctopusResourceKind.Variable, variable.Id, variable.Name);
 
     private static bool IsType(string value, string expected)
         => string.Equals(value?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
@@ -372,6 +340,13 @@ public class OctopusImportVariableMapper : IOctopusImportVariableMapper
             SourceId = sourceId,
             ResourceName = resourceName
         });
+
+    private sealed record VariableMappingContext(
+        OctopusVariableSetDto VariableSet,
+        OctopusImportIdMap IdMap,
+        OctopusExportSecrets Secrets,
+        List<OctopusImportDiagnosticDto> Diagnostics,
+        List<OctopusImportRequiredInputDto> RequiredInputs);
 
     private sealed record VariableSetCommandMapping(
         string Name,

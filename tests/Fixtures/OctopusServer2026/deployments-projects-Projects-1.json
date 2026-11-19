@@ -1,0 +1,77 @@
+{
+  "ItemType": "Deployment",
+  "TotalResults": 1,
+  "ItemsPerPage": 30,
+  "NumberOfPages": 1,
+  "LastPageNumber": 0,
+  "Items": [
+    {
+      "Id": "Deployments-1",
+      "SpaceId": "Spaces-1",
+      "ReleaseId": "Releases-1",
+      "ChannelId": "Channels-1",
+      "DeploymentProcessId": "deploymentprocess-Projects-1-s-4-ABCDE",
+      "Changes": [
+        {
+          "Version": "1.0.1",
+          "ReleaseNotes": null,
+          "BuildInformation": [],
+          "WorkItems": [],
+          "Commits": []
+        }
+      ],
+      "ChangesMarkdown": "",
+      "EnvironmentId": "Environments-1",
+      "TenantId": null,
+      "ForcePackageDownload": false,
+      "ForcePackageRedeployment": false,
+      "Priority": "LifecycleDefault",
+      "DebugMode": "False",
+      "SkipActions": [],
+      "SpecificMachineIds": [],
+      "ExcludedMachineIds": [],
+      "ManifestVariableSetId": "variableset-Deployments-1",
+      "TaskId": "ServerTasks-1",
+      "ProjectId": "Projects-1",
+      "UseGuidedFailure": false,
+      "Comments": null,
+      "FormValues": {},
+      "QueueTime": null,
+      "QueueTimeExpiry": null,
+      "Name": "Deploy to Dev",
+      "Created": "2025-01-02T03:05:00.000+00:00",
+      "TentacleRetentionPeriod": {
+        "Strategy": "Default",
+        "Unit": "Items",
+        "QuantityToKeep": 0,
+        "ShouldKeepForever": false
+      },
+      "ChangeRequestSettings": null,
+      "DeployedBy": "import-reader",
+      "DeployedById": "Users-7",
+      "FailureEncountered": false,
+      "DeployedToMachineIds": [
+        "Machines-1"
+      ],
+      "ExecutionPlanLogContext": {
+        "Steps": [
+          {
+            "Slug": "run-migrations",
+            "CorrelationId": "ServerTasks-1_ABCDEFGHIJ/0001"
+          }
+        ]
+      },
+      "FailTargetDiscovery": false,
+      "Links": {
+        "Self": "/api/Spaces-1/deployments/Deployments-1"
+      }
+    }
+  ],
+  "Links": {
+    "Self": "/api/Spaces-1/deployments?skip=0&take=30",
+    "Template": "/api/Spaces-1/deployments{?skip,take}",
+    "Page.All": "/api/Spaces-1/deployments?skip=0&take=2147483647",
+    "Page.Current": "/api/Spaces-1/deployments?skip=0&take=30",
+    "Page.Last": "/api/Spaces-1/deployments?skip=0&take=30"
+  }
+}

@@ -264,7 +264,9 @@ public class DeploymentResourceGeneratorTests
         var (step, action) = CreateMinimal();
         Add(action, "Squid.Action.KubernetesContainers.DeploymentStyle", "BlueGreen");
 
-        var yaml = await GetDeploymentYaml(step, action);
+        // Blue/green slot manifests are embedded in the runtime switch script, not a static deployment.yaml.
+        var files = await new KubernetesContainersActionYamlGenerator().GenerateAsync(step, action, CancellationToken.None);
+        var yaml = Encoding.UTF8.GetString(files["bluegreen.sh"]);
 
         yaml.ShouldContain("type: RollingUpdate");
         yaml.ShouldNotContain("type: BlueGreen");

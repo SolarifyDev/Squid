@@ -92,33 +92,87 @@ public class KindClusterFixture : IAsyncLifetime
     /// cluster's node container so hybrid tests can run pods with
     /// <c>imagePullPolicy: IfNotPresent</c> without needing public-network egress.
     ///
-    /// <para>Logic:</para>
-    /// <list type="number">
-    ///   <item><c>docker pull &lt;image&gt;</c> — pulls to the host's docker daemon if not already cached</item>
-    ///   <item><c>kind load docker-image &lt;image&gt; --name &lt;cluster&gt;</c> — loads into the Kind node</item>
-    /// </list>
+    /// <para>Docker 29+ (containerd image store) makes <c>docker save</c> emit a
+    /// multi-platform index whose non-host blobs are absent, and
+    /// <c>kind load docker-image</c> imports with <c>--all-platforms</c> → "content
+    /// digest not found". So we first save only the host platform and import it
+    /// straight into the node's containerd (no <c>--digests</c>: Docker 29 archives
+    /// carry a non-runnable manifest that fails to unpack as a digest ref); if that path is unavailable (Docker
+    /// older than 28 has no <c>docker save --platform</c>) we fall back to
+    /// <c>kind load docker-image</c>. Mirrors the "Preload busybox into Kind"
+    /// step in <c>.github/workflows/e2e-k8s-pipeline.yml</c>.</para>
     ///
-    /// <para>If either step fails (e.g. docker daemon not running, kind CLI
-    /// version mismatch), we log a warning and continue. Tests that NEED
-    /// the preload will fail with a clearer error than "fixture init failed".</para>
+    /// <para>Failures only warn — tests that NEED the preload fail with a
+    /// clearer error than "fixture init failed".</para>
     /// </summary>
     private async Task TryPreloadImagesAsync()
     {
         if (_isExternalCluster) return;   // external cluster: caller manages image preload
 
-        foreach (var image in PreloadedImages)
-        {
-            var pull = await RunProcessAsync("docker", $"pull {image}");
-            if (pull.ExitCode != 0)
-            {
-                Console.WriteLine($"[KindClusterFixture] Warning: docker pull {image} failed (exit {pull.ExitCode}): {pull.Error}");
-                continue;
-            }
+        var platform = await ReadDockerPlatformAsync().ConfigureAwait(false);
 
-            var load = await RunProcessAsync("kind", $"load docker-image {image} --name {ClusterName}");
-            if (load.ExitCode != 0)
-                Console.WriteLine($"[KindClusterFixture] Warning: kind load {image} failed (exit {load.ExitCode}): {load.Error}");
+        foreach (var image in PreloadedImages)
+            await PreloadImageAsync(image, platform).ConfigureAwait(false);
+    }
+
+    private async Task PreloadImageAsync(string image, string platform)
+    {
+        var loaded = await PreloadViaPlatformScopedSaveAsync(image, platform).ConfigureAwait(false) || await PreloadViaKindLoadAsync(image).ConfigureAwait(false);
+
+        if (!loaded) return;
+
+        if (!await IsImageOnNodeAsync(image).ConfigureAwait(false))
+            Console.WriteLine($"[KindClusterFixture] Warning: {image} still not present on Kind node {ControlPlaneNode} after preload");
+    }
+
+    private static string ControlPlaneNode => $"{ClusterName}-control-plane";
+
+    private static async Task<string> ReadDockerPlatformAsync()
+    {
+        var result = await RunProcessAsync("docker", "version --format \"{{.Server.Os}}/{{.Server.Arch}}\"").ConfigureAwait(false);
+
+        return result.ExitCode == 0 ? result.Output : null;
+    }
+
+    private static async Task<bool> PreloadViaPlatformScopedSaveAsync(string image, string platform)
+    {
+        if (string.IsNullOrEmpty(platform)) return false;
+
+        var pull = await RunProcessAsync("docker", $"pull --platform {platform} {image}").ConfigureAwait(false);
+
+        if (pull.ExitCode != 0) return false;
+
+        var import = await RunProcessAsync("bash", $"-o pipefail -c \"docker save --platform {platform} {image} | docker exec -i {ControlPlaneNode} ctr --namespace=k8s.io images import --snapshotter=overlayfs -\"").ConfigureAwait(false);
+
+        if (import.ExitCode == 0) return true;
+
+        Console.WriteLine($"[KindClusterFixture] Platform-scoped import of {image} failed (exit {import.ExitCode}), falling back to kind load: {import.Error}");
+        return false;
+    }
+
+    private static async Task<bool> PreloadViaKindLoadAsync(string image)
+    {
+        var pull = await RunProcessAsync("docker", $"pull {image}").ConfigureAwait(false);
+
+        if (pull.ExitCode != 0)
+        {
+            Console.WriteLine($"[KindClusterFixture] Warning: docker pull {image} failed (exit {pull.ExitCode}): {pull.Error}");
+            return false;
         }
+
+        var load = await RunProcessAsync("kind", $"load docker-image {image} --name {ClusterName}").ConfigureAwait(false);
+
+        if (load.ExitCode == 0) return true;
+
+        Console.WriteLine($"[KindClusterFixture] Warning: kind load {image} failed (exit {load.ExitCode}): {load.Error}");
+        return false;
+    }
+
+    private static async Task<bool> IsImageOnNodeAsync(string image)
+    {
+        var inspect = await RunProcessAsync("docker", $"exec {ControlPlaneNode} crictl inspecti {image}").ConfigureAwait(false);
+
+        return inspect.ExitCode == 0;
     }
 
     public async Task DisposeAsync()

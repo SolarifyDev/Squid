@@ -1,3 +1,4 @@
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using System;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -101,5 +102,27 @@ public class ServerTaskControlServiceCancelTests
         await _sut.CancelTaskAsync(1, CancellationToken.None);
 
         _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // An imported Octopus task keeps its original state (R8) but is read-only history: cancelling it — whatever that
+    // state is — must be refused before anything is touched (no transition, no registry signal, no job deletion).
+    [Theory]
+    [InlineData(TaskState.Executing)]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Paused)]
+    [InlineData(TaskState.Cancelling)]
+    public async Task ImportedTask_Throws409Exception(string state)
+    {
+        var task = new ServerTaskEntity { Id = 1, State = state, JobId = "job-1" };
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(task);
+        _dataProvider.Setup(d => d.IsImportedAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        var ex = await Should.ThrowAsync<ImportedServerTaskReadOnlyException>(() => _sut.CancelTaskAsync(1, CancellationToken.None));
+
+        ex.TaskId.ShouldBe(1);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _registry.Verify(r => r.TryCancel(It.IsAny<int>()), Times.Never);
+        _jobClient.Verify(j => j.DeleteJob(It.IsAny<string>()), Times.Never);
+        _interruptionService.Verify(i => i.CancelPendingInterruptionsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

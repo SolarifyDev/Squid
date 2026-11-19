@@ -220,6 +220,25 @@ public class KubernetesDeployYamlActionHandlerDescribeIntentTests
         intent.StatusCheckTimeoutSeconds.ShouldBe(300);
     }
 
+    // Absent keeps the native Squid behaviour (wait on Jobs); only an explicit value — which the Octopus
+    // import always writes — switches the Job wait off.
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("True", true)]
+    [InlineData("False", false)]
+    [InlineData("false", false)]
+    [InlineData(" False ", false)]
+    public async Task DescribeIntentAsync_WaitForJobs_ReadFromActionPropertyDefaultingToTrue(string waitForJobs, bool expected)
+    {
+        var action = CreateInlineYamlAction();
+
+        if (waitForJobs != null) action.Properties.Add(new DeploymentActionPropertyDto { PropertyName = "Squid.Action.Kubernetes.WaitForJobs", PropertyValue = waitForJobs });
+
+        var intent = (KubernetesApplyIntent)await ((IActionHandler)_handler).DescribeIntentAsync(CreateContext(action: action), CancellationToken.None);
+
+        intent.WaitForJobs.ShouldBe(expected);
+    }
+
     [Fact]
     public async Task DescribeIntentAsync_NullContext_Throws()
     {

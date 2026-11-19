@@ -94,6 +94,16 @@ public class ServerTaskController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("{taskId:int}/force-cancel")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ForceCancelServerTaskResponse))]
+    public async Task<IActionResult> ForceCancelTaskAsync(int taskId)
+    {
+        var response = await _mediator.SendAsync<ForceCancelServerTaskCommand, ForceCancelServerTaskResponse>(
+            new ForceCancelServerTaskCommand { TaskId = taskId }).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("{taskId:int}/resume")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(ResumeServerTaskResponse))]
     public async Task<IActionResult> ResumeTaskAsync(int taskId)

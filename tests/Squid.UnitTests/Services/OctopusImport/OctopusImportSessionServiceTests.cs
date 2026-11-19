@@ -19,6 +19,7 @@ public class OctopusImportSessionServiceTests
         _currentUser.SetupGet(u => u.Id).Returns(42);
         _temporaryUploadSettings.SetupGet(s => s.FailedRetentionPeriod).Returns(TimeSpan.FromHours(6));
         _temporaryUploadSettings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
+        _temporaryUploadSettings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
         _service = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _temporaryUploadSettings.Object);
     }
 
@@ -109,13 +110,13 @@ public class OctopusImportSessionServiceTests
     {
         var sessionId = Guid.NewGuid();
         _dataProvider
-            .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetSessionStatusNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Extracted));
 
         var result = await _service.GetSessionAsync(sessionId, 7, CancellationToken.None);
 
         result.State.ShouldBe(OctopusImportSessionState.Extracted);
-        _dataProvider.Verify(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(p => p.GetSessionStatusNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -134,7 +135,7 @@ public class OctopusImportSessionServiceTests
             () => _service.GetSessionAsync(Guid.NewGuid(), 7, CancellationToken.None));
 
         _dataProvider.Verify(
-            p => p.GetSessionNoTrackingAsync(
+            p => p.GetSessionStatusNoTrackingAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<int>(),
                 It.IsAny<int>(),
@@ -184,6 +185,40 @@ public class OctopusImportSessionServiceTests
                 7,
                 new OctopusImportTemporaryUpload("/tmp/upload.zip", 1234),
                 CancellationToken.None));
+    }
+
+    // A validation after the user changed what to import replaces (or, when blocked, clears) the plan confirmation imports, only while
+    // the session is Validated: once importing or settled, the plan it confirmed is never swapped.
+    [Theory]
+    [InlineData("{\"previewPlan\":{}}")]
+    [InlineData(null)]
+    public async Task ReplaceValidatedPlanAsync_Validated_ReplacesOrClearsThePlan_StateKept(string json)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Validated);
+        session.ValidatedPlanJson = "{\"previewPlan\":{\"old\":true}}";
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var result = await _service.ReplaceValidatedPlanAsync(sessionId, 7, json);
+
+        session.ValidatedPlanJson.ShouldBe(json);
+        result.State.ShouldBe(OctopusImportSessionState.Validated);
+        _dataProvider.Verify(p => p.UpdateSessionAsync(session, session.DataVersion, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportSessionState.Previewed)]
+    [InlineData(OctopusImportSessionState.Importing)]
+    [InlineData(OctopusImportSessionState.Succeeded)]
+    [InlineData(OctopusImportSessionState.Failed)]
+    public async Task ReplaceValidatedPlanAsync_NotValidated_Throws_NothingWritten(OctopusImportSessionState state)
+    {
+        var sessionId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, state));
+
+        await Should.ThrowAsync<OctopusImportSessionStateTransitionException>(() => _service.ReplaceValidatedPlanAsync(sessionId, 7, "{}"));
+
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -296,15 +331,48 @@ public class OctopusImportSessionServiceTests
             .Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>()))
             .ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
         _dataProvider
-            .Setup(p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.SessionId == sessionId && a.OwnerUserId == 42 && a.DestinationSpaceId == 7), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None);
+        var admitted = await _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None);
 
         admitted.ShouldBeTrue();
         _dataProvider.Verify(
-            p => p.TryStartConfirmationAsync(sessionId, 42, 7, It.IsAny<byte[]>(), It.IsAny<CancellationToken>()),
+            p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.SessionId == sessionId && a.OwnerUserId == 42 && a.DestinationSpaceId == 7 && a.AttemptId != Guid.Empty), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // The caller's attempt id is the fencing token the admission records; nothing else may stand in for it.
+    [Fact]
+    public async Task TryStartConfirmationAsync_WithAttemptId_RecordsThatAttempt()
+    {
+        var sessionId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await _service.TryStartConfirmationAsync(sessionId, 7, attemptId, null, CancellationToken.None);
+
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.AttemptId == attemptId), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // The version the validated plan was read with wins over the current one: a plan validated again meanwhile is never imported instead.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TryStartConfirmationAsync_ExpectsTheVersionThePlanWasReadWith_OrTheCurrentOne(bool planVersionGiven)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Validated);
+        session.DataVersion = [1, 1, 1];
+        byte[] planVersion = [2, 2, 2];
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+
+        await _service.TryStartConfirmationAsync(sessionId, 7, planVersionGiven ? planVersion : null, CancellationToken.None);
+
+        var expected = planVersionGiven ? planVersion : session.DataVersion;
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.Is<OctopusImportConfirmationAdmission>(a => a.ExpectedDataVersion == expected), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -313,17 +381,45 @@ public class OctopusImportSessionServiceTests
         var sessionId = Guid.NewGuid();
 
         var exception = await Should.ThrowAsync<OctopusImportSessionNotFoundException>(
-            () => _service.TryStartConfirmationAsync(sessionId, 7, CancellationToken.None));
+            () => _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None));
 
         exception.SessionId.ShouldBe(sessionId);
-        _dataProvider.Verify(
-            p => p.TryStartConfirmationAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<byte[]>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(OctopusImportSessionState.Succeeded)]
+    [InlineData(OctopusImportSessionState.Failed)]
+    public async Task RecordResultAsync_AnyTerminalState_ClearsTheRetainedExportPassword(OctopusImportSessionState terminalState)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Importing);
+        session.ProtectedExportPassword = "v2:protected";
+        string persistedPassword = "not-called";
+
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider
+            .Setup(p => p.UpdateSessionAsync(session, It.IsAny<byte[]>(), true, It.IsAny<CancellationToken>()))
+            .Callback<OctopusImportSession, byte[], bool, CancellationToken>((s, _, _, _) => persistedPassword = s.ProtectedExportPassword)
+            .Returns(Task.CompletedTask);
+
+        await _service.RecordResultAsync(sessionId, 7, terminalState, new OctopusImportSessionResultDto(), CancellationToken.None);
+
+        persistedPassword.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task UpdatePayloadAndTransitionAsync_NonTerminalTransition_KeepsTheRetainedExportPassword()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Previewed);
+        session.ProtectedExportPassword = "v2:protected";
+
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        await _service.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, validatedPlanJson: "{}", ct: CancellationToken.None);
+
+        session.ProtectedExportPassword.ShouldBe("v2:protected");
     }
 
     [Fact]
@@ -461,7 +557,120 @@ public class OctopusImportSessionServiceTests
             State = state.ToString(),
             SourceSummaryJson = "{\"fileName\":\"export.zip\"}",
             ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
-            LastStateChangedAt = DateTimeOffset.UtcNow
+            LastStateChangedAt = DateTimeOffset.UtcNow,
+            CreatedDate = DateTimeOffset.UtcNow
         };
+    }
+
+    // ── Maximum session age ───────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateSession_MaxAgeBelowRetention_ExpiresAtIsTheCap()
+    {
+        _temporaryUploadSettings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(2));
+        OctopusImportSession inserted = null;
+        _dataProvider.Setup(p => p.AddSessionAsync(It.IsAny<OctopusImportSession>(), true, It.IsAny<CancellationToken>())).Callback<OctopusImportSession, bool, CancellationToken>((session, _, _) => inserted = session).Returns(Task.CompletedTask);
+
+        await _service.CreateSessionAsync(7, new OctopusImportSourceSummaryDto(), CancellationToken.None);
+
+        inserted.ExpiresAt.ShouldBe(inserted.CreatedDate.AddHours(2));
+        inserted.TemporaryUploadCleanupAfter.ShouldBe(inserted.ExpiresAt);
+    }
+
+    [Fact]
+    public async Task CreateSession_SetsCreatedDateAndMaxExpiresAt()
+    {
+        var before = DateTimeOffset.UtcNow;
+        OctopusImportSession inserted = null;
+        _dataProvider.Setup(p => p.AddSessionAsync(It.IsAny<OctopusImportSession>(), true, It.IsAny<CancellationToken>())).Callback<OctopusImportSession, bool, CancellationToken>((session, _, _) => inserted = session).Returns(Task.CompletedTask);
+
+        var dto = await _service.CreateSessionAsync(7, new OctopusImportSourceSummaryDto(), CancellationToken.None);
+
+        inserted.CreatedDate.ShouldBeGreaterThanOrEqualTo(before);
+        dto.MaxExpiresAt.ShouldBe(inserted.CreatedDate.AddHours(168));
+    }
+
+    [Fact]
+    public async Task Map_MaxExpiresAt_IsCreatedPlusMaxAge()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Previewed);
+        session.CreatedDate = new DateTimeOffset(2026, 11, 1, 0, 0, 0, TimeSpan.Zero);
+        _dataProvider.Setup(p => p.GetSessionStatusNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        var dto = await _service.GetSessionAsync(sessionId, 7, CancellationToken.None);
+
+        dto.MaxExpiresAt.ShouldBe(new DateTimeOffset(2026, 11, 8, 0, 0, 0, TimeSpan.Zero));
+    }
+
+    public static TheoryData<string> GuardedMutators() => new() { "RegisterTemporaryUpload", "UpdatePayloadAndTransition", "ReplaceValidatedPlan", "UpdateProjectSelection", "TryStartConfirmation" };
+
+    // Past its maximum age a session takes no more work, even before the sweep closes it: nothing is written, nothing admitted.
+    [Theory]
+    [MemberData(nameof(GuardedMutators))]
+    public async Task Mutator_SessionOverAge_ThrowsSessionExpired_NothingWritten(string mutator)
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, mutator is "RegisterTemporaryUpload" ? OctopusImportSessionState.Uploaded : mutator is "UpdatePayloadAndTransition" ? OctopusImportSessionState.Previewed : OctopusImportSessionState.Validated);
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-169);
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        Task act() => mutator switch
+        {
+            "RegisterTemporaryUpload" => _service.RegisterTemporaryUploadAsync(sessionId, 7, new OctopusImportTemporaryUpload("/tmp/upload.zip", 10), CancellationToken.None),
+            "UpdatePayloadAndTransition" => _service.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Validated, validatedPlanJson: "{}", ct: CancellationToken.None),
+            "ReplaceValidatedPlan" => _service.ReplaceValidatedPlanAsync(sessionId, 7, "{}", CancellationToken.None),
+            "UpdateProjectSelection" => _service.UpdateProjectSelectionAsync(sessionId, 7, ["Projects-1"], session.DataVersion, CancellationToken.None),
+            _ => _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None)
+        };
+
+        var exception = await Should.ThrowAsync<OctopusImportSessionExpiredException>(act);
+
+        exception.SessionId.ShouldBe(sessionId);
+        _dataProvider.Verify(p => p.UpdateSessionAsync(It.IsAny<OctopusImportSession>(), It.IsAny<byte[]>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // The admission itself also refuses a session that reached the cap, atomically with the state check.
+    [Fact]
+    public async Task TryStartConfirmation_PassesTheMaxAgeBoundToTheAtomicAdmission()
+    {
+        var sessionId = Guid.NewGuid();
+        _dataProvider.Setup(p => p.GetSessionNoTrackingAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(NewSession(sessionId, OctopusImportSessionState.Validated));
+        DateTimeOffset createdAfter = default;
+        _dataProvider.Setup(p => p.TryStartConfirmationAsync(It.IsAny<OctopusImportConfirmationAdmission>(), It.IsAny<CancellationToken>())).Callback<OctopusImportConfirmationAdmission, CancellationToken>((admission, _) => createdAfter = admission.CreatedAfter).ReturnsAsync(true);
+        var expected = DateTimeOffset.UtcNow.AddHours(-168);
+
+        await _service.TryStartConfirmationAsync(sessionId, 7, ct: CancellationToken.None);
+
+        createdAfter.ShouldBe(expected, TimeSpan.FromSeconds(5));
+    }
+
+    // An import that runs past the cap must still be able to record how it ended.
+    [Fact]
+    public async Task RecordResult_OverAge_StillRecords()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Importing);
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-500);
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        await _service.RecordResultAsync(sessionId, 7, OctopusImportSessionState.Succeeded, new OctopusImportSessionResultDto(), CancellationToken.None);
+
+        session.State.ShouldBe(OctopusImportSessionState.Succeeded.ToString());
+    }
+
+    [Fact]
+    public async Task UpdatePayloadAndTransition_ToFailedWhenOverAge_Allowed()
+    {
+        var sessionId = Guid.NewGuid();
+        var session = NewSession(sessionId, OctopusImportSessionState.Previewed);
+        session.CreatedDate = DateTimeOffset.UtcNow.AddHours(-500);
+        _dataProvider.Setup(p => p.GetSessionAsync(sessionId, 42, 7, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+
+        await _service.UpdatePayloadAndTransitionAsync(sessionId, 7, OctopusImportSessionState.Previewed, OctopusImportSessionState.Failed, ct: CancellationToken.None);
+
+        session.State.ShouldBe(OctopusImportSessionState.Failed.ToString());
     }
 }

@@ -41,4 +41,10 @@
     <ProjectReference Include="..\..\src\Squid.Api\Squid.Api.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Sanitised synthetic Octopus 2026.1 REST responses (same JSON shapes as a real server, fake data). Shared by the
+         unit, integration and E2E tiers: each project links the folder into its own output. -->
+    <None Include="..\Fixtures\OctopusServer2026\*.json" Link="Fixtures\OctopusServer2026\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

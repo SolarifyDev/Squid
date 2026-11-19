@@ -6,6 +6,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
+using Squid.Core.Services.OctopusImport.Secrets;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
 using Squid.Message.Requests.OctopusImport;
@@ -16,7 +17,10 @@ public class GetOctopusImportPreviewRequestHandler(
     IOctopusImportSessionDataProvider sessionDataProvider,
     IOctopusImportSessionService sessionService,
     ICurrentUser currentUser,
-    IOctopusImportPlanningPipeline planningPipeline)
+    IOctopusImportPlanningPipeline planningPipeline,
+    IOctopusImportTemporaryUploadStore uploadStore,
+    IOctopusImportExportSecretStore secretStore = null,
+    IOctopusExportSecretsAccessor secretsAccessor = null)
     : IRequestHandler<GetOctopusImportPreviewRequest, GetOctopusImportPreviewResponse>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -36,15 +40,17 @@ public class GetOctopusImportPreviewRequestHandler(
         var state = ParseState(session.State);
         EnsurePreviewAllowed(state);
 
-        if (string.IsNullOrWhiteSpace(session.TemporaryUploadPath) || !File.Exists(session.TemporaryUploadPath))
+        var sourcePath = await uploadStore.MaterializeAsync(session, cancellationToken).ConfigureAwait(false);
+
+        if (sourcePath == null)
             return BadRequest(request, state, "Octopus import session does not have an available temporary upload.");
+
+        await secretStore.ApplyToAsync(secretsAccessor, request.SessionId, destinationSpaceId, cancellationToken).ConfigureAwait(false);
 
         OctopusImportPlanningSnapshot snapshot;
         try
         {
-            snapshot = await planningPipeline
-                .BuildPreviewAsync(session.TemporaryUploadPath, destinationSpaceId, cancellationToken)
-                .ConfigureAwait(false);
+            snapshot = await planningPipeline.BuildPreviewAsync(sourcePath, destinationSpaceId, SavedChoicesOf(session, state), OctopusImportSourceSummaries.ChosenProjectIds(session.SourceSummaryJson), cancellationToken).ConfigureAwait(false);
         }
         catch (OctopusArchiveExtractionException ex)
         {
@@ -90,6 +96,11 @@ public class GetOctopusImportPreviewRequestHandler(
 
         return session;
     }
+
+    // A validated session is previewed with the choices it was validated with (a reopened page shows what Import would import); any other
+    // state plans the default choices.
+    private static OctopusImportChoiceSelections SavedChoicesOf(OctopusImportSession session, OctopusImportSessionState state)
+        => state == OctopusImportSessionState.Validated ? OctopusImportValidatedPlans.SavedChoices(session.ValidatedPlanJson) : null;
 
     private static void EnsurePreviewAllowed(OctopusImportSessionState state)
     {

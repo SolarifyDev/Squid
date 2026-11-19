@@ -75,11 +75,13 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
         //   -o APT::Get::List-Cleanup=0          (don't prune other lists)
         //   -o Acquire::http::Timeout=60         (fail fast on wedged networks)
         //   -o Acquire::Retries=1                (single retry, not default 3)
-        // Sudoers has a matching NOPASSWD rule for this exact invocation.
+        // 1.9.9+ hosts run these through LinuxPackageInstallHelper (same flags,
+        // baked into the helper); older hosts keep the exact legacy invocation
+        // below, which their argument-wildcard sudoers rules match.
         return $$"""
                  if [ "$INSTALL_OK" != "1" ]; then
                    if command -v apt-get >/dev/null 2>&1 && [ -f /etc/apt/sources.list.d/squid.list ]; then
-                     echo "[upgrade-method:apt] Squid APT repo configured — attempting `apt-get install squid-tentacle={{targetVersion}}`"
+                     echo "[upgrade-method:apt] Squid APT repo configured — attempting \`apt-get install squid-tentacle={{targetVersion}}\`"
 
                      # ── A3 (1.6.0): dpkg lock preemption ────────────────────────────
                      # Wait up to 90s if /var/lib/dpkg/lock-frontend is held by a
@@ -178,7 +180,7 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                        echo "[upgrade-method:apt] Downloading rollback snapshot from $SNAPSHOT_URL"
                        if curl -fsSL --connect-timeout 15 --max-time 120 --retry 2 --retry-delay 5 \
                             "$SNAPSHOT_URL" -o "${SNAPSHOT_PATH}.tmp" 2>&1 | tail -3; then
-                         sudo mv "${SNAPSHOT_PATH}.tmp" "$SNAPSHOT_PATH" 2>/dev/null
+                         mv "${SNAPSHOT_PATH}.tmp" "$SNAPSHOT_PATH" 2>/dev/null || sudo mv "${SNAPSHOT_PATH}.tmp" "$SNAPSHOT_PATH" 2>/dev/null
                          SQUID_UPGRADE_ROLLBACK_SNAPSHOT="$SNAPSHOT_PATH"
                          echo "[upgrade-method:apt] Rollback snapshot saved to $SNAPSHOT_PATH"
                        else
@@ -199,21 +201,35 @@ public sealed class AptUpgradeMethod : ILinuxUpgradeMethod
                      # alone is enough to suppress interactive prompts for our squid-tentacle
                      # package (it has no debconf questions); DEBIAN_FRONTEND=noninteractive
                      # was belt-and-suspenders we can safely drop.
-                     if sudo apt-get update -qq \
-                            -o Dir::Etc::sourcelist=sources.list.d/squid.list \
-                            -o Dir::Etc::sourceparts=- \
-                            -o APT::Get::List-Cleanup=0 \
-                            -o Acquire::http::Timeout=60 \
-                            -o Acquire::Retries=1 \
-                         && sudo apt-get install -y --allow-downgrades \
-                                -o Acquire::http::Timeout=120 \
-                                -o Acquire::Retries=1 \
-                                "squid-tentacle={{targetVersion}}"; then
-                       INSTALL_OK=1
-                       INSTALL_METHOD=apt
-                       echo "[upgrade-method:apt] Installed squid-tentacle={{targetVersion}} via apt"
+                     # 1.9.9+ installs ship a root-owned helper granted by a wildcard-free
+                     # sudoers rule (sudo-rs rejects argument wildcards). Older installs
+                     # only have the legacy argument-wildcard rules, so their exact
+                     # commands below stay unchanged.
+                     if [ -x "{{LinuxPackageInstallHelper.FilePath}}" ]; then
+                       if sudo -n "{{LinuxPackageInstallHelper.FilePath}}" apt "{{targetVersion}}"; then
+                         INSTALL_OK=1
+                         INSTALL_METHOD=apt
+                         echo "[upgrade-method:apt] Installed squid-tentacle={{targetVersion}} via apt (package-install helper)"
+                       else
+                         echo "[upgrade-method:apt] package-install helper failed (exit $?); falling through to next method"
+                       fi
                      else
-                       echo "[upgrade-method:apt] apt-get install failed (exit $?); falling through to next method"
+                       if sudo apt-get update -qq \
+                              -o Dir::Etc::sourcelist=sources.list.d/squid.list \
+                              -o Dir::Etc::sourceparts=- \
+                              -o APT::Get::List-Cleanup=0 \
+                              -o Acquire::http::Timeout=60 \
+                              -o Acquire::Retries=1 \
+                           && sudo apt-get install -y --allow-downgrades \
+                                  -o Acquire::http::Timeout=120 \
+                                  -o Acquire::Retries=1 \
+                                  "squid-tentacle={{targetVersion}}"; then
+                         INSTALL_OK=1
+                         INSTALL_METHOD=apt
+                         echo "[upgrade-method:apt] Installed squid-tentacle={{targetVersion}} via apt"
+                       else
+                         echo "[upgrade-method:apt] apt-get install failed (exit $?); falling through to next method"
+                       fi
                      fi
                    else
                      echo "[upgrade-method:apt] Skipped: apt-get not found OR /etc/apt/sources.list.d/squid.list missing"

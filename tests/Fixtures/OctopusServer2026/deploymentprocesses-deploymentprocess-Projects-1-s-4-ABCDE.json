@@ -1,0 +1,125 @@
+{
+  "Id": "deploymentprocess-Projects-1-s-4-ABCDE",
+  "SpaceId": "Spaces-1",
+  "ProjectId": "Projects-1",
+  "Version": 4,
+  "Steps": [
+    {
+      "Type": "Step",
+      "PackageRequirement": "LetOctopusDecide",
+      "Properties": {
+        "Octopus.Action.TargetRoles": "web"
+      },
+      "Condition": "Success",
+      "StartTrigger": "StartAfterPrevious",
+      "Name": "Run migrations",
+      "Id": "4e0f5061-0000-4000-8000-000000000501",
+      "Slug": "run-migrations",
+      "Actions": [
+        {
+          "Id": "4e0f5061-0000-4000-8000-000000000511",
+          "Name": "Run migrations",
+          "Slug": "run-migrations",
+          "ActionType": "Octopus.Script",
+          "Notes": null,
+          "IsDisabled": false,
+          "CanBeUsedForProjectVersioning": false,
+          "IsRequired": false,
+          "WorkerPoolId": null,
+          "Container": {
+            "Image": null,
+            "FeedId": null,
+            "GitUrl": null,
+            "Dockerfile": null
+          },
+          "WorkerPoolVariable": "",
+          "Environments": [],
+          "EnvironmentsVariable": null,
+          "ExcludedEnvironments": [],
+          "ExcludedEnvironmentsVariable": null,
+          "Channels": [],
+          "ChannelsVariable": null,
+          "TenantTags": [],
+          "TenantTagsVariable": null,
+          "Packages": [],
+          "GitDependencies": [],
+          "Condition": "Success",
+          "Properties": {
+            "Octopus.Action.RunOnServer": "false",
+            "Octopus.Action.Script.ScriptSource": "Inline",
+            "Octopus.Action.Script.Syntax": "Bash",
+            "Octopus.Action.Script.ScriptBody": "echo migrate #{Shared.ApiUrl}"
+          },
+          "Links": {}
+        }
+      ]
+    },
+    {
+      "Type": "Step",
+      "PackageRequirement": "LetOctopusDecide",
+      "Properties": {
+        "Octopus.Action.TargetRoles": "web"
+      },
+      "Condition": "Success",
+      "StartTrigger": "StartAfterPrevious",
+      "Name": "Deploy web",
+      "Id": "4e0f5061-0000-4000-8000-000000000502",
+      "Slug": "deploy-web",
+      "Actions": [
+        {
+          "Id": "4e0f5061-0000-4000-8000-000000000512",
+          "Name": "Deploy web",
+          "Slug": "deploy-web",
+          "ActionType": "Octopus.KubernetesDeployContainers",
+          "Notes": null,
+          "IsDisabled": false,
+          "CanBeUsedForProjectVersioning": true,
+          "IsRequired": false,
+          "WorkerPoolId": null,
+          "Container": {
+            "Image": null,
+            "FeedId": null,
+            "GitUrl": null,
+            "Dockerfile": null
+          },
+          "WorkerPoolVariable": "",
+          "Environments": [],
+          "EnvironmentsVariable": null,
+          "ExcludedEnvironments": [],
+          "ExcludedEnvironmentsVariable": null,
+          "Channels": [],
+          "ChannelsVariable": null,
+          "TenantTags": [],
+          "TenantTagsVariable": null,
+          "Packages": [
+            {
+              "Id": "5f106172-0000-4000-8000-000000000521",
+              "Name": "web",
+              "PackageId": "sample/web",
+              "FeedId": "Feeds-1",
+              "AcquisitionLocation": "NotAcquired",
+              "Properties": {
+                "Extract": "True",
+                "PackageParameterName": "",
+                "SelectionMode": "immediate"
+              }
+            }
+          ],
+          "GitDependencies": [],
+          "Condition": "Success",
+          "Properties": {
+            "Octopus.Action.KubernetesContainers.Replicas": "1",
+            "Octopus.Action.KubernetesContainers.DeploymentStyle": "RollingUpdate",
+            "Octopus.Action.KubernetesContainers.DeploymentResourceType": "Deployment",
+            "Octopus.Action.KubernetesContainers.Containers": "[{\"Name\":\"web\",\"PackageId\":\"sample/web\",\"FeedId\":\"Feeds-1\"}]"
+          },
+          "Links": {}
+        }
+      ]
+    }
+  ],
+  "LastSnapshotId": null,
+  "Links": {
+    "Self": "/api/Spaces-1/deploymentprocesses/deploymentprocess-Projects-1-s-4-ABCDE"
+  }
+}

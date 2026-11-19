@@ -9,6 +9,11 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         => KubernetesPropertyParser.ParseContainers(properties).Count > 0;
 
     public string Generate(Dictionary<string, string> properties)
+        => Generate(properties, new Dictionary<string, string>());
+
+    /// <param name="properties">Action properties.</param>
+    /// <param name="extraPodLabels">Labels added to the pod template only — never to the immutable <c>spec.selector.matchLabels</c>.</param>
+    internal string Generate(Dictionary<string, string> properties, IReadOnlyDictionary<string, string> extraPodLabels)
     {
         var deploymentName = KubernetesPropertyParser.GetProperty(properties, KubernetesProperties.DeploymentName);
         var namespaceName = KubernetesPropertyParser.GetNamespace(properties);
@@ -68,9 +73,19 @@ internal sealed class DeploymentResourceGenerator : IKubernetesResourceGenerator
         sb.AppendLine($"    type: {k8sStrategyType}");
         AppendRollingUpdateIfPresent(sb, k8sStrategyType, properties);
 
-        PodTemplateYamlBuilder.AppendPodTemplate(sb, properties, selectorLabels, "  ");
+        PodTemplateYamlBuilder.AppendPodTemplate(sb, properties, MergePodLabels(selectorLabels, extraPodLabels), "  ");
 
         return sb.ToString();
+    }
+
+    private static Dictionary<string, string> MergePodLabels(Dictionary<string, string> selectorLabels, IReadOnlyDictionary<string, string> extraPodLabels)
+    {
+        var podLabels = new Dictionary<string, string>(selectorLabels);
+
+        foreach (var (key, value) in extraPodLabels)
+            podLabels.TryAdd(key, value);
+
+        return podLabels;
     }
 
     private static void AppendRollingUpdateIfPresent(StringBuilder sb, string deploymentStrategy, Dictionary<string, string> properties)

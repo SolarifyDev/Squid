@@ -59,7 +59,8 @@ public class KubernetesDeployYamlActionHandler : IActionHandler
             FieldManager = fieldManager,
             ForceConflicts = forceConflicts,
             ObjectStatusCheck = objectStatusCheck,
-            StatusCheckTimeoutSeconds = statusCheckTimeout
+            StatusCheckTimeoutSeconds = statusCheckTimeout,
+            WaitForJobs = KubernetesApplyIntentFactory.ReadWaitForJobs(ctx.Action)
         };
     }
 

@@ -16,6 +16,12 @@ public interface ILifeCycleService : IScopedDependency
     Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken);
 
     Task<GetLifeCycleResponse> GetLifecycleAsync(GetLifecycleRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Adds one phase (with its environments) to an existing lifecycle at <paramref name="sortOrder"/>: only the sort order of the phases at
+    /// or after it moves up by one; the lifecycle and its other phases are never rewritten. Returns the phase id.
+    /// </summary>
+    Task<int> InsertPhaseAsync(int lifecycleId, LifecyclePhaseModel phase, int sortOrder, CancellationToken cancellationToken);
 }
 
 public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDataProvider)
@@ -72,6 +78,20 @@ public class LifeCycleService(IMapper mapper, ILifeCycleDataProvider lifeCycleDa
                 LifecyclePhase = BuildLifecycleDetailDto(lifecycle, newPhases)
             }
         };
+    }
+
+    public async Task<int> InsertPhaseAsync(int lifecycleId, LifecyclePhaseModel phase, int sortOrder, CancellationToken cancellationToken)
+    {
+        var entity = mapper.Map<LifecyclePhase>(phase);
+
+        entity.LifecycleId = lifecycleId;
+        entity.SortOrder = sortOrder;
+
+        await lifeCycleDataProvider.OpenPhaseOrderGapAsync(lifecycleId, sortOrder, cancellationToken).ConfigureAwait(false);
+        await lifeCycleDataProvider.AddPhasesAsync([entity], cancellationToken: cancellationToken).ConfigureAwait(false);
+        await InsertLifecyclePhaseEnvironmentsAsync([phase], [entity], cancellationToken).ConfigureAwait(false);
+
+        return entity.Id;
     }
 
     public async Task<LifeCycleDeletedEvent> DeleteLifeCyclesAsync(DeleteLifeCyclesCommand command, CancellationToken cancellationToken)

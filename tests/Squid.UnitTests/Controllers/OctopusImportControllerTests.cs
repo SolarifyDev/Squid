@@ -12,6 +12,7 @@ using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Message.Commands.OctopusImport;
 using Squid.Message.Enums.OctopusImport;
 using Squid.Message.Models.OctopusImport;
+using Squid.Message.Requests.OctopusImport;
 
 namespace Squid.UnitTests.Controllers;
 
@@ -92,5 +93,84 @@ public class OctopusImportControllerTests
         captured.ShouldNotBeNull();
         captured.Password.ShouldBe("octopus-password");
         captured.ContentType.ShouldBe("application/zip");
+    }
+
+    [Fact]
+    public async Task FetchHistoryAsync_RouteSessionIdWinsOverTheBody()
+    {
+        var mediator = new Mock<IMediator>();
+        var routeSessionId = Guid.NewGuid();
+        FetchOctopusImportHistoryCommand captured = null;
+        mediator.Setup(m => m.SendAsync<FetchOctopusImportHistoryCommand, FetchOctopusImportHistoryResponse>(It.IsAny<FetchOctopusImportHistoryCommand>(), It.IsAny<CancellationToken>())).Callback<FetchOctopusImportHistoryCommand, CancellationToken>((command, _) => captured = command).ReturnsAsync(new FetchOctopusImportHistoryResponse());
+
+        await new OctopusImportController(mediator.Object).FetchHistoryAsync(routeSessionId, new FetchOctopusImportHistoryCommand { SessionId = Guid.NewGuid(), SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY", OctopusSpaceId = "Spaces-1" }, CancellationToken.None);
+
+        captured.SessionId.ShouldBe(routeSessionId);
+        captured.SpaceId.ShouldBe(7);
+        captured.ApiKey.ShouldBe("API-KEY");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ConfirmAsync_DispatchesTheQueryBoundCommand_RouteSessionIdWins(bool runInBackground)
+    {
+        var mediator = new Mock<IMediator>();
+        var routeSessionId = Guid.NewGuid();
+        ConfirmOctopusImportCommand captured = null;
+        mediator.Setup(m => m.SendAsync<ConfirmOctopusImportCommand, ConfirmOctopusImportResponse>(It.IsAny<ConfirmOctopusImportCommand>(), It.IsAny<CancellationToken>())).Callback<ConfirmOctopusImportCommand, CancellationToken>((command, _) => captured = command).ReturnsAsync(new ConfirmOctopusImportResponse());
+
+        var result = await new OctopusImportController(mediator.Object).ConfirmAsync(routeSessionId, new ConfirmOctopusImportCommand { SessionId = Guid.NewGuid(), SpaceId = 7, RunInBackground = runInBackground }, CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>();
+        captured.SessionId.ShouldBe(routeSessionId);
+        captured.SpaceId.ShouldBe(7);
+        captured.RunInBackground.ShouldBe(runInBackground);
+    }
+
+    [Fact]
+    public async Task ProbeAndConnect_DispatchTheBoundCommand()
+    {
+        var mediator = new Mock<IMediator>();
+        var probe = new ProbeOctopusServerCommand { SpaceId = 7, ServerUrl = "https://octopus.example.com", ApiKey = "API-KEY" };
+        var connect = new ConnectOctopusImportCommand { SpaceId = 7 };
+        mediator.Setup(m => m.SendAsync<ProbeOctopusServerCommand, ProbeOctopusServerResponse>(probe, It.IsAny<CancellationToken>())).ReturnsAsync(new ProbeOctopusServerResponse());
+        mediator.Setup(m => m.SendAsync<ConnectOctopusImportCommand, ConnectOctopusImportResponse>(connect, It.IsAny<CancellationToken>())).ReturnsAsync(new ConnectOctopusImportResponse());
+        var controller = new OctopusImportController(mediator.Object);
+
+        (await controller.ProbeServerAsync(probe, CancellationToken.None)).ShouldBeOfType<OkObjectResult>();
+        (await controller.ConnectAsync(connect, CancellationToken.None)).ShouldBeOfType<OkObjectResult>();
+
+        mediator.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(nameof(OctopusImportController.ProbeServerAsync), "history/probe")]
+    [InlineData(nameof(OctopusImportController.ConnectAsync), "connect")]
+    [InlineData(nameof(OctopusImportController.FetchHistoryAsync), "{sessionId:guid}/history/fetch")]
+    public void ServerSourceActions_ArePostOnly_SoTheApiKeyNeverTravelsInAQueryString(string action, string template)
+    {
+        var method = typeof(OctopusImportController).GetMethod(action)!;
+
+        method.GetCustomAttribute<HttpPostAttribute>().ShouldNotBeNull().Template.ShouldBe(template);
+        method.GetCustomAttribute<HttpGetAttribute>().ShouldBeNull();
+    }
+
+    // The web client lists sessions with GET {IMPORT_API_ROOT}/sessions (SquidWeb octopusImport.ts): the route is pinned on both sides.
+    [Fact]
+    public async Task SessionsAsync_IsAGetOnTheSessionsRoute_AndDispatchesTheBoundRequest()
+    {
+        var method = typeof(OctopusImportController).GetMethod(nameof(OctopusImportController.SessionsAsync))!;
+        var mediator = new Mock<IMediator>();
+        var request = new ListOctopusImportSessionsRequest { SpaceId = 7 };
+        mediator.Setup(m => m.RequestAsync<ListOctopusImportSessionsRequest, ListOctopusImportSessionsResponse>(request, It.IsAny<CancellationToken>())).ReturnsAsync(new ListOctopusImportSessionsResponse());
+
+        var result = await new OctopusImportController(mediator.Object).SessionsAsync(request, CancellationToken.None);
+
+        typeof(OctopusImportController).GetCustomAttribute<RouteAttribute>().ShouldNotBeNull().Template.ShouldBe("api/octopus-import");
+        method.GetCustomAttribute<HttpGetAttribute>().ShouldNotBeNull().Template.ShouldBe("sessions");
+        method.GetParameters()[0].GetCustomAttribute<FromQueryAttribute>().ShouldNotBeNull();
+        result.ShouldBeOfType<OkObjectResult>();
+        mediator.VerifyAll();
     }
 }

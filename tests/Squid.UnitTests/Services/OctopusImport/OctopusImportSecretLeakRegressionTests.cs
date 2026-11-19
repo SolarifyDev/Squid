@@ -15,6 +15,8 @@ using Squid.Message.Models.OctopusImport;
 using Squid.UnitTests.Support;
 using Xunit;
 
+using Squid.UnitTests.Services.OctopusImport.SessionFiles;
+
 namespace Squid.UnitTests.Services.OctopusImport;
 
 [Collection(GlobalStateSerialisedCollection.Name)]
@@ -42,9 +44,10 @@ public class OctopusImportSecretLeakRegressionTests
         _temporaryUploadSettings.SetupGet(s => s.DefaultRetentionPeriod).Returns(TimeSpan.FromHours(24));
         _temporaryUploadSettings.SetupGet(s => s.CleanupBatchSize).Returns(25);
         _temporaryUploadSettings.SetupGet(s => s.InterruptedImportGracePeriod).Returns(TimeSpan.FromHours(2));
+        _temporaryUploadSettings.SetupGet(s => s.MaxSessionAge).Returns(TimeSpan.FromHours(168));
 
         _sessionService = new OctopusImportSessionService(_dataProvider.Object, _currentUser.Object, _temporaryUploadSettings.Object);
-        _cleanupService = new OctopusImportTemporaryUploadCleanupService(_dataProvider.Object, _uploadStore.Object, _temporaryUploadSettings.Object);
+        _cleanupService = new OctopusImportTemporaryUploadCleanupService(_dataProvider.Object, _uploadStore.Object, new InMemoryOctopusImportSessionFileStore(), _temporaryUploadSettings.Object);
     }
 
     [Fact]
@@ -292,13 +295,6 @@ public class OctopusImportSecretLeakRegressionTests
                 .Setup(p => p.ExpireSessionsAsync(It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(0);
             _dataProvider
-                .Setup(p => p.MarkInterruptedImportsFailedAsync(
-                    It.IsAny<DateTimeOffset>(),
-                    It.IsAny<DateTimeOffset>(),
-                    It.IsAny<TimeSpan>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(0);
-            _dataProvider
                 .Setup(p => p.GetTemporaryUploadCleanupCandidatesAsync(
                     It.IsAny<DateTimeOffset>(),
                     It.IsAny<int>(),
@@ -311,7 +307,7 @@ public class OctopusImportSecretLeakRegressionTests
                         DateTimeOffset.UtcNow.AddMinutes(-1))
                 ]);
             _uploadStore
-                .Setup(s => s.SecureDeleteAsync(sessionId, path, It.IsAny<CancellationToken>()))
+                .Setup(s => s.SecureDeleteAsync(sessionId, It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ThrowsAsync(new InvalidOperationException("cleanup failed for password=cleanup-secret-token and Authorization=Bearer cleanup-secret-token"));
 
             var outcome = await _cleanupService.EnforceCleanupAsync(CancellationToken.None);
