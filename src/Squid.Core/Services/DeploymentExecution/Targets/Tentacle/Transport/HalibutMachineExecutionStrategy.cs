@@ -55,7 +55,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         _breakerRegistry = breakerRegistry;
         _capabilitiesCache = capabilitiesCache;
         _inFlightStore = inFlightStore;
-        _rpcRetry = rpcRetry ?? RpcRetryHandler.FromEnvironment();
+        _rpcRetry = rpcRetry ?? new RpcRetryHandler(halibutSetting.RpcRetry);
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 

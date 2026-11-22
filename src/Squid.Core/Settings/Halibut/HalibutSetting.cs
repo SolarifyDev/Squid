@@ -12,12 +12,34 @@ public class HalibutSetting : IConfigurationSetting
         Observer = section.GetSection("Observer").Get<ObserverSettings>() ?? new ObserverSettings();
         Liveness = section.GetSection("Liveness").Get<LivenessSettings>() ?? new LivenessSettings();
         CircuitBreaker = section.GetSection("CircuitBreaker").Get<CircuitBreakerSettings>() ?? new CircuitBreakerSettings();
+        RpcRetry = section.GetSection("RpcRetry").Get<RpcRetrySettings>() ?? new RpcRetrySettings();
     }
 
     public PollingSettings Polling { get; set; } = new();
     public ObserverSettings Observer { get; set; } = new();
     public LivenessSettings Liveness { get; set; } = new();
     public CircuitBreakerSettings CircuitBreaker { get; set; } = new();
+    public RpcRetrySettings RpcRetry { get; set; } = new();
+}
+
+/// <summary>
+/// Time budgets for retrying a script RPC (GetStatus / Cancel / Complete) that failed with a transient
+/// transport error. A value of zero or less is invalid and falls back to its default.
+/// </summary>
+public class RpcRetrySettings
+{
+    public const int DefaultBudgetSeconds = 120;
+    public const int DefaultCancelBudgetSeconds = 20;
+    public const int DefaultCompleteBudgetSeconds = 30;
+
+    /// <summary>Total budget for GetStatus retries (also capped by the script's remaining timeout).</summary>
+    public int BudgetSeconds { get; set; } = DefaultBudgetSeconds;
+
+    /// <summary>Shorter budget for CancelScript so a cancel to a dead agent stays bounded.</summary>
+    public int CancelBudgetSeconds { get; set; } = DefaultCancelBudgetSeconds;
+
+    /// <summary>Best-effort budget for CompleteScript.</summary>
+    public int CompleteBudgetSeconds { get; set; } = DefaultCompleteBudgetSeconds;
 }
 
 public class PollingSettings

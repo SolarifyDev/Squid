@@ -1,31 +1,27 @@
+using Squid.Core.Settings.Halibut;
+
 namespace Squid.Core.Halibut.Resilience;
 
 /// <summary>
 /// The single per-RPC retry loop for agent calls that outlive a dropped connection (script GetStatus /
 /// Cancel / Complete). A call is retried only while the failure is TRANSIENT per
 /// <see cref="TransientFailureClassifier"/> (never a second classification), only inside a total time
-/// budget, with exponential backoff, and never once the caller's token fires. When the budget runs out
+/// budget (<see cref="RpcRetrySettings"/>), with exponential backoff, and never once the caller's token fires. When the budget runs out
 /// (or the failure is not transient) the exception the agent call actually threw is rethrown unchanged,
 /// so every downstream classifier (the runner's transient-pause path, the circuit breaker) sees exactly
 /// what it saw before retries existed.
 /// </summary>
 public sealed class RpcRetryHandler
 {
-    public const string RetryBudgetSecondsEnvVar = "SQUID_HALIBUT_RPC_RETRY_BUDGET_SECONDS";
-    public const string CompleteRetryBudgetSecondsEnvVar = "SQUID_HALIBUT_RPC_COMPLETE_RETRY_BUDGET_SECONDS";
-    public const string CancelRetryBudgetSecondsEnvVar = "SQUID_HALIBUT_RPC_CANCEL_RETRY_BUDGET_SECONDS";
-
-    internal const int DefaultRetryBudgetSeconds = 120;
-    internal const int DefaultCompleteRetryBudgetSeconds = 30;
-    internal const int DefaultCancelRetryBudgetSeconds = 20;
-
     private static readonly TimeSpan InitialBackoff = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(10);
 
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
 
-    public RpcRetryHandler(TimeSpan statusBudget, TimeSpan completeBudget, TimeSpan cancelBudget) : this(statusBudget, completeBudget, cancelBudget, null, null) { }
+    public RpcRetryHandler(RpcRetrySettings settings) : this(Resolve(settings?.BudgetSeconds, RpcRetrySettings.DefaultBudgetSeconds), Resolve(settings?.CompleteBudgetSeconds, RpcRetrySettings.DefaultCompleteBudgetSeconds), Resolve(settings?.CancelBudgetSeconds, RpcRetrySettings.DefaultCancelBudgetSeconds), null, null) { }
+
+    internal RpcRetryHandler(TimeSpan statusBudget, TimeSpan completeBudget, TimeSpan cancelBudget) : this(statusBudget, completeBudget, cancelBudget, null, null) { }
 
     internal RpcRetryHandler(TimeSpan statusBudget, TimeSpan completeBudget, TimeSpan cancelBudget, Func<DateTimeOffset> utcNow, Func<TimeSpan, CancellationToken, Task> delayAsync)
     {
@@ -48,15 +44,9 @@ public sealed class RpcRetryHandler
     /// </summary>
     public TimeSpan CancelBudget { get; }
 
-    public static RpcRetryHandler FromEnvironment()
-        => new(ReadBudget(RetryBudgetSecondsEnvVar, DefaultRetryBudgetSeconds), ReadBudget(CompleteRetryBudgetSecondsEnvVar, DefaultCompleteRetryBudgetSeconds), ReadBudget(CancelRetryBudgetSecondsEnvVar, DefaultCancelRetryBudgetSeconds));
-
-    /// <summary>Non-negative integer seconds; 0 disables retries; unset/garbage/negative falls back to the default.</summary>
-    internal static TimeSpan ParseBudget(string raw, int defaultSeconds)
-        => int.TryParse(raw?.Trim(), out var seconds) && seconds >= 0 ? TimeSpan.FromSeconds(seconds) : TimeSpan.FromSeconds(defaultSeconds);
-
-    private static TimeSpan ReadBudget(string envVar, int defaultSeconds)
-        => ParseBudget(System.Environment.GetEnvironmentVariable(envVar), defaultSeconds);
+    /// <summary>Seconds from configuration; zero, negative or unset is invalid and falls back to the default.</summary>
+    internal static TimeSpan Resolve(int? configuredSeconds, int defaultSeconds)
+        => TimeSpan.FromSeconds(configuredSeconds is > 0 ? configuredSeconds.Value : defaultSeconds);
 
     /// <param name="cancellation">Caller cancellation: aborts the backoff wait with <see cref="OperationCanceledException"/>.</param>
     /// <param name="stopRetrying">Stops further retries and rethrows the last real failure (e.g. the liveness probe already declared the agent gone).</param>

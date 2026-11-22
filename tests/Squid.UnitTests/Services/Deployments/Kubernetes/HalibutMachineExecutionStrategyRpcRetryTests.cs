@@ -77,6 +77,23 @@ public class HalibutMachineExecutionStrategyRpcRetryTests
     }
 
     [Fact]
+    public async Task WithoutAnExplicitHandler_TheStrategyUsesTheHalibutSettingRpcRetryBudget()
+    {
+        // Wiring seam: HalibutSetting.RpcRetry must reach the handler the strategy builds. With the 120s
+        // default this outage would retry for minutes; the configured 1s budget must end it quickly.
+        var agent = new FlakyAgent(getStatusFailuresBeforeRecovery: int.MaxValue);
+        _factory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>())).Returns(agent);
+        var setting = new HalibutSetting { RpcRetry = new RpcRetrySettings { BudgetSeconds = 1 } };
+        var strategy = new HalibutMachineExecutionStrategy(_factory.Object, new CalamariPayloadBuilder(new Mock<IYamlNuGetPacker>().Object), new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 }), setting);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        await Should.ThrowAsync<HalibutClientException>(() => strategy.ExecuteScriptAsync(Request(), CancellationToken.None));
+
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20), "the configured 1s budget, not the 120s default, must bound the retries");
+        agent.GetStatusCalls.ShouldBeGreaterThan(1);
+    }
+
+    [Fact]
     public async Task ObserverReceivesARetryingClient()
     {
         var observer = new Mock<IHalibutScriptObserver>();

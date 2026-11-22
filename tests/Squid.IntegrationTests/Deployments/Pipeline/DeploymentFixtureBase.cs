@@ -71,7 +71,7 @@ public class DeploymentFixtureBase : TestBase
 
             var machine = new Machine
             {
-                Name = "Transient Pause Agent",
+                Name = $"Transient Pause Agent {Guid.NewGuid():N}",
                 IsDisabled = false,
                 Roles = "[\"web\"]",
                 EnvironmentIds = $"[{environment.Id}]",
@@ -88,7 +88,7 @@ public class DeploymentFixtureBase : TestBase
             {
                 await repository.InsertAsync(new Machine
                 {
-                    Name = $"Transient Pause Agent {i}",
+                    Name = $"Transient Pause Agent {i} {Guid.NewGuid():N}",
                     IsDisabled = false,
                     Roles = machine.Roles,
                     EnvironmentIds = machine.EnvironmentIds,

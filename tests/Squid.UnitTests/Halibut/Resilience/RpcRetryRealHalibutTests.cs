@@ -75,7 +75,7 @@ public sealed class RpcRetryRealHalibutTests : IAsyncLifetime
     [Fact]
     public async Task ConnectionDroppedMidScript_WithRetries_ScriptCompletesWithoutThrowing()
     {
-        var client = new RetryingScriptClient(_server.CreateAsyncClient<IScriptService, IAsyncScriptService>(_endpoint), RpcRetryHandler.FromEnvironment(), TimeSpan.FromMinutes(5), CancellationToken.None);
+        var client = new RetryingScriptClient(_server.CreateAsyncClient<IScriptService, IAsyncScriptService>(_endpoint), new RpcRetryHandler(new RpcRetrySettings()), TimeSpan.FromMinutes(5), CancellationToken.None);
 
         var result = await ObserveWithBlipAsync(client);
 

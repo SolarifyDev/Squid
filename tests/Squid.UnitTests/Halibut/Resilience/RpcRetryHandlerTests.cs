@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 using Halibut;
 using Halibut.Exceptions;
 using Shouldly;
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Halibut.Resilience;
+using Squid.Core.Settings.Halibut;
 using Xunit;
 
 namespace Squid.UnitTests.Halibut.Resilience;
@@ -144,24 +146,51 @@ public sealed class RpcRetryHandlerTests
     }
 
     [Fact]
-    public void EnvVarNamesAndDefaults_ArePinned()
+    public void Settings_BindFromHalibutRpcRetrySection_WithPinnedKeyNames()
     {
-        // Renaming either name silently drops the override an operator deployed; changing a default changes pause behaviour fleet-wide.
-        RpcRetryHandler.RetryBudgetSecondsEnvVar.ShouldBe("SQUID_HALIBUT_RPC_RETRY_BUDGET_SECONDS");
-        RpcRetryHandler.CompleteRetryBudgetSecondsEnvVar.ShouldBe("SQUID_HALIBUT_RPC_COMPLETE_RETRY_BUDGET_SECONDS");
-        RpcRetryHandler.DefaultRetryBudgetSeconds.ShouldBe(120);
-        RpcRetryHandler.DefaultCompleteRetryBudgetSeconds.ShouldBe(30);
-        RpcRetryHandler.CancelRetryBudgetSecondsEnvVar.ShouldBe("SQUID_HALIBUT_RPC_CANCEL_RETRY_BUDGET_SECONDS");
-        RpcRetryHandler.DefaultCancelRetryBudgetSeconds.ShouldBe(20);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string>
+        {
+            ["Halibut:RpcRetry:BudgetSeconds"] = "11",
+            ["Halibut:RpcRetry:CancelBudgetSeconds"] = "7",
+            ["Halibut:RpcRetry:CompleteBudgetSeconds"] = "5"
+        }).Build();
+
+        var settings = new HalibutSetting(configuration).RpcRetry;
+
+        settings.BudgetSeconds.ShouldBe(11);
+        settings.CancelBudgetSeconds.ShouldBe(7);
+        settings.CompleteBudgetSeconds.ShouldBe(5);
+
+        var handler = new RpcRetryHandler(settings);
+        handler.StatusBudget.ShouldBe(TimeSpan.FromSeconds(11));
+        handler.CancelBudget.ShouldBe(TimeSpan.FromSeconds(7));
+        handler.CompleteBudget.ShouldBe(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public void Settings_WhenSectionAbsent_UseThePinnedDefaults()
+    {
+        var settings = new HalibutSetting(new ConfigurationBuilder().Build()).RpcRetry;
+
+        settings.BudgetSeconds.ShouldBe(120);
+        settings.CancelBudgetSeconds.ShouldBe(20);
+        settings.CompleteBudgetSeconds.ShouldBe(30);
+
+        var handler = new RpcRetryHandler(settings);
+        handler.StatusBudget.ShouldBe(TimeSpan.FromSeconds(120));
+        handler.CancelBudget.ShouldBe(TimeSpan.FromSeconds(20));
+        handler.CompleteBudget.ShouldBe(TimeSpan.FromSeconds(30));
     }
 
     [Theory]
-    [InlineData(null, 120, 120)]
-    [InlineData("", 120, 120)]
-    [InlineData("abc", 120, 120)]
-    [InlineData("-5", 120, 120)]
-    [InlineData("0", 120, 0)]
-    [InlineData(" 45 ", 120, 45)]
-    public void ParseBudget_FallsBackToDefault_AllowsZeroToDisable(string raw, int defaultSeconds, int expectedSeconds)
-        => RpcRetryHandler.ParseBudget(raw, defaultSeconds).ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void InvalidBudgets_FallBackToTheDefaults_NeverDisableRetries(int invalid)
+    {
+        var handler = new RpcRetryHandler(new RpcRetrySettings { BudgetSeconds = invalid, CancelBudgetSeconds = invalid, CompleteBudgetSeconds = invalid });
+
+        handler.StatusBudget.ShouldBe(TimeSpan.FromSeconds(120));
+        handler.CancelBudget.ShouldBe(TimeSpan.FromSeconds(20));
+        handler.CompleteBudget.ShouldBe(TimeSpan.FromSeconds(30));
+    }
 }
