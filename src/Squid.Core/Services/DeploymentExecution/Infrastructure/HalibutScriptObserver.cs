@@ -42,7 +42,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
     // NOTE: Halibut RPC proxy calls (GetStatusAsync, CompleteScriptAsync, CancelScriptAsync)
     // do not accept CancellationToken — cancellation is only checked between polling intervals.
     // This is a known Halibut 8.x limitation.
-    public async Task<ScriptExecutionResult> ObserveAndCompleteAsync(
+    public Task<ScriptExecutionResult> ObserveAndCompleteAsync(
         Machine machine,
         IAsyncScriptService scriptClient,
         ScriptTicket ticket,
@@ -52,6 +52,19 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         ScriptStatusResponse initialStartResponse = null,
         ServiceEndPoint? endpoint = null,
         ScriptOutputSink outputSink = null)
+        => ObserveAndCompleteAsync(machine, scriptClient, ticket, scriptTimeout, ct, masker, initialStartResponse, endpoint, outputSink, shouldCancelRemoteScript: null);
+
+    public async Task<ScriptExecutionResult> ObserveAndCompleteAsync(
+        Machine machine,
+        IAsyncScriptService scriptClient,
+        ScriptTicket ticket,
+        TimeSpan scriptTimeout,
+        CancellationToken ct,
+        SensitiveValueMasker masker,
+        ScriptStatusResponse initialStartResponse,
+        ServiceEndPoint? endpoint,
+        ScriptOutputSink outputSink,
+        RemoteScriptCancelDecision shouldCancelRemoteScript)
     {
         var streamed = outputSink != null;
         var startTime = DateTime.UtcNow;
@@ -164,14 +177,14 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                     {
                         Log.Warning("[Deploy] Agent {MachineName} unreachable after {Failures} consecutive probe failures — aborting wait",
                             machine.Name, unreachable.ConsecutiveFailures);
-                        await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                        await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: false).ConfigureAwait(false);
                         throw unreachable;
                     }
                 }
             }
             catch (OperationCanceledException)
             {
-                await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: true).ConfigureAwait(false);
                 throw;
             }
 
@@ -191,7 +204,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 }
                 catch (OperationCanceledException)
                 {
-                    await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+                    await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: true).ConfigureAwait(false);
                     throw;
                 }
 
@@ -331,6 +344,25 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             anchor);
         logs.Insert(0, marker);
         return marker;
+    }
+
+    /// <summary>
+    /// Cancel the remote script on an interruption — unless the caller said the interruption is only a
+    /// pause. Without a decision (upgrade strategies, legacy callers) every interruption cancels, as
+    /// before. With one: a cancellation-token interruption cancels only when the decision says the
+    /// outcome is final; an unreachable agent (<paramref name="interruptionIsFinal"/> false) never
+    /// cancels, because the deployment pauses and the script must survive for the resume to re-attach —
+    /// and for a polling agent a queued CancelScript would be delivered on reconnect and kill it.
+    /// </summary>
+    private static Task CancelUnlessPausingAsync(IAsyncScriptService scriptClient, ScriptTicket ticket, long lastLogSequence, RemoteScriptCancelDecision shouldCancelRemoteScript, bool interruptionIsFinal)
+    {
+        if (shouldCancelRemoteScript != null && !(interruptionIsFinal && shouldCancelRemoteScript()))
+        {
+            Log.Information("[Deploy] Leaving script with ticket {Ticket} running on the agent: the task is pausing, a resume will re-attach", ticket.TaskId);
+            return Task.CompletedTask;
+        }
+
+        return TryCancelScriptAsync(scriptClient, ticket, lastLogSequence);
     }
 
     private static async Task TryCancelScriptAsync(

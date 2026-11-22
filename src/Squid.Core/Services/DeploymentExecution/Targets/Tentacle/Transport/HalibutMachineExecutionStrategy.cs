@@ -254,7 +254,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, scriptTicket);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink).ConfigureAwait(false);
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
 
         // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
         // observer RETURNED (script completed, reported a non-zero exit, or hit the
@@ -333,7 +333,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
             request.Machine.Name, existingTicketId, probe.State);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink).ConfigureAwait(false);
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
 
         // Clear only on a definitive observation; preserve on a throw so a further
         // resume re-attaches again (same rationale as DispatchOrReattachAsync).

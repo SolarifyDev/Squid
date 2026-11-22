@@ -63,6 +63,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
+        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts);
+
         try
         {
             var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
@@ -181,6 +183,18 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             registry.Unregister(serverTaskId);
         }
     }
+
+    /// <summary>
+    /// Whether an in-flight remote script must be cancelled on the agent when the run is interrupted:
+    /// only when the task is heading to a terminal state, i.e. the pointer to that script becomes
+    /// obsolete. A user cancel always is; a deployment timeout is only when it is NOT resumable (the
+    /// task will Fail). A resumable timeout pauses the task, and the external job token (host
+    /// shutdown) is deliberately absent so it cannot cancel the script of a task that may resume.
+    /// Reads the source flags (set before any linked token's callbacks run), never a linked token,
+    /// so the observer cannot observe its own cancellation before the decision flips.
+    /// </summary>
+    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(CancellationTokenSource registryCts, CancellationTokenSource timeoutCts)
+        => () => registryCts.IsCancellationRequested || (!TimeoutResumable && timeoutCts.IsCancellationRequested);
 
     private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
     {

@@ -202,7 +202,7 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<CancellationToken>(),
                 It.IsAny<SensitiveValueMasker>(),
                 It.IsAny<ScriptStatusResponse>(),
-                It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
+                It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>(), It.IsAny<RemoteScriptCancelDecision>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = true, ExitCode = 0, LogLines = new List<string>() });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -225,7 +225,7 @@ public class HalibutMachineExecutionStrategyTests
             It.IsAny<CancellationToken>(),
             It.IsAny<SensitiveValueMasker>(),
             It.IsAny<ScriptStatusResponse>(),
-            It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()), Times.Once);
+            It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>(), It.IsAny<RemoteScriptCancelDecision>()), Times.Once);
     }
 
     [Fact]
@@ -249,7 +249,7 @@ public class HalibutMachineExecutionStrategyTests
                 It.IsAny<CancellationToken>(),
                 It.IsAny<SensitiveValueMasker>(),
                 It.IsAny<ScriptStatusResponse>(),
-                It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()))
+                It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>(), It.IsAny<RemoteScriptCancelDecision>()))
             .ReturnsAsync(new ScriptExecutionResult { Success = false, ExitCode = 7, LogLines = new List<string> { "x" } });
 
         var strategy = new HalibutMachineExecutionStrategy(
@@ -271,7 +271,7 @@ public class HalibutMachineExecutionStrategyTests
             It.IsAny<CancellationToken>(),
             It.IsAny<SensitiveValueMasker>(),
             It.IsAny<ScriptStatusResponse>(),
-            It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>()), Times.Once);
+            It.IsAny<global::Halibut.ServiceEndPoint>(), It.IsAny<ScriptOutputSink>(), It.IsAny<RemoteScriptCancelDecision>()), Times.Once);
     }
 
     [Fact]

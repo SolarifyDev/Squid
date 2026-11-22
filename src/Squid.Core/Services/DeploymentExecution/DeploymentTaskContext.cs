@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Planning;
+using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Models.Deployments.Snapshots;
@@ -37,6 +38,14 @@ public class DeploymentTaskContext
     public Dictionary<string, PackageAcquisitionResult> AcquiredPackages { get; set; } = new();
     public bool FailureEncountered { get; set; }
     public bool UseGuidedFailure { get; set; }
+
+    /// <summary>
+    /// Set by the pipeline runner, which alone knows why a run is being interrupted. Copied onto each
+    /// dispatched <c>ScriptExecutionRequest</c> so a remote script is cancelled only when the task is
+    /// heading to a terminal state. Null (e.g. a context built outside the runner) = legacy
+    /// cancel-on-every-interruption.
+    /// </summary>
+    public RemoteScriptCancelDecision ShouldCancelRemoteScript { get; set; }
 
     // Planning — deployment plan produced by IDeploymentPlanner (phase 6, order 460).
     // Shadow-observed in 6c-i: built but not consumed. Phase 6c-iii wires ExecuteStepsPhase
