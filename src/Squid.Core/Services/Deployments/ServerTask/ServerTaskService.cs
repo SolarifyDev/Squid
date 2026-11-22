@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ActivityLog;
+using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.ServerTask;
 
@@ -61,12 +62,16 @@ public partial class ServerTaskService : IServerTaskService
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IActivityLogDataProvider _activityLogDataProvider;
     private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
+    private readonly IServerTaskLeaseDataProvider _serverTaskLeaseDataProvider;
+    private readonly TimeSpan _leaseStale = ServerTaskLeaseOptions.FromEnvironment().Stale;
 
     public ServerTaskService(
         IServerTaskDataProvider serverTaskDataProvider,
         IActivityLogDataProvider activityLogDataProvider,
-        IServerTaskLogDataProvider serverTaskLogDataProvider)
+        IServerTaskLogDataProvider serverTaskLogDataProvider,
+        IServerTaskLeaseDataProvider serverTaskLeaseDataProvider)
     {
+        _serverTaskLeaseDataProvider = serverTaskLeaseDataProvider;
         _serverTaskDataProvider = serverTaskDataProvider;
         _activityLogDataProvider = activityLogDataProvider;
         _serverTaskLogDataProvider = serverTaskLogDataProvider;
