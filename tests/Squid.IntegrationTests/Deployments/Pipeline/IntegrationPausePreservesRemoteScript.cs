@@ -265,7 +265,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         });
 
     // Script stays Running (and the observer keeps polling) until Finish() is called.
-    private sealed class BlockingAgent : IAsyncScriptService
+    internal sealed class BlockingAgent : IAsyncScriptService
     {
         private volatile bool _finished;
         private int _cancelCalls;
@@ -358,7 +358,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         public Task<bool> ProbeAsync(ServiceEndPoint endpoint, TimeSpan timeout, CancellationToken ct) => Task.FromResult(false);
     }
 
-    private sealed class FixedClientFactory : IHalibutClientFactory
+    internal sealed class FixedClientFactory : IHalibutClientFactory
     {
         private readonly IAsyncScriptService _client;
 
