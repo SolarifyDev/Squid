@@ -45,7 +45,7 @@ internal sealed class HealthCheckTestHost : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>()))
             .Returns<string, Func<Task<object>>, TimeSpan?, TimeSpan?, TimeSpan?, RedisServer>((key, logic, _, _, _, _) =>
             {
-                lockKeys?.Add(key);
+                if (lockKeys != null) lock (lockKeys) lockKeys.Add(key);   // probes run in parallel: List<T> is not thread-safe
                 return logic();
             });
 
