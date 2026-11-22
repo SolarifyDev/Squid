@@ -1,3 +1,4 @@
+using Squid.UnitTests.Support;
 using System;
 using System.Diagnostics;
 using System.Linq;
@@ -27,7 +28,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -43,7 +44,7 @@ public class DeploymentPipelineRunnerTests
             .Returns<DeploymentTaskContext, CancellationToken>(async (_, token) => await Task.Delay(TimeSpan.FromSeconds(60), token));
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
 
         var sw = Stopwatch.StartNew();
         await Should.ThrowAsync<OperationCanceledException>(() => runner.ProcessAsync(1, CancellationToken.None));
@@ -67,7 +68,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(new[] { failurePhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        var runner = new DeploymentPipelineRunner(new[] { failurePhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -89,7 +90,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 
@@ -120,7 +121,7 @@ public class DeploymentPipelineRunnerTests
             .Returns(Task.CompletedTask);
 
         var registry = new TaskCancellationRegistry();
-        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        var runner = new DeploymentPipelineRunner(new[] { okPhase.Object }, lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
 
         await Should.ThrowAsync<ServerTaskStateTransitionException>(() => runner.ProcessAsync(1, CancellationToken.None));
 
@@ -142,7 +143,7 @@ public class DeploymentPipelineRunnerTests
         var completion = new Mock<IDeploymentCompletionHandler>();
         var phase = new Mock<IDeploymentPipelinePhase>();
         var jobClient = new Mock<ISquidBackgroundJobClient>();
-        var runner = new DeploymentPipelineRunner(new[] { phase.Object }, lifecycle.Object, completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, jobClient.Object);
+        var runner = new DeploymentPipelineRunner(new[] { phase.Object }, lifecycle.Object, completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, jobClient.Object, NoLeaseKeeper.Instance);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 

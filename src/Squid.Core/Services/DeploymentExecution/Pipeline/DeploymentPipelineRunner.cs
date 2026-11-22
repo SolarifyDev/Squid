@@ -4,11 +4,12 @@ using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Core.Services.Jobs;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient) : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient, IServerTaskLeaseKeeper leaseKeeper) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
 
@@ -83,12 +84,16 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 return;
             }
 
+            ctx.Lease = leaseKeeper.Start(serverTaskId);
+
             lifecycle.Initialize(ctx);
 
             var ordered = phases.OrderBy(p => p.Order).ToList();
 
             foreach (var phase in ordered)
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
+
+            if (IsLeaseLost(ctx)) return;
 
             await lifecycle.EmitAsync(new PackagesReleasedEvent(new DeploymentEventContext()), linkedCts.Token);
 
@@ -206,6 +211,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         finally
         {
             registry.Unregister(serverTaskId);
+
+            if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -233,8 +240,21 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
     private static bool IsHostShutdown(CancellationTokenSource registryCts, CancellationToken externalCt)
         => externalCt.IsCancellationRequested && !registryCts.IsCancellationRequested;
 
+    // The reaper already recovered this task (paused it, or completed its cancel): whatever this process was about to record would overwrite that
+    // decision (a Paused task flipped to Failed, its checkpoint deleted), so the outcome is left as the reaper wrote it.
+    private static bool IsLeaseLost(DeploymentTaskContext ctx)
+    {
+        if (ctx.Lease is not { IsLost: true }) return false;
+
+        Log.Warning("[Deploy] Task {TaskId} lost its lease while running (recovered by the reaper or taken over); not recording an outcome, leaving the task state as recovered", ctx.ServerTaskId);
+
+        return true;
+    }
+
     private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
     {
+        if (IsLeaseLost(ctx)) return;
+
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
 
         try

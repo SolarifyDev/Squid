@@ -1,6 +1,7 @@
 using System.Data;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.SourceMap;
 
@@ -162,33 +163,59 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     private Task<int> ExecuteStateUpdateAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
     {
-        if (TaskState.IsTerminal(newState))
-        {
-            return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-                t => t.Id == taskId && t.State == expectedCurrentState,
-                s => s.SetProperty(t => t.State, newState)
-                      .SetProperty(t => t.DataVersion, dataVersion)
-                      .SetProperty(t => t.LastModifiedDate, now)
-                      .SetProperty(t => t.CompletedTime, now),
-                ct);
-        }
+        if (TaskState.IsTerminal(newState)) return UpdateToTerminalAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
 
-        if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-        {
-            return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-                t => t.Id == taskId && t.State == expectedCurrentState,
-                s => s.SetProperty(t => t.State, newState)
-                      .SetProperty(t => t.DataVersion, dataVersion)
-                      .SetProperty(t => t.LastModifiedDate, now)
-                      .SetProperty(t => t.StartTime, now),
-                ct);
-        }
+        if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)) return UpdateToExecutingAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
+
+        if (string.Equals(newState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return UpdateToPausedAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
 
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             t => t.Id == taskId && t.State == expectedCurrentState,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now),
+            ct);
+    }
+
+    // A task that left the running states has no live owner: its lease is cleared so a stale one can never be mistaken for a running task's.
+    private Task<int> UpdateToTerminalAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    {
+        return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.Id == taskId && t.State == expectedCurrentState,
+            s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.DataVersion, dataVersion)
+                  .SetProperty(t => t.LastModifiedDate, now)
+                  .SetProperty(t => t.CompletedTime, now)
+                  .SetProperty(t => t.LeaseOwner, (string)null)
+                  .SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null),
+            ct);
+    }
+
+    // The claim stamps this process's lease in the same statement, on the database clock, so there is no unleased window between claiming and the first renewal.
+    private Task<int> UpdateToExecutingAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    {
+        var owner = ServerTaskLeaseOwner.Current;
+
+        return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.Id == taskId && t.State == expectedCurrentState,
+            s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.DataVersion, dataVersion)
+                  .SetProperty(t => t.LastModifiedDate, now)
+                  .SetProperty(t => t.StartTime, now)
+                  .SetProperty(t => t.LeaseOwner, owner)
+                  .SetProperty(t => t.LeaseRenewedAt, t => DateTimeOffset.UtcNow),
+            ct);
+    }
+
+    private Task<int> UpdateToPausedAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    {
+        return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            t => t.Id == taskId && t.State == expectedCurrentState,
+            s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.DataVersion, dataVersion)
+                  .SetProperty(t => t.LastModifiedDate, now)
+                  .SetProperty(t => t.LeaseOwner, (string)null)
+                  .SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null),
             ct);
     }
 

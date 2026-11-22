@@ -1,3 +1,4 @@
+using Squid.UnitTests.Support;
 using System;
 using System.Linq;
 using System.Linq.Expressions;
@@ -167,6 +168,6 @@ public class ConcurrencyTagTests
 
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, _backgroundJobClient.Object);
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, _backgroundJobClient.Object, NoLeaseKeeper.Instance);
     }
 }

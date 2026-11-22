@@ -1,3 +1,4 @@
+using Squid.UnitTests.Support;
 using System;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
@@ -266,7 +267,7 @@ public class DeploymentPipelineRunnerTimeoutTests
 
     private DeploymentPipelineRunner CreateRunnerWithoutTimeoutOverride()
     {
-        return new DeploymentPipelineRunner(Array.Empty<IDeploymentPipelinePhase>(), _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        return new DeploymentPipelineRunner(Array.Empty<IDeploymentPipelinePhase>(), _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
     }
 
     private IDeploymentPipelinePhase CreateHangingPhase()
@@ -284,7 +285,7 @@ public class DeploymentPipelineRunnerTimeoutTests
 
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>())
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance)
         {
             DeploymentTimeout = TimeSpan.FromMilliseconds(50),
             TimeoutResumable = true
@@ -293,7 +294,7 @@ public class DeploymentPipelineRunnerTimeoutTests
 
     private DeploymentPipelineRunner CreateFailFastRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>())
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance)
         {
             DeploymentTimeout = TimeSpan.FromMilliseconds(50),
             TimeoutResumable = false

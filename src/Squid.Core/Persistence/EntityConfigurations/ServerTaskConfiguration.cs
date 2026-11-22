@@ -26,6 +26,12 @@ public class ServerTaskConfiguration: IEntityTypeConfiguration<ServerTask>
         builder.Property(p => p.DataVersion).IsConcurrencyToken();
         builder.Property(p => p.State).HasMaxLength(50).IsRequired();
         builder.Property(p => p.HasPendingInterruptions);
+        builder.Property(p => p.LeaseOwner).HasMaxLength(200);
+
+        // Reaper scan: only leased Executing/Cancelling rows. Schema is created by 20261122_add_server_task_lease.sql; keep the filter byte-identical.
+        builder.HasIndex(p => p.LeaseRenewedAt)
+            .HasFilter("lease_renewed_at IS NOT NULL AND state IN ('Executing', 'Cancelling')")
+            .HasDatabaseName("ix_server_task_active_lease");
 
         builder.HasIndex(p => new { p.ConcurrencyTag, p.State })
             .HasFilter("concurrency_tag IS NOT NULL")

@@ -54,6 +54,11 @@ public class ServerTask : IEntity<int>, IAuditable
 
     public bool HasPendingInterruptions { get; set; }
 
+    // Lease: the process running the pipeline stamps itself here and renews it on the database clock; NULL = never leased (pre-lease rows, older servers).
+    public string LeaseOwner { get; set; }
+
+    public DateTimeOffset? LeaseRenewedAt { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

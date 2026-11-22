@@ -1,3 +1,4 @@
+using Squid.UnitTests.Support;
 using System;
 using Halibut;
 using Squid.Core.Services.DeploymentExecution;
@@ -478,13 +479,13 @@ public class DeploymentPipelineRunnerCancellationTests
     /// waiting on the real 60-minute default.
     /// </summary>
     private DeploymentPipelineRunner CreateFastTimeoutRunner(params IDeploymentPipelinePhase[] phases)
-        => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>())
+        => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance)
         {
             DeploymentTimeout = TimeSpan.FromMilliseconds(50)
         };
 
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance);
     }
 }

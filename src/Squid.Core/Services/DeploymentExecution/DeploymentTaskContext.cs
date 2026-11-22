@@ -82,6 +82,9 @@ public class DeploymentTaskContext
     /// </summary>
     public Dictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> ResumeBatchStates { get; set; } = new();
 
+    // Lease held while the pipeline runs; IsLost means the task was recovered from under this process
+    public Squid.Core.Services.Deployments.ServerTask.Lease.IServerTaskLease Lease { get; set; }
+
     // Logging
     private long _logSequence;
     public long NextLogSequence() => Interlocked.Increment(ref _logSequence);

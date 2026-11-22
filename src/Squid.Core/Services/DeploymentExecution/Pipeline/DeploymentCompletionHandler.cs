@@ -145,13 +145,14 @@ public sealed class DeploymentCompletionHandler(
     /// The guarded skip leaves it <c>Cancelling</c> too. The database outcome is byte-identical;
     /// what changes is that an expected race is no longer signalled by an exception.</para>
     ///
-    /// <para>That row is genuinely stuck: <c>Cancelling</c> counts as an active state so it
-    /// keeps holding the environment's concurrency slot, its only edges out
-    /// (<c>Cancelled</c>, <c>Failed</c>) need a live pipeline, re-cancel no-ops and resume
-    /// rejects it, and there is no reaper. Freeing it needs cross-pod cancel propagation or a
-    /// stale-active-task reaper — neither of which exists, and both out of scope here. The
-    /// <c>Cancelling</c> skip is therefore logged at Warning: it is the only remaining signal
-    /// that an environment just lost a concurrency slot with no automatic recovery.</para>
+    /// <para>That row is stuck until something else frees it: <c>Cancelling</c> counts as an active
+    /// state so it keeps holding the environment's concurrency slot, its only edges out
+    /// (<c>Cancelled</c>, <c>Failed</c>) need a live pipeline, and re-cancel no-ops and resume
+    /// rejects it. Its lease stops renewing once this pipeline ends, so the stale-task reaper
+    /// completes it as <c>Cancelled</c> after the lease staleness threshold (default 5 minutes);
+    /// an operator can also force-cancel it. The skip is still logged at Warning: until one of
+    /// those happens the environment has lost a concurrency slot, and cross-pod cancel
+    /// propagation (which would free it at once) does not exist.</para>
     ///
     /// <para><b>The success path does not share this.</b> <see cref="OnSuccessAsync"/> also
     /// transitions from a hardcoded <c>Executing</c>, but it is the one completion callback the
@@ -195,7 +196,7 @@ public sealed class DeploymentCompletionHandler(
     {
         if (string.Equals(fromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
         {
-            Log.Warning("[Deploy] Task {TaskId} is Cancelling, not Executing — skipping the pause so the cancel wins. The task stays Cancelling and keeps holding its environment's concurrency slot; there is no automatic recovery for this state", serverTaskId);
+            Log.Warning("[Deploy] Task {TaskId} is Cancelling, not Executing — skipping the pause so the cancel wins. The task stays Cancelling and keeps holding its environment's concurrency slot until the stale-task reaper completes it (its lease stops renewing) or an operator force-cancels it", serverTaskId);
             return;
         }
 
