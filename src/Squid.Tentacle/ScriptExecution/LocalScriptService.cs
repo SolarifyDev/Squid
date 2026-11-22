@@ -855,35 +855,71 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         _draining = true;
         Log.Information("LocalScriptService drain started. {Count} script(s) active", _scripts.Count);
 
+        await WaitForScriptProcessesToExitAsync(timeout).ConfigureAwait(false);
+
+        PersistExitedScripts();
+        KillRemainingScripts();
+
+        Log.Information("LocalScriptService drain complete");
+    }
+
+    // Polling is cancelled before the drain, so no CompleteScript/CancelScript RPC can arrive to
+    // empty _scripts; the drain therefore waits on the PROCESSES, not on the registry.
+    private async Task WaitForScriptProcessesToExitAsync(TimeSpan timeout)
+    {
         using var cts = new CancellationTokenSource(timeout);
 
         try
         {
-            while (!_scripts.IsEmpty && !cts.Token.IsCancellationRequested)
+            while (_scripts.Values.Any(IsProcessRunning))
                 await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Timeout — force-kill remaining
+            // Timeout — remaining scripts are force-killed by the caller
         }
+    }
 
+    // Synchronously writes the real exit code of every script that exited, so it is on disk before
+    // the agent process ends (the async Exited callback may not have run yet). Idempotent.
+    private void PersistExitedScripts()
+    {
+        foreach (var running in _scripts.Values.Where(r => !IsProcessRunning(r)))
+            PersistNaturalExit(running);
+    }
+
+    private void KillRemainingScripts()
+    {
         foreach (var (ticketId, running) in _scripts)
         {
             try
             {
-                if (!running.Process.HasExited)
-                {
-                    Log.Warning("Drain timeout — killing script {TicketId}", ticketId);
-                    running.Process.Kill(entireProcessTree: true);
-                }
+                if (!IsProcessRunning(running)) continue;
+
+                Log.Warning("Drain timeout — killing script {TicketId}", ticketId);
+
+                // The kill signal's exit code is not a result: suppress natural-exit persistence so the
+                // state stays Running and a restarted agent reports UnknownResult (resumable), as before.
+                MarkCancelRequested(running);
+                running.Process.Kill(entireProcessTree: true);
             }
             catch (Exception ex)
             {
                 Log.Warning(ex, "Failed to kill script {TicketId} during drain", ticketId);
             }
         }
+    }
 
-        Log.Information("LocalScriptService drain complete");
+    private static bool IsProcessRunning(RunningScript running)
+    {
+        try
+        {
+            return !running.Process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     // ========================================================================

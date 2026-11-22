@@ -138,10 +138,23 @@ public sealed class SystemdServiceHost : IServiceHost
         // ShutdownDrainTimeoutSeconds via env var should also lower this in
         // their unit overlay if they want a tight kill window. Pinned by
         // ServiceCommandTests.GenerateUnitFile_PinsTimeoutStopSec330.
+        //
+        // ── KillMode=mixed ──
+        // systemd's default KillMode=control-group delivers KillSignal to EVERY process in the
+        // unit's cgroup at once, so deployment scripts the agent spawned were SIGINT'd the instant
+        // `systemctl stop/restart` ran and the in-process drain protected nothing. `mixed` sends
+        // KillSignal to the main process only (the agent, which then drains), and SIGKILLs whatever
+        // is left in the cgroup once the main process exits or TimeoutStopSec expires. `process`
+        // was rejected: it would leave orphaned scripts running after the agent is gone. The
+        // upgrade script runs in its own `systemd-run --scope` cgroup, so it is unaffected.
+        //
+        // After/Wants=network-online.target: the agent dials out at boot; network.target only
+        // means "network stack configured", not "reachable".
         return $"""
             [Unit]
             Description={description}
-            After=network.target
+            After=network-online.target
+            Wants=network-online.target
             StartLimitBurst=3
             StartLimitIntervalSec=120
 
@@ -152,6 +165,7 @@ public sealed class SystemdServiceHost : IServiceHost
             {userLines}Restart=on-failure
             RestartSec=10
             KillSignal=SIGINT
+            KillMode=mixed
             TimeoutStopSec=330
             StartLimitAction=none
 
