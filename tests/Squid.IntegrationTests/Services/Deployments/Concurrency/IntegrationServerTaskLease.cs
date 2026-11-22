@@ -140,15 +140,77 @@ public class IntegrationServerTaskLease : TestBase
     [Theory]
     [InlineData("foreign-stale")]
     [InlineData("none")]
-    [InlineData("self")]
-    public async Task StartExecuting_OnAnExecutingRow_TakesOverWhenTheOwnerIsDeadUnleasedOrThisProcess(string holder)
+    [InlineData("self-stale")]
+    public async Task StartExecuting_OnAnExecutingRow_TakesOverWhenTheOwnerIsDeadOrUnleased(string holder)
     {
-        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2", leaseOwner: holder == "none" ? null : holder == "self" ? Owner : DeadOwner, leaseAge: holder == "foreign-stale" ? TimeSpan.FromMinutes(10) : TimeSpan.FromSeconds(5));
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2", leaseOwner: holder == "none" ? null : holder == "self-stale" ? Owner : DeadOwner, leaseAge: holder == "none" ? TimeSpan.Zero : TimeSpan.FromMinutes(10));
 
         var result = await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id));
 
         result.Task.State.ShouldBe(TaskState.Executing);
         (await LoadAsync(id)).LeaseOwner.ShouldBe(Owner);
+    }
+
+    // A duplicate delivery inside the SAME process is as much a duplicate as one on another pod: this process's own fresh lease does not admit it.
+    [Fact]
+    public async Task StartExecuting_OnARowThisVeryProcessRunsWithAFreshLease_IsRefused()
+    {
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2b", leaseOwner: Owner, leaseAge: TimeSpan.FromSeconds(5));
+
+        await Run<IServerTaskService>(s => Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => s.StartExecutingAsync(id)));
+
+        (await LoadAsync(id)).State.ShouldBe(TaskState.Executing);
+    }
+
+    // Both deliveries read the task as Pending/Paused; one CAS wins and every loser must be fenced - not routed to a failure path that would fail the winner.
+    [Theory]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Paused)]
+    public async Task ConcurrentStartExecuting_ExactlyOneWins_EveryLoserIsFenced_NothingIsWritten(string state)
+    {
+        for (var round = 0; round < 5; round++)
+        {
+            var id = await SeedAsync(state, $"deploy:claim-race-{state}-{round}");
+            await Run<IDeploymentCheckpointService>(c => c.EnsureExistsAsync(id, 1)).ConfigureAwait(false);
+
+            var outcomes = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => TryStartExecutingAsync(id))).ConfigureAwait(false);
+
+            outcomes.Count(o => o == null).ShouldBe(1, $"round {round}: exactly one delivery may start the pipeline");
+            outcomes.Where(o => o != null).ShouldAllBe(o => o is ServerTaskOwnedByLiveProcessException, $"round {round}: every loser must be fenced, never see a transition error");
+
+            var task = await LoadAsync(id);
+            task.State.ShouldBe(TaskState.Executing);
+            task.LeaseOwner.ShouldBe(Owner);
+            (await Run<IDeploymentCheckpointService, object>(async c => await c.LoadAsync(id).ConfigureAwait(false))).ShouldNotBeNull("the checkpoint must survive the losers");
+        }
+    }
+
+    // The runner on the loser's side, against the real database: the fenced delivery writes no completion, leaves the winner's state and lease, and starts no lease.
+    [Fact]
+    public async Task Runner_OnADuplicateDelivery_WritesNothing_AndLeavesTheWinnersTaskRunning()
+    {
+        var id = await SeedAsync(TaskState.Pending, "deploy:runner-dup");
+        await Run<IServerTaskDataProvider>(p => p.TransitionStateAsync(id, TaskState.Pending, TaskState.Executing)).ConfigureAwait(false);   // the winner
+        await Run<IDeploymentCheckpointService>(c => c.EnsureExistsAsync(id, 1)).ConfigureAwait(false);
+        var before = await LoadAsync(id);
+        var completion = new Moq.Mock<Squid.Core.Services.DeploymentExecution.Pipeline.IDeploymentCompletionHandler>();
+        var lifecycle = new Moq.Mock<Squid.Core.Services.DeploymentExecution.Lifecycle.IDeploymentLifecycle>();
+
+        await Run<IServerTaskService, IServerTaskLeaseKeeper, IServerTaskDataProvider>(async (service, keeper, provider) =>
+        {
+            var phase = new Squid.Core.Services.DeploymentExecution.Pipeline.Phases.LoadTaskPhase(service, keeper);
+            var runner = new Squid.Core.Services.DeploymentExecution.Pipeline.DeploymentPipelineRunner([phase], lifecycle.Object, completion.Object, new Squid.Core.Services.DeploymentExecution.Script.TaskCancellationRegistry(), provider, Moq.Mock.Of<Squid.Core.Services.Jobs.ISquidBackgroundJobClient>());
+
+            await runner.ProcessAsync(id, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        completion.VerifyNoOtherCalls();
+        lifecycle.Verify(l => l.EmitAsync(Moq.It.IsAny<Squid.Core.Services.DeploymentExecution.Lifecycle.DeploymentLifecycleEvent>(), Moq.It.IsAny<CancellationToken>()), Moq.Times.Never);
+        var after = await LoadAsync(id);
+        after.State.ShouldBe(TaskState.Executing);
+        after.LeaseOwner.ShouldBe(before.LeaseOwner);
+        after.CompletedTime.ShouldBeNull();
+        (await Run<IDeploymentCheckpointService, object>(async c => await c.LoadAsync(id).ConfigureAwait(false))).ShouldNotBeNull();
     }
 
     [Theory]
@@ -315,6 +377,19 @@ public class IntegrationServerTaskLease : TestBase
 
         results.Sum().ShouldBe(1);
     }
+
+    private Task<Exception> TryStartExecutingAsync(int id) => Run<IServerTaskService, Exception>(async s =>
+    {
+        try
+        {
+            await s.StartExecutingAsync(id).ConfigureAwait(false);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    });
 
     private Task<int> Claim(int id, string owner) => Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, owner, StaleAfter));
 

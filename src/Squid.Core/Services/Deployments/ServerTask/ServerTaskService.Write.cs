@@ -16,9 +16,9 @@ public partial class ServerTaskService
         var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
-            await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
+            await ClaimOrFenceAsync(task, TaskState.Pending, ct).ConfigureAwait(false);
         else if (isResumed)
-            await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
+            await ClaimOrFenceAsync(task, TaskState.Paused, ct).ConfigureAwait(false);
         else if (string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
             await FenceAlreadyExecutingAsync(task, ct).ConfigureAwait(false);
         else
@@ -30,14 +30,38 @@ public partial class ServerTaskService
         return new StartExecutingResult(task, isResumed);
     }
 
+    // Two deliveries can both read the task as Pending/Paused; only one CAS wins. The loser finds the row Executing — the winner's — and must take
+    // the same fenced path as any duplicate delivery to a running task, never fall into a failure path that would fail the winner's live deployment.
+    // Any other state after a lost CAS keeps the original transition error.
+    private async Task ClaimOrFenceAsync(Persistence.Entities.Deployments.ServerTask task, string from, CancellationToken ct)
+    {
+        try
+        {
+            await _serverTaskDataProvider.TransitionStateAsync(task.Id, from, TaskState.Executing, ct).ConfigureAwait(false);
+        }
+        catch (ServerTaskStateTransitionException ex) when (string.Equals(ex.FromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+        {
+            await FenceAlreadyExecutingAsync(task, ct).ConfigureAwait(false);
+        }
+    }
+
     // A task delivered while already Executing is either a dead owner's task being re-run (Hangfire retry) or a duplicate delivery to a live one.
-    // The lease tells them apart in one atomic UPDATE: it is taken only when this process holds it, nobody does, or its holder went silent.
+    // The lease tells them apart in one atomic UPDATE: it is taken only when nobody holds it or its holder went silent — never because the
+    // holder is this same process, which would let a duplicate delivery in the same pod run beside the live pipeline.
     private async Task FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
     {
-        var rows = await _serverTaskLeaseDataProvider.AcquireAsync(task.Id, ServerTaskLeaseOwner.Current, _leaseStale, ct).ConfigureAwait(false);
+        var rows = await _serverTaskLeaseDataProvider.ClaimRunningAsync(task.Id, ServerTaskLeaseOwner.Current, _leaseStale, ct).ConfigureAwait(false);
 
         if (rows == 0)
-            throw new ServerTaskOwnedByLiveProcessException(task.Id, task.LeaseOwner);
+            throw new ServerTaskOwnedByLiveProcessException(task.Id, await ReadLeaseOwnerAsync(task, ct).ConfigureAwait(false));
+    }
+
+    // The owner named in the refusal is read fresh: the row the caller loaded may predate the winner's claim.
+    private async Task<string> ReadLeaseOwnerAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+    {
+        var current = await _serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(task.Id, ct).ConfigureAwait(false);
+
+        return current?.LeaseOwner ?? task.LeaseOwner;
     }
 
     public Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, string detail = null, CancellationToken ct = default)

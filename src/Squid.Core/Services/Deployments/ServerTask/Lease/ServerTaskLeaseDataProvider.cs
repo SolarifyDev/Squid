@@ -14,6 +14,13 @@ public interface IServerTaskLeaseDataProvider : IScopedDependency
     /// </summary>
     Task<int> AcquireAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default);
 
+    /// <summary>
+    /// The claim-time fence: takes the lease of a running task only when nobody holds it (NULL) or the holder's lease is stale. Unlike
+    /// <see cref="AcquireAsync"/> the caller's own lease does NOT qualify: a second delivery inside the same process is as much a duplicate as one
+    /// on another pod, and must not start a second pipeline beside the live one.
+    /// </summary>
+    Task<int> ClaimRunningAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default);
+
     /// <summary>Renews the lease only while <paramref name="owner"/> still holds it on a running task; returns 0 when it does not.</summary>
     Task<int> RenewAsync(int taskId, string owner, CancellationToken ct = default);
 
@@ -30,7 +37,13 @@ public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLe
     // DateTimeOffset.UtcNow inside a query is translated to the database's now(), never sent as this server's time, so every pod and the reaper share one clock.
     public Task<int> AcquireAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default)
         => repository.ExecuteUpdateAsync<ServerTaskEntity>(
-            Takeable(taskId, owner, staleAfter),
+            Takeable(taskId, owner, staleAfter, includeOwn: true),
+            s => s.SetProperty(t => t.LeaseOwner, owner).SetProperty(t => t.LeaseRenewedAt, t => DateTimeOffset.UtcNow),
+            ct);
+
+    public Task<int> ClaimRunningAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default)
+        => repository.ExecuteUpdateAsync<ServerTaskEntity>(
+            Takeable(taskId, owner, staleAfter, includeOwn: false),
             s => s.SetProperty(t => t.LeaseOwner, owner).SetProperty(t => t.LeaseRenewedAt, t => DateTimeOffset.UtcNow),
             ct);
 
@@ -100,10 +113,12 @@ public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLe
         return Both(t => t.Id == id && t.State == state && t.LeaseOwner == owner, StaleLease(staleAfter));
     }
 
-    // A running task whose lease this owner already holds, nobody holds, or whose holder went silent. A live foreign owner never matches.
-    internal static Expression<Func<ServerTaskEntity, bool>> Takeable(int taskId, string owner, TimeSpan staleAfter)
+    // A running task nobody holds, or whose holder went silent, or (when includeOwn) whose lease this owner already holds. A live foreign owner never matches.
+    internal static Expression<Func<ServerTaskEntity, bool>> Takeable(int taskId, string owner, TimeSpan staleAfter, bool includeOwn)
     {
-        Expression<Func<ServerTaskEntity, bool>> unheldOrMine = t => t.LeaseOwner == owner || t.LeaseRenewedAt == null;
+        Expression<Func<ServerTaskEntity, bool>> unheld = t => t.LeaseRenewedAt == null;
+        Expression<Func<ServerTaskEntity, bool>> mine = t => t.LeaseOwner == owner;
+        var unheldOrMine = includeOwn ? Either(unheld, mine) : unheld;
 
         return Both(Both(t => t.Id == taskId, Running()), Either(unheldOrMine, StaleLease(staleAfter)));
     }

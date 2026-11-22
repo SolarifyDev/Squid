@@ -287,16 +287,18 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
     }
 
     [Fact]
-    public async Task StartExecutingAsync_AlreadyExecuting_DoesNotThrow()
+    public async Task StartExecutingAsync_AlreadyExecutingWithoutALease_DoesNotThrow()
     {
         var taskId = await SeedPendingTaskAsync();
 
-        await Run<IServerTaskService, IServerTaskDataProvider>(async (service, provider) =>
+        await Run<IServerTaskService, IServerTaskDataProvider, IRepository>(async (service, provider, repository) =>
         {
-            // First: transition Pending → Executing
+            // First: transition Pending → Executing, then drop the lease the claim stamped: the row an older server (or a pre-lease
+            // deployment) left Executing. A task a live process still leases is refused instead (see IntegrationServerTaskLease).
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing);
+            await repository.ExecuteUpdateAsync<Squid.Core.Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId, s => s.SetProperty(t => t.LeaseOwner, (string)null).SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null));
 
-            // StartExecutingAsync on an already-Executing task should not throw
+            // StartExecutingAsync on an already-Executing, unleased task should not throw
             var result = await service.StartExecutingAsync(taskId);
             result.Task.State.ShouldBe(TaskState.Executing);
         });
