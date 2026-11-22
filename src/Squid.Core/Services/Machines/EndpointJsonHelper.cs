@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 using Halibut;
-using Halibut.Diagnostics;
+using Squid.Core.Halibut;
 
 namespace Squid.Core.Services.Machines;
 
@@ -53,7 +53,7 @@ public static class EndpointJsonHelper
 
             var uri = $"poll://{subscriptionId}/";
 
-            return new ServiceEndPoint(uri, thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return new ServiceEndPoint(uri, thumbprint, HalibutModule.BuildTimeoutsAndLimits());
         }
         catch
         {
@@ -73,7 +73,7 @@ public static class EndpointJsonHelper
             if (string.IsNullOrEmpty(uri) || string.IsNullOrEmpty(thumbprint))
                 return null;
 
-            return new ServiceEndPoint(new Uri(uri), thumbprint, HalibutTimeoutsAndLimits.RecommendedValues());
+            return new ServiceEndPoint(new Uri(uri), thumbprint, HalibutModule.BuildTimeoutsAndLimits());
         }
         catch
         {
