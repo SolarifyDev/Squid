@@ -101,11 +101,10 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // check ran first and races produced DeploymentFailedEvent while the UI
             // showed "cancel requested". Checkpoint + downstream consumers then latched
             // on the wrong terminal state. We still let timeouts fall through to the
-            // OCE handler below (timeoutCts raises OCE mid-execution, not here). The external
-            // token is the job host shutting down, never a user cancel: it is rethrown just above
-            // so it is handled like a mid-run shutdown (pause + redelivery), not as a cancel.
-            if (IsHostShutdown(registryCts, ct)) ct.ThrowIfCancellationRequested();
-
+            // OCE handler below (timeoutCts raises OCE mid-execution, not here). Only the user's
+            // registry cancel wins here: the external token is the job host shutting down, and once every
+            // phase has completed there is nothing left to resume, so the real outcome (Failed/Success) is
+            // recorded with the completion writes' own timeout token and the job returns normally.
             if (registryCts.Token.IsCancellationRequested)
             {
                 await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);

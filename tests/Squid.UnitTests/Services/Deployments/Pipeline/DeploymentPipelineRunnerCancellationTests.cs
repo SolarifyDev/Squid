@@ -263,12 +263,16 @@ public class DeploymentPipelineRunnerCancellationTests
             failMessage: "race must not emit the failed event — downstream consumers latch on it");
     }
 
-    [Fact]
-    public async Task RaceShutdownAfterFailure_ExternalCtPauses_NotCancelledNotFailed()
+    public enum LateShutdown { NoFailure, WithFailure, WithUserCancel }
+
+    [Theory]
+    [InlineData(LateShutdown.NoFailure, "Success")]
+    [InlineData(LateShutdown.WithFailure, "Failed")]
+    [InlineData(LateShutdown.WithUserCancel, "Cancelled")]
+    public async Task ShutdownAfterAllPhasesCompleted_RecordsTheRealOutcome_NoRethrowNoPause(LateShutdown scenario, string expected)
     {
-        // Same window but the signal is the external (host shutdown) token. The task is still Executing, so
-        // neither the cancel write nor a Failed record is right: a step failure observed while the host is
-        // going down may be shutdown fallout. Pause and rethrow so the re-delivered job re-evaluates.
+        // Every phase finished before the host token fired: nothing is left to resume, so pausing would
+        // make the terminal outcome depend on redelivery (and leave the task Paused forever if none comes).
         using var externalCts = new CancellationTokenSource();
 
         var phase = new Mock<IDeploymentPipelinePhase>();
@@ -276,16 +280,21 @@ public class DeploymentPipelineRunnerCancellationTests
         phase.Setup(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
             .Returns<DeploymentTaskContext, CancellationToken>((ctx, _) =>
             {
-                ctx.FailureEncountered = true;
+                ctx.FailureEncountered = scenario == LateShutdown.WithFailure;
+                if (scenario == LateShutdown.WithUserCancel) _registry.TryCancel(1);
                 externalCts.Cancel();
                 return Task.CompletedTask;
             });
 
         var runner = CreateRunner(phase.Object);
 
-        await Should.ThrowAsync<OperationCanceledException>(() => runner.ProcessAsync(1, externalCts.Token));
+        await Should.NotThrowAsync(() => runner.ProcessAsync(1, externalCts.Token));
 
-        VerifyHostShutdownPause();
+        _completion.Verify(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), expected == "Success" ? Times.Once() : Times.Never());
+        _completion.Verify(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), expected == "Failed" ? Times.Once() : Times.Never());
+        _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), expected == "Cancelled" ? Times.Once() : Times.Never());
+        _completion.Verify(c => c.OnPausedAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
+        _lifecycle.Verify(l => l.EmitAsync(It.IsAny<DeploymentPausedEvent>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
