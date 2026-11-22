@@ -305,6 +305,160 @@ public class ScriptRecoveryServiceTests : IDisposable
         service.ActiveScripts.Count.ShouldBe(0);
     }
 
+    // ========== Completed-pod recovery: real exit code + logs ==========
+
+    [Theory]
+    [InlineData("Succeeded", 0, null)]
+    [InlineData("Failed", 3, "Error")]
+    [InlineData("Failed", 137, "OOMKilled")]
+    public void Recovery_CompletedPod_ReportsRealExitCode(string phase, int exitCode, string? reason)
+    {
+        SeedStateFile("done-ticket", "squid-script-done", "NoIsolation");
+        SetupCompletedPod("squid-script-done", phase, ScriptContainer(exitCode, reason));
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("done-ticket"), 0));
+        status.State.ShouldBe(ProcessState.Complete);
+        status.ExitCode.ShouldBe(exitCode);
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_CompleteScriptReturnsRealExitCodeAndLogs()
+    {
+        SeedStateFile("logs-ticket", "squid-script-logs", "NoIsolation");
+        SetupCompletedPod("squid-script-logs", "Succeeded", ScriptContainer(0, null));
+        SetupPodLogs("hello from the pod\nsecond line\n");
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var result = _service.CompleteScript(new CompleteScriptCommand(new ScriptTicket("logs-ticket"), 0));
+        result.State.ShouldBe(ProcessState.Complete);
+        result.ExitCode.ShouldBe(0);
+        result.Logs.Select(l => l.Text).ShouldContain(t => t.Contains("hello from the pod"));
+        result.Logs.Select(l => l.Text).ShouldContain(t => t.Contains("second line"));
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_CleansUpPodWorkspaceAndMutexExactlyOnce()
+    {
+        SeedStateFile("clean-ticket", "squid-script-clean", "NoIsolation");
+        SetupCompletedPod("squid-script-clean", "Failed", ScriptContainer(3, "Error"));
+        SetupPodLogs("boom\n");
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+        _service.CompleteScript(new CompleteScriptCommand(new ScriptTicket("clean-ticket"), 0));
+
+        _ops.Verify(o => o.DeletePod("squid-script-clean", It.IsAny<string>(), It.IsAny<int?>()), Times.Once);
+        Directory.Exists(Path.Combine(_tempWorkspace, "clean-ticket")).ShouldBeFalse();
+        _service.MutexLocks.ContainsKey("clean-ticket").ShouldBeFalse();
+        _service.ActiveScripts.ContainsKey("clean-ticket").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Recovery_CompletedPodWithSidecar_PicksScriptContainer()
+    {
+        SeedStateFile("sidecar-ticket", "squid-script-sidecar", "NoIsolation");
+        var sidecar = new V1ContainerStatus { Name = "nfs-watchdog", State = Terminated(9, "Error") };
+        SetupCompletedPod("squid-script-sidecar", "Succeeded", sidecar, ScriptContainer(0, null));
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("sidecar-ticket"), 0));
+        status.ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_LogReadFails_StillReportsRealExitCode()
+    {
+        SeedStateFile("nolog-ticket", "squid-script-nolog", "NoIsolation");
+        SetupCompletedPod("squid-script-nolog", "Failed", ScriptContainer(3, "Error"));
+        _ops.Setup(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()))
+            .Throws(new InvalidOperationException("logs unavailable"));
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var result = _service.CompleteScript(new CompleteScriptCommand(new ScriptTicket("nolog-ticket"), 0));
+        result.ExitCode.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_NoScriptContainerStatus_FallsBackToUnknownWithReason()
+    {
+        SeedStateFile("nostatus-ticket", "squid-script-nostatus", "NoIsolation");
+        SetupCompletedPod("squid-script-nostatus", "Succeeded", new V1ContainerStatus { Name = "nfs-watchdog", State = Terminated(0, null) });
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var status = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("nostatus-ticket"), 0));
+        status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+        status.Logs.Select(l => l.Text).ShouldContain(t => t.Contains("exit code of container 'script' could not be read"));
+        _service.ActiveScripts.ContainsKey("nostatus-ticket").ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_ScriptContainerNotTerminated_FallsBackToUnknown()
+    {
+        SeedStateFile("waiting-ticket", "squid-script-waiting", "NoIsolation");
+        SetupCompletedPod("squid-script-waiting", "Failed", new V1ContainerStatus { Name = "script", State = new V1ContainerState { Waiting = new V1ContainerStateWaiting() } });
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("waiting-ticket"), 0)).ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    [Fact]
+    public void Recovery_CompletedPod_StatusReadFailsAfterPhase_FallsBackToUnknown()
+    {
+        SeedStateFile("apierr-ticket", "squid-script-apierr", "NoIsolation");
+        _ops.SetupSequence(o => o.ReadPodStatus("squid-script-apierr", It.IsAny<string>()))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = "Failed" } })
+            .Throws(new InvalidOperationException("apiserver unavailable"));
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("apierr-ticket"), 0)).ExitCode.ShouldBe(ScriptExitCodes.UnknownResult);
+    }
+
+    // Pins SSOT: recovery and the normal completion path must derive the exit code from the same
+    // pod status. A parallel parser in recovery would diverge on at least one of these shapes.
+    [Theory]
+    [InlineData("Succeeded", 0)]
+    [InlineData("Failed", 3)]
+    [InlineData("Failed", 137)]
+    public void Recovery_CompletedPod_ExitCodeMatchesNormalCompletionPath(string phase, int exitCode)
+    {
+        var sidecar = new V1ContainerStatus { Name = "nfs-watchdog", State = Terminated(1, null) };
+
+        SeedStateFile("parity-ticket", "squid-script-parity", "NoIsolation");
+        SetupCompletedPod("squid-script-parity", phase, sidecar, ScriptContainer(exitCode, null));
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+        var recovered = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("parity-ticket"), 0)).ExitCode;
+
+        SetupCompletedPod("squid-script-normal", phase, sidecar, ScriptContainer(exitCode, null));
+        _service.RestoreActiveScript(new ScriptPodContext("normal-ticket", "squid-script-normal", _tempWorkspace, "eos"), null);
+        var normal = _service.GetStatus(new ScriptStatusRequest(new ScriptTicket("normal-ticket"), 0)).ExitCode;
+
+        recovered.ShouldBe(normal);
+        recovered.ShouldBe(exitCode);
+    }
+
+    private static V1ContainerStatus ScriptContainer(int exitCode, string? reason) => new() { Name = "script", State = Terminated(exitCode, reason) };
+
+    private static V1ContainerState Terminated(int exitCode, string? reason) => new() { Terminated = new V1ContainerStateTerminated { ExitCode = exitCode, Reason = reason } };
+
+    private void SetupCompletedPod(string podName, string phase, params V1ContainerStatus[] containers)
+    {
+        _ops.Setup(o => o.ReadPodStatus(podName, It.IsAny<string>()))
+            .Returns(new V1Pod { Status = new V1PodStatus { Phase = phase, ContainerStatuses = containers } });
+    }
+
+    private void SetupPodLogs(string logs)
+    {
+        _ops.Setup(o => o.ReadPodLog(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTime?>()))
+            .Returns(() => new MemoryStream(System.Text.Encoding.UTF8.GetBytes(logs)));
+    }
+
     private void SetupPodPhase(string podName, string phase)
     {
         if (phase == KubernetesPodManager.PhaseNotFound)

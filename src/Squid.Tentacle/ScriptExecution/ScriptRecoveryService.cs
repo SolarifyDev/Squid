@@ -120,15 +120,39 @@ public class ScriptRecoveryService
 
         if (phase is "Succeeded" or "Failed")
         {
-            Log.Information("Recovered script {TicketId}: pod {PodName} already completed ({Phase})", state.TicketId, state.PodName, phase);
-            InjectFailure(state.TicketId, service, $"Pod completed during agent restart (phase: {phase})");
+            RecoverCompletedScript(state, workDir, service, podManager, mutex);
             return;
         }
 
         Log.Information("Recovered script {TicketId}: pod {PodName} still running ({Phase}), rebuilding context", state.TicketId, state.PodName, phase);
 
+        RestoreScriptContext(state, workDir, service, mutex);
+    }
+
+    // The pod finished while the agent was down. Re-adopt it like a running pod so the normal
+    // GetStatus/CompleteScript path derives the exit code (GetScriptContainerTermination), drains
+    // the logs, deletes the pod and cleans the workspace — one code path, no second parser.
+    private static void RecoverCompletedScript(ScriptStateFile state, string workDir, ScriptPodService service, KubernetesPodManager podManager, ScriptIsolationMutex mutex)
+    {
+        var termination = podManager.GetScriptContainerTermination(state.PodName);
+
+        if (termination == null)
+        {
+            Log.Warning("Recovered script {TicketId}: pod {PodName} completed but container 'script' has no readable terminated state", state.TicketId, state.PodName);
+            InjectFailure(state.TicketId, service, "Pod completed during agent restart but the exit code of container 'script' could not be read; the script result is unknown");
+            return;
+        }
+
+        Log.Information("Recovered script {TicketId}: pod {PodName} already completed (exit code {ExitCode}), restoring real result", state.TicketId, state.PodName, termination.ExitCode);
+
+        RestoreScriptContext(state, workDir, service, mutex);
+    }
+
+    private static void RestoreScriptContext(ScriptStateFile state, string workDir, ScriptPodService service, ScriptIsolationMutex mutex)
+    {
         var ctx = new ScriptPodContext(state.TicketId, state.PodName, workDir, state.EosMarkerToken);
         ctx.LastLogTimestamp = state.LastLogTimestamp;
+        ctx.SensitiveValues = SensitiveVariableDecryptor.ExtractSensitiveValues(workDir);
 
         var mutexHandle = TryReacquireMutex(state, mutex);
 
