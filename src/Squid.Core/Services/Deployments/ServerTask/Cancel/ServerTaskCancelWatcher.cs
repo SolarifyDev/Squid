@@ -1,3 +1,5 @@
+using Squid.Core.Settings.ServerTask;
+
 namespace Squid.Core.Services.Deployments.ServerTask.Cancel;
 
 /// <summary>
@@ -15,7 +17,7 @@ public sealed class ServerTaskCancelWatcher : IServerTaskCancelWatcher
     private readonly ILifetimeScope _lifetimeScope;
     private readonly ServerTaskCancelWatchOptions _options;
 
-    public ServerTaskCancelWatcher(ILifetimeScope lifetimeScope) : this(lifetimeScope, ServerTaskCancelWatchOptions.FromEnvironment())
+    public ServerTaskCancelWatcher(ILifetimeScope lifetimeScope, ServerTaskSetting setting) : this(lifetimeScope, ServerTaskCancelWatchOptions.From(setting))
     {
     }
 
