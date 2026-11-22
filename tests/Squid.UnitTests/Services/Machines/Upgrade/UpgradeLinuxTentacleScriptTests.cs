@@ -1174,17 +1174,22 @@ public sealed class UpgradeLinuxTentacleScriptTests
     }
 
     [Fact]
-    public void Script_GracefulStopDropIn_IsAppliedOnlyAfterRestartSucceeded()
+    public void Script_GracefulStopDropIn_IsAppliedAfterRestartSucceeded_AndBeforeTheTerminalSuccessEvent()
     {
         // The stop that performs this upgrade must run under the old settings (unchanged proven
-        // behaviour); the drop-in takes effect for the next stop.
+        // behaviour); the drop-in takes effect for the next stop. The server reads the LAST event
+        // as the outcome, so the drop-in's own event must precede the terminal `success` event.
         var restart = RenderedScript.IndexOf("timeout 90 sudo systemctl restart", StringComparison.Ordinal);
-        var success = RenderedScript.IndexOf("write_status \"SUCCESS\"", StringComparison.Ordinal);
+        var versionCheck = RenderedScript.IndexOf("RUNNING_VERSION=$(timeout 5", StringComparison.Ordinal);
         var call = RenderedScript.IndexOf("\n  ensure_graceful_stop_dropin\n", StringComparison.Ordinal);
+        var successEvent = RenderedScript.IndexOf("emit_event B success ", StringComparison.Ordinal);
+        var successStatus = RenderedScript.IndexOf("write_status \"SUCCESS\"", StringComparison.Ordinal);
 
         restart.ShouldBeGreaterThan(0);
-        success.ShouldBeGreaterThan(restart);
-        call.ShouldBeGreaterThan(success);
+        versionCheck.ShouldBeGreaterThan(restart);
+        call.ShouldBeGreaterThan(versionCheck);
+        successEvent.ShouldBeGreaterThan(call);
+        successStatus.ShouldBeGreaterThan(call);
         CountOccurrences(RenderedScript, "ensure_graceful_stop_dropin\n").ShouldBe(1, "called exactly once, on the success path only");
     }
 

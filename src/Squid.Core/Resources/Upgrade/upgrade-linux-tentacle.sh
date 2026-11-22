@@ -770,15 +770,18 @@ fi
 
 if [ "$HEALTH_OK" = "1" ]; then
   echo "✓ Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
-  emit_event B success "Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
-  write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target (method=$INSTALL_METHOD)"
-
   # Existing hosts keep the unit file generated at install time (KillMode=control-group,
   # After=network.target) until reinstall. Apply the graceful-stop settings via an idempotent
   # drop-in. Deliberately AFTER the restart succeeded: the stop that just happened ran under the
   # old settings exactly as before, so this upgrade's behaviour is unchanged; the drop-in takes
-  # effect for the next stop. Best-effort: a failure here must never fail an upgrade.
+  # effect for the next stop. And BEFORE the terminal `success` event: the server reads the last
+  # event as the outcome, so nothing may be emitted after it. Best-effort: a failure here must
+  # never fail an upgrade.
   ensure_graceful_stop_dropin
+
+  emit_event B success "Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
+  write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target (method=$INSTALL_METHOD)"
+
   if [ "$INSTALL_METHOD" = "tarball" ]; then
     sudo rm -rf "$BAK_DIR"
   fi
