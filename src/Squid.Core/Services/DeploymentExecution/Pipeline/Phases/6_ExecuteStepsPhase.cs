@@ -81,6 +81,8 @@ public sealed partial class ExecuteStepsPhase(
         var batches = StepBatcher.BatchSteps(orderedSteps);
         var stepSortOrderByStep = orderedSteps.ToDictionary(step => step, step => step.StepOrder);
 
+        ExpandLegacyBatchStates(batches);
+
         _currentBatchIndex = 0;
 
         await EnsureCheckpointRowAsync(ct).ConfigureAwait(false);
@@ -282,13 +284,26 @@ public sealed partial class ExecuteStepsPhase(
         return _batchStates.GetOrAdd(batchIndex, _ => new Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState());
     }
 
-    internal void MarkTargetCompleted(int batchIndex, int machineId, bool failed)
+    internal void MarkTargetCompleted(int batchIndex, int stepId, int machineId, bool failed)
     {
         var state = GetOrCreateBatchState(batchIndex);
         // AddCompleted / AddFailed serialise on the state's internal lock so parallel
-        // writers don't corrupt the underlying HashSet.
-        if (failed) state.AddFailed(machineId);
-        else state.AddCompleted(machineId);
+        // writers don't corrupt the underlying HashSet. Keyed by (step, machine): a batch can
+        // run several steps against the same machine and each completes independently.
+        if (failed) state.AddFailed(stepId, machineId);
+        else state.AddCompleted(stepId, machineId);
+    }
+
+    // A checkpoint written before step-keying holds machine-level entries only; they meant "terminal
+    // for every step of the batch", so expand them across this batch's steps before anything runs.
+    private void ExpandLegacyBatchStates(List<List<DeploymentStepDto>> batches)
+    {
+        foreach (var (batchIndex, state) in _batchStates)
+        {
+            if (batchIndex < 0 || batchIndex >= batches.Count) continue;
+
+            state.ExpandLegacy(batches[batchIndex].Select(step => step.Id));
+        }
     }
 
     /// <summary>

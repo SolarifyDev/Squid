@@ -145,7 +145,7 @@ public sealed class BatchCheckpointStateThreadSafetyTests
         const int machines = 500;
         var phase = CreatePhaseUnderTest();
 
-        Parallel.For(0, machines, i => phase.MarkTargetCompleted(7, i, failed: false));
+        Parallel.For(0, machines, i => phase.MarkTargetCompleted(7, 1, i, failed: false));
 
         var state = phase.GetOrCreateBatchState(7);
         state.CompletedMachineIds.Count.ShouldBe(machines,
