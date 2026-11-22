@@ -224,6 +224,13 @@ public static class WindowsUpgradeE2ECategories
     public const string TentacleBinary = "WindowsTentacleBinaryE2E";
 
     /// <summary>
+    /// E2E coverage for SCM recovery after a FATAL agent error: the real binary must report a
+    /// non-zero service exit code so the <c>sc failure</c> restart fires, and an operator
+    /// <c>sc stop</c> must not restart. Tier 🟢 high-fidelity (real binary + real SCM).
+    /// </summary>
+    public const string ScmFatalRecovery = "TentacleScmFatalRecoveryE2E";
+
+    /// <summary>
     /// E2E coverage for the production
     /// <c>Squid.DeployToIISWebSite</c> action's PowerShell payload against
     /// a real Windows host with real IIS installed. Drives

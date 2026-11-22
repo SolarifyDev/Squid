@@ -48,11 +48,13 @@ public sealed class TentacleScmHostedService : BackgroundService
 {
     private readonly string[] _args;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly Action<int>? _reportServiceExitCode;
 
-    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime)
+    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null)
     {
         _args = args ?? throw new ArgumentNullException(nameof(args));
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
+        _reportServiceExitCode = reportServiceExitCode;
     }
 
     /// <summary>
@@ -85,6 +87,11 @@ public sealed class TentacleScmHostedService : BackgroundService
         }
         finally
         {
+            // Tell SCM WHY we are stopping BEFORE the host stops: the final SERVICE_STOPPED
+            // status carries this code, and only a non-zero code lets the `sc failure`
+            // restart actions fire. An operator stop (token cancelled) stays 0.
+            _reportServiceExitCode?.Invoke(ScmExitCode.Resolve(LastExitCode, stoppingToken.IsCancellationRequested));
+
             // Trigger host shutdown so SCM transitions out of RUNNING
             // even if the command pipeline finished early (e.g. `run`
             // exited cleanly without a Stop signal — uncommon for the

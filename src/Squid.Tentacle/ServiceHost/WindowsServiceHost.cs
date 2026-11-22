@@ -127,6 +127,19 @@ public sealed class WindowsServiceHost : IServiceHost
             Console.Error.WriteLine($"  sc failure {request.ServiceName} reset= {DefaultResetSeconds} actions= restart/{DefaultRestartDelayMs}/restart/{DefaultRestartDelayMs}/restart/{DefaultRestartDelayMs}");
         }
 
+        // `sc failure` actions only fire when the process CRASHES unless the failure-actions
+        // flag is also set. A fatal agent error is caught and reported as a clean
+        // SERVICE_STOPPED carrying a non-zero exit code (see TentacleScmHostedService); SCM
+        // treats that as a failure ONLY with this flag. Same soft-fail rationale as above.
+        var failureFlagExit = Sc(BuildScFailureFlagArgs(request.ServiceName));
+
+        if (failureFlagExit != 0)
+        {
+            Console.Error.WriteLine($"Warning: failed to enable restart-on-non-crash-failure for '{request.ServiceName}' (sc.exe failureflag exit {failureFlagExit}).");
+            Console.Error.WriteLine("  A fatal agent error will NOT trigger an automatic restart until you run:");
+            Console.Error.WriteLine($"  sc failureflag {request.ServiceName} 1");
+        }
+
         // sc create doesn't auto-start; mirror systemd's "create + enable + start"
         // by running sc start so 'service install' is one-shot.
         var startExit = Sc(BuildScStartArgs(request.ServiceName));
@@ -313,6 +326,19 @@ public sealed class WindowsServiceHost : IServiceHost
             "reset=", resetSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "actions=", actionsValue
         };
+    }
+
+    /// <summary>
+    /// Builds the argv for <c>sc.exe failureflag &lt;name&gt; 1</c> — sets
+    /// <c>SERVICE_FAILURE_ACTIONS_FLAG</c> so the <c>sc failure</c> actions also run when the
+    /// service stops itself with a non-zero exit code (not only when the process crashes).
+    /// Without it a fatal-but-graceful agent exit leaves the service stopped forever.
+    /// </summary>
+    internal static string[] BuildScFailureFlagArgs(string serviceName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
+
+        return new[] { "failureflag", serviceName, "1" };
     }
 
     internal static string[] BuildScDeleteArgs(string serviceName)
