@@ -443,6 +443,51 @@ public class ScriptRecoveryServiceTests : IDisposable
         recovered.ShouldBe(exitCode);
     }
 
+    // Guards RestoreScriptContext's ExtractSensitiveValues: without it a recovered script's logs
+    // (now returned for completed pods) would carry secrets unmasked.
+    [Theory]
+    [InlineData("Running")]
+    [InlineData("Succeeded")]
+    public void Recovery_RecoveredScript_MasksSensitiveValuesInReturnedLogs(string phaseAtRecovery)
+    {
+        const string secret = "Sup3r-S3cret-Value-42";
+        SeedStateFile("mask-ticket", "squid-script-mask", "NoIsolation");
+        WriteEncryptedSensitiveVariables(Path.Combine(_tempWorkspace, "mask-ticket"), "pw-for-recovery-test", secret);
+        SetupPodLogs($"connecting with {secret}\nplain line\n");
+
+        var reads = 0;
+        _ops.Setup(o => o.ReadPodStatus("squid-script-mask", It.IsAny<string>()))
+            .Returns(() => reads++ == 0 && phaseAtRecovery == "Running" ? PodInPhase("Running", null) : PodInPhase("Succeeded", ScriptContainer(0, null)));
+
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+
+        var texts = _service.CompleteScript(new CompleteScriptCommand(new ScriptTicket("mask-ticket"), 0)).Logs.Select(l => l.Text).ToList();
+        texts.ShouldNotContain(t => t.Contains(secret));
+        texts.ShouldContain(t => t.Contains("connecting with") && t.Contains("*"));
+        texts.ShouldContain(t => t.Contains("plain line"));
+    }
+
+    private static V1Pod PodInPhase(string phase, V1ContainerStatus? container) => new() { Status = new V1PodStatus { Phase = phase, ContainerStatuses = container == null ? null : new[] { container } } };
+
+    private static void WriteEncryptedSensitiveVariables(string workDir, string password, string secret)
+    {
+        var plain = System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { ["dbPwd"] = secret }));
+        var salt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+        var nonce = System.Security.Cryptography.RandomNumberGenerator.GetBytes(12);
+
+        using var kdf = new System.Security.Cryptography.Rfc2898DeriveBytes(password, salt, 600_000, System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var cipher = new byte[plain.Length];
+        var tag = new byte[16];
+
+        using (var aes = new System.Security.Cryptography.AesGcm(kdf.GetBytes(32), 16))
+            aes.Encrypt(nonce, plain, cipher, tag);
+
+        var envelope = "V2__"u8.ToArray().Concat(salt).Concat(nonce).Concat(cipher).Concat(tag).ToArray();
+
+        File.WriteAllBytes(Path.Combine(workDir, "sensitiveVariables.json"), envelope);
+        File.WriteAllText(Path.Combine(workDir, "sensitiveVariables.json.key"), password);
+    }
+
     private static V1ContainerStatus ScriptContainer(int exitCode, string? reason) => new() { Name = "script", State = Terminated(exitCode, reason) };
 
     private static V1ContainerState Terminated(int exitCode, string? reason) => new() { Terminated = new V1ContainerStateTerminated { ExitCode = exitCode, Reason = reason } };
