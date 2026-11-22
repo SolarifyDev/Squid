@@ -178,7 +178,8 @@ public sealed class WindowsUpgradePhaseBE2ETests
             "Start-Service",
             "Split-Path -Parent",   //  polish #2: bak path safety
             "Split-Path -Leaf",
-            "Join-Path"
+            "Join-Path",
+            "failureflag"           // existing fleet: upgrade must enable restart-on-fatal
         };
 
         foreach (var op in keyOperations)
@@ -230,6 +231,11 @@ Move-Item -Path $extractDir -Destination $installDir -Force
 
 # Restart service. New binary reads version.txt and writes marker.
 Start-Service -Name $serviceName
+
+# Mirror of the production post-health-check step: enable the failure-actions
+# flag so SCM restarts the agent after a fatal (non-crash) exit. Real sc.exe.
+& sc.exe failureflag $serviceName 1 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {{ exit 21 }}
 
 exit 0
 ";
