@@ -21,8 +21,8 @@ public sealed class RpcRetryHandlerTests
     private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private readonly List<TimeSpan> _delays = new();
 
-    private RpcRetryHandler Handler(int statusSeconds = 120, int completeSeconds = 30)
-        => new(TimeSpan.FromSeconds(statusSeconds), TimeSpan.FromSeconds(completeSeconds), () => _now, FakeDelay);
+    private RpcRetryHandler Handler(int statusSeconds = 120, int completeSeconds = 30, int cancelSeconds = 20)
+        => new(TimeSpan.FromSeconds(statusSeconds), TimeSpan.FromSeconds(completeSeconds), TimeSpan.FromSeconds(cancelSeconds), () => _now, FakeDelay);
 
     private Task FakeDelay(TimeSpan delay, CancellationToken ct)
     {
@@ -126,7 +126,7 @@ public sealed class RpcRetryHandlerTests
     public async Task CallerCancelsDuringBackoff_ThrowsOperationCanceled()
     {
         using var cts = new CancellationTokenSource();
-        var handler = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), () => _now, (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
+        var handler = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(20), () => _now, (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
 
         await Should.ThrowAsync<OperationCanceledException>(() => handler.ExecuteAsync<int>(() => throw new HalibutClientException("x"), "GetStatus", TimeSpan.FromMinutes(2), cts.Token));
     }
@@ -136,7 +136,7 @@ public sealed class RpcRetryHandlerTests
     {
         using var stop = new CancellationTokenSource();
         var failure = new HalibutClientException("x");
-        var handler = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), () => _now, (_, ct) => { stop.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
+        var handler = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(20), () => _now, (_, ct) => { stop.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
 
         var caught = await Should.ThrowAsync<HalibutClientException>(() => handler.ExecuteAsync<int>(() => throw failure, "GetStatus", TimeSpan.FromMinutes(2), CancellationToken.None, stop.Token));
 
@@ -151,6 +151,8 @@ public sealed class RpcRetryHandlerTests
         RpcRetryHandler.CompleteRetryBudgetSecondsEnvVar.ShouldBe("SQUID_HALIBUT_RPC_COMPLETE_RETRY_BUDGET_SECONDS");
         RpcRetryHandler.DefaultRetryBudgetSeconds.ShouldBe(120);
         RpcRetryHandler.DefaultCompleteRetryBudgetSeconds.ShouldBe(30);
+        RpcRetryHandler.CancelRetryBudgetSecondsEnvVar.ShouldBe("SQUID_HALIBUT_RPC_CANCEL_RETRY_BUDGET_SECONDS");
+        RpcRetryHandler.DefaultCancelRetryBudgetSeconds.ShouldBe(20);
     }
 
     [Theory]

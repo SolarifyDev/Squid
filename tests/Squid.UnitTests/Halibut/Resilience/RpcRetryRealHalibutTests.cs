@@ -31,7 +31,7 @@ namespace Squid.UnitTests.Halibut.Resilience;
 [Trait("Category", "RealHalibut")]
 public sealed class RpcRetryRealHalibutTests : IAsyncLifetime
 {
-    private static readonly TimeSpan ScriptDuration = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan ScriptDuration = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan Outage = TimeSpan.FromSeconds(2);
 
     private HalibutRuntime _agent;
@@ -103,7 +103,7 @@ public sealed class RpcRetryRealHalibutTests : IAsyncLifetime
 
         var observing = observer.ObserveAndCompleteAsync(new Machine { Name = "real-agent" }, client, ticket, TimeSpan.FromMinutes(5), CancellationToken.None, null, start);
 
-        await Task.Delay(TimeSpan.FromMilliseconds(800));
+        await Task.Delay(TimeSpan.FromSeconds(2));
         _proxy.Sever();
         await Task.Delay(Outage);
         _proxy.Restore();

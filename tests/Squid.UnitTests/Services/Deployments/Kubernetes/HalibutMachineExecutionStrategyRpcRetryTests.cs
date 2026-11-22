@@ -38,7 +38,7 @@ public class HalibutMachineExecutionStrategyRpcRetryTests
     {
         _factory.Setup(f => f.CreateClient(It.IsAny<ServiceEndPoint>())).Returns(agent);
 
-        var retry = new RpcRetryHandler(TimeSpan.FromSeconds(budgetSeconds), TimeSpan.FromSeconds(30), () => _now, (d, _) => { _now += d; return Task.CompletedTask; });
+        var retry = new RpcRetryHandler(TimeSpan.FromSeconds(budgetSeconds), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(20), () => _now, (d, _) => { _now += d; return Task.CompletedTask; });
         var observer = new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 });
 
         return new HalibutMachineExecutionStrategy(_factory.Object, new CalamariPayloadBuilder(new Mock<IYamlNuGetPacker>().Object), observer, new HalibutSetting(), _breakers, rpcRetry: retry);

@@ -34,11 +34,11 @@ public class RetryingScriptClientTests
     private readonly Machine _machine = new() { Name = "agent" };
     private readonly HalibutScriptObserver _observer = new(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 });
 
-    private RpcRetryHandler Handler(int statusSeconds = 120, int completeSeconds = 30)
-        => new(TimeSpan.FromSeconds(statusSeconds), TimeSpan.FromSeconds(completeSeconds), () => _now, (d, ct) => { ct.ThrowIfCancellationRequested(); _now += d; return Task.CompletedTask; });
+    private RpcRetryHandler Handler(int statusSeconds = 120, int completeSeconds = 30, int cancelSeconds = 20)
+        => new(TimeSpan.FromSeconds(statusSeconds), TimeSpan.FromSeconds(completeSeconds), TimeSpan.FromSeconds(cancelSeconds), () => _now, (d, ct) => { ct.ThrowIfCancellationRequested(); _now += d; return Task.CompletedTask; });
 
-    private RetryingScriptClient Retrying(Agent agent, TimeSpan? scriptTimeout = null, int statusSeconds = 120, int completeSeconds = 30, CancellationToken ct = default)
-        => new(agent, Handler(statusSeconds, completeSeconds), scriptTimeout ?? Plenty, ct);
+    private RetryingScriptClient Retrying(Agent agent, TimeSpan? scriptTimeout = null, int statusSeconds = 120, int completeSeconds = 30, int cancelSeconds = 20, CancellationToken ct = default)
+        => new(agent, Handler(statusSeconds, completeSeconds, cancelSeconds), scriptTimeout ?? Plenty, ct);
 
     private static ScriptStatusResponse Status(ScriptTicket t, ProcessState state, int exit, long next, params string[] lines)
         => new(t, state, exit, lines.Select(l => new ProcessOutput(ProcessOutputSource.StdOut, l, DateTimeOffset.UtcNow)).ToList(), next);
@@ -140,7 +140,7 @@ public class RetryingScriptClientTests
     {
         using var cts = new CancellationTokenSource();
         var agent = new Agent { OnGetStatus = _ => throw new HalibutClientException("drop") };
-        var cancelsDuringBackoff = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), () => _now, (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
+        var cancelsDuringBackoff = new RpcRetryHandler(TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(20), () => _now, (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.CompletedTask; });
         var client = new RetryingScriptClient(agent, cancelsDuringBackoff, Plenty, cts.Token);
 
         await Should.ThrowAsync<OperationCanceledException>(() => ObserveAsync(client, cts.Token, decision: () => true));
@@ -169,16 +169,17 @@ public class RetryingScriptClientTests
     }
 
     [Fact]
-    public async Task CancelThatNeverReachesTheAgent_GivesUpAfterBudget_WithoutThrowing()
+    public async Task CancelThatNeverReachesTheAgent_GivesUpAfterItsOwnShortBudget_WithoutThrowing()
     {
         using var cts = new CancellationTokenSource();
         var agent = new Agent { OnGetStatus = _ => Status(_ticket, ProcessState.Running, 0, 1), OnCancel = _ => throw new HalibutClientException("dead") };
         cts.CancelAfter(20);
 
-        await Should.ThrowAsync<OperationCanceledException>(() => ObserveAsync(Retrying(agent, ct: cts.Token, statusSeconds: 3), cts.Token));
+        // GetStatus budget is huge; only the Cancel budget (3s) may bound the cancel.
+        await Should.ThrowAsync<OperationCanceledException>(() => ObserveAsync(Retrying(agent, ct: cts.Token, statusSeconds: 120, cancelSeconds: 3), cts.Token));
 
-        agent.CancelCalls.ShouldBeGreaterThan(1);
-        agent.CancelCalls.ShouldBeLessThan(10, "bounded by the budget, not unbounded");
+        agent.CancelCalls.ShouldBeGreaterThan(1, "it retried");
+        (_now - new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)).ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(3), "cancel latency is bounded by the cancel budget, not the 120s status budget");
     }
 
     // ── Complete (non-idempotent) ────────────────────────────────────────────
@@ -234,19 +235,69 @@ public class RetryingScriptClientTests
     }
 
     [Fact]
-    public async Task CompleteOutageBeyondBudget_ThrowsTheOriginalException()
+    public async Task CompleteOutageBeyondBudget_AfterCompletionWasObserved_ReturnsTheObservedResult_InsteadOfPausing()
+    {
+        var agent = new Agent
+        {
+            OnGetStatus = _ => Status(_ticket, ProcessState.Complete, 7, 2, "done"),
+            OnComplete = _ => throw new HalibutClientException("down")
+        };
+        var client = Retrying(agent, completeSeconds: 2);
+        await client.GetStatusAsync(new ScriptStatusRequest(_ticket, 0));
+
+        var response = await client.CompleteScriptAsync(new CompleteScriptCommand(_ticket, 2));
+
+        response.State.ShouldBe(ProcessState.Complete);
+        response.ExitCode.ShouldBe(7, "the outcome is known; rethrowing would pause and a resume would re-dispatch a finished script");
+        agent.CompleteCalls.ShouldBeGreaterThan(1);
+    }
+
+    [Fact]
+    public async Task CompleteOutageBeyondBudget_ThroughTheObserver_ReturnsTheRealExitCode()
+    {
+        var agent = new Agent
+        {
+            OnGetStatus = n => n == 1 ? Status(_ticket, ProcessState.Running, 0, 1) : Status(_ticket, ProcessState.Complete, 3, 2),
+            OnComplete = _ => throw new HalibutClientException("down")
+        };
+
+        var result = await ObserveAsync(Retrying(agent, completeSeconds: 2));
+
+        result.ExitCode.ShouldBe(3);
+        result.Success.ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompleteOutageBeyondBudget_WithoutARealObservedCompletion_RethrowsTheOriginal(bool getStatusSaidUnknown)
     {
         var failure = new HalibutClientException("down");
         var agent = new Agent
         {
-            OnGetStatus = n => n == 1 ? Status(_ticket, ProcessState.Running, 0, 1) : Status(_ticket, ProcessState.Complete, 0, 2),
+            OnGetStatus = _ => getStatusSaidUnknown ? Status(_ticket, ProcessState.Complete, ScriptExitCodes.UnknownResult, 0) : Status(_ticket, ProcessState.Running, 0, 1),
             OnComplete = _ => throw failure
         };
+        var client = Retrying(agent, completeSeconds: 2);
+        await client.GetStatusAsync(new ScriptStatusRequest(_ticket, 0));
 
-        var thrown = await Should.ThrowAsync<HalibutClientException>(() => ObserveAsync(Retrying(agent, completeSeconds: 2)));
+        var thrown = await Should.ThrowAsync<HalibutClientException>(() => client.CompleteScriptAsync(new CompleteScriptCommand(_ticket, 1)));
 
         thrown.ShouldBeSameAs(failure);
-        agent.CompleteCalls.ShouldBeGreaterThan(1);
+    }
+
+    [Fact]
+    public async Task CompletePermanentFailure_EvenAfterObservedCompletion_IsNotSwallowed()
+    {
+        var agent = new Agent
+        {
+            OnGetStatus = _ => Status(_ticket, ProcessState.Complete, 0, 2),
+            OnComplete = _ => throw new ServiceInvocationHalibutClientException("agent service threw")
+        };
+        var client = Retrying(agent);
+        await client.GetStatusAsync(new ScriptStatusRequest(_ticket, 0));
+
+        await Should.ThrowAsync<ServiceInvocationHalibutClientException>(() => client.CompleteScriptAsync(new CompleteScriptCommand(_ticket, 2)));
     }
 
     // ── Liveness stays authoritative ─────────────────────────────────────────
@@ -256,7 +307,7 @@ public class RetryingScriptClientTests
     {
         var agent = new Agent { OnGetStatus = _ => throw new HalibutClientException("agent gone") };
         // Real time here: the probe loop runs on real timers; the 120s retry budget would otherwise hold the observer far past the probe's verdict.
-        var client = new RetryingScriptClient(agent, new RpcRetryHandler(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30)), Plenty, CancellationToken.None);
+        var client = new RetryingScriptClient(agent, new RpcRetryHandler(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(20)), Plenty, CancellationToken.None);
         var observer = new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 }, new LivenessSettings { ProbeIntervalSeconds = 1, ProbeTimeoutSeconds = 1, FailureThreshold = 2 }, new DeadProbe());
         var endpoint = new ServiceEndPoint(new Uri("poll://fake/"), "AABBCCDD", HalibutTimeoutsAndLimits.RecommendedValues());
         var watch = System.Diagnostics.Stopwatch.StartNew();

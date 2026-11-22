@@ -68,16 +68,40 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     }
 
     public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command)
-        => _retry.ExecuteAsync(() => _inner.CancelScriptAsync(command), "CancelScript", _retry.StatusBudget, CancellationToken.None);
+        => _retry.ExecuteAsync(() => _inner.CancelScriptAsync(command), "CancelScript", _retry.CancelBudget, CancellationToken.None);
 
     public async Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command)
     {
         var attempts = 0;
 
-        var response = await _retry.ExecuteAsync(() => { attempts++; return _inner.CompleteScriptAsync(command); }, "CompleteScript", _retry.CompleteBudget, _ct, _stopRetrying).ConfigureAwait(false);
+        try
+        {
+            var response = await _retry.ExecuteAsync(() => { attempts++; return _inner.CompleteScriptAsync(command); }, "CompleteScript", _retry.CompleteBudget, _ct, _stopRetrying).ConfigureAwait(false);
 
-        return attempts > 1 ? ReconcileRetriedComplete(command, response) : response;
+            return attempts > 1 ? ReconcileRetriedComplete(command, response) : response;
+        }
+        catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex) && _observedComplete.ContainsKey(command.Ticket.TaskId))
+        {
+            return UseObservedCompletion(command, ex);
+        }
     }
+
+    /// <summary>
+    /// Complete could not be confirmed, but GetStatus already reported the script finished with its real
+    /// exit code: the outcome is known. Rethrowing would pause the deployment, and a resume would find the
+    /// ticket gone (-1) and re-dispatch a script that already ran. Only the agent-side cleanup is unconfirmed.
+    /// </summary>
+    private ScriptStatusResponse UseObservedCompletion(CompleteScriptCommand command, Exception ex)
+    {
+        var observed = _observedComplete[command.Ticket.TaskId];
+
+        Log.Warning(ex, "[Deploy] CompleteScript for ticket {Ticket} could not be confirmed; using the exit code {ExitCode} already observed via GetStatus", command.Ticket.TaskId, observed.ExitCode);
+
+        return BuildFromObserved(command, observed);
+    }
+
+    private static ScriptStatusResponse BuildFromObserved(CompleteScriptCommand command, ScriptStatusResponse observed)
+        => new(command.Ticket, ProcessState.Complete, observed.ExitCode, new List<ProcessOutput>(), command.LastLogSequence);
 
     private ScriptStatusResponse ReconcileRetriedComplete(CompleteScriptCommand command, ScriptStatusResponse response)
     {
@@ -86,7 +110,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
 
         Log.Warning("[Deploy] CompleteScript retry for ticket {Ticket} answered unknown-result after a lost response; using the exit code {ExitCode} already observed via GetStatus", command.Ticket.TaskId, observed.ExitCode);
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, observed.ExitCode, new List<ProcessOutput>(), command.LastLogSequence);
+        return BuildFromObserved(command, observed);
     }
 
     private void RememberIfRealCompletion(ScriptTicket ticket, ScriptStatusResponse response)
