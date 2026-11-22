@@ -63,7 +63,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
-        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts);
+        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
 
         try
         {
@@ -186,15 +186,20 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     /// <summary>
     /// Whether an in-flight remote script must be cancelled on the agent when the run is interrupted:
-    /// only when the task is heading to a terminal state, i.e. the pointer to that script becomes
-    /// obsolete. A user cancel always is; a deployment timeout is only when it is NOT resumable (the
-    /// task will Fail). A resumable timeout pauses the task, and the external job token (host
-    /// shutdown) is deliberately absent so it cannot cancel the script of a task that may resume.
-    /// Reads the source flags (set before any linked token's callbacks run), never a linked token,
-    /// so the observer cannot observe its own cancellation before the decision flips.
+    /// on every interruption EXCEPT a recognised pause, so any cancellation source not listed here
+    /// (e.g. a required step's fail-fast peer cancellation, whose task then Fails) keeps the legacy
+    /// cancel behaviour instead of silently orphaning the script. A pause — the task keeps its in-flight
+    /// pointer for resume — is: not user-cancelled AND (a resumable deployment timeout fired OR the
+    /// external job token (host shutdown) fired). Reads the source flags (set before any linked token's
+    /// callbacks run), never a linked token, so the observer cannot see its own cancellation before the
+    /// decision flips; <paramref name="externalCt"/> is a source token, not linked, so it is race-free too.
     /// </summary>
-    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(CancellationTokenSource registryCts, CancellationTokenSource timeoutCts)
-        => () => registryCts.IsCancellationRequested || (!TimeoutResumable && timeoutCts.IsCancellationRequested);
+    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(CancellationTokenSource registryCts, CancellationTokenSource timeoutCts, CancellationToken externalCt)
+    {
+        bool IsPausing() => !registryCts.IsCancellationRequested && ((TimeoutResumable && timeoutCts.IsCancellationRequested) || externalCt.IsCancellationRequested);
+
+        return () => !IsPausing();
+    }
 
     private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
     {

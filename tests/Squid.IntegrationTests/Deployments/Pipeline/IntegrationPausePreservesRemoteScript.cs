@@ -69,6 +69,26 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
     }
 
     [Fact]
+    public async Task RequiredStep_OneTargetFailsFast_PeerScriptIsCancelledOnItsAgent_AndTaskFails()
+    {
+        // A required step fans out; when target A's script fails, the phase cancels the peers through an
+        // INTERNAL fail-fast token the runner does not own. The task then ends Failed and its checkpoint
+        // (with the peer's in-flight pointer) is deleted, so the peer's still-running script must be
+        // cancelled on its agent - otherwise it is orphaned. Guards against whitelisting only "known final"
+        // reasons: an unlisted internal source must keep cancelling.
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true, machineCount: 2).ConfigureAwait(false);
+        var agent = new FailOnePeerBlockOtherAgent();
+
+        // The runner records the failure and rethrows it to the job host.
+        await Should.ThrowAsync<Exception>(() => RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(60), resumable: true)).ConfigureAwait(false);
+
+        await AssertStateAsync(seeded.TaskId, TaskState.Failed, "one required target failing fails the task").ConfigureAwait(false);
+        agent.StartedTickets.Count.ShouldBe(2, "both targets must have dispatched before the failure");
+        agent.CancelledTickets.Count.ShouldBe(1, "exactly the still-running peer must be sent CancelScript; the failed target must not");
+        agent.CancelledTickets[0].ShouldBe(agent.BlockerTicket, "CancelScript must target the peer's ticket");
+    }
+
+    [Fact]
     public async Task NonResumableTimeout_WhileScriptRunning_CancelsRemoteScript_AndFailsTask()
     {
         var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
@@ -108,7 +128,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         agent.CancelCalls.ShouldBe(0, "an external (host) cancellation must not send CancelScript to the agent");
     }
 
-    private async Task RunPipelineAsync(int taskId, BlockingAgent agent, TimeSpan timeout, bool resumable, Action<ILifetimeScope> afterAgentPolled = null, CancellationToken externalToken = default, IHalibutScriptObserver observer = null)
+    private async Task RunPipelineAsync(int taskId, IAsyncScriptService agent, TimeSpan timeout, bool resumable, Action<ILifetimeScope> afterAgentPolled = null, CancellationToken externalToken = default, IHalibutScriptObserver observer = null)
     {
         await Run<ILifetimeScope>(async scope =>
         {
@@ -128,7 +148,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
 
             if (afterAgentPolled != null)
             {
-                await agent.Polled.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+                await ((BlockingAgent)agent).Polled.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
                 afterAgentPolled(scope);
             }
 
@@ -191,6 +211,54 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command)
         {
             Interlocked.Increment(ref _cancelCalls);
+
+            return Task.FromResult(Resp(command.Ticket, ProcessState.Complete, 0));
+        }
+
+        private static ScriptStatusResponse Resp(ScriptTicket ticket, ProcessState state, int exitCode) => new(ticket, state, exitCode, new List<ProcessOutput>(), 0);
+    }
+
+    // First ticket to start is the blocker (stays Running); the second fails (exit 1) but only once the
+    // blocker has been polled, so the peer is provably in-flight when fail-fast cancels it.
+    private sealed class FailOnePeerBlockOtherAgent : IAsyncScriptService
+    {
+        private readonly object _gate = new();
+        private readonly TaskCompletionSource _blockerPolled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<string> StartedTickets { get; } = new();
+        public List<string> CancelledTickets { get; } = new();
+        public string BlockerTicket { get; private set; }
+
+        public Task<ScriptStatusResponse> StartScriptAsync(StartScriptCommand command)
+        {
+            lock (_gate)
+            {
+                StartedTickets.Add(command.ScriptTicket.TaskId);
+                BlockerTicket ??= command.ScriptTicket.TaskId;
+            }
+
+            return Task.FromResult(Resp(command.ScriptTicket, ProcessState.Running, 0));
+        }
+
+        public async Task<ScriptStatusResponse> GetStatusAsync(ScriptStatusRequest request)
+        {
+            if (request.Ticket.TaskId == BlockerTicket)
+            {
+                _blockerPolled.TrySetResult();
+
+                return Resp(request.Ticket, ProcessState.Running, 0);
+            }
+
+            await _blockerPolled.Task.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+            return Resp(request.Ticket, ProcessState.Complete, 1);
+        }
+
+        public Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command) => Task.FromResult(Resp(command.Ticket, ProcessState.Complete, 1));
+
+        public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command)
+        {
+            lock (_gate) CancelledTickets.Add(command.Ticket.TaskId);
 
             return Task.FromResult(Resp(command.Ticket, ProcessState.Complete, 0));
         }

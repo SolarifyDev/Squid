@@ -18,7 +18,7 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 /// </summary>
 public class DeploymentPipelineRunnerRemoteCancelDecisionTests
 {
-    public enum Interruption { None, UserCancel, TimeoutResumable, TimeoutFailFast, ExternalCancel }
+    public enum Interruption { InternalFailFast, UserCancel, UserCancelAndExternal, TimeoutResumable, TimeoutFailFast, ExternalCancel }
 
     private readonly Mock<IDeploymentLifecycle> _lifecycle = new();
     private readonly Mock<IDeploymentCompletionHandler> _completion = new();
@@ -26,8 +26,9 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
     private readonly Mock<IServerTaskDataProvider> _taskDataProvider = new();
 
     [Theory]
-    [InlineData(Interruption.None, false)]
+    [InlineData(Interruption.InternalFailFast, true)]        // unrecognised internal source (required-step peer abort): legacy cancel
     [InlineData(Interruption.UserCancel, true)]
+    [InlineData(Interruption.UserCancelAndExternal, true)]   // user cancel wins over a concurrent shutdown: task is terminal
     [InlineData(Interruption.TimeoutResumable, false)]
     [InlineData(Interruption.TimeoutFailFast, true)]
     [InlineData(Interruption.ExternalCancel, false)]
@@ -38,12 +39,16 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
         var phase = new InterruptingPhase(interruption, _registry, external, d => decisionAtInterruption = d);
         var runner = CreateRunner(phase, resumable: interruption != Interruption.TimeoutFailFast);
 
-        await runner.ProcessAsync(1, external.Token);
+        // An internal fail-fast cancellation is not a runner-recognised source, so the runner treats the
+        // resulting OperationCanceledException as a failure and rethrows; that is not under test here.
+        try { await runner.ProcessAsync(1, external.Token); }
+        catch (OperationCanceledException) when (interruption == Interruption.InternalFailFast) { }
 
         decisionAtInterruption.ShouldBe(expectedCancel,
             customMessage: $"{interruption}: the decision the observer sees when its token fires must be {expectedCancel}. " +
-                           "True for a task that will end Cancelled/Failed (pointer obsolete); false when the task pauses and a resume " +
-                           "must re-attach to the still-running script.");
+                           "False only for a recognised pause (resumable timeout, external/host cancellation) where a resume must " +
+                           "re-attach to the still-running script; true for everything else, including cancellation sources the runner " +
+                           "does not know about (their task ends terminal, so a surviving script would be orphaned).");
     }
 
     [Fact]
@@ -91,18 +96,15 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
 
         public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
         {
-            if (_interruption == Interruption.None)
-            {
-                _record(ctx.ShouldCancelRemoteScript());
-                return;
-            }
+            using var peer = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-            if (_interruption == Interruption.UserCancel) _registry.TryCancel(ctx.ServerTaskId);
-            if (_interruption == Interruption.ExternalCancel) _external.Cancel();
+            if (_interruption is Interruption.UserCancel or Interruption.UserCancelAndExternal) _registry.TryCancel(ctx.ServerTaskId);
+            if (_interruption is Interruption.ExternalCancel or Interruption.UserCancelAndExternal) _external.Cancel();
+            if (_interruption == Interruption.InternalFailFast) peer.Cancel();
 
             try
             {
-                await Task.Delay(Timeout.Infinite, ct);
+                await Task.Delay(Timeout.Infinite, peer.Token);
             }
             catch (OperationCanceledException)
             {

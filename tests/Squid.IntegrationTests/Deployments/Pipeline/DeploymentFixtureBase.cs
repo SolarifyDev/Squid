@@ -17,7 +17,7 @@ public class DeploymentFixtureBase : TestBase
 {
     protected DeploymentFixtureBase() : base("_deployment_", "squid_test_deployment") { }
 
-    protected async Task<SeededDeployment> SeedScriptDeploymentAsync(bool isRequired)
+    protected async Task<SeededDeployment> SeedScriptDeploymentAsync(bool isRequired, int machineCount = 1)
     {
         SeededDeployment? result = null;
 
@@ -81,6 +81,23 @@ public class DeploymentFixtureBase : TestBase
             };
 
             await repository.InsertAsync(machine).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            // Extra targets sharing the first one's role/environment (a required step fans out across all).
+            for (var i = 2; i <= machineCount; i++)
+            {
+                await repository.InsertAsync(new Machine
+                {
+                    Name = $"Transient Pause Agent {i}",
+                    IsDisabled = false,
+                    Roles = machine.Roles,
+                    EnvironmentIds = machine.EnvironmentIds,
+                    Endpoint = JsonSerializer.Serialize(new { CommunicationStyle = "KubernetesAgent", SubscriptionId = $"sub-{Guid.NewGuid():N}", Thumbprint = "AA11BB22CC33DD44", Namespace = "default" }),
+                    SpaceId = 1,
+                    Slug = $"transient-agent-{Guid.NewGuid():N}"[..20]
+                }).ConfigureAwait(false);
+            }
+
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
 
             var release = await builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
