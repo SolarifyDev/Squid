@@ -215,6 +215,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
                 StartedAt = DateTimeOffset.UtcNow
             });
 
+            // MUST come after the Running save above: a script that exits immediately would otherwise have
+            // its Complete record overwritten by the stale Running snapshot.
+            HookNaturalExitPersistence(process, running);
+
             Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
 
             WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
@@ -597,6 +601,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
         {
             var workDir = ResolveWorkDir(command.Ticket.TaskId);
+            var recovered = RecoverPersistedCompletion(command, workDir);
             DeletePersistedStateIfAny(workDir);
             //  audit follow-up (#1): CompleteScript early-return
             // path was missing _cancellationRegistry.Cleanup. The leak
@@ -609,7 +614,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             // is executed; full leak-path repro requires mid-Start
             // failure injection that's not in scope for this phase.
             _cancellationRegistry.Cleanup(command.Ticket);
-            return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
+            return recovered ?? CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
         }
 
         if (!running.Process.HasExited)
@@ -648,7 +653,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         var logs = ReadLogs(running, command.LastLogSequence - 1);
         var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
 
-        PersistCompleteState(running, exitCode);
+        FinalizeState(running, exitCode);
 
         // Write the execution manifest BEFORE workspace cleanup so the audit
         // artifact is guaranteed to hit disk even if cleanup aborts. The manifest
@@ -668,6 +673,19 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         _cancellationRegistry.Cleanup(command.Ticket);
 
         return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
+    }
+
+    /// <summary>
+    /// After an agent restart the in-memory entry is gone but the state file may record a real
+    /// completion (see <see cref="PersistNaturalExit"/>). Returns that result with the on-disk logs
+    /// so CompleteScript does not downgrade a recorded outcome to UnknownResult; null otherwise.
+    /// </summary>
+    private ScriptStatusResponse? RecoverPersistedCompletion(CompleteScriptCommand command, string workDir)
+    {
+        if (!TryBuildStatusFromPersistedLogs(command.Ticket, workDir, command.LastLogSequence, out var persisted)) return null;
+        if (persisted!.State != ProcessState.Complete || persisted.ExitCode == ScriptExitCodes.UnknownResult) return null;
+
+        return persisted;
     }
 
     private static void WriteExecutionManifest(RunningScript running, string ticketId, int exitCode)
@@ -719,6 +737,11 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
         }
 
+        // Cancel wins over a racing natural exit: the server asked for it and is told Canceled, so
+        // the recorded result must say Canceled too. Flag BEFORE Kill so the exit callback (which
+        // would otherwise record the kill signal's exit code) stands down.
+        MarkCancelRequested(running);
+
         try
         {
             if (!running.Process.HasExited)
@@ -751,7 +774,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         var logs = ReadLogs(running, command.LastLogSequence - 1);
 
-        PersistCompleteState(running, ScriptExitCodes.Canceled);
+        FinalizeState(running, ScriptExitCodes.Canceled);
 
         running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
@@ -1536,6 +1559,64 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     }
 
     /// <summary>
+    /// Records the script's real exit code on disk the moment the agent observes the process
+    /// exit, instead of only when the server later calls CompleteScript. Without this an agent
+    /// restart between "script exited" and "server completes it" leaves the state file saying
+    /// Running with a dead PID, which the orphan path reports as UnknownResult for a script
+    /// that actually succeeded.
+    ///
+    /// <para>Runs on the runtime's existing process-exit callback (no thread per script). The
+    /// post-subscribe <c>HasExited</c> check covers a process that exited before the handler was
+    /// attached; <see cref="PersistNaturalExit"/> is idempotent so double delivery is harmless.</para>
+    /// </summary>
+    private static void HookNaturalExitPersistence(Process process, RunningScript running)
+    {
+        process.Exited += (_, _) => PersistNaturalExit(running);
+        process.EnableRaisingEvents = true;
+
+        if (process.HasExited)
+            ThreadPool.QueueUserWorkItem(_ => PersistNaturalExit(running));
+    }
+
+    private static void PersistNaturalExit(RunningScript running)
+    {
+        try
+        {
+            // Parameterless WaitForExit is the only overload that flushes the async stdout/stderr
+            // readers; the persisted Complete state must never be visible before the final log
+            // lines are on disk (SequencedLogWriter flushes every Append).
+            running.Process.WaitForExit();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Skipped exit persistence for {WorkDir}: process already released", running.WorkDir);
+            return;
+        }
+
+        lock (running.TerminalGate)
+        {
+            if (running.Finalized || running.CancelRequested) return;
+
+            PersistCompleteState(running, running.Process.ExitCode);
+        }
+    }
+
+    private static void MarkCancelRequested(RunningScript running)
+    {
+        lock (running.TerminalGate)
+            running.CancelRequested = true;
+    }
+
+    private static void FinalizeState(RunningScript running, int exitCode)
+    {
+        lock (running.TerminalGate)
+        {
+            running.Finalized = true;
+            PersistCompleteState(running, exitCode);
+        }
+    }
+
+    /// <summary>
     /// Reads log entries from disk AND derives the response's <c>NextLogSequence</c>
     /// cursor in a single place, so the cursor is always one past the highest
     /// sequence in the entries actually returned (or <c>afterSequence + 1</c> when
@@ -1671,6 +1752,15 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         /// double-call. See <c>DrainAsyncReadersOnce</c> for the race this closes.
         /// </summary>
         public int DrainedAsyncReaders;
+
+        /// <summary>Guards the terminal-state flags below and serialises every state-file completion write.</summary>
+        public readonly object TerminalGate = new();
+
+        /// <summary>Set (under <see cref="TerminalGate"/>) when CancelScript starts; suppresses the natural-exit write.</summary>
+        public bool CancelRequested;
+
+        /// <summary>Set (under <see cref="TerminalGate"/>) once CompleteScript/CancelScript recorded the final result.</summary>
+        public bool Finalized;
 
         public long LogSequence => LogWriter?.NextSequence ?? 0;
 
