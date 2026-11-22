@@ -269,11 +269,11 @@ public sealed partial class ExecuteStepsPhase(
             operation, CheckpointPersistMaxAttempts, exhaustedGuidance);
     }
 
-    private string SerializeBatchStates()
+    internal string SerializeBatchStates()
     {
         if (_batchStates.Count == 0) return "{}";
 
-        var keyed = _batchStates.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value);
+        var keyed = _batchStates.ToDictionary(kv => kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture), kv => kv.Value.Snapshot());
         return System.Text.Json.JsonSerializer.Serialize(keyed);
     }
 

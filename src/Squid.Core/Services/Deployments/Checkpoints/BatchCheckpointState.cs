@@ -137,6 +137,28 @@ public sealed class BatchCheckpointState
         }
     }
 
+    /// <summary>
+    /// A deep copy taken under the lock — the only consistent view of a state that parallel target
+    /// executors are still mutating. Serialise this, never the live instance: the JSON serializer
+    /// enumerates the collections without the lock and would throw or tear.
+    /// </summary>
+    public BatchCheckpointState Snapshot()
+    {
+        lock (_gate)
+        {
+            return new BatchCheckpointState
+            {
+                CompletedMachineIds = new HashSet<int>(CompletedMachineIds),
+                FailedMachineIds = new HashSet<int>(FailedMachineIds),
+                StepStates = StepStates.ToDictionary(kv => kv.Key, kv => new StepCheckpointState
+                {
+                    CompletedMachineIds = new HashSet<int>(kv.Value.CompletedMachineIds),
+                    FailedMachineIds = new HashSet<int>(kv.Value.FailedMachineIds)
+                })
+            };
+        }
+    }
+
     private bool IsMachineLevelTerminal(int machineId) => CompletedMachineIds.Contains(machineId) || FailedMachineIds.Contains(machineId);
 
     private StepCheckpointState GetOrAddStep(int stepId)

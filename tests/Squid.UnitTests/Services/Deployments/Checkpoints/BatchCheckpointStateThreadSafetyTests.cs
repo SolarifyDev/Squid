@@ -152,6 +152,47 @@ public sealed class BatchCheckpointStateThreadSafetyTests
             customMessage: $"concurrent MarkTargetCompleted writers lost entries — expected {machines}");
     }
 
+    [Fact]
+    public async Task SerializeBatchStates_WhileTargetsMarkCompleted_NeverThrows_AndEntriesAreMonotone()
+    {
+        // The guided-failure checkpoint is written while peer targets of the same parallel batch are still
+        // calling MarkTargetCompleted. Serialising the live state enumerates HashSet/Dictionary unlocked.
+        const int writers = 8;
+        const int perWriter = 4000;
+        var phase = CreatePhaseUnderTest();
+        var snapshots = new List<BatchCheckpointState>();
+        phase.GetOrCreateBatchState(0);
+
+        var writing = Task.WhenAll(Enumerable.Range(0, writers).Select(w => Task.Run(() =>
+        {
+            for (var i = 0; i < perWriter; i++)
+                phase.MarkTargetCompleted(0, stepId: i % 5, machineId: w * perWriter + i, failed: i % 7 == 0);
+        })));
+
+        while (!writing.IsCompleted)
+            snapshots.Add(Deserialize(phase.SerializeBatchStates()));
+
+        await writing;
+        snapshots.Add(Deserialize(phase.SerializeBatchStates()));
+
+        snapshots.Count.ShouldBeGreaterThan(1, "the serializer must have raced the writers at least once");
+
+        for (var k = 1; k < snapshots.Count; k++)
+            foreach (var (stepId, prior) in snapshots[k - 1].StepStates)
+            {
+                snapshots[k].StepStates.ShouldContainKey(stepId);
+                var later = snapshots[k].StepStates[stepId];
+                later.CompletedMachineIds.IsSupersetOf(prior.CompletedMachineIds).ShouldBeTrue($"snapshot {k} lost a completed entry of step {stepId}");
+                later.FailedMachineIds.IsSupersetOf(prior.FailedMachineIds).ShouldBeTrue($"snapshot {k} lost a failed entry of step {stepId}");
+            }
+
+        var final = snapshots[^1];
+        (final.CompletedMachineIds.Count + final.FailedMachineIds.Count).ShouldBe(writers * perWriter);
+
+        static BatchCheckpointState Deserialize(string json)
+            => System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, BatchCheckpointState>>(json)["0"];
+    }
+
     /// <summary>
     /// Build an <see cref="ExecuteStepsPhase"/> with nulls for every injected service.
     /// These tests only exercise <c>GetOrCreateBatchState</c> / <c>MarkTargetCompleted</c>
