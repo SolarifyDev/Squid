@@ -16,33 +16,38 @@ internal static class VolumeResolver
 
     internal static string? ResolveVolumeRoot(string path)
     {
-        var mountRoots = ReadReadyMountRoots();
+        var mountRoots = DriveInfo.GetDrives().Select(d => d.Name).ToList();
 
         if (mountRoots.Count == 0) return null;
 
-        var realPath = ResolveRealPath(path);
-
-        return PickMountRoot(realPath, mountRoots, Path.DirectorySeparatorChar, PathComparison);
+        return PickReadyMountRoot(ResolveRealPath(path), mountRoots, Path.DirectorySeparatorChar, PathComparison, IsReady);
     }
 
     /// <summary>Pure: the mount root with the longest component-wise prefix match for the path, or null.</summary>
     internal static string? PickMountRoot(string path, IEnumerable<string> mountRoots, char separator, StringComparison comparison)
     {
+        return PickReadyMountRoot(path, mountRoots, separator, comparison, _ => true);
+    }
+
+    /// <summary>
+    /// Matches on mount NAMES only, then probes readiness best-candidate-first and stops at the first ready one.
+    /// A readiness probe is a statfs; a hung NFS/CIFS/FUSE mount elsewhere on the host must never be touched.
+    /// </summary>
+    internal static string? PickReadyMountRoot(string path, IEnumerable<string> mountRoots, char separator, StringComparison comparison, Func<string, bool> isReady)
+    {
         var target = NormalizeRoot(path, separator);
-        string? best = null;
-        var bestLength = -1;
 
-        foreach (var mountRoot in mountRoots)
+        var candidates = mountRoots
+            .Select(root => (Root: root, Normalized: NormalizeRoot(root, separator)))
+            .Where(c => IsPathWithin(target, c.Normalized, separator, comparison))
+            .OrderByDescending(c => c.Normalized.Length);
+
+        foreach (var candidate in candidates)
         {
-            var candidate = NormalizeRoot(mountRoot, separator);
-
-            if (candidate.Length <= bestLength || !IsPathWithin(target, candidate, separator, comparison)) continue;
-
-            best = mountRoot;
-            bestLength = candidate.Length;
+            if (isReady(candidate.Root)) return candidate.Root;
         }
 
-        return best;
+        return null;
     }
 
     private static bool IsPathWithin(string path, string root, char separator, StringComparison comparison)
@@ -65,27 +70,15 @@ internal static class VolumeResolver
 
     private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
-    private static List<string> ReadReadyMountRoots()
-    {
-        var roots = new List<string>();
-
-        foreach (var drive in DriveInfo.GetDrives())
-        {
-            if (IsReady(drive)) roots.Add(drive.Name);
-        }
-
-        return roots;
-    }
-
-    private static bool IsReady(DriveInfo drive)
+    private static bool IsReady(string mountRoot)
     {
         try
         {
-            return drive.IsReady;
+            return new DriveInfo(mountRoot).IsReady;
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Skipping mount {Mount}: readiness probe failed", drive.Name);
+            Log.Debug(ex, "Skipping mount {Mount}: readiness probe failed", mountRoot);
             return false;
         }
     }

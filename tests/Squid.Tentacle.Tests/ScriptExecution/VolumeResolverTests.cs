@@ -44,4 +44,37 @@ public class VolumeResolverTests
         existing.ShouldNotBeNull();
         missing.ShouldBe(existing);
     }
+
+    [Fact]
+    public void PickReadyMountRoot_ProbesOnlyMatchingCandidates_BestFirst_NeverUnrelatedMounts()
+    {
+        var probed = new List<string>();
+        bool Probe(string root)
+        {
+            probed.Add(root);
+            return root != "/hung-nfs" ? true : throw new InvalidOperationException("an unrelated mount must never be probed");
+        }
+
+        var picked = VolumeResolver.PickReadyMountRoot("/var/lib/squid/work", new[] { "/", "/hung-nfs", "/var", "/var/lib/squid", "/mnt/other" }, '/', Ordinal, Probe);
+
+        picked.ShouldBe("/var/lib/squid");
+        probed.ShouldBe(new[] { "/var/lib/squid" });
+    }
+
+    [Fact]
+    public void PickReadyMountRoot_BestCandidateNotReady_FallsBackToNextBest()
+    {
+        var probed = new List<string>();
+
+        var picked = VolumeResolver.PickReadyMountRoot("/var/lib/squid/work", new[] { "/", "/hung-nfs", "/var", "/var/lib/squid" }, '/', Ordinal, r => { probed.Add(r); return r != "/var/lib/squid"; });
+
+        picked.ShouldBe("/var");
+        probed.ShouldBe(new[] { "/var/lib/squid", "/var" });
+    }
+
+    [Fact]
+    public void PickReadyMountRoot_NothingReady_ReturnsNull()
+    {
+        VolumeResolver.PickReadyMountRoot("/a/b", new[] { "/", "/a" }, '/', Ordinal, _ => false).ShouldBeNull();
+    }
 }
