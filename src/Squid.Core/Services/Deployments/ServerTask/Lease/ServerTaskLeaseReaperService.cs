@@ -1,5 +1,6 @@
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
+using Squid.Core.Settings.ServerTask;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.ServerTask;
 
@@ -28,7 +29,7 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
     private readonly IDeploymentInterruptionService _interruptionService;
     private readonly ServerTaskLeaseOptions _options;
 
-    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.FromEnvironment())
+    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskSetting setting) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.From(setting))
     {
     }
 
@@ -43,8 +44,6 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
 
     public async Task<int> ReapStaleAsync(CancellationToken ct = default)
     {
-        if (!_options.ReaperEnabled) return 0;
-
         var stale = await _leases.GetStaleAsync(_options.Stale, ServerTaskLeaseOptions.ReaperBatchSize, ct).ConfigureAwait(false);
         var recovered = 0;
 
