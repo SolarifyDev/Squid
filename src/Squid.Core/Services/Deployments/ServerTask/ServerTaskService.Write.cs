@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
@@ -18,13 +19,25 @@ public partial class ServerTaskService
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Pending, TaskState.Executing, ct).ConfigureAwait(false);
         else if (isResumed)
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Executing, ct).ConfigureAwait(false);
-        else if (!string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+        else if (string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+            await FenceAlreadyExecutingAsync(task, ct).ConfigureAwait(false);
+        else
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
 
         task.State = TaskState.Executing;
         task.StartTime ??= DateTimeOffset.UtcNow;
 
         return new StartExecutingResult(task, isResumed);
+    }
+
+    // A task delivered while already Executing is either a dead owner's task being re-run (Hangfire retry) or a duplicate delivery to a live one.
+    // The lease tells them apart in one atomic UPDATE: it is taken only when this process holds it, nobody does, or its holder went silent.
+    private async Task FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+    {
+        var rows = await _serverTaskLeaseDataProvider.AcquireAsync(task.Id, ServerTaskLeaseOwner.Current, _leaseStale, ct).ConfigureAwait(false);
+
+        if (rows == 0)
+            throw new ServerTaskOwnedByLiveProcessException(task.Id, task.LeaseOwner);
     }
 
     public Task AddLogAsync(int taskId, long sequenceNumber, ServerTaskLogCategory category, string message, string source, long? activityNodeId = null, DateTimeOffset? occurredAt = null, string detail = null, CancellationToken ct = default)

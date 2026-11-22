@@ -9,7 +9,7 @@ using Squid.Core.Services.Jobs;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient, IServerTaskLeaseKeeper leaseKeeper) : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
 
@@ -83,8 +83,6 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 await RequeueForConcurrencySlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
                 return;
             }
-
-            ctx.Lease = leaseKeeper.Start(serverTaskId);
 
             lifecycle.Initialize(ctx);
 
@@ -171,6 +169,12 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
             await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+        }
+        catch (ServerTaskOwnedByLiveProcessException ex)
+        {
+            // A duplicate delivery of a task a live process is still running. Nothing is written — not the state, the checkpoint, a
+            // completion record or the remote script — and SafeCompleteAsync is not involved: the owner keeps running alone.
+            Log.Warning("[Deploy] Task {TaskId} is already running under live owner {Owner}; duplicate delivery suppressed", ex.ServerTaskId, ex.LeaseOwner);
         }
         catch (ConcurrencySlotOccupiedException ex)
         {

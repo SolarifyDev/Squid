@@ -99,19 +99,81 @@ public class IntegrationServerTaskLease : TestBase
         (DateTimeOffset.UtcNow - renewed.LeaseRenewedAt.Value).ShouldBeLessThan(TimeSpan.FromSeconds(30), "renewal moves the lease to now");
     }
 
+    // The takeover rule: this process's own lease, no lease at all, or a holder that went silent. A live foreign owner is never displaced.
     [Theory]
-    [InlineData(TaskState.Executing, 1)]
-    [InlineData(TaskState.Cancelling, 1)]
-    [InlineData(TaskState.Paused, 0)]
-    [InlineData(TaskState.Pending, 0)]
-    public async Task Acquire_TakesOverARunningTask_NeverAnIdleOne(string state, int expectedRows)
+    [InlineData(TaskState.Executing, "foreign", 1, 0)]       // live foreign owner (fresh lease): refused
+    [InlineData(TaskState.Cancelling, "foreign", 1, 0)]
+    [InlineData(TaskState.Executing, "foreign", 10, 1)]      // dead owner (stale lease): takeover
+    [InlineData(TaskState.Cancelling, "foreign", 10, 1)]
+    [InlineData(TaskState.Executing, "none", 0, 1)]          // older pod / pre-migration row: takeover
+    [InlineData(TaskState.Executing, "self", 0, 1)]          // same-process re-entry
+    [InlineData(TaskState.Paused, "none", 0, 0)]
+    [InlineData(TaskState.Pending, "none", 0, 0)]
+    public async Task Acquire_FollowsTheTakeoverRule(string state, string holder, int ageMinutes, int expectedRows)
     {
-        var id = await SeedAsync(state, "deploy:a-1", leaseOwner: state == TaskState.Executing ? DeadOwner : null, leaseAge: TimeSpan.FromMinutes(30));
+        var owner = holder == "foreign" ? DeadOwner : holder == "self" ? Owner : null;
+        var id = await SeedAsync(state, "deploy:a-1", leaseOwner: owner, leaseAge: TimeSpan.FromMinutes(ageMinutes));
 
-        var rows = await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, Owner));
+        var rows = await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, Owner, StaleAfter));
 
         rows.ShouldBe(expectedRows);
-        if (expectedRows == 1) (await LoadAsync(id)).LeaseOwner.ShouldBe(Owner);
+        (await LoadAsync(id)).LeaseOwner.ShouldBe(expectedRows == 1 ? Owner : owner);
+    }
+
+    // The fence at the claim: a duplicate delivery of a task a live process still runs must not start a second pipeline.
+    [Fact]
+    public async Task StartExecuting_OnARowALiveForeignOwnerRuns_IsRefused_AndChangesNothing()
+    {
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-1", leaseOwner: DeadOwner, leaseAge: TimeSpan.FromSeconds(10));
+        var before = await LoadAsync(id);
+
+        var ex = await Run<IServerTaskService, ServerTaskOwnedByLiveProcessException>(s => Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => s.StartExecutingAsync(id)));
+
+        ex.ServerTaskId.ShouldBe(id);
+        ex.LeaseOwner.ShouldBe(DeadOwner);
+        var after = await LoadAsync(id);
+        after.State.ShouldBe(TaskState.Executing);
+        after.LeaseOwner.ShouldBe(DeadOwner);
+        after.LeaseRenewedAt.ShouldBe(before.LeaseRenewedAt);
+    }
+
+    [Theory]
+    [InlineData("foreign-stale")]
+    [InlineData("none")]
+    [InlineData("self")]
+    public async Task StartExecuting_OnAnExecutingRow_TakesOverWhenTheOwnerIsDeadUnleasedOrThisProcess(string holder)
+    {
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2", leaseOwner: holder == "none" ? null : holder == "self" ? Owner : DeadOwner, leaseAge: holder == "foreign-stale" ? TimeSpan.FromMinutes(10) : TimeSpan.FromSeconds(5));
+
+        var result = await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id));
+
+        result.Task.State.ShouldBe(TaskState.Executing);
+        (await LoadAsync(id)).LeaseOwner.ShouldBe(Owner);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Paused)]
+    public async Task StartExecuting_FromPendingOrPaused_StampsThisProcess(string state)
+    {
+        var id = await SeedAsync(state, "deploy:fence-3");
+
+        await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id));
+
+        (await LoadAsync(id)).LeaseOwner.ShouldBe(Owner);
+    }
+
+    [Fact]
+    public async Task TwoClaimantsOnAStaleExecutingRow_ExactlyOneWins()
+    {
+        for (var round = 0; round < 10; round++)
+        {
+            var id = await SeedAsync(TaskState.Executing, $"deploy:fence-race-{round}", leaseOwner: DeadOwner, leaseAge: TimeSpan.FromMinutes(10));
+
+            var results = await Task.WhenAll(Claim(id, "pod-a:1:a"), Claim(id, "pod-b:2:b")).ConfigureAwait(false);
+
+            results.Sum().ShouldBe(1, $"round {round}: one claimant takes the dead owner's lease, the other then sees a live owner");
+        }
     }
 
     [Fact]
@@ -206,7 +268,7 @@ public class IntegrationServerTaskLease : TestBase
         var id = await SeedAsync(TaskState.Executing, "deploy:c-1", leaseOwner: DeadOwner, leaseAge: TimeSpan.FromMinutes(10));
         var candidate = new StaleServerTask(id, TaskState.Executing, DeadOwner);
 
-        await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, "new-owner")).ConfigureAwait(false);   // a takeover after the read
+        await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, "new-owner", StaleAfter)).ConfigureAwait(false);   // a takeover after the read
 
         (await Recover(candidate)).ShouldBe(0);
         (await LoadAsync(id)).State.ShouldBe(TaskState.Executing);
@@ -253,6 +315,8 @@ public class IntegrationServerTaskLease : TestBase
 
         results.Sum().ShouldBe(1);
     }
+
+    private Task<int> Claim(int id, string owner) => Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, owner, StaleAfter));
 
     private Task<int> Renew(int id, string owner) => Run<IServerTaskLeaseDataProvider, int>(p => p.RenewAsync(id, owner));
 

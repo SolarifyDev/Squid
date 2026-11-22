@@ -20,7 +20,7 @@ public class ServerTaskServiceReadTests
 
     public ServerTaskServiceReadTests()
     {
-        _sut = new ServerTaskService(_dataProvider.Object, _activityLogs.Object, _logs.Object);
+        _sut = new ServerTaskService(_dataProvider.Object, _activityLogs.Object, _logs.Object, Mock.Of<Squid.Core.Services.Deployments.ServerTask.Lease.IServerTaskLeaseDataProvider>());
     }
 
     [Theory]

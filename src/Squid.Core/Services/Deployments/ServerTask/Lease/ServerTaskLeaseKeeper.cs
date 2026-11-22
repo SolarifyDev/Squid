@@ -44,7 +44,7 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
 
         return held
             ? await provider.RenewAsync(serverTaskId, ServerTaskLeaseOwner.Current, ct).ConfigureAwait(false)
-            : await provider.AcquireAsync(serverTaskId, ServerTaskLeaseOwner.Current, ct).ConfigureAwait(false);
+            : await provider.AcquireAsync(serverTaskId, ServerTaskLeaseOwner.Current, _options.Stale, ct).ConfigureAwait(false);
     }
 
     private sealed class Lease : IServerTaskLease
@@ -52,6 +52,7 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _loop;
         private volatile bool _lost;
+        private bool _warnedDenied;
 
         public Lease(ServerTaskLeaseKeeper keeper, int serverTaskId) => _loop = LoopAsync(keeper, serverTaskId, _stop.Token);
 
@@ -95,6 +96,7 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
                 if (rows > 0) return true;
 
                 if (held) MarkLost(serverTaskId);
+                else WarnDeniedOnce(serverTaskId);
 
                 return held;
             }
@@ -104,6 +106,18 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
 
                 return held;
             }
+        }
+
+        // The keeper starts after the claim, which already fenced out a live foreign owner, so a denial here means someone else took the lease in
+        // between. It is not "lost" (this process never held it) and not fatal: it warns once and keeps trying each interval, so it neither
+        // flags the pipeline as dispossessed nor spins silently.
+        private void WarnDeniedOnce(int serverTaskId)
+        {
+            if (_warnedDenied) return;
+
+            _warnedDenied = true;
+
+            Log.Warning("[Lease] Task {TaskId} lease is held by another live process; this process keeps trying to acquire it each interval", serverTaskId);
         }
 
         private void MarkLost(int serverTaskId)

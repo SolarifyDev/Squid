@@ -11,8 +11,9 @@ using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
 /// <summary>
-/// Wiring between the runner and the lease: a guard tested alone proves nothing if the call site is deleted. Removing
-/// <c>leaseKeeper.Start</c> from the runner, or the disposal in its finally, fails these.
+/// Wiring between the runner and the lease: a guard tested alone proves nothing if the call site is deleted. The lease is started by
+/// <c>LoadTaskPhase</c> after a successful claim (see <c>LoadTaskPhaseLeaseTests</c>); the runner owns releasing it on every exit path and
+/// refusing to record an outcome once it is lost. Removing the disposal in its finally, or either guard, fails these.
 /// </summary>
 public class DeploymentPipelineRunnerLeaseTests
 {
@@ -114,6 +115,28 @@ public class DeploymentPipelineRunnerLeaseTests
         _keeper.Leases[0].Disposed.ShouldBeTrue();
     }
 
+    // A duplicate delivery of a task a live process still runs: the claim is refused before any lease starts, and nothing at all is written.
+    [Fact]
+    public async Task DuplicateDeliveryToALiveOwner_IsSuppressed_NothingStartedNothingRecorded()
+    {
+        var phaseRan = 0;
+        var second = new Mock<IDeploymentPipelinePhase>();
+        second.Setup(p => p.Order).Returns(2);
+
+        var fenced = PlainPhase((_, _) => { phaseRan++; throw new Squid.Core.Services.Deployments.ServerTask.Exceptions.ServerTaskOwnedByLiveProcessException(42, "pod-a:1:x"); });
+        var runner = new DeploymentPipelineRunner([fenced, second.Object], _lifecycle.Object, _completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+
+        await runner.ProcessAsync(42, CancellationToken.None);
+
+        phaseRan.ShouldBe(1);
+        second.Verify(p => p.ExecuteAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never, "no later phase may run");
+        _keeper.Started.ShouldBeEmpty("a fenced claim must not start renewing a lease it does not hold");
+        VerifyNoOutcomeRecorded();
+        _completion.Verify(c => c.OnTimedOutAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+        _completion.Verify(c => c.OnTransientPauseAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()), Times.Never);
+        _lifecycle.Verify(l => l.EmitAsync(It.IsAny<DeploymentLifecycleEvent>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private void VerifyNoOutcomeRecorded()
     {
         _completion.Verify(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -123,9 +146,17 @@ public class DeploymentPipelineRunnerLeaseTests
     }
 
     private DeploymentPipelineRunner Runner(IDeploymentPipelinePhase phase)
-        => new([phase], _lifecycle.Object, _completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), _keeper);
+        => new([phase], _lifecycle.Object, _completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
 
-    private static IDeploymentPipelinePhase Phase(Action<DeploymentTaskContext, CancellationToken> body)
+    // Stands in for LoadTaskPhase: the claim succeeded, so the lease starts, then the pipeline's work runs.
+    private IDeploymentPipelinePhase Phase(Action<DeploymentTaskContext, CancellationToken> body)
+        => PlainPhase((ctx, ct) =>
+        {
+            ctx.Lease = _keeper.Start(ctx.ServerTaskId);
+            body(ctx, ct);
+        });
+
+    private static IDeploymentPipelinePhase PlainPhase(Action<DeploymentTaskContext, CancellationToken> body)
     {
         var phase = new Mock<IDeploymentPipelinePhase>();
         phase.Setup(p => p.Order).Returns(1);

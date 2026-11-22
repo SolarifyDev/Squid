@@ -26,21 +26,21 @@ public class ServerTaskLeaseKeeperTests : IDisposable
     [Fact]
     public async Task Start_AcquiresImmediately_ThenRenewsOnItsOwnTimer()
     {
-        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _provider.Setup(p => p.RenewAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
         await using var lease = _keeper.Start(5);
 
         await WaitUntilAsync(() => Renewals() >= 3);
 
-        _provider.Verify(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>()), Times.Once);
+        _provider.Verify(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Once);
         lease.IsLost.ShouldBeFalse();
     }
 
     [Fact]
     public async Task Dispose_StopsRenewal()
     {
-        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _provider.Setup(p => p.RenewAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var lease = _keeper.Start(5);
         await WaitUntilAsync(() => Renewals() >= 1);
@@ -57,7 +57,7 @@ public class ServerTaskLeaseKeeperTests : IDisposable
     [Fact]
     public async Task ZeroRowsBeforeTheClaim_IsNotLost_AndAcquireRetriesUntilHeld()
     {
-        _provider.SetupSequence(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(0).ReturnsAsync(0).ReturnsAsync(1);
+        _provider.SetupSequence(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(0).ReturnsAsync(0).ReturnsAsync(1);
         _provider.Setup(p => p.RenewAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
         await using var lease = _keeper.Start(5);
@@ -65,14 +65,14 @@ public class ServerTaskLeaseKeeperTests : IDisposable
         await WaitUntilAsync(() => Renewals() >= 1);
 
         lease.IsLost.ShouldBeFalse();
-        _provider.Verify(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>()), Times.Exactly(3));
+        _provider.Verify(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
     }
 
     // Once held, a renewal that updates nothing means the reaper (or a takeover) moved the row: renewal stops for good so it can never undo that.
     [Fact]
     public async Task RenewalUpdatingNothing_AfterBeingHeld_IsLost_AndRenewalStops()
     {
-        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         _provider.SetupSequence(p => p.RenewAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1).ReturnsAsync(0).ReturnsAsync(1);
 
         await using var lease = _keeper.Start(5);
@@ -84,10 +84,25 @@ public class ServerTaskLeaseKeeperTests : IDisposable
         Renewals().ShouldBe(2, "after losing the lease the keeper must not renew again");
     }
 
+    // The keeper starts after a claim that already fenced out a live foreign owner, so a denial should not happen. If it does (someone took the
+    // lease in between) it is NOT "lost" (this process never held it): the keeper keeps retrying each interval rather than giving up or flagging the pipeline.
+    [Fact]
+    public async Task AcquireDeniedByALiveForeignOwner_IsNeverLost_AndKeepsRetrying()
+    {
+        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
+
+        await using var lease = _keeper.Start(5);
+
+        await WaitUntilAsync(() => System.Linq.Enumerable.Count(_provider.Invocations, i => i.Method.Name == nameof(IServerTaskLeaseDataProvider.AcquireAsync)) >= 4);
+
+        lease.IsLost.ShouldBeFalse();
+        Renewals().ShouldBe(0, "a lease that was never held is acquired, not renewed");
+    }
+
     [Fact]
     public async Task RenewalThrowing_DoesNotKillTheLoop_AndIsNotLost()
     {
-        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _provider.Setup(p => p.AcquireAsync(5, Owner, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
         var calls = 0;
         _provider.Setup(p => p.RenewAsync(5, Owner, It.IsAny<CancellationToken>())).Returns(() => Interlocked.Increment(ref calls) == 1 ? throw new InvalidOperationException("db blip") : Task.FromResult(1));
 

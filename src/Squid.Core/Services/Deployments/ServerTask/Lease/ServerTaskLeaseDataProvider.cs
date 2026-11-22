@@ -8,8 +8,11 @@ namespace Squid.Core.Services.Deployments.ServerTask.Lease;
 
 public interface IServerTaskLeaseDataProvider : IScopedDependency
 {
-    /// <summary>Takes the lease of a task that is running (Executing/Cancelling) whoever held it; returns 0 when the task is in any other state.</summary>
-    Task<int> AcquireAsync(int taskId, string owner, CancellationToken ct = default);
+    /// <summary>
+    /// Takes the lease of a running task (Executing/Cancelling) only when <paramref name="owner"/> already holds it, nobody does (NULL), or the
+    /// holder's lease is stale; returns 0 when a live foreign owner holds it or the task is in any other state.
+    /// </summary>
+    Task<int> AcquireAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default);
 
     /// <summary>Renews the lease only while <paramref name="owner"/> still holds it on a running task; returns 0 when it does not.</summary>
     Task<int> RenewAsync(int taskId, string owner, CancellationToken ct = default);
@@ -25,9 +28,9 @@ public interface IServerTaskLeaseDataProvider : IScopedDependency
 public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLeaseDataProvider
 {
     // DateTimeOffset.UtcNow inside a query is translated to the database's now(), never sent as this server's time, so every pod and the reaper share one clock.
-    public Task<int> AcquireAsync(int taskId, string owner, CancellationToken ct = default)
+    public Task<int> AcquireAsync(int taskId, string owner, TimeSpan staleAfter, CancellationToken ct = default)
         => repository.ExecuteUpdateAsync<ServerTaskEntity>(
-            t => t.Id == taskId && (t.State == TaskState.Executing || t.State == TaskState.Cancelling),
+            Takeable(taskId, owner, staleAfter),
             s => s.SetProperty(t => t.LeaseOwner, owner).SetProperty(t => t.LeaseRenewedAt, t => DateTimeOffset.UtcNow),
             ct);
 
@@ -79,15 +82,46 @@ public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLe
             s => s.SetProperty(t => t.State, toState).SetProperty(t => t.DataVersion, dataVersion).SetProperty(t => t.LastModifiedDate, now).SetProperty(t => t.CompletedTime, now).SetProperty(t => t.LeaseOwner, (string)null).SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null),
             ct);
 
-    // A NULL lease never matches (NULL <= x is not true): a row nobody leased has no proof its owner died and is left alone.
-    private static Expression<Func<ServerTaskEntity, bool>> IsStale(TimeSpan staleAfter)
-        => t => (t.State == TaskState.Executing || t.State == TaskState.Cancelling) && t.LeaseRenewedAt != null && t.LeaseRenewedAt <= DateTimeOffset.UtcNow - staleAfter;
+    // The one definition of "the owner stopped renewing", on the database clock. A NULL lease never matches (NULL <= x is not true): a row
+    // nobody leased has no proof its owner died. The scan, the recovery CAS and the takeover rule are all built from this.
+    private static Expression<Func<ServerTaskEntity, bool>> StaleLease(TimeSpan staleAfter)
+        => t => t.LeaseRenewedAt != null && t.LeaseRenewedAt <= DateTimeOffset.UtcNow - staleAfter;
+
+    private static Expression<Func<ServerTaskEntity, bool>> Running()
+        => t => t.State == TaskState.Executing || t.State == TaskState.Cancelling;
+
+    private static Expression<Func<ServerTaskEntity, bool>> IsStale(TimeSpan staleAfter) => Both(Running(), StaleLease(staleAfter));
 
     // The candidate as it was read: the same state, the same owner, still silent for the threshold. A renewal or a takeover in between makes this false.
     private static Expression<Func<ServerTaskEntity, bool>> StillStale(StaleServerTask task, TimeSpan staleAfter)
     {
         var (id, state, owner) = (task.Id, task.State, task.LeaseOwner);
 
-        return t => t.Id == id && t.State == state && t.LeaseOwner == owner && t.LeaseRenewedAt != null && t.LeaseRenewedAt <= DateTimeOffset.UtcNow - staleAfter;
+        return Both(t => t.Id == id && t.State == state && t.LeaseOwner == owner, StaleLease(staleAfter));
+    }
+
+    // A running task whose lease this owner already holds, nobody holds, or whose holder went silent. A live foreign owner never matches.
+    internal static Expression<Func<ServerTaskEntity, bool>> Takeable(int taskId, string owner, TimeSpan staleAfter)
+    {
+        Expression<Func<ServerTaskEntity, bool>> unheldOrMine = t => t.LeaseOwner == owner || t.LeaseRenewedAt == null;
+
+        return Both(Both(t => t.Id == taskId, Running()), Either(unheldOrMine, StaleLease(staleAfter)));
+    }
+
+    private static Expression<Func<ServerTaskEntity, bool>> Both(Expression<Func<ServerTaskEntity, bool>> left, Expression<Func<ServerTaskEntity, bool>> right) => Join(left, right, Expression.AndAlso);
+
+    private static Expression<Func<ServerTaskEntity, bool>> Either(Expression<Func<ServerTaskEntity, bool>> left, Expression<Func<ServerTaskEntity, bool>> right) => Join(left, right, Expression.OrElse);
+
+    private static Expression<Func<ServerTaskEntity, bool>> Join(Expression<Func<ServerTaskEntity, bool>> left, Expression<Func<ServerTaskEntity, bool>> right, Func<Expression, Expression, BinaryExpression> combine)
+    {
+        var parameter = left.Parameters[0];
+        var rebound = new ParameterRebinder(right.Parameters[0], parameter).Visit(right.Body);
+
+        return Expression.Lambda<Func<ServerTaskEntity, bool>>(combine(left.Body, rebound), parameter);
+    }
+
+    private sealed class ParameterRebinder(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) => node == from ? to : base.VisitParameter(node);
     }
 }

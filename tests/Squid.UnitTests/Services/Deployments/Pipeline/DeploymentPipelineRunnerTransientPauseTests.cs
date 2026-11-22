@@ -1,4 +1,3 @@
-using Squid.UnitTests.Support;
 using System;
 using Halibut;
 using Squid.Core.Halibut.Resilience;
@@ -134,7 +133,7 @@ public class DeploymentPipelineRunnerTransientPauseTests
 
     // Long timeout so the wall-clock timer never fires before the phase throws.
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
-        => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>(), NoLeaseKeeper.Instance)
+        => new(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>())
         {
             DeploymentTimeout = TimeSpan.FromMinutes(5)
         };
