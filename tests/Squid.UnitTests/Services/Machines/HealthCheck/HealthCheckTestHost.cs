@@ -3,6 +3,7 @@ using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Settings.Machines;
 using Squid.Message.Enums.Caching;
 
 namespace Squid.UnitTests.Services.Machines.HealthCheck;
@@ -17,9 +18,9 @@ internal sealed class HealthCheckTestHost : IDisposable
     public MachineHealthCheckService Service { get; }
     public MachineHealthCheckCoordinator Coordinator { get; }
 
-    public HealthCheckTestHost(IMachineDataProvider machines, IMachinePolicyDataProvider policies, ITransportRegistry transports, IRedisSafeRunner redis, MachineHealthCheckOptions options = null, HealthCheckInProcessLocks locks = null)
+    public HealthCheckTestHost(IMachineDataProvider machines, IMachinePolicyDataProvider policies, ITransportRegistry transports, IRedisSafeRunner redis, MachineHealthCheckSetting options = null, HealthCheckInProcessLocks locks = null)
     {
-        options ??= new MachineHealthCheckOptions(TimeSpan.FromSeconds(75), 6, TimeSpan.FromSeconds(300));
+        options ??= new MachineHealthCheckSetting();
         locks ??= new HealthCheckInProcessLocks();
 
         var builder = new ContainerBuilder();

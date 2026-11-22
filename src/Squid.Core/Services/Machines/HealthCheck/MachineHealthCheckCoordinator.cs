@@ -1,5 +1,6 @@
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Settings.Machines;
 
 namespace Squid.Core.Services.Machines.HealthCheck;
 
@@ -34,13 +35,9 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     private readonly IRedisSafeRunner _redis;
     private readonly ILifetimeScope _scope;
     private readonly HealthCheckInProcessLocks _locks;
-    private readonly MachineHealthCheckOptions _options;
+    private readonly MachineHealthCheckSetting _options;
 
-    public MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks) : this(redis, scope, locks, MachineHealthCheckOptions.FromEnvironment())
-    {
-    }
-
-    internal MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckOptions options)
+    public MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options)
     {
         _redis = redis;
         _scope = scope;

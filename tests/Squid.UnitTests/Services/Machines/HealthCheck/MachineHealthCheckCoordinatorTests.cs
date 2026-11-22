@@ -3,6 +3,8 @@ using Autofac;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Settings.Machines;
+using Microsoft.Extensions.Configuration;
 using Squid.Message.Enums.Caching;
 
 namespace Squid.UnitTests.Services.Machines.HealthCheck;
@@ -17,19 +19,48 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
 
     private MachineHealthCheckCoordinator Create(Mock<IRedisSafeRunner> redis = null, HealthCheckInProcessLocks locks = null, int parallelism = 4, TimeSpan? probeTimeout = null, TimeSpan? sweepDeadline = null)
     {
-        var options = new MachineHealthCheckOptions(probeTimeout ?? Fast, parallelism, sweepDeadline ?? TimeSpan.FromSeconds(30));
+        var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = (probeTimeout ?? Fast).TotalSeconds, MaxParallelism = parallelism, SweepDeadlineSeconds = (sweepDeadline ?? TimeSpan.FromSeconds(30)).TotalSeconds };
 
         return new MachineHealthCheckCoordinator((redis ?? HealthCheckTestHost.PassthroughRedis()).Object, _container, locks ?? new HealthCheckInProcessLocks(), options);
     }
 
-    // ── Rule 8: env var names + defaults ──
+    // ── appsettings binding: section/key names, defaults, fallback ──
+
+    private static MachineHealthCheckSetting Bind(Dictionary<string, string> values)
+        => new(new ConfigurationBuilder().AddInMemoryCollection(values).Build());
 
     [Fact]
-    public void EnvVarNames_Pinned()
+    public void Setting_SectionAndKeyNames_Pinned()
     {
-        MachineHealthCheckOptions.ProbeTimeoutSecondsEnvVar.ShouldBe("SQUID_HEALTH_CHECK_PROBE_TIMEOUT_SECONDS");
-        MachineHealthCheckOptions.MaxParallelismEnvVar.ShouldBe("SQUID_HEALTH_CHECK_MAX_PARALLELISM");
-        MachineHealthCheckOptions.SweepDeadlineSecondsEnvVar.ShouldBe("SQUID_HEALTH_CHECK_SWEEP_DEADLINE_SECONDS");
+        MachineHealthCheckSetting.SectionName.ShouldBe("MachineHealthCheck");
+
+        var setting = Bind(new Dictionary<string, string> { ["MachineHealthCheck:ProbeTimeoutSeconds"] = "11", ["MachineHealthCheck:MaxParallelism"] = "3", ["MachineHealthCheck:SweepDeadlineSeconds"] = "22" });
+
+        setting.ProbeTimeout.ShouldBe(TimeSpan.FromSeconds(11));
+        setting.MaxParallelism.ShouldBe(3);
+        setting.SweepDeadline.ShouldBe(TimeSpan.FromSeconds(22));
+    }
+
+    [Fact]
+    public void Setting_Absent_UsesDefaults()
+    {
+        var setting = Bind(new Dictionary<string, string>());
+
+        setting.ProbeTimeoutSeconds.ShouldBe(75);
+        setting.MaxParallelism.ShouldBe(6);
+        setting.SweepDeadlineSeconds.ShouldBe(300);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void Setting_NonPositive_FallsBackToDefaults(string raw)
+    {
+        var setting = Bind(new Dictionary<string, string> { ["MachineHealthCheck:ProbeTimeoutSeconds"] = raw, ["MachineHealthCheck:MaxParallelism"] = raw, ["MachineHealthCheck:SweepDeadlineSeconds"] = raw });
+
+        setting.ProbeTimeoutSeconds.ShouldBe(75);
+        setting.MaxParallelism.ShouldBe(6);
+        setting.SweepDeadlineSeconds.ShouldBe(300);
     }
 
     [Fact]
@@ -37,24 +68,6 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     {
         MachineHealthCheckCoordinator.SweepLockKey.ShouldBe("squid:health:sweep");
         MachineHealthCheckCoordinator.MachineLockKey(42).ShouldBe("squid:health:machine:42");
-    }
-
-    [Theory]
-    [InlineData(null, 75, 6, 300)]
-    [InlineData("abc", 75, 6, 300)]
-    [InlineData("0", 75, 6, 300)]
-    [InlineData("-5", 75, 6, 300)]
-    [InlineData("20", 20, 20, 20)]
-    public void FromEnvironment_ParsesPositiveIntsElseDefaults(string raw, int timeout, int parallelism, int deadline)
-    {
-        WithEnv(raw, () =>
-        {
-            var options = MachineHealthCheckOptions.FromEnvironment();
-
-            options.ProbeTimeout.TotalSeconds.ShouldBe(timeout);
-            options.MaxParallelism.ShouldBe(parallelism);
-            options.SweepDeadline.TotalSeconds.ShouldBe(deadline);
-        });
     }
 
     // ── Sweep lock ──
@@ -364,21 +377,5 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     {
         int snapshot;
         do { snapshot = target; } while (value > snapshot && Interlocked.CompareExchange(ref target, value, snapshot) != snapshot);
-    }
-
-    private static void WithEnv(string raw, Action assertion)
-    {
-        var names = new[] { MachineHealthCheckOptions.ProbeTimeoutSecondsEnvVar, MachineHealthCheckOptions.MaxParallelismEnvVar, MachineHealthCheckOptions.SweepDeadlineSecondsEnvVar };
-        var saved = names.Select(Environment.GetEnvironmentVariable).ToArray();
-
-        try
-        {
-            foreach (var name in names) Environment.SetEnvironmentVariable(name, raw);
-            assertion();
-        }
-        finally
-        {
-            for (var i = 0; i < names.Length; i++) Environment.SetEnvironmentVariable(names[i], saved[i]);
-        }
     }
 }

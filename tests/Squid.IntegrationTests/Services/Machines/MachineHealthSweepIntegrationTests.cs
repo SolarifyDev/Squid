@@ -7,6 +7,7 @@ using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Settings.Machines;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
 using Squid.Message.Models.Deployments.Machine;
@@ -109,6 +110,16 @@ public class MachineHealthSweepIntegrationTests : TestBase
         await sweep.ConfigureAwait(false);
     }
 
+    [Fact]
+    public async Task Container_RegistersHealthCheckSetting_WithDefaults()
+    {
+        var setting = await Run<MachineHealthCheckSetting, MachineHealthCheckSetting>(s => Task.FromResult(s)).ConfigureAwait(false);
+
+        setting.ProbeTimeoutSeconds.ShouldBe(75);
+        setting.MaxParallelism.ShouldBe(6);
+        setting.SweepDeadlineSeconds.ShouldBe(300);
+    }
+
     // ── helpers ──
 
     private Task RunSweepAsync(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism = 4)
@@ -116,7 +127,7 @@ public class MachineHealthSweepIntegrationTests : TestBase
 
     private async Task<T> RunWithOverridesAsync<T>(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism, Func<IMachineHealthCheckService, Task<T>> action)
     {
-        var options = new MachineHealthCheckOptions(TimeSpan.FromSeconds(probeTimeoutSeconds), maxParallelism, TimeSpan.FromMinutes(5));
+        var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = probeTimeoutSeconds, MaxParallelism = maxParallelism, SweepDeadlineSeconds = 300 };
         var transport = new Mock<IDeploymentTransport>();
         transport.Setup(t => t.HealthChecker).Returns(strategy);
         transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);

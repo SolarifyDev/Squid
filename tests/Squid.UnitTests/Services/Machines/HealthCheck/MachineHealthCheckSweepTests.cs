@@ -6,6 +6,7 @@ using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Settings.Machines;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
@@ -36,7 +37,7 @@ public class MachineHealthCheckSweepTests : IDisposable
 
     private HealthCheckTestHost CreateHost(Mock<IRedisSafeRunner> redis = null, int parallelism = 4, TimeSpan? probeTimeout = null, HealthCheckInProcessLocks locks = null)
     {
-        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, (redis ?? HealthCheckTestHost.PassthroughRedis()).Object, new MachineHealthCheckOptions(probeTimeout ?? Fast, parallelism, TimeSpan.FromSeconds(30)), locks);
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, (redis ?? HealthCheckTestHost.PassthroughRedis()).Object, new MachineHealthCheckSetting { ProbeTimeoutSeconds = (probeTimeout ?? Fast).TotalSeconds, MaxParallelism = parallelism, SweepDeadlineSeconds = 30 }, locks);
         _hosts.Add(host);
 
         return host;
