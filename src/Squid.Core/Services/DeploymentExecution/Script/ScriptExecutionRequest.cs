@@ -52,6 +52,13 @@ public class ScriptExecutionRequest
     /// </summary>
     public ScriptOutputSink OutputSink { get; set; }
 
+    /// <summary>
+    /// Optional: tells an observing strategy whether interrupting the wait makes this script's outcome
+    /// final (cancel the remote script) or merely pauses the task (leave it running so resume can
+    /// re-attach). Runtime-only; null = legacy behavior (cancel on every interruption).
+    /// </summary>
+    public RemoteScriptCancelDecision ShouldCancelRemoteScript { get; set; }
+
     public ExecutionMode ResolveExecutionMode()
     {
         if (ExecutionMode == ExecutionMode.Unspecified)

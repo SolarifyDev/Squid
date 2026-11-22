@@ -63,6 +63,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
+        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
+
         try
         {
             var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
@@ -180,6 +182,23 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             registry.Unregister(serverTaskId);
         }
+    }
+
+    /// <summary>
+    /// Whether an in-flight remote script must be cancelled on the agent when the run is interrupted:
+    /// on every interruption EXCEPT a recognised pause, so any cancellation source not listed here
+    /// (e.g. a required step's fail-fast peer cancellation, whose task then Fails) keeps the legacy
+    /// cancel behaviour instead of silently orphaning the script. A pause — the task keeps its in-flight
+    /// pointer for resume — is: not user-cancelled AND (a resumable deployment timeout fired OR the
+    /// external job token (host shutdown) fired). Reads the source flags (set before any linked token's
+    /// callbacks run), never a linked token, so the observer cannot see its own cancellation before the
+    /// decision flips; <paramref name="externalCt"/> is a source token, not linked, so it is race-free too.
+    /// </summary>
+    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(CancellationTokenSource registryCts, CancellationTokenSource timeoutCts, CancellationToken externalCt)
+    {
+        bool IsPausing() => !registryCts.IsCancellationRequested && ((TimeoutResumable && timeoutCts.IsCancellationRequested) || externalCt.IsCancellationRequested);
+
+        return () => !IsPausing();
     }
 
     private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)

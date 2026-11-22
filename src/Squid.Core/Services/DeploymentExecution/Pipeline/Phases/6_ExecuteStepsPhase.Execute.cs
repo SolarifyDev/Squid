@@ -376,6 +376,8 @@ public sealed partial class ExecuteStepsPhase
                 request.OutputSink = (lines, sinkCt) => lifecycle.EmitAsync(
                     new ScriptProgressReceivedEvent(new DeploymentEventContext { StepDisplayOrder = stepDisplayOrder, MachineName = tc.Machine.Name, ActionSortOrder = actionSortOrder, ScriptOutputChunk = lines }), sinkCt);
 
+                request.ShouldCancelRemoteScript = _ctx.ShouldCancelRemoteScript;
+
                 var execResult = await strategy.ExecuteScriptAsync(request, ct).ConfigureAwait(false);
 
                 // P1-B.7: cross-reference output-variable values against the
