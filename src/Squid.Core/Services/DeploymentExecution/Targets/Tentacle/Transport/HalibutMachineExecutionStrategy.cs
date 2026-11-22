@@ -36,6 +36,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly IInFlightScriptStore _inFlightStore;
+    private readonly RpcRetryHandler _rpcRetry;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -45,7 +46,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         HalibutSetting halibutSetting,
         IMachineCircuitBreakerRegistry breakerRegistry = null,
         IMachineRuntimeCapabilitiesCache capabilitiesCache = null,
-        IInFlightScriptStore inFlightStore = null)
+        IInFlightScriptStore inFlightStore = null,
+        RpcRetryHandler rpcRetry = null)
     {
         _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
@@ -53,6 +55,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         _breakerRegistry = breakerRegistry;
         _capabilitiesCache = capabilitiesCache;
         _inFlightStore = inFlightStore;
+        _rpcRetry = rpcRetry ?? RpcRetryHandler.FromEnvironment();
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -232,6 +235,11 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // ticket and skip its own script. Keyed by the stable, process-unique
         // step/action ids — display names carry no uniqueness guarantee.
         var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
+
+        // GetStatus / Cancel / Complete survive a brief dropped connection inside a time budget; every
+        // exhausted budget rethrows the original exception, so the pause path below is unchanged and the
+        // breaker still sees ONE failure per dispatch (retries never touch it). StartScript stays unretried.
+        scriptClient = new RetryingScriptClient(scriptClient, _rpcRetry, scriptTimeout, ct);
 
         var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;

@@ -219,7 +219,7 @@ public class HalibutMachineExecutionStrategyTests
         payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>(), ScriptSyntax.PowerShell), Times.Once);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
-            scriptClient.Object,
+            It.Is<IAsyncScriptService>(c => c is RetryingScriptClient),
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
@@ -265,7 +265,7 @@ public class HalibutMachineExecutionStrategyTests
         payloadBuilder.Verify(x => x.Build(It.IsAny<ScriptExecutionRequest>()), Times.Never);
         observer.Verify(o => o.ObserveAndCompleteAsync(
             machine,
-            scriptClient.Object,
+            It.Is<IAsyncScriptService>(c => c is RetryingScriptClient),
             It.IsAny<ScriptTicket>(),
             It.Is<TimeSpan>(t => t == TimeSpan.FromMinutes(30)),
             It.IsAny<CancellationToken>(),
