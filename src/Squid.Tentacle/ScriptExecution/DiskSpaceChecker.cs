@@ -13,6 +13,11 @@ public static class DiskSpaceChecker
     {
         if (!Enabled) return;
 
+        EnsureEnoughFreeSpace(path);
+    }
+
+    internal static void EnsureEnoughFreeSpace(string path)
+    {
         var (available, total) = GetDiskSpace(path);
 
         if (total <= 0) return;
@@ -36,7 +41,7 @@ public static class DiskSpaceChecker
     {
         try
         {
-            var driveInfo = new DriveInfo(Path.GetPathRoot(path) ?? path);
+            var driveInfo = new DriveInfo(VolumeResolver.ResolveVolumeRoot(path) ?? Path.GetPathRoot(path) ?? path);
 
             return (driveInfo.AvailableFreeSpace, driveInfo.TotalSize);
         }
