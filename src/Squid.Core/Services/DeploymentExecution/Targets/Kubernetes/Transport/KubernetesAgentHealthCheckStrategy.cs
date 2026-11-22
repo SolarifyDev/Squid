@@ -56,7 +56,8 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
         try
         {
             var capsClient = _halibutClientFactory.CreateCapabilitiesClient(endpoint);
-            var response = await capsClient.GetCapabilitiesAsync(new CapabilitiesRequest()).ConfigureAwait(false);
+            // The Halibut async contract carries no CancellationToken, so WaitAsync is what makes the probe honour ct.
+            var response = await capsClient.GetCapabilitiesAsync(new CapabilitiesRequest()).WaitAsync(ct).ConfigureAwait(false);
 
             if (response == null)
                 return new HealthCheckResult(false, "Agent returned null capabilities response");
@@ -71,6 +72,10 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
                 return new HealthCheckResult(false, rbacFailure);
 
             return new HealthCheckResult(true, $"Agent connected — version {response.AgentVersion}, services: {string.Join(", ", response.SupportedServices)}");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

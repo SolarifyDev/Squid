@@ -57,6 +57,10 @@ public class OpenClawHealthCheckStrategy : IHealthCheckStrategy
         {
             return new HealthCheckResult(false, "OpenClaw gateway connection timed out");
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (HttpRequestException ex)
         {
             return new HealthCheckResult(false, $"OpenClaw gateway connection failed: {ex.Message}");

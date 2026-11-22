@@ -38,6 +38,10 @@ public sealed class ManualHealthCheckErrorCodesIntegrityTests
         => ManualHealthCheckErrorCodes.OfflineTolerated.ShouldBe("offline_tolerated");
 
     [Fact]
+    public void ProbeInProgress_LiteralPinned()
+        => ManualHealthCheckErrorCodes.ProbeInProgress.ShouldBe("probe_in_progress");
+
+    [Fact]
     public void AllCodes_LowerSnakeCase_StableConvention()
     {
         // Convention: lower_snake_case so consumers can split-on-underscore +

@@ -10,6 +10,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Machines;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.UnitTests.Services.Machines.HealthCheck;
 
 namespace Squid.UnitTests.Services.Machines;
 
@@ -26,6 +27,7 @@ public class MachineHealthCheckServiceTests
     private readonly Mock<ITransportRegistry> _transportRegistry = new();
     private readonly Mock<IDeploymentTransport> _transport = new();
     private readonly Mock<IHealthCheckStrategy> _healthChecker = new();
+    private readonly HealthCheckTestHost _host;
     private readonly MachineHealthCheckService _service;
 
     public MachineHealthCheckServiceTests()
@@ -35,7 +37,8 @@ public class MachineHealthCheckServiceTests
         _transportRegistry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(_transport.Object);
         _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
             .ReturnsAsync(new HealthCheckResult(true, "ok"));
-        _service = new MachineHealthCheckService(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object);
+        _host = new HealthCheckTestHost(_machineDataProvider.Object, _policyDataProvider.Object, _transportRegistry.Object, HealthCheckTestHost.PassthroughRedis().Object);
+        _service = _host.Service;
     }
 
     // ========================================================================
@@ -526,14 +529,10 @@ public class MachineHealthCheckServiceTests
 
         SetupMachineList(machine1, machine2);
 
-        var callCount = 0;
+        // Keyed by machine, not call order: the sweep probes machines in parallel.
         _healthChecker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount == 1) throw new TimeoutException("connection timeout");
-                return new HealthCheckResult(true, "ok");
-            });
+            .Returns<Machine, MachineConnectivityPolicyDto, CancellationToken, MachineHealthCheckPolicyDto>((m, _, _, _) =>
+                m.Id == 1 ? throw new TimeoutException("connection timeout") : Task.FromResult(new HealthCheckResult(true, "ok")));
 
         await _service.AutoHealthCheckForAllAsync();
 
@@ -598,6 +597,10 @@ public class MachineHealthCheckServiceTests
         // cross-space method instead of the obsolete nullable-spaceId entry.
         _machineDataProvider.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((machines.Length, machines.ToList()));
+
+        // The sweep re-loads each due machine by id in its own scope.
+        foreach (var machine in machines)
+            SetupMachineById(machine);
     }
 
     private void SetupPolicy(int policyId, int intervalSeconds)

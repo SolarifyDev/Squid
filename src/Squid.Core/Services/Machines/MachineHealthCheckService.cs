@@ -7,6 +7,7 @@ using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Machines;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.HealthCheck;
 
 namespace Squid.Core.Services.Machines;
 
@@ -44,19 +45,40 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     private readonly IMachinePolicyDataProvider _policyDataProvider;
     private readonly ITransportRegistry _transportRegistry;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
+    private readonly IMachineHealthCheckCoordinator _coordinator;
 
-    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry, IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
+    public MachineHealthCheckService(IMachineDataProvider machineDataProvider, IMachinePolicyDataProvider policyDataProvider, ITransportRegistry transportRegistry, IMachineHealthCheckCoordinator coordinator, IMachineRuntimeCapabilitiesCache capabilitiesCache = null)
     {
         _machineDataProvider = machineDataProvider;
         _policyDataProvider = policyDataProvider;
         _transportRegistry = transportRegistry;
+        _coordinator = coordinator;
         _capabilitiesCache = capabilitiesCache;
     }
 
+    // Per-machine exclusivity (not global): a manual check is never blocked by a long sweep — it
+    // only waits for a probe of THIS machine that is already running (at most one probe timeout),
+    // and the machine is loaded inside the lock so the probe never records over a stale entity.
     public async Task<ManualHealthCheckResult> ManualHealthCheckAsync(int machineId, CancellationToken cancellationToken = default)
     {
         var checkedAt = DateTimeOffset.UtcNow;
+        ManualHealthCheckResult result = null;
 
+        var acquired = await _coordinator.TryRunForMachineAsync(machineId, _coordinator.ManualBusyWait, async () => result = await ManualHealthCheckLockedAsync(machineId, checkedAt, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
+
+        return acquired ? result : BuildProbeInProgressResult(machineId, checkedAt);
+    }
+
+    private static ManualHealthCheckResult BuildProbeInProgressResult(int machineId, DateTimeOffset checkedAt) => new()
+    {
+        Successful = false,
+        Detail = $"Another health check for machine {machineId} is still running — try again shortly.",
+        ErrorCode = ManualHealthCheckErrorCodes.ProbeInProgress,
+        CheckedAt = checkedAt
+    };
+
+    private async Task<ManualHealthCheckResult> ManualHealthCheckLockedAsync(int machineId, DateTimeOffset checkedAt, CancellationToken cancellationToken)
+    {
         var machine = await _machineDataProvider.GetMachinesByIdAsync(machineId, cancellationToken).ConfigureAwait(false);
 
         if (machine == null)
@@ -133,51 +155,112 @@ public class MachineHealthCheckService : IMachineHealthCheckService
 
     public async Task AutoHealthCheckForAllAsync(CancellationToken cancellationToken = default)
     {
+        var ran = await _coordinator.TryRunSweepAsync(SweepAsync, cancellationToken).ConfigureAwait(false);
+
+        if (!ran)
+            Log.Information("Skipping auto health check sweep: another sweep is already running");
+    }
+
+    private async Task SweepAsync(CancellationToken cancellationToken)
+    {
+        var dueMachineIds = await FindDueMachineIdsAsync(cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Running auto health check sweep for {Count} due machines", dueMachineIds.Count);
+
+        await _coordinator.ForEachInScopeAsync(dueMachineIds, ProbeDueMachineInScopeAsync, cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Auto health check sweep completed for {Count} due machines", dueMachineIds.Count);
+    }
+
+    private async Task<List<int>> FindDueMachineIdsAsync(CancellationToken cancellationToken)
+    {
         // P1-D.8 (Phase-8): the health-check sweep is system-internal (runs
         // under InternalUser / Hangfire) and legitimately scans every space.
         // Use the explicitly-named cross-space method instead of the
         // (now obsolete) nullable-spaceId entry — makes the cross-space
         // intent visible at the call site.
         var (_, machines) = await _machineDataProvider.GetMachinesAllSpacesPagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        var dueIds = new List<int>();
 
-        var activeMachines = machines.Where(m => !m.IsDisabled).ToList();
-
-        Log.Information("Running auto health check sweep for {Count} active machines", activeMachines.Count);
-
-        var checkedCount = 0;
-
-        foreach (var machine in activeMachines)
+        foreach (var machine in machines.Where(m => !m.IsDisabled))
         {
-            try
-            {
-                var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
-
-                if (!ShouldRunHealthCheck(machine, healthCheckPolicy))
-                    continue;
-
-                var transport = ResolveTransport(machine);
-
-                if (transport?.HealthChecker == null)
-                {
-                    await RecordUnavailableAsync(machine, $"No health checker for {CommunicationStyleParser.Parse(machine.Endpoint)}", cancellationToken).ConfigureAwait(false);
-                    checkedCount++;
-                    continue;
-                }
-
-                var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
-
-                await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
-                checkedCount++;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Health check failed for machine {MachineName}", machine.Name);
-                await RecordUnavailableAsync(machine, $"Health check error: {ex.Message}", cancellationToken).ConfigureAwait(false);
-                checkedCount++;
-            }
+            if (await IsDueSafelyAsync(machine, cancellationToken).ConfigureAwait(false))
+                dueIds.Add(machine.Id);
         }
 
-        Log.Information("Auto health check sweep completed. Checked {CheckedCount} of {TotalCount} machines", checkedCount, activeMachines.Count);
+        return dueIds;
+    }
+
+    // A policy that cannot be evaluated counts as due so the per-machine probe hits the same
+    // error and records the machine Unavailable, exactly as the sequential sweep did.
+    private async Task<bool> IsDueSafelyAsync(Machine machine, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+
+            return ShouldRunHealthCheck(machine, healthCheckPolicy);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            Log.Error(ex, "Could not evaluate health check schedule for machine {MachineName}", machine.Name);
+
+            return true;
+        }
+    }
+
+    private static Task ProbeDueMachineInScopeAsync(ILifetimeScope scope, int machineId, CancellationToken cancellationToken)
+        => scope.Resolve<MachineHealthCheckService>().ProbeDueMachineAsync(machineId, cancellationToken);
+
+    // Runs in a fresh DI scope (own DbContext) so probes can run in parallel. Under the per-machine
+    // lock the machine is reloaded and its due-ness re-checked, so a machine that a manual check
+    // (or another replica's sweep) refreshed since the listing is not probed again.
+    internal async Task ProbeDueMachineAsync(int machineId, CancellationToken cancellationToken)
+    {
+        var acquired = await _coordinator.TryRunForMachineAsync(machineId, TimeSpan.Zero, () => CheckDueMachineAsync(machineId, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+        if (!acquired)
+            Log.Information("Skipping health check for machine {MachineId}: another probe is already running", machineId);
+    }
+
+    private async Task CheckDueMachineAsync(int machineId, CancellationToken cancellationToken)
+    {
+        var machine = await _machineDataProvider.GetMachinesByIdAsync(machineId, cancellationToken).ConfigureAwait(false);
+
+        if (machine == null || machine.IsDisabled) return;
+
+        try
+        {
+            await CheckAndRecordIfDueAsync(machine, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Health check failed for machine {MachineName}", machine.Name);
+            await RecordUnavailableAsync(machine, $"Health check error: {ex.Message}", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task CheckAndRecordIfDueAsync(Machine machine, CancellationToken cancellationToken)
+    {
+        var healthCheckPolicy = await LoadHealthCheckPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+
+        if (!ShouldRunHealthCheck(machine, healthCheckPolicy)) return;
+
+        var transport = ResolveTransport(machine);
+
+        if (transport?.HealthChecker == null)
+        {
+            await RecordUnavailableAsync(machine, $"No health checker for {CommunicationStyleParser.Parse(machine.Endpoint)}", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var connectivityPolicy = await LoadConnectivityPolicyAsync(machine, cancellationToken).ConfigureAwait(false);
+
+        await RunAndRecordAsync(machine, transport, connectivityPolicy, healthCheckPolicy, cancellationToken).ConfigureAwait(false);
     }
 
     // ========================================================================
@@ -188,7 +271,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     {
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
-        var result = await transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, cancellationToken, healthCheckPolicy).ConfigureAwait(false);
+        var result = await _coordinator.RunProbeAsync(probeToken => transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, probeToken, healthCheckPolicy), cancellationToken).ConfigureAwait(false);
         var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
