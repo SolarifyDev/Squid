@@ -538,6 +538,13 @@ if [ -z "${SQUID_UPGRADE_SCOPED:-}" ]; then
   # restart squid-tentacle` doesn't kill us along with the tentacle service.
   # Halibut connection dies here (expected); the next health check reads
   # /var/lib/squid-tentacle/last-upgrade.json for the final outcome.
+  # Declare this script detached from the agent's lifecycle. The tracked process (this PID,
+  # which becomes `sudo` after the exec below) stays alive in the agent cgroup until Phase B
+  # finishes, and Phase B restarts the agent: without this marker the agent's graceful drain
+  # would wait for us while we wait for the restart. The agent skips marked scripts in its
+  # drain (neither waits for nor kills them). Name pinned by LocalScriptService.DrainExemptMarkerFileName.
+  : > "$PWD/.squid-drain-exempt" 2>/dev/null || true
+
   SCOPED_SCRIPT="/tmp/squid-upgrade-scoped-$$-$(date +%s).sh"
   cp "$0" "$SCOPED_SCRIPT"
   chmod +x "$SCOPED_SCRIPT"
@@ -689,6 +696,32 @@ fi
 write_status "SWAPPED" "New binary in place via $INSTALL_METHOD; about to restart service"
 emit_event B swapped "Binary in place via $INSTALL_METHOD; restarting service"
 
+# ── Graceful-stop drop-in (existing-fleet migration) ──────────────────────────
+# KillMode=mixed: `systemctl stop` signals only the agent, so its drain protects running
+# scripts (control-group, the default, SIGINTs every script at once). Wants/After
+# network-online.target: the agent dials out at boot.
+ensure_graceful_stop_dropin() {
+  local dropin_dir="/etc/systemd/system/${SERVICE_NAME}.service.d"
+  local dropin_file="$dropin_dir/squid-graceful-stop.conf"
+  local desired
+  desired=$(printf '[Unit]\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nKillMode=mixed\n')
+
+  if [ "$(sudo cat "$dropin_file" 2>/dev/null || true)" = "$desired" ]; then
+    echo "[upgrade] Graceful-stop drop-in already present: $dropin_file"
+    return 0
+  fi
+
+  if sudo mkdir -p "$dropin_dir" 2>/dev/null \
+     && printf '%s\n' "$desired" | sudo tee "$dropin_file" >/dev/null 2>&1 \
+     && sudo systemctl daemon-reload 2>/dev/null; then
+    echo "[upgrade] Installed graceful-stop drop-in: $dropin_file"
+    emit_event B dropin-installed "Installed KillMode=mixed drop-in $dropin_file"
+  else
+    echo "::warning:: Could not install graceful-stop drop-in $dropin_file (continuing; upgrade unaffected)."
+    emit_event B dropin-skipped "Graceful-stop drop-in not installed"
+  fi
+}
+
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
 emit_event B restart-start "Running systemctl restart $SERVICE_NAME"
@@ -739,6 +772,13 @@ if [ "$HEALTH_OK" = "1" ]; then
   echo "✓ Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
   emit_event B success "Upgrade to $TARGET_VERSION successful via $INSTALL_METHOD"
   write_status "SUCCESS" "Agent restarted, healthz OK, --version matches target (method=$INSTALL_METHOD)"
+
+  # Existing hosts keep the unit file generated at install time (KillMode=control-group,
+  # After=network.target) until reinstall. Apply the graceful-stop settings via an idempotent
+  # drop-in. Deliberately AFTER the restart succeeded: the stop that just happened ran under the
+  # old settings exactly as before, so this upgrade's behaviour is unchanged; the drop-in takes
+  # effect for the next stop. Best-effort: a failure here must never fail an upgrade.
+  ensure_graceful_stop_dropin
   if [ "$INSTALL_METHOD" = "tarball" ]; then
     sudo rm -rf "$BAK_DIR"
   fi

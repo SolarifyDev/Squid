@@ -850,6 +850,14 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             nextLogSequence: 0);
     }
 
+    /// <summary>
+    /// A script that creates this file in its working directory declares itself detached from the
+    /// agent's lifecycle (the upgrade script hands off to a systemd scope and then restarts the agent):
+    /// the drain neither waits for it nor kills it. Renaming breaks the shipped upgrade script, so the
+    /// literal is pinned by a test.
+    /// </summary>
+    public const string DrainExemptMarkerFileName = ".squid-drain-exempt";
+
     public async Task WaitForDrainAsync(TimeSpan timeout)
     {
         _draining = true;
@@ -871,7 +879,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         try
         {
-            while (_scripts.Values.Any(IsProcessRunning))
+            while (_scripts.Values.Any(HoldsDrain))
                 await Task.Delay(TimeSpan.FromMilliseconds(250), cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -894,7 +902,7 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         {
             try
             {
-                if (!IsProcessRunning(running)) continue;
+                if (!HoldsDrain(running)) continue;
 
                 Log.Warning("Drain timeout — killing script {TicketId}", ticketId);
 
@@ -909,6 +917,10 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             }
         }
     }
+
+    private static bool HoldsDrain(RunningScript running) => IsProcessRunning(running) && !IsDrainExempt(running);
+
+    private static bool IsDrainExempt(RunningScript running) => File.Exists(Path.Combine(running.WorkDir, DrainExemptMarkerFileName));
 
     private static bool IsProcessRunning(RunningScript running)
     {

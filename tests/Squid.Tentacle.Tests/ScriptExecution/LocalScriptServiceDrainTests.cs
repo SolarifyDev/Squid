@@ -71,6 +71,35 @@ public class LocalScriptServiceDrainTests : IDisposable
         status.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult, "a drain-timeout kill is not a script result; the kill signal's exit code must not be persisted");
     }
 
+    [Fact]
+    public async Task Drain_ScriptDeclaredDetached_IsNeitherWaitedForNorKilled()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        // Same shape as the upgrade script: marks itself detached, then outlives the agent restart it triggers.
+        var ticket = Start($"touch \"$PWD/{LocalScriptService.DrainExemptMarkerFileName}\"; sleep 30");
+        WaitForFile(Path.Combine(WorkDir(ticket), LocalScriptService.DrainExemptMarkerFileName));
+
+        var elapsed = await TimeDrainAsync(TimeSpan.FromSeconds(3));
+
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2), "a detached script must not hold the drain (it waits for the restart the drain is blocking)");
+        _service.GetStatus(new ScriptStatusRequest(ticket, 0)).State.ShouldBe(ProcessState.Running, "and must not be killed either: its process tree includes the scope the upgrade runs in");
+    }
+
+    [Fact]
+    public async Task Drain_DetachedScriptDoesNotExcuseOtherRunningScripts()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var detached = Start($"touch \"$PWD/{LocalScriptService.DrainExemptMarkerFileName}\"; sleep 30");
+        WaitForFile(Path.Combine(WorkDir(detached), LocalScriptService.DrainExemptMarkerFileName));
+        Start("sleep 30");
+
+        var elapsed = await TimeDrainAsync(TimeSpan.FromSeconds(1));
+
+        elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(900), "an ordinary running script must still be waited for");
+    }
+
     private async Task<TimeSpan> TimeDrainAsync(TimeSpan timeout)
     {
         var sw = Stopwatch.StartNew();
@@ -90,6 +119,18 @@ public class LocalScriptServiceDrainTests : IDisposable
     }
 
     private static string WorkDir(ScriptTicket ticket) => Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticket.TaskId}");
+
+    private static void WaitForFile(string path)
+    {
+        var sw = Stopwatch.StartNew();
+
+        while (!File.Exists(path))
+        {
+            if (sw.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException($"{path} not created within 20s");
+
+            Thread.Sleep(5);
+        }
+    }
 
     private static void WaitForPersistedComplete(ScriptTicket ticket)
     {
