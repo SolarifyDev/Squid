@@ -61,12 +61,27 @@ public class DeploymentPipelineRunnerLeaseTests
     }
 
     [Fact]
-    public async Task LeaseIsReleased_WhenTheTaskIsCancelled()
+    public async Task LeaseIsReleased_WhenTheUserCancels()
+    {
+        var registry = new TaskCancellationRegistry();
+        var phase = Phase((_, ct) => { registry.TryCancel(42); ct.ThrowIfCancellationRequested(); });
+        var runner = new DeploymentPipelineRunner([phase], _lifecycle.Object, _completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
+
+        await runner.ProcessAsync(42, CancellationToken.None);
+
+        _completion.Verify(c => c.OnCancelledAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        _keeper.Leases[0].Disposed.ShouldBeTrue();
+    }
+
+    // The external job token is the host shutting down: the run pauses and rethrows so Hangfire re-delivers it. The lease must
+    // still be released on that path, or the restarted server's claim would be fenced by this dead process's lease until it goes stale.
+    [Fact]
+    public async Task LeaseIsReleased_WhenTheHostShutsDown()
     {
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Runner(Phase((_, ct) => ct.ThrowIfCancellationRequested())).ProcessAsync(42, cts.Token);
+        await Should.ThrowAsync<OperationCanceledException>(() => Runner(Phase((_, ct) => ct.ThrowIfCancellationRequested())).ProcessAsync(42, cts.Token));
 
         _keeper.Leases[0].Disposed.ShouldBeTrue();
     }
