@@ -52,6 +52,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
     internal const bool DefaultDeploymentTimeoutResumable = true;
 
+    internal const string HostShutdownPauseReason = "the server is shutting down; the deployment is paused and will resume when the job is re-delivered (or can be resumed manually)";
+
     internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
     internal bool TimeoutResumable { get; init; } = ResolveTimeoutResumable();
 
@@ -99,8 +101,12 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // check ran first and races produced DeploymentFailedEvent while the UI
             // showed "cancel requested". Checkpoint + downstream consumers then latched
             // on the wrong terminal state. We still let timeouts fall through to the
-            // OCE handler below (timeoutCts raises OCE mid-execution, not here).
-            if (registryCts.Token.IsCancellationRequested || ct.IsCancellationRequested)
+            // OCE handler below (timeoutCts raises OCE mid-execution, not here). The external
+            // token is the job host shutting down, never a user cancel: it is rethrown just above
+            // so it is handled like a mid-run shutdown (pause + redelivery), not as a cancel.
+            if (IsHostShutdown(registryCts, ct)) ct.ThrowIfCancellationRequested();
+
+            if (registryCts.Token.IsCancellationRequested)
             {
                 await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
                 await completion.OnCancelledAsync(ctx, timeout.Token);
@@ -127,6 +133,26 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 ctx,
                 () => completion.OnPausedAsync(ctx, CancellationToken.None),
                 new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }));
+        }
+        catch (OperationCanceledException) when (IsHostShutdown(registryCts, ct))
+        {
+            // The job host is stopping (Hangfire substitutes its shutdown-linked token for `ct`) and the
+            // user did NOT cancel. The task is still Executing, so the Cancelling → Cancelled write of the
+            // cancel path could never apply: it would throw, SafeCompleteAsync would swallow it, the job
+            // would return normally (Hangfire marks it Succeeded, never re-delivers) and the task would
+            // wedge in Executing holding its environment's concurrency slot. Pause instead — checkpoint and
+            // in-flight script pointers preserved (the observer left the script running, see
+            // BuildRemoteScriptCancelDecision) — then rethrow: Hangfire treats an OperationCanceledException
+            // raised while its shutdown token is cancelled as an interrupted job and re-queues it rather
+            // than failing it, so the restarted server resumes from the checkpoint.
+            Log.Information("[Deploy] Task {TaskId} interrupted by host shutdown; pausing for resume on job re-delivery", serverTaskId);
+
+            await SafeCompleteAsync(
+                ctx,
+                () => completion.OnPausedAsync(ctx, CancellationToken.None),
+                new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = HostShutdownPauseReason }));
+
+            throw;
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
@@ -200,6 +226,13 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         return () => !IsPausing();
     }
+
+    /// <summary>
+    /// The external job token fired and the user did not cancel: the job host is shutting down. A user
+    /// cancel always wins when both are signalled (the task is then Cancelling and ends Cancelled).
+    /// </summary>
+    private static bool IsHostShutdown(CancellationTokenSource registryCts, CancellationToken externalCt)
+        => externalCt.IsCancellationRequested && !registryCts.IsCancellationRequested;
 
     private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
     {

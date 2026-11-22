@@ -40,9 +40,10 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
         var runner = CreateRunner(phase, resumable: interruption != Interruption.TimeoutFailFast);
 
         // An internal fail-fast cancellation is not a runner-recognised source, so the runner treats the
-        // resulting OperationCanceledException as a failure and rethrows; that is not under test here.
+        // resulting OperationCanceledException as a failure and rethrows; a host shutdown is rethrown so
+        // Hangfire re-delivers the job. Neither rethrow is under test here.
         try { await runner.ProcessAsync(1, external.Token); }
-        catch (OperationCanceledException) when (interruption == Interruption.InternalFailFast) { }
+        catch (OperationCanceledException) when (interruption is Interruption.InternalFailFast or Interruption.ExternalCancel) { }
 
         decisionAtInterruption.ShouldBe(expectedCancel,
             customMessage: $"{interruption}: the decision the observer sees when its token fires must be {expectedCancel}. " +

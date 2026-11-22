@@ -1,6 +1,9 @@
 using Autofac;
+using Microsoft.EntityFrameworkCore;
 using Halibut;
 using Squid.Core.Halibut.Resilience;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
@@ -114,19 +117,103 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
     }
 
     [Fact]
-    public async Task ExternalCancellation_WhileScriptRunning_DoesNotCancelRemoteScript()
+    public async Task HostShutdown_WhileScriptRunning_PausesKeepsSlotAndPointer_AndRedeliveryReattachesToSameTicket()
     {
-        // Host shutdown / job-token cancellation. Today the runner still ends the task Cancelled; the
-        // planned follow-up makes shutdown pause it instead. Either way the observer must not be the
-        // one deciding to kill a script whose task may yet resume.
+        // Host shutdown / job-token cancellation (the user did NOT cancel). The task must end Paused - not
+        // wedge in Executing - with its in-flight pointer kept and the agent script left running, the runner
+        // must rethrow the cancellation (Hangfire re-queues an OperationCanceledException raised while its
+        // shutdown token is cancelled), and the paused task must keep holding its environment slot. The
+        // re-delivered job (a second ProcessAsync) then re-attaches to the SAME ticket and succeeds.
+        const string tag = "env-slot-shutdown-test";
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        await SetConcurrencyTagAsync(seeded.TaskId, tag).ConfigureAwait(false);
+        var peerTaskId = await InsertPendingPeerTaskAsync(seeded.TaskId, tag).ConfigureAwait(false);
+        var agent = new BlockingAgent();
+        using var external = new CancellationTokenSource();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(60), resumable: true, afterAgentPolled: _ => external.Cancel(), externalToken: external.Token)).ConfigureAwait(false);
+
+        await AssertStateAsync(seeded.TaskId, TaskState.Paused, "a host shutdown must PAUSE the task, not leave it Executing or cancel it").ConfigureAwait(false);
+        agent.CancelCalls.ShouldBe(0, "the script must keep running so the re-delivered job can re-attach");
+        agent.StartedTickets.Count.ShouldBe(1);
+        (await InFlightTicketAsync(seeded).ConfigureAwait(false)).ShouldBe(agent.StartedTickets[0], "the in-flight pointer must survive the pause");
+        (await CompletionCountAsync(seeded.TaskId).ConfigureAwait(false)).ShouldBe(0, "a paused deployment has not completed - no (failed) completion record");
+
+        var peerAgent = new BlockingAgent();
+        await RunPipelineAsync(peerTaskId, peerAgent, timeout: TimeSpan.FromSeconds(60), resumable: true).ConfigureAwait(false);
+
+        await AssertStateAsync(peerTaskId, TaskState.Pending, "Paused holds the environment slot, so a peer task for the same environment must not claim it").ConfigureAwait(false);
+        peerAgent.StartedTickets.Count.ShouldBe(0, "the blocked peer must not dispatch anything");
+
+        agent.Finish();
+        await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(30), resumable: true).ConfigureAwait(false);
+
+        await AssertStateAsync(seeded.TaskId, TaskState.Success, "the re-delivered job must resume from the checkpoint and complete").ConfigureAwait(false);
+        agent.StartedTickets.Count.ShouldBe(1, "re-delivery must re-attach, not dispatch a duplicate StartScript");
+        agent.ProbedTickets.ShouldAllBe(t => t == agent.StartedTickets[0], "every probe after re-delivery must target the original ticket");
+        agent.CancelCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task HostShutdown_AndUserCancel_TogetherCancelsRemoteScript()
+    {
+        // User cancel wins over a simultaneous shutdown: the task heads to Cancelled, so the script is cancelled.
         var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
         var agent = new BlockingAgent();
         using var external = new CancellationTokenSource();
 
-        await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(60), resumable: true, afterAgentPolled: _ => external.Cancel(), externalToken: external.Token).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(60), resumable: true, afterAgentPolled: scope =>
+        {
+            scope.Resolve<ITaskCancellationRegistry>().TryCancel(seeded.TaskId);
+            external.Cancel();
+        }, externalToken: external.Token).ConfigureAwait(false);
 
-        agent.CancelCalls.ShouldBe(0, "an external (host) cancellation must not send CancelScript to the agent");
+        agent.CancelCalls.ShouldBe(1, "user cancel is terminal even when the host is also shutting down");
     }
+
+    private Task SetConcurrencyTagAsync(int taskId, string tag)
+        => Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var task = await repository.Query<ServerTask>(t => t.Id == taskId).FirstAsync().ConfigureAwait(false);
+            task.ConcurrencyTag = tag;
+
+            await repository.UpdateAsync(task).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+        });
+
+    // A bare Pending task sharing the tag: the slot check short-circuits before any phase runs, so no deployment graph is needed.
+    private async Task<int> InsertPendingPeerTaskAsync(int sourceTaskId, string tag)
+    {
+        var peerId = 0;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var source = await repository.QueryNoTracking<ServerTask>(t => t.Id == sourceTaskId).FirstAsync().ConfigureAwait(false);
+
+            var peer = new ServerTask
+            {
+                Name = "Slot Peer Task", Description = "Contends for the same environment slot", QueueTime = DateTimeOffset.UtcNow, State = TaskState.Pending,
+                ServerTaskType = "Deploy", ProjectId = source.ProjectId, EnvironmentId = source.EnvironmentId, SpaceId = 1, LastModifiedDate = DateTimeOffset.UtcNow,
+                BusinessProcessState = "Queued", StateOrder = 1, Weight = 1, BatchId = 0, JSON = string.Empty, HasWarningsOrErrors = false,
+                ServerNodeId = Guid.NewGuid(), DurationSeconds = 0, DataVersion = Array.Empty<byte>(), ConcurrencyTag = tag
+            };
+
+            await repository.InsertAsync(peer).ConfigureAwait(false);
+            await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            peerId = peer.Id;
+        }).ConfigureAwait(false);
+
+        return peerId;
+    }
+
+    private Task<int> CompletionCountAsync(int taskId)
+        => Run<IRepository, int>(async repository =>
+        {
+            var deploymentIds = await repository.QueryNoTracking<Deployment>(d => d.TaskId == taskId).Select(d => d.Id).ToListAsync().ConfigureAwait(false);
+
+            return await repository.QueryNoTracking<DeploymentCompletion>(c => deploymentIds.Contains(c.DeploymentId)).CountAsync().ConfigureAwait(false);
+        });
 
     private async Task RunPipelineAsync(int taskId, IAsyncScriptService agent, TimeSpan timeout, bool resumable, Action<ILifetimeScope> afterAgentPolled = null, CancellationToken externalToken = default, IHalibutScriptObserver observer = null)
     {
