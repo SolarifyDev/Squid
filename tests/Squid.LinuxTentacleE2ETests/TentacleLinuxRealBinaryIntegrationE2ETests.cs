@@ -347,6 +347,12 @@ public sealed class TentacleLinuxRealBinaryIntegrationE2ETests
                           $"Got: [{string.Join(", ", capabilities.SupportedServices ?? new List<string>())}]. " +
                           "If absent: TentacleHalibutHost.serviceFactory.Register<IScriptService> regressed.");
 
+        // The real binary registers ScriptService V2 beside V1 and must advertise it, or the server never uses it.
+        capabilities.SupportedServices.ShouldContain(Squid.Message.Contracts.Tentacle.ScriptServiceCapabilities.V2,
+            customMessage: $"agent MUST advertise {Squid.Message.Contracts.Tentacle.ScriptServiceCapabilities.V2}. " +
+                          $"Got: [{string.Join(", ", capabilities.SupportedServices ?? new List<string>())}]. " +
+                          "If absent: CapabilitiesService stopped advertising V2, or TentacleApp.BuildScriptService no longer hands the host a V2-capable service.");
+
         // ── Step 6: THE PIN — dispatch a real script via Halibut polling ──
         // This is what no other test in the suite exercises: the FULL real
         // production round-trip. Server (stub) sends StartScriptCommand →

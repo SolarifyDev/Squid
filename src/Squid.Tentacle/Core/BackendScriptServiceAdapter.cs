@@ -3,7 +3,7 @@ using Squid.Tentacle.Abstractions;
 
 namespace Squid.Tentacle.Core;
 
-public sealed class BackendScriptServiceAdapter : IScriptService
+public class BackendScriptServiceAdapter : IScriptService
 {
     private readonly ITentacleScriptBackend _backend;
 

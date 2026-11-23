@@ -5,17 +5,19 @@ using System.Linq;
 using System.Text;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Contracts.Tentacle.V2;
 using Serilog;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Observability;
 using Squid.Tentacle.Platform;
 using Squid.Tentacle.ScriptExecution.Logging;
 using Squid.Tentacle.ScriptExecution.State;
+using Squid.Tentacle.ScriptExecution.V2;
 using Squid.Tentacle.Security.Admission;
 
 namespace Squid.Tentacle.ScriptExecution;
 
-public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
+public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
     public bool IsRunningScript(string ticketId)
         => !string.IsNullOrEmpty(ticketId) && _scripts.ContainsKey(ticketId);
@@ -34,6 +36,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     /// <see cref="CompleteScript"/> calls <see cref="ScriptCancellationRegistry.Cleanup"/>.
     /// </summary>
     private readonly ScriptCancellationRegistry _cancellationRegistry = new();
+    private readonly ScriptTombstoneStore _tombstones;
+    private readonly TicketLockStripes _ticketLocks = new();
+    private readonly ConcurrentDictionary<string, byte> _startsInFlight = new();
 
     /// <summary>Test-only — observe the per-ticket CTS registry's live entry count.
     /// Used to verify Cleanup is called on every exit path of LocalScriptService.</summary>
@@ -99,9 +104,15 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
     public LocalScriptService() : this(new ScriptStateStoreFactory()) { }
 
     public LocalScriptService(IScriptStateStoreFactory stateStoreFactory, IAdmissionPolicySource? admissionPolicySource = null)
+        : this(stateStoreFactory, admissionPolicySource, ScriptTombstoneStore.ForTempRoot())
+    {
+    }
+
+    internal LocalScriptService(IScriptStateStoreFactory stateStoreFactory, IAdmissionPolicySource? admissionPolicySource, ScriptTombstoneStore tombstones)
     {
         _stateStoreFactory = stateStoreFactory ?? throw new ArgumentNullException(nameof(stateStoreFactory));
         _admissionPolicySource = admissionPolicySource;
+        _tombstones = tombstones;
     }
 
     public ScriptStatusResponse StartScript(StartScriptCommand command)
@@ -617,6 +628,11 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
             return recovered ?? CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
         }
 
+        return CompleteRunning(command.Ticket, command.LastLogSequence, running);
+    }
+
+    private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Action<int>? onFinalExitCode = null)
+    {
         if (!running.Process.HasExited)
             running.Process.WaitForExit(TimeSpan.FromSeconds(30));
 
@@ -650,8 +666,8 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         // (single line) this is sub-millisecond.
         running.Process.WaitForExit();
 
-        var logs = ReadLogs(running, command.LastLogSequence - 1);
-        var exitCode = running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout;
+        var logs = ReadLogs(running, lastLogSequence - 1);
+        var exitCode = forcedExitCode ?? (running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout);
 
         FinalizeState(running, exitCode);
 
@@ -659,7 +675,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         // artifact is guaranteed to hit disk even if cleanup aborts. The manifest
         // is useful to operators doing post-mortems even after the workspace
         // itself is gone — it gets copied out to a durable archive externally.
-        WriteExecutionManifest(running, command.Ticket.TaskId, exitCode);
+        WriteExecutionManifest(running, ticket.TaskId, exitCode);
+
+        onFinalExitCode?.Invoke(exitCode);
 
         running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
@@ -670,9 +688,9 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
         // script has reached a terminal state. Without this, the registry
         // accumulates one CTS per script ever run — small leak but
         // unbounded over agent lifetime.
-        _cancellationRegistry.Cleanup(command.Ticket);
+        _cancellationRegistry.Cleanup(ticket);
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
+        return new ScriptStatusResponse(ticket, ProcessState.Complete, exitCode, logs, running.LogSequence);
     }
 
     /// <summary>
@@ -1809,6 +1827,11 @@ public class LocalScriptService : IScriptService, ITentacleScriptBackend, IGrace
 
         /// <summary>Set (under <see cref="TerminalGate"/>) once CompleteScript/CancelScript recorded the final result.</summary>
         public bool Finalized;
+
+        /// <summary>Set by V2 CancelScript so later status/complete calls report Canceled instead of the kill signal's exit code.</summary>
+        public volatile bool V2Canceled;
+
+        public int? V2CancelExitCode => V2Canceled ? ScriptExitCodes.Canceled : null;
 
         public long LogSequence => LogWriter?.NextSequence ?? 0;
 

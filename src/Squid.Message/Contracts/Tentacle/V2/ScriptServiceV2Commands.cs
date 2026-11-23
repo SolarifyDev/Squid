@@ -14,7 +14,7 @@ public enum ScriptStateV2
     /// <summary>The script finished; <see cref="ScriptStatusResponseV2.ExitCode"/> is its real exit code.</summary>
     Completed = 3,
 
-    /// <summary>The agent has never seen this ticket. The script did not run here (or its record was already released).</summary>
+    /// <summary>The agent has never seen this ticket, or its completion record expired from retention. A released ticket within retention reports its recorded final state instead.</summary>
     UnknownTicket = 4,
 
     /// <summary>The agent knew the ticket but lost the outcome (e.g. restarted mid-run). No exit code exists.</summary>

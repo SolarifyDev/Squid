@@ -5,6 +5,7 @@ using Halibut.Diagnostics;
 using Halibut.ServiceModel;
 using Squid.Tentacle.Configuration;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Contracts.Tentacle.V2;
 using Serilog;
 
 namespace Squid.Tentacle.Halibut;
@@ -53,7 +54,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         _settings = settings;
 
         var asyncAdapter = new AsyncScriptServiceAdapter(scriptService);
-        var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService());
+        var capsAdapter = new AsyncCapabilitiesServiceAdapter(capabilitiesService ?? new Core.CapabilitiesService(metadata: null, advertiseScriptServiceV2: scriptService is IScriptServiceV2));
 
         // : register the file-transfer service. Default impl writes
         // under ~/.squid/uploads with workspace-boundary path rewriting (rooted
@@ -63,6 +64,7 @@ public class TentacleHalibutHost : ITentacleHalibutHost
 
         var serviceFactory = new DelegateServiceFactory();
         serviceFactory.Register<IScriptService, IScriptServiceAsync>(() => asyncAdapter);
+        RegisterScriptServiceV2(serviceFactory, scriptService);
         serviceFactory.Register<ICapabilitiesService, ICapabilitiesServiceAsync>(() => capsAdapter);
         serviceFactory.Register<IFileTransferService, IFileTransferServiceAsync>(() => fileTransferAdapter);
 
@@ -463,6 +465,35 @@ public class TentacleHalibutHost : ITentacleHalibutHost
         CancelPolling();
         await _runtime.DisposeAsync().ConfigureAwait(false);
         _pollCts.Dispose();
+    }
+
+    // Halibut routes by interface name, so V2 sits beside V1 on the same agent; old servers only ever call V1.
+    private static void RegisterScriptServiceV2(DelegateServiceFactory serviceFactory, IScriptService scriptService)
+    {
+        if (scriptService is not IScriptServiceV2 v2) return;
+
+        var v2Adapter = new AsyncScriptServiceV2Adapter(v2);
+
+        serviceFactory.Register<IScriptServiceV2, IScriptServiceV2Async>(() => v2Adapter);
+    }
+
+    private sealed class AsyncScriptServiceV2Adapter : IScriptServiceV2Async
+    {
+        private readonly IScriptServiceV2 _inner;
+
+        public AsyncScriptServiceV2Adapter(IScriptServiceV2 inner) => _inner = inner;
+
+        public Task<ScriptStatusResponseV2> StartScriptAsync(StartScriptCommandV2 command, CancellationToken ct)
+            => Task.FromResult(_inner.StartScript(command));
+
+        public Task<ScriptStatusResponseV2> GetStatusAsync(ScriptStatusRequestV2 request, CancellationToken ct)
+            => Task.FromResult(_inner.GetStatus(request));
+
+        public Task<ScriptStatusResponseV2> CancelScriptAsync(CancelScriptCommandV2 command, CancellationToken ct)
+            => Task.FromResult(_inner.CancelScript(command));
+
+        public Task<CompleteScriptResponseV2> CompleteScriptAsync(CompleteScriptCommandV2 command, CancellationToken ct)
+            => Task.FromResult(_inner.CompleteScript(command));
     }
 
     private sealed class AsyncScriptServiceAdapter : IScriptServiceAsync

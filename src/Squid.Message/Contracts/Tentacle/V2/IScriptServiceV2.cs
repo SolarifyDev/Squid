@@ -20,7 +20,9 @@ public interface IScriptServiceV2
     /// <summary>
     /// Returns the current status plus the logs after <see cref="ScriptStatusRequestV2.LastLogSequence"/>.
     /// Pass the returned <see cref="ScriptStatusResponseV2.NextLogSequence"/> back as the next cursor.
-    /// An unknown ticket yields <see cref="ScriptStateV2.UnknownTicket"/>.
+    /// A ticket already released by Complete still answers with its recorded final state and exit code (no logs) for the agent's
+    /// tombstone retention window, so a crashed server can probe safely. <see cref="ScriptStateV2.UnknownTicket"/> therefore means
+    /// never seen, or expired from retention.
     /// </summary>
     ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request);
 
