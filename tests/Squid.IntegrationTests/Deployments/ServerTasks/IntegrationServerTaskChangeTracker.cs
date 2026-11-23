@@ -293,10 +293,11 @@ public class IntegrationServerTaskChangeTracker : ServerTaskFixtureBase
 
         await Run<IServerTaskService, IServerTaskDataProvider, IRepository>(async (service, provider, repository) =>
         {
-            // First: transition Pending → Executing, then drop the lease the claim stamped: the row an older server (or a pre-lease
-            // deployment) left Executing. A task a live process still leases is refused instead (see IntegrationServerTaskLease).
+            // First: transition Pending → Executing, then drop the lease the claim stamped and age the row past the stale window: what an older
+            // server (or a pre-lease deployment) left Executing long ago. A task a live process still leases, or an unleased row touched a moment
+            // ago (an older server may be running it), is refused instead (see IntegrationServerTaskLease).
             await provider.TransitionStateAsync(taskId, TaskState.Pending, TaskState.Executing);
-            await repository.ExecuteUpdateAsync<Squid.Core.Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId, s => s.SetProperty(t => t.LeaseOwner, (string)null).SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null));
+            await repository.ExecuteUpdateAsync<Squid.Core.Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId, s => s.SetProperty(t => t.LeaseOwner, (string)null).SetProperty(t => t.LeaseRenewedAt, (DateTimeOffset?)null).SetProperty(t => t.LastModifiedDate, DateTimeOffset.UtcNow.AddMinutes(-10)));
 
             // StartExecutingAsync on an already-Executing, unleased task should not throw
             var result = await service.StartExecutingAsync(taskId);
