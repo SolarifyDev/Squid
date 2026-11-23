@@ -49,13 +49,13 @@ public sealed class WindowsUpgradeScriptResourceTests
         return reader.ReadToEnd();
     }
 
-    // -- failureflag step: existing fleet must get restart-on-fatal on upgrade ------
+    // -- recovery policy: existing fleet must get the bounded restart-on-fatal policy ------
     // Ordering matters: with the flag on, SCM restarts a new binary that fails at startup
-    // (10s delay) -- racing Invoke-Rollback's junction swap / Start-Service if the flag were
-    // set before the health check. So it must sit after every rollback call site.
+    // (10s delay) -- racing Invoke-Rollback's junction swap / Start-Service. Phase B therefore
+    // SUSPENDS the flag before stopping the service and restores it on every exit path.
 
     [Fact]
-    public void FailureFlagStep_IsPresent_AndPureAscii()
+    public void RecoveryPolicy_IsPresent_AndPureAscii()
     {
         var script = LoadResource();
 
@@ -64,20 +64,65 @@ public sealed class WindowsUpgradeScriptResourceTests
     }
 
     [Fact]
-    public void FailureFlagStep_RunsAfterHealthCheck_AndAfterEveryRollbackCallSite_BeforeSuccessStatus()
+    public void Upgrade_NeverRewritesTheScmRestartActions_OnlyTheFlag()
+    {
+        // Rewriting `sc failure` with a terminal `none` action stopped SCM restarting graceful non-zero
+        // stops at all on a real Windows host (observed in CI), so the upgrade only toggles the flag.
+        LoadResource().ShouldNotContain("sc.exe failure ");
+    }
+
+    [Fact]
+    public void RecoveryPolicy_IsAppliedAfterHealthCheckAndEveryRollbackCallSite_BeforeSuccessStatus()
     {
         var script = LoadResource();
 
-        var firstMention = script.IndexOf("failureflag", System.StringComparison.Ordinal);
-        var flag = script.IndexOf("& sc.exe failureflag", System.StringComparison.Ordinal);
+        var apply = script.LastIndexOf("        Set-ScmRecoveryPolicy\n", System.StringComparison.Ordinal);
         var lastRollbackCall = script.LastIndexOf("Invoke-Rollback -Reason", System.StringComparison.Ordinal);
         var healthLoopEnd = script.IndexOf("if (-not $healthOk)", System.StringComparison.Ordinal);
         var success = script.LastIndexOf("Write-UpgradeStatus -Status 'SUCCESS'", System.StringComparison.Ordinal);
 
-        flag.ShouldBeGreaterThan(lastRollbackCall);
-        flag.ShouldBeGreaterThan(healthLoopEnd);
-        flag.ShouldBeLessThan(success);
-        firstMention.ShouldBeGreaterThan(lastRollbackCall);
+        apply.ShouldBeGreaterThan(lastRollbackCall);
+        apply.ShouldBeGreaterThan(healthLoopEnd);
+        apply.ShouldBeLessThan(success);
+    }
+
+    [Fact]
+    public void PhaseB_SuspendsFailureActions_BeforeStoppingTheService_AndSettlesAPendingRestart()
+    {
+        var script = LoadResource();
+        var phaseB = script.IndexOf("$script:CURRENT_PHASE = 'B'", System.StringComparison.Ordinal);
+        var suspend = script.IndexOf("\n    Suspend-FailureActions\n", System.StringComparison.Ordinal);
+        var settle = script.IndexOf("\n    Wait-ScmPendingRestartToSettle\n", suspend, System.StringComparison.Ordinal);
+        var stop = script.IndexOf("Stop-Service -Name $SERVICE_NAME -Force\n", phaseB, System.StringComparison.Ordinal);
+
+        suspend.ShouldBeGreaterThan(phaseB);
+        settle.ShouldBeGreaterThan(suspend);
+        stop.ShouldBeGreaterThan(settle);
+    }
+
+    [Fact]
+    public void FailureActions_AreRestoredFromTheFinallyBlock_SoEveryExitPathRestoresThem()
+    {
+        var script = LoadResource();
+        var finallyBlock = script.Substring(script.LastIndexOf("finally {", System.StringComparison.Ordinal));
+
+        finallyBlock.ShouldContain("Restore-FailureActions");
+        finallyBlock.IndexOf("Restore-FailureActions", System.StringComparison.Ordinal)
+            .ShouldBeLessThan(finallyBlock.IndexOf("Remove-Item -Path $LOCK_FILE", System.StringComparison.Ordinal));
+        script.ShouldContain("$script:FailureFlagSuspended = $true", customMessage: "restore must only act when the suspend succeeded");
+    }
+
+    [Fact]
+    public void Rollback_LetsAPendingScmRestartSettle_BeforeItStopsTheService()
+    {
+        var script = LoadResource();
+        var body = script.Substring(script.IndexOf("function Invoke-Rollback", System.StringComparison.Ordinal));
+
+        var settle = body.IndexOf("Wait-ScmPendingRestartToSettle", System.StringComparison.Ordinal);
+        var stop = body.IndexOf("Stop-Service", System.StringComparison.Ordinal);
+
+        settle.ShouldBeGreaterThan(-1);
+        settle.ShouldBeLessThan(stop);
     }
 
     [Fact]

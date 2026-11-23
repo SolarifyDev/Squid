@@ -30,6 +30,10 @@ namespace Squid.Tentacle.Core;
 /// </summary>
 public static class TentacleEntry
 {
+    /// <summary>Exit code for "the server denied registration (missing permission)". Permanent: only an operator
+    /// can fix it, so the SCM host reports it as a clean stop instead of letting recovery restart it forever.</summary>
+    public const int PermissionDeniedExitCode = 403;
+
     /// <summary>
     /// The build-in command set the binary supports. Kept as a static
     /// property (vs constructed in Program.cs) so the SCM-detection seam
@@ -116,7 +120,7 @@ public static class TentacleEntry
             // operator can resolve without reading server source.
             EmitPermissionDeniedHint(ex);
             TryWriteScmDiagnostic($"TentacleEntry.RunAsync caught PermissionDeniedRegistrationException: {ex.MissingPermission}");
-            return 403;
+            return PermissionDeniedExitCode;
         }
         catch (Exception ex)
         {

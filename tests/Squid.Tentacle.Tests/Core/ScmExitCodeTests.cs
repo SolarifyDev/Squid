@@ -17,7 +17,8 @@ public sealed class ScmExitCodeTests
 {
     [Theory]
     [InlineData(1, false, 1)]     // fatal error, nobody asked to stop -> failure reported
-    [InlineData(403, false, 403)] // permission-denied exit code is passed through
+    [InlineData(403, false, 0)]   // permission denied is permanent: stop cleanly, do not restart-loop re-registering
+    [InlineData(2, false, 2)]     // any other failure stays non-zero so recovery restarts it
     [InlineData(0, false, 0)]     // clean early exit -> unchanged
     [InlineData(0, true, 0)]      // operator stop, clean
     [InlineData(1, true, 0)]      // failure while stopping must NOT trigger a restart against the operator's stop

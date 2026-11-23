@@ -14,7 +14,13 @@ public static class ScmExitCode
 {
     /// <summary>A stop requested by SCM / the host (operator <c>sc stop</c>, shutdown) is always a clean 0;
     /// otherwise the pipeline's exit code is reported as-is (non-zero = failure = recovery applies).</summary>
-    public static int Resolve(int pipelineExitCode, bool stopRequested) => stopRequested ? 0 : pipelineExitCode;
+    public static int Resolve(int pipelineExitCode, bool stopRequested) => stopRequested || IsPermanentFailure(pipelineExitCode) ? 0 : pipelineExitCode;
+
+    /// <summary>A failure no restart can fix (registration permission denied): reported to the SCM as a clean stop so
+    /// the restart actions do not re-register against the server every 10s forever. The agent has already logged the
+    /// operator hint (and the SCM diagnostic log); the service simply stays STOPPED. Transient failures keep a
+    /// non-zero code so recovery restarts them.</summary>
+    public static bool IsPermanentFailure(int pipelineExitCode) => pipelineExitCode == TentacleEntry.PermissionDeniedExitCode;
 
     /// <summary>Returns a reporter that writes the code to the SCM-bound lifetime; a no-op when the
     /// lifetime is not a Windows service (Linux / console).</summary>
