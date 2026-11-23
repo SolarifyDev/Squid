@@ -248,6 +248,18 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         if (!_scripts.TryGetValue(request.Ticket.TaskId, out var ctx))
             return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
 
+        var status = BuildActiveStatus(request, ctx);
+
+        // Isolation protects the running pod only: once the pod is done the lock is free even if CompleteScript never
+        // arrives. Idempotent (TryRemove), so the later Complete/Cancel release is a no-op.
+        if (status.State == ProcessState.Complete)
+            ReleaseMutexForTicket(request.Ticket.TaskId);
+
+        return status;
+    }
+
+    private ScriptStatusResponse BuildActiveStatus(ScriptStatusRequest request, ScriptPodContext ctx)
+    {
         var logs = DrainLogs(ctx);
 
         if (ctx.EosDetected)

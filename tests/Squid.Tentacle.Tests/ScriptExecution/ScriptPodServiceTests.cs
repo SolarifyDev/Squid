@@ -441,6 +441,33 @@ public class ScriptPodServiceTests : IDisposable
         status2.NextLogSequence.ShouldBe(1);
     }
 
+    [Fact]
+    public void GetStatus_PodFinishedButNoComplete_ReleasesMutexAndStartsPendingScript()
+    {
+        var service = CreateService();
+        var command = MakeIsolatedCommand("echo test", "pod-exit-release-mutex");
+
+        var ticket1 = service.StartScript(command).Ticket;
+        var ticket2 = service.StartScript(WithNewTicket(command)).Ticket;
+        var ticket3 = service.StartScript(WithNewTicket(command)).Ticket;
+
+        SetupPodPhase("Running");
+        SetupPodLogs("");
+        service.GetStatus(new ScriptStatusRequest(ticket1, 0));
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue("a running pod keeps isolation");
+
+        SetupPodPhase("Succeeded");
+        SetupPodExitCode(0);
+        service.GetStatus(new ScriptStatusRequest(ticket1, 0));
+
+        service.PendingScripts.ContainsKey(ticket2.TaskId).ShouldBeFalse("the pod finished; the waiting script must start without CompleteScript");
+        service.ActiveScripts.ContainsKey(ticket2.TaskId).ShouldBeTrue();
+
+        service.CompleteScript(new CompleteScriptCommand(ticket1, 0));
+
+        service.PendingScripts.ContainsKey(ticket3.TaskId).ShouldBeTrue("Complete after the exit-release must not release the lock the next script now holds");
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
