@@ -106,14 +106,15 @@ public class IntegrationServerTaskLease : TestBase
     [InlineData(TaskState.Cancelling, "foreign", 1, 0)]
     [InlineData(TaskState.Executing, "foreign", 10, 1)]      // dead owner (stale lease): takeover
     [InlineData(TaskState.Cancelling, "foreign", 10, 1)]
-    [InlineData(TaskState.Executing, "none", 0, 1)]          // older pod / pre-migration row: takeover
+    [InlineData(TaskState.Executing, "none", 10, 1)]         // pre-lease row untouched for longer than the stale window: takeover
+    [InlineData(TaskState.Executing, "none", 0, 0)]          // pre-lease row claimed a moment ago: its (older-server) owner may be running it right now
     [InlineData(TaskState.Executing, "self", 0, 1)]          // same-process re-entry
     [InlineData(TaskState.Paused, "none", 0, 0)]
     [InlineData(TaskState.Pending, "none", 0, 0)]
     public async Task Acquire_FollowsTheTakeoverRule(string state, string holder, int ageMinutes, int expectedRows)
     {
         var owner = holder == "foreign" ? DeadOwner : holder == "self" ? Owner : null;
-        var id = await SeedAsync(state, "deploy:a-1", leaseOwner: owner, leaseAge: TimeSpan.FromMinutes(ageMinutes));
+        var id = await SeedAsync(state, "deploy:a-1", leaseOwner: owner, leaseAge: TimeSpan.FromMinutes(ageMinutes), modifiedAgo: holder == "none" ? TimeSpan.FromMinutes(ageMinutes) : null);
 
         var rows = await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, Owner, StaleAfter));
 
@@ -142,14 +143,67 @@ public class IntegrationServerTaskLease : TestBase
     [InlineData("foreign-stale")]
     [InlineData("none")]
     [InlineData("self-stale")]
-    public async Task StartExecuting_OnAnExecutingRow_TakesOverWhenTheOwnerIsDeadOrUnleased(string holder)
+    public async Task StartExecuting_OnAnExecutingRow_TakesOverWhenTheOwnerIsDeadOrLongUnleased_AsAResume(string holder)
     {
-        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2", leaseOwner: holder == "none" ? null : holder == "self-stale" ? Owner : DeadOwner, leaseAge: holder == "none" ? TimeSpan.Zero : TimeSpan.FromMinutes(10));
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-2", leaseOwner: holder == "none" ? null : holder == "self-stale" ? Owner : DeadOwner, leaseAge: TimeSpan.FromMinutes(10), modifiedAgo: holder == "none" ? TimeSpan.FromMinutes(10) : null);
 
         var result = await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id));
 
         result.Task.State.ShouldBe(TaskState.Executing);
+        result.IsResumed.ShouldBeTrue("a takeover continues a deployment the dead owner already started");
         (await LoadAsync(id)).LeaseOwner.ShouldBe(Owner);
+    }
+
+    // A pod that predates leases claims a task with no lease and keeps running it without renewing anything. A duplicate delivery to a new pod a moment
+    // later must not read "no lease" as "dead owner" and start a second pipeline beside it.
+    [Fact]
+    public async Task StartExecuting_OnAFreshRowWithNoLease_IsRefused_BecauseAnOlderServerMayBeRunningIt()
+    {
+        var id = await SeedAsync(TaskState.Executing, "deploy:fence-prelease");
+
+        await Run<IServerTaskService>(s => Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => s.StartExecutingAsync(id))).ConfigureAwait(false);
+
+        var row = await LoadAsync(id);
+        row.State.ShouldBe(TaskState.Executing);
+        row.LeaseOwner.ShouldBeNull("the refusal must not stamp a lease on the older server's task");
+    }
+
+    // A duplicate delivery to a task being cancelled used to hit the transition error, which the runner turns into Cancelling -> Failed on the owner's task.
+    [Theory]
+    [InlineData(1)]    // a live owner finishing the cancel
+    [InlineData(10)]   // a dead owner: the reaper completes the cancel, a second pipeline must not start on it
+    public async Task StartExecuting_OnACancellingTask_IsRefused_AndChangesNothing(int leaseAgeMinutes)
+    {
+        var id = await SeedAsync(TaskState.Cancelling, $"deploy:cancel-dup-{leaseAgeMinutes}", leaseOwner: DeadOwner, leaseAge: TimeSpan.FromMinutes(leaseAgeMinutes));
+        var before = await LoadAsync(id);
+
+        var ex = await Run<IServerTaskService, ServerTaskOwnedByLiveProcessException>(s => Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => s.StartExecutingAsync(id)));
+
+        ex.LeaseOwner.ShouldBe(DeadOwner);
+        var after = await LoadAsync(id);
+        after.State.ShouldBe(TaskState.Cancelling);
+        after.LeaseOwner.ShouldBe(DeadOwner);
+        after.LeaseRenewedAt.ShouldBe(before.LeaseRenewedAt);
+    }
+
+    // The runner on the duplicate's side, against the real database: it must not fail the owner's Cancelling task.
+    [Fact]
+    public async Task Runner_OnADuplicateDeliveryToACancellingTask_LeavesItCancelling_AndRecordsNothing()
+    {
+        var id = await SeedAsync(TaskState.Cancelling, "deploy:runner-cancel-dup", leaseOwner: Owner, leaseAge: TimeSpan.FromSeconds(5));
+        var completion = new Moq.Mock<Squid.Core.Services.DeploymentExecution.Pipeline.IDeploymentCompletionHandler>();
+        var lifecycle = new Moq.Mock<Squid.Core.Services.DeploymentExecution.Lifecycle.IDeploymentLifecycle>();
+
+        await Run<IServerTaskService, IServerTaskLeaseKeeper, IServerTaskDataProvider>(async (service, keeper, provider) =>
+        {
+            var phase = new Squid.Core.Services.DeploymentExecution.Pipeline.Phases.LoadTaskPhase(service, keeper);
+            var runner = new Squid.Core.Services.DeploymentExecution.Pipeline.DeploymentPipelineRunner([phase], lifecycle.Object, completion.Object, new Squid.Core.Services.DeploymentExecution.Script.TaskCancellationRegistry(), provider, Moq.Mock.Of<Squid.Core.Services.Jobs.ISquidBackgroundJobClient>());
+
+            await runner.ProcessAsync(id, CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        completion.VerifyNoOtherCalls();
+        (await LoadAsync(id)).State.ShouldBe(TaskState.Cancelling);
     }
 
     // A duplicate delivery inside the SAME process is as much a duplicate as one on another pod: this process's own fresh lease does not admit it.
@@ -491,7 +545,7 @@ public class IntegrationServerTaskLease : TestBase
 
     private Task<ServerTaskEntity> LoadAsync(int id) => Run<IRepository, ServerTaskEntity>(r => r.QueryNoTracking<ServerTaskEntity>(t => t.Id == id).FirstAsync());
 
-    private async Task<int> SeedAsync(string state, string tag, string leaseOwner = null, TimeSpan? leaseAge = null, TimeSpan? startedAgo = null)
+    private async Task<int> SeedAsync(string state, string tag, string leaseOwner = null, TimeSpan? leaseAge = null, TimeSpan? startedAgo = null, TimeSpan? modifiedAgo = null)
     {
         var task = new ServerTaskEntity
         {
@@ -518,6 +572,10 @@ public class IntegrationServerTaskLease : TestBase
         {
             await repository.InsertAsync(task).ConfigureAwait(false);
             await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+
+            // The context stamps LastModifiedDate on every tracked save, so the age of the row is set afterwards, the way the transitions (bulk updates) leave it.
+            if (modifiedAgo != null)
+                await repository.ExecuteUpdateAsync<ServerTaskEntity>(t => t.Id == task.Id, s => s.SetProperty(t => t.LastModifiedDate, DateTimeOffset.UtcNow - modifiedAgo.Value), CancellationToken.None).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
         return task.Id;

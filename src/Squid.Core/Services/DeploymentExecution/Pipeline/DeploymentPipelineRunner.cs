@@ -202,9 +202,10 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (ServerTaskOwnedByLiveProcessException ex)
         {
-            // A duplicate delivery of a task a live process is still running. Nothing is written — not the state, the checkpoint, a
-            // completion record or the remote script — and SafeCompleteAsync is not involved: the owner keeps running alone.
-            Log.Warning("[Deploy] Task {TaskId} is already running under live owner {Owner}; duplicate delivery suppressed", ex.ServerTaskId, ex.LeaseOwner);
+            // A duplicate delivery of a task a live process is still running (or is cancelling). Nothing is written — not the state, the checkpoint, a
+            // completion record or the remote script — and SafeCompleteAsync is not involved: the owner keeps running alone. If that owner is in fact dead,
+            // the reaper recovers the task once its lease goes stale and resumes it, so dropping the delivery here loses nothing.
+            Log.Warning("[Deploy] Task {TaskId} is already owned by {Owner}; duplicate delivery suppressed", ex.ServerTaskId, ex.LeaseOwner);
         }
         catch (ConcurrencySlotOccupiedException ex)
         {

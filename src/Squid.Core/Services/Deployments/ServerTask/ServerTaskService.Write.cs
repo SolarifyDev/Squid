@@ -15,48 +15,62 @@ public partial class ServerTaskService
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
 
-        var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
+        var wasPaused = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
+        var tookOver = false;
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
-            await ClaimOrFenceAsync(task, TaskState.Pending, leaseOwner, ct).ConfigureAwait(false);
-        else if (isResumed)
-            await ClaimOrFenceAsync(task, TaskState.Paused, leaseOwner, ct).ConfigureAwait(false);
+            tookOver = await ClaimOrFenceAsync(task, TaskState.Pending, leaseOwner, ct).ConfigureAwait(false);
+        else if (wasPaused)
+            tookOver = await ClaimOrFenceAsync(task, TaskState.Paused, leaseOwner, ct).ConfigureAwait(false);
         else if (string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-            await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
+            tookOver = await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
+        else if (string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
+            throw await CancellingOwnerAsync(task, ct).ConfigureAwait(false);
         else
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
 
         task.State = TaskState.Executing;
         task.StartTime ??= DateTimeOffset.UtcNow;
 
-        return new StartExecutingResult(task, isResumed);
+        // A takeover of a dead owner's Executing row is a resume: the run before it already started the deployment, so a guided-failure outcome the
+        // operator resolved in the meantime must be applied and the log must say "resumed", exactly as for a Paused task.
+        return new StartExecutingResult(task, wasPaused || tookOver);
     }
 
     // Two deliveries can both read the task as Pending/Paused; only one CAS wins. The loser finds the row Executing — the winner's — and must take
     // the same fenced path as any duplicate delivery to a running task, never fall into a failure path that would fail the winner's live deployment.
     // Any other state after a lost CAS keeps the original transition error.
-    private async Task ClaimOrFenceAsync(Persistence.Entities.Deployments.ServerTask task, string from, string leaseOwner, CancellationToken ct)
+    private async Task<bool> ClaimOrFenceAsync(Persistence.Entities.Deployments.ServerTask task, string from, string leaseOwner, CancellationToken ct)
     {
         try
         {
             await _serverTaskDataProvider.TransitionStateAsync(task.Id, from, TaskState.Executing, leaseOwner, ct).ConfigureAwait(false);
+
+            return false;
         }
         catch (ServerTaskStateTransitionException ex) when (string.Equals(ex.FromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
         {
-            await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
+            return await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
         }
     }
 
     // A task delivered while already Executing is either a dead owner's task being re-run (Hangfire retry) or a duplicate delivery to a live one.
     // The lease tells them apart in one atomic UPDATE: it is taken only when nobody holds it or its holder went silent — never because the
     // holder is this same process, which would let a duplicate delivery in the same pod run beside the live pipeline.
-    private async Task FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, string leaseOwner, CancellationToken ct)
+    private async Task<bool> FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, string leaseOwner, CancellationToken ct)
     {
         var rows = await _serverTaskLeaseDataProvider.ClaimRunningAsync(task.Id, leaseOwner, _leaseStale, ct).ConfigureAwait(false);
 
         if (rows == 0)
             throw new ServerTaskOwnedByLiveProcessException(task.Id, await ReadLeaseOwnerAsync(task, ct).ConfigureAwait(false));
+
+        return true;
     }
+
+    // A task being cancelled has an owner that is finishing the cancel, or a dead one the reaper completes: either way a second pipeline on it must never start
+    // (it would run the deployment the user cancelled), and the delivery must not fall into the failure path that would turn the owner's Cancelling into Failed.
+    private async Task<ServerTaskOwnedByLiveProcessException> CancellingOwnerAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+        => new(task.Id, await ReadLeaseOwnerAsync(task, ct).ConfigureAwait(false));
 
     // The owner named in the refusal is read fresh: the row the caller loaded may predate the winner's claim.
     private async Task<string> ReadLeaseOwnerAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)

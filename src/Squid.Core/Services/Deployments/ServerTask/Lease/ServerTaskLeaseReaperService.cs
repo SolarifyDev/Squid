@@ -19,6 +19,8 @@ public interface IServerTaskLeaseReaperService : IScopedDependency
 /// owner and is never touched, nor is a task that was never leased: with no proof its owner died (an older server's task during a rolling
 /// upgrade, or a row from before leases) it is not ours to take, so the reaper only ever recovers what a lease-aware process stopped renewing.
 /// Every recovery is a compare-and-swap on state, owner and staleness, so a renewal that lands first wins and the reaper no-ops.
+/// A paused task whose server stopped is then resumed automatically (the redelivery of its job, which the lease fence may already have dropped, would have
+/// done the same), at most <see cref="ServerTaskLeaseOptions.MaxAutoResumes"/> times per task so a deployment that kills its server cannot loop forever.
 /// </summary>
 public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
 {
@@ -29,14 +31,16 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
     private readonly IDeploymentCheckpointService _checkpointService;
     private readonly IDeploymentInterruptionService _interruptionService;
     private readonly IInFlightScriptCanceller _scriptCanceller;
+    private readonly IServerTaskControlService _controlService;
     private readonly ServerTaskLeaseOptions _options;
 
-    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskSetting setting, IInFlightScriptCanceller scriptCanceller = null) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.From(setting), scriptCanceller)
+    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskSetting setting, IInFlightScriptCanceller scriptCanceller = null, IServerTaskControlService controlService = null) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.From(setting), scriptCanceller, controlService)
     {
     }
 
-    internal ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskLeaseOptions options, IInFlightScriptCanceller scriptCanceller = null)
+    internal ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskLeaseOptions options, IInFlightScriptCanceller scriptCanceller = null, IServerTaskControlService controlService = null)
     {
+        _controlService = controlService;
         _leases = leases;
         _serverTaskService = serverTaskService;
         _checkpointService = checkpointService;
@@ -94,7 +98,46 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
 
         if (target == TaskState.Cancelled) await ReleaseCancelledAsync(task.Id, ct).ConfigureAwait(false);
 
-        await WriteLogAsync(task, target, ct).ConfigureAwait(false);
+        var resume = target == TaskState.Paused ? await DecideAutoResumeAsync(task, ct).ConfigureAwait(false) : AutoResume.NotApplicable;
+
+        await WriteLogAsync(task, target, resume, ct).ConfigureAwait(false);
+
+        if (resume == AutoResume.Requested) await RequestResumeAsync(task, ct).ConfigureAwait(false);
+    }
+
+    internal enum AutoResume { NotApplicable, Requested, LimitReached }
+
+    // The log lines the reaper wrote before this recovery are the count of earlier recoveries of the task: no extra column, and a task an operator resumed
+    // by hand keeps its history, so one that keeps stopping its server eventually waits for a human.
+    private async Task<AutoResume> DecideAutoResumeAsync(StaleServerTask task, CancellationToken ct)
+    {
+        if (_controlService == null) return AutoResume.NotApplicable;
+
+        try
+        {
+            var earlier = await _leases.CountLogsFromSourceAsync(task.Id, LogSource, ct).ConfigureAwait(false);
+
+            return earlier < _options.MaxAutoResumes ? AutoResume.Requested : AutoResume.LimitReached;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "[Lease] Could not count earlier recoveries of task {TaskId}; leaving it Paused for an operator", task.Id);
+
+            return AutoResume.LimitReached;
+        }
+    }
+
+    // Best effort: the recovery is committed, and a task that is not resumed here is still Paused with its checkpoint for an operator.
+    private async Task RequestResumeAsync(StaleServerTask task, CancellationToken ct)
+    {
+        try
+        {
+            await _controlService.TryAutoResumeAsync(task.Id, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warning(ex, "[Lease] Failed to resume recovered task {TaskId} automatically; it stays Paused", task.Id);
+        }
     }
 
     private async Task ReleaseCancelledAsync(int taskId, CancellationToken ct)
@@ -114,13 +157,13 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
         }
     }
 
-    private async Task WriteLogAsync(StaleServerTask task, string target, CancellationToken ct)
+    private async Task WriteLogAsync(StaleServerTask task, string target, AutoResume resume, CancellationToken ct)
     {
         try
         {
             var sequence = await _leases.GetMaxLogSequenceAsync(task.Id, ct).ConfigureAwait(false) + 1;
 
-            await _serverTaskService.AddLogAsync(task.Id, sequence, ServerTaskLogCategory.Warning, Describe(task, target), LogSource, ct: ct).ConfigureAwait(false);
+            await _serverTaskService.AddLogAsync(task.Id, sequence, ServerTaskLogCategory.Warning, Describe(task, target, resume), LogSource, ct: ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -128,7 +171,14 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
         }
     }
 
-    internal static string Describe(StaleServerTask task, string target) => target == TaskState.Paused
-        ? $"The server running this task (owner {task.LeaseOwner}) stopped responding, so the task was paused. Its progress is saved: resume it to continue from the last checkpoint."
+    internal static string Describe(StaleServerTask task, string target, AutoResume resume = AutoResume.NotApplicable) => target == TaskState.Paused
+        ? $"The server running this task (owner {task.LeaseOwner}) stopped responding, so the task was paused. {DescribeResume(resume)}"
         : $"The server running this task (owner {task.LeaseOwner}) stopped responding after cancellation was requested, so the task was marked Cancelled.";
+
+    private static string DescribeResume(AutoResume resume) => resume switch
+    {
+        AutoResume.Requested => "Its progress is saved and it is being resumed automatically from the last checkpoint.",
+        AutoResume.LimitReached => "Its progress is saved, but it was already resumed automatically after earlier stops, so resume it manually to continue from the last checkpoint.",
+        _ => "Its progress is saved: resume it to continue from the last checkpoint."
+    };
 }
