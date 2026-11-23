@@ -190,6 +190,73 @@ public class ResumeCheckpointTests
             "machine not yet completed must still run on resume");
     }
 
+    [Theory]
+    [InlineData(false, new[] { 2 })]            // step-keyed: only StepA finished on the machine → StepB must re-run
+    [InlineData(true, new int[0])]                 // legacy machine-level entry → every step of the batch is done
+    public async Task ExecuteSteps_ParallelBatchOnSameMachine_ResumeSkipsOnlyStepsRecordedTerminal(bool legacy, int[] expectedRerunStepIds)
+    {
+        var strategy = new RecordingStrategy();
+        var (lifecycle, _) = CreateLifecycle();
+        var transport = new TestTransport(strategy);
+        var phase = new ExecuteStepsPhase(CreateRegistry(), lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
+
+        var machine = new Machine { Id = 100, Name = "shared-machine", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+        var stepA = MakeStep("StepA", 1, "web", MakeAction("ActionA"));
+        var stepB = MakeStep("StepB", 2, "web", MakeAction("ActionB"));
+        stepB.StartTrigger = "StartWithPrevious";
+
+        var state = new BatchCheckpointState();
+        if (legacy) state.AddCompleted(machine.Id);
+        else state.AddCompleted(stepA.Id, machine.Id);
+
+        var ctx = CreateBaseContext();
+        ctx.IsResume = true;
+        ctx.ResumeFromBatchIndex = -1;
+        ctx.ResumeBatchStates = new Dictionary<int, BatchCheckpointState> { [0] = state };
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTargetForMachine(machine, transport) };
+        ctx.Steps = new List<DeploymentStepDto> { stepA, stepB };
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var rerun = strategy.Requests.Select(r => r.StepId).Distinct().OrderBy(n => n).ToList();
+        rerun.ShouldBe(expectedRerunStepIds.ToList(), "a step re-runs on resume unless THAT step is recorded terminal on the machine (legacy entries cover every step)");
+    }
+
+    [Fact]
+    public async Task ExecuteSteps_LegacyStateResumedWithNewWork_IsExpandedPerStep_SoLegacyMachineStaysDoneForEveryStep()
+    {
+        var strategy = new RecordingStrategy();
+        var (lifecycle, _) = CreateLifecycle();
+        var transport = new TestTransport(strategy);
+        var phase = new ExecuteStepsPhase(CreateRegistry(), lifecycle, new Mock<Squid.Core.Services.Deployments.Interruptions.IDeploymentInterruptionService>().Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
+
+        var doneMachine = new Machine { Id = 100, Name = "legacy-done", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+        var newMachine = new Machine { Id = 200, Name = "new-work", Roles = JsonSerializer.Serialize(new[] { "web" }) };
+        var stepA = MakeStep("StepA", 1, "web", MakeAction("ActionA"));
+        var stepB = MakeStep("StepB", 2, "web", MakeAction("ActionB"));
+        stepB.StartTrigger = "StartWithPrevious";
+
+        var legacy = new BatchCheckpointState();
+        legacy.AddCompleted(doneMachine.Id);
+
+        var ctx = CreateBaseContext();
+        ctx.IsResume = true;
+        ctx.ResumeFromBatchIndex = -1;
+        ctx.ResumeBatchStates = new Dictionary<int, BatchCheckpointState> { [0] = legacy };
+        ctx.AllTargetsContext = new List<DeploymentTargetContext> { MakeTargetForMachine(doneMachine, transport), MakeTargetForMachine(newMachine, transport) };
+        ctx.Steps = new List<DeploymentStepDto> { stepA, stepB };
+        lifecycle.Initialize(ctx);
+
+        await phase.ExecuteAsync(ctx, CancellationToken.None);
+
+        var state = phase.GetOrCreateBatchState(0);
+        state.IsLegacy.ShouldBeFalse();
+        state.IsTerminalFor(stepA.Id, doneMachine.Id).ShouldBeTrue("the legacy machine entry must survive as per-step entries once new work is recorded in the same batch");
+        state.IsTerminalFor(stepB.Id, doneMachine.Id).ShouldBeTrue();
+        strategy.Requests.Select(r => r.Machine.Name).Distinct().ShouldBe(new[] { "new-work" });
+    }
+
     [Fact]
     public async Task ExecuteSteps_PersistsPerTargetState_WhenTargetsComplete()
     {
