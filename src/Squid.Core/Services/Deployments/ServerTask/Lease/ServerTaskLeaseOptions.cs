@@ -11,6 +11,7 @@ public sealed class ServerTaskLeaseOptions
     public const int DefaultRenewIntervalSeconds = 20;
     public const int MinRenewIntervalSeconds = 5;
     public const int DefaultStaleSeconds = 300;
+    public const int DefaultMaxAutoResumes = 3;
     public const int ReaperBatchSize = 50;
 
     /// <summary>A lease goes stale only after this many renewal intervals pass without one.</summary>
@@ -19,6 +20,9 @@ public sealed class ServerTaskLeaseOptions
     public TimeSpan RenewInterval { get; init; } = TimeSpan.FromSeconds(DefaultRenewIntervalSeconds);
 
     public TimeSpan Stale { get; init; } = TimeSpan.FromSeconds(DefaultStaleSeconds);
+
+    /// <summary>How many times the reaper resumes a recovered task by itself before leaving it Paused for an operator.</summary>
+    public int MaxAutoResumes { get; init; } = DefaultMaxAutoResumes;
 
     /// <summary>
     /// How long a run may go without one successful renewal before it assumes the lease is lost and stops: two renewal intervals short of the stale
@@ -33,7 +37,7 @@ public sealed class ServerTaskLeaseOptions
         var interval = Math.Max(MinRenewIntervalSeconds, Positive(lease.RenewIntervalSeconds, DefaultRenewIntervalSeconds));
         var stale = Math.Max(interval * MinStaleIntervals, Positive(lease.StaleSeconds, DefaultStaleSeconds));
 
-        return new ServerTaskLeaseOptions { RenewInterval = TimeSpan.FromSeconds(interval), Stale = TimeSpan.FromSeconds(stale) };
+        return new ServerTaskLeaseOptions { RenewInterval = TimeSpan.FromSeconds(interval), Stale = TimeSpan.FromSeconds(stale), MaxAutoResumes = Positive(lease.MaxAutoResumes, DefaultMaxAutoResumes) };
     }
 
     private static int Positive(int value, int fallback) => value > 0 ? value : fallback;

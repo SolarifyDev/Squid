@@ -30,6 +30,9 @@ public interface IServerTaskLeaseDataProvider : IScopedDependency
     Task<int> RecoverAsync(StaleServerTask task, string toState, TimeSpan staleAfter, CancellationToken ct = default);
 
     Task<long> GetMaxLogSequenceAsync(int taskId, CancellationToken ct = default);
+
+    /// <summary>How many log lines <paramref name="source"/> has written for the task: the reaper writes one per recovery, so this is how many times it has recovered it.</summary>
+    Task<int> CountLogsFromSourceAsync(int taskId, string source, CancellationToken ct = default);
 }
 
 public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLeaseDataProvider
@@ -82,6 +85,9 @@ public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLe
         return max ?? 0;
     }
 
+    public Task<int> CountLogsFromSourceAsync(int taskId, string source, CancellationToken ct = default)
+        => repository.QueryNoTracking<ServerTaskLogEntity>(l => l.ServerTaskId == taskId && l.Source == source).CountAsync(ct);
+
     // The lease is cleared: a recovered row has no live owner, and its next claim stamps a new one.
     private Task<int> RecoverToActiveAsync(Expression<Func<ServerTaskEntity, bool>> unchanged, string toState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
         => repository.ExecuteUpdateAsync<ServerTaskEntity>(
@@ -113,10 +119,18 @@ public class ServerTaskLeaseDataProvider(IRepository repository) : IServerTaskLe
         return Both(t => t.Id == id && t.State == state && t.LeaseOwner == owner, StaleLease(staleAfter));
     }
 
-    // A running task nobody holds, or whose holder went silent, or (when includeOwn) whose lease this owner already holds. A live foreign owner never matches.
+    // A row with no lease at all: claimed or resumed by a server that predates leases (a rolling upgrade) or by a row older than leases. Such an owner may
+    // be alive and cannot renew, so "no lease" proves nothing by itself; the only evidence is how long the row has been untouched. Claims and resumes stamp
+    // LastModifiedDate and nothing touches a running row until it moves on, so a row unmodified for the stale window has had as long as a lease-aware owner
+    // would have needed to prove it was alive.
+    private static Expression<Func<ServerTaskEntity, bool>> UnleasedAndLongUntouched(TimeSpan staleAfter)
+        => t => t.LeaseRenewedAt == null && t.LastModifiedDate <= DateTimeOffset.UtcNow - staleAfter;
+
+    // A running task whose lease holder went silent, or that nobody has leased for longer than the stale window, or (when includeOwn) whose lease this owner
+    // already holds. A live foreign owner never matches, and neither does a fresh row without a lease: its pre-lease owner may be running it right now.
     internal static Expression<Func<ServerTaskEntity, bool>> Takeable(int taskId, string owner, TimeSpan staleAfter, bool includeOwn)
     {
-        Expression<Func<ServerTaskEntity, bool>> unheld = t => t.LeaseRenewedAt == null;
+        var unheld = UnleasedAndLongUntouched(staleAfter);
         Expression<Func<ServerTaskEntity, bool>> mine = t => t.LeaseOwner == owner;
         var unheldOrMine = includeOwn ? Either(unheld, mine) : unheld;
 

@@ -54,6 +54,41 @@ public class ServerTaskServiceClaimFenceTests
         _leases.Verify(l => l.ClaimRunningAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // A duplicate delivery to a task being cancelled used to fall into the transition error, which the runner turns into Cancelling -> Failed on the owner's task.
+    // The owner is finishing the cancel (or the reaper completes it if it died), so the delivery is dropped whatever the lease says.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DeliveryToACancellingTask_IsFenced_NeverTakenOver_NeverAnError(bool leaseIsStale)
+    {
+        _tasks.SetupSequence(t => t.GetServerTaskByIdNoTrackingAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 7, State = TaskState.Cancelling }).ReturnsAsync(new ServerTaskEntity { Id = 7, State = TaskState.Cancelling, LeaseOwner = "owner:1:x" });
+        _leases.Setup(l => l.ClaimRunningAsync(7, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(leaseIsStale ? 1 : 0);
+
+        var ex = await Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => Service().StartExecutingAsync(7));
+
+        ex.LeaseOwner.ShouldBe("owner:1:x");
+        _leases.Verify(l => l.ClaimRunningAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Never, "a second pipeline must never start on a cancelled task");
+        _tasks.Verify(t => t.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Taking over a dead owner's Executing row continues a deployment that already started: it is a resume, so a resolved guided failure applies.
+    [Theory]
+    [InlineData(TaskState.Pending, false, false)]   // a fresh claim
+    [InlineData(TaskState.Paused, false, true)]     // a resume
+    [InlineData(TaskState.Executing, true, true)]   // a takeover of a dead owner
+    [InlineData(TaskState.Pending, true, true)]     // a lost claim race that then takes over a dead winner
+    public async Task IsResumed_IsTrueForAResumeAndForATakeoverOfARunningRow(string state, bool takesOverARunningRow, bool expectedResumed)
+    {
+        Reads(state);
+        if (state != TaskState.Executing && takesOverARunningRow)
+            _tasks.Setup(t => t.TransitionStateAsync(7, state, TaskState.Executing, It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Executing, TaskState.Executing));
+        _leases.Setup(l => l.ClaimRunningAsync(7, It.IsAny<string>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var result = await Service().StartExecutingAsync(7);
+
+        result.IsResumed.ShouldBe(expectedResumed);
+    }
+
     private void Reads(string state)
         => _tasks.Setup(t => t.GetServerTaskByIdNoTrackingAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 7, State = state });
 

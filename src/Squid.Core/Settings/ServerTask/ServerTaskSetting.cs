@@ -24,6 +24,9 @@ public class ServerTaskLeaseSettings
 
     /// <summary>How long a lease may go unrenewed before the reaper recovers the task. Never below three renewal intervals when read.</summary>
     public int StaleSeconds { get; set; } = 300;
+
+    /// <summary>How many times the reaper resumes a task on its own after recovering it from a stopped server; past that it stays Paused for an operator (a deployment that keeps killing its server must not loop). Must be positive.</summary>
+    public int MaxAutoResumes { get; set; } = 3;
 }
 
 public class ServerTaskCancelWatchSettings

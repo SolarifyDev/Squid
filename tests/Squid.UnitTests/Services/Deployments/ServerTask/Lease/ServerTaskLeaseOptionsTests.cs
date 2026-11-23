@@ -42,6 +42,29 @@ public class ServerTaskLeaseOptionsTests
 
         setting.Lease.RenewIntervalSeconds.ShouldBe(20);
         setting.Lease.StaleSeconds.ShouldBe(300);
+        setting.Lease.MaxAutoResumes.ShouldBe(3);
+    }
+
+    // Renaming the key silently drops an operator's override of how often a crashing deployment is resumed on its own.
+    [Fact]
+    public void ConfigurationKey_MaxAutoResumes_IsBound()
+    {
+        var setting = Bind(("ServerTask:Lease:MaxAutoResumes", "7"));
+
+        setting.Lease.MaxAutoResumes.ShouldBe(7);
+        ServerTaskLeaseOptions.From(setting).MaxAutoResumes.ShouldBe(7);
+    }
+
+    [Theory]
+    [InlineData(0, 3)]
+    [InlineData(-4, 3)]
+    [InlineData(1, 1)]
+    [InlineData(10, 10)]
+    public void MaxAutoResumes_FallsBackToTheDefault_WhenNotPositive(int configured, int expected)
+    {
+        var setting = new ServerTaskSetting { Lease = new ServerTaskLeaseSettings { MaxAutoResumes = configured } };
+
+        ServerTaskLeaseOptions.From(setting).MaxAutoResumes.ShouldBe(expected);
     }
 
     [Theory]
