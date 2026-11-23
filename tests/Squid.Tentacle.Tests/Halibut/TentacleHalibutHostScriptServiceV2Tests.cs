@@ -84,6 +84,9 @@ public sealed class TentacleHalibutHostScriptServiceV2Tests : IAsyncLifetime
         complete.Outcome.ShouldBe(CompleteScriptOutcomeV2.Completed);
         complete.FinalStatus!.ExitCode.ShouldBe(5);
         repeat.Outcome.ShouldBe(CompleteScriptOutcomeV2.AlreadyCompleted);
+        var probe = await v2.GetStatusAsync(new ScriptStatusRequestV2(ticket, 0));
+        probe.State.ShouldBe(ScriptStateV2.Completed, "a crashed server probing a released ticket must see its result, not UnknownTicket");
+        probe.ExitCode.ShouldBe(5);
         unknown.State.ShouldBe(ScriptStateV2.UnknownTicket);
     }
 

@@ -294,7 +294,30 @@ public class LocalScriptServiceV2Tests : IDisposable
         var afterRestart = NewService();
 
         afterRestart.CompleteScript(new CompleteScriptCommandV2(command.ScriptTicket, 0)).Outcome.ShouldBe(CompleteScriptOutcomeV2.AlreadyCompleted);
-        afterRestart.GetStatus(new ScriptStatusRequestV2(command.ScriptTicket, 0)).State.ShouldBe(ScriptStateV2.UnknownTicket, "a released ticket has no status, only a completion tombstone");
+    }
+
+    [Fact]
+    public void GetStatus_AfterComplete_ReturnsRecordedExitCode_AlsoAfterRestart_ButUnknownOnceRetentionExpired()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var command = NewCommand("echo bye; exit 6");
+        var before = NewService();
+        before.StartScript(command);
+        WaitForCompleted(before, command.ScriptTicket);
+        before.CompleteScript(new CompleteScriptCommandV2(command.ScriptTicket, 0));
+        var request = new ScriptStatusRequestV2(command.ScriptTicket, 0);
+
+        var sameInstance = before.GetStatus(request);
+        var afterRestart = NewService().GetStatus(request);
+        var expired = NewService(DateTimeOffset.UtcNow + ScriptTombstoneStore.DefaultRetention + TimeSpan.FromMinutes(1)).GetStatus(request);
+
+        sameInstance.State.ShouldBe(ScriptStateV2.Completed);
+        sameInstance.ExitCode.ShouldBe(6);
+        sameInstance.Logs.ShouldBeEmpty();
+        afterRestart.State.ShouldBe(ScriptStateV2.Completed);
+        afterRestart.ExitCode.ShouldBe(6);
+        expired.State.ShouldBe(ScriptStateV2.UnknownTicket, "UnknownTicket means never seen or expired from retention");
     }
 
     // ── cancel ──────────────────────────────────────────────────────────────
@@ -362,9 +385,10 @@ public class LocalScriptServiceV2Tests : IDisposable
 
     // ── helpers ─────────────────────────────────────────────────────────────
 
-    private LocalScriptService NewService()
+    private LocalScriptService NewService(DateTimeOffset? clockNow = null)
     {
-        var service = new LocalScriptService(new ScriptStateStoreFactory(), null, new ScriptTombstoneStore(_tombstoneDir));
+        var clock = clockNow is { } now ? (Func<DateTimeOffset>)(() => now) : null;
+        var service = new LocalScriptService(new ScriptStateStoreFactory(), null, new ScriptTombstoneStore(_tombstoneDir, clock: clock));
         _services.Add(service);
         return service;
     }

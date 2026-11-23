@@ -35,7 +35,7 @@ public partial class LocalScriptService
 
     public ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request)
     {
-        return TryBuildStatusV2(request.Ticket, request.LastLogSequence, out var status) ? status! : ScriptV2Mapping.Unknown(request.Ticket, request.LastLogSequence);
+        return TryBuildStatusV2(request.Ticket, request.LastLogSequence, out var status) ? status! : ReadReleasedStatusV2(request.Ticket, request.LastLogSequence);
     }
 
     public ScriptStatusResponseV2 CancelScript(CancelScriptCommandV2 command)
@@ -228,15 +228,19 @@ public partial class LocalScriptService
         return ScriptV2Mapping.Released(persisted);
     }
 
-    private ScriptStatusResponseV2 ReadFinalStatusV2(ScriptTicket ticket, long lastLogSequence)
+    // A released ticket is answered from its tombstone; Unknown therefore means never seen or expired from retention.
+    private ScriptStatusResponseV2 ReadReleasedStatusV2(ScriptTicket ticket, long lastLogSequence)
     {
-        if (TryBuildPersistedStatusV2(ticket, lastLogSequence, out var persisted)) return persisted!;
-
         var tombstone = _tombstones.TryRead(ticket.TaskId);
 
         return tombstone != null
             ? ScriptV2Mapping.FromTombstone(ticket, tombstone, lastLogSequence)
             : ScriptV2Mapping.Unknown(ticket, lastLogSequence);
+    }
+
+    private ScriptStatusResponseV2 ReadFinalStatusV2(ScriptTicket ticket, long lastLogSequence)
+    {
+        return TryBuildPersistedStatusV2(ticket, lastLogSequence, out var persisted) ? persisted! : ReadReleasedStatusV2(ticket, lastLogSequence);
     }
 
     private void WriteTombstone(ScriptTicket ticket, ScriptStateV2 state, int exitCode)

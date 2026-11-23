@@ -146,6 +146,29 @@ public class ScriptPodServiceV2Tests : IDisposable
     }
 
     [Fact]
+    public void GetStatus_AfterComplete_ReturnsRecordedExitCode_AlsoAfterRestart_ButUnknownOnceRetentionExpired()
+    {
+        var service = NewService();
+        var command = NewCommand("exit 9");
+        service.StartScript(command);
+        SetupContainer("Failed", 9);
+        service.CompleteScript(new CompleteScriptCommandV2(command.ScriptTicket, 0));
+        var request = new ScriptStatusRequestV2(command.ScriptTicket, 0);
+
+        var sameInstance = service.GetStatus(request);
+        var afterRestart = NewService().GetStatus(request);
+        var expiredService = NewService();
+        var future = DateTimeOffset.UtcNow + ScriptTombstoneStore.DefaultRetention + TimeSpan.FromMinutes(1);
+        expiredService.Tombstones = new ScriptTombstoneStore(Path.Combine(_workspace, ScriptTombstoneStore.WorkspaceDirectoryName), clock: () => future);
+
+        sameInstance.State.ShouldBe(ScriptStateV2.Completed);
+        sameInstance.ExitCode.ShouldBe(9);
+        afterRestart.State.ShouldBe(ScriptStateV2.Completed);
+        afterRestart.ExitCode.ShouldBe(9);
+        expiredService.GetStatus(request).State.ShouldBe(ScriptStateV2.UnknownTicket);
+    }
+
+    [Fact]
     public void RestartWithRecordedExitCode_ReportsCompletedWithThatCode_ThenReleases()
     {
         var ticket = SaveState(new ScriptState { Progress = ScriptProgress.Complete, ExitCode = 12, NextLogSequence = 4 });

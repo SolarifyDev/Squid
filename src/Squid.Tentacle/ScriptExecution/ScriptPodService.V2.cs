@@ -45,7 +45,7 @@ public partial class ScriptPodService : IScriptServiceV2
 
         if (IsKnownInMemoryV2(ticket.TaskId) && TryReadLiveStatusV2(request, out var live)) return live!;
 
-        return TryBuildPersistedStatusV2(ticket, out var persisted) ? persisted! : ScriptV2Mapping.Unknown(ticket, request.LastLogSequence);
+        return ReadFinalStatusV2(ticket, request.LastLogSequence);
     }
 
     public ScriptStatusResponseV2 CancelScript(CancelScriptCommandV2 command)
