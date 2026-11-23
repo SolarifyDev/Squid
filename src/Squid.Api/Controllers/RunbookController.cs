@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Squid.Message.Commands.Deployments.Runbook;
 using Squid.Message.Requests.Deployments.Runbook;
@@ -97,6 +98,44 @@ public class RunbookController : ControllerBase
     {
         var response = await _mediator
             .SendAsync<PublishRunbookCommand, PublishRunbookResponse>(command, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    [HttpPost("run")]
+    [ProducesResponseType(StatusCodes.Status202Accepted, Type = typeof(RunRunbookResponse))]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable, Type = typeof(RunRunbookResponse))]
+    public async Task<IActionResult> RunAsync(
+        [FromBody] RunRunbookCommand command,
+        CancellationToken cancellationToken)
+    {
+        var response = await _mediator
+            .SendAsync<RunRunbookCommand, RunRunbookResponse>(command, cancellationToken)
+            .ConfigureAwait(false);
+
+        return response.Code == HttpStatusCode.ServiceUnavailable
+            ? StatusCode(StatusCodes.Status503ServiceUnavailable, response)
+            : Accepted(response);
+    }
+
+    [HttpGet("eligible-environments/{id:int}")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetRunbookEligibleEnvironmentsResponse))]
+    public async Task<IActionResult> EligibleEnvironmentsAsync(
+        int id,
+        [FromQuery] int projectId,
+        [FromQuery] int? spaceId,
+        CancellationToken cancellationToken)
+    {
+        var request = new GetRunbookEligibleEnvironmentsRequest
+        {
+            Id = id,
+            ProjectId = projectId,
+            SpaceId = spaceId
+        };
+        var response = await _mediator
+            .RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                request, cancellationToken)
             .ConfigureAwait(false);
 
         return Ok(response);

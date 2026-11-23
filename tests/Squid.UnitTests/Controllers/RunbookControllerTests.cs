@@ -1,3 +1,4 @@
+using System.Net;
 using Mediator.Net;
 using Microsoft.AspNetCore.Mvc;
 using Squid.Api.Controllers;
@@ -59,6 +60,41 @@ public class RunbookControllerTests
         var result = await controller.PublishAsync(command, CancellationToken.None);
 
         result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeSameAs(response);
+    }
+
+    [Fact]
+    public async Task EligibleEnvironmentsAsync_ForwardsRunbookAndScopeIds()
+    {
+        var mediator = new Mock<IMediator>();
+        var response = new GetRunbookEligibleEnvironmentsResponse();
+        mediator.Setup(m => m.RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                It.Is<GetRunbookEligibleEnvironmentsRequest>(r => r.Id == 21 && r.ProjectId == 11 && r.SpaceId == 7),
+                CancellationToken.None))
+            .ReturnsAsync(response);
+        var controller = new RunbookController(mediator.Object);
+
+        var result = await controller.EligibleEnvironmentsAsync(21, 11, 7, CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeSameAs(response);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Accepted)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task RunAsync_ReturnsAdmissionStatus(HttpStatusCode code)
+    {
+        var mediator = new Mock<IMediator>();
+        var command = new RunRunbookCommand { Id = 21, ProjectId = 11, SpaceId = 7, EnvironmentId = 9 };
+        var response = new RunRunbookResponse { Code = code };
+        mediator.Setup(m => m.SendAsync<RunRunbookCommand, RunRunbookResponse>(command, CancellationToken.None))
+            .ReturnsAsync(response);
+        var controller = new RunbookController(mediator.Object);
+
+        var result = await controller.RunAsync(command, CancellationToken.None);
+
+        var objectResult = result.ShouldBeAssignableTo<ObjectResult>();
+        objectResult.StatusCode.ShouldBe((int)code);
+        objectResult.Value.ShouldBeSameAs(response);
     }
 
     [Fact]

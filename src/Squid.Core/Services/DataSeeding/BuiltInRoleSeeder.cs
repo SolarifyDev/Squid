@@ -100,6 +100,7 @@ public static class BuiltInRoles
         {
             Permission.ProjectView, Permission.ProcessView, Permission.ReleaseView,
             Permission.RunbookView,
+            Permission.RunbookRun,
             Permission.DeploymentView, Permission.DeploymentCreate,
             Permission.EnvironmentView, Permission.MachineView,
             Permission.VariableView, Permission.AccountView, Permission.FeedView,

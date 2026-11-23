@@ -44,6 +44,7 @@ public class BuiltInRoleSeederTests
     public void ProjectDeployer_HasRunbookViewWithoutRunbookEdit()
     {
         BuiltInRoles.ProjectDeployer.Permissions.ShouldContain(Permission.RunbookView);
+        BuiltInRoles.ProjectDeployer.Permissions.ShouldContain(Permission.RunbookRun);
         BuiltInRoles.ProjectDeployer.Permissions.ShouldNotContain(Permission.RunbookEdit);
     }
 
@@ -52,6 +53,8 @@ public class BuiltInRoleSeederTests
     {
         BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookView);
         BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookEdit);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookPublish);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldNotContain(Permission.RunbookRun);
         BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.ProcessView);
         BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.ProcessEdit);
     }

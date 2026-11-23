@@ -112,4 +112,8 @@ public enum Permission
     [PermissionScope(PermissionScope.SpaceOnly)] InterruptionSubmitOverride,
 
     [PermissionScope(PermissionScope.SpaceOnly)] RunbookPublish,
+
+    // Runbook execution is intentionally separate from publishing. Operators can
+    // run a published version without being allowed to replace it.
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookRun,
 }
