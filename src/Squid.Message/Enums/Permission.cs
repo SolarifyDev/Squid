@@ -25,6 +25,10 @@ public enum Permission
     [PermissionScope(PermissionScope.SpaceOnly)] ProcessView,
     [PermissionScope(PermissionScope.SpaceOnly)] ProcessEdit,
 
+    // Runbook
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookView,
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookEdit,
+
     // Variable
     [PermissionScope(PermissionScope.SpaceOnly)] VariableView,
     [PermissionScope(PermissionScope.SpaceOnly)] VariableEdit,
@@ -106,4 +110,10 @@ public enum Permission
     // Interruption (appended — permissions persist by name, but ordinals stay stable for any int consumer)
     // Approve / take responsibility for a manual intervention on behalf of its responsible teams.
     [PermissionScope(PermissionScope.SpaceOnly)] InterruptionSubmitOverride,
+
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookPublish,
+
+    // Runbook execution is intentionally separate from publishing. Operators can
+    // run a published version without being allowed to replace it.
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookRun,
 }

@@ -1,5 +1,8 @@
 using Squid.Core.Services.Common;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Process;
+using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.Core.Services.Deployments.Snapshots;
@@ -9,6 +12,8 @@ public partial interface IDeploymentSnapshotService
     Task<DeploymentProcessSnapshotDto> SnapshotProcessFromReleaseAsync(Persistence.Entities.Deployments.Release release, CancellationToken cancellationToken = default);
 
     Task<DeploymentProcessSnapshotDto> SnapshotProcessFromIdAsync(int processId, CancellationToken cancellationToken = default);
+
+    Task<DeploymentProcessSnapshotDataDto> CaptureRunbookDraftAsync(Runbook runbook, CancellationToken cancellationToken = default);
     
     Task<DeploymentProcessSnapshotDto> LoadProcessSnapshotAsync(int processSnapshotId, CancellationToken cancellationToken = default);
 }
@@ -28,6 +33,18 @@ public partial class DeploymentSnapshotService
     {
         var process = await _deploymentProcessDataProvider.GetDeploymentProcessByIdAsync(processId, cancellationToken).ConfigureAwait(false);
 
+        if (process == null)
+        {
+            throw new DeploymentEntityNotFoundException("DeploymentProcess", processId);
+        }
+
+        if (process.ProcessKind != Squid.Message.Enums.DeploymentProcessKind.ProjectDeployment
+            || process.OwnerId.HasValue)
+        {
+            throw new ProcessContextMismatchException(
+                $"DeploymentProcess {processId} is not a project deployment process.");
+        }
+
         var snapshotData = await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
         
         var blob = UtilService.BuildSnapshotBlob(snapshotData);
@@ -45,6 +62,22 @@ public partial class DeploymentSnapshotService
         await _deploymentSnapshotDataProvider.AddDeploymentProcessSnapshotAsync(processSnapshot, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return _mapper.Map<DeploymentProcessSnapshotDto>(processSnapshot, opts => opts.AfterMap((_, dest) => dest.Data = snapshotData));
+    }
+
+    public async Task<DeploymentProcessSnapshotDataDto> CaptureRunbookDraftAsync(
+        Runbook runbook, CancellationToken cancellationToken = default)
+    {
+        var process = await _deploymentProcessDataProvider
+            .GetDeploymentProcessByIdAsync(runbook.ProcessId, cancellationToken).ConfigureAwait(false);
+
+        if (process == null || process.ProcessKind != DeploymentProcessKind.Runbook
+            || process.OwnerId != runbook.Id || process.ProjectId != runbook.ProjectId
+            || process.SpaceId != runbook.SpaceId)
+        {
+            throw new ProcessContextMismatchException($"The process does not belong to Runbook {runbook.Id}.");
+        }
+
+        return await GenerateProcessSnapshotData(process, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<DeploymentProcessSnapshotDto> LoadProcessSnapshotAsync(int processSnapshotId, CancellationToken cancellationToken = default)

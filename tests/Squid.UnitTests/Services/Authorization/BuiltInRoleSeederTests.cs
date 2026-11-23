@@ -34,6 +34,32 @@ public class BuiltInRoleSeederTests
     }
 
     [Fact]
+    public void ProjectViewer_HasRunbookViewWithoutRunbookEdit()
+    {
+        BuiltInRoles.ProjectViewer.Permissions.ShouldContain(Permission.RunbookView);
+        BuiltInRoles.ProjectViewer.Permissions.ShouldNotContain(Permission.RunbookEdit);
+    }
+
+    [Fact]
+    public void ProjectDeployer_HasRunbookViewWithoutRunbookEdit()
+    {
+        BuiltInRoles.ProjectDeployer.Permissions.ShouldContain(Permission.RunbookView);
+        BuiltInRoles.ProjectDeployer.Permissions.ShouldContain(Permission.RunbookRun);
+        BuiltInRoles.ProjectDeployer.Permissions.ShouldNotContain(Permission.RunbookEdit);
+    }
+
+    [Fact]
+    public void ProjectContributor_HasRunbookViewAndEdit()
+    {
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookView);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookEdit);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.RunbookPublish);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldNotContain(Permission.RunbookRun);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.ProcessView);
+        BuiltInRoles.ProjectContributor.Permissions.ShouldContain(Permission.ProcessEdit);
+    }
+
+    [Fact]
     public void BuiltInRoles_NoDuplicatePermissions()
     {
         foreach (var role in BuiltInRoles.All)

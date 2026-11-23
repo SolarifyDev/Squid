@@ -29,6 +29,19 @@ public class SquidResponse : IResponse
     public IReadOnlyList<string> SuggestedRoles { get; set; }
 
     /// <summary>
+    /// Stable machine-readable code for structured validation failures.
+    /// Null on success and unstructured failures.
+    /// </summary>
+    [JsonPropertyName("validationCode")]
+    public string ValidationCode { get; set; }
+
+    /// <summary>
+    /// The request field associated with <see cref="ValidationCode"/>.
+    /// </summary>
+    [JsonPropertyName("validationField")]
+    public string ValidationField { get; set; }
+
+    /// <summary>
     /// Machine-readable kind of an Octopus import failure (e.g. <c>"Unreachable"</c>, <c>"Unauthorized"</c>,
     /// <c>"KeyRestricted"</c>, <c>"SessionNotFound"</c>), so the import page can tell a failure it can resume from one
     /// that needs a new key or a new session without parsing <see cref="Msg"/>. Null on success and on other failures.

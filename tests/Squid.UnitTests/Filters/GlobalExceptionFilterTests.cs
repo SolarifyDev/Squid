@@ -7,6 +7,9 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
 using Squid.Api.Filters;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Process;
+using Squid.Core.Services.Deployments.Runbooks.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Message.Enums.OctopusImport;
@@ -50,6 +53,19 @@ public class GlobalExceptionFilterTests
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
     }
 
+    [Fact]
+    public void OnException_WhenRunbookNameConflicts_ReturnsConflictWithValidationCode()
+    {
+        var exception = new RunbookNameConflictException("Recovery");
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
+        var response = context.Result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeOfType<SquidResponse>();
+        response.ValidationCode.ShouldBe("runbook.name_conflict");
+        response.ValidationField.ShouldBe("name");
+    }
+
     // A session past its maximum age conflicts with the request like any other closed session: start a new one.
     [Fact]
     public void OnException_ImportSessionPastMaxAge_ReturnsConflictEnvelope()
@@ -59,6 +75,31 @@ public class GlobalExceptionFilterTests
         var context = Execute(exception);
 
         AssertEnvelope(context, HttpStatusCode.Conflict, exception.Message);
+    }
+
+    [Fact]
+    public void OnException_WhenRunbookEntityIsMissing_ReturnsNotFoundEnvelope()
+    {
+        var exception = new DeploymentEntityNotFoundException("Runbook", 21);
+
+        var context = Execute(exception);
+
+        AssertEnvelope(context, HttpStatusCode.NotFound, exception.Message);
+    }
+
+    [Fact]
+    public void OnException_WhenProcessContextDoesNotMatch_PreservesPermissionDenialEnvelope()
+    {
+        var exception = new ProcessContextMismatchException("Runbook and process do not match.");
+
+        var context = Execute(exception);
+
+        context.ExceptionHandled.ShouldBeTrue();
+        var response = context.Result.ShouldBeOfType<OkObjectResult>()
+            .Value.ShouldBeOfType<SquidResponse>();
+        response.Code.ShouldBe(HttpStatusCode.Forbidden);
+        response.Msg.ShouldStartWith(exception.Message);
+        response.MissingPermission.ShouldBe("ProcessView");
     }
 
     [Theory]
@@ -130,6 +171,21 @@ public class GlobalExceptionFilterTests
     {
         var json = System.Text.Json.JsonSerializer.Serialize(new SquidResponse { ErrorKind = "Unreachable" });
 
+        json.ShouldContain("\"errorKind\":\"Unreachable\"", Case.Sensitive);
+    }
+
+    [Fact]
+    public void ValidationFields_SerializedAlongsideErrorKind()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new SquidResponse
+        {
+            ValidationCode = "runbook.name_conflict",
+            ValidationField = "name",
+            ErrorKind = "Unreachable"
+        });
+
+        json.ShouldContain("\"validationCode\":\"runbook.name_conflict\"", Case.Sensitive);
+        json.ShouldContain("\"validationField\":\"name\"", Case.Sensitive);
         json.ShouldContain("\"errorKind\":\"Unreachable\"", Case.Sensitive);
     }
 

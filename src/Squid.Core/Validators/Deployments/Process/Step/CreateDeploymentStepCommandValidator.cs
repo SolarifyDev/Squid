@@ -8,6 +8,8 @@ public class CreateDeploymentStepCommandValidator : FluentMessageValidator<Creat
     public CreateDeploymentStepCommandValidator()
     {
         RuleFor(c => c.ProcessId).GreaterThan(0);
+        RuleFor(c => c.RunbookId).GreaterThan(0).When(c => c.RunbookId.HasValue);
+        RuleFor(c => c.ProjectId).GreaterThan(0).When(c => c.ProjectId.HasValue);
 
         RuleFor(c => c.Step).NotNull();
 
