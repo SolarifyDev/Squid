@@ -28,10 +28,12 @@ public class HalibutModule : Module
     public const string TcpReceiveResponseTimeoutSecondsEnvVar = "SQUID_HALIBUT_TCP_RECEIVE_RESPONSE_TIMEOUT_SECONDS";
 
     /// <summary>
-    /// Env var overriding the polling request queue timeout (how long the
-    /// agent waits for server-side work before re-polling). Lowering can
-    /// reduce idle-agent latency at the cost of more polling RPCs;
-    /// raising reduces RPC volume at the cost of stale work pickup.
+    /// Env var overriding <c>PollingRequestQueueTimeout</c>: how long a request the SERVER dispatches to a polling agent may wait
+    /// in the server's queue for that agent to connect and pick it up. When it elapses the dispatch fails with a transient
+    /// timeout (it is NOT how long the agent waits before re-polling, and lowering it does not reduce idle latency). Lower it
+    /// and a busy or briefly offline agent fails dispatches (and health probes, cancels) sooner; raise it and they wait longer.
+    /// Health-check probe timeouts and the Cancel retry budget should stay above/around it
+    /// (see <c>MachineHealthCheckSetting</c> and <c>RpcRetrySettings</c>). Positive integer seconds; anything else keeps the default.
     /// </summary>
     public const string PollingRequestQueueTimeoutSecondsEnvVar = "SQUID_HALIBUT_POLLING_QUEUE_TIMEOUT_SECONDS";
 
@@ -134,11 +136,10 @@ public class HalibutModule : Module
 
     private static void LogTimeoutOverrides(HalibutTimeoutsAndLimits values)
     {
-        if (TryReadSecondsEnv(TcpReceiveResponseTimeoutSecondsEnvVar, out _))
-            Log.Information("Halibut TcpClientReceiveResponseTimeout overridden via {EnvVar} → {Seconds}s", TcpReceiveResponseTimeoutSecondsEnvVar, values.TcpClientReceiveResponseTimeout.TotalSeconds);
-
-        if (TryReadSecondsEnv(PollingRequestQueueTimeoutSecondsEnvVar, out _))
-            Log.Information("Halibut PollingRequestQueueTimeout overridden via {EnvVar} → {Seconds}s", PollingRequestQueueTimeoutSecondsEnvVar, values.PollingRequestQueueTimeout.TotalSeconds);
+        Log.Information(
+            "Halibut effective limits: PollingRequestQueueTimeout={PollingQueueSeconds}s (override {PollingQueueEnvVar}), TcpClientReceiveResponseTimeout={ReceiveSeconds}s (override {ReceiveEnvVar}), TcpClientConnectTimeout={ConnectSeconds}s, RetryCountLimit={RetryCount}, ConnectionErrorRetryTimeout={ConnectionRetrySeconds}s",
+            values.PollingRequestQueueTimeout.TotalSeconds, PollingRequestQueueTimeoutSecondsEnvVar, values.TcpClientReceiveResponseTimeout.TotalSeconds, TcpReceiveResponseTimeoutSecondsEnvVar,
+            values.TcpClientConnectTimeout.TotalSeconds, values.RetryCountLimit, values.ConnectionErrorRetryTimeout.TotalSeconds);
     }
 
     /// <summary>

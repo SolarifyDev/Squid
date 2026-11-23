@@ -1,3 +1,4 @@
+using Halibut;
 using Squid.Core.Settings.Halibut;
 
 namespace Squid.Core.Halibut.Resilience;
@@ -10,6 +11,12 @@ namespace Squid.Core.Halibut.Resilience;
 /// (or the failure is not transient) the exception the agent call actually threw is rethrown unchanged,
 /// so every downstream classifier (the runner's transient-pause path, the circuit breaker) sees exactly
 /// what it saw before retries existed.
+///
+/// <para>The budget normally bounds when the LAST ATTEMPT MAY START, not how long it runs: one attempt can itself wait the
+/// polling-queue timeout (120 s by default) or Halibut's listening-connect retry window. A caller that needs a hard latency bound
+/// (CancelScript) passes <c>boundEachAttempt</c>: an attempt still running when the budget is spent is abandoned and a transient
+/// <see cref="HalibutClientException"/> is thrown. The Halibut proxy interfaces take no cancellation token, so the abandoned
+/// request cannot be withdrawn; it may still be delivered later, which is harmless for the idempotent cancel.</para>
 /// </summary>
 public sealed class RpcRetryHandler
 {
@@ -39,8 +46,8 @@ public sealed class RpcRetryHandler
     public TimeSpan CompleteBudget { get; }
 
     /// <summary>
-    /// Shorter budget for CancelScript: a user cancel or script-timeout cancel to a dead agent keeps the
-    /// task in Cancelling while it retries, so cancel latency must stay bounded.
+    /// Hard total-time bound for CancelScript (the call sites pass <c>boundEachAttempt</c>): a user cancel or script-timeout cancel to a
+    /// dead agent keeps the task in Cancelling while it retries, so cancel latency must stay bounded.
     /// </summary>
     public TimeSpan CancelBudget { get; }
 
@@ -50,7 +57,8 @@ public sealed class RpcRetryHandler
 
     /// <param name="cancellation">Caller cancellation: aborts the backoff wait with <see cref="OperationCanceledException"/>.</param>
     /// <param name="stopRetrying">Stops further retries and rethrows the last real failure (e.g. the liveness probe already declared the agent gone).</param>
-    public async Task<T> ExecuteAsync<T>(Func<Task<T>> call, string rpcName, TimeSpan budget, CancellationToken cancellation, CancellationToken stopRetrying = default)
+    /// <param name="boundEachAttempt">Makes the budget a hard bound on total time: an attempt still running at the deadline is abandoned (see the class remarks).</param>
+    public async Task<T> ExecuteAsync<T>(Func<Task<T>> call, string rpcName, TimeSpan budget, CancellationToken cancellation, CancellationToken stopRetrying = default, bool boundEachAttempt = false)
     {
         var started = _utcNow();
         var attempt = 0;
@@ -61,7 +69,11 @@ public sealed class RpcRetryHandler
 
             try
             {
-                return await call().ConfigureAwait(false);
+                return await RunAttemptAsync(call, rpcName, boundEachAttempt, budget - (_utcNow() - started)).ConfigureAwait(false);
+            }
+            catch (AttemptAbandonedException)
+            {
+                throw;
             }
             catch (Exception ex) when (IsRetryable(ex, cancellation, stopRetrying))
             {
@@ -75,6 +87,32 @@ public sealed class RpcRetryHandler
             }
         }
     }
+
+    private async Task<T> RunAttemptAsync<T>(Func<Task<T>> call, string rpcName, bool boundEachAttempt, TimeSpan remaining)
+    {
+        // Budget already spent before the first attempt (e.g. the script deadline passed): run it once, unbounded, as before.
+        if (!boundEachAttempt || remaining <= TimeSpan.Zero) return await call().ConfigureAwait(false);
+
+        var attempt = call();
+
+        using var deadline = new CancellationTokenSource();
+        var expired = Task.Delay(remaining, deadline.Token);
+
+        if (await Task.WhenAny(attempt, expired).ConfigureAwait(false) == attempt)
+        {
+            deadline.Cancel();
+
+            return await attempt.ConfigureAwait(false);
+        }
+
+        _ = attempt.ContinueWith(t => t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+
+        Log.Warning("[Deploy] Agent RPC {Rpc} did not finish within its {BudgetSeconds}s budget; abandoning the attempt", rpcName, (int)remaining.TotalSeconds);
+
+        throw new AttemptAbandonedException($"Agent RPC {rpcName} did not complete within its time budget; the attempt was abandoned");
+    }
+
+    private sealed class AttemptAbandonedException(string message) : HalibutClientException(message);
 
     private static bool IsRetryable(Exception ex, CancellationToken cancellation, CancellationToken stopRetrying)
         => !cancellation.IsCancellationRequested && !stopRetrying.IsCancellationRequested && TransientFailureClassifier.IsTransient(ex);

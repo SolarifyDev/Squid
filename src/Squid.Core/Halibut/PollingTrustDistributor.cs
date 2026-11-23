@@ -108,7 +108,10 @@ public class PollingTrustDistributor : IPollingTrustDistributor, IStartable
 
         try
         {
-            var dataProvider = _scope.Resolve<IMachineDataProvider>();
+            // A child scope per refresh: resolving from the root would pin one DbContext (and its connection) for the life of the process.
+            await using var refreshScope = _scope.BeginLifetimeScope();
+
+            var dataProvider = refreshScope.Resolve<IMachineDataProvider>();
             var thumbprints = await dataProvider.GetPollingThumbprintsAsync(cancellationToken).ConfigureAwait(false);
 
             _halibutRuntime.TrustOnly(thumbprints);

@@ -68,7 +68,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     }
 
     public Task<ScriptStatusResponse> CancelScriptAsync(CancelScriptCommand command)
-        => _retry.ExecuteAsync(() => _inner.CancelScriptAsync(command), "CancelScript", _retry.CancelBudget, CancellationToken.None);
+        => _retry.ExecuteAsync(() => _inner.CancelScriptAsync(command), "CancelScript", _retry.CancelBudget, CancellationToken.None, boundEachAttempt: true);
 
     public async Task<ScriptStatusResponse> CompleteScriptAsync(CompleteScriptCommand command)
     {

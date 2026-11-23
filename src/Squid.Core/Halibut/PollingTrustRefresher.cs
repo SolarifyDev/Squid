@@ -23,6 +23,8 @@ public sealed class PollingTrustRefresher : IPollingTrustRefresher, IStartable, 
     private readonly IPollingTrustDistributor _distributor;
     private readonly TrustSettings _settings;
     private readonly TimeProvider _time;
+    private const int MaxTrackedClients = 1024;
+
     private readonly CancellationTokenSource _stopping = new();
     private readonly object _refreshGate = new();
     private readonly object _unauthorizedGate = new();
@@ -31,6 +33,7 @@ public sealed class PollingTrustRefresher : IPollingTrustRefresher, IStartable, 
     private bool _pending;
     private bool _hasUnauthorizedRefresh;
     private long _lastUnauthorizedRefresh;
+    private readonly Dictionary<string, ClientBackoff> _clientBackoff = new();
     private int _disposed;
 
     public PollingTrustRefresher(IPollingTrustDistributor distributor, HalibutSetting setting = null) : this(distributor, setting?.Trust, TimeProvider.System)
@@ -53,7 +56,7 @@ public sealed class PollingTrustRefresher : IPollingTrustRefresher, IStartable, 
 
     public void OnUnauthorizedClient(string thumbprint)
     {
-        if (!TryClaimUnauthorizedRefresh()) return;
+        if (!TryClaimUnauthorizedRefresh(thumbprint)) return;
 
         Log.Debug("Unknown Halibut client {Thumbprint} connected, refreshing the polling trust list from the database", thumbprint);
 
@@ -109,13 +112,21 @@ public sealed class PollingTrustRefresher : IPollingTrustRefresher, IStartable, 
         }
     }
 
-    private bool TryClaimUnauthorizedRefresh()
+    // Two gates: a global minimum gap (a burst of unknown clients costs one read) and a per-thumbprint backoff. A client that stays
+    // unknown after a refresh (a deleted machine whose agent keeps polling) would otherwise trigger a database read every global gap forever;
+    // its gap doubles on each repeat up to the periodic refresh interval, which already re-reads the list at that rate anyway.
+    private bool TryClaimUnauthorizedRefresh(string thumbprint)
     {
         var now = _time.GetTimestamp();
+        var key = thumbprint ?? string.Empty;
 
         lock (_unauthorizedGate)
         {
             if (_hasUnauthorizedRefresh && _time.GetElapsedTime(_lastUnauthorizedRefresh, now) < _settings.UnauthorizedRefreshMinInterval) return false;
+            if (_clientBackoff.TryGetValue(key, out var previous) && _time.GetElapsedTime(previous.At, now) < previous.Gap) return false;
+
+            _clientBackoff[key] = NextBackoff(previous, now);
+            PruneClientBackoff(now);
 
             _hasUnauthorizedRefresh = true;
             _lastUnauthorizedRefresh = now;
@@ -123,6 +134,33 @@ public sealed class PollingTrustRefresher : IPollingTrustRefresher, IStartable, 
             return true;
         }
     }
+
+    private ClientBackoff NextBackoff(ClientBackoff previous, long now)
+    {
+        var min = _settings.UnauthorizedRefreshMinInterval;
+        var cap = Max(_settings.RefreshInterval, min);
+
+        if (previous == null || _time.GetElapsedTime(previous.At, now) > cap * 2) return new ClientBackoff(now, min);
+
+        var doubled = previous.Gap * 2;
+
+        return new ClientBackoff(now, doubled < cap ? doubled : cap);
+    }
+
+    private void PruneClientBackoff(long now)
+    {
+        if (_clientBackoff.Count <= MaxTrackedClients) return;
+
+        var stale = _clientBackoff.Where(kv => _time.GetElapsedTime(kv.Value.At, now) > _settings.RefreshInterval * 2).Select(kv => kv.Key).ToList();
+
+        foreach (var key in stale) _clientBackoff.Remove(key);
+
+        if (_clientBackoff.Count > MaxTrackedClients) _clientBackoff.Clear();
+    }
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a > b ? a : b;
+
+    private sealed record ClientBackoff(long At, TimeSpan Gap);
 
     public void Dispose()
     {

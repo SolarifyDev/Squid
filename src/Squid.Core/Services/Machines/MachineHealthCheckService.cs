@@ -271,7 +271,8 @@ public class MachineHealthCheckService : IMachineHealthCheckService
     {
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
-        var result = await _coordinator.RunProbeAsync(probeToken => transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, probeToken, healthCheckPolicy), cancellationToken).ConfigureAwait(false);
+        var timeout = _coordinator.ProbeTimeoutFor(transport.CommunicationStyle, healthCheckPolicy);
+        var result = await _coordinator.RunProbeAsync(probeToken => transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, probeToken, healthCheckPolicy), cancellationToken, timeout).ConfigureAwait(false);
         var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);

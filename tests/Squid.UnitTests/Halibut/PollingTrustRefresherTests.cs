@@ -95,6 +95,60 @@ public class PollingTrustRefresherTests
         await distributor.WaitForCallsAsync(2);
     }
 
+    [Fact]
+    public async Task OnUnauthorizedClient_ClientThatStaysUnknown_BacksOffExponentially_UpToTheRefreshInterval()
+    {
+        var clock = new ManualTimeProvider();
+        var distributor = new CountingDistributor();
+        using var refresher = new PollingTrustRefresher(distributor, new TrustSettings { UnauthorizedRefreshMinIntervalSeconds = 2, RefreshIntervalSeconds = 15 }, clock);
+        var expectedCalls = 0;
+
+        async Task HitAsync(string thumbprint, bool expectRefresh)
+        {
+            refresher.OnUnauthorizedClient(thumbprint);
+
+            if (expectRefresh) await distributor.WaitForCallsAsync(++expectedCalls);
+            else await Task.Delay(100);
+
+            distributor.Calls.ShouldBe(expectedCalls);
+        }
+
+        await HitAsync("GONE", expectRefresh: true);      // t=0, next gap 2s
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await HitAsync("GONE", expectRefresh: true);      // t=3, next gap 4s
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await HitAsync("GONE", expectRefresh: false);     // t=6: only 3s since the last, gap is 4s
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await HitAsync("GONE", expectRefresh: true);      // t=8, next gap 8s
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await HitAsync("GONE", expectRefresh: false);     // t=13: 5s < 8s
+
+        await HitAsync("OTHER", expectRefresh: true);     // a different client is not held back by GONE's backoff
+    }
+
+    [Fact]
+    public async Task OnUnauthorizedClient_BackoffResets_AfterTheClientWasQuietForLong()
+    {
+        var clock = new ManualTimeProvider();
+        var distributor = new CountingDistributor();
+        using var refresher = new PollingTrustRefresher(distributor, new TrustSettings { UnauthorizedRefreshMinIntervalSeconds = 2, RefreshIntervalSeconds = 15 }, clock);
+
+        refresher.OnUnauthorizedClient("GONE");
+        await distributor.WaitForCallsAsync(1);
+        clock.Advance(TimeSpan.FromSeconds(3));
+        refresher.OnUnauthorizedClient("GONE");
+        await distributor.WaitForCallsAsync(2);
+
+        clock.Advance(TimeSpan.FromSeconds(120));
+        refresher.OnUnauthorizedClient("GONE");
+        await distributor.WaitForCallsAsync(3);
+
+        clock.Advance(TimeSpan.FromSeconds(3));
+        refresher.OnUnauthorizedClient("GONE");
+
+        await distributor.WaitForCallsAsync(4);
+    }
+
     // ── Timer ───────────────────────────────────────────────────────────
 
     [Fact]
