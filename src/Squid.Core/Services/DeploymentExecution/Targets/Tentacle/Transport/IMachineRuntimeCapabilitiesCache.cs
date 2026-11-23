@@ -26,7 +26,11 @@ public interface IMachineRuntimeCapabilitiesCache
     /// highest common protocol version without an extra capabilities RPC at
     /// dispatch time. Prerequisite for the future E.2 V2 rollout.
     /// </summary>
-    void Store(int machineId, IReadOnlyDictionary<string, string> metadata, string agentVersion, IReadOnlyList<string> supportedServices = null);
+    /// <param name="observedAt">
+    /// When the snapshot was taken. Defaults to now; the hydrator passes the persisted timestamp so a pod can
+    /// tell whether the shared copy is newer than what it holds (<see cref="IMachineCapabilitiesRefresher.SyncFromStoreAsync"/>).
+    /// </param>
+    void Store(int machineId, IReadOnlyDictionary<string, string> metadata, string agentVersion, IReadOnlyList<string> supportedServices = null, DateTimeOffset? observedAt = null);
 
     MachineRuntimeCapabilities TryGet(int machineId);
 
@@ -70,9 +74,8 @@ public sealed class MachineRuntimeCapabilities
 
     /// <summary>
     /// True if the agent has announced <c>IScriptService/v2</c> in its capabilities
-    /// list. Prep work for E.2 — the V2 server-side dispatch is not yet implemented,
-    /// but once it is this read site is already wired. Cold cache → returns
-    /// <c>false</c>, so dispatch safely falls back to V1.
+    /// list; <see cref="IScriptDispatcherSelector"/> dispatches over V2 only when this is
+    /// true. Cold cache → returns <c>false</c>, so dispatch safely falls back to V1.
     /// </summary>
     public bool SupportsScriptServiceV2 =>
         SupportedServices.Any(s => string.Equals(s, ScriptServiceCapabilities.V2, StringComparison.OrdinalIgnoreCase));
@@ -126,6 +129,9 @@ public sealed class MachineRuntimeCapabilities
     public bool IsUnknown => string.IsNullOrWhiteSpace(Os)
         || string.Equals(Os, AgentOperatingSystems.Unknown, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>When this snapshot was taken (UTC); <see langword="null"/> for <see cref="Empty"/> and snapshots built outside the cache.</summary>
+    public DateTimeOffset? ObservedAt { get; init; }
+
     public static readonly MachineRuntimeCapabilities Empty = new();
 }
 
@@ -133,7 +139,7 @@ public sealed class InMemoryMachineRuntimeCapabilitiesCache : IMachineRuntimeCap
 {
     private readonly ConcurrentDictionary<int, MachineRuntimeCapabilities> _cache = new();
 
-    public void Store(int machineId, IReadOnlyDictionary<string, string> metadata, string agentVersion, IReadOnlyList<string> supportedServices = null)
+    public void Store(int machineId, IReadOnlyDictionary<string, string> metadata, string agentVersion, IReadOnlyList<string> supportedServices = null, DateTimeOffset? observedAt = null)
     {
         if (metadata == null) return;
 
@@ -146,7 +152,8 @@ public sealed class InMemoryMachineRuntimeCapabilitiesCache : IMachineRuntimeCap
             Architecture = Read(metadata, "architecture"),
             AgentVersion = agentVersion ?? string.Empty,
             SupportedServices = supportedServices ?? Array.Empty<string>(),
-            InstalledRoles = Read(metadata, "installedRoles")
+            InstalledRoles = Read(metadata, "installedRoles"),
+            ObservedAt = observedAt ?? DateTimeOffset.UtcNow
         };
         _cache[machineId] = caps;
     }

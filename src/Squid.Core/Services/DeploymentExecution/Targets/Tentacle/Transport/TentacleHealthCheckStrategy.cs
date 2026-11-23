@@ -149,26 +149,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     /// <see cref="InMemoryMachineRuntimeCapabilitiesCache.Store"/>'s field
     /// reads — both consume the same agent-side <c>metadata</c> dictionary.
     /// </summary>
-    private static MachineRuntimeCapabilities BuildCapabilitiesFromResponse(CapabilitiesResponse response)
-    {
-        return new MachineRuntimeCapabilities
-        {
-            Os = ReadMetadata(response, "os") ?? string.Empty,
-            OsVersion = ReadMetadata(response, "osVersion") ?? string.Empty,
-            DefaultShell = ReadMetadata(response, "defaultShell") ?? string.Empty,
-            InstalledShells = ReadMetadata(response, "installedShells") ?? string.Empty,
-            Architecture = ReadMetadata(response, "architecture") ?? string.Empty,
-            AgentVersion = response.AgentVersion ?? string.Empty,
-            // CapabilitiesResponse.SupportedServices is a List<string>; cast to
-            // IReadOnlyList<string> for the canonical capabilities shape.
-            SupportedServices = (IReadOnlyList<string>)response.SupportedServices ?? Array.Empty<string>(),
-            // H7 — read the agent's detected roles for the H2 persistence layer.
-            // Empty for pre-H7 agents (the metadata key is absent) — null-coalesced
-            // here, then absent role slots in MachineCapabilitySet.From → handler's
-            // role requirement falls to optimistic-allow.
-            InstalledRoles = ReadMetadata(response, "installedRoles") ?? string.Empty
-        };
-    }
+    private static MachineRuntimeCapabilities BuildCapabilitiesFromResponse(CapabilitiesResponse response) => MachineCapabilitiesRecorder.Map(response);
 
     /// <summary>
     /// Parse the agent's upgrade-status JSON ONCE and dispatch to two
