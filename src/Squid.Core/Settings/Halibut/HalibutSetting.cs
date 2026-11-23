@@ -127,13 +127,13 @@ public class RpcRetrySettings
     public const int DefaultCancelBudgetSeconds = 20;
     public const int DefaultCompleteBudgetSeconds = 30;
 
-    /// <summary>Total budget for GetStatus retries (also capped by the script's remaining timeout).</summary>
+    /// <summary>Budget for GetStatus retries (also capped by the script's remaining timeout). It bounds when the last retry may START; a single attempt can still wait up to the polling-queue timeout.</summary>
     public int BudgetSeconds { get; set; } = DefaultBudgetSeconds;
 
-    /// <summary>Shorter budget for CancelScript so a cancel to a dead agent stays bounded.</summary>
+    /// <summary>Hard bound on CancelScript's total time, retries included: an attempt still running when it elapses is abandoned (the Halibut proxy takes no cancellation token), so a cancel to a dead agent stays bounded.</summary>
     public int CancelBudgetSeconds { get; set; } = DefaultCancelBudgetSeconds;
 
-    /// <summary>Best-effort budget for CompleteScript.</summary>
+    /// <summary>Best-effort budget for CompleteScript retries; like GetStatus it bounds when the last retry may start, not how long one attempt runs.</summary>
     public int CompleteBudgetSeconds { get; set; } = DefaultCompleteBudgetSeconds;
 }
 

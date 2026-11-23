@@ -452,6 +452,26 @@ public class PollingTrustDistributorTests : IDisposable
         _halibutRuntime.IsTrusted("REGISTERED-B").ShouldBeTrue();
     }
 
+    [Fact]
+    public async Task ReconfigureAsync_ResolvesTheDataProviderFromAChildScopePerRefresh_AndReleasesIt()
+    {
+        var created = 0;
+        var released = 0;
+        var builder = new ContainerBuilder();
+        builder.RegisterInstance(_halibutRuntime).As<HalibutRuntime>().ExternallyOwned();
+        builder.Register(_ => { Interlocked.Increment(ref created); return _machineDataProvider.Object; }).As<IMachineDataProvider>().InstancePerLifetimeScope().OnRelease(_ => Interlocked.Increment(ref released));
+        _machineDataProvider.Setup(x => x.GetPollingThumbprintsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<string> { "T1" });
+
+        await using var container = builder.Build();
+        var distributor = new PollingTrustDistributor(container);
+
+        await distributor.ReconfigureAsync();
+        await distributor.ReconfigureAsync();
+
+        created.ShouldBe(2, "each refresh needs its own scope (own DbContext), not one root-level instance kept forever");
+        released.ShouldBe(2, "the refresh scope must be disposed when the refresh ends");
+    }
+
     private static (byte[] pfxBytes, string password) GenerateSelfSignedPfx()
     {
         const string password = "test";

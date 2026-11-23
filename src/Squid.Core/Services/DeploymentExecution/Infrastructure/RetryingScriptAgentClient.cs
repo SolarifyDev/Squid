@@ -41,7 +41,7 @@ internal sealed class RetryingScriptAgentClient : IScriptAgentClient, IStopRetry
     }
 
     public Task<AgentScriptStatus> CancelAsync(ScriptTicket ticket, long lastLogSequence)
-        => _retry.ExecuteAsync(() => _inner.CancelAsync(ticket, lastLogSequence), "CancelScript", _retry.CancelBudget, CancellationToken.None);
+        => _retry.ExecuteAsync(() => _inner.CancelAsync(ticket, lastLogSequence), "CancelScript", _retry.CancelBudget, CancellationToken.None, boundEachAttempt: true);
 
     public Task<AgentScriptCompletion> CompleteAsync(ScriptTicket ticket, long lastLogSequence)
         => _retry.ExecuteAsync(() => _inner.CompleteAsync(ticket, lastLogSequence), "CompleteScript", _retry.CompleteBudget, _ct, _stopRetrying);

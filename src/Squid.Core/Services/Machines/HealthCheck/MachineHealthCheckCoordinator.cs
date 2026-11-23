@@ -1,7 +1,10 @@
 using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Halibut;
 using Squid.Core.Settings.Machines;
+using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Machine;
 
 namespace Squid.Core.Services.Machines.HealthCheck;
 
@@ -13,8 +16,14 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
     /// <summary>Runs <paramref name="work"/> while holding the machine's probe lock. Returns false when the lock stayed held by another probe for <paramref name="wait"/>.</summary>
     Task<bool> TryRunForMachineAsync(int machineId, TimeSpan wait, Func<Task> work, CancellationToken ct);
 
-    /// <summary>Runs one probe with the per-probe timeout. A timeout yields an unhealthy result with a clear reason; cancellation of <paramref name="ct"/> propagates.</summary>
+    /// <summary>Runs one probe with the configured per-probe timeout. A timeout yields an unhealthy result with a clear reason; cancellation of <paramref name="ct"/> propagates.</summary>
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct);
+
+    /// <summary>Same as the two-argument overload with an explicit timeout (see <see cref="ProbeTimeoutFor"/>). A probe that reports a failure only after the timeout keeps its own error text in the result.</summary>
+    Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout);
+
+    /// <summary>The probe timeout for a machine of this communication style: the operator's configured value, or the transport-aware default.</summary>
+    TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy);
 
     /// <summary>Runs <paramref name="work"/> for each item with bounded parallelism, each in its own DI scope (own DbContext). A failing item never stops the others.</summary>
     Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct);
@@ -30,6 +39,7 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     private const string MachineLockKeyPrefix = "squid:health:machine:";
     private static readonly TimeSpan LockMargin = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ManualWaitMargin = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan TimeoutGrace = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
     private static readonly object Ran = new();
 
@@ -46,7 +56,9 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         _options = options;
     }
 
-    public TimeSpan ManualBusyWait => _options.ProbeTimeout + ManualWaitMargin;
+    public TimeSpan ManualBusyWait => ProbeTimeoutPolicy.ManualWait(_options, HalibutModule.BuildTimeoutsAndLimits()) + ManualWaitMargin;
+
+    public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy) => ProbeTimeoutPolicy.For(_options, style, policy, HalibutModule.BuildTimeoutsAndLimits());
 
     internal static string MachineLockKey(int machineId) => $"{MachineLockKeyPrefix}{machineId}";
 
@@ -74,7 +86,7 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         {
             var redisWait = RemainingWait(wait, waited.Elapsed);
 
-            return await RunUnderRedisLockAsync(MachineLockKey(machineId), _options.ProbeTimeout + LockMargin, redisWait, work).ConfigureAwait(false);
+            return await RunUnderRedisLockAsync(MachineLockKey(machineId), ProbeTimeoutPolicy.Longest(_options, HalibutModule.BuildTimeoutsAndLimits()) + LockMargin, redisWait, work).ConfigureAwait(false);
         }
         finally
         {
@@ -85,20 +97,40 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     // The caller's wait is ONE budget shared by the in-process lock and the Redis lock, not one per lock.
     private static TimeSpan RemainingWait(TimeSpan wait, TimeSpan elapsed) => elapsed >= wait ? TimeSpan.Zero : wait - elapsed;
 
-    public async Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct)
+    public Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct) => RunProbeAsync(probe, ct, _options.ProbeTimeout);
+
+    public async Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout)
     {
         using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(_options.ProbeTimeout);
+        probeCts.CancelAfter(timeout);
+
+        var running = probe(probeCts.Token);
 
         try
         {
-            var result = await probe(probeCts.Token).WaitAsync(probeCts.Token).ConfigureAwait(false);
+            var result = await running.WaitAsync(probeCts.Token).ConfigureAwait(false);
 
-            return ResolveProbeOutcome(result, probeCts, ct);
+            return ResolveProbeOutcome(result, probeCts, ct, timeout);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return BuildTimeoutResult();
+            return await BuildTimeoutResultAsync(running, timeout).ConfigureAwait(false);
+        }
+    }
+
+    // The probe's token is already cancelled, so a well-behaved probe finishes within the grace and reports why it was failing
+    // (connection refused, auth error, ...); one that is truly hung yields the plain timeout message.
+    private static async Task<HealthCheckResult> BuildTimeoutResultAsync(Task<HealthCheckResult> running, TimeSpan timeout)
+    {
+        try
+        {
+            var result = await running.WaitAsync(TimeoutGrace).ConfigureAwait(false);
+
+            return BuildTimeoutResult(timeout, result.Detail);
+        }
+        catch (Exception)
+        {
+            return BuildTimeoutResult(timeout, null);
         }
     }
 
@@ -142,17 +174,21 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         }
     }
 
-    private HealthCheckResult ResolveProbeOutcome(HealthCheckResult result, CancellationTokenSource probeCts, CancellationToken ct)
+    private static HealthCheckResult ResolveProbeOutcome(HealthCheckResult result, CancellationTokenSource probeCts, CancellationToken ct, TimeSpan timeout)
     {
         if (result.Healthy) return result;
 
         ct.ThrowIfCancellationRequested();
 
-        return probeCts.IsCancellationRequested ? BuildTimeoutResult() : result;
+        return probeCts.IsCancellationRequested ? BuildTimeoutResult(timeout, result.Detail) : result;
     }
 
-    private HealthCheckResult BuildTimeoutResult()
-        => new(false, $"Health check timed out after {_options.ProbeTimeout.TotalSeconds:0}s without a response from the machine");
+    private static HealthCheckResult BuildTimeoutResult(TimeSpan timeout, string probeDetail)
+    {
+        var message = $"Health check timed out after {timeout.TotalSeconds:0}s without a response from the machine";
+
+        return new HealthCheckResult(false, string.IsNullOrWhiteSpace(probeDetail) ? message : $"{message}. Last probe error: {probeDetail}");
+    }
 
     private async Task<bool> RunUnderRedisLockAsync(string key, TimeSpan expiry, TimeSpan? wait, Func<Task> work)
     {
