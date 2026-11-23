@@ -99,13 +99,21 @@ public sealed class ScriptServiceV2RealHalibutTests : IAsyncLifetime
     public async Task StartScriptCommandV2_EveryField_RoundTripsThroughHalibut()
     {
         var client = _server.CreateAsyncClient<IScriptServiceV2, IAsyncScriptServiceV2>(_bothEndpoint);
-        var sent = new StartScriptCommandV2(Ticket, "echo hi", ScriptIsolationLevel.FullIsolation, TimeSpan.FromSeconds(30), "squid/machine/9", new[] { "a", "b c" }, "task-1", TimeSpan.FromSeconds(5))
+        var sent = new StartScriptCommandV2
         {
+            ScriptTicket = Ticket,
+            ScriptBody = "body-1",
+            Isolation = ScriptIsolationLevel.FullIsolation,
+            ScriptIsolationMutexTimeout = TimeSpan.FromSeconds(31),
+            IsolationMutexName = "mutex-2",
+            Arguments = new[] { "arg-3a", "arg-3b" },
+            TaskId = "task-4",
+            DurationToWaitForScriptToFinish = TimeSpan.FromSeconds(53),
             ScriptSyntax = ScriptType.Python,
-            TargetNamespace = "ns",
-            Labels = new Dictionary<string, string> { ["k"] = "v" },
-            Scripts = new Dictionary<ScriptType, string> { [ScriptType.PowerShell] = "Write-Host hi" },
-            Files = new List<ScriptFile> { new("f.txt", DataStream.FromString("file-body"), "pw") }
+            TargetNamespace = "ns-5",
+            Labels = new Dictionary<string, string> { ["label-k"] = "label-v" },
+            Scripts = new Dictionary<ScriptType, string> { [ScriptType.PowerShell] = "script-6" },
+            Files = new List<ScriptFile> { new("file-7.txt", DataStream.FromString("file-body-8"), "pw-9") }
         };
         _v2.NextStatus = new ScriptStatusResponseV2(Ticket, ScriptStateV2.Pending, 0, new List<ProcessOutput>(), 0);
 
@@ -113,20 +121,20 @@ public sealed class ScriptServiceV2RealHalibutTests : IAsyncLifetime
 
         var received = _v2.ReceivedStart;
         received.ScriptTicket.ShouldBe(Ticket);
-        received.ScriptBody.ShouldBe("echo hi");
+        received.ScriptBody.ShouldBe("body-1");
         received.Isolation.ShouldBe(ScriptIsolationLevel.FullIsolation);
-        received.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromSeconds(30));
-        received.IsolationMutexName.ShouldBe("squid/machine/9");
-        received.Arguments.ShouldBe(new[] { "a", "b c" });
-        received.TaskId.ShouldBe("task-1");
-        received.DurationToWaitForScriptToFinish.ShouldBe(TimeSpan.FromSeconds(5));
+        received.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromSeconds(31));
+        received.IsolationMutexName.ShouldBe("mutex-2");
+        received.Arguments.ShouldBe(new[] { "arg-3a", "arg-3b" });
+        received.TaskId.ShouldBe("task-4");
+        received.DurationToWaitForScriptToFinish.ShouldBe(TimeSpan.FromSeconds(53));
         received.ScriptSyntax.ShouldBe(ScriptType.Python);
-        received.TargetNamespace.ShouldBe("ns");
-        received.Labels.ShouldBe(new Dictionary<string, string> { ["k"] = "v" });
-        received.Scripts.ShouldBe(new Dictionary<ScriptType, string> { [ScriptType.PowerShell] = "Write-Host hi" });
-        received.Files.Single().Name.ShouldBe("f.txt");
-        received.Files.Single().EncryptionPassword.ShouldBe("pw");
-        _v2.ReceivedFileBody.ShouldBe("file-body", "DataStream content must survive the V2 Start call");
+        received.TargetNamespace.ShouldBe("ns-5");
+        received.Labels.ShouldBe(new Dictionary<string, string> { ["label-k"] = "label-v" });
+        received.Scripts.ShouldBe(new Dictionary<ScriptType, string> { [ScriptType.PowerShell] = "script-6" });
+        received.Files.Single().Name.ShouldBe("file-7.txt");
+        received.Files.Single().EncryptionPassword.ShouldBe("pw-9");
+        _v2.ReceivedFileBody.ShouldBe("file-body-8", "DataStream content must survive the V2 Start call");
     }
 
     [Fact]

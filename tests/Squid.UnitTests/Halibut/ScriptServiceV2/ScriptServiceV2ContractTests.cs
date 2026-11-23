@@ -103,4 +103,21 @@ public sealed class ScriptServiceV2ContractTests
 
         cache.TryGet(1).SupportsScriptServiceV2.ShouldBeFalse("an old agent must keep dispatching through V1");
     }
+
+    [Fact]
+    public void StartScriptCommandV2_NullTicket_Throws()
+    {
+        Should.Throw<ArgumentNullException>(() => new StartScriptCommandV2 { ScriptTicket = null });
+    }
+
+    [Fact]
+    public void StartScriptCommandV2_Defaults_CollectionsEmptyAndSyntaxBash()
+    {
+        var command = new StartScriptCommandV2 { ScriptTicket = new ScriptTicket("t") };
+
+        command.Arguments.ShouldBeEmpty();
+        command.Files.ShouldBeEmpty();
+        command.Scripts.ShouldBeEmpty();
+        command.ScriptSyntax.ShouldBe(ScriptType.Bash);
+    }
 }

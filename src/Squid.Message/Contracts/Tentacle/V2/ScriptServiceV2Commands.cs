@@ -1,5 +1,3 @@
-using Newtonsoft.Json;
-
 namespace Squid.Message.Contracts.Tentacle.V2;
 
 /// <summary>
@@ -38,45 +36,30 @@ public enum CompleteScriptOutcomeV2
     UnknownTicket = 3
 }
 
+/// <summary>
+/// Property-based on purpose (no long positional constructor): adjacent same-typed parameters are an
+/// arg-position trap (the #427 mutex-name-in-taskId bug), so every field is set by name.
+/// </summary>
 public class StartScriptCommandV2
 {
-    [JsonConstructor]
-    public StartScriptCommandV2(
-        ScriptTicket scriptTicket,
-        string scriptBody,
-        ScriptIsolationLevel isolation,
-        TimeSpan scriptIsolationMutexTimeout,
-        string? isolationMutexName,
-        string[] arguments,
-        string? taskId,
-        TimeSpan durationToWaitForScriptToFinish)
-    {
-        ScriptTicket = scriptTicket ?? throw new ArgumentNullException(nameof(scriptTicket));
-        ScriptBody = scriptBody;
-        Isolation = isolation;
-        ScriptIsolationMutexTimeout = scriptIsolationMutexTimeout;
-        IsolationMutexName = isolationMutexName;
-        Arguments = arguments ?? Array.Empty<string>();
-        TaskId = taskId;
-        DurationToWaitForScriptToFinish = durationToWaitForScriptToFinish;
-    }
+    private readonly ScriptTicket _scriptTicket;
 
     /// <summary>Client-chosen idempotency key.</summary>
-    public ScriptTicket ScriptTicket { get; }
+    public required ScriptTicket ScriptTicket { get => _scriptTicket; init => _scriptTicket = value ?? throw new ArgumentNullException(nameof(ScriptTicket)); }
 
-    public string ScriptBody { get; }
+    public string ScriptBody { get; init; } = string.Empty;
 
-    public ScriptIsolationLevel Isolation { get; }
+    public ScriptIsolationLevel Isolation { get; init; }
 
-    public TimeSpan ScriptIsolationMutexTimeout { get; }
+    public TimeSpan ScriptIsolationMutexTimeout { get; init; }
 
-    public string? IsolationMutexName { get; }
+    public string? IsolationMutexName { get; init; }
 
-    public string[] Arguments { get; }
+    public string[] Arguments { get; init; } = Array.Empty<string>();
 
-    public string? TaskId { get; }
+    public string? TaskId { get; init; }
 
-    public TimeSpan DurationToWaitForScriptToFinish { get; }
+    public TimeSpan DurationToWaitForScriptToFinish { get; init; }
 
     public ScriptType ScriptSyntax { get; init; } = ScriptType.Bash;
 
