@@ -35,7 +35,12 @@ public partial class LocalScriptService
 
     public ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request)
     {
-        return TryBuildStatusV2(request.Ticket, request.LastLogSequence, out var status) ? status! : ReadReleasedStatusV2(request.Ticket, request.LastLogSequence);
+        if (TryBuildStatusV2(request.Ticket, request.LastLogSequence, out var status)) return status!;
+
+        // A Start still waiting for the isolation mutex has no state file yet; UnknownTicket here makes the server re-dispatch.
+        if (_startsInFlight.ContainsKey(request.Ticket.TaskId)) return ScriptV2Mapping.Pending(request.Ticket, request.LastLogSequence);
+
+        return ReadReleasedStatusV2(request.Ticket, request.LastLogSequence);
     }
 
     public ScriptStatusResponseV2 CancelScript(CancelScriptCommandV2 command)
@@ -83,11 +88,23 @@ public partial class LocalScriptService
         {
             if (TryBuildStatusV2(ticket, 0, out known)) return true;
 
+            if (TryReadTombstoneStatusV2(ticket, out known)) return true;
+
             if (_startsInFlight.TryAdd(ticket.TaskId, 0)) return false;
 
             known = ScriptV2Mapping.Pending(ticket, 0);
             return true;
         }
+    }
+
+    // A released ticket already ran: a delayed or duplicate Start answers with its recorded result instead of running it again.
+    private bool TryReadTombstoneStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
+    {
+        var tombstone = _tombstones.TryRead(ticket.TaskId);
+
+        status = tombstone != null ? ScriptV2Mapping.FromTombstone(ticket, tombstone, 0) : null;
+
+        return status != null;
     }
 
     private bool TryBuildStatusV2(ScriptTicket ticket, long lastLogSequence, out ScriptStatusResponseV2? status)
@@ -230,7 +247,7 @@ public partial class LocalScriptService
 
     private CompleteScriptResponseV2 CompleteRunningV2(ScriptTicket ticket, long lastLogSequence, RunningScript running)
     {
-        var v1 = CompleteRunning(ticket, lastLogSequence, running, running.V2CancelWins ? ScriptExitCodes.Canceled : null, exitCode => WriteTombstone(ticket, ScriptStateV2.Completed, exitCode), TimeSpan.Zero);
+        var v1 = CompleteRunning(ticket, lastLogSequence, running, running.V2CancelWins ? ScriptExitCodes.Canceled : null, exitCode => TryWriteTombstone(ticket, ScriptStateV2.Completed, exitCode), TimeSpan.Zero);
 
         _cancellationRegistry.Cleanup(ticket);
 
@@ -248,8 +265,12 @@ public partial class LocalScriptService
     {
         if (persisted.State is ScriptStateV2.Running or ScriptStateV2.Pending) return ScriptV2Mapping.NotYetComplete(persisted);
 
-        WriteTombstone(ticket, persisted.State, persisted.ExitCode);
-        CleanupWorkDir(ResolveWorkDir(ticket.TaskId));
+        // Without a durable tombstone the persisted state is the only record of the result: keep it (a repeated Complete retries).
+        if (TryWriteTombstone(ticket, persisted.State, persisted.ExitCode))
+            CleanupWorkDir(ResolveWorkDir(ticket.TaskId));
+        else
+            StateOnlyWorkspace.Scrub(ResolveWorkDir(ticket.TaskId));
+
         _cancellationRegistry.Cleanup(ticket);
 
         return ScriptV2Mapping.Released(persisted);
@@ -270,6 +291,6 @@ public partial class LocalScriptService
         return TryBuildPersistedStatusV2(ticket, lastLogSequence, out var persisted) ? persisted! : ReadReleasedStatusV2(ticket, lastLogSequence);
     }
 
-    private void WriteTombstone(ScriptTicket ticket, ScriptStateV2 state, int exitCode)
-        => _tombstones.Write(new ScriptTombstone(ticket.TaskId, state, exitCode, DateTimeOffset.UtcNow));
+    private bool TryWriteTombstone(ScriptTicket ticket, ScriptStateV2 state, int exitCode)
+        => _tombstones.TryWrite(new ScriptTombstone(ticket.TaskId, state, exitCode, DateTimeOffset.UtcNow));
 }

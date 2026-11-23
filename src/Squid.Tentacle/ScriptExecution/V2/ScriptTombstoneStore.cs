@@ -53,19 +53,30 @@ public sealed class ScriptTombstoneStore
 
     public static ScriptTombstoneStore ForWorkspace(string workspacePath) => new(Path.Combine(workspacePath, WorkspaceDirectoryName));
 
-    public void Write(ScriptTombstone tombstone)
+    public void Write(ScriptTombstone tombstone) => TryWrite(tombstone);
+
+    /// <summary>
+    /// Writes the tombstone and reports whether it is durably on disk. Callers that are about to release the
+    /// workspace state it replaces must keep that state when this returns false, otherwise a crash leaves nothing
+    /// that records the result and a resume re-runs the script.
+    /// </summary>
+    public bool TryWrite(ScriptTombstone tombstone)
     {
-        if (!TicketIdWhitelist.IsMatch(tombstone.TicketId)) return;
+        if (!TicketIdWhitelist.IsMatch(tombstone.TicketId)) return false;
 
         try
         {
             Directory.CreateDirectory(_directory);
             WriteAtomically(tombstone);
             PruneIfDue();
+
+            return true;
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to write completion tombstone for ticket {TicketId}; a repeated Complete will report UnknownTicket", tombstone.TicketId);
+            Log.Error(ex, "Failed to write completion tombstone for ticket {TicketId}; keeping its recorded state so the result is not lost", tombstone.TicketId);
+
+            return false;
         }
     }
 

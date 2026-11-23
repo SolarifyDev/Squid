@@ -89,7 +89,7 @@ public class CapabilitiesService : ICapabilitiesService
     }
 
     public CapabilitiesService(Dictionary<string, string> metadata,
-        Squid.Tentacle.Platform.IUpgradeStatusStorage upgradeStorage, bool advertiseScriptServiceV2 = true)
+        Squid.Tentacle.Platform.IUpgradeStatusStorage upgradeStorage, bool advertiseScriptServiceV2 = false)
     {
         _advertiseScriptServiceV2 = advertiseScriptServiceV2;
         _metadata = MergeWithRuntimeCapabilities(metadata);

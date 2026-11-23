@@ -177,6 +177,6 @@ public class ScriptRecoveryService
 
     private static void InjectFailure(string ticketId, ScriptPodService service, string message)
     {
-        service.InjectTerminalResult(ticketId, ScriptExitCodes.UnknownResult, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, message) });
+        service.InjectLostResult(ticketId, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, message) });
     }
 }

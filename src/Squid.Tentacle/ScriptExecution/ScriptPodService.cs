@@ -7,6 +7,7 @@ using Squid.Message.Contracts.Tentacle;
 using Serilog;
 using Squid.Tentacle.Abstractions;
 using Squid.Tentacle.Health;
+using Squid.Tentacle.ScriptExecution.State;
 
 namespace Squid.Tentacle.ScriptExecution;
 
@@ -25,6 +26,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     private readonly IKubernetesPodOperations? _podOps;
     private readonly ConcurrentDictionary<string, ScriptPodContext> _scripts = new();
     private readonly ConcurrentDictionary<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)> _terminalResults = new();
+
+    // Tickets whose injected terminal result means "the agent lost track of this script" (V2 reports ResultLost, not a real exit code).
+    private readonly ConcurrentDictionary<string, byte> _lostResults = new();
+
+    // Tickets being launched right now (V2 Start, or a queued script leaving the pending queue): no in-memory entry exists yet.
+    private readonly ConcurrentDictionary<string, byte> _startsInFlight = new();
     private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
     private readonly ConcurrentDictionary<string, PendingScript> _pendingScripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
@@ -309,13 +316,23 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         return new ScriptStatusResponse(request.Ticket, state, exitCode, logs, ctx.LogSequence);
     }
 
-    public ScriptStatusResponse CompleteScript(CompleteScriptCommand command)
+    public ScriptStatusResponse CompleteScript(CompleteScriptCommand command) => CompleteScriptCore(command, null);
+
+    /// <summary>
+    /// <paramref name="recordFinal"/> (V2) records the final result somewhere durable BEFORE the persisted state is released; it
+    /// returns false when that failed, in which case the state file stays so a crash does not turn a finished script into an unknown one.
+    /// </summary>
+    internal ScriptStatusResponse CompleteScriptCore(CompleteScriptCommand command, Func<ScriptStatusResponse, bool>? recordFinal)
     {
         try
         {
             if (_terminalResults.TryRemove(command.Ticket.TaskId, out var terminal))
             {
-                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
+                _lostResults.TryRemove(command.Ticket.TaskId, out _);
+
+                if (recordFinal?.Invoke(terminal.Response) ?? true)
+                    DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
+
                 return terminal.Response;
             }
 
@@ -336,15 +353,21 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             // these two lines still lets a server redeliver and learn the exit code.
             PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, exitCode, ctx.LogSequence);
 
+            var final = new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
+
             _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
-            CleanupWorkspace(ctx.WorkDir);
+
+            if (recordFinal?.Invoke(final) ?? true)
+                CleanupWorkspace(ctx.WorkDir);
+            else
+                StateOnlyWorkspace.Scrub(ctx.WorkDir);
 
             if (exitCode == 0)
                 TentacleMetrics.ScriptCompleted();
             else
                 TentacleMetrics.ScriptFailed();
 
-            return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
+            return final;
         }
         finally
         {
@@ -415,14 +438,25 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         _terminalResults[ticketId] = (response, DateTimeOffset.UtcNow);
     }
 
+    /// <summary>
+    /// Injects a terminal result for a script the agent can no longer account for (restart recovery). V1 sees the usual
+    /// UnknownResult code; V2 reports ResultLost for it, for as long as the entry lives and after it is evicted.
+    /// </summary>
+    public void InjectLostResult(string ticketId, List<ProcessOutput> logs)
+    {
+        _lostResults[ticketId] = 0;
+
+        InjectTerminalResult(ticketId, ScriptExitCodes.UnknownResult, logs);
+    }
+
     public void EvictStaleTerminalResults(TimeSpan maxAge)
     {
         var cutoff = DateTimeOffset.UtcNow - maxAge;
 
         foreach (var kvp in _terminalResults)
         {
-            if (kvp.Value.CreatedAt < cutoff)
-                _terminalResults.TryRemove(kvp.Key, out _);
+            if (kvp.Value.CreatedAt < cutoff && _terminalResults.TryRemove(kvp.Key, out _))
+                _lostResults.TryRemove(kvp.Key, out _);
         }
     }
 
@@ -495,8 +529,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             if (!_isolationMutex.TryAcquire(kvp.Value.Command, out var handle))
                 continue;
 
+            // Visible as "starting" from before the script leaves the pending queue until its pod is tracked.
+            _startsInFlight[kvp.Key] = 0;
+
             if (!_pendingScripts.TryRemove(kvp.Key, out var pending))
             {
+                _startsInFlight.TryRemove(kvp.Key, out _);
                 handle!.Dispose();
                 retryNeeded = true;
                 continue;
@@ -519,6 +557,10 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                     failedLock.Dispose();
 
                 continue;
+            }
+            finally
+            {
+                _startsInFlight.TryRemove(kvp.Key, out _);
             }
 
             if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)

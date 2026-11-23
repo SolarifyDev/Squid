@@ -655,7 +655,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         return CompleteRunning(command.Ticket, command.LastLogSequence, running);
     }
 
-    private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Action<int>? onFinalExitCode = null, TimeSpan? exitWait = null)
+    private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Func<int, bool>? onFinalExitCode = null, TimeSpan? exitWait = null)
     {
         if (!running.Process.HasExited)
             running.Process.WaitForExit(exitWait ?? TimeSpan.FromSeconds(30));
@@ -676,11 +676,18 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         // itself is gone — it gets copied out to a durable archive externally.
         WriteExecutionManifest(running, ticket.TaskId, exitCode);
 
-        onFinalExitCode?.Invoke(exitCode);
+        // The hook returns false when the result could not be recorded elsewhere (tombstone write failed): the state file
+        // in the workspace is then the only record, so the workspace must stay.
+        var releaseWorkspace = onFinalExitCode?.Invoke(exitCode) ?? true;
 
         running.LogWriter?.Dispose();
         running.IsolationHandle?.Dispose();
-        CleanupWorkDir(running.WorkDir);
+
+        if (releaseWorkspace)
+            CleanupWorkDir(running.WorkDir);
+        else
+            StateOnlyWorkspace.Scrub(running.WorkDir);
+
         running.Process.Dispose();
 
         // : release the per-ticket soft-cancel CTS now the

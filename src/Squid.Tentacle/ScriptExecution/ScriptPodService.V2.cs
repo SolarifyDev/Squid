@@ -33,9 +33,18 @@ public partial class ScriptPodService : IScriptServiceV2
         {
             if (TryPeekStatusV2(ticket, out var known)) return known!;
 
-            var v1 = StartScript(ScriptV2Mapping.ToV1(command));
+            _startsInFlight[ticket.TaskId] = 0;
 
-            return TryPeekStatusV2(ticket, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
+            try
+            {
+                var v1 = StartScript(ScriptV2Mapping.ToV1(command));
+
+                return TryPeekStatusV2(ticket, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
+            }
+            finally
+            {
+                _startsInFlight.TryRemove(ticket.TaskId, out _);
+            }
         }
     }
 
@@ -44,6 +53,9 @@ public partial class ScriptPodService : IScriptServiceV2
         var ticket = request.Ticket;
 
         if (IsKnownInMemoryV2(ticket.TaskId) && TryReadLiveStatusV2(request, out var live)) return live!;
+
+        // The pod is being launched: its persisted state says Starting (or does not exist yet), which must not read as lost or unknown.
+        if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.Pending(ticket, request.LastLogSequence);
 
         return ReadFinalStatusV2(ticket, request.LastLogSequence);
     }
@@ -54,9 +66,11 @@ public partial class ScriptPodService : IScriptServiceV2
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
-            if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return ScriptV2Mapping.FromV1Terminal(terminal.Response);
+            if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
 
             if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId)) return CancelLiveV2(command);
+
+            if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
             return ReadFinalStatusV2(ticket, command.LastLogSequence);
         }
@@ -70,7 +84,7 @@ public partial class ScriptPodService : IScriptServiceV2
         {
             if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId)) return CompleteLiveV2(command);
 
-            if (_pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
+            if (_pendingScripts.ContainsKey(ticket.TaskId) || _startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotLiveV2(ticket);
         }
@@ -85,14 +99,28 @@ public partial class ScriptPodService : IScriptServiceV2
 
         status = true switch
         {
-            _ when _terminalResults.TryGetValue(ticketId, out var terminal) => ScriptV2Mapping.FromV1Terminal(terminal.Response),
+            _ when _terminalResults.TryGetValue(ticketId, out var terminal) => MapTerminalV2(terminal.Response),
             _ when _scripts.TryGetValue(ticketId, out var ctx) => ScriptV2Mapping.Running(ticket, new List<ProcessOutput>(), ctx.LogSequence),
             _ when _pendingScripts.ContainsKey(ticketId) => ScriptV2Mapping.Pending(ticket, 0),
             _ => null
         };
 
-        return status != null || TryBuildPersistedStatusV2(ticket, out status);
+        return status != null || TryBuildPersistedStatusV2(ticket, out status) || TryReadTombstoneStatusV2(ticket, out status);
     }
+
+    // A released ticket already ran: a delayed or duplicate Start answers with its recorded result instead of launching another pod.
+    private bool TryReadTombstoneStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
+    {
+        var tombstone = Tombstones.TryRead(ticket.TaskId);
+
+        status = tombstone != null ? ScriptV2Mapping.FromTombstone(ticket, tombstone, 0) : null;
+
+        return status != null;
+    }
+
+    // A terminal result injected for a script the agent lost track of is ResultLost, not a Completed exit code.
+    private ScriptStatusResponseV2 MapTerminalV2(ScriptStatusResponse v1)
+        => _lostResults.ContainsKey(v1.Ticket.TaskId) ? ScriptV2Mapping.Lost(v1.Ticket, v1.Logs, v1.NextLogSequence) : ScriptV2Mapping.FromV1Terminal(v1);
 
     // The V1 read may race a concurrent Complete that consumes the entry; if the ticket left memory while we
     // read, V1 answered UnknownResult for it, so discard that and let the persisted/tombstone path decide.
@@ -109,8 +137,8 @@ public partial class ScriptPodService : IScriptServiceV2
         return true;
     }
 
-    private static ScriptStatusResponseV2 MapLiveV1Status(ScriptStatusResponse v1)
-        => v1.State == ProcessState.Complete ? ScriptV2Mapping.FromV1Terminal(v1) : ScriptV2Mapping.Running(v1.Ticket, v1.Logs, v1.NextLogSequence);
+    private ScriptStatusResponseV2 MapLiveV1Status(ScriptStatusResponse v1)
+        => v1.State == ProcessState.Complete ? MapTerminalV2(v1) : ScriptV2Mapping.Running(v1.Ticket, v1.Logs, v1.NextLogSequence);
 
     private bool TryBuildPersistedStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
     {
@@ -170,12 +198,25 @@ public partial class ScriptPodService : IScriptServiceV2
     private CompleteScriptResponseV2 CompleteLiveV2(CompleteScriptCommandV2 command)
     {
         var ticket = command.Ticket;
-        var final = ScriptV2Mapping.FromV1Terminal(CompleteScript(new CompleteScriptCommand(ticket, command.LastLogSequence)));
+        var lost = _lostResults.ContainsKey(ticket.TaskId);
+        var recorded = false;
 
-        Tombstones.Write(ScriptV2Mapping.ToTombstone(final, DateTimeOffset.UtcNow));
+        var v1 = CompleteScriptCore(new CompleteScriptCommand(ticket, command.LastLogSequence), response =>
+        {
+            recorded = true;
+
+            return Tombstones.TryWrite(ScriptV2Mapping.ToTombstone(MapFinalV2(response, lost), DateTimeOffset.UtcNow));
+        });
+
+        var final = MapFinalV2(v1, lost);
+
+        if (!recorded) Tombstones.Write(ScriptV2Mapping.ToTombstone(final, DateTimeOffset.UtcNow));
 
         return ScriptV2Mapping.Released(final);
     }
+
+    private static ScriptStatusResponseV2 MapFinalV2(ScriptStatusResponse v1, bool lost)
+        => lost ? ScriptV2Mapping.Lost(v1.Ticket, v1.Logs, v1.NextLogSequence) : ScriptV2Mapping.FromV1Terminal(v1);
 
     private CompleteScriptResponseV2 CompleteNotLiveV2(ScriptTicket ticket)
     {
@@ -184,9 +225,16 @@ public partial class ScriptPodService : IScriptServiceV2
 
         var workDir = Path.Combine(_tentacleSettings.WorkspacePath, ticket.TaskId);
 
-        Tombstones.Write(ScriptV2Mapping.ToTombstone(persisted!, DateTimeOffset.UtcNow));
-        DeletePersistedStateIfAny(workDir);
-        CleanupWorkspace(workDir);
+        // Without a durable tombstone the persisted state is the only record of the result: keep it (a repeated Complete retries).
+        if (Tombstones.TryWrite(ScriptV2Mapping.ToTombstone(persisted!, DateTimeOffset.UtcNow)))
+        {
+            DeletePersistedStateIfAny(workDir);
+            CleanupWorkspace(workDir);
+        }
+        else
+        {
+            StateOnlyWorkspace.Scrub(workDir);
+        }
 
         return ScriptV2Mapping.Released(persisted!);
     }

@@ -29,9 +29,18 @@ public class CapabilitiesServiceTests
     }
 
     [Fact]
-    public void GetCapabilities_DefaultConstructor_AdvertisesScriptServiceV2()
+    public void GetCapabilities_DefaultConstructor_DoesNotAdvertiseScriptServiceV2_UntilABackendThatServesItSaysSo()
     {
-        new CapabilitiesService().GetCapabilities(new CapabilitiesRequest()).SupportedServices.ShouldContain("IScriptService/v2");
+        var services = new CapabilitiesService().GetCapabilities(new CapabilitiesRequest()).SupportedServices;
+
+        services.ShouldNotContain(ScriptServiceCapabilities.V2, "advertising V2 for a backend that does not implement it makes the server dispatch V2 calls that fail");
+        services.ShouldContain("IScriptService/v1");
+    }
+
+    [Fact]
+    public void GetCapabilities_MetadataOnlyConstructor_DoesNotAdvertiseScriptServiceV2()
+    {
+        new CapabilitiesService(new Dictionary<string, string>()).GetCapabilities(new CapabilitiesRequest()).SupportedServices.ShouldNotContain(ScriptServiceCapabilities.V2);
     }
 
     [Fact]
