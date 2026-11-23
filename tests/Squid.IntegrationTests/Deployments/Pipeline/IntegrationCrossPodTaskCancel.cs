@@ -37,7 +37,7 @@ public class IntegrationCrossPodTaskCancel : DeploymentFixtureBase
             await CancelOnPodBAsync(podAScope, seeded.TaskId).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
-        agent.CancelCalls.ShouldBe(1, "a user cancel on another pod must still cancel the agent script (RemoteScriptCancelDecision: user cancel is terminal)");
+        agent.CancelCalls.ShouldBeGreaterThanOrEqualTo(1, "a user cancel on another pod must still cancel the agent script (RemoteScriptCancelDecision: user cancel is terminal)");
         await AssertStateAsync(seeded.TaskId, TaskState.Cancelled).ConfigureAwait(false);
     }
 

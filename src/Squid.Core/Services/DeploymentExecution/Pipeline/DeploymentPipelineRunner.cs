@@ -66,21 +66,14 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         var registryCts = registry.Register(serverTaskId);
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
 
-        // The job host's token never feeds the pipeline directly: it is arbitrated first (see ArbitrateExternalCancel) so that a user cancel
-        // Hangfire delivers as a job abort is never mistaken for a host shutdown by the code that unwinds from it.
-        using var arbitratedCts = new CancellationTokenSource();
-        var external = arbitratedCts.Token;
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, external, timeoutCts.Token);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
-        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, external);
+        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
 
         IAsyncDisposable cancelWatch = null;
-        CancellationTokenRegistration externalRegistration = default;
 
         try
         {
-            externalRegistration = ct.Register(() => ArbitrateExternalCancel(serverTaskId, registryCts, arbitratedCts));
-
             var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
 
             if (slot == SlotDecision.AlreadyResolved)
@@ -153,7 +146,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 () => completion.OnPausedAsync(ctx, CancellationToken.None),
                 new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }));
         }
-        catch (OperationCanceledException) when (IsHostShutdown(registryCts, external))
+        catch (OperationCanceledException) when (IsHostShutdown(registryCts, ct))
         {
             // The job host is stopping (Hangfire substitutes its shutdown-linked token for `ct`) and the
             // user did NOT cancel. The task is still Executing, so the Cancelling → Cancelled write of the
@@ -164,6 +157,15 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // BuildRemoteScriptCancelDecision) — then rethrow: Hangfire treats an OperationCanceledException
             // raised while its shutdown token is cancelled as an interrupted job and re-queues it rather
             // than failing it, so the restarted server resumes from the checkpoint.
+            if (await IsUserCancelPersistedAsync(serverTaskId).ConfigureAwait(false))
+            {
+                Log.Information("[Deploy] Task {TaskId} was aborted by its job token but the user had cancelled it; completing the cancel", serverTaskId);
+
+                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+
+                return;
+            }
+
             Log.Information("[Deploy] Task {TaskId} interrupted by host shutdown; pausing for resume on job re-delivery", serverTaskId);
 
             await SafeCompleteAsync(
@@ -173,7 +175,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             throw;
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !external.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested)
         {
             var ex = new DeploymentTimeoutException(serverTaskId, DeploymentTimeout);
 
@@ -204,7 +206,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             Log.Information("[Deploy] Task {TaskId} lost concurrency slot at claim (tag: {Tag}); re-enqueuing", serverTaskId, ex.ConcurrencyTag);
             await RequeueForConcurrencySlotAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
         }
-        catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !external.IsCancellationRequested
+        catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
             && TargetCatchClassifier.IsTransientInfraFailure(ex))
         {
             // A transient infra failure (Halibut RPC drop after the library's
@@ -233,52 +235,34 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             if (cancelWatch != null) await cancelWatch.DisposeAsync().ConfigureAwait(false);
 
-            await externalRegistration.DisposeAsync().ConfigureAwait(false);
-
             registry.Unregister(serverTaskId, registryCts);
 
             if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
         }
     }
 
-    /// <summary>
-    /// How long the job-token arbitration may block on its one DB read. Hangfire's job abort for a user cancel and a real host shutdown both
-    /// fire the same external token; only the task row tells them apart. Bounded so an unreachable DB cannot hold up a shutdown.
-    /// </summary>
+    /// <summary>How long the shutdown-vs-cancel row read may take; the read is async and off any cancellation callback.</summary>
     internal static readonly TimeSpan ExternalCancelProbeTimeout = TimeSpan.FromSeconds(5);
 
     // The external (Hangfire) token fired. It means one of two things: the host is shutting down, or the user cancelled a task running on a pod
-    // that is not the one that served the cancel (Hangfire aborts the deleted job's token there). Only the row can say which: Cancelling means a
-    // user cancel — trip the registry token FIRST so every later reader (the remote CancelScript decision, the catch filters) sees a user cancel,
-    // then release the pipeline. Synchronous on purpose: the decision to cancel the agent's script is read while the pipeline unwinds from this
-    // very signal, so the verdict must exist before the signal propagates. Anything unreadable stays a shutdown (the established behaviour).
-    private void ArbitrateExternalCancel(int serverTaskId, CancellationTokenSource registryCts, CancellationTokenSource arbitratedCts)
+    // that is not the one that served the cancel (Hangfire aborts the deleted job's token there). Only the row can say which: Cancelling is a user
+    // cancel. Read here, in the async catch, never on the cancellation callback thread. Unreadable stays a shutdown (the established behaviour).
+    private async Task<bool> IsUserCancelPersistedAsync(int serverTaskId)
     {
         try
         {
-            if (IsUserCancelPersisted(serverTaskId)) registryCts.Cancel();
+            using var probeCts = new CancellationTokenSource(ExternalCancelProbeTimeout);
+
+            var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, probeCts.Token).ConfigureAwait(false);
+
+            return task != null && string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[Deploy] Could not read task {TaskId} to tell a user cancel from a host shutdown; treating the external cancel as a shutdown", serverTaskId);
+            Log.Warning(ex, "[Deploy] Could not read task {TaskId} to tell a user cancel from a host shutdown; treating it as a shutdown", serverTaskId);
+
+            return false;
         }
-
-        try
-        {
-            arbitratedCts.Cancel();
-        }
-        catch (ObjectDisposedException)
-        {
-        }
-    }
-
-    private bool IsUserCancelPersisted(int serverTaskId)
-    {
-        using var probeCts = new CancellationTokenSource(ExternalCancelProbeTimeout);
-
-        var task = Task.Run(() => serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, probeCts.Token)).GetAwaiter().GetResult();
-
-        return task != null && string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase);
     }
 
     // This run only becomes the task's registered cancel target once it holds the lease: a duplicate delivery that the claim fences out must

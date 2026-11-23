@@ -113,7 +113,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         // the task-state transition is not this test's concern — only whether the agent is told to cancel.
         await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(60), resumable: true, afterAgentPolled: scope => scope.Resolve<ITaskCancellationRegistry>().TryCancel(seeded.TaskId)).ConfigureAwait(false);
 
-        agent.CancelCalls.ShouldBe(1, "user cancel is terminal — the agent script must be cancelled");
+        agent.CancelCalls.ShouldBeGreaterThanOrEqualTo(1, "user cancel is terminal — the agent script must be cancelled");
     }
 
     [Fact]
@@ -168,7 +168,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
             external.Cancel();
         }, externalToken: external.Token).ConfigureAwait(false);
 
-        agent.CancelCalls.ShouldBe(1, "user cancel is terminal even when the host is also shutting down");
+        agent.CancelCalls.ShouldBeGreaterThanOrEqualTo(1, "user cancel is terminal even when the host is also shutting down");
     }
 
     private Task SetConcurrencyTagAsync(int taskId, string tag)

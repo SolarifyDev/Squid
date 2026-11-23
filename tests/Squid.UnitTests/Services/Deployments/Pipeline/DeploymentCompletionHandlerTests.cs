@@ -73,6 +73,23 @@ public class DeploymentCompletionHandlerTests
         _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // The single place enforcing "a task that reaches Cancelled has no agent script left running": whatever the observer decided when its token
+    // fired, the scripts still recorded in flight are cancelled before the state is written and before the checkpoint holding them is deleted.
+    [Fact]
+    public async Task OnCancelled_CancelsTheInFlightAgentScripts_BeforeTheStateWriteAndTheCheckpointDelete()
+    {
+        var order = new List<string>();
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        canceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
+        _checkpointService.Setup(c => c.DeleteAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        await sut.OnCancelledAsync(new DeploymentTaskContext { ServerTaskId = 1 }, CancellationToken.None);
+
+        order.ShouldBe(["cancel-scripts", "transition", "delete-checkpoint"]);
+    }
+
     // ========== OnCancelledAsync ==========
 
     [Fact]
