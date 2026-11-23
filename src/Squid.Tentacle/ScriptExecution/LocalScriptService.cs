@@ -101,6 +101,15 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     // target version format.
     private static readonly string AgentVersion = Core.AssemblyVersion.Canonical;
 
+    /// <summary>
+    /// How long after a script's process exits we keep waiting for its stdout/stderr to reach EOF before we stop
+    /// reading. A script that leaves a background child holding the pipe open would otherwise block every waiter
+    /// until that child exits.
+    /// </summary>
+    internal static readonly TimeSpan DefaultOutputDrainTimeout = TimeSpan.FromSeconds(10);
+
+    internal TimeSpan OutputDrainTimeout { get; init; } = DefaultOutputDrainTimeout;
+
     public LocalScriptService() : this(new ScriptStateStoreFactory()) { }
 
     public LocalScriptService(IScriptStateStoreFactory stateStoreFactory, IAdmissionPolicySource? admissionPolicySource = null)
@@ -201,7 +210,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
             var process = StartProcess(workDir, command);
             var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
             var traceId = ResolveParentTraceId(command);
-            var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId);
+            var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId) { OutputDrainTimeout = OutputDrainTimeout };
 
             // Ownership transferred — RunningScript.Dispose now owns the mutex handle.
             isolationHandle = null;
@@ -397,10 +406,8 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         // additional times after seeing Complete; this fix removes the race
         // at its source so single-poll callers also get the full output.
         //
-        // Idempotent: WaitForExit() on an already-drained process is a no-op,
-        // but we gate via Interlocked.Exchange to avoid taking the lock-equivalent
-        // path on every subsequent poll.
-        DrainAsyncReadersOnce(running);
+        // Idempotent and bounded — see AwaitOutputDrained.
+        AwaitOutputDrained(running);
 
         // Cursor MUST be derived from the same disk read as `logs` — see
         // ReadLogsAndCursor's XML for the race that the previous two-source
@@ -413,36 +420,53 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     }
 
     /// <summary>
-    /// Drains <see cref="Process.OutputDataReceived"/> / <see cref="Process.ErrorDataReceived"/>
-    /// callbacks via the parameterless <see cref="Process.WaitForExit()"/> overload,
-    /// AT MOST ONCE per <paramref name="running"/> instance. No-op when the process
-    /// hasn't exited yet (the readers are still actively delivering lines).
+    /// Waits (bounded) for the script's stdout/stderr readers to reach EOF once its process has exited, so the final
+    /// output lines are on disk before the result is read or recorded. No-op while the process is still running.
     ///
-    /// <para>The .NET docs say: "Following a call to <see cref="Process.BeginOutputReadLine"/>,
-    /// only calling <see cref="Process.WaitForExit()"/> (no args) ensures async output is
-    /// flushed before returning." The timeout overload, and the implicit `HasExited` poll,
-    /// do NOT wait for the AsyncStreamReader to drain.</para>
+    /// <para>Deliberately NOT the parameterless <see cref="Process.WaitForExit()"/>: that waits until EVERY holder of the
+    /// pipe closes it, so a script that leaves a background child (<c>nohup app &amp;</c>) blocks the caller until that child
+    /// exits. EOF is tracked from the readers' own end-of-stream callbacks instead; if it has not arrived
+    /// <see cref="RunningScript.OutputDrainTimeout"/> after the exit was first observed, reading stops, what was captured is
+    /// kept and a truncation line is appended. The wait is anchored at the first observed exit, so concurrent and later
+    /// callers share one deadline and never add up.</para>
     ///
-    /// <para>Race we're closing: process writes "last line" → process exits → threadpool
-    /// hasn't yet scheduled the <c>OutputDataReceived</c> callback for "last line" → test
-    /// polls <see cref="GetStatus"/> → sees <c>HasExited=true</c> → reads log file from disk
-    /// → "last line" not there yet → returns Complete with truncated logs.</para>
+    /// <para>Never call this while holding a ticket lock: it can block for up to the drain timeout.</para>
     /// </summary>
-    private static void DrainAsyncReadersOnce(RunningScript running)
+    private static void AwaitOutputDrained(RunningScript running)
     {
-        if (!running.Process.HasExited) return;
-        if (Interlocked.Exchange(ref running.DrainedAsyncReaders, 1) != 0) return;
+        if (running.OutputDrained || IsProcessRunning(running)) return;
+
+        running.NoteExitObserved();
+
+        lock (running.DrainGate)
+        {
+            if (running.OutputDrained) return;
+
+            if (!running.OutputEof.Task.Wait(running.RemainingDrainBudget()))
+                StopReadingOutput(running);
+
+            running.OutputDrained = true;
+        }
+    }
+
+    private static void StopReadingOutput(RunningScript running)
+    {
+        Log.Warning("Script output pipe still open {Seconds}s after exit (a background process kept it); stopping output capture for {WorkDir}", running.OutputDrainTimeout.TotalSeconds, running.WorkDir);
 
         try
         {
-            running.Process.WaitForExit();
+            running.Process.CancelOutputRead();
+            running.Process.CancelErrorRead();
         }
-        catch
+        catch (InvalidOperationException)
         {
-            // Drain is best-effort — if Process was disposed mid-drain (e.g.
-            // CompleteScript ran concurrently), the readers are gone anyway.
+            // Readers were never started or the process object is already released: nothing left to stop.
         }
+
+        running.LogWriter?.Append(ProcessOutputSource.StdErr, OutputTruncatedMessage);
     }
+
+    internal const string OutputTruncatedMessage = "[squid] output truncated: a background process kept the output pipe open after the script exited";
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
@@ -631,40 +655,15 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         return CompleteRunning(command.Ticket, command.LastLogSequence, running);
     }
 
-    private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Action<int>? onFinalExitCode = null)
+    private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Action<int>? onFinalExitCode = null, TimeSpan? exitWait = null)
     {
         if (!running.Process.HasExited)
-            running.Process.WaitForExit(TimeSpan.FromSeconds(30));
+            running.Process.WaitForExit(exitWait ?? TimeSpan.FromSeconds(30));
 
-        // ALWAYS drain async stream readers before reading logs — even if
-        // the process exited before this method was called.
-        //
-        // Per .NET docs: WaitForExit() with no parameters waits for the
-        // process to exit AND for the async output / error stream readers
-        // to be flushed. The bool overload above (WaitForExit(timeout))
-        // does NOT wait for async readers. WaitForExit(timeout) on an
-        // already-exited process is a no-op AND skips the flush; without
-        // calling WaitForExit() afterwards, .NET's AsyncStreamReader can
-        // still be mid-callback, holding output that hasn't reached the
-        // LogWriter yet.
-        //
-        // Concrete failure mode this eliminates (PR #273 round 1-3 chased
-        // it via 1s/2s sleep workarounds):
-        //   1. Script writes a single line + exits within 50ms
-        //   2. CompleteScript called; HasExited=true → WaitForExit(timeout)
-        //      branch SKIPPED entirely
-        //   3. ReadLogs reads disk; AsyncStreamReader callback hasn't
-        //      fired yet → log file is empty
-        //   4. Test sees ExitCode=0 + AllText=""
-        //   5. Worse: the late callback fires AFTER LogWriter.Dispose()
-        //      and gets silently dropped by SequencedLogWriter.Append's
-        //      _disposed guard (see that method's "Late-OutputDataReceived
-        //      race" comment)
-        //
-        // Fast: WaitForExit() on an already-exited process only waits for
-        // async readers to finish their final callbacks. For tiny output
-        // (single line) this is sub-millisecond.
-        running.Process.WaitForExit();
+        // ALWAYS drain the output readers before reading logs, even if the process exited before this call: the
+        // timed WaitForExit above does not wait for them, and a late callback would hit a disposed LogWriter.
+        // Bounded — see AwaitOutputDrained.
+        AwaitOutputDrained(running);
 
         var logs = ReadLogs(running, lastLogSequence - 1);
         var exitCode = forcedExitCode ?? (running.Process.HasExited ? running.Process.ExitCode : ScriptExitCodes.Timeout);
@@ -770,20 +769,14 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
             Log.Warning(ex, "Failed to kill process for ticket {TicketId}", command.Ticket.TaskId);
         }
 
-        // Drain async stream readers (same rationale as CompleteScript).
-        // Even after Kill the OS may still have a partial line buffered;
-        // WaitForExit() (no-arg) ensures the AsyncStreamReader callbacks
-        // have fired before we read logs + dispose the writer. Bounded by
-        // a brief timed wait on HasExited because Kill is best-effort —
-        // some kernel races leave the process zombie momentarily.
+        // Drain the output readers (same rationale as CompleteScript). Kill is best-effort, so first give the
+        // process a brief moment to go away.
         try
         {
             if (!running.Process.HasExited)
                 running.Process.WaitForExit(TimeSpan.FromSeconds(5));
 
-            // Same WaitForExit() flush as CompleteScript — see that method's
-            // doc-comment for the AsyncStreamReader race rationale.
-            running.Process.WaitForExit();
+            AwaitOutputDrained(running);
         }
         catch (Exception ex)
         {
@@ -1609,6 +1602,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     {
         process.OutputDataReceived += (_, e) =>
         {
+            if (e.Data == null) running.NoteStreamEof();
             if (e.Data == null || running.LogWriter == null) return;
             var parsed = PodLogLineParser.Parse(e.Data);
             running.LogWriter.Append(parsed.Source, parsed.Text);
@@ -1616,6 +1610,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
         process.ErrorDataReceived += (_, e) =>
         {
+            if (e.Data == null) running.NoteStreamEof();
             if (e.Data == null || running.LogWriter == null) return;
             running.LogWriter.Append(ProcessOutputSource.StdErr, e.Data);
         };
@@ -1637,21 +1632,36 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     /// </summary>
     private static void HookNaturalExitPersistence(Process process, RunningScript running)
     {
-        process.Exited += (_, _) => PersistNaturalExit(running);
+        process.Exited += (_, _) => ScheduleNaturalExitPersistence(running);
         process.EnableRaisingEvents = true;
 
         if (process.HasExited)
-            ThreadPool.QueueUserWorkItem(_ => PersistNaturalExit(running));
+            ThreadPool.QueueUserWorkItem(_ => ScheduleNaturalExitPersistence(running));
+    }
+
+    // Runs on the process-exit callback: it must neither block nor hold the Process lock, so a script whose output
+    // pipe is still open is persisted from a timer continuation once EOF arrives or the drain budget runs out.
+    private static void ScheduleNaturalExitPersistence(RunningScript running)
+    {
+        running.NoteExitObserved();
+
+        if (running.OutputEof.Task.IsCompleted)
+        {
+            PersistNaturalExit(running);
+            return;
+        }
+
+        Task.WhenAny(running.OutputEof.Task, Task.Delay(running.RemainingDrainBudget()))
+            .ContinueWith(_ => PersistNaturalExit(running), TaskScheduler.Default);
     }
 
     private static void PersistNaturalExit(RunningScript running)
     {
         try
         {
-            // Parameterless WaitForExit is the only overload that flushes the async stdout/stderr
-            // readers; the persisted Complete state must never be visible before the final log
-            // lines are on disk (SequencedLogWriter flushes every Append).
-            running.Process.WaitForExit();
+            // The persisted Complete state must never be visible before the final log lines are on disk
+            // (SequencedLogWriter flushes every Append), so drain first. Bounded — see AwaitOutputDrained.
+            AwaitOutputDrained(running);
         }
         catch (Exception ex)
         {
@@ -1822,12 +1832,40 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         public DateTimeOffset StartedAt { get; }
         public string? TraceId { get; }
 
-        /// <summary>
-        /// 0 = `WaitForExit()` (no-arg drain) not yet called; 1 = called. Toggled
-        /// via <see cref="Interlocked.Exchange"/> so concurrent GetStatus polls don't
-        /// double-call. See <c>DrainAsyncReadersOnce</c> for the race this closes.
-        /// </summary>
-        public int DrainedAsyncReaders;
+        /// <summary>Completes when both stdout and stderr readers have reported end-of-stream.</summary>
+        public readonly TaskCompletionSource OutputEof = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>How long after the exit is first observed we wait for <see cref="OutputEof"/> before giving up on the pipe.</summary>
+        public TimeSpan OutputDrainTimeout { get; init; } = DefaultOutputDrainTimeout;
+
+        /// <summary>Serialises the single bounded drain (see <c>AwaitOutputDrained</c>); a per-script lock, never shared across tickets.</summary>
+        public readonly object DrainGate = new();
+
+        /// <summary>Set once the drain finished (EOF reached or output capture stopped).</summary>
+        public volatile bool OutputDrained;
+
+        private int _openStreams = 2;
+        private long _exitObservedAt;
+
+        public void NoteStreamEof()
+        {
+            if (Interlocked.Decrement(ref _openStreams) == 0)
+                OutputEof.TrySetResult();
+        }
+
+        /// <summary>Anchors the drain deadline at the first moment the exit was observed (idempotent).</summary>
+        public void NoteExitObserved() => Interlocked.CompareExchange(ref _exitObservedAt, Stopwatch.GetTimestamp(), 0);
+
+        public TimeSpan RemainingDrainBudget()
+        {
+            var anchor = Interlocked.Read(ref _exitObservedAt);
+
+            if (anchor == 0) return OutputDrainTimeout;
+
+            var remaining = OutputDrainTimeout - Stopwatch.GetElapsedTime(anchor);
+
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
 
         /// <summary>Guards the terminal-state flags below and serialises every state-file completion write.</summary>
         public readonly object TerminalGate = new();
@@ -1841,7 +1879,13 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         /// <summary>Set by V2 CancelScript so later status/complete calls report Canceled instead of the kill signal's exit code.</summary>
         public volatile bool V2Canceled;
 
+        /// <summary>Set (before the kill) when a V2 cancel is being carried out; the outcome is recorded once the cancel finishes.</summary>
+        public volatile bool V2CancelIssued;
+
         public int? V2CancelExitCode => V2Canceled ? ScriptExitCodes.Canceled : null;
+
+        /// <summary>A cancel was issued or recorded, so a racing Complete must report Canceled rather than the kill signal's exit code.</summary>
+        public bool V2CancelWins => V2CancelIssued || V2Canceled;
 
         public long LogSequence => LogWriter?.NextSequence ?? 0;
 

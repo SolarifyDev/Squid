@@ -49,6 +49,10 @@ public partial class LocalScriptService
             return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
         }
 
+        // Kill + bounded drain happen OUTSIDE the ticket lock: the lock is one of 64 shared stripes, so waiting on a
+        // process or its output pipe while holding it would stall unrelated tickets.
+        if (_scripts.TryGetValue(ticket.TaskId, out var live) && ShouldIssueCancelV2(live)) IssueCancelV2(ticket, live);
+
         lock (_ticketLocks.For(ticket.TaskId))
         {
             if (_scripts.TryGetValue(ticket.TaskId, out var running)) return CancelRunningV2(ticket, command.LastLogSequence, running);
@@ -60,6 +64,8 @@ public partial class LocalScriptService
     public CompleteScriptResponseV2 CompleteScript(CompleteScriptCommandV2 command)
     {
         var ticket = command.Ticket;
+
+        if (_scripts.TryGetValue(ticket.TaskId, out var live)) AwaitExitAndOutputV2(live);
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
@@ -97,7 +103,7 @@ public partial class LocalScriptService
 
     private static ScriptStatusResponseV2 BuildStatusV2(ScriptTicket ticket, RunningScript running, long lastLogSequence)
     {
-        DrainAsyncReadersOnce(running);
+        AwaitOutputDrained(running);
 
         var (logs, next) = ReadLogsAndCursor(running, lastLogSequence - 1);
 
@@ -167,20 +173,16 @@ public partial class LocalScriptService
         }
     }
 
-    private ScriptStatusResponseV2 CancelRunningV2(ScriptTicket ticket, long lastLogSequence, RunningScript running)
-    {
-        if (running.V2CancelExitCode == null && IsProcessRunning(running))
-            KillForCancelV2(ticket, running);
+    private static bool ShouldIssueCancelV2(RunningScript running) => !running.V2CancelIssued && !running.V2Canceled && IsProcessRunning(running);
 
-        return BuildStatusV2(ticket, running, lastLogSequence);
-    }
-
-    private void KillForCancelV2(ScriptTicket ticket, RunningScript running)
+    // Kills the process and waits (bounded) for it and its output to go away. Must run without the ticket lock.
+    private void IssueCancelV2(ScriptTicket ticket, RunningScript running)
     {
         _cancellationRegistry.Cancel(ticket);
 
         // Flag BEFORE the kill so the exit callback does not record the kill signal's exit code.
         MarkCancelRequested(running);
+        running.V2CancelIssued = true;
 
         try
         {
@@ -189,21 +191,46 @@ public partial class LocalScriptService
             if (!running.Process.HasExited)
                 running.Process.WaitForExit(TimeSpan.FromSeconds(5));
 
-            running.Process.WaitForExit();
+            AwaitOutputDrained(running);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to kill process for ticket {TicketId}", ticket.TaskId);
         }
+    }
 
-        running.V2Canceled = true;
+    // Under the ticket lock: only records the outcome of a cancel already carried out by IssueCancelV2 (no waiting).
+    private ScriptStatusResponseV2 CancelRunningV2(ScriptTicket ticket, long lastLogSequence, RunningScript running)
+    {
+        if (running.V2CancelIssued && !running.V2Canceled)
+        {
+            running.V2Canceled = true;
 
-        FinalizeState(running, ScriptExitCodes.Canceled);
+            FinalizeState(running, ScriptExitCodes.Canceled);
+        }
+
+        return BuildStatusV2(ticket, running, lastLogSequence);
+    }
+
+    // Outside the ticket lock: lets a finishing script exit and its output drain (both bounded) before the lock is taken.
+    private static void AwaitExitAndOutputV2(RunningScript running)
+    {
+        try
+        {
+            if (!running.Process.HasExited)
+                running.Process.WaitForExit(TimeSpan.FromSeconds(30));
+
+            AwaitOutputDrained(running);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Skipped pre-complete wait for {WorkDir}: process already released", running.WorkDir);
+        }
     }
 
     private CompleteScriptResponseV2 CompleteRunningV2(ScriptTicket ticket, long lastLogSequence, RunningScript running)
     {
-        var v1 = CompleteRunning(ticket, lastLogSequence, running, running.V2CancelExitCode, exitCode => WriteTombstone(ticket, ScriptStateV2.Completed, exitCode));
+        var v1 = CompleteRunning(ticket, lastLogSequence, running, running.V2CancelWins ? ScriptExitCodes.Canceled : null, exitCode => WriteTombstone(ticket, ScriptStateV2.Completed, exitCode), TimeSpan.Zero);
 
         _cancellationRegistry.Cleanup(ticket);
 
