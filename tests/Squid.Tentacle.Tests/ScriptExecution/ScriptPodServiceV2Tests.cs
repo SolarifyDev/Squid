@@ -111,6 +111,21 @@ public class ScriptPodServiceV2Tests : IDisposable
     }
 
     [Fact]
+    public void Complete_QueuedBehindIsolationMutex_ReturnsNotYetComplete_AndLeavesItQueued()
+    {
+        var service = NewService();
+        service.StartScript(NewCommand("echo first", ScriptIsolationLevel.FullIsolation, "mx"));
+        var queued = NewCommand("echo second", ScriptIsolationLevel.FullIsolation, "mx");
+        service.StartScript(queued);
+
+        var response = service.CompleteScript(new CompleteScriptCommandV2(queued.ScriptTicket, 0));
+
+        response.Outcome.ShouldBe(CompleteScriptOutcomeV2.NotYetComplete);
+        response.FinalStatus!.State.ShouldBe(ScriptStateV2.Pending);
+        service.PendingScripts.ContainsKey(queued.ScriptTicket.TaskId).ShouldBeTrue();
+    }
+
+    [Fact]
     public void CompleteThenComplete_SecondIsAlreadyCompleted_AlsoAcrossRestart()
     {
         var service = NewService();

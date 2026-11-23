@@ -201,6 +201,49 @@ public class LocalScriptServiceV2Tests : IDisposable
         finally { sleeper.Kill(); }
     }
 
+    [Fact]
+    public void Complete_ScriptStillRunningUnderPreviousAgentProcess_ReturnsNotYetComplete_AndReleasesNothing()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        using var sleeper = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
+        var ticket = NewTicket();
+        SaveState(ticket, new ScriptState { TicketId = ticket.TaskId, Progress = ScriptProgress.Running, ProcessId = sleeper.Id, ProcessStartedAt = sleeper.StartTime.ToUniversalTime(), CreatedAt = DateTimeOffset.UtcNow });
+        var service = NewService();
+
+        try
+        {
+            var response = service.CompleteScript(new CompleteScriptCommandV2(ticket, 0));
+
+            response.Outcome.ShouldBe(CompleteScriptOutcomeV2.NotYetComplete);
+            response.FinalStatus!.State.ShouldBe(ScriptStateV2.Running);
+            Directory.Exists(WorkDir(ticket)).ShouldBeTrue("a running script's workspace must not be released");
+            new ScriptTombstoneStore(_tombstoneDir).TryRead(ticket.TaskId).ShouldBeNull();
+        }
+        finally { sleeper.Kill(); }
+    }
+
+    [Fact]
+    public async Task Complete_WhileStartIsBlockedOnTheIsolationMutex_ReturnsNotYetCompleteWithPending()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var service = NewService();
+        var holder = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = "sleep 30", Isolation = ScriptIsolationLevel.FullIsolation, IsolationMutexName = "v2-nyc-mutex", ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
+        var waiter = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = "echo never", Isolation = ScriptIsolationLevel.FullIsolation, IsolationMutexName = "v2-nyc-mutex", ScriptIsolationMutexTimeout = TimeSpan.FromSeconds(20) };
+        service.StartScript(holder);
+        var blockedStart = Task.Run(() => { try { service.StartScript(waiter); } catch { } });
+        await Task.Delay(500);
+
+        var response = service.CompleteScript(new CompleteScriptCommandV2(waiter.ScriptTicket, 0));
+        service.CancelScript(new CancelScriptCommandV2(waiter.ScriptTicket, 0));
+        service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0));
+        await blockedStart;
+
+        response.Outcome.ShouldBe(CompleteScriptOutcomeV2.NotYetComplete);
+        response.FinalStatus!.State.ShouldBe(ScriptStateV2.Pending);
+    }
+
     // ── restart after natural exit (#553) ───────────────────────────────────
 
     [Theory]

@@ -70,8 +70,7 @@ public partial class ScriptPodService : IScriptServiceV2
         {
             if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId)) return CompleteLiveV2(command);
 
-            if (_pendingScripts.ContainsKey(ticket.TaskId))
-                throw new InvalidOperationException($"Script {ticket.TaskId} is still queued; cancel it or poll until it is running before completing");
+            if (_pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotLiveV2(ticket);
         }

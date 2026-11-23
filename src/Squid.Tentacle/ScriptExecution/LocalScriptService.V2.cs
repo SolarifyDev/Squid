@@ -65,8 +65,7 @@ public partial class LocalScriptService
         {
             if (_scripts.TryRemove(ticket.TaskId, out var running)) return CompleteRunningV2(ticket, command.LastLogSequence, running);
 
-            if (_startsInFlight.ContainsKey(ticket.TaskId))
-                throw new InvalidOperationException($"Script {ticket.TaskId} is still starting; cancel it or poll until it is running before completing");
+            if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotRunningV2(ticket, command.LastLogSequence);
         }
@@ -220,8 +219,7 @@ public partial class LocalScriptService
 
     private CompleteScriptResponseV2 ReleasePersistedV2(ScriptTicket ticket, ScriptStatusResponseV2 persisted)
     {
-        if (persisted.State is ScriptStateV2.Running or ScriptStateV2.Pending)
-            throw new InvalidOperationException($"Script {ticket.TaskId} is still running under a previous agent process and cannot be completed yet");
+        if (persisted.State is ScriptStateV2.Running or ScriptStateV2.Pending) return ScriptV2Mapping.NotYetComplete(persisted);
 
         WriteTombstone(ticket, persisted.State, persisted.ExitCode);
         CleanupWorkDir(ResolveWorkDir(ticket.TaskId));

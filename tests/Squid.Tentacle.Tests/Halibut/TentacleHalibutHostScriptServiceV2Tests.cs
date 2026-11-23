@@ -88,6 +88,40 @@ public sealed class TentacleHalibutHostScriptServiceV2Tests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task V2_CompleteOfAScriptStillRunning_ReturnsNotYetCompleteOverHalibut_NotAServiceException()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var v2 = _server.CreateAsyncClient<IScriptServiceV2, IAsyncScriptServiceV2>(Endpoint(_bothHost));
+        using var sleeper = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
+        var ticket = NewTicket();
+        new ScriptStateStore(Path.Combine(Path.GetTempPath(), $"squid-tentacle-{ticket.TaskId}")).Save(new ScriptState { TicketId = ticket.TaskId, Progress = ScriptProgress.Running, ProcessId = sleeper.Id, ProcessStartedAt = sleeper.StartTime.ToUniversalTime(), CreatedAt = DateTimeOffset.UtcNow });
+
+        try
+        {
+            var response = await v2.CompleteScriptAsync(new CompleteScriptCommandV2(ticket, 0));
+
+            response.Outcome.ShouldBe(CompleteScriptOutcomeV2.NotYetComplete);
+            response.FinalStatus!.State.ShouldBe(ScriptStateV2.Running);
+        }
+        finally { sleeper.Kill(); }
+    }
+
+    [Fact]
+    public async Task V2_StartWithoutSettingMutexTimeout_StillRuns()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var v2 = _server.CreateAsyncClient<IScriptServiceV2, IAsyncScriptServiceV2>(Endpoint(_bothHost));
+        var ticket = NewTicket();
+
+        await v2.StartScriptAsync(new StartScriptCommandV2 { ScriptTicket = ticket, ScriptBody = "exit 0" });
+        var final = await PollUntilCompletedAsync(v2, ticket);
+
+        final.ExitCode.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task V1_StillWorksOnTheSameAgent_ThatAlsoServesV2()
     {
         if (OperatingSystem.IsWindows()) return;

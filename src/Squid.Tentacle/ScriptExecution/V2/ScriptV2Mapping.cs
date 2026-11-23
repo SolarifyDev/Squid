@@ -51,6 +51,9 @@ public static class ScriptV2Mapping
     public static CompleteScriptResponseV2 Released(ScriptStatusResponseV2 final)
         => new(final.Ticket, CompleteScriptOutcomeV2.Completed, final);
 
+    public static CompleteScriptResponseV2 NotYetComplete(ScriptStatusResponseV2 current)
+        => new(current.Ticket, CompleteScriptOutcomeV2.NotYetComplete, current);
+
     public static CompleteScriptResponseV2 AlreadyReleased(ScriptTicket ticket)
         => new(ticket, CompleteScriptOutcomeV2.AlreadyCompleted, null);
 
