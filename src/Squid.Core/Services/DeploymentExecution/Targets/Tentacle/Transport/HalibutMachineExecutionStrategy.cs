@@ -5,11 +5,13 @@ using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.DeploymentExecution.Script.Files;
+using Squid.Core.Services.DeploymentExecution.Tentacle.Dispatchers;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Settings.Halibut;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 
@@ -27,16 +29,24 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 /// Tentacle composition pieces so a new transport contributor doesn't try to
 /// extend it from the wrong place. Same structural-genericity fix as
 ///  (<c>EndpointVariableFactory</c>).</para>
+///
+/// <para><b>Seam boundary</b>: this class owns everything that is the same whichever script-service
+/// protocol version the agent speaks — endpoint parsing, circuit breaker, polling-work admission, ticket
+/// generation, the machine-scoped isolation mutex name, the in-flight record-before-RPC / clear /
+/// re-attach protocol, RPC retry wrapping, the observer and the remote-cancel decision. Only "open a
+/// client, start a script from a <see cref="ScriptDispatchSpec"/>, recognise an unknown ticket" varies,
+/// and that lives behind <see cref="IScriptDispatcher"/> (V1: <c>Dispatchers/V1ScriptDispatcher</c>).
+/// A new protocol version is a sibling dispatcher; this class does not change.</para>
 /// </summary>
 public class HalibutMachineExecutionStrategy : IExecutionStrategy
 {
-    private readonly IHalibutClientFactory _halibutClientFactory;
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
     private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
     private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly IInFlightScriptStore _inFlightStore;
     private readonly RpcRetryHandler _rpcRetry;
+    private readonly IScriptDispatcher _scriptDispatcher;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -47,15 +57,16 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         IMachineCircuitBreakerRegistry breakerRegistry = null,
         IMachineRuntimeCapabilitiesCache capabilitiesCache = null,
         IInFlightScriptStore inFlightStore = null,
-        RpcRetryHandler rpcRetry = null)
+        RpcRetryHandler rpcRetry = null,
+        IScriptDispatcher scriptDispatcher = null)
     {
-        _halibutClientFactory = halibutClientFactory;
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
         _capabilitiesCache = capabilitiesCache;
         _inFlightStore = inFlightStore;
         _rpcRetry = rpcRetry ?? new RpcRetryHandler(halibutSetting.RpcRetry);
+        _scriptDispatcher = scriptDispatcher ?? new V1ScriptDispatcher(halibutClientFactory);
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -98,7 +109,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             // Observability today; the branch site is already wired for E.2's V2 rollout.
             LogProtocolDispatchDecision(request.Machine.Id, request.Machine.Name);
 
-            var scriptClient = _halibutClientFactory.CreateClient(endpoint);
+            var scriptClient = _scriptDispatcher.CreateClient(endpoint);
 
             try
             {
@@ -154,32 +165,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
-        // Ticket is fresh-per-attempt (Guid) so a retry doesn't trap on agent-side
-        // state from the previous attempt. IsolationMutexName is MACHINE-SCOPED
-        // (the 5th ctor arg) so every FullIsolation script on this machine —
-        // deployments AND upgrades, all via ScriptIsolationMutexNames.ForMachine —
-        // serialises behind one writer lock. The server task id rides the 7th arg
-        // (taskId) purely for correlation.
-        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
-        var scriptTicket = new ScriptTicket(ticketId);
+        var dispatch = BuildDispatch(request, scriptClient, endpoint, scriptBody, scriptFiles);
 
-        var command = new StartScriptCommand(
-            scriptTicket,
-            scriptBody,
-            ScriptIsolationLevel.FullIsolation,
-            scriptTimeout,
-            ScriptIsolationMutexNames.ForMachine(request.Machine.Id),
-            Array.Empty<string>(),
-            request.ServerTaskId.ToString(),
-            TimeSpan.Zero,
-            scriptFiles)
-        {
-            ScriptSyntax = MapSyntax(request.Syntax),
-            TargetNamespace = request.TargetNamespace
-        };
-
-        return await DispatchOrReattachAsync(request, scriptClient, endpoint, scriptTicket, command, scriptTimeout, ct).ConfigureAwait(false);
+        return await DispatchOrReattachAsync(dispatch, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
@@ -190,30 +178,42 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, request.PackageReferences, variableBytes, sensitiveBytes, password);
-        var scriptTimeout = request.Timeout ?? _defaultScriptTimeout;
-        // See ExecuteCalamariViaHalibutAsync above for the ticket-vs-mutex-name
-        // rationale: ticket is Guid-per-attempt; IsolationMutexName (arg 5) is the
-        // machine-scoped name that serialises FullIsolation scripts on the agent.
-        var ticketId = GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id);
-        var scriptTicket = new ScriptTicket(ticketId);
+        var dispatch = BuildDispatch(request, scriptClient, endpoint, request.ScriptBody, scriptFiles);
 
-        var command = new StartScriptCommand(
-            scriptTicket,
-            request.ScriptBody,
-            ScriptIsolationLevel.FullIsolation,
-            scriptTimeout,
-            ScriptIsolationMutexNames.ForMachine(request.Machine.Id),
-            Array.Empty<string>(),
-            request.ServerTaskId.ToString(),
-            TimeSpan.Zero,
-            scriptFiles)
+        return await DispatchOrReattachAsync(dispatch, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Everything one dispatch needs, protocol-neutral: the ticket / timeout / mutex name are decided here
+    /// (shared by every <see cref="IScriptDispatcher"/>), and the dispatcher only validates the spec and
+    /// prepares its start call — before any in-flight record or agent probe.
+    /// </summary>
+    private DispatchContext BuildDispatch(ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, string scriptBody, ScriptFile[] scriptFiles)
+    {
+        // Ticket is fresh-per-attempt (Guid) so a retry doesn't trap on agent-side
+        // state from the previous attempt. The isolation mutex name is MACHINE-SCOPED
+        // so every FullIsolation script on this machine — deployments AND upgrades,
+        // all via ScriptIsolationMutexNames.ForMachine — serialises behind one writer
+        // lock. The server task id rides along purely for correlation.
+        var spec = new ScriptDispatchSpec
         {
-            ScriptSyntax = MapSyntax(request.Syntax),
+            Ticket = new ScriptTicket(GenerateTicketId(request.ServerTaskId, request.StepName, request.ActionName, request.Machine.Id)),
+            ScriptBody = scriptBody,
+            Files = scriptFiles,
+            Timeout = request.Timeout ?? _defaultScriptTimeout,
+            IsolationMutexName = ScriptIsolationMutexNames.ForMachine(request.Machine.Id),
+            ServerTaskId = request.ServerTaskId,
+            Syntax = request.Syntax,
             TargetNamespace = request.TargetNamespace
         };
 
-        return await DispatchOrReattachAsync(request, scriptClient, endpoint, scriptTicket, command, scriptTimeout, ct).ConfigureAwait(false);
+        var start = _scriptDispatcher.PrepareStart(scriptClient, spec);
+
+        return new DispatchContext(request, scriptClient, endpoint, spec, start);
     }
+
+    /// <summary>One dispatch: the request, the RAW agent client, the endpoint, the protocol-neutral spec and the dispatcher's prepared start call.</summary>
+    private sealed record DispatchContext(ScriptExecutionRequest Request, IAsyncScriptService Client, ServiceEndPoint Endpoint, ScriptDispatchSpec Spec, Func<Task<ScriptStatusResponse>> Start);
 
     /// <summary>
     /// Dispatch a script to the agent and observe it to completion — or, on a
@@ -224,10 +224,10 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     /// moment the agent launches the script leaves a durable pointer the next run
     /// can re-attach to — never a duplicate dispatch.
     /// </summary>
-    private async Task<ScriptExecutionResult> DispatchOrReattachAsync(
-        ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint,
-        ScriptTicket scriptTicket, StartScriptCommand command, TimeSpan scriptTimeout, CancellationToken ct)
+    private async Task<ScriptExecutionResult> DispatchOrReattachAsync(DispatchContext dispatch, CancellationToken ct)
     {
+        var request = dispatch.Request;
+
         // Scope the in-flight slot to the (machine, step, action) dispatch unit, NOT
         // the machine alone: a parallel batch can dispatch two scripts to one machine
         // at once (two StartWithPrevious steps sharing a target role), and a
@@ -239,9 +239,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // GetStatus / Cancel / Complete survive a brief dropped connection inside a time budget; every
         // exhausted budget rethrows the original exception, so the pause path below is unchanged and the
         // breaker still sees ONE failure per dispatch (retries never touch it). StartScript stays unretried.
-        scriptClient = new RetryingScriptClient(scriptClient, _rpcRetry, scriptTimeout, ct);
+        var scriptClient = new RetryingScriptClient(dispatch.Client, _rpcRetry, dispatch.Spec.Timeout, ct);
 
-        var reattached = await TryReattachAsync(request, scriptClient, endpoint, scriptTimeout, ct).ConfigureAwait(false);
+        var reattached = await TryReattachAsync(dispatch, scriptClient, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;
 
         // Record-before-RPC: persist the ticket we are about to dispatch BEFORE
@@ -251,18 +251,18 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // dispatch a fresh ticket — running the (non-idempotent) script a SECOND
         // time. With the record first, resume always knows a ticket to re-probe:
         // TryReattachAsync re-attaches if the agent has it, and falls through to a
-        // clean fresh dispatch (via the Complete+UnknownResult sentinel) if the
+        // clean fresh dispatch (via the unknown-ticket answer) if the
         // script never actually started. The agent is idempotent for a known
         // ticket, so even a retried StartScript returns status, not a second run.
         if (_inFlightStore != null)
-            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, scriptTicket.TaskId, ct).ConfigureAwait(false);
+            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, dispatch.Spec.Ticket.TaskId, ct).ConfigureAwait(false);
 
-        var startResponse = await scriptClient.StartScriptAsync(command).ConfigureAwait(false);
+        var startResponse = await dispatch.Start().ConfigureAwait(false);
 
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
-            request.Machine.Name, scriptTicket);
+            request.Machine.Name, dispatch.Spec.Ticket);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, scriptTicket, scriptTimeout, ct, request.Masker, startResponse, endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, dispatch.Spec.Ticket, dispatch.Spec.Timeout, ct, request.Masker, startResponse, dispatch.Endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
 
         // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
         // observer RETURNED (script completed, reported a non-zero exit, or hit the
@@ -287,14 +287,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     /// still has a usable script for it, observe that script to completion and
     /// return its result (no duplicate dispatch). Returns <see langword="null"/>
     /// — meaning "dispatch fresh" — when there is no record, the probe fails, or
-    /// the agent has no usable script (<see cref="AgentHasUsableScript"/>). The
-    /// fresh-dispatch fallback is exactly today's behaviour, so re-attach can only
+    /// the agent no longer knows the ticket (<see cref="IScriptDispatcher.IsUnknownTicket"/>).
+    /// The fresh-dispatch fallback is exactly today's behaviour, so re-attach can only
     /// ever AVOID a duplicate, never change a deployment that wasn't resuming.
     /// </summary>
-    private async Task<ScriptExecutionResult> TryReattachAsync(
-        ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, TimeSpan scriptTimeout, CancellationToken ct)
+    private async Task<ScriptExecutionResult> TryReattachAsync(DispatchContext dispatch, IAsyncScriptService scriptClient, CancellationToken ct)
     {
         if (_inFlightStore == null) return null;
+
+        var request = dispatch.Request;
 
         // Same dispatch-unit scope as DispatchOrReattachAsync: only re-attach to a
         // ticket recorded for THIS (machine, step, action), never to a sibling step
@@ -332,7 +333,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             return null;
         }
 
-        if (!AgentHasUsableScript(probe))
+        if (_scriptDispatcher.IsUnknownTicket(probe))
         {
             await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
             return null;
@@ -341,7 +342,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
             request.Machine.Name, existingTicketId, probe.State);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, scriptTimeout, ct, request.Masker, probe, endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
+        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, dispatch.Spec.Timeout, ct, request.Masker, probe, dispatch.Endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
 
         // Clear only on a definitive observation; preserve on a throw so a further
         // resume re-attaches again (same rationale as DispatchOrReattachAsync).
@@ -351,22 +352,12 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     /// <summary>
-    /// Whether a <c>GetStatus</c> probe shows the agent still holds the script,
-    /// so we re-attach instead of dispatching a duplicate. The Tentacle returns
-    /// <c>Complete + UnknownResult (-1)</c> for an UNKNOWN ticket — the single
-    /// "agent doesn't have it" signal — so ONLY that case dispatches fresh.
-    ///
-    /// <para>Every other state means the agent demonstrably holds the ticket and
-    /// MUST be re-attached to — including <see cref="ProcessState.Pending"/>: a
-    /// queued-but-not-started script left by the crashed run would otherwise run
-    /// <i>alongside</i> a fresh dispatch (new ticket), causing the exact
-    /// double-execution this feature prevents. A real script that genuinely
-    /// exited -1 collides with the sentinel and is conservatively re-dispatched
-    /// (today's behaviour) — an accepted rare edge.</para>
+    /// Whether a <c>GetStatus</c> probe shows the agent still holds the script (V1 semantics: anything
+    /// except <c>Complete + UnknownResult (-1)</c>, including <c>Pending</c>). Kept as the stable,
+    /// test-pinned entry point; the rule itself lives with the protocol in
+    /// <see cref="V1ScriptDispatcher.IsUnknownTicketProbe"/>.
     /// </summary>
-    internal static bool AgentHasUsableScript(ScriptStatusResponse probe)
-        => probe is not null
-           && !(probe.State == ProcessState.Complete && probe.ExitCode == ScriptExitCodes.UnknownResult);
+    internal static bool AgentHasUsableScript(ScriptStatusResponse probe) => !V1ScriptDispatcher.IsUnknownTicketProbe(probe);
 
     private static ScriptFile[] BuildDirectScriptFiles(
         DeploymentFileCollection deploymentFiles,
@@ -389,26 +380,8 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return files.ToArray();
     }
 
-    /// <summary>
-    /// Translates the server-side script syntax to the Tentacle's wire enum.
-    /// All five syntaxes the Tentacle's <c>LocalScriptService</c> can execute
-    /// natively are passed through; an unknown syntax is rejected loudly rather
-    /// than silently downgraded to <c>Bash</c>, which previously caused Python
-    /// scripts to be handed to <c>bash script.sh</c> and crash with
-    /// <c>"import: command not found"</c>.
-    /// </summary>
-    internal static ScriptType MapSyntax(Message.Models.Deployments.Execution.ScriptSyntax syntax)
-    {
-        return syntax switch
-        {
-            Message.Models.Deployments.Execution.ScriptSyntax.PowerShell => ScriptType.PowerShell,
-            Message.Models.Deployments.Execution.ScriptSyntax.Bash => ScriptType.Bash,
-            Message.Models.Deployments.Execution.ScriptSyntax.Python => ScriptType.Python,
-            Message.Models.Deployments.Execution.ScriptSyntax.CSharp => ScriptType.CSharp,
-            Message.Models.Deployments.Execution.ScriptSyntax.FSharp => ScriptType.FSharp,
-            _ => throw new InvalidOperationException($"Unsupported script syntax for Tentacle execution: {syntax}")
-        };
-    }
+    /// <summary>Stable, test-pinned entry point; the V1 wire mapping lives in <see cref="V1ScriptDispatcher"/>.</summary>
+    internal static ScriptType MapSyntax(Message.Models.Deployments.Execution.ScriptSyntax syntax) => V1ScriptDispatcher.MapSyntax(syntax);
 
     /// <summary>
     /// Produces a fresh <see cref="ScriptTicket"/> id per dispatch attempt
