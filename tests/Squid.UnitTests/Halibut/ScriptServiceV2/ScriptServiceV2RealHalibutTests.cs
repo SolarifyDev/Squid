@@ -181,6 +181,7 @@ public sealed class ScriptServiceV2RealHalibutTests : IAsyncLifetime
     [InlineData(CompleteScriptOutcomeV2.Completed, true)]
     [InlineData(CompleteScriptOutcomeV2.AlreadyCompleted, false)]
     [InlineData(CompleteScriptOutcomeV2.UnknownTicket, false)]
+    [InlineData(CompleteScriptOutcomeV2.NotYetComplete, true)]
     public async Task CompleteScriptResponseV2_EveryOutcome_RoundTripsThroughHalibut(CompleteScriptOutcomeV2 outcome, bool withFinalStatus)
     {
         var client = _server.CreateAsyncClient<IScriptServiceV2, IAsyncScriptServiceV2>(_bothEndpoint);

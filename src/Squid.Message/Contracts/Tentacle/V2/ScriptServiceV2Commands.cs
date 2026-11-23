@@ -33,7 +33,13 @@ public enum CompleteScriptOutcomeV2
     AlreadyCompleted = 2,
 
     /// <summary>The agent has no record of the ticket.</summary>
-    UnknownTicket = 3
+    UnknownTicket = 3,
+
+    /// <summary>
+    /// The ticket exists but is still starting, queued or running (including under a previous agent process), so it cannot be
+    /// released. <see cref="CompleteScriptResponseV2.FinalStatus"/> carries its current status; poll or cancel, then Complete again.
+    /// </summary>
+    NotYetComplete = 4
 }
 
 /// <summary>
@@ -51,7 +57,10 @@ public class StartScriptCommandV2
 
     public ScriptIsolationLevel Isolation { get; init; }
 
-    public TimeSpan ScriptIsolationMutexTimeout { get; init; }
+    /// <summary>Default 30 minutes: what the server sends for V1 deployments today (<c>HalibutSetting.Polling.ScriptTimeoutMinutes</c>). A zero timeout would make the agent's mutex acquire fail even for NoIsolation.</summary>
+    public TimeSpan ScriptIsolationMutexTimeout { get; init; } = DefaultScriptIsolationMutexTimeout;
+
+    public static readonly TimeSpan DefaultScriptIsolationMutexTimeout = TimeSpan.FromMinutes(30);
 
     public string? IsolationMutexName { get; init; }
 
@@ -150,6 +159,6 @@ public class CompleteScriptResponseV2
 
     public CompleteScriptOutcomeV2 Outcome { get; }
 
-    /// <summary>Final status with the remaining logs; present only for <see cref="CompleteScriptOutcomeV2.Completed"/>.</summary>
+    /// <summary>Final status with the remaining logs for <see cref="CompleteScriptOutcomeV2.Completed"/>; the current status for <see cref="CompleteScriptOutcomeV2.NotYetComplete"/>; null otherwise.</summary>
     public ScriptStatusResponseV2? FinalStatus { get; }
 }

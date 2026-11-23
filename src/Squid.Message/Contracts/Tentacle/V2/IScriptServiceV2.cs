@@ -34,6 +34,7 @@ public interface IScriptServiceV2
     /// Finishes the script: returns the remaining logs and releases the agent's resources for the
     /// ticket. Idempotent: a second Complete, or one for an unknown ticket, returns an explicit
     /// <see cref="CompleteScriptOutcomeV2"/> instead of a fabricated exit code.
+    /// A ticket that is still starting, queued or running returns <see cref="CompleteScriptOutcomeV2.NotYetComplete"/> with its current status; Complete never throws for it.
     /// </summary>
     CompleteScriptResponseV2 CompleteScript(CompleteScriptCommandV2 command);
 }

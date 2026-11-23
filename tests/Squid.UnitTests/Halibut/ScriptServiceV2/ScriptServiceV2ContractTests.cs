@@ -36,6 +36,7 @@ public sealed class ScriptServiceV2ContractTests
     [InlineData(CompleteScriptOutcomeV2.Completed, 1)]
     [InlineData(CompleteScriptOutcomeV2.AlreadyCompleted, 2)]
     [InlineData(CompleteScriptOutcomeV2.UnknownTicket, 3)]
+    [InlineData(CompleteScriptOutcomeV2.NotYetComplete, 4)]
     public void CompleteScriptOutcomeV2_ValuesPinned(CompleteScriptOutcomeV2 outcome, int wireValue)
     {
         ((int)outcome).ShouldBe(wireValue);
@@ -44,7 +45,16 @@ public sealed class ScriptServiceV2ContractTests
     [Fact]
     public void CompleteScriptOutcomeV2_HasNoUnpinnedMembers()
     {
-        Enum.GetValues<CompleteScriptOutcomeV2>().Length.ShouldBe(4);
+        Enum.GetValues<CompleteScriptOutcomeV2>().Length.ShouldBe(5, "a new member must be added to the pinned theory above");
+    }
+
+    [Fact]
+    public void StartScriptCommandV2_IsolationMutexTimeout_DefaultsToWhatTheServerSendsForV1()
+    {
+        var command = new StartScriptCommandV2 { ScriptTicket = new ScriptTicket("t") };
+
+        command.ScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(30), "zero makes the agent's mutex acquire fail even for NoIsolation");
+        StartScriptCommandV2.DefaultScriptIsolationMutexTimeout.ShouldBe(TimeSpan.FromMinutes(30));
     }
 
     [Fact]
