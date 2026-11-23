@@ -2,6 +2,7 @@ using System.Security.Cryptography.X509Certificates;
 using Halibut;
 using Halibut.Diagnostics;
 using Halibut.ServiceModel;
+using Squid.Core.Halibut.RedisQueue;
 using Squid.Core.Settings.Halibut;
 using Squid.Core.Settings.SelfCert;
 using Squid.Message.Hardening;
@@ -71,12 +72,14 @@ public class HalibutModule : Module
 
             var refresher = ctx.Resolve<IPollingTrustRefresher>();
 
+            // Polling-agent requests queue locally first and cross pods through Redis only when no poller of the agent is attached here (see FailoverPendingRequestQueue).
             var halibutRuntime = new HalibutRuntimeBuilder()
                 .WithServiceFactory(services)
                 .WithTrustProvider(ctx.Resolve<SnapshotTrustProvider>())
                 .WithOnUnauthorizedClientConnect((_, thumbprint) => BlockAndRefreshTrust(refresher, thumbprint))
                 .WithServerCertificate(serverCert)
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
+                .WithFailoverQueue(ctx, halibutTimeoutsAndLimits, new LogFactory())
                 .Build();
 
             Log.Information("HalibutRuntime created. ServerCertThumbprint={Thumbprint}", serverCert.Thumbprint);
@@ -90,6 +93,8 @@ public class HalibutModule : Module
         builder.RegisterType<SnapshotTrustProvider>().AsSelf().SingleInstance();
 
         builder.RegisterType<PollingTrustRefresher>().As<IPollingTrustRefresher>().As<IStartable>().SingleInstance();
+
+        HalibutQueueWiring.RegisterComponents(builder);
 
         builder.RegisterType<PollingTrustDistributor>().As<IPollingTrustDistributor>().As<IStartable>().SingleInstance();
     }
