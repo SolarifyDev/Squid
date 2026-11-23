@@ -98,7 +98,7 @@ public sealed class DiskPressureHealAction : ISelfHealAction
 
     public TimeSpan CheckInterval => _currentInterval;
 
-    private static DiskPressure DefaultDiskProbe(string path)
+    internal static DiskPressure DefaultDiskProbe(string path)
     {
         var (available, total) = DiskSpaceChecker.GetDiskSpace(path);
         return new DiskPressure(available, total,
