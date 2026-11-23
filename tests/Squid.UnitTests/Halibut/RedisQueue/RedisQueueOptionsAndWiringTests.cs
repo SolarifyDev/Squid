@@ -48,6 +48,32 @@ public class RedisQueueOptionsTests
         options.ShouldBe(new RedisQueueOptions("staging", TimeSpan.FromSeconds(40), 7, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(9), TimeSpan.FromSeconds(4), TimeSpan.FromMinutes(60)));
     }
 
+    [Fact]
+    public void ReplicaHeartbeatAndApplyResponseBudget_HaveDefaults_AreBound_AndLiveWindowIsThreeBeats()
+    {
+        var defaults = RedisQueueOptions.From(Bind());
+
+        defaults.ReplicaHeartbeat.ShouldBe(TimeSpan.FromSeconds(5));
+        defaults.ApplyResponseBudget.ShouldBe(TimeSpan.FromSeconds(10));
+        defaults.ReplicaLiveWindow.ShouldBe(TimeSpan.FromSeconds(15));
+
+        var bound = RedisQueueOptions.From(Bind(("Halibut:RedisQueue:ReplicaHeartbeatSeconds", "2"), ("Halibut:RedisQueue:ApplyResponseBudgetSeconds", "7")));
+
+        bound.ReplicaHeartbeat.ShouldBe(TimeSpan.FromSeconds(2));
+        bound.ApplyResponseBudget.ShouldBe(TimeSpan.FromSeconds(7));
+        bound.ReplicaLiveWindow.ShouldBe(TimeSpan.FromSeconds(6));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void NonPositiveReplicaHeartbeatAndBudget_FallBackToTheDefaults(string raw)
+    {
+        var options = RedisQueueOptions.From(Bind(("Halibut:RedisQueue:ReplicaHeartbeatSeconds", raw), ("Halibut:RedisQueue:ApplyResponseBudgetSeconds", raw)));
+
+        options.ShouldBe(RedisQueueOptions.From(Bind()));
+    }
+
     [Theory]
     [InlineData("0")]
     [InlineData("-5")]

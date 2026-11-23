@@ -87,7 +87,7 @@ public sealed class PostgresDataStreamPersistence(ILifetimeScope scope) : IDataS
         return connection;
     }
 
-    private static string ReadConnectionString(ILifetimeScope root)
+    internal static string ReadConnectionString(ILifetimeScope root)
     {
         using var child = root.BeginLifetimeScope();
 

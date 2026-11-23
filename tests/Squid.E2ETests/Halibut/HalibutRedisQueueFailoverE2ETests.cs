@@ -120,10 +120,10 @@ public class HalibutRedisQueueFailoverE2ETests : IClassFixture<TwoPodsFixture>
         agent.Service.Started.ShouldContain("c-after");
     }
 
-    // A single replica with Redis down and an agent that restarts: before Redis was involved the in-memory queue held the request until the agent reconnected.
+    // Redis down, the other pod alive and an agent that restarts: before Redis was involved the in-memory queue held the request until the agent reconnected.
     // It must still, however long the agent was away compared with the liveness window and however long Redis has been down.
     [Fact]
-    public async Task SingleReplica_RedisCut_AgentGoneAndBackAfterTwentySeconds_RequestIssuedWhileGoneSucceedsOnReconnect()
+    public async Task RedisCut_AgentGoneAndBackAfterTwentySeconds_RequestIssuedWhileGoneSucceedsOnReconnect()
     {
         await using var agent = _pods.StartAgent(_pods.A);
 
@@ -156,6 +156,28 @@ public class HalibutRedisQueueFailoverE2ETests : IClassFixture<TwoPodsFixture>
 
             await WaitUntilAsync(() => _pods.A.Health.IsAvailable && _pods.B.Health.IsAvailable, "both breakers to close after Redis returned", TimeSpan.FromSeconds(30));
         }
+    }
+
+    // The agent restarts on a node served by the other pod. The old pod's polling handler keeps the dead connection's dequeue outstanding for Halibut's 30 s wait, and
+    // the liveness window follows it, so for a while the old pod still counts the agent as attached. (A request issued during the first 30 s is taken by that dead
+    // dequeue and fails with a connection reset: Halibut's own behaviour, the same on a single pod, and a transient failure the deployment pauses on.) One issued after
+    // the dequeue ended but inside the window is queued locally, and must not be stranded there until the pickup timeout.
+    [Fact]
+    public async Task AgentMovesToAnotherPod_RequestIssuedOnTheOldPodWhileItStillCountsTheAgent_FollowsItThroughRedis()
+    {
+        await using var agent = _pods.StartAgent(_pods.A);
+
+        await agent.CallFrom(_pods.A).StartScriptAsync(Script("g-warm")).WithinAsync(TimeSpan.FromSeconds(60), "the warm-up request");
+        await agent.DisconnectAsync();
+
+        agent.MoveTo(_pods.B);
+
+        await Task.Delay(TimeSpan.FromSeconds(32));
+
+        var response = await agent.CallFrom(_pods.A, TimeSpan.FromSeconds(120)).StartScriptAsync(Script("g-moved")).WithinAsync(TimeSpan.FromSeconds(100), "the request issued while the agent moved");
+
+        response.State.ShouldBe(ProcessState.Complete);
+        agent.Service.Started.ShouldContain("g-moved");
     }
 
     [Fact]
@@ -277,8 +299,18 @@ internal static class TaskLimits
 
 public sealed record ReceivedFile(long Length, string Sha256, string Password);
 
+/// <summary>What a <see cref="TestAgent"/> needs of a pod: its runtime to call through, and where and as whom it listens for polling agents.</summary>
+public interface IFailoverPod
+{
+    HalibutRuntime Runtime { get; }
+
+    string Thumbprint { get; }
+
+    int PollingPort { get; }
+}
+
 /// <summary>One server pod: a container built through the real module with its own polling listener, certificate and the shared Postgres and Redis.</summary>
-public sealed class RedisFailoverPod : E2EFixtureBase<HalibutRedisQueueFailoverE2ETests>
+public sealed class RedisFailoverPod<TTest> : E2EFixtureBase<TTest>, IFailoverPod
 {
     private readonly string _redis;
     private readonly string _prefix;
@@ -319,9 +351,25 @@ public sealed class RedisFailoverPod : E2EFixtureBase<HalibutRedisQueueFailoverE
         configuration["Halibut:RedisQueue:OpenDurationSeconds"] = "2";
         configuration["Halibut:RedisQueue:ProbeIntervalSeconds"] = "1";
         configuration["Halibut:RedisQueue:ProbeTimeoutSeconds"] = "1";
+        configuration["Halibut:RedisQueue:ReplicaHeartbeatSeconds"] = "1";
 
         // The trust list is refreshed from the database (which knows no test agent) on a timer; the test trusts its agents by hand, so the timer must not wipe them.
         configuration["Halibut:Trust:RefreshIntervalSeconds"] = "3600";
+    }
+
+    public IReplicaPresence Replicas => LifetimeScope.Resolve<IReplicaPresence>();
+
+    /// <summary>The heartbeat has to have seen the other pod before a request may cross to it through Redis.</summary>
+    public async Task WaitUntilAnotherReplicaIsLiveAsync()
+    {
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+
+        while (!Replicas.OtherReplicaIsLive)
+        {
+            if (DateTime.UtcNow > until) throw new TimeoutException("The pod never saw another live replica");
+
+            await Task.Delay(50);
+        }
     }
 
     public async Task WaitUntilTrustLoadedAsync()
@@ -356,9 +404,9 @@ public sealed class TwoPodsFixture : IAsyncLifetime
 
     public CuttableTcpProxy Proxy { get; private set; }
 
-    public RedisFailoverPod A { get; private set; }
+    public RedisFailoverPod<HalibutRedisQueueFailoverE2ETests> A { get; private set; }
 
-    public RedisFailoverPod B { get; private set; }
+    public RedisFailoverPod<HalibutRedisQueueFailoverE2ETests> B { get; private set; }
 
     public async Task InitializeAsync()
     {
@@ -370,13 +418,15 @@ public sealed class TwoPodsFixture : IAsyncLifetime
         Proxy = new CuttableTcpProxy(host, port);
         _inspector = await ConnectionMultiplexer.ConnectAsync($"{_realRedis},abortConnect=False");
 
-        A = new RedisFailoverPod(Proxy.Address, _prefix);
-        B = new RedisFailoverPod(Proxy.Address, _prefix);
+        A = new RedisFailoverPod<HalibutRedisQueueFailoverE2ETests>(Proxy.Address, _prefix);
+        B = new RedisFailoverPod<HalibutRedisQueueFailoverE2ETests>(Proxy.Address, _prefix);
 
         await A.InitializeAsync();
         await B.InitializeAsync();
         await A.WaitUntilTrustLoadedAsync();
         await B.WaitUntilTrustLoadedAsync();
+        await A.WaitUntilAnotherReplicaIsLiveAsync();
+        await B.WaitUntilAnotherReplicaIsLiveAsync();
     }
 
     public async Task DisposeAsync()
@@ -393,9 +443,9 @@ public sealed class TwoPodsFixture : IAsyncLifetime
 
     public string[] RedisKeysWithPrefix() => _inspector.GetServer(_realRedis).Keys(pattern: $"{_prefix}*").Select(k => k.ToString()).ToArray();
 
-    public TestAgent StartAgent(RedisFailoverPod pollsThisPod) => TestAgent.Polling(pollsThisPod, A, B);
+    public TestAgent StartAgent(IFailoverPod pollsThisPod) => TestAgent.Polling(pollsThisPod, A, B);
 
-    public TestAgent StartListeningAgent(RedisFailoverPod calledBy) => TestAgent.Listening(calledBy, A, B);
+    public TestAgent StartListeningAgent(IFailoverPod calledBy) => TestAgent.Listening(calledBy, A, B);
 
     private static (string Host, int Port) RealRedisEndpoint()
     {
@@ -433,10 +483,10 @@ public sealed class TestAgent : IAsyncDisposable
     private readonly X509Certificate2 _cert;
     private readonly string _subscription;
     private readonly Uri _listenEndpoint;
-    private readonly RedisFailoverPod _polledPod;
+    private IFailoverPod _polledPod;
     private HalibutRuntime _runtime;
 
-    private TestAgent(X509Certificate2 cert, RecordingScriptService service, string subscription, Uri listenEndpoint, RedisFailoverPod polledPod, HalibutRuntime runtime)
+    private TestAgent(X509Certificate2 cert, RecordingScriptService service, string subscription, Uri listenEndpoint, IFailoverPod polledPod, HalibutRuntime runtime)
     {
         _cert = cert;
         Service = service;
@@ -448,7 +498,7 @@ public sealed class TestAgent : IAsyncDisposable
 
     public RecordingScriptService Service { get; }
 
-    public static TestAgent Polling(RedisFailoverPod pollsThisPod, params RedisFailoverPod[] allPods)
+    public static TestAgent Polling(IFailoverPod pollsThisPod, params IFailoverPod[] allPods)
     {
         var (cert, service) = NewIdentity(allPods);
         var agent = new TestAgent(cert, service, $"e2e-{Guid.NewGuid():N}", null, pollsThisPod, null);
@@ -458,7 +508,15 @@ public sealed class TestAgent : IAsyncDisposable
         return agent;
     }
 
-    public static TestAgent Listening(RedisFailoverPod calledBy, params RedisFailoverPod[] allPods)
+    /// <summary>An agent that is trusted but has not connected yet: <see cref="Connect"/> is called by the test.</summary>
+    public static TestAgent PollingLater(IFailoverPod pollsThisPod, params IFailoverPod[] allPods)
+    {
+        var (cert, service) = NewIdentity(allPods);
+
+        return new TestAgent(cert, service, $"e2e-{Guid.NewGuid():N}", null, pollsThisPod, null);
+    }
+
+    public static TestAgent Listening(IFailoverPod calledBy, params IFailoverPod[] allPods)
     {
         var (cert, service) = NewIdentity(allPods);
         var runtime = NewRuntime(cert, service);
@@ -476,6 +534,14 @@ public sealed class TestAgent : IAsyncDisposable
         _runtime = null;
     }
 
+    /// <summary>The agent restarting on another node: same identity and subscription, now polling a different pod. Only after <see cref="DisconnectAsync"/>.</summary>
+    public void MoveTo(IFailoverPod pod)
+    {
+        _polledPod = pod;
+
+        Connect();
+    }
+
     /// <summary>The agent (re)starting: same identity and subscription, polling the same pod.</summary>
     public void Connect()
     {
@@ -485,7 +551,7 @@ public sealed class TestAgent : IAsyncDisposable
     }
 
     /// <summary>A client of this agent as the given pod sees it. A request nobody collects within <paramref name="pickupTimeout"/> fails (the polling-queue timeout of the endpoint).</summary>
-    public IAsyncScriptService CallFrom(RedisFailoverPod pod, TimeSpan? pickupTimeout = null)
+    public IAsyncScriptService CallFrom(IFailoverPod pod, TimeSpan? pickupTimeout = null)
     {
         var limits = HalibutTimeoutsAndLimits.RecommendedValues();
 
@@ -496,7 +562,7 @@ public sealed class TestAgent : IAsyncDisposable
         return pod.Runtime.CreateAsyncClient<IScriptService, IAsyncScriptService>(endpoint);
     }
 
-    private static (X509Certificate2 Cert, RecordingScriptService Service) NewIdentity(RedisFailoverPod[] allPods)
+    private static (X509Certificate2 Cert, RecordingScriptService Service) NewIdentity(IFailoverPod[] allPods)
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest("CN=e2e-agent", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);

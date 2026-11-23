@@ -57,6 +57,8 @@ public class RedisQueueSettings
     public const int DefaultProbeIntervalSeconds = 3;
     public const int DefaultProbeTimeoutSeconds = 2;
     public const int DefaultKeyRotationMinutes = 10;
+    public const int DefaultReplicaHeartbeatSeconds = 5;
+    public const int DefaultApplyResponseBudgetSeconds = 10;
 
     /// <summary>Prefix of every Redis key the queue writes. Two Squid installations sharing one Redis must use different prefixes.</summary>
     public string KeyPrefix { get; set; } = DefaultKeyPrefix;
@@ -78,6 +80,12 @@ public class RedisQueueSettings
 
     /// <summary>How long one data key seals queued messages before a new one is made. Wrapping a key costs a 600k-iteration PBKDF2, so it is done per period, not per message.</summary>
     public int KeyRotationMinutes { get; set; } = DefaultKeyRotationMinutes;
+
+    /// <summary>How often this replica records in the database that it is alive. Another replica counts as live for three intervals after its last beat. While none is live, no request is ever sent through Redis.</summary>
+    public int ReplicaHeartbeatSeconds { get; set; } = DefaultReplicaHeartbeatSeconds;
+
+    /// <summary>How long a response for a request that came from another pod may take to be written to Redis before the agent's connection stops waiting for it (the requesting pod then fails the request as a transient error).</summary>
+    public int ApplyResponseBudgetSeconds { get; set; } = DefaultApplyResponseBudgetSeconds;
 }
 
 /// <summary>

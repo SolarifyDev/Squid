@@ -45,6 +45,9 @@ public static class HalibutQueueWiring
         builder.Register(CreateKeyProtector).As<IQueueMessageKeyProtector>().SingleInstance();
         builder.Register(ctx => new QueueMessageKeys(ctx.Resolve<IQueueMessageKeyProtector>(), ctx.Resolve<RedisQueueOptions>(), TimeProvider.System)).As<IQueueMessageKeys>().SingleInstance();
         builder.Register(_ => new RedisFallbackLog(TimeProvider.System)).AsSelf().SingleInstance();
+        builder.RegisterType<PostgresReplicaStore>().As<IReplicaStore>().SingleInstance();
+        builder.RegisterType<ReplicaPresence>().As<IReplicaPresence>().AsSelf().SingleInstance();
+        builder.RegisterType<ReplicaHeartbeat>().As<IStartable>().AsSelf().SingleInstance();
         builder.RegisterType<QueueSealingStartupCheck>().As<IStartable>().SingleInstance();
         builder.RegisterType<QueueSerializerSlot>().AsSelf().SingleInstance();
         builder.Register(CreateRedisFactory).AsSelf().SingleInstance();
@@ -55,7 +58,7 @@ public static class HalibutQueueWiring
     {
         var slot = ctx.Resolve<QueueSerializerSlot>();
         var redis = ctx.Resolve<LazyRedisPendingRequestQueueFactory>();
-        var failover = new FailoverPendingRequestQueueFactory(limits, logFactory, redis, new FailoverQueueContext(ctx.Resolve<IRedisQueueHealth>(), ctx.Resolve<RedisQueueOptions>(), TimeProvider.System, ctx.Resolve<RedisFallbackLog>()));
+        var failover = new FailoverPendingRequestQueueFactory(limits, logFactory, redis, new FailoverQueueContext(ctx.Resolve<IRedisQueueHealth>(), ctx.Resolve<RedisQueueOptions>(), TimeProvider.System, ctx.Resolve<RedisFallbackLog>(), ctx.Resolve<IReplicaPresence>()));
         var wrappers = new MessageStreamWrappers([new QueueMessageStreamWrapper(ctx.Resolve<IQueueMessageKeys>())]);
 
         return builder.WithLogFactory(logFactory).WithTypeRegistry(BuildContractRegistry()).WithQueueMessageStreamWrappers(wrappers).WithPendingRequestQueueFactory(serializer =>
