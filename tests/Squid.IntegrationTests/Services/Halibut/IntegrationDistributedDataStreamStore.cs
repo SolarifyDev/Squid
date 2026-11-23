@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
 using Halibut;
 using Halibut.Queue.QueuedDataStreams;
@@ -7,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Squid.Core.Halibut.DataStreamStorage;
 using Squid.Core.Halibut.DataStreamStorage.Exceptions;
+using Squid.Core.Settings.Halibut;
 using Squid.Core.Persistence.Db;
 using Squid.Message.Commands.DataStreamStorage;
 
@@ -15,7 +15,7 @@ namespace Squid.IntegrationTests.Services.HalibutStorage;
 /// <summary>
 /// Integration tier on the real Postgres: the store, its persistence and the sweep through the real container, mediator and migration. Covers what a
 /// fake cannot: the transaction really rolls back, chunks really leave the database sealed, the sweep and the cascade delete really remove rows, and a
-/// 48 MB stream really moves through bounded memory.
+/// 48 MB stream really moves one chunk at a time.
 /// </summary>
 public class IntegrationDistributedDataStreamStore : TestBase
 {
@@ -306,22 +306,25 @@ public class IntegrationDistributedDataStreamStore : TestBase
     public void TheContainer_ResolvesTheStoreAsHalibutsContract()
         => CurrentScope.Resolve<IStoreDataStreamsForDistributedQueues>().ShouldBeOfType<DistributedDataStreamStore>();
 
+    // Bounded memory, asserted deterministically: the store only ever hands the database (and gets back) one sealed chunk at a time, so the largest
+    // buffer it moves is one chunk whatever the payload. A process-wide heap sample would be polluted by the test classes xUnit runs in parallel.
     [Fact]
-    public async Task FortyEightMegabytes_RoundTripByteExact_WithMemoryBelowTwoThirdsOfThePayload()
+    public async Task FortyEightMegabytes_RoundTripByteExact_MovingNoMoreThanOneChunkAtATime()
     {
         const int total = 48 * 1024 * 1024;
+        const int chunk = DataStreamStorageSettings.DefaultChunkBytes;
         var expectedHash = HashOfGenerated(total);
         var stream = new DataStream(total, (s, ct) => GenerateAsync(s, total, ct));
+        var recording = new RecordingPersistence(CurrentScope.Resolve<IDataStreamPersistence>());
+        var store = new DistributedDataStreamStore(recording, CurrentScope.Resolve<IDataStreamKeyProtector>(), new HalibutSetting());
 
-        var peak = new PeakMemory();
-        await peak.RunAsync(async () =>
+        await store.StoreDataStreams([stream], false, CancellationToken.None);
+
+        var rehydrate = new CapturingRehydrate(stream.Id);
+        await store.RehydrateDataStreams([1], [rehydrate], CancellationToken.None);
+
+        await using (var data = rehydrate.Supply())
         {
-            await Store.StoreDataStreams([stream], false, CancellationToken.None);
-
-            var rehydrate = new CapturingRehydrate(stream.Id);
-            await Store.RehydrateDataStreams([1], [rehydrate], CancellationToken.None);
-
-            await using var data = rehydrate.Supply();
             data.Data.Length.ShouldBe(total);
 
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -331,11 +334,60 @@ public class IntegrationDistributedDataStreamStore : TestBase
             while ((read = await data.Data.ReadAsync(buffer)) > 0) hash.AppendData(buffer, 0, read);
 
             hash.GetHashAndReset().ShouldBe(expectedHash, "48 MB came back byte-exact");
-        });
+        }
 
-        Console.WriteLine($"48 MB round trip: peak managed-heap growth {peak.PeakGrowthBytes / 1024 / 1024} MB");
-        peak.PeakGrowthBytes.ShouldBeLessThan(total * 2 / 3, $"the payload is {total / 1024 / 1024} MB; chunked streaming must not hold it (peak growth was {peak.PeakGrowthBytes / 1024 / 1024} MB)");
+        recording.ChunksWritten.ShouldBe(total / chunk);
+        recording.LargestWritten.ShouldBeLessThanOrEqualTo(chunk + DataStreamCodec.Overhead, "the store wrote a buffer bigger than one chunk");
+        recording.LargestRead.ShouldBeLessThanOrEqualTo(chunk + DataStreamCodec.Overhead, "the store read a buffer bigger than one chunk");
         (await CountAsync("halibut_data_stream_chunk")).ShouldBe(0);
+    }
+
+    /// <summary>Delegates to the real persistence and records the largest sealed chunk it was given or returned.</summary>
+    private sealed class RecordingPersistence(IDataStreamPersistence inner) : IDataStreamPersistence
+    {
+        private int _largestWritten;
+        private int _largestRead;
+        private int _chunksWritten;
+
+        public int LargestWritten => _largestWritten;
+        public int LargestRead => _largestRead;
+        public int ChunksWritten => _chunksWritten;
+
+        public async Task<IDataStreamBatchWriter> BeginBatchAsync(CancellationToken ct) => new RecordingBatch(await inner.BeginBatchAsync(ct), this);
+
+        public Task<IReadOnlyList<StoredDataStreamHeader>> GetHeadersAsync(IReadOnlyCollection<Guid> streamIds, CancellationToken ct) => inner.GetHeadersAsync(streamIds, ct);
+
+        public async Task<byte[]> ReadChunkAsync(Guid streamId, int chunkIndex, CancellationToken ct)
+        {
+            var chunk = await inner.ReadChunkAsync(streamId, chunkIndex, ct);
+
+            if (chunk != null) _largestRead = Math.Max(_largestRead, chunk.Length);
+
+            return chunk;
+        }
+
+        public Task DeleteAsync(Guid streamId, CancellationToken ct) => inner.DeleteAsync(streamId, ct);
+
+        public Task<int> DeleteOlderThanAsync(TimeSpan age, CancellationToken ct) => inner.DeleteOlderThanAsync(age, ct);
+
+        private sealed class RecordingBatch(IDataStreamBatchWriter batch, RecordingPersistence owner) : IDataStreamBatchWriter
+        {
+            public Task BeginStreamAsync(Guid streamId, string protectedKey, CancellationToken ct) => batch.BeginStreamAsync(streamId, protectedKey, ct);
+
+            public Task AddChunkAsync(Guid streamId, int chunkIndex, ReadOnlyMemory<byte> sealedChunk, CancellationToken ct)
+            {
+                owner._largestWritten = Math.Max(owner._largestWritten, sealedChunk.Length);
+                owner._chunksWritten++;
+
+                return batch.AddChunkAsync(streamId, chunkIndex, sealedChunk, ct);
+            }
+
+            public Task CompleteStreamAsync(Guid streamId, long length, int chunkCount, CancellationToken ct) => batch.CompleteStreamAsync(streamId, length, chunkCount, ct);
+
+            public Task CommitAsync(CancellationToken ct) => batch.CommitAsync(ct);
+
+            public ValueTask DisposeAsync() => batch.DisposeAsync();
+        }
     }
 
     private static byte[] HashOfGenerated(int total)
@@ -362,37 +414,6 @@ public class IntegrationDistributedDataStreamStore : TestBase
         {
             random.NextBytes(block);
             await destination.WriteAsync(block.AsMemory(0, Math.Min(block.Length, remaining)), ct);
-        }
-    }
-
-    /// <summary>Samples the managed heap while the work runs; the heap before it (after a full collection) is the baseline.</summary>
-    private sealed class PeakMemory
-    {
-        public long PeakGrowthBytes { get; private set; }
-
-        public async Task RunAsync(Func<Task> work)
-        {
-            GC.Collect();
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
-
-            var baseline = GC.GetTotalMemory(false);
-            using var stop = new CancellationTokenSource();
-            var sampler = Task.Run(async () =>
-            {
-                while (!stop.IsCancellationRequested)
-                {
-                    PeakGrowthBytes = Math.Max(PeakGrowthBytes, GC.GetTotalMemory(false) - baseline);
-                    await Task.Delay(10);
-                }
-            });
-
-            try { await work(); }
-            finally
-            {
-                stop.Cancel();
-                await sampler;
-            }
         }
     }
 
