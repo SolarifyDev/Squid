@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using Halibut;
 using Halibut.ServiceModel;
 using Halibut.Transport.Protocol;
@@ -243,6 +244,109 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
                 return;
             }
         }
+    }
+
+    [Fact]
+    public async Task ARedisRequestThatWasHandedOut_IsNotRetainedAfterItIsAnswered_WhileAPollerStaysConnected()
+    {
+        var polling = _queue.DequeueAsync(CancellationToken.None);
+        var references = new List<WeakReference>();
+
+        for (var i = 0; i < 20; i++)
+        {
+            references.Add(await HandOutAndAnswerAsync(polling));
+
+            polling = _queue.DequeueAsync(CancellationToken.None);
+        }
+
+        // The last dequeue is still outstanding: the poller is live for every one of the windows below.
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        CollectGarbage();
+
+        references.Count(r => r.IsAlive).ShouldBe(0, "a claimed request must not be kept alive by the expiry that was watching it");
+        _redis.Applied.Count.ShouldBe(20, "every request was answered once, none failed by the expiry");
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private async Task<WeakReference> HandOutAndAnswerAsync(Task<RequestMessageWithCancellationToken> polling)
+    {
+        var request = Request();
+
+        await WaitUntilAsync(() => _redis.DequeueCalls >= 1);
+        await _redis.Items.Writer.WriteAsync(Dequeued(request));
+
+        var next = await polling.WithinAsync(Limit, "dequeue");
+
+        await _queue.ApplyResponse(ResponseMessage.FromResult(next.RequestMessage, "ok"), next.RequestMessage.ActivityId);
+
+        return new WeakReference(request);
+    }
+
+    private static void CollectGarbage()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
+    }
+
+    [Fact]
+    public async Task ParkedRequestCancelledByItsRequester_IsNotHandedOut_AndItsOriginIsToldSo()
+    {
+        using var cancelled = new CancellationTokenSource();
+        var crossPod = Request();
+        var (local, queued) = await ParkAsync(new RequestMessageWithCancellationToken(crossPod, cancelled.Token));
+
+        await cancelled.CancelAsync();
+        await _queue.ApplyResponse(ResponseMessage.FromResult(local, "ok"), local.ActivityId);
+        await queued.WithinAsync(Limit, "queued");
+
+        var other = Request();
+        var otherQueued = _local.QueueAndWaitAsync(other, CancellationToken.None);
+        var next = await _queue.DequeueAsync(CancellationToken.None).WithinAsync(Limit, "dequeue");
+
+        next.RequestMessage.Id.ShouldBe(other.Id, "the cancelled request must not be sent to the agent: Halibut would drop the connection");
+        _redis.Applied.Select(a => a.ActivityId).ShouldContain(crossPod.ActivityId, "the sending pod is told so that it releases the request");
+
+        await _queue.ApplyResponse(ResponseMessage.FromResult(other, "ok"), other.ActivityId);
+        await otherQueued.WithinAsync(Limit, "other queued");
+    }
+
+    [Fact]
+    public async Task DequeueWhoseOwnTokenIsAlreadyCancelled_TakesNoParkedRequest()
+    {
+        var crossPod = Request();
+        var (local, queued) = await ParkAsync(Dequeued(crossPod));
+
+        await _queue.ApplyResponse(ResponseMessage.FromResult(local, "ok"), local.ActivityId);
+        await queued.WithinAsync(Limit, "queued");
+
+        using var cancel = new CancellationTokenSource();
+
+        await cancel.CancelAsync();
+        await Should.ThrowAsync<OperationCanceledException>(() => _queue.DequeueAsync(cancel.Token));
+
+        var next = await _queue.DequeueAsync(CancellationToken.None).WithinAsync(Limit, "dequeue");
+
+        next.RequestMessage.Id.ShouldBe(crossPod.Id, "the cancelled dequeue took nothing, so the item is still there");
+    }
+
+    /// <summary>Leaves a Redis item parked: the agent is busy on a local request when it arrives. The local request is returned, still unanswered.</summary>
+    private async Task<(RequestMessage Local, Task<ResponseMessage> Queued)> ParkAsync(RequestMessageWithCancellationToken item)
+    {
+        var local = Request();
+        var polling = _queue.DequeueAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => _redis.DequeueCalls == 1);
+
+        var queued = _local.QueueAndWaitAsync(local, CancellationToken.None);
+
+        await polling.WithinAsync(Limit, "first dequeue");
+        await _redis.Items.Writer.WriteAsync(item);
+        await Task.Delay(100);
+
+        return (local, queued);
     }
 
     [Fact]

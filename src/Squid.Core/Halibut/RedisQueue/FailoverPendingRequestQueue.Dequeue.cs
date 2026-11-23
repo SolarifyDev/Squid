@@ -8,6 +8,8 @@ public sealed partial class FailoverPendingRequestQueue
 {
     public async Task<RequestMessageWithCancellationToken> DequeueAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         using var attached = _presence.DequeueStarted();
 
         if (TryTakeParked(out var parked)) return HandOut(parked.Request, parked.Origin);
