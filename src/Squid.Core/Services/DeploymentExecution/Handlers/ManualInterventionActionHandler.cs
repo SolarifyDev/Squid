@@ -103,8 +103,6 @@ public sealed class ManualInterventionActionHandler(
             ResponsibleTeamIds = responsibleTeamIds
         }, ct).ConfigureAwait(false);
 
-        await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
-
-        throw new DeploymentSuspendedException(ctx.ServerTaskId);
+        throw await DeploymentSuspension.PauseAsync(serverTaskService, ctx.ServerTaskId, ctx.DeploymentContext, ct).ConfigureAwait(false);
     }
 }

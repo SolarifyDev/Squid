@@ -4,6 +4,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
@@ -20,10 +21,7 @@ public sealed class DeploymentCompletionHandler(
     {
         await RecordCompletionAsync(ctx, true, "Deployment completed successfully").ConfigureAwait(false);
 
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
-        {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Success, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+        if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
         await TriggerAutoDeploymentsAsync(ctx, ct).ConfigureAwait(false);
@@ -40,10 +38,7 @@ public sealed class DeploymentCompletionHandler(
 
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
-        {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, TaskState.Failed, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+        if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -57,10 +52,7 @@ public sealed class DeploymentCompletionHandler(
 
         await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
 
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
-        {
-            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -95,7 +87,7 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -115,7 +107,7 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} timed out; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -136,7 +128,7 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} hit a transient infrastructure failure; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -164,8 +156,10 @@ public sealed class DeploymentCompletionHandler(
     /// rejects it. Its lease stops renewing once this pipeline ends, so the stale-task reaper
     /// completes it as <c>Cancelled</c> after the lease staleness threshold (default 5 minutes);
     /// an operator can also force-cancel it. The skip is still logged at Warning: until one of
-    /// those happens the environment has lost a concurrency slot, and cross-pod cancel
-    /// propagation (which would free it at once) does not exist.</para>
+    /// those happens the environment has lost a concurrency slot. Cross-pod cancel propagation
+    /// exists (the cancel watcher carries a Cancelling row to the pod that runs the task), but it
+    /// only completes a cancel for a run that is still executing: this run is already unwinding
+    /// into a pause, so it is the reaper or an operator that frees the row.</para>
     ///
     /// <para><b>The success path does not share this.</b> <see cref="OnSuccessAsync"/> also
     /// transitions from a hardcoded <c>Executing</c>, but it is the one completion callback the
@@ -175,20 +169,38 @@ public sealed class DeploymentCompletionHandler(
     /// state and performs the legal <c>Cancelling → Failed</c>. The row ends terminal and the slot
     /// is freed — at the cost of a deployment that succeeded being recorded as failed.</para>
     /// </summary>
-    private async Task PauseIfStillExecutingAsync(int serverTaskId, CancellationToken ct)
+    private async Task PauseIfStillExecutingAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        var fromState = await ResolveCurrentActiveStateAsync(serverTaskId, ct).ConfigureAwait(false);
+        var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
         if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
         {
-            LogSkippedPause(serverTaskId, fromState);
+            LogSkippedPause(ctx.ServerTaskId, fromState);
             return;
         }
 
-        await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+        await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
+    }
+
+    // Every write this run makes out of a running state is conditional on the run still holding the task's lease: a task another run recovered or resumed
+    // is not ours to pause, finish or cancel, and nothing after it (the checkpoint cleanup, auto-deploys) may run on that run's behalf either.
+    private async Task<bool> TransitionOwnedAsync(DeploymentTaskContext ctx, string fromState, string toState, CancellationToken ct)
+    {
+        try
         {
-            await serverTaskService.TransitionStateAsync(serverTaskId, TaskState.Executing, TaskState.Paused, cancellationToken).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
+            await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+            {
+                await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, toState, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+
+            return true;
+        }
+        catch (ServerTaskLeaseNotHeldException ex)
+        {
+            Log.Warning("[Deploy] Task {TaskId} is now leased to another run ({Owner}); this run's move {From} -> {To} was refused and nothing else is recorded", ctx.ServerTaskId, ex.CurrentOwner, fromState, toState);
+
+            return false;
+        }
     }
 
     /// <summary>

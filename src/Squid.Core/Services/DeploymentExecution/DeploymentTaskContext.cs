@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.DeploymentExecution.Planning;
 using Squid.Core.Services.DeploymentExecution.Script;
@@ -82,8 +83,35 @@ public class DeploymentTaskContext
     /// </summary>
     public Dictionary<int, Squid.Core.Services.Deployments.Checkpoints.BatchCheckpointState> ResumeBatchStates { get; set; } = new();
 
-    // Lease held while the pipeline runs; IsLost means the task was recovered from under this process
+    // Lease held while the pipeline runs; IsLost means the task was recovered from under this run
     public Squid.Core.Services.Deployments.ServerTask.Lease.IServerTaskLease Lease { get; set; }
+
+    /// <summary>
+    /// Identity of THIS run on the task's lease (process identity plus a per-run suffix). The claim stamps it, the keeper renews it, and the run's pause,
+    /// success, failure and cancel writes apply only while the row still carries it — so a second run of the task, started while this one is still
+    /// unwinding, is never overwritten by it.
+    /// </summary>
+    public string LeaseOwner { get; init; } = Squid.Core.Services.Deployments.ServerTask.Lease.ServerTaskLeaseOwner.NewRun();
+
+    private readonly CancellationTokenSource _suspend = new();
+    private volatile DeploymentSuspendedException _suspended;
+
+    /// <summary>Cancelled when a step suspends the task (manual intervention, guided failure) so every sibling stops instead of running on behind a Paused task.</summary>
+    public CancellationToken SuspendToken => _suspend.Token;
+
+    /// <summary>The suspension that stopped this run, or null while the run is not suspended. Also read by the cancel decision: a suspended run is pausing, not ending, so its remote scripts are left running.</summary>
+    public DeploymentSuspendedException Suspended => _suspended;
+
+    /// <summary>
+    /// A step has already moved the task to Paused (its lease is released): stop everything else this run is doing. Call it only AFTER that write
+    /// succeeded, because the siblings it cancels leave their agent scripts running on the strength of the task being Paused.
+    /// </summary>
+    public void RequestSuspend(DeploymentSuspendedException suspended)
+    {
+        _suspended ??= suspended;
+
+        _suspend.Cancel();
+    }
 
     // Logging
     private long _logSequence;

@@ -131,6 +131,12 @@ public class DeploymentPipelineRunnerDuplicateDeliveryTests
     {
         public bool IsLost => false;
 
+        public CancellationToken LostToken => CancellationToken.None;
+
+        public void Release()
+        {
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

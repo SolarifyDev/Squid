@@ -18,7 +18,7 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 /// </summary>
 public class DeploymentPipelineRunnerRemoteCancelDecisionTests
 {
-    public enum Interruption { InternalFailFast, UserCancel, UserCancelAndExternal, TimeoutResumable, TimeoutFailFast, ExternalCancel }
+    public enum Interruption { InternalFailFast, UserCancel, UserCancelAndExternal, TimeoutResumable, TimeoutFailFast, ExternalCancel, Suspended, SuspendedAndUserCancel }
 
     private readonly Mock<IDeploymentLifecycle> _lifecycle = new();
     private readonly Mock<IDeploymentCompletionHandler> _completion = new();
@@ -32,6 +32,8 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
     [InlineData(Interruption.TimeoutResumable, false)]
     [InlineData(Interruption.TimeoutFailFast, true)]
     [InlineData(Interruption.ExternalCancel, false)]
+    [InlineData(Interruption.Suspended, false)]              // a step paused the task for an interruption: siblings stop, their scripts keep running for the resume
+    [InlineData(Interruption.SuspendedAndUserCancel, true)]  // the user's cancel still wins
     public async Task Decision_WhenInterrupted_CancelsRemoteScriptOnlyIfTaskHeadsTerminal(Interruption interruption, bool expectedCancel)
     {
         using var external = new CancellationTokenSource();
@@ -43,7 +45,7 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
         // resulting OperationCanceledException as a failure and rethrows; a host shutdown is rethrown so
         // Hangfire re-delivers the job. Neither rethrow is under test here.
         try { await runner.ProcessAsync(1, external.Token); }
-        catch (OperationCanceledException) when (interruption is Interruption.InternalFailFast or Interruption.ExternalCancel) { }
+        catch (OperationCanceledException) when (interruption is Interruption.InternalFailFast or Interruption.ExternalCancel or Interruption.Suspended) { }
 
         decisionAtInterruption.ShouldBe(expectedCancel,
             customMessage: $"{interruption}: the decision the observer sees when its token fires must be {expectedCancel}. " +
@@ -99,9 +101,10 @@ public class DeploymentPipelineRunnerRemoteCancelDecisionTests
         {
             using var peer = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-            if (_interruption is Interruption.UserCancel or Interruption.UserCancelAndExternal) _registry.TryCancel(ctx.ServerTaskId);
+            if (_interruption is Interruption.UserCancel or Interruption.UserCancelAndExternal or Interruption.SuspendedAndUserCancel) _registry.TryCancel(ctx.ServerTaskId);
+            if (_interruption is Interruption.Suspended or Interruption.SuspendedAndUserCancel) ctx.RequestSuspend(new Squid.Core.Services.DeploymentExecution.Exceptions.DeploymentSuspendedException(ctx.ServerTaskId));
             if (_interruption is Interruption.ExternalCancel or Interruption.UserCancelAndExternal) _external.Cancel();
-            if (_interruption == Interruption.InternalFailFast) peer.Cancel();
+            if (_interruption is Interruption.InternalFailFast or Interruption.Suspended) peer.Cancel();
 
             try
             {

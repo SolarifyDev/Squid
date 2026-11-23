@@ -81,7 +81,7 @@ public class GuidedFailureTests
         await Should.ThrowAsync<DeploymentSuspendedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
 
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========== Guided Failure: Checkpoint Before Suspending ==========
@@ -101,7 +101,7 @@ public class GuidedFailureTests
             .ReturnsAsync(new DeploymentInterruption { Id = 1 });
 
         var serverTaskService = new Mock<IServerTaskService>();
-        serverTaskService.Setup(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        serverTaskService.Setup(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("transition"))
             .Returns(Task.CompletedTask);
 
@@ -240,7 +240,7 @@ public class GuidedFailureTests
         await Should.ThrowAsync<DeploymentSuspendedException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
 
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Once);
-        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ========== Helpers ==========

@@ -74,7 +74,8 @@ public class ManualInterventionTests
         await Should.ThrowAsync<DeploymentSuspendedException>(() => handler.ExecuteStepLevelAsync(ctx, CancellationToken.None));
 
         interruptionService.Verify(s => s.CreateInterruptionAsync(It.Is<CreateInterruptionRequest>(r => r.InterruptionType == InterruptionType.ManualIntervention), It.IsAny<CancellationToken>()), Times.Once);
-        serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ctx.DeploymentContext.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        ctx.DeploymentContext.Suspended.ShouldNotBeNull("the run is told it was suspended, so the siblings of the batch stop");
     }
 
     [Fact]
@@ -443,7 +444,8 @@ public class ManualInterventionTests
             },
             Variables = new List<VariableDto>(),
             ReleaseVersion = "1.0.0",
-            StepDisplayOrder = 1, ActionSortOrder = 1
+            StepDisplayOrder = 1, ActionSortOrder = 1,
+            DeploymentContext = new DeploymentTaskContext { ServerTaskId = 1 }
         };
     }
 }

@@ -21,7 +21,7 @@ public class ServerTaskServiceClaimFenceTests
     public async Task LostClaim_ToALiveWinner_IsFenced_NamingTheWinner(string from)
     {
         _tasks.SetupSequence(t => t.GetServerTaskByIdNoTrackingAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 7, State = from }).ReturnsAsync(new ServerTaskEntity { Id = 7, State = TaskState.Executing, LeaseOwner = "winner:1:x" });
-        _tasks.Setup(t => t.TransitionStateAsync(7, from, TaskState.Executing, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Executing, TaskState.Executing));
+        _tasks.Setup(t => t.TransitionStateAsync(7, from, TaskState.Executing, ServerTaskLeaseOwner.Current, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Executing, TaskState.Executing));
         _leases.Setup(l => l.ClaimRunningAsync(7, ServerTaskLeaseOwner.Current, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(0);
 
         var ex = await Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => Service().StartExecutingAsync(7));
@@ -34,7 +34,7 @@ public class ServerTaskServiceClaimFenceTests
     public async Task LostClaim_ToADeadWinner_IsTakenOver()
     {
         Reads(TaskState.Pending);
-        _tasks.Setup(t => t.TransitionStateAsync(7, TaskState.Pending, TaskState.Executing, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Executing, TaskState.Executing));
+        _tasks.Setup(t => t.TransitionStateAsync(7, TaskState.Pending, TaskState.Executing, ServerTaskLeaseOwner.Current, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Executing, TaskState.Executing));
         _leases.Setup(l => l.ClaimRunningAsync(7, ServerTaskLeaseOwner.Current, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>())).ReturnsAsync(1);
 
         (await Service().StartExecutingAsync(7)).Task.State.ShouldBe(TaskState.Executing);
@@ -47,7 +47,7 @@ public class ServerTaskServiceClaimFenceTests
     public async Task LostClaim_ToAnyOtherState_KeepsTheTransitionError(string actual)
     {
         Reads(TaskState.Pending);
-        _tasks.Setup(t => t.TransitionStateAsync(7, TaskState.Pending, TaskState.Executing, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(actual, TaskState.Executing));
+        _tasks.Setup(t => t.TransitionStateAsync(7, TaskState.Pending, TaskState.Executing, ServerTaskLeaseOwner.Current, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskStateTransitionException(actual, TaskState.Executing));
 
         await Should.ThrowAsync<ServerTaskStateTransitionException>(() => Service().StartExecutingAsync(7));
 
