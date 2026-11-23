@@ -21,7 +21,8 @@ public class ServerTaskControlService(
     ITaskCancellationRegistry cancellationRegistry,
     IDeploymentInterruptionService interruptionService,
     IDeploymentCheckpointService checkpointService,
-    ISquidBackgroundJobClient backgroundJobClient) : IServerTaskControlService
+    ISquidBackgroundJobClient backgroundJobClient,
+    IInFlightScriptCanceller inFlightScriptCanceller = null) : IServerTaskControlService
 {
     internal static readonly TimeSpan ForceCancelStuckGracePeriod = TimeSpan.FromSeconds(60);
 
@@ -90,6 +91,7 @@ public class ServerTaskControlService(
             ct).ConfigureAwait(false);
 
         await interruptionService.CancelPendingInterruptionsAsync(task.Id, ct).ConfigureAwait(false);
+        await CancelInFlightScriptsAsync(task.Id, ct).ConfigureAwait(false);
         await checkpointService.DeleteAsync(task.Id, ct).ConfigureAwait(false);
 
         if (!string.IsNullOrEmpty(task.JobId))
@@ -193,8 +195,18 @@ public class ServerTaskControlService(
         await serverTaskService.TransitionStateAsync(task.Id, TaskState.Paused, TaskState.Cancelled, ct).ConfigureAwait(false);
 
         await interruptionService.CancelPendingInterruptionsAsync(task.Id, ct).ConfigureAwait(false);
+        await CancelInFlightScriptsAsync(task.Id, ct).ConfigureAwait(false);
         await checkpointService.DeleteAsync(task.Id, ct).ConfigureAwait(false);
 
         Log.Information("Cancelled paused task {TaskId}", task.Id);
+    }
+
+    // A pause leaves the agent script running and its ticket on the checkpoint; the checkpoint is about to be deleted, so this is the last chance
+    // to stop the script. Best effort and bounded inside the canceller — an unreachable agent never blocks the cancel.
+    private async Task CancelInFlightScriptsAsync(int serverTaskId, CancellationToken ct)
+    {
+        if (inFlightScriptCanceller == null) return;
+
+        await inFlightScriptCanceller.CancelAllAsync(serverTaskId, ct).ConfigureAwait(false);
     }
 }

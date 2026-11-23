@@ -42,6 +42,8 @@ internal sealed class V1ScriptSession : IScriptAgentSession
     public async Task<AgentScriptStatus> ProbeAsync(ScriptTicket ticket)
         => V1ScriptAgentClient.ToNeutral(await _retrying.GetStatusAsync(new ScriptStatusRequest(ticket, 0)).ConfigureAwait(false));
 
+    public Task CancelAsync(ScriptTicket ticket) => _retrying.CancelScriptAsync(new CancelScriptCommand(ticket, 0));
+
     public bool IsUnknownTicket(AgentScriptStatus probe)
         => _dispatcher.IsUnknownTicket(probe == null ? null : V1ScriptAgentClient.ToV1(probe));
 

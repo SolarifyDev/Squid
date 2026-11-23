@@ -44,6 +44,8 @@ internal sealed class V2ScriptSession : IScriptAgentSession
     /// </summary>
     public Task<AgentScriptStatus> ProbeAsync(ScriptTicket ticket) => _retrying.GetStatusAsync(ticket, 0);
 
+    public Task CancelAsync(ScriptTicket ticket) => _retrying.CancelAsync(ticket, 0);
+
     public bool IsUnknownTicket(AgentScriptStatus probe) => probe == null || probe.State == AgentScriptState.UnknownTicket;
 
     public Task<ScriptExecutionResult> ObserveAsync(ScriptExecutionRequest request, ServiceEndPoint endpoint, ScriptTicket ticket, AgentScriptStatus initial)

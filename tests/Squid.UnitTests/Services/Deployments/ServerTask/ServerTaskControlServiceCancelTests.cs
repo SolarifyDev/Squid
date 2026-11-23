@@ -18,11 +18,62 @@ public class ServerTaskControlServiceCancelTests
     private readonly Mock<IDeploymentInterruptionService> _interruptionService = new();
     private readonly Mock<IDeploymentCheckpointService> _checkpointService = new();
     private readonly Mock<ISquidBackgroundJobClient> _jobClient = new();
+    private readonly Mock<IInFlightScriptCanceller> _scriptCanceller = new();
     private readonly ServerTaskControlService _sut;
 
     public ServerTaskControlServiceCancelTests()
     {
-        _sut = new ServerTaskControlService(_dataProvider.Object, _serverTaskService.Object, _registry.Object, _interruptionService.Object, _checkpointService.Object, _jobClient.Object);
+        _sut = new ServerTaskControlService(_dataProvider.Object, _serverTaskService.Object, _registry.Object, _interruptionService.Object, _checkpointService.Object, _jobClient.Object, _scriptCanceller.Object);
+    }
+
+    // A pause keeps the agent script running; the checkpoint holds its only ticket. Cancelling the paused task must stop the script BEFORE that
+    // checkpoint is deleted — afterwards nothing can say what to cancel.
+    [Fact]
+    public async Task CancelPaused_CancelsTheInFlightAgentScripts_BeforeDeletingTheCheckpoint()
+    {
+        var order = new List<string>();
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 1, State = TaskState.Paused });
+        _scriptCanceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        _checkpointService.Setup(c => c.DeleteAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
+
+        await _sut.CancelTaskAsync(1, CancellationToken.None);
+
+        order.ShouldBe(["cancel-scripts", "delete-checkpoint"]);
+    }
+
+    // A running task's own pipeline cancels its script through the observer; a second cancel from the control service would race it.
+    [Fact]
+    public async Task CancelExecuting_LeavesTheAgentScriptToTheRunningPipeline()
+    {
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 1, State = TaskState.Executing });
+
+        await _sut.CancelTaskAsync(1, CancellationToken.None);
+
+        _scriptCanceller.Verify(c => c.CancelAllAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ForceCancelStuck_CancelsTheInFlightAgentScripts_BeforeDeletingTheCheckpoint()
+    {
+        var order = new List<string>();
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 1, State = TaskState.Cancelling, LastModifiedDate = DateTimeOffset.UtcNow.AddMinutes(-5) });
+        _scriptCanceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        _checkpointService.Setup(c => c.DeleteAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
+
+        await _sut.ForceCancelStuckTaskAsync(1, CancellationToken.None);
+
+        order.ShouldBe(["cancel-scripts", "delete-checkpoint"]);
+    }
+
+    [Fact]
+    public async Task CancelPaused_WithoutACanceller_StillCancelsAndDeletesTheCheckpoint()
+    {
+        var sut = new ServerTaskControlService(_dataProvider.Object, _serverTaskService.Object, _registry.Object, _interruptionService.Object, _checkpointService.Object, _jobClient.Object);
+        _dataProvider.Setup(d => d.GetServerTaskByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 1, State = TaskState.Paused });
+
+        await sut.CancelTaskAsync(1, CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(1, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
