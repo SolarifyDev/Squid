@@ -2,8 +2,9 @@ namespace Squid.Core.Halibut.DataStreamStorage;
 
 /// <summary>
 /// The destination a data stream is written into: bytes are cut into chunks of <c>chunkBytes</c>, each sealed and handed to the batch as soon as it is full,
-/// so a stream of any size is stored holding one plain chunk and one sealed chunk in memory. A stream whose length is an exact multiple of the chunk size
-/// ends on a full chunk and gets no empty trailing one. <see cref="CompleteAsync"/> writes the last partial chunk and the final length.
+/// so a stream of any size is stored holding one plain chunk and one sealed chunk in memory. A full chunk is only sealed once more data follows it or the stream
+/// completes, because the last chunk is sealed as the last one (see <see cref="DataStreamCodec"/>): a stream whose length is an exact multiple of the chunk size
+/// ends on a full chunk and gets no empty trailing one, and an empty stream is one empty last chunk. <see cref="CompleteAsync"/> writes the last chunk and the final length.
 /// </summary>
 public sealed class DataStreamChunkWriter : Stream
 {
@@ -28,6 +29,8 @@ public sealed class DataStreamChunkWriter : Stream
     {
         while (buffer.Length > 0)
         {
+            if (_filled == _plain.Length) await FlushChunkAsync(isFinal: false, cancellationToken).ConfigureAwait(false);
+
             var taken = Math.Min(buffer.Length, _plain.Length - _filled);
 
             buffer[..taken].CopyTo(_plain.AsMemory(_filled));
@@ -35,8 +38,6 @@ public sealed class DataStreamChunkWriter : Stream
             _filled += taken;
             _length += taken;
             buffer = buffer[taken..];
-
-            if (_filled == _plain.Length) await FlushChunkAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -44,17 +45,17 @@ public sealed class DataStreamChunkWriter : Stream
 
     public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
 
-    /// <summary>Writes the last partial chunk (if any) and the stream's final length and chunk count.</summary>
+    /// <summary>Writes the last chunk and the stream's final length and chunk count.</summary>
     public async Task CompleteAsync(CancellationToken ct)
     {
-        if (_filled > 0) await FlushChunkAsync(ct).ConfigureAwait(false);
+        await FlushChunkAsync(isFinal: true, ct).ConfigureAwait(false);
 
         await _batch.CompleteStreamAsync(_streamId, _length, _chunkCount, ct).ConfigureAwait(false);
     }
 
-    private async Task FlushChunkAsync(CancellationToken ct)
+    private async Task FlushChunkAsync(bool isFinal, CancellationToken ct)
     {
-        var sealedChunk = _sealer.Seal(_plain.AsMemory(0, _filled), _chunkCount);
+        var sealedChunk = _sealer.Seal(_plain.AsMemory(0, _filled), _chunkCount, isFinal);
 
         await _batch.AddChunkAsync(_streamId, _chunkCount, sealedChunk, ct).ConfigureAwait(false);
 

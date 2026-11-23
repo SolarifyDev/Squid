@@ -1,6 +1,9 @@
 using System.Linq;
 using Shouldly;
 using Squid.Core.Halibut.RedisQueue;
+using Squid.Core.Halibut.RedisQueue.Encryption;
+using Squid.Core.Services.Security;
+using Squid.UnitTests.Halibut.DataStreamStorage;
 using Xunit;
 using static Squid.UnitTests.Halibut.RedisQueue.RedisQueueTestSupport;
 
@@ -61,9 +64,13 @@ public sealed class ReplicaHeartbeatTests
 
         public List<Guid> Left { get; } = new();
 
-        public Func<CancellationToken, Task<int>> OnBeat { get; set; }
+        public Dictionary<Guid, string> OtherKeyChecks { get; } = new();
 
-        public Task<int> BeatAsync(Guid replicaId, TimeSpan liveWindow, CancellationToken ct)
+        public List<string> PublishedKeyChecks { get; } = new();
+
+        public Func<CancellationToken, Task<ReplicaBeat>> OnBeat { get; set; }
+
+        public Task<ReplicaBeat> BeatAsync(Guid replicaId, TimeSpan liveWindow, string keyCheck, CancellationToken ct)
         {
             if (OnBeat != null) return OnBeat(ct);
 
@@ -71,8 +78,9 @@ public sealed class ReplicaHeartbeatTests
 
             Beats.Add(replicaId);
             Windows.Add(liveWindow);
+            PublishedKeyChecks.Add(keyCheck);
 
-            return Task.FromResult(OthersAlive);
+            return Task.FromResult(new ReplicaBeat(OthersAlive, OtherKeyChecks));
         }
 
         public Task LeaveAsync(Guid replicaId, CancellationToken ct)
@@ -102,6 +110,88 @@ public sealed class ReplicaHeartbeatTests
         _store.Windows.Single().ShouldBe(TimeSpan.FromMilliseconds(150), "the live window is three beats");
     }
 
+    private static QueueKeyCheck KeyCheck(byte masterKeySeed) => new(new QueueMessageKeyProtector(new Lazy<IVariableEncryptionService>(() => DataStreamStorageTestSupport.Encryption(masterKeySeed))));
+
+    private ReplicaHeartbeat Heartbeat(IQueueKeyCheck keyCheck) => new(_store, _presence, Options() with { ReplicaHeartbeat = TimeSpan.FromMilliseconds(50) }, keyCheck);
+
+    // What a real replica publishes, as another replica sees it.
+    private static string PublishedBy(byte masterKeySeed) => KeyCheck(masterKeySeed).Create();
+
+    [Fact]
+    public async Task AReplicaWithAnotherMasterKey_IsReportedOnce_AndOneWithTheSameKeyIsNot()
+    {
+        var sameKey = Guid.NewGuid();
+        var otherKey = Guid.NewGuid();
+        var heartbeat = Heartbeat(KeyCheck(masterKeySeed: 1));
+
+        _store.OthersAlive = 2;
+        _store.OtherKeyChecks[sameKey] = PublishedBy(masterKeySeed: 1);
+        _store.OtherKeyChecks[otherKey] = PublishedBy(masterKeySeed: 50);
+
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+
+        heartbeat.ReplicasWithAnotherMasterKey.ShouldBe([otherKey]);
+    }
+
+    [Fact]
+    public async Task AReplicaThatPublishedNoCheck_IsNotReported()
+    {
+        var heartbeat = Heartbeat(KeyCheck(masterKeySeed: 1));
+
+        _store.OthersAlive = 1;
+        _store.OtherKeyChecks[Guid.NewGuid()] = null;
+
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+
+        heartbeat.ReplicasWithAnotherMasterKey.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task TheOwnKeyCheck_IsMadeOnce_AndPublishedWithEveryBeat()
+    {
+        var heartbeat = Heartbeat(KeyCheck(masterKeySeed: 1));
+
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+
+        _store.PublishedKeyChecks.Distinct().Count().ShouldBe(1, "sealing it is a PBKDF2: done once");
+        _store.PublishedKeyChecks.ShouldAllBe(c => c != null);
+        KeyCheck(masterKeySeed: 1).CanOpen(_store.PublishedKeyChecks[0]).ShouldBeTrue();
+        KeyCheck(masterKeySeed: 50).CanOpen(_store.PublishedKeyChecks[0]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task NoMasterKey_PublishesNoCheck_AndTheBeatStillWorks()
+    {
+        var heartbeat = Heartbeat(new QueueKeyCheck(new QueueMessageKeyProtector(new Lazy<IVariableEncryptionService>(() => throw new InvalidOperationException("no master key")))));
+
+        _store.OthersAlive = 1;
+
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+
+        _store.PublishedKeyChecks.ShouldAllBe(c => c == null);
+        _presence.OtherReplicaIsLive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AFailingStore_MeansNoOtherReplica_AndRecoversOnTheNextGoodBeat()
+    {
+        var heartbeat = Heartbeat();
+
+        _store.OthersAlive = 1;
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+        _presence.OtherReplicaIsLive.ShouldBeTrue();
+
+        _store.Failure = new InvalidOperationException("database down");
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+        _presence.OtherReplicaIsLive.ShouldBeFalse("when it cannot tell, the queue stays local");
+
+        _store.Failure = null;
+        await heartbeat.BeatOnceAsync(CancellationToken.None);
+        _presence.OtherReplicaIsLive.ShouldBeTrue();
+    }
+
     // Disposing a container whose beat is in flight: the beat's connection scope may already be gone, and whatever it throws must not fail the shutdown.
     [Fact]
     public async Task ABeatThatFailsWithSomethingOtherThanCancellationWhileShuttingDown_DoesNotFailTheShutdown()
@@ -123,24 +213,6 @@ public sealed class ReplicaHeartbeatTests
 
         await inFlight.Task.WithinAsync(TimeSpan.FromSeconds(10), "the first beat to start");
         await Should.NotThrowAsync(async () => await heartbeat.DisposeAsync());
-    }
-
-    [Fact]
-    public async Task AFailingStore_MeansNoOtherReplica_AndRecoversOnTheNextGoodBeat()
-    {
-        var heartbeat = Heartbeat();
-
-        _store.OthersAlive = 1;
-        await heartbeat.BeatOnceAsync(CancellationToken.None);
-        _presence.OtherReplicaIsLive.ShouldBeTrue();
-
-        _store.Failure = new InvalidOperationException("database down");
-        await heartbeat.BeatOnceAsync(CancellationToken.None);
-        _presence.OtherReplicaIsLive.ShouldBeFalse("when it cannot tell, the queue stays local");
-
-        _store.Failure = null;
-        await heartbeat.BeatOnceAsync(CancellationToken.None);
-        _presence.OtherReplicaIsLive.ShouldBeTrue();
     }
 
     [Fact]

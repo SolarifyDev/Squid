@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -89,6 +90,18 @@ public sealed class HalibutModuleQueueWiringTests
         ((IDictionary)typeof(HalibutRuntime).GetField("queues", NonPublic)!.GetValue(runtime)!).Count.ShouldBe(0, "a listening Tentacle is called over a direct connection: no queue, so no Redis");
     }
 
+    // A check nobody starts says nothing: the orphan-TTL error and the replica heartbeat (which also compares master keys) must run with the container.
+    [Fact]
+    public void TheStartupChecksAndTheHeartbeat_AreStartedWithTheContainer()
+    {
+        using var container = BuildContainer();
+        var started = container.Resolve<IEnumerable<IStartable>>().Select(s => s.GetType()).ToList();
+
+        started.ShouldContain(typeof(Squid.Core.Halibut.DataStreamStorage.DataStreamOrphanTtlStartupCheck));
+        started.ShouldContain(typeof(ReplicaHeartbeat));
+        container.Resolve<IQueueKeyCheck>().ShouldBeOfType<QueueKeyCheck>();
+    }
+
     [Fact]
     public void EveryPod_SealsQueuedMessages()
     {
@@ -128,7 +141,7 @@ public sealed class HalibutModuleQueueWiringTests
     /// <summary>The database side of the heartbeat (the real one is picked up by the application's dependency scan): always reports one other replica.</summary>
     private sealed class OtherReplicaStore : IReplicaStore
     {
-        public Task<int> BeatAsync(Guid replicaId, TimeSpan liveWindow, CancellationToken ct) => Task.FromResult(1);
+        public Task<ReplicaBeat> BeatAsync(Guid replicaId, TimeSpan liveWindow, string keyCheck, CancellationToken ct) => Task.FromResult(new ReplicaBeat(1, new Dictionary<Guid, string>()));
 
         public Task LeaveAsync(Guid replicaId, CancellationToken ct) => Task.CompletedTask;
     }

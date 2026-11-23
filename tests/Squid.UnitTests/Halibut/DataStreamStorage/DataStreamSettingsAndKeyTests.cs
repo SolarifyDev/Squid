@@ -121,6 +121,9 @@ public class DataStreamKeyProtectorTests
 
 public class DataStreamOrphanSweepTests
 {
+    private static HalibutSetting Bind(params (string Key, string Value)[] pairs)
+        => new(new ConfigurationBuilder().AddInMemoryCollection(pairs.Select(p => new KeyValuePair<string, string>(p.Key, p.Value))).Build());
+
     [Fact]
     public async Task Sweep_DeletesOlderThanTheConfiguredTtl_AndReportsTheCount()
     {
@@ -134,12 +137,60 @@ public class DataStreamOrphanSweepTests
     [Fact]
     public async Task Sweep_FromSettings_UsesTheBoundTtl()
     {
-        var setting = new HalibutSetting { DataStreamStorage = { OrphanTtlMinutes = 7 } };
+        var setting = new HalibutSetting { DataStreamStorage = { OrphanTtlMinutes = 45 } };
         var persistence = new InMemoryDataStreamPersistence();
 
         await new DataStreamOrphanSweeper(persistence, setting).SweepAsync();
 
-        persistence.DeletedOlderThan.ShouldBe(TimeSpan.FromMinutes(7));
+        persistence.DeletedOlderThan.ShouldBe(TimeSpan.FromMinutes(45));
+    }
+
+    // A TTL shorter than a request may wait for pickup (and then for its stream to be read) would delete the data of a request that is still alive.
+    [Fact]
+    public async Task Sweep_FromSettings_NeverUsesATtlShorterThanASafeRequestMayWait()
+    {
+        var setting = new HalibutSetting { DataStreamStorage = { OrphanTtlMinutes = 1 } };
+        var persistence = new InMemoryDataStreamPersistence();
+
+        await new DataStreamOrphanSweeper(persistence, setting).SweepAsync();
+
+        persistence.DeletedOlderThan.ShouldBe(DataStreamStorageOptions.MinimumOrphanTtl);
+    }
+
+    [Theory]
+    [InlineData(2, 20)]
+    [InlineData(10, 20)]
+    [InlineData(15, 25)]
+    [InlineData(60, 70)]
+    public void SafeOrphanTtl_IsThePickupTimeoutPlusTheMargin_ButNeverUnderTheMinimum(int pickupMinutes, int expectedMinutes)
+        => DataStreamStorageOptions.SafeOrphanTtl(TimeSpan.FromMinutes(pickupMinutes)).ShouldBe(TimeSpan.FromMinutes(expectedMinutes));
+
+    [Theory]
+    [InlineData(5, 15, 25)]
+    [InlineData(40, 15, 40)]
+    public void WithSafeOrphanTtl_RaisesAShortTtl_AndKeepsALongOne(int configuredMinutes, int pickupMinutes, int expectedMinutes)
+        => new DataStreamStorageOptions(1024, TimeSpan.FromMinutes(configuredMinutes)).WithSafeOrphanTtl(TimeSpan.FromMinutes(pickupMinutes)).OrphanTtl.ShouldBe(TimeSpan.FromMinutes(expectedMinutes));
+
+    [Theory]
+    [InlineData(1, 2, true)]
+    [InlineData(19, 2, true)]
+    [InlineData(20, 2, false)]
+    [InlineData(60, 2, false)]
+    [InlineData(30, 25, true)]
+    public void TheStartupCheck_SaysSoWhenTheConfiguredTtlIsTooShort(int configuredMinutes, int pickupMinutes, bool expectedToComplain)
+        => new DataStreamOrphanTtlStartupCheck(new HalibutSetting { DataStreamStorage = { OrphanTtlMinutes = configuredMinutes } }).Check(TimeSpan.FromMinutes(pickupMinutes)).ShouldBe(expectedToComplain);
+
+    [Fact]
+    public void TheStartupCheck_WithNoSetting_UsesTheDefaults_AndIsQuiet()
+        => new DataStreamOrphanTtlStartupCheck().Check(TimeSpan.FromMinutes(2)).ShouldBeFalse();
+
+    [Fact]
+    public void KeyRotation_HasADefault_IsBound_AndFallsBackWhenInvalid()
+    {
+        DataStreamStorageOptions.From(Bind()).KeyRotation.ShouldBe(TimeSpan.FromMinutes(10));
+        DataStreamStorageOptions.From(Bind(("Halibut:DataStreamStorage:KeyRotationMinutes", "3"))).KeyRotation.ShouldBe(TimeSpan.FromMinutes(3));
+        DataStreamStorageOptions.From(Bind(("Halibut:DataStreamStorage:KeyRotationMinutes", "0"))).KeyRotation.ShouldBe(TimeSpan.FromMinutes(10));
+        DataStreamStorageOptions.From(Bind(("Halibut:DataStreamStorage:KeyRotationMinutes", "-4"))).KeyRotation.ShouldBe(TimeSpan.FromMinutes(10));
     }
 
     [Fact]

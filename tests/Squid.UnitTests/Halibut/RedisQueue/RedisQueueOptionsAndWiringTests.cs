@@ -119,10 +119,40 @@ public class RedisQueueFailureClassificationTests
 public class HalibutQueueContractTests
 {
     // A pod that dequeues a Redis request without ever having created a client for its contract cannot read the request; every contract an agent speaks must be registered at startup.
+    // The expected set is derived, not listed: a contract a new agent version speaks, added to the Tentacle contracts, is missed by the registry and this fails.
+    // A contract is a service interface of the Tentacle contract namespaces; the client-side async proxies (IAsync*) and the server-side async handlers (*Async) are not.
     [Fact]
     public void EveryAgentContract_IsRegisteredOnEveryPod()
     {
-        HalibutQueueWiring.ContractTypes.ShouldBe([typeof(IScriptService), typeof(ICapabilitiesService), typeof(IFileTransferService), typeof(IScriptServiceV1), typeof(ICapabilitiesServiceV1), typeof(IScriptServiceV2)], ignoreOrder: true);
+        var contracts = typeof(IScriptService).Assembly.GetTypes()
+            .Where(t => t.IsInterface && t.Namespace != null && t.Namespace.StartsWith("Squid.Message.Contracts.Tentacle", StringComparison.Ordinal))
+            .Where(t => !t.Name.StartsWith("IAsync", StringComparison.Ordinal) && !t.Name.EndsWith("Async", StringComparison.Ordinal))
+            .ToArray();
+
+        contracts.Length.ShouldBeGreaterThanOrEqualTo(6, "the derivation found the contracts at all");
+        HalibutQueueWiring.ContractTypes.ShouldBe(contracts, ignoreOrder: true);
+    }
+
+    // Every client the server creates for an agent is a contract the queue must be able to read on a pod that never created it.
+    [Fact]
+    public void EveryClientTheServerCreates_IsOfARegisteredContract()
+    {
+        var created = typeof(Squid.Core.Services.DeploymentExecution.Transport.IHalibutClientFactory).Assembly.GetTypes()
+            .Where(t => typeof(Squid.Core.Services.DeploymentExecution.Transport.IHalibutClientFactory).IsAssignableFrom(t) && t.IsClass)
+            .SelectMany(t => t.GetMethods())
+            .Select(m => m.ReturnType)
+            .Where(r => r.Namespace != null && r.Namespace.StartsWith("Squid.Message.Contracts.Tentacle", StringComparison.Ordinal) && r.Name.StartsWith("IAsync", StringComparison.Ordinal))
+            .Distinct()
+            .ToList();
+
+        created.ShouldNotBeEmpty("the factory's clients were found");
+
+        foreach (var client in created)
+        {
+            var service = HalibutQueueWiring.ContractTypes.SingleOrDefault(c => client.Name == "IAsync" + c.Name[1..] || client.Name == "IAsyncClient" + c.Name[1..]);
+
+            service.ShouldNotBeNull($"{client.Name} is created by the server, so its service contract must be registered");
+        }
     }
 
     [Fact]

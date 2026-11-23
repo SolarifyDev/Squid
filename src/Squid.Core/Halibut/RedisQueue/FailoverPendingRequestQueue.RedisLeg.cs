@@ -77,7 +77,10 @@ public sealed partial class FailoverPendingRequestQueue
         {
             var request = await redis.DequeueAsync(_lifetime.Token).ConfigureAwait(false);
 
-            if (request != null) Park(new ParkedRequest(request, redis));
+            if (request == null) return;
+
+            if (IsAddressedToThisAgent(request)) Park(new ParkedRequest(request, redis));
+            else await RefuseMisaddressedAsync(new ParkedRequest(request, redis)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -88,6 +91,22 @@ public sealed partial class FailoverPendingRequestQueue
 
             if (!IsUnreadableMessage(ex)) _health.RecordFailure($"dequeue failed: {ex.GetType().Name}");
         }
+    }
+
+    // The message is sealed, but nothing in the seal says which agent it is for: a sealed request copied by whoever can write to Redis into another agent's list would
+    // open fine and run there. The request names its destination inside the sealed bytes, so it is checked against the agent this queue serves.
+    private bool IsAddressedToThisAgent(RequestMessageWithCancellationToken request)
+    {
+        var destination = request.RequestMessage.Destination?.BaseUri;
+
+        return destination == null || Uri.Compare(destination, _endpoint, UriComponents.AbsoluteUri, UriFormat.UriEscaped, StringComparison.OrdinalIgnoreCase) == 0;
+    }
+
+    private async Task RefuseMisaddressedAsync(ParkedRequest request)
+    {
+        Log.Error("Refusing request {RequestActivityId} from the Redis queue of agent {Endpoint}: it is addressed to {Destination}. Someone moved a sealed request between agents' queues", request.Request.RequestMessage.ActivityId, _endpoint, request.Request.RequestMessage.Destination?.BaseUri);
+
+        if (request.TryClaim()) await FailAsync(request, "it was addressed to a different agent").ConfigureAwait(false);
     }
 
     // A message that cannot be opened (tampered, sealed under another master key) is a problem with that message, not with Redis.

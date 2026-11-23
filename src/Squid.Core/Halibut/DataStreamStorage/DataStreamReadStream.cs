@@ -5,7 +5,7 @@ namespace Squid.Core.Halibut.DataStreamStorage;
 /// <summary>
 /// A stored data stream read back chunk by chunk: each chunk is fetched with its own short query when the previous one is used up, so no database connection
 /// is held while a slow consumer (the agent's network) drains the bytes, and only one chunk is ever in memory. Every chunk must be there, authentic and in
-/// order, and the bytes must add up to the header's length; anything else throws <see cref="DataStreamUnreadableException"/> rather than yielding short or wrong data.
+/// order, the last one must be sealed as the last (so a lowered chunk count cannot hide a missing tail), and the bytes must add up to the header's length; anything else throws <see cref="DataStreamUnreadableException"/> rather than yielding short or wrong data.
 /// Halibut's copier asks for <see cref="Length"/> and seeks to the start before reading, so both are supported; seeking anywhere else is not.
 /// </summary>
 public sealed class DataStreamReadStream(IDataStreamPersistence persistence, StoredDataStreamHeader header, byte[] key) : Stream
@@ -40,6 +40,9 @@ public sealed class DataStreamReadStream(IDataStreamPersistence persistence, Sto
     // False at the end of the stream; the end is only believed when the chunks seen add up to the header.
     private async Task<bool> LoadNextChunkAsync(CancellationToken ct)
     {
+        if (header.ChunkCount < 1)
+            throw new DataStreamUnreadableException(header.StreamId, "it has no chunks, and every stream has at least its last one");
+
         if (_nextChunk >= header.ChunkCount) return EnsureComplete();
 
         var stored = await persistence.ReadChunkAsync(header.StreamId, _nextChunk, ct).ConfigureAwait(false)
@@ -47,7 +50,7 @@ public sealed class DataStreamReadStream(IDataStreamPersistence persistence, Sto
 
         if (_plain.Length < stored.Length - DataStreamCodec.Overhead) _plain = new byte[stored.Length - DataStreamCodec.Overhead];
 
-        _plainLength = DataStreamCodec.Open(stored, key, header.StreamId, _nextChunk, _plain);
+        _plainLength = DataStreamCodec.Open(stored, key, header.StreamId, _nextChunk, _plain, isFinal: _nextChunk == header.ChunkCount - 1);
         _plainOffset = 0;
         _nextChunk++;
 

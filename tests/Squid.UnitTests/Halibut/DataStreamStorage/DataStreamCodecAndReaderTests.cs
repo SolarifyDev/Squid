@@ -31,6 +31,22 @@ public class DataStreamCodecTests
         DataStreamCodec.TagBytes.ShouldBe(16);
         DataStreamCodec.Overhead.ShouldBe(28);
         System.Text.Encoding.UTF8.GetString(DataStreamCodec.AssociatedData(StreamId, 3)).ShouldBe("11111111222233334444555555555555|3");
+        System.Text.Encoding.UTF8.GetString(DataStreamCodec.AssociatedData(StreamId, 3, isFinal: true)).ShouldBe("11111111222233334444555555555555|3|final");
+        System.Text.Encoding.UTF8.GetString(DataStreamCodec.AssociatedData(StreamId, 3, isFinal: false)).ShouldBe("11111111222233334444555555555555|3");
+    }
+
+    [Fact]
+    public void ALastChunk_OnlyOpensAsTheLastChunk_AndAMiddleChunkNeverDoes()
+    {
+        using var sealer = new DataStreamChunkSealer(Key, StreamId, 64);
+        var last = sealer.Seal(Bytes(40), 2, isFinal: true).ToArray();
+        var middle = sealer.Seal(Bytes(40), 2, isFinal: false).ToArray();
+
+        DataStreamCodec.Open(last, Key, StreamId, 2, new byte[64], isFinal: true).ShouldBe(40);
+        DataStreamCodec.Open(middle, Key, StreamId, 2, new byte[64], isFinal: false).ShouldBe(40);
+
+        Should.Throw<DataStreamUnreadableException>(() => DataStreamCodec.Open(last, Key, StreamId, 2, new byte[64], isFinal: false));
+        Should.Throw<DataStreamUnreadableException>(() => DataStreamCodec.Open(middle, Key, StreamId, 2, new byte[64], isFinal: true));
     }
 
     [Fact]
@@ -232,7 +248,7 @@ public class DataStreamReadStreamTests
 public class DataStreamChunkWriterTests
 {
     [Theory]
-    [InlineData(0, 0)]
+    [InlineData(0, 1)]
     [InlineData(1, 1)]
     [InlineData(8, 1)]
     [InlineData(9, 2)]

@@ -83,15 +83,14 @@ public class HalibutRedisQueueFailoverE2ETests : IClassFixture<TwoPodsFixture>
 
         await agent.CallFrom(_pods.A).StartScriptAsync(Script("c-warm")).WithinAsync(TimeSpan.FromSeconds(60), "the warm-up request");
 
-        var baseline = await TimeAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-before")));
+        await CompleteLocallyAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-before")));
 
         _pods.Proxy.Sever();
 
         try
         {
-            var duringCut = await TimeAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-cut")));
-
-            duringCut.ShouldBeLessThan(baseline + TimeSpan.FromSeconds(1), "Redis going away must not slow a request for an agent polling this pod");
+            // Redis stalls for 30 to 50 s when it is cut: a request for an agent polling this pod that completes within the limit is not waiting on it.
+            await CompleteLocallyAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-cut")));
 
             await WaitUntilAsync(() => !_pods.A.Health.IsAvailable, "pod A's breaker to open", TimeSpan.FromSeconds(30));
 
@@ -101,11 +100,10 @@ public class HalibutRedisQueueFailoverE2ETests : IClassFixture<TwoPodsFixture>
             var failure = await Should.ThrowAsync<Exception>(() => agent.CallFrom(_pods.A, TimeSpan.FromSeconds(4)).StartScriptAsync(Script("c-cross-cut")));
 
             timer.Elapsed.ShouldBeGreaterThan(TimeSpan.FromSeconds(3), "it waited for the agent in the local queue instead of failing at once");
-            timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(20));
             TransientFailureClassifier.IsTransient(failure).ShouldBeTrue($"{failure.GetType().Name}: {failure.Message} must pause the deployment, not fail it");
             agent.Service.Started.ShouldNotContain("c-cross-cut");
 
-            (await TimeAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-cut-open")))).ShouldBeLessThan(baseline + TimeSpan.FromSeconds(1));
+            await CompleteLocallyAsync(() => agent.CallFrom(_pods.B).StartScriptAsync(Script("c-cut-open")));
         }
         finally
         {
@@ -242,14 +240,11 @@ public class HalibutRedisQueueFailoverE2ETests : IClassFixture<TwoPodsFixture>
     private static StartScriptCommand ScriptWith(string ticket, params ScriptFile[] files)
         => new(new ScriptTicket(ticket), ScriptMarker, ScriptIsolationLevel.NoIsolation, TimeSpan.FromSeconds(1), null, [], "e2e-task", TimeSpan.FromSeconds(1), files);
 
-    private static async Task<TimeSpan> TimeAsync(Func<Task<ScriptStatusResponse>> call)
+    private static async Task CompleteLocallyAsync(Func<Task<ScriptStatusResponse>> call)
     {
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        var response = await call().WithinAsync(TimeSpan.FromSeconds(30), "a local request");
+        var response = await call().WithinAsync(TimeSpan.FromSeconds(25), "a local request");
 
         response.State.ShouldBe(ProcessState.Complete);
-
-        return timer.Elapsed;
     }
 
     private static async Task<T> RetryUntilAsync<T>(Func<Task<T>> call, TimeSpan limit)

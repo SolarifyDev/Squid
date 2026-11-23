@@ -117,12 +117,16 @@ public class DataStreamStorageSettings
     public const int DefaultChunkBytes = 1024 * 1024;
     public const int MaxChunkBytes = 32 * 1024 * 1024;
     public const int DefaultOrphanTtlMinutes = 60;
+    public const int DefaultKeyRotationMinutes = 10;
 
     /// <summary>Size of one stored chunk. Each chunk is one row and the only buffer a store or a read holds, so memory stays near this size however large the stream is.</summary>
     public int ChunkBytes { get; set; } = DefaultChunkBytes;
 
     /// <summary>Age after which a stored stream nobody collected (its request was cancelled, timed out or never picked up) is removed. Must outlast the longest request pickup wait.</summary>
     public int OrphanTtlMinutes { get; set; } = DefaultOrphanTtlMinutes;
+
+    /// <summary>How long one data key seals stored streams before a new one is made. Wrapping a key costs a 600k-iteration PBKDF2 on the pod that stores and on the pod that reads, so it is done per period, not per request.</summary>
+    public int KeyRotationMinutes { get; set; } = DefaultKeyRotationMinutes;
 }
 
 /// <summary>

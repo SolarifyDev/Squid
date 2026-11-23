@@ -46,6 +46,8 @@ public static class HalibutQueueWiring
         builder.Register(ctx => new QueueMessageKeys(ctx.Resolve<IQueueMessageKeyProtector>(), ctx.Resolve<RedisQueueOptions>(), TimeProvider.System)).As<IQueueMessageKeys>().SingleInstance();
         builder.Register(_ => new RedisFallbackLog(TimeProvider.System)).AsSelf().SingleInstance();
         builder.RegisterType<PostgresReplicaStore>().As<IReplicaStore>().SingleInstance();
+        builder.RegisterType<QueueKeyCheck>().As<IQueueKeyCheck>().SingleInstance();
+        builder.RegisterType<DataStreamOrphanTtlStartupCheck>().As<IStartable>().SingleInstance();
         builder.RegisterType<ReplicaPresence>().As<IReplicaPresence>().AsSelf().SingleInstance();
         builder.RegisterType<ReplicaHeartbeat>().As<IStartable>().AsSelf().SingleInstance();
         builder.RegisterType<QueueSealingStartupCheck>().As<IStartable>().SingleInstance();

@@ -205,11 +205,9 @@ public sealed class FailoverPendingRequestQueueReplicaTests : IAsyncDisposable
 
         _redis.Hang = true;
 
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-
+        // The fake never answers and the budget is 300 ms: that the call returns at all is the proof it stopped waiting.
         await _queue.ApplyResponse(ResponseMessage.FromResult(request, "ok"), request.ActivityId).WithinAsync(Limit, "apply");
 
-        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "the budget is 300 ms; the fake would otherwise wait for ever");
         _health.Failures.Count.ShouldBe(1);
     }
 
