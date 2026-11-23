@@ -1,0 +1,158 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Halibut;
+using Halibut.Diagnostics;
+using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Common;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
+using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Script;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
+using Squid.Core.Services.DeploymentExecution.Tentacle.Dispatchers;
+using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Deployments.Checkpoints;
+using Squid.Core.Settings.Halibut;
+using Squid.Message.Constants;
+using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Models.Deployments.Execution;
+
+namespace Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle;
+
+/// <summary>
+/// Pins the seam itself: the strategy must route client creation, start and unknown-ticket recognition
+/// through <see cref="IScriptDispatcher"/> (so a V2 sibling can replace V1 without touching the strategy),
+/// and <see cref="V1ScriptDispatcher"/> must own the V1 wire specifics.
+/// </summary>
+[Collection("HalibutPollingWorkAdmissionStaticState")]
+public class ScriptDispatcherSeamTests
+{
+    private readonly Machine _machine = new() { Id = 42, Name = "agent-42", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-seam","Thumbprint":"AABBCCDD"}""" };
+
+    [Fact]
+    public async Task Strategy_UsesTheInjectedDispatcher_ForClientStartAndSpec()
+    {
+        var agent = new Mock<IAsyncScriptService>();
+        agent.Setup(a => a.GetStatusAsync(It.IsAny<ScriptStatusRequest>())).ReturnsAsync((ScriptStatusRequest r) => new ScriptStatusResponse(r.Ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+        agent.Setup(a => a.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>())).ReturnsAsync((CompleteScriptCommand c) => new ScriptStatusResponse(c.Ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var dispatcher = new Mock<IScriptDispatcher>();
+        ScriptDispatchSpec seenSpec = null;
+        var started = 0;
+        dispatcher.Setup(d => d.CreateClient(It.IsAny<ServiceEndPoint>())).Returns(agent.Object);
+        dispatcher.Setup(d => d.PrepareStart(agent.Object, It.IsAny<ScriptDispatchSpec>()))
+            .Callback<IAsyncScriptService, ScriptDispatchSpec>((_, spec) => seenSpec = spec)
+            .Returns(() => { started++; return Task.FromResult(new ScriptStatusResponse(seenSpec.Ticket, ProcessState.Running, 0, new List<ProcessOutput>(), 0)); });
+
+        var factory = new Mock<IHalibutClientFactory>();
+        var strategy = new HalibutMachineExecutionStrategy(factory.Object, new CalamariPayloadBuilder(new Mock<IYamlNuGetPacker>().Object), new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 }), new HalibutSetting(), scriptDispatcher: dispatcher.Object);
+
+        var request = new ScriptExecutionRequest
+        {
+            Machine = _machine, ScriptBody = "echo seam", ExecutionMode = ExecutionMode.DirectScript, Syntax = ScriptSyntax.Bash, TargetNamespace = "ns", ServerTaskId = 777, Timeout = TimeSpan.FromMinutes(3),
+            ReleaseVersion = "1.0.0", Variables = new List<Message.Models.Deployments.Variable.VariableDto>()
+        };
+
+        await strategy.ExecuteScriptAsync(request, CancellationToken.None);
+
+        factory.Verify(f => f.CreateClient(It.IsAny<ServiceEndPoint>()), Times.Never, "the strategy must open the client through the dispatcher, not the factory");
+        started.ShouldBe(1);
+        seenSpec.ScriptBody.ShouldBe("echo seam");
+        seenSpec.ServerTaskId.ShouldBe(777);
+        seenSpec.Timeout.ShouldBe(TimeSpan.FromMinutes(3));
+        seenSpec.IsolationMutexName.ShouldBe("squid/machine/42");
+        seenSpec.Syntax.ShouldBe(ScriptSyntax.Bash);
+        seenSpec.TargetNamespace.ShouldBe("ns");
+        seenSpec.Ticket.TaskId.ShouldMatch("^[a-f0-9]{32}$");
+    }
+
+    [Theory]
+    [InlineData(true, true)]    // dispatcher says unknown -> fresh dispatch, no re-attach
+    [InlineData(false, false)]  // dispatcher says known   -> re-attach, no StartScript
+    public async Task Strategy_AsksTheDispatcher_WhetherTheRecordedTicketIsKnown(bool unknown, bool expectFreshStart)
+    {
+        var agent = new Mock<IAsyncScriptService>();
+        agent.Setup(a => a.GetStatusAsync(It.IsAny<ScriptStatusRequest>())).ReturnsAsync((ScriptStatusRequest r) => new ScriptStatusResponse(r.Ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+        agent.Setup(a => a.CompleteScriptAsync(It.IsAny<CompleteScriptCommand>())).ReturnsAsync((CompleteScriptCommand c) => new ScriptStatusResponse(c.Ticket, ProcessState.Complete, 0, new List<ProcessOutput>(), 0));
+
+        var dispatcher = new Mock<IScriptDispatcher>();
+        var started = 0;
+        dispatcher.Setup(d => d.CreateClient(It.IsAny<ServiceEndPoint>())).Returns(agent.Object);
+        dispatcher.Setup(d => d.PrepareStart(It.IsAny<IAsyncScriptService>(), It.IsAny<ScriptDispatchSpec>())).Returns(() => { started++; return Task.FromResult(new ScriptStatusResponse(new ScriptTicket("t"), ProcessState.Running, 0, new List<ProcessOutput>(), 0)); });
+        dispatcher.Setup(d => d.IsUnknownTicket(It.IsAny<ScriptStatusResponse>())).Returns(unknown);
+
+        var store = new Mock<IInFlightScriptStore>();
+        store.Setup(s => s.TryGetTicketAsync(It.IsAny<int>(), It.IsAny<DispatchSlot>(), It.IsAny<CancellationToken>())).ReturnsAsync("OLD");
+
+        var strategy = new HalibutMachineExecutionStrategy(new Mock<IHalibutClientFactory>().Object, new CalamariPayloadBuilder(new Mock<IYamlNuGetPacker>().Object), new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 }), new HalibutSetting(), inFlightStore: store.Object, scriptDispatcher: dispatcher.Object);
+
+        await strategy.ExecuteScriptAsync(new ScriptExecutionRequest { Machine = _machine, ScriptBody = "x", ExecutionMode = ExecutionMode.DirectScript, ReleaseVersion = "1", Variables = new List<Message.Models.Deployments.Variable.VariableDto>() }, CancellationToken.None);
+
+        dispatcher.Verify(d => d.IsUnknownTicket(It.IsAny<ScriptStatusResponse>()), Times.Once);
+        (started == 1).ShouldBe(expectFreshStart);
+    }
+
+    [Fact]
+    public void V1_PrepareStart_PerformsNoIo_UntilTheDelegateRuns()
+    {
+        var factory = new Mock<IHalibutClientFactory>();
+        var agent = new Mock<IAsyncScriptService>();
+        agent.Setup(a => a.StartScriptAsync(It.IsAny<StartScriptCommand>())).ReturnsAsync(new ScriptStatusResponse(new ScriptTicket("t"), ProcessState.Running, 0, new List<ProcessOutput>(), 0));
+
+        var start = new V1ScriptDispatcher(factory.Object).PrepareStart(agent.Object, Spec());
+
+        agent.Verify(a => a.StartScriptAsync(It.IsAny<StartScriptCommand>()), Times.Never);
+
+        start().Wait();
+
+        agent.Verify(a => a.StartScriptAsync(It.Is<StartScriptCommand>(c => c.TaskId == "9" && c.IsolationMutexName == "mutex" && c.ScriptBody == "body")), Times.Once);
+    }
+
+    [Fact]
+    public void V1_PrepareStart_UnsupportedSyntax_ThrowsBeforeAnyRpc()
+    {
+        var agent = new Mock<IAsyncScriptService>(MockBehavior.Strict);
+
+        Should.Throw<InvalidOperationException>(() => new V1ScriptDispatcher(new Mock<IHalibutClientFactory>().Object).PrepareStart(agent.Object, Spec() with { Syntax = (ScriptSyntax)999 }));
+    }
+
+    [Fact]
+    public void V1_CreateClient_DelegatesToTheFactory()
+    {
+        var agent = new Mock<IAsyncScriptService>().Object;
+        var factory = new Mock<IHalibutClientFactory>();
+        var endpoint = new ServiceEndPoint("poll://x/", "AABB", new HalibutTimeoutsAndLimits());
+        factory.Setup(f => f.CreateClient(endpoint)).Returns(agent);
+
+        new V1ScriptDispatcher(factory.Object).CreateClient(endpoint).ShouldBeSameAs(agent);
+    }
+
+    [Theory]
+    [InlineData(ProcessState.Complete, ScriptExitCodes.UnknownResult, true)]
+    [InlineData(ProcessState.Complete, 0, false)]
+    [InlineData(ProcessState.Running, 0, false)]
+    [InlineData(ProcessState.Pending, 0, false)]
+    public void V1_IsUnknownTicket_OnlyForCompleteWithUnknownResult(ProcessState state, int exitCode, bool expected)
+    {
+        var probe = new ScriptStatusResponse(new ScriptTicket("t"), state, exitCode, new List<ProcessOutput>(), 0);
+
+        new V1ScriptDispatcher(new Mock<IHalibutClientFactory>().Object).IsUnknownTicket(probe).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void V1_IsUnknownTicket_NullProbe_IsUnknown()
+        => new V1ScriptDispatcher(new Mock<IHalibutClientFactory>().Object).IsUnknownTicket(null).ShouldBeTrue();
+
+    private static ScriptDispatchSpec Spec() => new()
+    {
+        Ticket = new ScriptTicket("ticket"),
+        ScriptBody = "body",
+        Files = Array.Empty<ScriptFile>(),
+        Timeout = TimeSpan.FromMinutes(2),
+        IsolationMutexName = "mutex",
+        ServerTaskId = 9,
+        Syntax = ScriptSyntax.Bash,
+        TargetNamespace = "ns"
+    };
+}
