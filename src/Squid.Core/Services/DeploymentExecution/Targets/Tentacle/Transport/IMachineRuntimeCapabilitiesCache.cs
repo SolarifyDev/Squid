@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Squid.Core.Services.DeploymentExecution.Validation;
 using Squid.Message.Constants;
+using Squid.Message.Contracts.Tentacle;
 
 namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 
@@ -74,7 +75,7 @@ public sealed class MachineRuntimeCapabilities
     /// <c>false</c>, so dispatch safely falls back to V1.
     /// </summary>
     public bool SupportsScriptServiceV2 =>
-        SupportedServices.Any(s => string.Equals(s, "IScriptService/v2", StringComparison.OrdinalIgnoreCase));
+        SupportedServices.Any(s => string.Equals(s, ScriptServiceCapabilities.V2, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// explicit-claim OS predicates the upgrade-strategy
