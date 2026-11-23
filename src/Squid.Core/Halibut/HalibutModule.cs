@@ -67,6 +67,8 @@ public class HalibutModule : Module
 
             var halibutTimeoutsAndLimits = BuildTimeoutsAndLimits();
 
+            LogTimeoutOverrides(halibutTimeoutsAndLimits);
+
             var halibutRuntime = new HalibutRuntimeBuilder()
                 .WithServiceFactory(services)
                 .WithServerCertificate(serverCert)
@@ -85,31 +87,36 @@ public class HalibutModule : Module
     }
 
     /// <summary>
-    /// Builds the timeouts/limits with env-var overrides applied. Always
-    /// starts from <see cref="HalibutTimeoutsAndLimits.RecommendedValues"/>
-    /// — env vars adjust individual fields without rewriting the whole
-    /// shape (so when Halibut adds a new field with a sensible default,
-    /// we inherit it automatically).
+    /// SSOT for <see cref="HalibutTimeoutsAndLimits"/>: starts from
+    /// <see cref="HalibutTimeoutsAndLimits.RecommendedValues"/> and applies the env-var
+    /// overrides. Used for the <see cref="HalibutRuntime"/> AND for every
+    /// <see cref="ServiceEndPoint"/> the server builds (see EndpointJsonHelper) —
+    /// Halibut copies PollingRequestQueueTimeout, RetryListeningSleepInterval,
+    /// RetryCountLimit, ConnectionErrorRetryTimeout and TcpClientConnectTimeout onto the
+    /// endpoint at construction and reads them from <c>request.Destination</c> at dispatch
+    /// (PendingRequestQueueAsync), so an override applied only to the runtime never
+    /// reaches a polling dispatch. Pure and quiet: safe to call per endpoint.
     /// </summary>
     internal static HalibutTimeoutsAndLimits BuildTimeoutsAndLimits()
     {
         var values = HalibutTimeoutsAndLimits.RecommendedValues();
 
         if (TryReadSecondsEnv(TcpReceiveResponseTimeoutSecondsEnvVar, out var tcpReceive))
-        {
-            Log.Information("Halibut TcpClientReceiveResponseTimeout overridden via {EnvVar} → {Seconds}s",
-                TcpReceiveResponseTimeoutSecondsEnvVar, tcpReceive.TotalSeconds);
             values.TcpClientReceiveResponseTimeout = tcpReceive;
-        }
 
         if (TryReadSecondsEnv(PollingRequestQueueTimeoutSecondsEnvVar, out var pollingQueue))
-        {
-            Log.Information("Halibut PollingRequestQueueTimeout overridden via {EnvVar} → {Seconds}s",
-                PollingRequestQueueTimeoutSecondsEnvVar, pollingQueue.TotalSeconds);
             values.PollingRequestQueueTimeout = pollingQueue;
-        }
 
         return values;
+    }
+
+    private static void LogTimeoutOverrides(HalibutTimeoutsAndLimits values)
+    {
+        if (TryReadSecondsEnv(TcpReceiveResponseTimeoutSecondsEnvVar, out _))
+            Log.Information("Halibut TcpClientReceiveResponseTimeout overridden via {EnvVar} → {Seconds}s", TcpReceiveResponseTimeoutSecondsEnvVar, values.TcpClientReceiveResponseTimeout.TotalSeconds);
+
+        if (TryReadSecondsEnv(PollingRequestQueueTimeoutSecondsEnvVar, out _))
+            Log.Information("Halibut PollingRequestQueueTimeout overridden via {EnvVar} → {Seconds}s", PollingRequestQueueTimeoutSecondsEnvVar, values.PollingRequestQueueTimeout.TotalSeconds);
     }
 
     /// <summary>

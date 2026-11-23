@@ -12,6 +12,7 @@ namespace Squid.UnitTests.Halibut;
 /// env vars (Rule 8). Constants pinned so future renames can't silently
 /// brick deployment manifests that already set them.
 /// </summary>
+[Collection(HalibutEnvVarCollection.Name)]
 public sealed class HalibutModuleTimeoutsTests
 {
     [Fact]
