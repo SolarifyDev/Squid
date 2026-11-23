@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.Interruptions;
 using Squid.Core.Settings.ServerTask;
@@ -27,18 +28,20 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
     private readonly IServerTaskService _serverTaskService;
     private readonly IDeploymentCheckpointService _checkpointService;
     private readonly IDeploymentInterruptionService _interruptionService;
+    private readonly IInFlightScriptCanceller _scriptCanceller;
     private readonly ServerTaskLeaseOptions _options;
 
-    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskSetting setting) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.From(setting))
+    public ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskSetting setting, IInFlightScriptCanceller scriptCanceller = null) : this(leases, serverTaskService, checkpointService, interruptionService, ServerTaskLeaseOptions.From(setting), scriptCanceller)
     {
     }
 
-    internal ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskLeaseOptions options)
+    internal ServerTaskLeaseReaperService(IServerTaskLeaseDataProvider leases, IServerTaskService serverTaskService, IDeploymentCheckpointService checkpointService, IDeploymentInterruptionService interruptionService, ServerTaskLeaseOptions options, IInFlightScriptCanceller scriptCanceller = null)
     {
         _leases = leases;
         _serverTaskService = serverTaskService;
         _checkpointService = checkpointService;
         _interruptionService = interruptionService;
+        _scriptCanceller = scriptCanceller;
         _options = options;
     }
 
@@ -99,6 +102,10 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
         try
         {
             await _interruptionService.CancelPendingInterruptionsAsync(taskId, ct).ConfigureAwait(false);
+
+            // The dead owner can no longer cancel the agent script it was running, and the checkpoint deleted next is the only record of its ticket.
+            if (_scriptCanceller != null) await _scriptCanceller.CancelAllAsync(taskId, ct).ConfigureAwait(false);
+
             await _checkpointService.DeleteAsync(taskId, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

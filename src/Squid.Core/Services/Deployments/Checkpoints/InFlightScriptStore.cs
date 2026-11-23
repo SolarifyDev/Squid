@@ -78,6 +78,13 @@ public interface IInFlightScriptStore : IScopedDependency
         => Task.FromResult<ScriptProtocolVersion?>(null);
 
     /// <summary>
+    /// Every script recorded as in flight for the task (empty when none or no checkpoint row). Read-only; the default is "none known", i.e. an
+    /// implementer that does not persist tickets has nothing to cancel.
+    /// </summary>
+    Task<IReadOnlyList<InFlightScript>> ListAsync(int serverTaskId, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<InFlightScript>>(Array.Empty<InFlightScript>());
+
+    /// <summary>
     /// Cross-task: is ANY deployment currently holding an in-flight script on <paramref name="machineId"/>?
     /// Scans the (small, retention-bounded) set of checkpoints that still carry in-flight entries — a
     /// checkpoint exists only for an active or paused deployment, and is deleted on success. The tentacle
@@ -114,6 +121,9 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
 
     public Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
         => ReadAsync<ScriptProtocolVersion?>(serverTaskId, json => InFlightScriptMap.GetProtocol(json, slot), cancellationToken);
+
+    public async Task<IReadOnlyList<InFlightScript>> ListAsync(int serverTaskId, CancellationToken cancellationToken = default)
+        => await ReadAsync(serverTaskId, InFlightScriptMap.List, cancellationToken).ConfigureAwait(false) ?? Array.Empty<InFlightScript>();
 
     private async Task<T> ReadAsync<T>(int serverTaskId, Func<string, T> project, CancellationToken cancellationToken)
     {

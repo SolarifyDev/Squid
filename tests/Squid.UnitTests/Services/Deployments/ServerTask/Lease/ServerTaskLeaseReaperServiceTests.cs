@@ -1,3 +1,4 @@
+using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Handlers.CommandHandlers.Deployments.ServerTask;
 using Squid.Core.Jobs.RecurringJobs;
 using Squid.Core.Services.Deployments.Checkpoints;
@@ -18,6 +19,7 @@ public class ServerTaskLeaseReaperServiceTests
     private readonly Mock<IServerTaskService> _taskService = new();
     private readonly Mock<IDeploymentCheckpointService> _checkpoints = new();
     private readonly Mock<IDeploymentInterruptionService> _interruptions = new();
+    private readonly Mock<IInFlightScriptCanceller> _scriptCanceller = new();
 
     [Theory]
     [InlineData(TaskState.Executing, TaskState.Paused)]      // a crash must not discard progress: pause, checkpoint kept
@@ -114,6 +116,36 @@ public class ServerTaskLeaseReaperServiceTests
         (await Service().ReapStaleAsync()).ShouldBe(1);
     }
 
+    // The owner of a Cancelling task died, so nobody is left to cancel the agent script it was running; the checkpoint deleted next is the only
+    // record of the ticket, so the script must be cancelled first.
+    [Fact]
+    public async Task Cancelling_CancelsTheInFlightAgentScripts_BeforeTheCheckpointIsDeleted()
+    {
+        var order = new List<string>();
+        var task = new StaleServerTask(8, TaskState.Cancelling, "pod-a:1:x");
+        Stale(task);
+        Recovers(task, TaskState.Cancelled, 1);
+        _scriptCanceller.Setup(c => c.CancelAllAsync(8, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        _checkpoints.Setup(c => c.DeleteAsync(8, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
+
+        await Service().ReapStaleAsync();
+
+        order.ShouldBe(["cancel-scripts", "delete-checkpoint"]);
+    }
+
+    // An Executing task is only paused: its script must keep running for the resume to re-attach.
+    [Fact]
+    public async Task Executing_PausedByTheReaper_NeverCancelsTheAgentScript()
+    {
+        var task = new StaleServerTask(7, TaskState.Executing, "pod-a:1:x");
+        Stale(task);
+        Recovers(task, TaskState.Paused, 1);
+
+        await Service().ReapStaleAsync();
+
+        _scriptCanceller.Verify(c => c.CancelAllAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task Candidates_AreReadWithTheConfiguredStalenessAndBatchSize()
     {
@@ -171,5 +203,5 @@ public class ServerTaskLeaseReaperServiceTests
         => _leases.Setup(l => l.RecoverAsync(task, to, StaleAfter, It.IsAny<CancellationToken>())).ReturnsAsync(rows);
 
     private ServerTaskLeaseReaperService Service()
-        => new(_leases.Object, _taskService.Object, _checkpoints.Object, _interruptions.Object, new ServerTaskLeaseOptions { Stale = StaleAfter });
+        => new(_leases.Object, _taskService.Object, _checkpoints.Object, _interruptions.Object, new ServerTaskLeaseOptions { Stale = StaleAfter }, _scriptCanceller.Object);
 }

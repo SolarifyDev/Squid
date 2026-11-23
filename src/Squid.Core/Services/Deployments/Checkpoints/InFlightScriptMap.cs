@@ -87,6 +87,17 @@ public static class InFlightScriptMap
         throw new UnsupportedScriptProtocolException(recorded);
     }
 
+    /// <summary>Every recorded in-flight script with the protocol version it was dispatched with (V1 when the record has no version, null when unrecognised).</summary>
+    public static IReadOnlyList<InFlightScript> List(string json)
+        => Parse(json).Select(e => new InFlightScript(new DispatchSlot(e.MachineId, e.StepId, e.ActionId), e.Ticket, ParseProtocol(e.Protocol))).ToList();
+
+    private static ScriptProtocolVersion? ParseProtocol(string? recorded)
+    {
+        if (string.IsNullOrEmpty(recorded)) return ScriptProtocolVersion.V1;
+
+        return Enum.TryParse<ScriptProtocolVersion>(recorded, ignoreCase: false, out var version) && Enum.IsDefined(version) ? version : null;
+    }
+
     /// <summary>True if ANY in-flight entry targets <paramref name="machineId"/> — i.e. a script
     /// is dispatched to that machine's agent and not yet observed to completion. Used by the
     /// tentacle upgrade to defer restarting an agent that has a deployment script in flight.</summary>

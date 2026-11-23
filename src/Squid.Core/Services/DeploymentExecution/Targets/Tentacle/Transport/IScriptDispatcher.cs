@@ -69,6 +69,12 @@ public interface IScriptAgentSession
     /// </summary>
     bool ProbeFailureMeansUnknownTicket { get; }
 
+    /// <summary>
+    /// Asks the agent to cancel the script. Idempotent on the agent (an unknown ticket answers Canceled) and bounded by the cancel retry budget;
+    /// used to stop a script that a pause deliberately left running when its task is then cancelled.
+    /// </summary>
+    Task CancelAsync(ScriptTicket ticket);
+
     /// <summary>Observes the script to completion (or to the explicit lost / unknown outcome) and returns its result.</summary>
     Task<ScriptExecutionResult> ObserveAsync(ScriptExecutionRequest request, ServiceEndPoint endpoint, ScriptTicket ticket, AgentScriptStatus initial);
 }
