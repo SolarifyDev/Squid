@@ -15,6 +15,7 @@ using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Enums.OctopusImport;
 using SquidEnvironment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
@@ -189,6 +190,16 @@ public class OctopusImportScriptCompatibilityIntegrationTests : TestBase
 
             db.ChangeTracker.Clear();
             (await db.Set<ServerTask>().AsNoTracking().SingleAsync(t => t.Id == created.TaskId)).State.ShouldBe(TaskState.Success, customMessage: $"deployment to {environmentName} must succeed");
+
+            var taskNode = await db.Set<ActivityLog>().AsNoTracking().SingleOrDefaultAsync(node =>
+                node.ServerTaskId == created.TaskId && node.NodeType == DeploymentActivityLogNodeType.Task);
+            taskNode.ShouldNotBeNull("the deployment log writer must persist activity nodes in the test database");
+            taskNode.Status.ShouldBe(DeploymentActivityLogNodeStatus.Success);
+
+            var hasCompletionLog = await db.Set<ServerTaskLog>().AnyAsync(log =>
+                log.ServerTaskId == created.TaskId && log.ActivityNodeId == taskNode.Id
+                && log.MessageText == "Deployment completed successfully");
+            hasCompletionLog.ShouldBeTrue("the deployment log writer must flush task logs to the test database");
         });
     }
 

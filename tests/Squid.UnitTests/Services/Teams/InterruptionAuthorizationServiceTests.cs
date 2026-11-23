@@ -156,6 +156,7 @@ public class InterruptionAuthorizationServiceTests
         // Ordinals of pre-existing permissions must not move: the new value is appended at the end.
         ((int)Permission.AdministerSystem).ShouldBe(56);
         ((int)Permission.InterruptionSubmitOverride).ShouldBe(57);
+        ((int)Permission.RunbookRun).ShouldBe(59);
     }
 
     // ── Operator opt-out (Rule 8) ─────────────────────────────────────────────────────────────

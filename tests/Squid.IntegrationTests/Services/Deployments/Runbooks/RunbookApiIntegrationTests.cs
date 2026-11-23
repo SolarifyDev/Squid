@@ -1,12 +1,17 @@
+using System.Net;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.DeploymentExecution.Runbooks;
 using Squid.Core.Services.Deployments.Process;
 using Squid.Core.Services.Deployments.Runbooks;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.Jobs;
 using Squid.Core.Services.Teams;
+using Squid.IntegrationTests.Base;
 using Squid.IntegrationTests.Helpers;
 using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Runbook;
@@ -25,6 +30,9 @@ public class RunbookApiIntegrationTests : TestBase
     private const int ViewerUserId = 5101;
     private const int EditorUserId = 5102;
     private const int OtherProjectViewerUserId = 5103;
+    private const int RunnerUserId = 5104;
+    private const int PublisherUserId = 5105;
+    private const int EnvironmentRestrictedRunnerUserId = 5106;
     private static readonly Guid TestTopic = Guid.NewGuid();
 
     public RunbookApiIntegrationTests()
@@ -355,6 +363,280 @@ public class RunbookApiIntegrationTests : TestBase
             CurrentUser(ViewerUserId));
     }
 
+    [Fact]
+    public async Task EligibleEnvironments_UsesRunPermissionAndPersistedSnapshotAndTargetScope()
+    {
+        var fixture = await SeedProjectAsync();
+        await AssignPermissionsAsync(RunnerUserId, fixture.Project, Permission.RunbookRun);
+        await AssignPermissionsAsync(PublisherUserId, fixture.Project, Permission.RunbookPublish);
+
+        var runbook = await Run<IRunbookService, RunbookDto>(service =>
+            service.CreateRunbookAsync(new CreateRunbookCommand
+            {
+                Runbook = new CreateRunbookModel
+                {
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId,
+                    Name = "Eligible environments"
+                }
+            }));
+
+        var unpublished = await Run<IMediator, GetRunbookEligibleEnvironmentsResponse>(
+            mediator => mediator.RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                new GetRunbookEligibleEnvironmentsRequest
+                {
+                    Id = runbook.Id,
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId
+                }),
+            CurrentUser(RunnerUserId));
+        unpublished.Data.Environments.ShouldBeEmpty();
+
+        var eligibleEnvironmentId = 0;
+        var scopedOutEnvironmentId = 0;
+        await Run<SquidDbContext>(async db =>
+        {
+            var eligibleEnvironment = new Squid.Core.Persistence.Entities.Deployments.Environment
+            {
+                SpaceId = fixture.Project.SpaceId,
+                Name = "Runbook eligible",
+                Slug = "runbook-eligible",
+                SortOrder = 1
+            };
+            var scopedOutEnvironment = new Squid.Core.Persistence.Entities.Deployments.Environment
+            {
+                SpaceId = fixture.Project.SpaceId,
+                Name = "Runbook scoped out",
+                Slug = "runbook-scoped-out",
+                SortOrder = 2
+            };
+            var foreignEnvironment = new Squid.Core.Persistence.Entities.Deployments.Environment
+            {
+                SpaceId = fixture.Project.SpaceId + 1,
+                Name = "Runbook foreign space",
+                Slug = "runbook-foreign-space",
+                SortOrder = 3
+            };
+            db.Set<Squid.Core.Persistence.Entities.Deployments.Environment>().AddRange(
+                eligibleEnvironment, scopedOutEnvironment, foreignEnvironment);
+            await db.SaveChangesAsync();
+            eligibleEnvironmentId = eligibleEnvironment.Id;
+            scopedOutEnvironmentId = scopedOutEnvironment.Id;
+
+            db.Set<Machine>().AddRange(
+                MachineForEnvironment("eligible", fixture.Project.SpaceId, eligibleEnvironment.Id,
+                    "{\"CommunicationStyle\":\"TentacleListening\",\"Uri\":\"https://127.0.0.1:10933/\",\"Thumbprint\":\"AABB\"}"),
+                MachineForEnvironment("wrong-environment", fixture.Project.SpaceId, scopedOutEnvironment.Id,
+                    "{\"CommunicationStyle\":\"TentacleListening\",\"Uri\":\"https://127.0.0.1:10934/\",\"Thumbprint\":\"CCDD\"}"),
+                MachineForEnvironment("disabled", fixture.Project.SpaceId, eligibleEnvironment.Id,
+                    "{\"CommunicationStyle\":\"TentacleListening\",\"Uri\":\"https://127.0.0.1:10935/\",\"Thumbprint\":\"EEFF\"}", isDisabled: true),
+                MachineForEnvironment("foreign-space", fixture.Project.SpaceId + 1, eligibleEnvironment.Id,
+                    "{\"CommunicationStyle\":\"TentacleListening\",\"Uri\":\"https://127.0.0.1:10936/\",\"Thumbprint\":\"1122\"}"),
+                MachineForEnvironment("unsupported-transport", fixture.Project.SpaceId, eligibleEnvironment.Id,
+                    "{\"CommunicationStyle\":\"TentaclePolling\",\"SubscriptionId\":\"polling\",\"Thumbprint\":\"3344\"}"));
+
+            var step = new DeploymentStep
+            {
+                ProcessId = runbook.ProcessId,
+                StepOrder = 1,
+                Name = "Run script",
+                StepType = "Action",
+                Condition = "Success",
+                StartTrigger = string.Empty,
+                PackageRequirement = string.Empty
+            };
+            db.Set<DeploymentStep>().Add(step);
+            await db.SaveChangesAsync();
+
+            var action = new DeploymentAction
+            {
+                StepId = step.Id,
+                ActionOrder = 1,
+                Name = "Inline Bash",
+                ActionType = "Squid.Script",
+                IsRequired = true
+            };
+            db.Set<DeploymentAction>().Add(action);
+            await db.SaveChangesAsync();
+            db.Set<ActionEnvironment>().Add(new ActionEnvironment
+            {
+                ActionId = action.Id,
+                EnvironmentId = eligibleEnvironment.Id
+            });
+            db.Set<DeploymentActionProperty>().AddRange(
+                new DeploymentActionProperty
+                {
+                    ActionId = action.Id,
+                    PropertyName = "Squid.Action.Script.ScriptSource",
+                    PropertyValue = "Inline"
+                },
+                new DeploymentActionProperty
+                {
+                    ActionId = action.Id,
+                    PropertyName = "Squid.Action.Script.Syntax",
+                    PropertyValue = "Bash"
+                },
+                new DeploymentActionProperty
+                {
+                    ActionId = action.Id,
+                    PropertyName = "Squid.Action.Script.ScriptBody",
+                    PropertyValue = "echo eligible"
+                });
+            await db.SaveChangesAsync();
+        });
+
+        var published = await Run<IRunbookService, RunbookPublishedSnapshotDto>(service =>
+            service.PublishRunbookAsync(new PublishRunbookCommand
+            {
+                Id = runbook.Id,
+                ProjectId = fixture.Project.Id,
+                SpaceId = fixture.Project.SpaceId
+            }));
+        published.Version.ShouldBe(1);
+
+        var eligible = await Run<IMediator, GetRunbookEligibleEnvironmentsResponse>(
+            mediator => mediator.RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                new GetRunbookEligibleEnvironmentsRequest
+                {
+                    Id = runbook.Id,
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId
+                }),
+            CurrentUser(RunnerUserId));
+        eligible.Data.Environments.Select(environment => environment.Id)
+            .ShouldBe([eligibleEnvironmentId]);
+
+        await AssignPermissionsAsync(EnvironmentRestrictedRunnerUserId, fixture.Project, scopedOutEnvironmentId,
+            Permission.RunbookRun);
+        var restricted = await Run<IMediator, GetRunbookEligibleEnvironmentsResponse>(
+            mediator => mediator.RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                new GetRunbookEligibleEnvironmentsRequest
+                {
+                    Id = runbook.Id,
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId
+                }),
+            CurrentUser(EnvironmentRestrictedRunnerUserId));
+        restricted.Data.Environments.ShouldBeEmpty();
+
+        await Run<IMediator>(async mediator =>
+        {
+            var denied = await Should.ThrowAsync<InvalidOperationException>(() =>
+                mediator.SendAsync<PublishRunbookCommand, PublishRunbookResponse>(new PublishRunbookCommand
+                {
+                    Id = runbook.Id,
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId
+                }));
+            denied.Message.ShouldContain(nameof(Permission.RunbookPublish));
+        }, CurrentUser(RunnerUserId));
+
+        await Run<IMediator>(async mediator =>
+        {
+            var denied = await Should.ThrowAsync<InvalidOperationException>(() =>
+                mediator.RequestAsync<GetRunbookEligibleEnvironmentsRequest, GetRunbookEligibleEnvironmentsResponse>(
+                    new GetRunbookEligibleEnvironmentsRequest
+                    {
+                        Id = runbook.Id,
+                        ProjectId = fixture.Project.Id,
+                        SpaceId = fixture.Project.SpaceId
+                    }));
+            denied.Message.ShouldContain(nameof(Permission.RunbookRun));
+        }, CurrentUser(PublisherUserId));
+
+        var command = new RunRunbookCommand
+        {
+            Id = runbook.Id,
+            ProjectId = fixture.Project.Id,
+            SpaceId = fixture.Project.SpaceId,
+            EnvironmentId = eligibleEnvironmentId
+        };
+
+        await Run<IMediator, ISquidBackgroundJobClient, SquidDbContext>(async (mediator, jobs, db) =>
+        {
+            var unavailable = await mediator.SendAsync<RunRunbookCommand, RunRunbookResponse>(command);
+
+            unavailable.Code.ShouldBe(HttpStatusCode.ServiceUnavailable);
+            jobs.ShouldBeOfType<MockSquidBackgroundJobClient>().EnqueuedJobs.ShouldBeEmpty();
+            (await db.Set<ServerTask>().AnyAsync(task => task.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+        }, CurrentUser(RunnerUserId));
+
+        RunbookRunDto accepted = null;
+        await Run<IMediator, ISquidBackgroundJobClient>(async (mediator, jobs) =>
+        {
+            var response = await mediator.SendAsync<RunRunbookCommand, RunRunbookResponse>(command);
+            response.Code.ShouldBe(HttpStatusCode.Accepted);
+            accepted = response.Data;
+            accepted.Id.ShouldBeGreaterThan(0);
+            accepted.SnapshotId.ShouldBe(published.Id);
+            accepted.SnapshotVersion.ShouldBe(1);
+            accepted.InitiatedBy.ShouldBe(RunnerUserId);
+            accepted.State.ShouldBe(TaskState.Pending);
+            jobs.ShouldBeOfType<MockSquidBackgroundJobClient>().EnqueuedJobs.Single()
+                .Parameters.Single().Type.ShouldBe(typeof(IRunbookTaskExecutor));
+        }, builder =>
+        {
+            CurrentUser(RunnerUserId)(builder);
+            builder.RegisterType<AdmissionTestExecutor>().As<IRunbookTaskExecutor>();
+        });
+
+        var republished = await Run<IRunbookService, RunbookPublishedSnapshotDto>(service =>
+            service.PublishRunbookAsync(new PublishRunbookCommand
+            {
+                Id = runbook.Id,
+                ProjectId = fixture.Project.Id,
+                SpaceId = fixture.Project.SpaceId
+            }));
+        republished.Id.ShouldNotBe(published.Id);
+
+        await Run<SquidDbContext>(async db =>
+        {
+            var saved = await db.Set<RunbookRun>().Include(run => run.Task).SingleAsync(run => run.Id == accepted.Id);
+            saved.SnapshotId.ShouldBe(published.Id);
+            saved.RunbookId.ShouldBe(runbook.Id);
+            saved.EnvironmentId.ShouldBe(eligibleEnvironmentId);
+            saved.Task.Id.ShouldBe(accepted.TaskId);
+            saved.Task.ServerTaskType.ShouldBe(RunbookTaskTypes.Runbook);
+            saved.Task.State.ShouldBe(TaskState.Pending);
+            (await db.Set<Deployment>().AnyAsync(d => d.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+            (await db.Set<Release>().AnyAsync(r => r.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+        });
+    }
+
+    [Fact]
+    public async Task RunbookRun_UnpublishedRunbook_RollsBackTaskAndRun()
+    {
+        var fixture = await SeedProjectAsync();
+        await AssignPermissionsAsync(RunnerUserId, fixture.Project, Permission.RunbookRun);
+        var runbook = await Run<IRunbookService, RunbookDto>(service =>
+            service.CreateRunbookAsync(new CreateRunbookCommand
+            {
+                Runbook = new CreateRunbookModel
+                {
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId,
+                    Name = "Invalid snapshot run"
+                }
+            }));
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            Run<IRunbookService, RunbookRunDto>(service =>
+                service.RunAsync(new RunRunbookCommand
+                {
+                    Id = runbook.Id,
+                    ProjectId = fixture.Project.Id,
+                    SpaceId = fixture.Project.SpaceId,
+                    EnvironmentId = 999999
+                }),
+                CurrentUser(RunnerUserId)));
+
+        await Run<SquidDbContext>(async db =>
+        {
+            (await db.Set<RunbookRun>().AnyAsync(run => run.RunbookId == runbook.Id)).ShouldBeFalse();
+            (await db.Set<ServerTask>().AnyAsync(task => task.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+        });
+    }
+
     private async Task<Fixture> SeedProjectAsync()
     {
         Fixture fixture = null;
@@ -381,6 +663,13 @@ public class RunbookApiIntegrationTests : TestBase
     private async Task AssignPermissionsAsync(
         int userId,
         SquidProject scopeProject,
+        params Permission[] permissions) =>
+        await AssignPermissionsAsync(userId, scopeProject, null, permissions);
+
+    private async Task AssignPermissionsAsync(
+        int userId,
+        SquidProject scopeProject,
+        int? scopedEnvironmentId,
         params Permission[] permissions)
     {
         await Run<ITeamDataProvider, IUserRoleDataProvider, IScopedUserRoleDataProvider>(
@@ -413,6 +702,8 @@ public class RunbookApiIntegrationTests : TestBase
                 };
                 await scopedRoleProvider.AddAsync(scopedRole);
                 await scopedRoleProvider.SetProjectScopeAsync(scopedRole.Id, [scopeProject.Id]);
+                if (scopedEnvironmentId.HasValue)
+                    await scopedRoleProvider.SetEnvironmentScopeAsync(scopedRole.Id, [scopedEnvironmentId.Value]);
             });
     }
 
@@ -421,6 +712,24 @@ public class RunbookApiIntegrationTests : TestBase
 
     private static Action<ContainerBuilder> InternalCurrentUser() =>
         builder => builder.RegisterInstance<ICurrentUser>(new FixedInternalUser()).SingleInstance();
+
+    private static Machine MachineForEnvironment(
+        string name,
+        int spaceId,
+        int environmentId,
+        string endpoint,
+        bool isDisabled = false) =>
+        new()
+        {
+            Name = $"runbook-{name}",
+            SpaceId = spaceId,
+            Roles = "[]",
+            EnvironmentIds = $"[{environmentId}]",
+            Endpoint = endpoint,
+            Slug = $"runbook-{name}",
+            IsDisabled = isDisabled,
+            HealthStatus = MachineHealthStatus.Healthy
+        };
 
     private sealed class Fixture
     {
@@ -440,6 +749,12 @@ public class RunbookApiIntegrationTests : TestBase
         public int? Id => 8888;
         public string Name => "System";
         public bool IsInternal => true;
+    }
+
+    private sealed class AdmissionTestExecutor : IRunbookTaskExecutor
+    {
+        public Task ProcessAsync(int serverTaskId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("Admission tests must not execute Runbook jobs.");
     }
 }
 

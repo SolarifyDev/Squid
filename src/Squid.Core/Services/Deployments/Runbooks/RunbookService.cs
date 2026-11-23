@@ -2,13 +2,22 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.DeploymentExecution.Runbooks;
+using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
+using Squid.Core.Services.Deployments.Environments;
+using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Identity;
+using Squid.Core.Services.Jobs;
+using Squid.Core.Services.Machines;
 using Squid.Message.Commands.Deployments.Runbook;
 using Squid.Message.Constants;
 using Squid.Message.Enums;
+using Squid.Message.Models.Deployments.Environment;
 using Squid.Message.Models.Deployments.Runbook;
+using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Requests.Deployments.Runbook;
 
 namespace Squid.Core.Services.Deployments.Runbooks;
@@ -42,6 +51,14 @@ public interface IRunbookService : IScopedDependency
     Task<GetRunbooksResponseData> GetRunbooksAsync(
         GetRunbooksRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<GetRunbookEligibleEnvironmentsResponseData> GetEligibleEnvironmentsAsync(
+        GetRunbookEligibleEnvironmentsRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<RunbookRunDto> RunAsync(
+        RunRunbookCommand command,
+        CancellationToken cancellationToken = default);
 }
 
 public class RunbookService(
@@ -50,7 +67,12 @@ public class RunbookService(
     IProjectDataProvider projectDataProvider,
     IAuthorizationService authorizationService,
     ICurrentUser currentUser,
-    IRunbookPublicationDataProvider publicationDataProvider) : IRunbookService
+    IRunbookPublicationDataProvider publicationDataProvider,
+    IEnvironmentDataProvider environmentDataProvider,
+    IMachineDataProvider machineDataProvider,
+    IRunbookRunDataProvider runbookRunDataProvider,
+    IServerTaskDataProvider serverTaskDataProvider,
+    ISquidBackgroundJobClient backgroundJobClient) : IRunbookService
 {
     public async Task<RunbookDto> CreateRunbookAsync(
         CreateRunbookCommand command,
@@ -282,6 +304,267 @@ public class RunbookService(
         };
     }
 
+    public async Task<GetRunbookEligibleEnvironmentsResponseData> GetEligibleEnvironmentsAsync(
+        GetRunbookEligibleEnvironmentsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var spaceId = request.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(request.SpaceId),
+                "Runbook space is required.");
+
+        var project = await ResolveProjectAsync(request.ProjectId, spaceId, cancellationToken)
+            .ConfigureAwait(false);
+        await EnsurePermissionAsync(project.Id, project.SpaceId, Permission.RunbookRun, cancellationToken,
+                projectGroupId: project.ProjectGroupId)
+            .ConfigureAwait(false);
+
+        var runbook = await GetOwnedRunbookAsync(
+            request.Id,
+            request.ProjectId,
+            spaceId,
+            cancellationToken).ConfigureAwait(false);
+
+        // An unpublished draft is valid Runbook state, but it has no executable
+        // version and therefore has no eligible Run Now environments.
+        if (runbook.PublishedSnapshotId is not int snapshotId)
+            return new GetRunbookEligibleEnvironmentsResponseData();
+
+        var published = await publicationDataProvider
+            .GetPublishedDataAsync(runbook.Id, snapshotId, cancellationToken)
+            .ConfigureAwait(false);
+
+        // The pointer is protected by a composite foreign key. Keep the query
+        // fail-closed if old or manually altered data ever leaves it dangling.
+        if (published?.Process == null)
+            return new GetRunbookEligibleEnvironmentsResponseData();
+
+        var environments = (await environmentDataProvider
+                .GetEnvironmentPagingAsync(spaceId, cancellationToken: cancellationToken)
+                .ConfigureAwait(false))
+            .Item2;
+        if (environments.Count == 0)
+            return new GetRunbookEligibleEnvironmentsResponseData();
+
+        var machines = await machineDataProvider
+            .GetMachinesByFilterAsync(environments.Select(environment => environment.Id).ToHashSet(), [], cancellationToken)
+            .ConfigureAwait(false);
+
+        var result = new GetRunbookEligibleEnvironmentsResponseData();
+        foreach (var environment in environments.OrderBy(e => e.SortOrder).ThenBy(e => e.Name).ThenBy(e => e.Id))
+        {
+            if (!IsEnvironmentEligible(published.Process, environment, machines))
+                continue;
+
+            if (!currentUser.IsInternal)
+            {
+                var permission = await authorizationService.CheckPermissionAsync(new PermissionCheckRequest
+                {
+                    UserId = currentUser.Id.Value,
+                    Permission = Permission.RunbookRun,
+                    ProjectId = project.Id,
+                    ProjectGroupId = project.ProjectGroupId,
+                    SpaceId = project.SpaceId,
+                    EnvironmentId = environment.Id
+                }, cancellationToken).ConfigureAwait(false);
+                if (!permission.IsAuthorized)
+                    continue;
+            }
+
+            result.Environments.Add(ToEnvironmentDto(environment));
+        }
+
+        return result;
+    }
+
+    public async Task<RunbookRunDto> RunAsync(
+        RunRunbookCommand command,
+        CancellationToken cancellationToken = default)
+    {
+        var spaceId = command.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required",
+                nameof(command.SpaceId),
+                "Runbook space is required.");
+
+        var project = await ResolveProjectAsync(command.ProjectId, spaceId, cancellationToken)
+            .ConfigureAwait(false);
+        await EnsurePermissionAsync(project.Id, project.SpaceId, Permission.RunbookRun, cancellationToken,
+                environmentId: command.EnvironmentId, projectGroupId: project.ProjectGroupId)
+            .ConfigureAwait(false);
+
+        var runbook = await GetOwnedRunbookAsync(
+            command.Id,
+            command.ProjectId,
+            spaceId,
+            cancellationToken).ConfigureAwait(false);
+
+        if (runbook.PublishedSnapshotId is not int snapshotId)
+        {
+            throw new RunbookValidationException(
+                "runbook.not_published",
+                nameof(command.Id),
+                "Runbook must have a published version before it can run.");
+        }
+
+        var published = await publicationDataProvider
+            .GetPublishedDataAsync(runbook.Id, snapshotId, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (published?.Process == null)
+        {
+            throw new RunbookValidationException(
+                "runbook.published_snapshot_missing",
+                nameof(command.Id),
+                "The current published Runbook version is unavailable.");
+        }
+
+        // Revalidate the immutable payload at acceptance. This keeps the API
+        // fail-closed if a snapshot was imported or altered outside the publish path.
+        RunbookPublicationValidator.EnsureSupported(published.Process);
+
+        var environment = await environmentDataProvider
+            .GetEnvironmentByIdAsync(command.EnvironmentId, cancellationToken)
+            .ConfigureAwait(false);
+        if (environment == null || environment.SpaceId != project.SpaceId)
+            throw new DeploymentEntityNotFoundException("Environment", command.EnvironmentId);
+
+        var machines = await machineDataProvider
+            .GetMachinesByFilterAsync([environment.Id], [], cancellationToken).ConfigureAwait(false);
+        if (!IsEnvironmentEligible(published.Process, environment, machines))
+        {
+            throw new RunbookValidationException(
+                "runbook.environment_ineligible",
+                nameof(command.EnvironmentId),
+                $"Environment {command.EnvironmentId} is not eligible for this Runbook version.");
+        }
+
+        var initiatedBy = currentUser.Id ?? CurrentUsers.InternalUser.Id;
+        var task = new Persistence.Entities.Deployments.ServerTask
+        {
+            Name = "Runbook",
+            Description = $"Run Runbook {runbook.Name} version {published.Snapshot.Version}",
+            QueueTime = DateTimeOffset.UtcNow,
+            State = TaskState.Pending,
+            ServerTaskType = RunbookTaskTypes.Runbook,
+            SpaceId = spaceId,
+            ProjectId = project.Id,
+            EnvironmentId = command.EnvironmentId,
+            BusinessProcessState = "Queued",
+            StateOrder = 1,
+            Weight = 1,
+            DataVersion = Guid.NewGuid().ToByteArray()
+        };
+        var run = new Persistence.Entities.Deployments.RunbookRun
+        {
+            RunbookId = runbook.Id,
+            SnapshotId = published.Snapshot.Id,
+            ProjectId = project.Id,
+            SpaceId = spaceId,
+            EnvironmentId = command.EnvironmentId,
+            InitiatedBy = initiatedBy,
+            Task = task
+        };
+
+        // The pair is committed before Hangfire sees the task. A worker can
+        // therefore always resolve the pinned RunbookRun by ServerTaskId.
+        run = await runbookRunDataProvider
+            .CreateAsync(run, cancellationToken)
+            .ConfigureAwait(false);
+
+        var jobId = backgroundJobClient.Enqueue<IRunbookTaskExecutor>(
+            executor => executor.ProcessAsync(task.Id, CancellationToken.None));
+        if (!string.IsNullOrEmpty(jobId))
+        {
+            await serverTaskDataProvider
+                .SetJobIdAsync(task.Id, jobId, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+
+        return new RunbookRunDto
+        {
+            Id = run.Id,
+            RunbookId = run.RunbookId,
+            SnapshotId = run.SnapshotId,
+            SnapshotVersion = published.Snapshot.Version,
+            TaskId = run.ServerTaskId,
+            ProjectId = run.ProjectId,
+            SpaceId = run.SpaceId,
+            EnvironmentId = run.EnvironmentId,
+            InitiatedBy = run.InitiatedBy,
+            State = task.State,
+            CreatedDate = run.CreatedDate
+        };
+    }
+
+    private static bool IsEnvironmentEligible(DeploymentProcessSnapshotDataDto process,
+        Persistence.Entities.Deployments.Environment environment,
+        List<Machine> machines)
+    {
+        var actions = process.StepSnapshots
+            .Where(step => !step.IsDisabled)
+            .SelectMany(step => step.ActionSnapshots.Where(action => !action.IsDisabled)
+                .Select(action => (Step: step, Action: action)))
+            .ToList();
+
+        return actions.Count > 0 && actions.All(pair =>
+            IsActionInEnvironment(pair.Action, environment.Id)
+            && HasEligibleTarget(pair.Step, pair.Action, environment, machines));
+    }
+
+    private static bool IsActionInEnvironment(
+        DeploymentActionSnapshotDataDto action,
+        int environmentId)
+    {
+        if (action.ExcludedEnvironments.Contains(environmentId))
+            return false;
+
+        return action.Environments.Count == 0 || action.Environments.Contains(environmentId);
+    }
+
+    private static bool HasEligibleTarget(
+        DeploymentStepSnapshotDataDto step,
+        DeploymentActionSnapshotDataDto action,
+        Persistence.Entities.Deployments.Environment environment,
+        List<Persistence.Entities.Deployments.Machine> machines)
+    {
+        var requiredRoles = action.MachineRoles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var stepRoles = DeploymentTargetFinder.ParseCsvRoles(
+            step.Properties.GetValueOrDefault(SpecialVariables.Step.TargetRoles)
+            ?? step.Properties.GetValueOrDefault("TargetRoles"));
+
+        return machines.Any(machine =>
+            machine.SpaceId == environment.SpaceId
+            && !machine.IsDisabled
+            && DeploymentTargetFinder.ParseIds(machine.EnvironmentIds).Contains(environment.Id)
+            && CommunicationStyleParser.Parse(machine.Endpoint) == CommunicationStyle.TentacleListening
+            && EndpointJsonHelper.ParseTentacleListeningEndpoint(machine.Endpoint) != null
+            && MatchesRoles(machine, stepRoles, requiredRoles));
+    }
+
+    private static bool MatchesRoles(Machine machine, HashSet<string> stepRoles, HashSet<string> actionRoles)
+    {
+        var machineRoles = DeploymentTargetFinder.ParseRoles(machine.Roles);
+        return (stepRoles.Count == 0 || machineRoles.Overlaps(stepRoles))
+            && (actionRoles.Count == 0 || machineRoles.Overlaps(actionRoles));
+    }
+
+    private static EnvironmentDto ToEnvironmentDto(Persistence.Entities.Deployments.Environment environment) =>
+        new()
+        {
+            Id = environment.Id,
+            SpaceId = environment.SpaceId,
+            Slug = environment.Slug,
+            Name = environment.Name,
+            Description = environment.Description,
+            SortOrder = environment.SortOrder,
+            UseGuidedFailure = environment.UseGuidedFailure,
+            AllowDynamicInfrastructure = environment.AllowDynamicInfrastructure,
+            LastModifiedDate = environment.LastModifiedDate,
+            LastModifiedBy = environment.LastModifiedBy
+        };
+
     private async Task<Persistence.Entities.Deployments.Project> ResolveProjectAsync(
         int projectId,
         int spaceId,
@@ -335,7 +618,9 @@ public class RunbookService(
         int projectId,
         int spaceId,
         Permission permission,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? environmentId = null,
+        int? projectGroupId = null)
     {
         if (currentUser.IsInternal)
         {
@@ -355,7 +640,9 @@ public class RunbookService(
                 UserId = currentUser.Id.Value,
                 Permission = permission,
                 SpaceId = spaceId,
-                ProjectId = projectId
+                ProjectId = projectId,
+                EnvironmentId = environmentId,
+                ProjectGroupId = projectGroupId
             },
             cancellationToken).ConfigureAwait(false);
     }

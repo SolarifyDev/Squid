@@ -6,6 +6,7 @@ using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
 using Squid.Core.Services.Deployments.Snapshots;
 using Squid.Message.Models.Deployments.Runbook;
+using Squid.Message.Models.Deployments.Snapshots;
 
 namespace Squid.Core.Services.Deployments.Runbooks;
 
@@ -14,7 +15,13 @@ public interface IRunbookPublicationDataProvider : IScopedDependency
     Task<RunbookPublishedSnapshotDto> PublishAsync(int id, int projectId, int spaceId, int publishedBy, CancellationToken ct);
 
     Task<RunbookPublishedSnapshotDto> GetPublishedAsync(int runbookId, int snapshotId, CancellationToken ct);
+
+    Task<RunbookPublishedSnapshotData> GetPublishedDataAsync(int runbookId, int snapshotId, CancellationToken ct);
 }
+
+public sealed record RunbookPublishedSnapshotData(
+    RunbookPublishedSnapshotDto Snapshot,
+    DeploymentProcessSnapshotDataDto Process);
 
 public interface IRunbookPublicationWriteObserver : IScopedDependency
 {
@@ -104,4 +111,29 @@ public sealed class RunbookPublicationDataProvider(
                 PublishedBy = s.PublishedBy
             })
             .SingleOrDefaultAsync(ct);
+
+    public async Task<RunbookPublishedSnapshotData> GetPublishedDataAsync(
+        int runbookId,
+        int snapshotId,
+        CancellationToken ct)
+    {
+        var snapshot = await repository.QueryNoTracking<RunbookSnapshot>(
+                s => s.RunbookId == runbookId && s.Id == snapshotId)
+            .SingleOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (snapshot == null)
+            return null;
+
+        return new RunbookPublishedSnapshotData(
+            new RunbookPublishedSnapshotDto
+            {
+                Id = snapshot.Id,
+                RunbookId = snapshot.RunbookId,
+                Version = snapshot.Version,
+                PublishedAt = snapshot.PublishedAt,
+                PublishedBy = snapshot.PublishedBy
+            },
+            UtilService.DecompressFromGzip<DeploymentProcessSnapshotDataDto>(snapshot.SnapshotData));
+    }
 }

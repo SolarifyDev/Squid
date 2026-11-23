@@ -49,12 +49,15 @@ public partial class TestBase
             .As<IHttpContextAccessor>()
             .SingleInstance();
 
-        containerBuilder.Register(c =>
-            {
-                var dbContextBuilder = new DbContextOptionsBuilder<SquidDbContext>();
-                dbContextBuilder.UseNpgsql(isolatedConnectionString).UseSnakeCaseNamingConvention();
-                return new SquidDbContext(dbContextBuilder.Options, new InternalUser(), c.Resolve<IAuditDocumentRegistry>());
-            })
+        // DeploymentLogWriter creates its own contexts from these options.
+        var dbOptions = new DbContextOptionsBuilder<SquidDbContext>()
+            .UseNpgsql(isolatedConnectionString)
+            .UseSnakeCaseNamingConvention()
+            .Options;
+        containerBuilder.RegisterInstance(dbOptions);
+
+        containerBuilder.Register(c => new SquidDbContext(
+                c.Resolve<DbContextOptions<SquidDbContext>>(), new InternalUser(), c.Resolve<IAuditDocumentRegistry>()))
             .AsSelf()
             .As<DbContext>()
             .AsImplementedInterfaces()
