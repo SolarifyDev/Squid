@@ -99,46 +99,33 @@ public class AuthorizationService(
         return MapResourceScopeGrants(rows, permission);
     }
 
-    private async Task<List<ResourceScopeGrantRow>> LoadResourceScopeGrantRowsAsync(
+    private Task<List<ResourceScopeGrantRow>> LoadResourceScopeGrantRowsAsync(
         int userId,
         Permission permission,
         CancellationToken ct)
     {
         var permissionName = permission.ToString();
         var administerSystemName = Permission.AdministerSystem.ToString();
-        var roles = repository.QueryNoTracking<ScopedUserRole>(null);
-        var members = repository.QueryNoTracking<TeamMember>(null);
-        var permissions = repository.QueryNoTracking<UserRolePermission>(null);
-        var projects = repository.QueryNoTracking<ScopedUserRoleProject>(null);
-        var environments = repository.QueryNoTracking<ScopedUserRoleEnvironment>(null);
-        var groups = repository.QueryNoTracking<ScopedUserRoleProjectGroup>(null);
 
-        return await (from role in roles
-            join member in members on role.TeamId equals member.TeamId
-            where member.UserId == userId &&
-                  permissions.Any(permissionRow => permissionRow.UserRoleId == role.UserRoleId &&
-                                                   (permissionRow.Permission == permissionName ||
-                                                    permissionRow.Permission == administerSystemName))
-            select new ResourceScopeGrantRow
-            {
-                SpaceId = role.SpaceId,
-                HasRequestedPermission = permissions.Any(permissionRow =>
-                    permissionRow.UserRoleId == role.UserRoleId && permissionRow.Permission == permissionName),
-                HasAdministerSystem = permissions.Any(permissionRow =>
-                    permissionRow.UserRoleId == role.UserRoleId && permissionRow.Permission == administerSystemName),
-                ProjectIds = projects
-                    .Where(scope => scope.ScopedUserRoleId == role.Id)
-                    .Select(scope => scope.ProjectId)
-                    .ToList(),
-                EnvironmentIds = environments
-                    .Where(scope => scope.ScopedUserRoleId == role.Id)
-                    .Select(scope => scope.EnvironmentId)
-                    .ToList(),
-                ProjectGroupIds = groups
-                    .Where(scope => scope.ScopedUserRoleId == role.Id)
-                    .Select(scope => scope.ProjectGroupId)
-                    .ToList()
-            }).AsSingleQuery().ToListAsync(ct).ConfigureAwait(false);
+        // Independent arrays keep one row per scoped role and preserve empty scope dimensions.
+        return repository.Database.SqlQuery<ResourceScopeGrantRow>($"""
+            SELECT role.space_id,
+                   requested.user_role_id IS NOT NULL AS has_requested_permission,
+                   administer.user_role_id IS NOT NULL AS has_administer_system,
+                   ARRAY(SELECT project_id FROM scoped_user_role_project WHERE scoped_user_role_id = role.id) AS project_ids,
+                   ARRAY(SELECT environment_id FROM scoped_user_role_environment WHERE scoped_user_role_id = role.id) AS environment_ids,
+                   ARRAY(SELECT project_group_id FROM scoped_user_role_project_group WHERE scoped_user_role_id = role.id) AS project_group_ids
+            FROM scoped_user_role AS role
+            LEFT JOIN user_role_permission AS requested
+                ON requested.user_role_id = role.user_role_id AND requested.permission = {permissionName}
+            LEFT JOIN user_role_permission AS administer
+                ON administer.user_role_id = role.user_role_id AND administer.permission = {administerSystemName}
+            WHERE (requested.user_role_id IS NOT NULL OR administer.user_role_id IS NOT NULL)
+              AND EXISTS (
+                  SELECT 1 FROM team_member AS member
+                  WHERE member.team_id = role.team_id AND member.user_id = {userId}
+              )
+            """).ToListAsync(ct);
     }
 
     private static IReadOnlyList<ResourceScopeGrant> MapResourceScopeGrants(
@@ -311,9 +298,9 @@ public class AuthorizationService(
         public int? SpaceId { get; init; }
         public bool HasRequestedPermission { get; init; }
         public bool HasAdministerSystem { get; init; }
-        public List<int> ProjectIds { get; init; }
-        public List<int> EnvironmentIds { get; init; }
-        public List<int> ProjectGroupIds { get; init; }
+        public int[] ProjectIds { get; init; }
+        public int[] EnvironmentIds { get; init; }
+        public int[] ProjectGroupIds { get; init; }
     }
 
 }

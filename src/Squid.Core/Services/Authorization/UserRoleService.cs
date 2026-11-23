@@ -230,23 +230,15 @@ public class UserRoleService(
         await scopedUserRoleDataProvider.DeleteAsync(scopedUserRoleId, ct).ConfigureAwait(false);
     }
 
-    public async Task<ScopedUserRoleDto> UpdateRoleScopeAsync(UpdateRoleScopeCommand command, CancellationToken ct = default)
+    public Task<ScopedUserRoleDto> UpdateRoleScopeAsync(UpdateRoleScopeCommand command, CancellationToken ct = default)
     {
-        var scopedRole = await scopedUserRoleDataProvider
-            .GetByTeamAndIdAsync(command.TeamId, command.ScopedUserRoleId, ct)
-            .ConfigureAwait(false);
-
-        if (scopedRole == null)
-            throw new InvalidOperationException($"Scoped user role {command.ScopedUserRoleId} not found");
-
-        await scopedUserRoleDataProvider.ReplaceScopesAsync(
+        return scopedUserRoleDataProvider.ReplaceScopesAsync(
+            command.TeamId,
             command.ScopedUserRoleId,
             command.ProjectIds,
             command.EnvironmentIds,
             command.ProjectGroupIds,
-            ct).ConfigureAwait(false);
-
-        return await BuildScopedUserRoleDtoAsync(scopedRole, ct).ConfigureAwait(false);
+            ct);
     }
 
     public async Task<List<ScopedUserRoleDto>> GetTeamRolesAsync(int teamId, CancellationToken ct = default)

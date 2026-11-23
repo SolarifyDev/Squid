@@ -1,10 +1,6 @@
-using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization;
-using Squid.Core.Services.Identity;
 using Squid.Core.Services.Teams;
 using Squid.Message.Enums;
 
@@ -23,23 +19,21 @@ public class AuthorizationGrantConsistencyTests : TestBase
     }
 
     [Fact]
-    public async Task Grants_ReadEligibleRolesInSingleSelect()
+    public async Task Grants_ReadOneRowPerEligibleRoleInSingleSelect()
     {
         await SeedGrantAsync().ConfigureAwait(false);
-        var connectionString = await Run<SquidDbContext, string>(db =>
-            Task.FromResult(db.Database.GetConnectionString())).ConfigureAwait(false);
-        var commands = new CapturingCommands();
+        var commands = new AuthorizationSelectCapture();
 
         var grants = await Run<IAuthorizationService, IReadOnlyList<ResourceScopeGrant>>(
             service => service.GetResourceScopeGrantsAsync(UserId, Permission.ProjectView),
-            builder => RegisterCapturingDbContext(builder, connectionString, commands)).ConfigureAwait(false);
+            await commands.CreateRegistrationAsync(CurrentScope)).ConfigureAwait(false);
 
-        commands.SelectStatements.Count.ShouldBe(1);
+        commands.Selects.ShouldHaveSingleItem().RowCount.ShouldBe(1);
         var grant = grants.ShouldHaveSingleItem();
         grant.SpaceId.ShouldBe(1);
         grant.ProjectIds.ShouldBe(new HashSet<int> { 1001, 1002 });
-        grant.EnvironmentIds.ShouldBe(new HashSet<int> { 2001 });
-        grant.ProjectGroupIds.ShouldBe(new HashSet<int> { 3001 });
+        grant.EnvironmentIds.ShouldBe(new HashSet<int> { 2001, 2002 });
+        grant.ProjectGroupIds.ShouldBe(new HashSet<int> { 3001, 3002 });
     }
 
     [Fact]
@@ -95,48 +89,13 @@ public class AuthorizationGrantConsistencyTests : TestBase
             db.Set<ScopedUserRoleProject>().AddRange(
                 new ScopedUserRoleProject { ScopedUserRoleId = ScopedRoleId, ProjectId = 1001 },
                 new ScopedUserRoleProject { ScopedUserRoleId = ScopedRoleId, ProjectId = 1002 });
-            db.Set<ScopedUserRoleEnvironment>().Add(
-                new ScopedUserRoleEnvironment { ScopedUserRoleId = ScopedRoleId, EnvironmentId = 2001 });
-            db.Set<ScopedUserRoleProjectGroup>().Add(
-                new ScopedUserRoleProjectGroup { ScopedUserRoleId = ScopedRoleId, ProjectGroupId = 3001 });
+            db.Set<ScopedUserRoleEnvironment>().AddRange(
+                new ScopedUserRoleEnvironment { ScopedUserRoleId = ScopedRoleId, EnvironmentId = 2001 },
+                new ScopedUserRoleEnvironment { ScopedUserRoleId = ScopedRoleId, EnvironmentId = 2002 });
+            db.Set<ScopedUserRoleProjectGroup>().AddRange(
+                new ScopedUserRoleProjectGroup { ScopedUserRoleId = ScopedRoleId, ProjectGroupId = 3001 },
+                new ScopedUserRoleProjectGroup { ScopedUserRoleId = ScopedRoleId, ProjectGroupId = 3002 });
             await db.SaveChangesAsync();
         }).ConfigureAwait(false);
-    }
-
-    private static void RegisterCapturingDbContext(
-        ContainerBuilder builder,
-        string connectionString,
-        CapturingCommands commands)
-    {
-        var options = new DbContextOptionsBuilder<SquidDbContext>()
-            .UseNpgsql(connectionString)
-            .UseSnakeCaseNamingConvention()
-            .AddInterceptors(commands)
-            .Options;
-
-        builder.Register(context => new SquidDbContext(
-                options,
-                context.Resolve<ICurrentUser>()))
-            .AsSelf()
-            .As<DbContext>()
-            .AsImplementedInterfaces()
-            .InstancePerLifetimeScope();
-    }
-
-    private sealed class CapturingCommands : DbCommandInterceptor
-    {
-        public List<string> SelectStatements { get; } = new();
-
-        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
-            DbCommand command,
-            CommandEventData eventData,
-            InterceptionResult<DbDataReader> result,
-            CancellationToken cancellationToken = default)
-        {
-            if (command.CommandText.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
-                SelectStatements.Add(command.CommandText);
-
-            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
-        }
     }
 }

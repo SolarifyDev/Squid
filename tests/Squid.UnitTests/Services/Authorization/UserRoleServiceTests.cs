@@ -623,82 +623,34 @@ public class UserRoleServiceTests
     }
 
     [Fact]
-    public async Task UpdateRoleScope_Success_UpdatesAllScopes()
+    public async Task UpdateRoleScope_ReturnsResultFromAtomicReplacement()
     {
         var command = new UpdateRoleScopeCommand
         {
             TeamId = 10,
             ScopedUserRoleId = 100,
-            ProjectIds = new List<int> { 1, 2 },
-            EnvironmentIds = new List<int> { 3 },
-            ProjectGroupIds = new List<int>(),
+            ProjectIds = [1, 2],
+            EnvironmentIds = [3],
+            ProjectGroupIds = [],
+        };
+        var updatedRole = new ScopedUserRoleDto
+        {
+            Id = 100,
+            TeamId = 10,
+            UserRoleId = 50,
+            UserRoleName = "Dev",
+            SpaceId = 1,
+            ProjectIds = [1, 2],
+            EnvironmentIds = [3],
+            ProjectGroupIds = []
         };
 
-        _scopedUserRoleDataProvider.Setup(x =>
-                x.GetByTeamAndIdAsync(10, 100, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScopedUserRole { Id = 100, TeamId = 10, UserRoleId = 50, SpaceId = 1 });
-        _userRoleDataProvider.Setup(x => x.GetByIdAsync(50, It.IsAny<CancellationToken>())).ReturnsAsync(new UserRole { Id = 50, Name = "Dev" });
-        _scopedUserRoleDataProvider.Setup(x => x.GetProjectScopeAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(new List<int> { 1, 2 });
-        _scopedUserRoleDataProvider.Setup(x => x.GetEnvironmentScopeAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(new List<int> { 3 });
-        _scopedUserRoleDataProvider.Setup(x => x.GetProjectGroupScopeAsync(100, It.IsAny<CancellationToken>())).ReturnsAsync(new List<int>());
+        _scopedUserRoleDataProvider.Setup(x => x.ReplaceScopesAsync(
+            10, 100, command.ProjectIds, command.EnvironmentIds, command.ProjectGroupIds, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updatedRole);
 
         var result = await _sut.UpdateRoleScopeAsync(command);
 
-        result.Id.ShouldBe(100);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.ReplaceScopesAsync(
-                100,
-                It.Is<IReadOnlyCollection<int>>(projects => projects.SequenceEqual(new[] { 1, 2 })),
-                It.Is<IReadOnlyCollection<int>>(environments => environments.SequenceEqual(new[] { 3 })),
-                It.Is<IReadOnlyCollection<int>>(groups => !groups.Any()),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetProjectScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [Fact]
-    public async Task UpdateRoleScope_NotFound_Throws()
-    {
-        var command = new UpdateRoleScopeCommand
-        {
-            TeamId = 10,
-            ScopedUserRoleId = 999,
-            ProjectIds = new List<int>(),
-            EnvironmentIds = new List<int>(),
-            ProjectGroupIds = new List<int>(),
-        };
-
-        _scopedUserRoleDataProvider.Setup(x =>
-                x.GetByTeamAndIdAsync(10, 999, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ScopedUserRole)null);
-
-        var ex = await Should.ThrowAsync<InvalidOperationException>(() => _sut.UpdateRoleScopeAsync(command));
-
-        ex.Message.ShouldContain("999");
-        _scopedUserRoleDataProvider.Verify(
-            x => x.ReplaceScopesAsync(
-                It.IsAny<int>(),
-                It.IsAny<IReadOnlyCollection<int>>(),
-                It.IsAny<IReadOnlyCollection<int>>(),
-                It.IsAny<IReadOnlyCollection<int>>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetProjectScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetEnvironmentScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-        _scopedUserRoleDataProvider.Verify(
-            x => x.SetProjectGroupScopeAsync(It.IsAny<int>(), It.IsAny<List<int>>(), It.IsAny<CancellationToken>()),
-            Times.Never);
+        result.ShouldBeSameAs(updatedRole);
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization;
 using Squid.Message.Commands.Authorization;
+using Squid.Message.Models.Authorization;
 
 namespace Squid.IntegrationTests.Services.Authorization;
 
@@ -36,7 +37,20 @@ public class UserRoleServiceScopeUpdateTests : TestBase
             ProjectGroupIds = [ExistingProjectGroupId, ReplacementProjectGroupId]
         };
 
-        await Run<IUserRoleService>(service => service.UpdateRoleScopeAsync(command)).ConfigureAwait(false);
+        var commands = new AuthorizationSelectCapture();
+        var result = await Run<IUserRoleService, ScopedUserRoleDto>(
+            service => service.UpdateRoleScopeAsync(command),
+            await commands.CreateRegistrationAsync(CurrentScope)).ConfigureAwait(false);
+
+        AssertLockedRoleRead(commands, expectedRows: 1);
+        result.Id.ShouldBe(ScopedRoleId);
+        result.TeamId.ShouldBe(TeamId);
+        result.UserRoleId.ShouldBe(RoleId);
+        result.UserRoleName.ShouldBe("Scope Update Role");
+        result.SpaceId.ShouldBe(1);
+        result.ProjectIds.ShouldBe([ReplacementProjectId]);
+        result.EnvironmentIds.ShouldBe([ReplacementEnvironmentId]);
+        result.ProjectGroupIds.ShouldBe([ExistingProjectGroupId, ReplacementProjectGroupId]);
 
         await Run<SquidDbContext>(async db =>
         {
@@ -58,6 +72,46 @@ public class UserRoleServiceScopeUpdateTests : TestBase
             environmentIds.ShouldBe([ReplacementEnvironmentId]);
             projectGroupIds.ShouldBe([ExistingProjectGroupId, ReplacementProjectGroupId]);
         }).ConfigureAwait(false);
+    }
+
+    [Theory]
+    [InlineData(TeamId, ScopedRoleId + 1)]
+    [InlineData(TeamId + 1, ScopedRoleId)]
+    public async Task UpdateRoleScope_RejectsUnmatchedRoleWithoutChangingExistingScopes(int teamId, int scopedRoleId)
+    {
+        await SeedRoleWithScopesAsync().ConfigureAwait(false);
+        var command = new UpdateRoleScopeCommand
+        {
+            TeamId = teamId,
+            ScopedUserRoleId = scopedRoleId,
+            ProjectIds = [ReplacementProjectId],
+            EnvironmentIds = [ReplacementEnvironmentId],
+            ProjectGroupIds = [ReplacementProjectGroupId]
+        };
+        var commands = new AuthorizationSelectCapture();
+        var registration = await commands.CreateRegistrationAsync(CurrentScope);
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(() =>
+            Run<IUserRoleService>(service => service.UpdateRoleScopeAsync(command), registration));
+
+        exception.Message.ShouldBe($"Scoped user role {scopedRoleId} not found");
+        AssertLockedRoleRead(commands, expectedRows: 0);
+
+        await Run<IScopedUserRoleDataProvider>(async provider =>
+        {
+            (await provider.GetProjectScopeAsync(ScopedRoleId)).ShouldBe([ExistingProjectId]);
+            (await provider.GetEnvironmentScopeAsync(ScopedRoleId)).ShouldBe([ExistingEnvironmentId]);
+            (await provider.GetProjectGroupScopeAsync(ScopedRoleId)).ShouldBe([ExistingProjectGroupId]);
+        }).ConfigureAwait(false);
+    }
+
+    private static void AssertLockedRoleRead(AuthorizationSelectCapture commands, int expectedRows)
+    {
+        var read = commands.Selects.ShouldHaveSingleItem();
+
+        read.InTransaction.ShouldBeTrue();
+        read.Sql.ShouldContain("FOR UPDATE");
+        read.RowCount.ShouldBe(expectedRows);
     }
 
     [Fact]

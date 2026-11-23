@@ -1,12 +1,12 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
+using Squid.Message.Models.Authorization;
 
 namespace Squid.Core.Services.Authorization;
 
 public interface IScopedUserRoleDataProvider : IScopedDependency
 {
     Task<List<ScopedUserRole>> GetByTeamIdsAsync(List<int> teamIds, CancellationToken ct = default);
-    Task<ScopedUserRole> GetByTeamAndIdAsync(int teamId, int scopedUserRoleId, CancellationToken ct = default);
     Task<List<int>> GetProjectScopeAsync(int scopedUserRoleId, CancellationToken ct = default);
     Task<List<int>> GetEnvironmentScopeAsync(int scopedUserRoleId, CancellationToken ct = default);
     Task<List<int>> GetProjectGroupScopeAsync(int scopedUserRoleId, CancellationToken ct = default);
@@ -15,7 +15,8 @@ public interface IScopedUserRoleDataProvider : IScopedDependency
     Task SetProjectScopeAsync(int scopedUserRoleId, List<int> projectIds, CancellationToken ct = default);
     Task SetEnvironmentScopeAsync(int scopedUserRoleId, List<int> environmentIds, CancellationToken ct = default);
     Task SetProjectGroupScopeAsync(int scopedUserRoleId, List<int> projectGroupIds, CancellationToken ct = default);
-    Task ReplaceScopesAsync(
+    Task<ScopedUserRoleDto> ReplaceScopesAsync(
+        int teamId,
         int scopedUserRoleId,
         IReadOnlyCollection<int> projectIds,
         IReadOnlyCollection<int> environmentIds,
@@ -28,12 +29,6 @@ public class ScopedUserRoleDataProvider(IUnitOfWork unitOfWork, IRepository repo
     public async Task<List<ScopedUserRole>> GetByTeamIdsAsync(List<int> teamIds, CancellationToken ct = default)
     {
         return await repository.Query<ScopedUserRole>(x => teamIds.Contains(x.TeamId)).ToListAsync(ct).ConfigureAwait(false);
-    }
-
-    public Task<ScopedUserRole> GetByTeamAndIdAsync(int teamId, int scopedUserRoleId, CancellationToken ct = default)
-    {
-        return repository.Query<ScopedUserRole>(x => x.TeamId == teamId && x.Id == scopedUserRoleId)
-            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<List<int>> GetProjectScopeAsync(int scopedUserRoleId, CancellationToken ct = default)
@@ -102,7 +97,8 @@ public class ScopedUserRoleDataProvider(IUnitOfWork unitOfWork, IRepository repo
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task ReplaceScopesAsync(
+    public async Task<ScopedUserRoleDto> ReplaceScopesAsync(
+        int teamId,
         int scopedUserRoleId,
         IReadOnlyCollection<int> projectIds,
         IReadOnlyCollection<int> environmentIds,
@@ -113,21 +109,55 @@ public class ScopedUserRoleDataProvider(IUnitOfWork unitOfWork, IRepository repo
             ? await repository.Database.BeginTransactionAsync(ct).ConfigureAwait(false)
             : null;
 
-        await repository.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT 1 FROM scoped_user_role WHERE id = {scopedUserRoleId} FOR UPDATE", ct).ConfigureAwait(false);
+        var role = await LockScopedRoleAsync(teamId, scopedUserRoleId, ct).ConfigureAwait(false);
 
+        if (role == null)
+            throw new InvalidOperationException($"Scoped user role {scopedUserRoleId} not found");
+
+        var result = new ScopedUserRoleDto
+        {
+            Id = role.Id,
+            TeamId = role.TeamId,
+            UserRoleId = role.UserRoleId,
+            UserRoleName = role.UserRoleName,
+            SpaceId = role.SpaceId,
+            ProjectIds = projectIds.ToList(),
+            EnvironmentIds = environmentIds.ToList(),
+            ProjectGroupIds = projectGroupIds.ToList()
+        };
+
+        await DeleteScopesAsync(role.Id, ct).ConfigureAwait(false);
+        await InsertScopesAsync(
+            role.Id, result.ProjectIds, result.EnvironmentIds, result.ProjectGroupIds, ct).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        if (transaction != null)
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+        return result;
+    }
+
+    private async Task<LockedScopedRole> LockScopedRoleAsync(int teamId, int scopedUserRoleId, CancellationToken ct)
+    {
+        var rows = await repository.Database.SqlQuery<LockedScopedRole>($"""
+            SELECT scoped.id, scoped.team_id, scoped.user_role_id, scoped.space_id, role.name AS user_role_name
+            FROM scoped_user_role AS scoped
+            JOIN user_role AS role ON role.id = scoped.user_role_id
+            WHERE scoped.team_id = {teamId} AND scoped.id = {scopedUserRoleId}
+            FOR UPDATE OF scoped
+            """).ToListAsync(ct).ConfigureAwait(false);
+
+        return rows.SingleOrDefault();
+    }
+
+    private async Task DeleteScopesAsync(int scopedUserRoleId, CancellationToken ct)
+    {
         await repository.ExecuteDeleteAsync<ScopedUserRoleProject>(
             x => x.ScopedUserRoleId == scopedUserRoleId, ct).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<ScopedUserRoleEnvironment>(
             x => x.ScopedUserRoleId == scopedUserRoleId, ct).ConfigureAwait(false);
         await repository.ExecuteDeleteAsync<ScopedUserRoleProjectGroup>(
             x => x.ScopedUserRoleId == scopedUserRoleId, ct).ConfigureAwait(false);
-
-        await InsertScopesAsync(scopedUserRoleId, projectIds, environmentIds, projectGroupIds, ct).ConfigureAwait(false);
-        await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
-
-        if (transaction != null)
-            await transaction.CommitAsync(ct).ConfigureAwait(false);
     }
 
     private async Task InsertScopesAsync(
@@ -155,4 +185,12 @@ public class ScopedUserRoleDataProvider(IUnitOfWork unitOfWork, IRepository repo
             await repository.InsertAllAsync(projectGroups, ct).ConfigureAwait(false);
     }
 
+    private sealed class LockedScopedRole
+    {
+        public int Id { get; init; }
+        public int TeamId { get; init; }
+        public int UserRoleId { get; init; }
+        public int? SpaceId { get; init; }
+        public string UserRoleName { get; init; }
+    }
 }
