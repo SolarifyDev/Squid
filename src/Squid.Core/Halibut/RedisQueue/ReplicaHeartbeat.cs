@@ -64,6 +64,7 @@ public sealed class ReplicaHeartbeat(IReplicaStore store, ReplicaPresence presen
     private readonly Guid _id = Guid.NewGuid();
     private Task _loop;
     private bool _failing;
+    private int _disposed;
 
     public void Start() => _loop ??= Task.Run(RunAsync);
 
@@ -96,13 +97,16 @@ public sealed class ReplicaHeartbeat(IReplicaStore store, ReplicaPresence presen
             do await BeatOnceAsync(_stop.Token).ConfigureAwait(false);
             while (await timer.WaitForNextTickAsync(_stop.Token).ConfigureAwait(false));
         }
-        catch (OperationCanceledException)
+        catch (Exception) when (_stop.IsCancellationRequested)
         {
+            // Shutting down: whatever a beat in flight ran into (a cancelled call, a container already disposing) is not worth failing the shutdown for.
         }
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+
         await _stop.CancelAsync().ConfigureAwait(false);
 
         if (_loop != null) await _loop.ConfigureAwait(false);

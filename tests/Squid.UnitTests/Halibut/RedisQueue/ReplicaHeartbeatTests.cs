@@ -61,8 +61,12 @@ public sealed class ReplicaHeartbeatTests
 
         public List<Guid> Left { get; } = new();
 
+        public Func<CancellationToken, Task<int>> OnBeat { get; set; }
+
         public Task<int> BeatAsync(Guid replicaId, TimeSpan liveWindow, CancellationToken ct)
         {
+            if (OnBeat != null) return OnBeat(ct);
+
             if (Failure != null) throw Failure;
 
             Beats.Add(replicaId);
@@ -96,6 +100,29 @@ public sealed class ReplicaHeartbeatTests
 
         _presence.OtherReplicaIsLive.ShouldBe(expected);
         _store.Windows.Single().ShouldBe(TimeSpan.FromMilliseconds(150), "the live window is three beats");
+    }
+
+    // Disposing a container whose beat is in flight: the beat's connection scope may already be gone, and whatever it throws must not fail the shutdown.
+    [Fact]
+    public async Task ABeatThatFailsWithSomethingOtherThanCancellationWhileShuttingDown_DoesNotFailTheShutdown()
+    {
+        var inFlight = new TaskCompletionSource();
+
+        _store.OnBeat = async ct =>
+        {
+            inFlight.SetResult();
+
+            await Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => { });
+
+            throw new ObjectDisposedException("the container's scope");
+        };
+
+        var heartbeat = Heartbeat();
+
+        heartbeat.Start();
+
+        await inFlight.Task.WithinAsync(TimeSpan.FromSeconds(10), "the first beat to start");
+        await Should.NotThrowAsync(async () => await heartbeat.DisposeAsync());
     }
 
     [Fact]
