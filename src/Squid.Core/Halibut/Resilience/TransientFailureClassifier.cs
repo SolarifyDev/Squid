@@ -53,6 +53,15 @@ public static class TransientFailureClassifier
         return false;
     }
 
+    /// <summary>
+    /// The agent answered that it has no such service or method: what a peer built without a newer script-service
+    /// contract says. Permanent for the call, but evidence the AGENT lacks the protocol, not that the script failed.
+    /// </summary>
+    public static bool IsServiceMissing(Exception ex)
+        => ex is global::Halibut.Exceptions.ServiceNotFoundHalibutClientException
+            or global::Halibut.Exceptions.NoMatchingServiceOrMethodHalibutClientException
+            or global::Halibut.Exceptions.MethodNotFoundHalibutClientException;
+
     private static bool IsPermanentHalibutFailure(Exception ex)
         => ex is global::Halibut.Exceptions.ServiceInvocationHalibutClientException
             or global::Halibut.Exceptions.NoMatchingServiceOrMethodHalibutClientException

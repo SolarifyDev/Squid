@@ -73,7 +73,7 @@ public sealed class MachineRuntimeCapabilitiesCacheHydrator : IStartable
         var hydrated = 0;
         foreach (var (machineId, capabilities) in rows)
         {
-            cache.Store(machineId, BuildMetadataDictionary(capabilities), capabilities.AgentVersion, capabilities.SupportedServices);
+            cache.Store(machineId, BuildMetadataDictionary(capabilities), capabilities.AgentVersion, capabilities.SupportedServices, capabilities.ObservedAt);
             hydrated++;
         }
 
@@ -90,7 +90,7 @@ public sealed class MachineRuntimeCapabilitiesCacheHydrator : IStartable
     /// <c>TentacleHealthCheckStrategy</c> passes (the keys are the wire
     /// contract between agent's CapabilitiesResponse and the cache).
     /// </summary>
-    private static IReadOnlyDictionary<string, string> BuildMetadataDictionary(MachineRuntimeCapabilities capabilities)
+    internal static IReadOnlyDictionary<string, string> BuildMetadataDictionary(MachineRuntimeCapabilities capabilities)
     {
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {

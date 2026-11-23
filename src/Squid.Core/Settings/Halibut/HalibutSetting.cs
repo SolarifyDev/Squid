@@ -16,6 +16,7 @@ public class HalibutSetting : IConfigurationSetting
         Trust = section.GetSection("Trust").Get<TrustSettings>() ?? new TrustSettings();
         DataStreamStorage = section.GetSection("DataStreamStorage").Get<DataStreamStorageSettings>() ?? new DataStreamStorageSettings();
         RedisQueue = section.GetSection("RedisQueue").Get<RedisQueueSettings>() ?? new RedisQueueSettings();
+        Capabilities = section.GetSection("Capabilities").Get<CapabilitiesSettings>() ?? new CapabilitiesSettings();
     }
 
     public PollingSettings Polling { get; set; } = new();
@@ -26,6 +27,21 @@ public class HalibutSetting : IConfigurationSetting
     public TrustSettings Trust { get; set; } = new();
     public DataStreamStorageSettings DataStreamStorage { get; set; } = new();
     public RedisQueueSettings RedisQueue { get; set; } = new();
+    public CapabilitiesSettings Capabilities { get; set; } = new();
+}
+
+/// <summary>
+/// How a dispatch re-reads an agent's advertised capabilities when a call over the version it chose fails (an agent that was
+/// downgraded answers a newer-protocol call with a plain transport error). A value of zero or less is invalid and falls back to its default.
+/// </summary>
+public class CapabilitiesSettings
+{
+    public const int DefaultRefreshTimeoutSeconds = 10;
+
+    /// <summary>Upper bound on the capabilities call made to decide whether the agent still speaks the protocol version in use.</summary>
+    public int RefreshTimeoutSeconds { get; set; } = DefaultRefreshTimeoutSeconds;
+
+    public TimeSpan RefreshTimeout => TimeSpan.FromSeconds(RefreshTimeoutSeconds > 0 ? RefreshTimeoutSeconds : DefaultRefreshTimeoutSeconds);
 }
 
 /// <summary>

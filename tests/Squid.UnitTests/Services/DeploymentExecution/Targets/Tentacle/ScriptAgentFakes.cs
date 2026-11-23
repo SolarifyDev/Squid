@@ -261,3 +261,34 @@ internal sealed class VersionedFakeStore : IInFlightScriptStore
 
     private static string Format(DispatchSlot s) => $"{s.MachineId}/{s.StepId}/{s.ActionId}";
 }
+
+/// <summary>
+/// Capabilities refresher whose agent answer is scripted: a snapshot (the agent answered), or <see langword="null"/> (it did not).
+/// Records every call so a test can pin that the refresh is only ever made for a failed V2 call.
+/// </summary>
+internal sealed class FakeCapabilitiesRefresher : Squid.Core.Services.DeploymentExecution.Tentacle.IMachineCapabilitiesRefresher
+{
+    private readonly List<string> _events;
+
+    public FakeCapabilitiesRefresher(List<string> events) => _events = events;
+
+    public Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities AgentAnswer { get; set; }
+    public int RefreshCalls { get; private set; }
+    public List<int> SyncedMachines { get; } = new();
+
+    public Task SyncFromStoreAsync(int machineId, CancellationToken ct)
+    {
+        SyncedMachines.Add(machineId);
+        _events.Add($"Caps.Sync:{machineId}");
+
+        return Task.CompletedTask;
+    }
+
+    public Task<Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities> RefreshFromAgentAsync(int machineId, ServiceEndPoint endpoint, CancellationToken ct)
+    {
+        RefreshCalls++;
+        _events.Add($"Caps.Refresh:{machineId}");
+
+        return Task.FromResult(AgentAnswer);
+    }
+}

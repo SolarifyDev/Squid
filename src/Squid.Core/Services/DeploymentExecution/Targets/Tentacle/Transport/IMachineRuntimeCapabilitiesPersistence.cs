@@ -44,12 +44,26 @@ public interface IMachineRuntimeCapabilitiesPersistence
     Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct);
 
     /// <summary>
-    /// NULL out both columns for <paramref name="machineId"/>. Called after a
-    /// successful upgrade so the next health check repopulates with the new
-    /// agent version — matches the in-memory cache <c>Invalidate</c> contract.
+    /// Mark the persisted snapshot of <paramref name="machineId"/> as dropped: the JSON is NULLed and the
+    /// timestamp is set to now (a tombstone). Called after an upgrade or downgrade so the next health check
+    /// repopulates with the new agent — matches the in-memory cache <c>Invalidate</c> contract — and so
+    /// other server pods, whose caches this call cannot reach, learn of the drop by seeing a timestamp newer
+    /// than their own entry (<see cref="LoadIfNewerAsync"/>) instead of advertising the old agent's
+    /// protocol versions until their next health check.
     /// </summary>
     Task InvalidateAsync(int machineId, CancellationToken ct);
+
+    /// <summary>
+    /// The machine's persisted snapshot when it is newer than <paramref name="than"/> (always, when
+    /// <paramref name="than"/> is <see langword="null"/>); <see langword="null"/> when nothing was ever
+    /// written or the stored one is not newer. A tombstone (<see cref="InvalidateAsync"/>) comes back with
+    /// <see cref="PersistedCapabilitiesSnapshot.Capabilities"/> null. One indexed single-row read.
+    /// </summary>
+    Task<PersistedCapabilitiesSnapshot> LoadIfNewerAsync(int machineId, DateTimeOffset? than, CancellationToken ct);
 }
+
+/// <summary>A persisted capabilities row with the time it was written; <see cref="Capabilities"/> is null for a tombstone left by <see cref="IMachineRuntimeCapabilitiesPersistence.InvalidateAsync"/>.</summary>
+public sealed record PersistedCapabilitiesSnapshot(MachineRuntimeCapabilities Capabilities, DateTimeOffset UpdatedAt);
 
 public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapabilitiesPersistence, IScopedDependency
 {
@@ -106,7 +120,7 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         // capability data on startup. Skip rows with NULL json (the migration
         // backward-compat case + machines that never health-checked).
         var rows = await _repository.QueryNoTracking<Machine>(m => m.RuntimeCapabilitiesJson != null)
-            .Select(m => new { m.Id, m.RuntimeCapabilitiesJson })
+            .Select(m => new { m.Id, m.RuntimeCapabilitiesJson, m.RuntimeCapabilitiesUpdatedAt })
             .ToListAsync(ct)
             .ConfigureAwait(false);
 
@@ -116,20 +130,10 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         {
             try
             {
-                var persisted = JsonSerializer.Deserialize<PersistedCapabilities>(row.RuntimeCapabilitiesJson, SerializerOptions);
-                if (persisted == null) continue;
+                var capabilities = Deserialize(row.RuntimeCapabilitiesJson, row.RuntimeCapabilitiesUpdatedAt);
+                if (capabilities == null) continue;
 
-                results.Add((row.Id, new MachineRuntimeCapabilities
-                {
-                    Os = persisted.Os ?? string.Empty,
-                    OsVersion = persisted.OsVersion ?? string.Empty,
-                    DefaultShell = persisted.DefaultShell ?? string.Empty,
-                    InstalledShells = persisted.InstalledShells ?? string.Empty,
-                    Architecture = persisted.Architecture ?? string.Empty,
-                    AgentVersion = persisted.AgentVersion ?? string.Empty,
-                    SupportedServices = persisted.SupportedServices ?? Array.Empty<string>(),
-                    InstalledRoles = persisted.InstalledRoles ?? string.Empty
-                }));
+                results.Add((row.Id, capabilities));
             }
             catch (JsonException ex)
             {
@@ -148,14 +152,48 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
 
     public Task InvalidateAsync(int machineId, CancellationToken ct)
     {
-        // NULL both columns atomically. Caller (MachineUpgradeService after
-        // successful upgrade) wants the NEXT health check to be the source
-        // of truth, not the pre-upgrade snapshot.
+        // Drop the JSON but stamp the time: the NEXT health check becomes the source of truth, and a
+        // pod holding an older entry sees a newer timestamp with no JSON and evicts it too. Rows that
+        // were NULL/NULL before this change keep meaning "never probed".
         return _repository.ExecuteUpdateAsync<Machine>(
             m => m.Id == machineId,
             s => s.SetProperty(m => m.RuntimeCapabilitiesJson, (string)null)
-                  .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)null),
+                  .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
             ct);
+    }
+
+    public async Task<PersistedCapabilitiesSnapshot> LoadIfNewerAsync(int machineId, DateTimeOffset? than, CancellationToken ct)
+    {
+        var row = await _repository.QueryNoTracking<Machine>(m => m.Id == machineId && m.RuntimeCapabilitiesUpdatedAt != null)
+            .Select(m => new { m.RuntimeCapabilitiesJson, m.RuntimeCapabilitiesUpdatedAt })
+            .FirstOrDefaultAsync(ct)
+            .ConfigureAwait(false);
+
+        if (row == null || (than != null && row.RuntimeCapabilitiesUpdatedAt <= than)) return null;
+
+        var updatedAt = row.RuntimeCapabilitiesUpdatedAt.Value;
+
+        return new PersistedCapabilitiesSnapshot(row.RuntimeCapabilitiesJson == null ? null : Deserialize(row.RuntimeCapabilitiesJson, updatedAt), updatedAt);
+    }
+
+    private static MachineRuntimeCapabilities Deserialize(string json, DateTimeOffset? updatedAt)
+    {
+        var persisted = JsonSerializer.Deserialize<PersistedCapabilities>(json, SerializerOptions);
+
+        if (persisted == null) return null;
+
+        return new MachineRuntimeCapabilities
+        {
+            Os = persisted.Os ?? string.Empty,
+            OsVersion = persisted.OsVersion ?? string.Empty,
+            DefaultShell = persisted.DefaultShell ?? string.Empty,
+            InstalledShells = persisted.InstalledShells ?? string.Empty,
+            Architecture = persisted.Architecture ?? string.Empty,
+            AgentVersion = persisted.AgentVersion ?? string.Empty,
+            SupportedServices = persisted.SupportedServices ?? Array.Empty<string>(),
+            InstalledRoles = persisted.InstalledRoles ?? string.Empty,
+            ObservedAt = updatedAt
+        };
     }
 
     /// <summary>

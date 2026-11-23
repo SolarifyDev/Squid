@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Halibut;
 using Halibut.Diagnostics;
 using Squid.Core.Halibut.Resilience;
@@ -46,6 +47,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly IInFlightScriptStore _inFlightStore;
     private readonly RpcRetryHandler _rpcRetry;
     private readonly IScriptDispatcherSelector _dispatcherSelector;
+    private readonly IMachineCapabilitiesRefresher _capabilitiesRefresher;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -57,12 +59,14 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         IMachineRuntimeCapabilitiesCache capabilitiesCache = null,
         IInFlightScriptStore inFlightStore = null,
         RpcRetryHandler rpcRetry = null,
-        IScriptDispatcherSelector dispatcherSelector = null)
+        IScriptDispatcherSelector dispatcherSelector = null,
+        IMachineCapabilitiesRefresher capabilitiesRefresher = null)
     {
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
         _inFlightStore = inFlightStore;
+        _capabilitiesRefresher = capabilitiesRefresher;
         _rpcRetry = rpcRetry ?? new RpcRetryHandler(halibutSetting.RpcRetry);
 
         // Composed without a selector (tests, V1-only wiring): V1 is the only dispatcher, which is also what
@@ -85,6 +89,11 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // the success/failure of *this* call feeds back into the state machine.
         var breaker = _breakerRegistry?.GetOrCreate(request.Machine.Id);
         breaker?.ThrowIfOpen();
+
+        // Adopt a capabilities snapshot another pod (or an upgrade/downgrade) wrote after this pod cached its own,
+        // so the protocol version chosen below reflects what the agent speaks NOW, not what this pod last saw.
+        if (_capabilitiesRefresher != null)
+            await _capabilitiesRefresher.SyncFromStoreAsync(request.Machine.Id, ct).ConfigureAwait(false);
 
         //  (audit B.2): bounded polling-work admission gate.
         // Pre-fix, an offline polling Tentacle could absorb 1000+ queued
@@ -258,15 +267,14 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // resume probes in the dialect the script was started with. The agent is
         // idempotent for a known ticket, so even a retried StartScript returns status,
         // not a second run.
-        if (_inFlightStore != null)
-            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, dispatch.Spec.Ticket.TaskId, dispatch.Session.Version, ct).ConfigureAwait(false);
+        await RecordDispatchAsync(dispatch, slot, ct).ConfigureAwait(false);
 
-        var startResponse = await dispatch.Start().ConfigureAwait(false);
+        var started = await StartWithProtocolFallbackAsync(dispatch, slot, ct).ConfigureAwait(false);
 
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, dispatch.Spec.Ticket);
 
-        var result = await dispatch.Session.ObserveAsync(request, dispatch.Endpoint, dispatch.Spec.Ticket, startResponse).ConfigureAwait(false);
+        var result = await started.Dispatch.Session.ObserveAsync(request, dispatch.Endpoint, dispatch.Spec.Ticket, started.Status).ConfigureAwait(false);
 
         // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
         // observer RETURNED (script completed, reported a non-zero exit, hit the
@@ -278,6 +286,63 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
 
         return result;
+    }
+
+    private async Task RecordDispatchAsync(DispatchContext dispatch, DispatchSlot slot, CancellationToken ct)
+    {
+        if (_inFlightStore != null)
+            await _inFlightStore.RecordDispatchedAsync(dispatch.Request.ServerTaskId, slot, dispatch.Spec.Ticket.TaskId, dispatch.Session.Version, ct).ConfigureAwait(false);
+    }
+
+    private sealed record StartedDispatch(DispatchContext Dispatch, AgentScriptStatus Status);
+
+    /// <summary>
+    /// Starts the script over the chosen version. A V2 Start that fails because the agent no longer speaks V2
+    /// (it was downgraded, or this pod's cache is stale — a V1-only agent answers a V2 call with a plain
+    /// transport error the classifier treats as a blip) must not pause the deployment forever: the agent is
+    /// asked what it advertises, and only if it has withdrawn V2 is the script dispatched over V1 instead.
+    /// The V2 Start cannot have reached an agent that does not serve V2, so the fresh dispatch is safe;
+    /// any other failure — including an unreachable agent — propagates unchanged and is charged to the breaker.
+    /// </summary>
+    private async Task<StartedDispatch> StartWithProtocolFallbackAsync(DispatchContext dispatch, DispatchSlot slot, CancellationToken ct)
+    {
+        try
+        {
+            return new StartedDispatch(dispatch, await dispatch.Start().ConfigureAwait(false));
+        }
+        catch (Exception ex) when (IsPossibleProtocolMismatch(dispatch.Session, ex))
+        {
+            if (!await AgentWithdrewV2Async(dispatch, ct).ConfigureAwait(false)) throw;
+
+            Log.Warning(ex, "[Deploy] Agent {MachineName} no longer advertises script service V2; dispatching ticket {Ticket} over V1", dispatch.Request.Machine.Name, dispatch.Spec.Ticket.TaskId);
+
+            var v1 = SwitchToV1(dispatch);
+
+            await RecordDispatchAsync(v1, slot, ct).ConfigureAwait(false);
+
+            return new StartedDispatch(v1, await v1.Start().ConfigureAwait(false));
+        }
+    }
+
+    /// <summary>A V2 call that failed in a way a V1-only agent would also produce: a transport blip, or the service/method being absent.</summary>
+    private static bool IsPossibleProtocolMismatch(IScriptAgentSession session, Exception ex)
+        => session.Version == ScriptProtocolVersion.V2 && (TransientFailureClassifier.IsTransient(ex) || TransientFailureClassifier.IsServiceMissing(ex));
+
+    /// <summary>True only when the agent ANSWERED a capabilities call and no longer lists V2; an unanswered call proves nothing.</summary>
+    private async Task<bool> AgentWithdrewV2Async(DispatchContext dispatch, CancellationToken ct)
+    {
+        if (_capabilitiesRefresher == null) return false;
+
+        var capabilities = await _capabilitiesRefresher.RefreshFromAgentAsync(dispatch.Request.Machine.Id, dispatch.Endpoint, ct).ConfigureAwait(false);
+
+        return capabilities != null && !capabilities.SupportsScriptServiceV2;
+    }
+
+    private DispatchContext SwitchToV1(DispatchContext dispatch)
+    {
+        var session = _dispatcherSelector.ForVersion(ScriptProtocolVersion.V1).Open(dispatch.Endpoint, dispatch.Context);
+
+        return dispatch with { Session = session, Start = session.PrepareStart(dispatch.Spec) };
     }
 
     private async Task ClearInFlightAsync(int serverTaskId, DispatchSlot slot)
@@ -306,7 +371,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         var existingTicket = new ScriptTicket(recorded.TicketId);
         var session = OpenSessionFor(dispatch, recorded.Version);
-        var probe = await ProbeRecordedTicketAsync(request, session, existingTicket, ct).ConfigureAwait(false);
+        var probed = await ProbeRecordedTicketAsync(dispatch, session, existingTicket, ct).ConfigureAwait(false);
+        var probe = probed.Status;
+
+        session = probed.Session;
+
+        // A V2 ticket asked about over V1 (the agent was downgraded since): an unreleased ticket is visible to V1, so
+        // "unknown" can only mean the agent released it or lost it — it may have run, so the action fails instead of re-running.
+        if (probed.OverV1AfterDowngrade && session.IsUnknownTicket(probe))
+            return await FailLostResultAsync(request, existingTicket, slot).ConfigureAwait(false);
 
         if (probe == null || session.IsUnknownTicket(probe))
         {
@@ -357,40 +430,56 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         return _dispatcherSelector.ForVersion(recordedVersion).Open(dispatch.Endpoint, dispatch.Context);
     }
 
+    private sealed record RecordedProbe(IScriptAgentSession Session, AgentScriptStatus Status, bool OverV1AfterDowngrade);
+
     /// <summary>
-    /// Probes the recorded ticket. Returns <see langword="null"/> — "dispatch fresh" — only for a non-transient
+    /// Probes the recorded ticket. Returns a null status — "dispatch fresh" — only for a non-transient
     /// failure of a protocol that has no explicit unknown answer (V1). A TRANSIENT probe failure (the agent is
     /// still unreachable on resume) must NOT clear the pointer or dispatch fresh — the recorded script may still
     /// be running, so a fresh dispatch would duplicate it: the pointer is preserved and the exception propagates
-    /// so the deployment pauses again.
+    /// so the deployment pauses again. The one exception: a V2-recorded ticket whose probe fails while the agent
+    /// ANSWERS that it no longer advertises V2 (downgraded) is probed over V1 instead, so the resume neither
+    /// pauses forever nor re-runs the script.
     /// </summary>
-    private static async Task<AgentScriptStatus> ProbeRecordedTicketAsync(ScriptExecutionRequest request, IScriptAgentSession session, ScriptTicket ticket, CancellationToken ct)
+    private async Task<RecordedProbe> ProbeRecordedTicketAsync(DispatchContext dispatch, IScriptAgentSession session, ScriptTicket ticket, CancellationToken ct)
     {
         try
         {
-            return await session.ProbeAsync(ticket).ConfigureAwait(false);
+            return new RecordedProbe(session, await session.ProbeAsync(ticket).ConfigureAwait(false), false);
         }
         catch (Exception ex)
         {
-            if (TransientFailureClassifier.IsTransient(ex))
-            {
-                Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
-                    request.Machine.Name, ticket.TaskId);
-                throw;
-            }
+            if (!IsPossibleProtocolMismatch(session, ex) || !await AgentWithdrewV2Async(dispatch, ct).ConfigureAwait(false))
+                return HandleProbeFailure(dispatch.Request, session, ticket, ex);
 
-            if (!session.ProbeFailureMeansUnknownTicket)
-            {
-                Log.Warning(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}, protocol {ProtocolVersion}); the protocol answers unknown explicitly, so this is not evidence the script did not run — preserving the in-flight pointer.",
-                    request.Machine.Name, ticket.TaskId, session.Version);
-                throw;
-            }
+            Log.Warning(ex, "[Deploy] Agent {MachineName} no longer advertises script service V2; probing V2 ticket {Ticket} over V1", dispatch.Request.Machine.Name, ticket.TaskId);
 
-            Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
-                request.Machine.Name, ticket.TaskId);
+            var v1 = SwitchToV1(dispatch).Session;
 
-            return null;
+            return new RecordedProbe(v1, await v1.ProbeAsync(ticket).ConfigureAwait(false), true);
         }
+    }
+
+    private static RecordedProbe HandleProbeFailure(ScriptExecutionRequest request, IScriptAgentSession session, ScriptTicket ticket, Exception ex)
+    {
+        if (TransientFailureClassifier.IsTransient(ex))
+        {
+            Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
+                request.Machine.Name, ticket.TaskId);
+            ExceptionDispatchInfo.Capture(ex).Throw();
+        }
+
+        if (!session.ProbeFailureMeansUnknownTicket)
+        {
+            Log.Warning(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}, protocol {ProtocolVersion}); the protocol answers unknown explicitly, so this is not evidence the script did not run — preserving the in-flight pointer.",
+                request.Machine.Name, ticket.TaskId, session.Version);
+            ExceptionDispatchInfo.Capture(ex).Throw();
+        }
+
+        Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
+            request.Machine.Name, ticket.TaskId);
+
+        return new RecordedProbe(session, null, false);
     }
 
     private async Task<ScriptExecutionResult> FailLostResultAsync(ScriptExecutionRequest request, ScriptTicket ticket, DispatchSlot slot)
