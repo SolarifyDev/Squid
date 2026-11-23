@@ -53,4 +53,33 @@ public class ScopedDbGateTests
         release.SetResult();
         await holder.ConfigureAwait(false);
     }
+
+    [Fact]
+    public async Task RunAsync_EnteredFromInsideAGatedCall_ThrowsInsteadOfDeadlocking()
+    {
+        var gate = new ScopedDbGate();
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => gate.RunAsync(() => gate.RunAsync(() => Task.CompletedTask, CancellationToken.None), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+
+        ex.Message.ShouldContain("entered again");
+    }
+
+    [Fact]
+    public async Task RunAsync_EnteredFromATaskStartedInsideAGatedCall_ThrowsInsteadOfDeadlocking()
+    {
+        var gate = new ScopedDbGate();
+
+        await Should.ThrowAsync<InvalidOperationException>(() => gate.RunAsync(() => Task.Run(() => gate.RunAsync(() => Task.CompletedTask, CancellationToken.None)), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task RunAsync_SequentialCallsAfterAReentryError_StillWork()
+    {
+        var gate = new ScopedDbGate();
+
+        await Should.ThrowAsync<InvalidOperationException>(() => gate.RunAsync(() => gate.RunAsync(() => Task.CompletedTask, CancellationToken.None), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5))).ConfigureAwait(false);
+
+        await gate.RunAsync(() => Task.CompletedTask, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+        await gate.RunAsync(() => Task.CompletedTask, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+    }
 }

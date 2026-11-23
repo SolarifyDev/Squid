@@ -38,8 +38,11 @@ public interface ICertificateDataProvider : IScopedDependency
 /// create-then-update/delete (as the CRUD tests exercise) does not hit a duplicate-tracking
 /// conflict.</para>
 /// </summary>
-public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector) : ICertificateDataProvider
+public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector, IScopedDbGate dbGate = null) : ICertificateDataProvider
 {
+    // Parallel targets and variable expansion read certificates through this scope's shared DbContext, so that read goes through the gate.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     // The V2 envelope derives its key from a random per-payload salt, so the legacy KDF-scope
     // argument (a V1-only deterministic-salt input) is irrelevant for certificates (write V2 only).
     private const int SecretKdfScope = 0;
@@ -97,7 +100,7 @@ public class CertificateDataProvider(IUnitOfWork unitOfWork, IRepository reposit
 
     public async Task<Persistence.Entities.Deployments.Certificate> GetCertificateByIdAsync(int certificateId, CancellationToken cancellationToken = default)
     {
-        var certificate = await repository.GetByIdAsync<Persistence.Entities.Deployments.Certificate>(certificateId, cancellationToken).ConfigureAwait(false);
+        var certificate = await _dbGate.RunAsync(async () => await repository.GetByIdAsync<Persistence.Entities.Deployments.Certificate>(certificateId, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false);
 
         return await DecryptSecretsAsync(certificate).ConfigureAwait(false);
     }

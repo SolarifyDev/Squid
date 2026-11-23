@@ -63,9 +63,13 @@ public sealed class UpgradeTracePersistence : IUpgradeTracePersistence, IScopedD
 
     private readonly IRepository _repository;
 
-    public UpgradeTracePersistence(IRepository repository)
+    // Parallel health checks persist terminal upgrade traces through this scope's shared DbContext, so the write goes through the gate.
+    private readonly IScopedDbGate _dbGate;
+
+    public UpgradeTracePersistence(IRepository repository, IScopedDbGate dbGate = null)
     {
         _repository = repository;
+        _dbGate = dbGate ?? new ScopedDbGate();
     }
 
     public async Task SaveAsync(int machineId, UpgradeTraceSnapshot snapshot, CancellationToken ct)
@@ -76,11 +80,11 @@ public sealed class UpgradeTracePersistence : IUpgradeTracePersistence, IScopedD
 
         var now = DateTimeOffset.UtcNow;
 
-        await _repository.ExecuteUpdateAsync<Machine>(
+        await _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
             m => m.Id == machineId,
             s => s.SetProperty(m => m.LastUpgradeTraceJson, json)
                   .SetProperty(m => m.LastUpgradeTraceUpdatedAt, (DateTimeOffset?)now),
-            ct).ConfigureAwait(false);
+            ct), ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<(int MachineId, UpgradeTraceSnapshot Snapshot)>> LoadAllAsync(CancellationToken ct)
