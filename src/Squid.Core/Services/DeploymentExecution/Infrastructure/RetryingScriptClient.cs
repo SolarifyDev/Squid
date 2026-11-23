@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Squid.Core.Halibut.Resilience;
 using Squid.Message.Constants;
 
@@ -42,7 +41,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     private readonly DateTimeOffset _scriptDeadline;
     private readonly CancellationToken _ct;
     private CancellationToken _stopRetrying;
-    private readonly ConcurrentDictionary<string, ScriptStatusResponse> _observedComplete = new();
+    private readonly ObservedCompletions<ScriptStatusResponse> _observedComplete = new();
 
     public RetryingScriptClient(IAsyncScriptService inner, RpcRetryHandler retry, TimeSpan scriptTimeout, CancellationToken ct)
     {
@@ -80,7 +79,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
 
             return attempts > 1 ? ReconcileRetriedComplete(command, response) : response;
         }
-        catch (Exception ex) when (TransientFailureClassifier.IsTransient(ex) && _observedComplete.ContainsKey(command.Ticket.TaskId))
+        catch (Exception ex) when (_observedComplete.CanSubstituteFor(ex, command.Ticket.TaskId))
         {
             return UseObservedCompletion(command, ex);
         }
@@ -93,7 +92,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     /// </summary>
     private ScriptStatusResponse UseObservedCompletion(CompleteScriptCommand command, Exception ex)
     {
-        var observed = _observedComplete[command.Ticket.TaskId];
+        var observed = _observedComplete.Get(command.Ticket.TaskId);
 
         Log.Warning(ex, "[Deploy] CompleteScript for ticket {Ticket} could not be confirmed; using the exit code {ExitCode} already observed via GetStatus", command.Ticket.TaskId, observed.ExitCode);
 
@@ -106,7 +105,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     private ScriptStatusResponse ReconcileRetriedComplete(CompleteScriptCommand command, ScriptStatusResponse response)
     {
         if (!IsUnknownResult(response)) return response;
-        if (!_observedComplete.TryGetValue(command.Ticket.TaskId, out var observed)) return response;
+        if (!_observedComplete.TryGet(command.Ticket.TaskId, out var observed)) return response;
 
         Log.Warning("[Deploy] CompleteScript retry for ticket {Ticket} answered unknown-result after a lost response; using the exit code {ExitCode} already observed via GetStatus", command.Ticket.TaskId, observed.ExitCode);
 
@@ -116,7 +115,7 @@ public sealed class RetryingScriptClient : IAsyncScriptService, IStopRetryingAwa
     private void RememberIfRealCompletion(ScriptTicket ticket, ScriptStatusResponse response)
     {
         if (response.State == ProcessState.Complete && !IsUnknownResult(response))
-            _observedComplete[ticket.TaskId] = response;
+            _observedComplete.Remember(ticket.TaskId, response);
     }
 
     private static bool IsUnknownResult(ScriptStatusResponse response)

@@ -151,9 +151,23 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         // full scriptTimeout (which can be 30min+) waiting for GetStatusAsync to
         // eventually time out at the Halibut layer. Only started when a probe and
         // endpoint are both available — null-safe for tests and pre-wiring callers.
-        using var livenessCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var livenessTask = StartLivenessProbeLoop(machine, endpoint, livenessCts);
-        using var stopRetryingCts = BindStopRetryingOnLivenessFault(scriptClient, livenessTask);
+        CancellationTokenSource livenessCts = null;
+        Task livenessTask = null;
+        CancellationTokenSource stopRetryingCts = null;
+
+        // The probe stream stops once the script is seen finished (a healthy agent's idle time is not probed) and starts again if the agent
+        // then answers "not yet complete": observation goes on, and so must the detection of an agent that has gone away.
+        void StartLiveness()
+        {
+            stopRetryingCts?.Dispose();
+            livenessCts?.Dispose();
+
+            livenessCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            livenessTask = StartLivenessProbeLoop(machine, endpoint, livenessCts);
+            stopRetryingCts = BindStopRetryingOnLivenessFault(scriptClient, livenessTask);
+        }
+
+        StartLiveness();
 
         // Cancellation while waiting between polls: cancel-or-leave the remote script, then propagate.
         async Task DelayBeforeNextPollAsync()
@@ -199,87 +213,97 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
 
         AgentScriptCompletion completion;
 
-        while (true)
+        try
         {
-            while (!statusResponse.IsTerminal)
+            while (true)
             {
-                if (DateTime.UtcNow - startTime > scriptTimeout)
+                while (!statusResponse.IsTerminal)
                 {
-                    Log.Warning("[Deploy] Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
-                        scriptTimeout.TotalMinutes, machine.Name);
-                    await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
-
-                    var collectedLogLines = allLogs
-                        .OrderBy(l => l.Occurred)
-                        .Where(l => !string.IsNullOrEmpty(l.Text))
-                        .Select(l => masker?.Mask(l.Text) ?? l.Text)
-                        .ToList();
-
-                    var timeoutLine = $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout";
-                    collectedLogLines.Add(timeoutLine);
-                    await StreamLinesAsync(new[] { new ScriptOutputLine(timeoutLine, IsStdErr: true) }).ConfigureAwait(false);
-
-                    return new ScriptExecutionResult
+                    if (DateTime.UtcNow - startTime > scriptTimeout)
                     {
-                        Success = false,
-                        ExitCode = ScriptExitCodes.Timeout,
-                        LogLines = collectedLogLines,
-                        OutputStreamed = streamed && !streamFailed
-                    };
-                }
+                        Log.Warning("[Deploy] Script execution timeout ({TimeoutMinutes}m) on agent {MachineName}, cancelling",
+                            scriptTimeout.TotalMinutes, machine.Name);
+                        await TryCancelScriptAsync(scriptClient, ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
 
-                try
-                {
-                    ct.ThrowIfCancellationRequested();
+                        var collectedLogLines = allLogs
+                            .OrderBy(l => l.Occurred)
+                            .Where(l => !string.IsNullOrEmpty(l.Text))
+                            .Select(l => masker?.Mask(l.Text) ?? l.Text)
+                            .ToList();
 
-                    // If the background liveness loop raised AgentUnreachableException
-                    // it will have faulted; surface that here as a transient failure
-                    // rather than waiting the full scriptTimeout.
-                    if (livenessTask.IsFaulted)
-                    {
-                        var unreachable = FindUnreachable(livenessTask);
-                        if (unreachable != null)
+                        var timeoutLine = $"Script execution exceeded {scriptTimeout.TotalMinutes}-minute timeout";
+                        collectedLogLines.Add(timeoutLine);
+                        await StreamLinesAsync(new[] { new ScriptOutputLine(timeoutLine, IsStdErr: true) }).ConfigureAwait(false);
+
+                        return new ScriptExecutionResult
                         {
-                            Log.Warning("[Deploy] Agent {MachineName} unreachable after {Failures} consecutive probe failures — aborting wait",
-                                machine.Name, unreachable.ConsecutiveFailures);
-                            await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: false).ConfigureAwait(false);
-                            throw unreachable;
+                            Success = false,
+                            ExitCode = ScriptExitCodes.Timeout,
+                            LogLines = collectedLogLines,
+                            OutputStreamed = streamed && !streamFailed
+                        };
+                    }
+
+                    try
+                    {
+                        ct.ThrowIfCancellationRequested();
+
+                        // If the background liveness loop raised AgentUnreachableException
+                        // it will have faulted; surface that here as a transient failure
+                        // rather than waiting the full scriptTimeout.
+                        if (livenessTask.IsFaulted)
+                        {
+                            var unreachable = FindUnreachable(livenessTask);
+                            if (unreachable != null)
+                            {
+                                Log.Warning("[Deploy] Agent {MachineName} unreachable after {Failures} consecutive probe failures — aborting wait",
+                                    machine.Name, unreachable.ConsecutiveFailures);
+                                await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: false).ConfigureAwait(false);
+                                throw unreachable;
+                            }
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: true).ConfigureAwait(false);
+                        throw;
+                    }
+
+                    statusResponse = await GetStatusOrInterruptAsync(machine, scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, livenessTask, ct).ConfigureAwait(false);
+
+                    await AddAndStreamLogsAsync(statusResponse.Logs).ConfigureAwait(false);
+
+                    if (!statusResponse.IsTerminal)
+                        await DelayBeforeNextPollAsync().ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
-                {
-                    await CancelUnlessPausingAsync(scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: true).ConfigureAwait(false);
-                    throw;
-                }
 
-                statusResponse = await GetStatusOrInterruptAsync(machine, scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, livenessTask, ct).ConfigureAwait(false);
+                // The agent says it never had the script, or lost its outcome (V2 only): it may have run, so it is
+                // never re-run here — the action fails with an explicit message instead.
+                if (statusResponse.State != AgentScriptState.Completed)
+                    return await BuildLostResultAsync(statusResponse.State).ConfigureAwait(false);
 
-                await AddAndStreamLogsAsync(statusResponse.Logs).ConfigureAwait(false);
+                // Script finished normally — stop the liveness probe loop.
+                livenessCts.Cancel();
+                try { await livenessTask.ConfigureAwait(false); }
+                catch { /* probe loop swallows its own exceptions into the task result */ }
 
-                if (!statusResponse.IsTerminal)
-                    await DelayBeforeNextPollAsync().ConfigureAwait(false);
+                completion = await scriptClient.CompleteAsync(ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
+
+                await AddAndStreamLogsAsync(completion.Final?.Logs ?? new List<ProcessOutput>()).ConfigureAwait(false);
+
+                if (completion.Outcome != AgentCompleteOutcome.NotYetComplete) break;
+
+                // The agent reported Completed and then "not yet complete" (V2 only): keep observing rather than trust either answer.
+                statusResponse = completion.Final is { IsTerminal: false } stillGoing ? stillGoing : statusResponse with { State = AgentScriptState.Running };
+                StartLiveness();
+                await DelayBeforeNextPollAsync().ConfigureAwait(false);
             }
-
-            // The agent says it never had the script, or lost its outcome (V2 only): it may have run, so it is
-            // never re-run here — the action fails with an explicit message instead.
-            if (statusResponse.State != AgentScriptState.Completed)
-                return await BuildLostResultAsync(statusResponse.State).ConfigureAwait(false);
-
-            // Script finished normally — stop the liveness probe loop.
-            livenessCts.Cancel();
-            try { await livenessTask.ConfigureAwait(false); }
-            catch { /* probe loop swallows its own exceptions into the task result */ }
-
-            completion = await scriptClient.CompleteAsync(ticket, statusResponse.NextLogSequence).ConfigureAwait(false);
-
-            await AddAndStreamLogsAsync(completion.Final?.Logs ?? new List<ProcessOutput>()).ConfigureAwait(false);
-
-            if (completion.Outcome != AgentCompleteOutcome.NotYetComplete) break;
-
-            // The agent reported Completed and then "not yet complete" (V2 only): keep observing rather than trust either answer.
-            statusResponse = completion.Final is { IsTerminal: false } stillGoing ? stillGoing : statusResponse with { State = AgentScriptState.Running };
-            await DelayBeforeNextPollAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            livenessCts?.Cancel();
+            livenessCts?.Dispose();
+            stopRetryingCts?.Dispose();
         }
 
         // Complete answered "already completed" / "unknown" after a lost response: the exit code GetStatus

@@ -62,20 +62,20 @@ public interface IInFlightScriptStore : IScopedDependency
     /// <summary>
     /// Records the ticket together with the script-service protocol version it is dispatched with, in ONE
     /// write before the start RPC, so a resume re-attaches in the SAME dialect the script was started with
-    /// (a record can never exist with a ticket but without its version). The default forwards to the
-    /// version-less overload, i.e. an implementer that does not persist a version records a V1 dispatch;
-    /// <see cref="InFlightScriptStore"/> overrides it.
+    /// (a record can never exist with a ticket but without its version). Abstract on purpose: a default that
+    /// forwarded to the version-less overload would let an implementer that forgot to persist the version
+    /// silently record every V2 dispatch as V1, and a resume would then probe the script in the wrong dialect.
     /// </summary>
-    Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol, CancellationToken cancellationToken = default)
-        => RecordDispatchedAsync(serverTaskId, slot, scriptTicket, cancellationToken);
+    Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// The protocol version the slot's recorded script was dispatched with. A record written before version
-    /// negotiation existed is <see cref="ScriptProtocolVersion.V1"/>; <see langword="null"/> means the
-    /// store does not know (no checkpoint row / not overridden), which callers treat as V1.
+    /// negotiation existed is <see cref="ScriptProtocolVersion.V1"/>; <see langword="null"/> means the store holds
+    /// no record for the slot (no checkpoint row), which callers treat as V1. Abstract on purpose, like
+    /// <see cref="RecordDispatchedAsync(int, DispatchSlot, string, ScriptProtocolVersion, CancellationToken)"/>: an
+    /// implementer that forgot it would make every resume probe in V1 whatever was recorded.
     /// </summary>
-    Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
-        => Task.FromResult<ScriptProtocolVersion?>(null);
+    Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Cross-task: is ANY deployment currently holding an in-flight script on <paramref name="machineId"/>?

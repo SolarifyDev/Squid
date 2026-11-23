@@ -292,3 +292,13 @@ internal sealed class FakeCapabilitiesRefresher : Squid.Core.Services.Deployment
         return Task.FromResult(AgentAnswer);
     }
 }
+
+/// <summary>Hands the persistence straight through; the real <c>MachineCapabilitiesStoreAccess</c> opens a lifetime scope per call (covered by the integration tier).</summary>
+internal sealed class DirectStoreAccess : Squid.Core.Services.DeploymentExecution.Tentacle.IMachineCapabilitiesStoreAccess
+{
+    private readonly Squid.Core.Services.DeploymentExecution.Tentacle.IMachineRuntimeCapabilitiesPersistence _persistence;
+
+    public DirectStoreAccess(Squid.Core.Services.DeploymentExecution.Tentacle.IMachineRuntimeCapabilitiesPersistence persistence) => _persistence = persistence;
+
+    public Task<T> RunAsync<T>(Func<Squid.Core.Services.DeploymentExecution.Tentacle.IMachineRuntimeCapabilitiesPersistence, Task<T>> operation) => operation(_persistence);
+}

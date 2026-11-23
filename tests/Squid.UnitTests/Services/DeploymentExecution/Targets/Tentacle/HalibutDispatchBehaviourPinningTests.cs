@@ -371,6 +371,17 @@ public class HalibutDispatchBehaviourPinningTests
             return Task.CompletedTask;
         }
 
+        // These pinning tests are V1-only: a V1 dispatch records exactly what it always did (no version in the event log).
+        public Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol, CancellationToken cancellationToken = default)
+        {
+            protocol.ShouldBe(ScriptProtocolVersion.V1, "a machine with no advertised capabilities is dispatched over V1");
+
+            return RecordDispatchedAsync(serverTaskId, slot, scriptTicket, cancellationToken);
+        }
+
+        public Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+            => Task.FromResult<ScriptProtocolVersion?>(_tickets.ContainsKey(slot) ? ScriptProtocolVersion.V1 : null);
+
         public Task ClearAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
         {
             serverTaskId.ShouldBe(ServerTaskId);

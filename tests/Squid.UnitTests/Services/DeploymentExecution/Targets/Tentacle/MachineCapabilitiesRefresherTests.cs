@@ -221,14 +221,4 @@ public class MachineCapabilitiesRefresherTests
     [InlineData(-5)]
     public void CapabilitiesSettings_InvalidValue_FallsBackToTheDefault(int configured)
         => new CapabilitiesSettings { RefreshTimeoutSeconds = configured }.RefreshTimeout.ShouldBe(TimeSpan.FromSeconds(CapabilitiesSettings.DefaultRefreshTimeoutSeconds));
-
-    /// <summary>Hands the mock straight through; the real one opens a lifetime scope per call (covered by the integration tier).</summary>
-    private sealed class DirectStoreAccess : IMachineCapabilitiesStoreAccess
-    {
-        private readonly IMachineRuntimeCapabilitiesPersistence _persistence;
-
-        public DirectStoreAccess(IMachineRuntimeCapabilitiesPersistence persistence) => _persistence = persistence;
-
-        public Task<T> RunAsync<T>(Func<IMachineRuntimeCapabilitiesPersistence, Task<T>> operation) => operation(_persistence);
-    }
 }
