@@ -95,6 +95,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             {
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
 
+                PromoteOnceClaimed(ctx, registryCts);
+
                 cancelWatch ??= StartCancelWatchOnceClaimed(ctx);
             }
 
@@ -223,10 +225,19 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             if (cancelWatch != null) await cancelWatch.DisposeAsync().ConfigureAwait(false);
 
-            registry.Unregister(serverTaskId);
+            registry.Unregister(serverTaskId, registryCts);
 
             if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    // This run only becomes the task's registered cancel target once it holds the lease: a duplicate delivery that the claim fences out must
+    // never displace (and so never disable user-cancel or the cancel watcher for) the live run that owns the task. Idempotent.
+    private void PromoteOnceClaimed(DeploymentTaskContext ctx, CancellationTokenSource registryCts)
+    {
+        if (ctx.Lease == null) return;
+
+        registry.Promote(ctx.ServerTaskId, registryCts);
     }
 
     // Only a pipeline that holds the task's lease (the claim fenced out any live owner) watches for a cross-pod cancel: a duplicate delivery of a
