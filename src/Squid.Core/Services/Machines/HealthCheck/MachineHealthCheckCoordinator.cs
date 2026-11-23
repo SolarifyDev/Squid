@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Settings.Machines;
@@ -65,17 +66,24 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
     public async Task<bool> TryRunForMachineAsync(int machineId, TimeSpan wait, Func<Task> work, CancellationToken ct)
     {
+        var waited = Stopwatch.StartNew();
+
         if (!await _locks.TryEnterMachineAsync(machineId, wait, ct).ConfigureAwait(false)) return false;
 
         try
         {
-            return await RunUnderRedisLockAsync(MachineLockKey(machineId), _options.ProbeTimeout + LockMargin, wait, work).ConfigureAwait(false);
+            var redisWait = RemainingWait(wait, waited.Elapsed);
+
+            return await RunUnderRedisLockAsync(MachineLockKey(machineId), _options.ProbeTimeout + LockMargin, redisWait, work).ConfigureAwait(false);
         }
         finally
         {
             _locks.ExitMachine(machineId);
         }
     }
+
+    // The caller's wait is ONE budget shared by the in-process lock and the Redis lock, not one per lock.
+    private static TimeSpan RemainingWait(TimeSpan wait, TimeSpan elapsed) => elapsed >= wait ? TimeSpan.Zero : wait - elapsed;
 
     public async Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct)
     {

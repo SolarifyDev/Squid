@@ -112,6 +112,8 @@ public class RedisSafeRunner : IRedisSafeRunner
         IRedLock redLock;
         try
         {
+            EnsureConnected(server);
+
             redLock = await CreateLockAsync(lockKey, expiry, wait, retry, server).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -122,10 +124,31 @@ public class RedisSafeRunner : IRedisSafeRunner
 
         await using (redLock)
         {
-            if (!redLock.IsAcquired) return default;
+            if (!redLock.IsAcquired)
+                return ResolveUnacquired<T>(lockKey, redLock);
 
             return await logic().ConfigureAwait(false);
         }
+    }
+
+    // RedLock.net never throws when Redis is unreachable (abortConnect=False): it returns IsAcquired=false with Status NoQuorum
+    // (or Unlocked). Only Conflicted means another holder owns the lock; every other status is an infrastructure failure.
+    internal static T ResolveUnacquired<T>(string lockKey, IRedLock redLock) where T : class
+    {
+        if (redLock.Status == RedLockStatus.Conflicted) return default;
+
+        var inner = new InvalidOperationException($"Redis lock was not acquired and no holder was found (status {redLock.Status}); Redis is unreachable or has no quorum");
+
+        LogRedisException(inner);
+
+        throw new LockAcquireFailedException(lockKey, inner);
+    }
+
+    // A multiplexer that is known to be disconnected would otherwise make RedLock retry NoQuorum for the caller's whole wait.
+    private void EnsureConnected(RedisServer server)
+    {
+        if (!_connectionResolver(server).IsConnected)
+            throw new InvalidOperationException("Redis connection is down");
     }
 
     private async Task<IRedLock> CreateLockAsync(string lockKey, TimeSpan? expiry = null, TimeSpan? wait = null, TimeSpan? retry = null, RedisServer server = RedisServer.System)
