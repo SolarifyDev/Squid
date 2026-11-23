@@ -11,9 +11,11 @@ namespace Squid.Core.Services.DeploymentExecution.Infrastructure;
 /// timeout, cancel with no caller token and its own shorter budget, complete with its best-effort budget —
 /// and every exhausted budget rethrows the original exception.
 ///
-/// <para>Unlike V1 it needs no "remember the observed completion" repair: a retried Complete after a lost
-/// response answers an explicit <see cref="AgentCompleteOutcome.AlreadyCompleted"/> instead of a fabricated
-/// -1, and the observer reads the real exit code from the status it already saw.</para>
+/// <para>Unlike V1 it needs no reconcile of a retried Complete: a retried Complete after a lost response answers an
+/// explicit <see cref="AgentCompleteOutcome.AlreadyCompleted"/> instead of a fabricated -1, and the observer reads the real
+/// exit code from the status it already saw. It does share V1's rule for a Complete that cannot be confirmed at all
+/// (<see cref="ObservedCompletions{TObserved}"/>): once GetStatus reported the script completed, a failing Complete is answered
+/// <see cref="AgentCompleteOutcome.AlreadyCompleted"/> (the observer keeps the exit code it already saw) rather than pausing.</para>
 /// </summary>
 internal sealed class RetryingScriptAgentClient : IScriptAgentClient, IStopRetryingAware
 {
@@ -22,6 +24,7 @@ internal sealed class RetryingScriptAgentClient : IScriptAgentClient, IStopRetry
     private readonly DateTimeOffset _scriptDeadline;
     private readonly CancellationToken _ct;
     private CancellationToken _stopRetrying;
+    private readonly ObservedCompletions<AgentScriptStatus> _observedComplete = new();
 
     public RetryingScriptAgentClient(IScriptAgentClient inner, RpcRetryHandler retry, TimeSpan scriptTimeout, CancellationToken ct)
     {
@@ -33,18 +36,33 @@ internal sealed class RetryingScriptAgentClient : IScriptAgentClient, IStopRetry
 
     public void BindStopRetrying(CancellationToken stopRetrying) => _stopRetrying = stopRetrying;
 
-    public Task<AgentScriptStatus> GetStatusAsync(ScriptTicket ticket, long lastLogSequence)
+    public async Task<AgentScriptStatus> GetStatusAsync(ScriptTicket ticket, long lastLogSequence)
     {
         var budget = Min(_retry.StatusBudget, _scriptDeadline - DateTimeOffset.UtcNow);
 
-        return _retry.ExecuteAsync(() => _inner.GetStatusAsync(ticket, lastLogSequence), "GetStatus", budget, _ct, _stopRetrying);
+        var status = await _retry.ExecuteAsync(() => _inner.GetStatusAsync(ticket, lastLogSequence), "GetStatus", budget, _ct, _stopRetrying).ConfigureAwait(false);
+
+        if (status.State == AgentScriptState.Completed) _observedComplete.Remember(ticket.TaskId, status);
+
+        return status;
     }
 
     public Task<AgentScriptStatus> CancelAsync(ScriptTicket ticket, long lastLogSequence)
         => _retry.ExecuteAsync(() => _inner.CancelAsync(ticket, lastLogSequence), "CancelScript", _retry.CancelBudget, CancellationToken.None, boundEachAttempt: true);
 
-    public Task<AgentScriptCompletion> CompleteAsync(ScriptTicket ticket, long lastLogSequence)
-        => _retry.ExecuteAsync(() => _inner.CompleteAsync(ticket, lastLogSequence), "CompleteScript", _retry.CompleteBudget, _ct, _stopRetrying);
+    public async Task<AgentScriptCompletion> CompleteAsync(ScriptTicket ticket, long lastLogSequence)
+    {
+        try
+        {
+            return await _retry.ExecuteAsync(() => _inner.CompleteAsync(ticket, lastLogSequence), "CompleteScript", _retry.CompleteBudget, _ct, _stopRetrying).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (_observedComplete.CanSubstituteFor(ex, ticket.TaskId))
+        {
+            Log.Warning(ex, "[Deploy] CompleteScript for ticket {Ticket} could not be confirmed; using the exit code {ExitCode} already observed via GetStatus", ticket.TaskId, _observedComplete.Get(ticket.TaskId).ExitCode);
+
+            return new AgentScriptCompletion(AgentCompleteOutcome.AlreadyCompleted, null);
+        }
+    }
 
     private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 }

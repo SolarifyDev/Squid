@@ -1,5 +1,6 @@
 using Halibut;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Tentacle;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Models.Deployments.Execution;
 using Squid.Message.Models.Deployments.Machine;
@@ -40,10 +41,12 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
     };
 
     private readonly IHalibutClientFactory _halibutClientFactory;
+    private readonly IMachineCapabilitiesRecorder _capabilitiesRecorder;
 
-    public KubernetesAgentHealthCheckStrategy(IHalibutClientFactory halibutClientFactory)
+    public KubernetesAgentHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineCapabilitiesRecorder capabilitiesRecorder = null)
     {
         _halibutClientFactory = halibutClientFactory;
+        _capabilitiesRecorder = capabilitiesRecorder;
     }
 
     public async Task<HealthCheckResult> CheckHealthAsync(Machine machine, MachineConnectivityPolicyDto connectivityPolicy, CancellationToken ct, MachineHealthCheckPolicyDto healthCheckPolicy = null)
@@ -61,6 +64,12 @@ public class KubernetesAgentHealthCheckStrategy : IHealthCheckStrategy
 
             if (response == null)
                 return new HealthCheckResult(false, "Agent returned null capabilities response");
+
+            // The dispatch selector only chooses ScriptService V2 for an agent whose cached capabilities advertise it, and
+            // only a health check fills that cache: without this a Kubernetes agent that serves V2 is dispatched over V1 forever.
+            // Recorded before the RBAC verdict — the agent's protocol versions hold whether or not its RBAC is healthy.
+            if (_capabilitiesRecorder != null && machine != null)
+                await _capabilitiesRecorder.RecordAsync(machine.Id, response, ct).ConfigureAwait(false);
 
             // P0-Phase10.1: RBAC dry-run inspection. Agent populates these
             // metadata keys via `kubectl auth can-i create <resource>` at
