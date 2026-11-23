@@ -121,6 +121,16 @@ public class IntegrationRedisQueueFailover : TestBase
 
     private Pod NewPod(string redisAddress) => new(CurrentScope, redisAddress);
 
+    /// <summary>Another replica is alive: the only situation in which a request goes through Redis.</summary>
+    private static ReplicaPresence PeerPresent()
+    {
+        var presence = new ReplicaPresence();
+
+        presence.Set(true);
+
+        return presence;
+    }
+
     private sealed class Pod : IAsyncDisposable
     {
         private readonly HalibutRuntime _runtime;
@@ -198,7 +208,7 @@ public class IntegrationRedisQueueFailover : TestBase
                 {
                     slot.Value = serializer;
 
-                    return new FailoverPendingRequestQueueFactory(limits, logFactory, _redis, new FailoverQueueContext(Health, options, TimeProvider.System));
+                    return new FailoverPendingRequestQueueFactory(limits, logFactory, _redis, new FailoverQueueContext(Health, options, TimeProvider.System, null, PeerPresent()));
                 })
                 .Build();
         }

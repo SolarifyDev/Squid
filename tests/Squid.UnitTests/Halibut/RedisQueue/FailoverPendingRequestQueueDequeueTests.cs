@@ -27,7 +27,7 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
     public FailoverPendingRequestQueueDequeueTests()
     {
         _factory = new FakeRedisFactory(_redis);
-        _queue = new FailoverPendingRequestQueue(Endpoint, _local, _factory, new FailoverQueueContext(_health, Options(), TimeProvider.System));
+        _queue = new FailoverPendingRequestQueue(Endpoint, _local, _factory, new FailoverQueueContext(_health, Options(), TimeProvider.System, null, PeerPresent()));
     }
 
     public async ValueTask DisposeAsync() => await _queue.DisposeAsync();
@@ -54,7 +54,7 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
     {
         _health.IsAvailable = false;
 
-        await using var queue = new FailoverPendingRequestQueue(Endpoint, LocalQueue(TimeSpan.FromSeconds(30)), _factory, new FailoverQueueContext(_health, Options() with { ProbeInterval = TimeSpan.FromMilliseconds(200) }, TimeProvider.System));
+        await using var queue = new FailoverPendingRequestQueue(Endpoint, LocalQueue(TimeSpan.FromSeconds(30)), _factory, new FailoverQueueContext(_health, Options() with { ProbeInterval = TimeSpan.FromMilliseconds(200) }, TimeProvider.System, null, PeerPresent()));
 
         var timer = Stopwatch.StartNew();
         var next = await queue.DequeueAsync(CancellationToken.None).WithinAsync(Limit, "dequeue");

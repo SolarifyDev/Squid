@@ -14,9 +14,31 @@ public sealed partial class FailoverPendingRequestQueue
 
         if (TryTakeParked(out var parked)) return HandOut(parked.Request, parked.Origin);
 
+        var appeared = _replicas.OtherReplicaAppeared;
+
+        if (!_replicas.OtherReplicaIsLive) return HandOut(await DequeueUntilAReplicaAppearsAsync(appeared, cancellationToken).ConfigureAwait(false), _local);
+
         if (!RedisMayDeliver()) return HandOut(await DequeueLocalOnlyAsync(cancellationToken).ConfigureAwait(false), _local);
 
         return await DequeueFromBothLegsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// No other replica is alive, so nothing can arrive through Redis and none is listened to (no Redis leg, no subscription): this is Halibut's own local wait, in
+    /// full. It is cut short only if a replica appears, so that the next dequeue listens to Redis too; an early empty answer is an ordinary polling answer.
+    /// </summary>
+    private async Task<RequestMessageWithCancellationToken> DequeueUntilAReplicaAppearsAsync(CancellationToken appeared, CancellationToken ct)
+    {
+        using var stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(ct, appeared);
+
+        try
+        {
+            return await _local.DequeueAsync(stopWaiting.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -106,13 +128,34 @@ public sealed partial class FailoverPendingRequestQueue
         }
     }
 
-    // A failed Redis write must not throw into Halibut's polling loop: that would drop the agent's connection and with it every local request riding on it.
-    // The pod that sent the request stops hearing this pod's heartbeat and fails the request itself as a transient error.
+    // This runs inside Halibut's polling loop, so it must neither throw into it (that would drop the agent's connection and with it every local request riding on
+    // it) nor hold it: a Redis that does not answer would otherwise keep the connection waiting ~50 s per response. With the breaker open it is not attempted, and
+    // otherwise it gets a budget, after which it is left to finish by itself. Either way the pod that sent the request stops hearing this pod's heartbeat and fails
+    // the request itself as a transient error.
     private async Task ApplyToRedisAsync(IPendingRequestQueue redis, ResponseMessage response, Guid requestActivityId)
     {
+        if (!_health.IsAvailable)
+        {
+            Log.Warning("Redis is down, so the response of request {RequestActivityId} for agent {Endpoint} is not handed back; the requesting pod will fail it", requestActivityId, _endpoint);
+
+            return;
+        }
+
+        Task apply = null;
+
         try
         {
-            await redis.ApplyResponse(response, requestActivityId).ConfigureAwait(false);
+            apply = redis.ApplyResponse(response, requestActivityId);
+
+            await apply.WaitAsync(_options.ApplyResponseBudget).ConfigureAwait(false);
+        }
+        catch (TimeoutException) when (apply is { IsCompleted: false })
+        {
+            _health.RecordFailure("applying a cross-pod response timed out");
+
+            Log.Warning("Redis did not take the response of request {RequestActivityId} for agent {Endpoint} within {Budget}; the agent connection no longer waits for it", requestActivityId, _endpoint, _options.ApplyResponseBudget);
+
+            _ = apply.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
         }
         catch (Exception ex)
         {

@@ -155,6 +155,16 @@ internal static class RedisQueueTestSupport
 {
     public static readonly Uri Endpoint = new("poll://redis-queue-agent/");
 
+    /// <summary>Another replica is alive, as in a multi-replica install: the only situation in which a request may go through Redis.</summary>
+    public static ReplicaPresence PeerPresent()
+    {
+        var presence = new ReplicaPresence();
+
+        presence.Set(true);
+
+        return presence;
+    }
+
     public static RedisQueueOptions Options(TimeSpan? livenessWindow = null) => new("test", livenessWindow ?? TimeSpan.FromMilliseconds(300), 3, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2), TimeSpan.FromMinutes(10));
 
     public static RequestMessage Request(string name = "GetStatus", TimeSpan? pickupTimeout = null)

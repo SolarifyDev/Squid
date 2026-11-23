@@ -5,13 +5,17 @@ using Halibut.Transport.Protocol;
 
 namespace Squid.Core.Halibut.RedisQueue;
 
-/// <summary>What a queue shares with every other queue of the server: whether Redis is usable, the tunables and the clock.</summary>
-public sealed record FailoverQueueContext(IRedisQueueHealth Health, RedisQueueOptions Options, TimeProvider Clock, RedisFallbackLog Fallback = null);
+/// <summary>
+/// What a queue shares with every other queue of the server: whether Redis is usable, the tunables, the clock and whether another replica exists. A context without
+/// <paramref name="Replicas"/> has no other replica, so its queues never use Redis.
+/// </summary>
+public sealed record FailoverQueueContext(IRedisQueueHealth Health, RedisQueueOptions Options, TimeProvider Clock, RedisFallbackLog Fallback = null, IReplicaPresence Replicas = null);
 
 /// <summary>
 /// The pending-request queue of ONE polling agent on ONE pod, in two legs. The local leg is Halibut's in-memory queue: a request for an agent whose poller is
 /// attached to this pod goes there and never touches Redis, so a single-replica install has no Redis in its request path. The Redis leg is Halibut's Redis
-/// queue: a request for an agent with no live poller here goes through it, so the pod that does hold the poller collects it. The dequeue side serves both
+/// queue: a request for an agent with no live poller here goes through it, so the pod that does hold the poller collects it, but only while another server
+/// replica is alive: with none, Redis is not touched at all. The dequeue side serves both
 /// legs: the local leg is cancel-safe (an item is either returned or untouched), the Redis leg is never cancelled mid-flight (a cancelled Redis dequeue could
 /// lose a request it had just popped), so the two are raced and a Redis item that arrives while no dequeue is waiting is parked and handed to the next one.
 /// Redis trouble is confined to the Redis leg: it is created on first use, runs on its own task, and is skipped while the breaker is open.
@@ -23,6 +27,7 @@ public sealed partial class FailoverPendingRequestQueue : IPendingRequestQueue
     private readonly IPendingRequestQueueFactory _redisFactory;
     private readonly IRedisQueueHealth _health;
     private readonly PollerPresence _presence;
+    private readonly IReplicaPresence _replicas;
     private readonly TimeProvider _clock;
     private readonly RedisFallbackLog _fallback;
     private readonly RedisQueueOptions _options;
@@ -45,6 +50,7 @@ public sealed partial class FailoverPendingRequestQueue : IPendingRequestQueue
         _options = context.Options;
         _clock = context.Clock;
         _fallback = context.Fallback ?? new RedisFallbackLog(context.Clock);
+        _replicas = context.Replicas ?? new ReplicaPresence();
         _presence = new PollerPresence(context.Clock, context.Options.LivenessWindow);
     }
 

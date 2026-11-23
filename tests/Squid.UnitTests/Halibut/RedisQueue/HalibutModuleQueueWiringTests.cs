@@ -36,6 +36,26 @@ public sealed class HalibutModuleQueueWiringTests
         queue.ShouldBeOfType<FailoverPendingRequestQueue>("a polling agent's queue must be local first with Redis behind it, not Halibut's plain in-memory queue");
     }
 
+    // A guard nobody proved is called guards nothing: the queue must read the replica presence the heartbeat writes, or a multi-replica install would never use Redis
+    // (and a single replica could never be told apart from one).
+    [Fact]
+    public async Task TheQueue_ReadsTheReplicaPresenceTheHeartbeatPublishes()
+    {
+        using var container = BuildContainer();
+        var runtime = container.Resolve<HalibutRuntime>();
+        var queue = typeof(HalibutRuntime).GetMethod("GetQueue", NonPublic)!.Invoke(runtime, [new Uri("poll://seam-agent/")]);
+        var read = typeof(FailoverPendingRequestQueue).GetField("_replicas", NonPublic)!.GetValue(queue);
+        var presence = container.Resolve<IReplicaPresence>();
+
+        read.ShouldBeSameAs(presence);
+
+        var until = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+
+        while (!presence.OtherReplicaIsLive && DateTime.UtcNow < until) await Task.Delay(20);
+
+        presence.OtherReplicaIsLive.ShouldBeTrue("the heartbeat is started with the container and publishes what the store reports");
+    }
+
     // The pod that takes a request off Redis has usually never created a client for its contract; without the message types registered up front it cannot read the request.
     [Fact]
     public void ARuntimeThatNeverCreatedAClient_AlreadyKnowsEveryAgentContract()
@@ -100,7 +120,16 @@ public sealed class HalibutModuleQueueWiringTests
 
         builder.RegisterInstance(new SelfCertSetting { Base64 = Convert.ToBase64String(cert.Export(X509ContentType.Pfx, string.Empty)), Password = string.Empty }).AsSelf().SingleInstance();
         builder.RegisterModule(new HalibutModule());
+        builder.RegisterInstance<IReplicaStore>(new OtherReplicaStore()).SingleInstance();
 
         return builder.Build();
+    }
+
+    /// <summary>The database side of the heartbeat (the real one is picked up by the application's dependency scan): always reports one other replica.</summary>
+    private sealed class OtherReplicaStore : IReplicaStore
+    {
+        public Task<int> BeatAsync(Guid replicaId, TimeSpan liveWindow, CancellationToken ct) => Task.FromResult(1);
+
+        public Task LeaveAsync(Guid replicaId, CancellationToken ct) => Task.CompletedTask;
     }
 }

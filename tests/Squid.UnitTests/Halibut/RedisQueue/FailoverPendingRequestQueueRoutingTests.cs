@@ -23,7 +23,7 @@ public sealed class FailoverPendingRequestQueueRoutingTests : IAsyncDisposable
     public FailoverPendingRequestQueueRoutingTests()
     {
         _factory = new FakeRedisFactory(_redis);
-        _queue = new FailoverPendingRequestQueue(Endpoint, _local, _factory, new FailoverQueueContext(_health, Options(), TimeProvider.System));
+        _queue = new FailoverPendingRequestQueue(Endpoint, _local, _factory, new FailoverQueueContext(_health, Options(), TimeProvider.System, null, PeerPresent()));
     }
 
     public async ValueTask DisposeAsync() => await _queue.DisposeAsync();
@@ -178,7 +178,6 @@ public sealed class FailoverPendingRequestQueueRoutingTests : IAsyncDisposable
 
     [Theory]
     [InlineData(typeof(CouldNotGetDataLossTokenInTimeHalibutClientException), true)]
-    [InlineData(typeof(ErrorOccuredWhenInsertingDataIntoRedisHalibutPendingRequestQueueHalibutClientException), true)]
     [InlineData(typeof(ErrorWhilePreparingRequestForQueueHalibutClientException), false)]
     public async Task RequestNeverReachedRedis_FallsBackToTheLocalQueue_AndOnlyConnectivityFailuresCountAgainstTheBreaker(Type exceptionType, bool countsAgainstBreaker)
     {
@@ -190,6 +189,24 @@ public sealed class FailoverPendingRequestQueueRoutingTests : IAsyncDisposable
 
         (await queued.WithinAsync(TimeSpan.FromSeconds(5), "queued")).Result.ShouldBe("local", $"{exceptionType.Name} before the request was queued must not fail it");
         _health.Failures.Count.ShouldBe(countsAgainstBreaker ? 1 : 0, "a message that cannot be sealed (no master key) is not Redis's fault");
+    }
+
+    // Halibut throws this for any failure while inserting, including an RPUSH that succeeded and a pulse or reply that was lost: another pod may already hold the
+    // request, so queueing it locally as well could run it twice. It surfaces as the transient failure it is, and still counts against the breaker.
+    [Fact]
+    public async Task RequestThatMayAlreadyBeOnRedis_IsNotQueuedAgainLocally_ItSurfacesAsTransient()
+    {
+        var thrown = new ErrorOccuredWhenInsertingDataIntoRedisHalibutPendingRequestQueueHalibutClientException("pulse failed", new IOException("boom"));
+
+        _redis.OnQueueAndWait = _ => throw thrown;
+
+        var request = Request();
+        var ex = await Should.ThrowAsync<Exception>(() => _queue.QueueAndWaitAsync(request, CancellationToken.None));
+
+        ex.ShouldBeSameAs(thrown);
+        TransientFailureClassifier.IsTransient(ex).ShouldBeTrue();
+        _local.Count.ShouldBe(0, "the request was not also queued locally");
+        _health.Failures.Count.ShouldBe(1);
     }
 
     // A request that was queued on Redis and then lost must surface (it may be running elsewhere): queueing it again locally could run it twice.
