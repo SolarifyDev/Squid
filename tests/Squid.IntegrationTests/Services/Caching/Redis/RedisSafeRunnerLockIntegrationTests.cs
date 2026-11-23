@@ -83,6 +83,28 @@ public class RedisSafeRunnerLockIntegrationTests
     }
 
     [Fact]
+    public async Task RepeatedLocks_DoNotAccumulateEventHandlersOnTheSharedMultiplexer()
+    {
+        await using var host = BuildRunner(RealRedis);
+        var before = ConfigurationChangedSubscribers(host.Multiplexer);
+
+        for (var i = 0; i < 20; i++)
+            await host.Runner.ExecuteWithLockAsync<object>($"squid:test:leak:{Guid.NewGuid():N}", () => Task.FromResult(new object()), Expiry);
+
+        // RedLockFactory subscribes to the multiplexer's ConfigurationChanged in its constructor and only unsubscribes in Dispose.
+        ConfigurationChangedSubscribers(host.Multiplexer).ShouldBe(before, "a per-call RedLockFactory that is never disposed stays rooted by the long-lived multiplexer");
+    }
+
+    private static int ConfigurationChangedSubscribers(ConnectionMultiplexer multiplexer)
+    {
+        var field = typeof(ConnectionMultiplexer).GetField("ConfigurationChanged", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+
+        field.ShouldNotBeNull("StackExchange.Redis changed how ConfigurationChanged is stored; update this probe");
+
+        return (field.GetValue(multiplexer) as Delegate)?.GetInvocationList().Length ?? 0;
+    }
+
+    [Fact]
     public async Task FreeLock_RunsLogic_AndReturnsItsResult()
     {
         await using var host = BuildRunner(RealRedis);
@@ -122,6 +144,8 @@ public class RedisSafeRunnerLockIntegrationTests
     private sealed class RunnerHost(IContainer container, ConnectionMultiplexer multiplexer, RedisSafeRunner runner) : IAsyncDisposable
     {
         public RedisSafeRunner Runner { get; } = runner;
+
+        public ConnectionMultiplexer Multiplexer => multiplexer;
 
         public ILifetimeScope Scope => container;
 

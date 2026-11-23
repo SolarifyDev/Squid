@@ -154,7 +154,10 @@ public class RedisSafeRunner : IRedisSafeRunner
     private async Task<IRedLock> CreateLockAsync(string lockKey, TimeSpan? expiry = null, TimeSpan? wait = null, TimeSpan? retry = null, RedisServer server = RedisServer.System)
     {
         var multiplexers = new List<RedLockMultiplexer> { _connectionResolver(server) };
-        var redLockFactory = RedLockFactory.Create(multiplexers);
+        // The factory subscribes to the shared multiplexer's ConfigurationChanged and only unsubscribes in Dispose, so one that is never
+        // disposed leaks a handler (and itself) per call. Disposing it does not touch the multiplexer or any lock it created: a lock holds
+        // its own connections and keepalive timer, and the existing-multiplexer provider's DisposeConnections is a no-op.
+        using var redLockFactory = RedLockFactory.Create(multiplexers);
 
         var expiryTime = expiry ?? TimeSpan.FromSeconds(30);
         var waitTime = wait ?? TimeSpan.FromSeconds(10);
