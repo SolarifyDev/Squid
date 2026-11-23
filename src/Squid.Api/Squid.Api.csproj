@@ -19,6 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Squid.Mcp\Squid.Mcp.csproj" />
     <ProjectReference Include="..\Squid.Message\Squid.Message.csproj" />
     <ProjectReference Include="..\Squid.Core\Squid.Core.csproj" />
   </ItemGroup>

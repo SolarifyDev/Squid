@@ -5,6 +5,7 @@ using Mediator.Net.Pipeline;
 using Squid.Core.Extensions;
 using Squid.Core.Services.OctopusImport;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Requests.Mcp;
 
 namespace Squid.Core.Middlewares.Logging;
 
@@ -32,6 +33,12 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
 
     public Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
+        if (context.Message is IScopedReadQuery)
+        {
+            _logger.Information("----- Handling scoped read message {MessageName}", context.Message.GetGenericTypeName());
+            return Task.CompletedTask;
+        }
+
         _logger.Information("----- Handling message {MessageName} ({@Message})", context.Message.GetGenericTypeName(),
             GetSafeMessage(context.Message));
         return Task.CompletedTask;
@@ -106,6 +113,12 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
 
     public Task AfterExecute(TContext context, CancellationToken cancellationToken)
     {
+        if (context.Message is IScopedReadQuery)
+        {
+            _logger.Information("----- Scoped read message {MessageName} handled", context.Message.GetGenericTypeName());
+            return Task.CompletedTask;
+        }
+
         _logger.Information("----- Message {MessageName} handled - response: {@Response}",
             context.Message.GetGenericTypeName(), GetSafeValue(context.Result));
         

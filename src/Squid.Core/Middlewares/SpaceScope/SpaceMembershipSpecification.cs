@@ -3,6 +3,7 @@ using Mediator.Net.Pipeline;
 using Microsoft.AspNetCore.Http;
 using Squid.Core.Services.Identity;
 using Squid.Message.Hardening;
+using Squid.Message.Requests.Mcp;
 
 namespace Squid.Core.Middlewares.SpaceScope;
 
@@ -71,6 +72,8 @@ public sealed class SpaceMembershipSpecification<TContext> : IPipeSpecification<
 
     public async Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
+        if (context.Message is IScopedReadQuery) return;
+
         if (context.Message is not Message.Contracts.ISpaceScoped) return;
 
         // Internal users (Hangfire / system tasks) bypass the gate. Same

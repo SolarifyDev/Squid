@@ -11,6 +11,7 @@ public interface IAuthorizationService : IScopedDependency
     Task<PermissionCheckResult> CheckPermissionAsync(PermissionCheckRequest request, CancellationToken ct = default);
     Task EnsurePermissionAsync(PermissionCheckRequest request, CancellationToken ct = default);
     Task<ResourceScope> GetResourceScopeAsync(ResourceScopeRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<ResourceScopeGrant>> GetResourceScopeGrantsAsync(int userId, Permission permission, CancellationToken ct = default);
 }
 
 public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUserRoleDataProvider scopedUserRoleDataProvider, IUserRoleDataProvider userRoleDataProvider) : IAuthorizationService
@@ -86,6 +87,52 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
         return await BuildResourceScopeAsync(grantingRoleIds, ct).ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<ResourceScopeGrant>> GetResourceScopeGrantsAsync(int userId, Permission permission, CancellationToken ct = default)
+    {
+        var teamIds = await teamDataProvider.GetTeamIdsByUserIdAsync(userId, ct).ConfigureAwait(false);
+        if (teamIds.Count == 0) return Array.Empty<ResourceScopeGrant>();
+
+        var scopedRoles = await scopedUserRoleDataProvider.GetByTeamIdsAsync(teamIds, ct).ConfigureAwait(false);
+        if (scopedRoles.Count == 0) return Array.Empty<ResourceScopeGrant>();
+
+        var permissionsByRoleId = await BatchLoadPermissionsAsync(scopedRoles, ct).ConfigureAwait(false);
+
+        if (HasAdministerSystem(scopedRoles, permissionsByRoleId))
+            return new[] { new ResourceScopeGrant() };
+
+        var filteredRoles = FilterByPermissionScope(scopedRoles, permission);
+        var permissionName = permission.ToString();
+        var grants = new List<ResourceScopeGrant>();
+
+        foreach (var scopedRole in filteredRoles)
+        {
+            if (!permissionsByRoleId.TryGetValue(scopedRole.UserRoleId, out var permissions))
+                continue;
+
+            if (!permissions.Contains(permissionName))
+                continue;
+
+            grants.Add(await BuildResourceScopeGrantAsync(scopedRole, ct).ConfigureAwait(false));
+        }
+
+        return grants;
+    }
+
+    private async Task<ResourceScopeGrant> BuildResourceScopeGrantAsync(ScopedUserRole scopedRole, CancellationToken ct)
+    {
+        var projectIds = await scopedUserRoleDataProvider.GetProjectScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
+        var environmentIds = await scopedUserRoleDataProvider.GetEnvironmentScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
+        var projectGroupIds = await scopedUserRoleDataProvider.GetProjectGroupScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
+
+        return new ResourceScopeGrant
+        {
+            SpaceId = scopedRole.SpaceId,
+            ProjectIds = projectIds.ToHashSet(),
+            EnvironmentIds = environmentIds.ToHashSet(),
+            ProjectGroupIds = projectGroupIds.ToHashSet(),
+        };
+    }
+
     private static bool HasAdministerSystem(List<ScopedUserRole> scopedRoles, Dictionary<int, List<string>> permissionsByRoleId)
     {
         foreach (var role in scopedRoles)
@@ -99,6 +146,14 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
         }
 
         return false;
+    }
+
+    private static List<ScopedUserRole> FilterByPermissionScope(List<ScopedUserRole> scopedRoles, Permission permission)
+    {
+        if (permission.CanApplyAtSystemLevel() && !permission.CanApplyAtSpaceLevel())
+            return scopedRoles.Where(r => r.SpaceId == null).ToList();
+
+        return scopedRoles;
     }
 
     private static List<ScopedUserRole> FilterBySpace(List<ScopedUserRole> scopedRoles, Permission permission, int? spaceId)

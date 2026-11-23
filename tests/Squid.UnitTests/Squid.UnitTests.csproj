@@ -39,6 +39,7 @@
          this project (no separate ApiTests project); add an Api ref so
          the handler type is reachable. -->
     <ProjectReference Include="..\..\src\Squid.Api\Squid.Api.csproj" />
+    <ProjectReference Include="..\..\src\Squid.Mcp\Squid.Mcp.csproj" />
   </ItemGroup>
 
   <ItemGroup>

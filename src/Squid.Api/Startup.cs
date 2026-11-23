@@ -1,4 +1,5 @@
 using Correlate.AspNetCore;
+using Squid.Api.Extensions;
 using Correlate.DependencyInjection;
 using Squid.Api.Filters;
 using Squid.Api.Controllers;
@@ -31,6 +32,7 @@ public class Startup
         services.AddLogging();
         services.AddCorsPolicy(Configuration);
         services.AddCustomAuthentication(Configuration);
+        services.AddSquidMcpEndpoint(Configuration);
         services.AddSquidHangfire(Configuration);
         services.AddMvc(options =>
         {
@@ -52,7 +54,11 @@ public class Startup
         app.UseCors();
         app.UseAuthentication();
         app.UseAuthorization();
-        app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
+        app.UseEndpoints(endpoints =>
+        {
+            endpoints.MapSquidMcpEndpoint(Configuration);
+            endpoints.MapControllers();
+        });
         app.UseSquidHangfire(Configuration);
     }
 }

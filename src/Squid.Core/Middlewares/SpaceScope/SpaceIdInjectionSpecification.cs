@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.ExceptionServices;
 using Mediator.Net.Pipeline;
 using Microsoft.AspNetCore.Http;
+using Squid.Message.Requests.Mcp;
 
 namespace Squid.Core.Middlewares.SpaceScope;
 
@@ -19,6 +20,8 @@ public class SpaceIdInjectionSpecification<TContext> : IPipeSpecification<TConte
 
     public Task BeforeExecute(TContext context, CancellationToken cancellationToken)
     {
+        if (context.Message is IScopedReadQuery) return Task.CompletedTask;
+
         if (context.Message is not Message.Contracts.ISpaceScoped) return Task.CompletedTask;
 
         var prop = context.Message.GetType().GetProperty("SpaceId", BindingFlags.Public | BindingFlags.Instance);

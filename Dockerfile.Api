@@ -5,6 +5,7 @@ WORKDIR /src
 COPY NuGet.Config .
 COPY src/Squid.Message/ Squid.Message/
 COPY src/Squid.Core/ Squid.Core/
+COPY src/Squid.Mcp/ Squid.Mcp/
 COPY src/Squid.Api/ Squid.Api/
 COPY src/Squid.Calamari/ Squid.Calamari/
 
