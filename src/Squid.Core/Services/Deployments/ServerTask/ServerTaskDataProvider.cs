@@ -52,10 +52,14 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     private readonly IRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
 
-    public ServerTaskDataProvider(IRepository repository, IUnitOfWork unitOfWork)
+    // A suspending parallel step pauses the task while its siblings use the same scoped DbContext, so state transitions go through the gate.
+    private readonly IScopedDbGate _dbGate;
+
+    public ServerTaskDataProvider(IRepository repository, IUnitOfWork unitOfWork, IScopedDbGate dbGate = null)
     {
         _repository = repository;
         _unitOfWork = unitOfWork;
+        _dbGate = dbGate ?? new ScopedDbGate();
     }
 
     public async Task AddServerTaskAsync(Persistence.Entities.Deployments.ServerTask task, bool forceSave = true, CancellationToken cancellationToken = default)
@@ -128,7 +132,10 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default)
         => TransitionStateAsync(taskId, expectedCurrentState, newState, null, cancellationToken);
 
-    public async Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken = default)
+    public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken = default)
+        => _dbGate.RunAsync(() => TransitionStateGatedAsync(taskId, expectedCurrentState, newState, leaseOwner, cancellationToken), cancellationToken);
+
+    private async Task TransitionStateGatedAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken)
     {
         TaskState.EnsureValidTransition(expectedCurrentState, newState);
 

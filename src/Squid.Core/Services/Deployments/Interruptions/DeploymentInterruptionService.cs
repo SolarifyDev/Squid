@@ -43,11 +43,17 @@ public interface IDeploymentInterruptionService : IScopedDependency
     Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default);
 }
 
-public class DeploymentInterruptionService(IRepository repository, IUnitOfWork unitOfWork, IServerTaskService serverTaskService, IInterruptionAuthorizationService authService, ICurrentUser currentUser) : IDeploymentInterruptionService
+public class DeploymentInterruptionService(IRepository repository, IUnitOfWork unitOfWork, IServerTaskService serverTaskService, IInterruptionAuthorizationService authService, ICurrentUser currentUser, IScopedDbGate dbGate = null) : IDeploymentInterruptionService
 {
+    // Parallel steps and targets look up and raise interruptions on the run's one scoped DbContext, so those two calls go through the gate.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     private const int PollIntervalMs = 5000;
 
-    public async Task<DeploymentInterruption> CreateInterruptionAsync(CreateInterruptionRequest request, CancellationToken ct = default)
+    public Task<DeploymentInterruption> CreateInterruptionAsync(CreateInterruptionRequest request, CancellationToken ct = default)
+        => _dbGate.RunAsync(() => CreateGatedAsync(request, ct), ct);
+
+    private async Task<DeploymentInterruption> CreateGatedAsync(CreateInterruptionRequest request, CancellationToken ct)
     {
         var interruption = new DeploymentInterruption
         {
@@ -176,13 +182,11 @@ public class DeploymentInterruptionService(IRepository repository, IUnitOfWork u
         return await repository.ToListAsync<DeploymentInterruption>(i => i.ServerTaskId == serverTaskId && i.Resolution == null, ct).ConfigureAwait(false);
     }
 
-    public async Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default)
-    {
-        return await repository.QueryNoTracking<DeploymentInterruption>(i =>
+    public Task<DeploymentInterruption> FindResolvedInterruptionAsync(int serverTaskId, string stepName, string actionName, string machineName, CancellationToken ct = default)
+        => _dbGate.RunAsync(() => repository.QueryNoTracking<DeploymentInterruption>(i =>
                 i.ServerTaskId == serverTaskId && i.StepName == stepName && i.ActionName == actionName && i.MachineName == machineName && i.Resolution != null)
             .OrderByDescending(i => i.CreatedDate)
-            .FirstOrDefaultAsync(ct).ConfigureAwait(false);
-    }
+            .FirstOrDefaultAsync(ct), ct);
 
     public async Task CancelPendingInterruptionsAsync(int serverTaskId, CancellationToken ct = default)
     {

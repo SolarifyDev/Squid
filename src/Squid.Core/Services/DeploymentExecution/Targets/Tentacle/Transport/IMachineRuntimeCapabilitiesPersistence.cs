@@ -84,9 +84,13 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         WriteIndented = false
     };
 
-    public MachineRuntimeCapabilitiesPersistence(IRepository repository)
+    // Parallel health checks persist capabilities through this scope's shared DbContext, so the writes go through the gate.
+    private readonly IScopedDbGate _dbGate;
+
+    public MachineRuntimeCapabilitiesPersistence(IRepository repository, IScopedDbGate dbGate = null)
     {
         _repository = repository;
+        _dbGate = dbGate ?? new ScopedDbGate();
     }
 
     public async Task SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct)
@@ -107,11 +111,11 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
 
         var now = DateTimeOffset.UtcNow;
 
-        await _repository.ExecuteUpdateAsync<Machine>(
+        await _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
             m => m.Id == machineId,
             s => s.SetProperty(m => m.RuntimeCapabilitiesJson, json)
                   .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)now),
-            ct).ConfigureAwait(false);
+            ct), ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct)
@@ -155,11 +159,11 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         // Drop the JSON but stamp the time: the NEXT health check becomes the source of truth, and a
         // pod holding an older entry sees a newer timestamp with no JSON and evicts it too. Rows that
         // were NULL/NULL before this change keep meaning "never probed".
-        return _repository.ExecuteUpdateAsync<Machine>(
+        return _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
             m => m.Id == machineId,
             s => s.SetProperty(m => m.RuntimeCapabilitiesJson, (string)null)
                   .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
-            ct);
+            ct), ct);
     }
 
     public async Task<PersistedCapabilitiesSnapshot> LoadIfNewerAsync(int machineId, DateTimeOffset? than, CancellationToken ct)

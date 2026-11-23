@@ -1,4 +1,5 @@
 using Squid.Core.Extensions;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Intents;
 using Squid.Message.Constants;
@@ -12,8 +13,10 @@ using Squid.Message.Models.Deployments.Variable;
 
 namespace Squid.Core.Services.DeploymentExecution.Handlers;
 
-public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDeploymentTargetFinder targetFinder) : IActionHandler
+public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDeploymentTargetFinder targetFinder, IScopedDbGate dbGate = null) : IActionHandler
 {
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     public string ActionType => SpecialVariables.ActionTypes.HealthCheck;
 
     public ExecutionScope ExecutionScope => ExecutionScope.StepLevel;
@@ -130,7 +133,7 @@ public sealed class HealthCheckActionHandler(IDeploymentLifecycle lifecycle, IDe
 
     private async Task IncludeNewTargetsAsync(DeploymentTaskContext deployCtx, DeploymentStepDto step, CancellationToken ct)
     {
-        var freshTargets = await targetFinder.FindTargetsAsync(deployCtx.Deployment, ct).ConfigureAwait(false);
+        var freshTargets = await _dbGate.RunAsync(() => targetFinder.FindTargetsAsync(deployCtx.Deployment, ct), ct).ConfigureAwait(false);
         var existingIds = new HashSet<int>(deployCtx.AllTargets.Select(m => m.Id));
         var newMachines = freshTargets.Where(m => !existingIds.Contains(m.Id)).ToList();
 

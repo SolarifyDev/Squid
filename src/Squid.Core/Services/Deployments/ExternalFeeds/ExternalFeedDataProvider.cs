@@ -43,8 +43,11 @@ public interface IExternalFeedDataProvider : IScopedDependency
 /// in-memory entity can never be flushed back to the DB as plaintext by a later shared-scope
 /// SaveChanges.</para>
 /// </summary>
-public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector) : IExternalFeedDataProvider
+public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector, IScopedDbGate dbGate = null) : IExternalFeedDataProvider
 {
+    // Parallel steps read feeds through this scope's shared DbContext, so the reads below go through the gate.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     // The V2 envelope derives its key from a random per-payload salt, so the legacy KDF-scope
     // argument (a V1-only deterministic-salt input) is irrelevant for feeds, which only write V2.
     private const int PasswordKdfScope = 0;
@@ -93,9 +96,9 @@ public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository reposi
 
     public async Task<List<Persistence.Entities.Deployments.ExternalFeed>> GetExternalFeedsByIdsAsync(List<int> ids, CancellationToken cancellationToken)
     {
-        var feeds = await repository.QueryNoTracking<Persistence.Entities.Deployments.ExternalFeed>()
+        var feeds = await _dbGate.RunAsync(() => repository.QueryNoTracking<Persistence.Entities.Deployments.ExternalFeed>()
             .Where(f => ids.Contains(f.Id))
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
+            .ToListAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
 
         return await DecryptPasswordsAsync(feeds).ConfigureAwait(false);
     }
@@ -104,8 +107,8 @@ public class ExternalFeedDataProvider(IUnitOfWork unitOfWork, IRepository reposi
     {
         // QueryNoTracking so the decrypt below mutates a DETACHED entity — a tracked entity would
         // be detected as Modified and a later in-scope SaveChanges would flush plaintext back.
-        var feed = await repository.QueryNoTracking<Persistence.Entities.Deployments.ExternalFeed>(f => f.Id == feedId)
-            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var feed = await _dbGate.RunAsync(() => repository.QueryNoTracking<Persistence.Entities.Deployments.ExternalFeed>(f => f.Id == feedId)
+            .FirstOrDefaultAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
 
         return await DecryptPasswordAsync(feed).ConfigureAwait(false);
     }
