@@ -13,6 +13,9 @@ public sealed class RpcRetryHandlerAttemptBoundTests
 {
     private static readonly TimeSpan Budget = TimeSpan.FromMilliseconds(300);
 
+    // A bounded call that regresses to waiting forever must fail the test, not hang the whole run.
+    private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
+
     private static RpcRetryHandler Handler() => new(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30), Budget);
 
     private static Task<int> Hang() => new TaskCompletionSource<int>().Task;
@@ -22,7 +25,7 @@ public sealed class RpcRetryHandlerAttemptBoundTests
     {
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
-        var ex = await Should.ThrowAsync<HalibutClientException>(() => Handler().ExecuteAsync(Hang, "CancelScript", Budget, CancellationToken.None, default, boundEachAttempt: true));
+        var ex = await Should.ThrowAsync<HalibutClientException>(() => Handler().ExecuteAsync(Hang, "CancelScript", Budget, CancellationToken.None, default, boundEachAttempt: true).WaitAsync(Guard));
 
         watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
         TransientFailureClassifier.IsTransient(ex).ShouldBeTrue("the runner must keep treating a lost cancel round-trip as a transient blip");
@@ -39,15 +42,29 @@ public sealed class RpcRetryHandlerAttemptBoundTests
     }
 
     [Fact]
-    public async Task TransientFailureThenHang_Bounded_TotalTimeStaysNearBudget()
+    public async Task TransientFailureThenHang_Bounded_SecondAttemptIsBoundedToo()
+    {
+        var budget = TimeSpan.FromMilliseconds(1500);
+        var calls = 0;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        await Should.ThrowAsync<HalibutClientException>(() => Handler().ExecuteAsync(() => ++calls == 1 ? throw new HalibutClientException("reset") : Hang(), "CancelScript", budget, CancellationToken.None, default, boundEachAttempt: true).WaitAsync(Guard));
+
+        calls.ShouldBe(2, "the 500ms backoff fits in the budget, so a bounded second attempt runs");
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(4));
+    }
+
+    [Fact]
+    public async Task TransientFailure_BackoffWouldSpendTheRestOfTheBudget_Bounded_FailsWithoutAnUnboundedAttempt()
     {
         var calls = 0;
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
-        await Should.ThrowAsync<HalibutClientException>(() => Handler().ExecuteAsync(() => ++calls == 1 ? throw new HalibutClientException("reset") : Hang(), "CancelScript", Budget, CancellationToken.None, default, boundEachAttempt: true));
+        var ex = await Should.ThrowAsync<HalibutClientException>(() => Handler().ExecuteAsync(() => ++calls == 1 ? throw new HalibutClientException("reset") : Hang(), "CancelScript", Budget, CancellationToken.None, default, boundEachAttempt: true).WaitAsync(Guard));
 
-        calls.ShouldBe(2);
+        calls.ShouldBe(1, "with no budget left after the backoff, a further attempt could only run unbounded and hang on a stuck agent");
         watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3));
+        TransientFailureClassifier.IsTransient(ex).ShouldBeTrue();
     }
 
     [Fact]

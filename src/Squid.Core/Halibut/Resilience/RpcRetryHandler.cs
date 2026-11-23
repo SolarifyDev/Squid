@@ -77,7 +77,7 @@ public sealed class RpcRetryHandler
             }
             catch (Exception ex) when (IsRetryable(ex, cancellation, stopRetrying))
             {
-                var delay = NextDelay(attempt, budget - (_utcNow() - started));
+                var delay = NextDelay(attempt, budget - (_utcNow() - started), boundEachAttempt);
 
                 if (delay == null) throw;
 
@@ -117,13 +117,16 @@ public sealed class RpcRetryHandler
     private static bool IsRetryable(Exception ex, CancellationToken cancellation, CancellationToken stopRetrying)
         => !cancellation.IsCancellationRequested && !stopRetrying.IsCancellationRequested && TransientFailureClassifier.IsTransient(ex);
 
-    private static TimeSpan? NextDelay(int attempt, TimeSpan remaining)
+    private static TimeSpan? NextDelay(int attempt, TimeSpan remaining, bool boundEachAttempt)
     {
         if (remaining <= TimeSpan.Zero) return null;
 
         var backoff = TimeSpan.FromMilliseconds(Math.Min(InitialBackoff.TotalMilliseconds * Math.Pow(2, attempt - 1), MaxBackoff.TotalMilliseconds));
 
-        return backoff < remaining ? backoff : remaining;
+        if (backoff < remaining) return backoff;
+
+        // A bounded call has no time left for another attempt after this wait; that attempt would run unbounded and could hang.
+        return boundEachAttempt ? null : remaining;
     }
 
     private async Task<bool> WaitAsync(TimeSpan delay, CancellationToken cancellation, CancellationToken stopRetrying)
