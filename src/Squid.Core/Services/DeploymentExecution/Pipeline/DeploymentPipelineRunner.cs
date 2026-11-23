@@ -65,6 +65,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         var registryCts = registry.Register(serverTaskId);
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
+
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
 
         ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
@@ -156,6 +157,15 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // BuildRemoteScriptCancelDecision) — then rethrow: Hangfire treats an OperationCanceledException
             // raised while its shutdown token is cancelled as an interrupted job and re-queues it rather
             // than failing it, so the restarted server resumes from the checkpoint.
+            if (await IsUserCancelPersistedAsync(serverTaskId).ConfigureAwait(false))
+            {
+                Log.Information("[Deploy] Task {TaskId} was aborted by its job token but the user had cancelled it; completing the cancel", serverTaskId);
+
+                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+
+                return;
+            }
+
             Log.Information("[Deploy] Task {TaskId} interrupted by host shutdown; pausing for resume on job re-delivery", serverTaskId);
 
             await SafeCompleteAsync(
@@ -228,6 +238,30 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             registry.Unregister(serverTaskId, registryCts);
 
             if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>How long the shutdown-vs-cancel row read may take; the read is async and off any cancellation callback.</summary>
+    internal static readonly TimeSpan ExternalCancelProbeTimeout = TimeSpan.FromSeconds(5);
+
+    // The external (Hangfire) token fired. It means one of two things: the host is shutting down, or the user cancelled a task running on a pod
+    // that is not the one that served the cancel (Hangfire aborts the deleted job's token there). Only the row can say which: Cancelling is a user
+    // cancel. Read here, in the async catch, never on the cancellation callback thread. Unreadable stays a shutdown (the established behaviour).
+    private async Task<bool> IsUserCancelPersistedAsync(int serverTaskId)
+    {
+        try
+        {
+            using var probeCts = new CancellationTokenSource(ExternalCancelProbeTimeout);
+
+            var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, probeCts.Token).ConfigureAwait(false);
+
+            return task != null && string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[Deploy] Could not read task {TaskId} to tell a user cancel from a host shutdown; treating it as a shutdown", serverTaskId);
+
+            return false;
         }
     }
 

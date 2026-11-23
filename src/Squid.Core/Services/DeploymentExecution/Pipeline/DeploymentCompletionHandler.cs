@@ -13,7 +13,8 @@ public sealed class DeploymentCompletionHandler(
     IDeploymentDataProvider deploymentDataProvider,
     IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
     IAutoDeployService autoDeployService,
-    IDeploymentCheckpointService checkpointService) : IDeploymentCompletionHandler
+    IDeploymentCheckpointService checkpointService,
+    IInFlightScriptCanceller inFlightScriptCanceller = null) : IDeploymentCompletionHandler
 {
     public async Task OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
@@ -54,12 +55,24 @@ public sealed class DeploymentCompletionHandler(
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
 
+        await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
+
         await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
         {
             await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, cancellationToken).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
+    }
+
+    // The one place that guarantees "a task that reaches Cancelled has no agent script left running": whichever path led here, and whatever the
+    // observer decided when its token fired (it may have chosen "pausing" and left the script alone), every ticket still recorded in flight is
+    // cancelled before the checkpoint that holds them is deleted. Idempotent on the agent; best effort and bounded inside the canceller.
+    private async Task CancelInFlightScriptsAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        if (inFlightScriptCanceller == null) return;
+
+        await inFlightScriptCanceller.CancelAllAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
     }
 
     /// <summary>

@@ -37,8 +37,50 @@ public class IntegrationCrossPodTaskCancel : DeploymentFixtureBase
             await CancelOnPodBAsync(podAScope, seeded.TaskId).ConfigureAwait(false);
         }).ConfigureAwait(false);
 
-        agent.CancelCalls.ShouldBe(1, "a user cancel on another pod must still cancel the agent script (RemoteScriptCancelDecision: user cancel is terminal)");
+        agent.CancelCalls.ShouldBeGreaterThanOrEqualTo(1, "a user cancel on another pod must still cancel the agent script (RemoteScriptCancelDecision: user cancel is terminal)");
         await AssertStateAsync(seeded.TaskId, TaskState.Cancelled).ConfigureAwait(false);
+    }
+
+    // Hangfire deletes the job when a cancel is served (ServerTaskControlService.DeleteJob) and aborts the running job's token on the pod that runs it;
+    // that is the SAME external token a host shutdown fires. Fired here right after the cancel is served, ahead of the 3s watcher, it must be read as the
+    // user cancel it is: agent script cancelled, task Cancelled — not "paused for shutdown" with the script left running and the row stuck Cancelling.
+    [Fact]
+    public async Task CancelIssuedOnAnotherPod_DeliveredAsHangfireJobAbort_IsStillACancel_NotAShutdown()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        var agent = new BlockingAgent();
+        using var jobToken = new CancellationTokenSource();
+
+        await RunPodAAsync(seeded.TaskId, agent, async podAScope =>
+        {
+            await agent.Polled.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+            await CancelOnPodBAsync(podAScope, seeded.TaskId).ConfigureAwait(false);
+
+            jobToken.Cancel();
+        }, jobToken.Token).ConfigureAwait(false);
+
+        agent.CancelCalls.ShouldBe(1, "a job abort caused by a user cancel must still cancel the agent script");
+        await AssertStateAsync(seeded.TaskId, TaskState.Cancelled).ConfigureAwait(false);
+    }
+
+    // The same external token with the row still Executing is a real host shutdown: pause (resumable), script untouched, job rethrown for re-delivery.
+    [Fact]
+    public async Task HostShutdown_WhileExecuting_StillPauses_AndLeavesTheAgentScriptRunning()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        var agent = new BlockingAgent();
+        using var jobToken = new CancellationTokenSource();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => RunPodAAsync(seeded.TaskId, agent, async _ =>
+        {
+            await agent.Polled.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+            jobToken.Cancel();
+        }, jobToken.Token)).ConfigureAwait(false);
+
+        agent.CancelCalls.ShouldBe(0, "a shutdown pause must leave the agent script running for the resume to re-attach");
+        await AssertStateAsync(seeded.TaskId, TaskState.Paused).ConfigureAwait(false);
     }
 
     [Fact]
@@ -77,13 +119,13 @@ public class IntegrationCrossPodTaskCancel : DeploymentFixtureBase
         await podB.CancelTaskAsync(taskId).ConfigureAwait(false);
     }
 
-    private async Task RunPodAAsync(int taskId, BlockingAgent agent, Func<ILifetimeScope, Task> whileRunning)
+    private async Task RunPodAAsync(int taskId, BlockingAgent agent, Func<ILifetimeScope, Task> whileRunning, CancellationToken jobToken = default)
     {
         await Run<ILifetimeScope>(async scope =>
         {
             var executor = scope.Resolve<IDeploymentTaskExecutor>();
 
-            var run = executor.ProcessAsync(taskId, CancellationToken.None);
+            var run = executor.ProcessAsync(taskId, jobToken);
 
             await whileRunning(scope).ConfigureAwait(false);
 
