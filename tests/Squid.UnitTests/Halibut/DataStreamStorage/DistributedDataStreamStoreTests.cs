@@ -39,7 +39,7 @@ public class DistributedDataStreamStoreTests
     }
 
     [Theory]
-    [InlineData(0, 0)]
+    [InlineData(0, 1)]
     [InlineData(Chunk, 1)]
     [InlineData(Chunk + 1, 2)]
     [InlineData(3 * Chunk, 3)]
@@ -269,19 +269,136 @@ public class DistributedDataStreamStoreTests
         keys.Unwrap(stored.Header.ProtectedKey, stream.Id).Length.ShouldBe(DataStreamCodec.KeyBytes);
     }
 
+    // Wrapping a key is a 600 000-iteration PBKDF2: one per rotation period, not one per request, on the pod that stores and on the pod that reads.
+    private sealed class CountingKeys(IDataStreamKeyProtector inner) : IDataStreamKeyProtector
+    {
+        public int Wraps { get; private set; }
+
+        public int Unwraps { get; private set; }
+
+        public byte[] NewKey() => inner.NewKey();
+
+        public string Wrap(byte[] key)
+        {
+            Wraps++;
+
+            return inner.Wrap(key);
+        }
+
+        public byte[] Unwrap(string wrapped, Guid streamId)
+        {
+            Unwraps++;
+
+            return inner.Unwrap(wrapped, streamId);
+        }
+    }
+
     [Fact]
-    public async Task AtRest_EachStoreUsesAFreshKey_AndIdenticalContentSealsDifferently()
+    public async Task AtRest_StoresWithinARotationPeriodShareOneWrappedKey_AfterItAFreshOne_AndIdenticalContentStillSealsDifferently()
     {
         var persistence = new InMemoryDataStreamPersistence();
-        var store = Store(persistence, Chunk);
+        var clock = new Squid.UnitTests.Halibut.RedisQueue.ManualTimeProvider();
+        var keys = new CountingKeys(Keys());
+        var store = new DistributedDataStreamStore(persistence, keys, new DataStreamStorageOptions(Chunk, TimeSpan.FromMinutes(60)) { KeyRotation = TimeSpan.FromMinutes(10) }, clock);
         var a = DataStream.FromBytes(Bytes(32));
         var b = DataStream.FromBytes(Bytes(32));
+        var c = DataStream.FromBytes(Bytes(32));
 
         await store.StoreDataStreams([a], false, CancellationToken.None);
         await store.StoreDataStreams([b], false, CancellationToken.None);
 
-        persistence.Streams[a.Id].Header.ProtectedKey.ShouldNotBe(persistence.Streams[b.Id].Header.ProtectedKey);
-        persistence.Streams[a.Id].Chunks[0].ShouldNotBe(persistence.Streams[b.Id].Chunks[0]);
+        keys.Wraps.ShouldBe(1, "two requests in one period wrap one key");
+        persistence.Streams[a.Id].Header.ProtectedKey.ShouldBe(persistence.Streams[b.Id].Header.ProtectedKey);
+        persistence.Streams[a.Id].Chunks[0].ShouldNotBe(persistence.Streams[b.Id].Chunks[0], "a fresh nonce seals every chunk");
+
+        clock.Advance(TimeSpan.FromMinutes(10));
+        await store.StoreDataStreams([c], false, CancellationToken.None);
+
+        keys.Wraps.ShouldBe(2);
+        persistence.Streams[c.Id].Header.ProtectedKey.ShouldNotBe(persistence.Streams[a.Id].Header.ProtectedKey, "a new period seals with a new key");
+    }
+
+    [Fact]
+    public async Task Reading_UnwrapsAKeyOncePerPod_NotOncePerRequest()
+    {
+        var persistence = new InMemoryDataStreamPersistence();
+        var keys = new CountingKeys(Keys());
+        var store = new DistributedDataStreamStore(persistence, keys, new DataStreamStorageOptions(Chunk, TimeSpan.FromMinutes(60)));
+        var streams = Enumerable.Range(0, 3).Select(_ => DataStream.FromBytes(Bytes(20))).ToList();
+
+        foreach (var stream in streams) await store.StoreDataStreams([stream], false, CancellationToken.None);
+
+        var reading = new DistributedDataStreamStore(persistence, keys, new DataStreamStorageOptions(Chunk, TimeSpan.FromMinutes(60)));
+
+        foreach (var stream in streams)
+        {
+            var rehydrate = new CapturingRehydrate(stream.Id, 20);
+
+            await reading.RehydrateDataStreams(DistributedDataStreamStore_Metadata, [rehydrate], CancellationToken.None);
+
+            (await rehydrate.ReadAllAndDisposeAsync()).Length.ShouldBe(20);
+        }
+
+        keys.Unwraps.ShouldBe(1, "three requests of one rotation period share one wrapped key, unwrapped once by the reading pod");
+    }
+
+    [Fact]
+    public async Task AKeyThatCannotBeUnwrapped_IsNotRemembered_ItFailsEveryTime()
+    {
+        var persistence = new InMemoryDataStreamPersistence();
+        var stream = DataStream.FromBytes(Bytes(20));
+
+        await Store(persistence, Chunk, Keys(seed: 1)).StoreDataStreams([stream], false, CancellationToken.None);
+
+        var reading = Store(persistence, Chunk, Keys(seed: 50));
+
+        for (var attempt = 0; attempt < 2; attempt++)
+            await Should.ThrowAsync<DataStreamUnreadableException>(() => reading.RehydrateDataStreams(DistributedDataStreamStore_Metadata, [new CapturingRehydrate(stream.Id, 20)], CancellationToken.None));
+    }
+
+    // The header (length, chunk count) is not secret and sits unauthenticated in a row; the chunks are what is authenticated. A stream that lost its tail, with the
+    // header lowered to match, must not be read as a shorter stream: it would run a truncated script or install a truncated package.
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AStreamThatLostItsTail_WithTheHeaderLoweredToMatch_IsRefused(int chunksDropped)
+    {
+        var persistence = new InMemoryDataStreamPersistence();
+        var stream = DataStream.FromBytes(Bytes(4 * Chunk));
+
+        await Store(persistence, Chunk).StoreDataStreams([stream], false, CancellationToken.None);
+
+        var stored = persistence.Streams[stream.Id];
+        var kept = stored.Header.ChunkCount - chunksDropped;
+
+        for (var index = kept; index < stored.Header.ChunkCount; index++) stored.Chunks.Remove(index);
+
+        stored.Header = stored.Header with { ChunkCount = kept, Length = kept * Chunk };
+
+        var rehydrate = new CapturingRehydrate(stream.Id, kept * Chunk);
+
+        await Store(persistence, Chunk).RehydrateDataStreams(DistributedDataStreamStore_Metadata, [rehydrate], CancellationToken.None);
+        await Should.ThrowAsync<DataStreamUnreadableException>(() => rehydrate.ReadAllAndDisposeAsync());
+    }
+
+    [Fact]
+    public async Task AStreamEmptiedByLoweringItsHeaderToZero_IsRefused_BecauseEveryStreamHasALastChunk()
+    {
+        var persistence = new InMemoryDataStreamPersistence();
+        var stream = DataStream.FromBytes(Bytes(2 * Chunk));
+
+        await Store(persistence, Chunk).StoreDataStreams([stream], false, CancellationToken.None);
+
+        var stored = persistence.Streams[stream.Id];
+
+        stored.Chunks.Clear();
+        stored.Header = stored.Header with { ChunkCount = 0, Length = 0 };
+
+        var rehydrate = new CapturingRehydrate(stream.Id, 0);
+
+        await Store(persistence, Chunk).RehydrateDataStreams(DistributedDataStreamStore_Metadata, [rehydrate], CancellationToken.None);
+
+        await Should.ThrowAsync<DataStreamUnreadableException>(() => rehydrate.ReadAllAndDisposeAsync());
     }
 
     [Fact]

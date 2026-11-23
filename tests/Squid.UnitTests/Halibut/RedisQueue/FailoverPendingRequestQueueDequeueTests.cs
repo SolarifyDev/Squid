@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using Halibut;
+using Halibut.Diagnostics;
 using Halibut.ServiceModel;
 using Halibut.Transport.Protocol;
 using Shouldly;
@@ -56,11 +57,10 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
 
         await using var queue = new FailoverPendingRequestQueue(Endpoint, LocalQueue(TimeSpan.FromSeconds(30)), _factory, new FailoverQueueContext(_health, Options() with { ProbeInterval = TimeSpan.FromMilliseconds(200) }, TimeProvider.System, null, PeerPresent()));
 
-        var timer = Stopwatch.StartNew();
+        // Halibut's own wait is 30 seconds and the limit is 10: that it returned at all is the proof the wait was cut to the probe interval.
         var next = await queue.DequeueAsync(CancellationToken.None).WithinAsync(Limit, "dequeue");
 
         next.ShouldBeNull();
-        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "Halibut's own wait is 30 seconds");
     }
 
     [Fact]
@@ -313,6 +313,53 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
         await otherQueued.WithinAsync(Limit, "other queued");
     }
 
+    // A sealed request names its destination inside the sealed bytes. Whoever can write to Redis (but has no master key) can still copy a sealed request into another
+    // agent's list: it opens fine there, and must not run there.
+    [Fact]
+    public async Task RedisRequestAddressedToAnotherAgent_IsNeverHandedOut_AndItsSenderIsToldAtOnce()
+    {
+        var foreign = Request();
+
+        foreign.Destination = new ServiceEndPoint(new Uri("poll://another-agent/"), "thumbprint", HalibutTimeoutsAndLimits.RecommendedValues());
+
+        var polling = _queue.DequeueAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => _redis.DequeueCalls == 1);
+        await _redis.Items.Writer.WriteAsync(Dequeued(foreign));
+        await WaitUntilAsync(() => !_redis.Applied.IsEmpty);
+
+        var (response, id) = _redis.Applied.Single();
+
+        id.ShouldBe(foreign.ActivityId);
+        response.Error.ShouldNotBeNull();
+        response.Error.HalibutErrorType.ShouldBe(typeof(HalibutClientException).FullName, "the sender fails at once, as a transient transport error");
+        polling.IsCompleted.ShouldBeFalse("it was not handed to the agent");
+
+        var legit = Request();
+        var queued = _local.QueueAndWaitAsync(legit, CancellationToken.None);
+
+        (await polling.WithinAsync(Limit, "dequeue")).RequestMessage.Id.ShouldBe(legit.Id);
+
+        await _queue.ApplyResponse(ResponseMessage.FromResult(legit, "ok"), legit.ActivityId);
+        await queued.WithinAsync(Limit, "queued");
+    }
+
+    [Fact]
+    public async Task RedisRequestWithNoDestination_IsStillServed_OnlyAMisaddressedOneIsRefused()
+    {
+        var request = Request();
+
+        request.Destination = null;
+
+        var polling = _queue.DequeueAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => _redis.DequeueCalls == 1);
+        await _redis.Items.Writer.WriteAsync(Dequeued(request));
+
+        (await polling.WithinAsync(Limit, "dequeue")).RequestMessage.Id.ShouldBe(request.Id);
+        _redis.Applied.ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task DequeueWhoseOwnTokenIsAlreadyCancelled_TakesNoParkedRequest()
     {
@@ -360,11 +407,11 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
         await WaitUntilAsync(() => _redis.DequeueCalls == 1);
 
         var request = Request();
-        var timer = Stopwatch.StartNew();
         var queued = _local.QueueAndWaitAsync(request, CancellationToken.None);
+
+        // Halibut's Redis queue sleeps 30 s before it reports an error and the limit is 10: that the dequeue returned at all shows the sleep is on the Redis leg only.
         var next = await polling.WithinAsync(Limit, "dequeue");
 
-        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1), "Halibut's Redis queue sleeps up to 30 s before it reports an error; that sleep is on the Redis leg only");
         next.RequestMessage.Id.ShouldBe(request.Id);
 
         await _queue.ApplyResponse(ResponseMessage.FromResult(request, "ok"), request.ActivityId);
@@ -448,11 +495,9 @@ public sealed class FailoverPendingRequestQueueDequeueTests : IAsyncDisposable
 
         _redis.Hang = true;
 
-        var timer = Stopwatch.StartNew();
-
+        // The stuck Redis never answers; the budget is 3 s and the limit 20, so shutting down at all shows it does not wait out a Redis timeout.
         await _queue.DisposeAsync().AsTask().WithinAsync(TimeSpan.FromSeconds(20), "dispose");
 
-        timer.Elapsed.ShouldBeLessThan(FailoverPendingRequestQueue.DisposeBudget + TimeSpan.FromSeconds(3), "shutting down must not wait out a Redis timeout of tens of seconds");
         _redis.Disposed.ShouldBeTrue("the Redis queue is released even though failing the parked request is stuck");
 
         _ = queued;

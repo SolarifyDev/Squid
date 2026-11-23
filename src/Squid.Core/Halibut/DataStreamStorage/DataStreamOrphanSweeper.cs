@@ -17,7 +17,8 @@ public sealed class DataStreamOrphanSweeper : IDataStreamOrphanSweeper
     private readonly IDataStreamPersistence _persistence;
     private readonly DataStreamStorageOptions _options;
 
-    public DataStreamOrphanSweeper(IDataStreamPersistence persistence, HalibutSetting setting) : this(persistence, DataStreamStorageOptions.From(setting))
+    // The TTL is never shorter than the request pickup timeout in force allows (see DataStreamStorageOptions.SafeOrphanTtl): a stream a live request needs is not swept.
+    public DataStreamOrphanSweeper(IDataStreamPersistence persistence, HalibutSetting setting) : this(persistence, DataStreamStorageOptions.From(setting).WithSafeOrphanTtl(HalibutModule.BuildTimeoutsAndLimits().PollingRequestQueueTimeout))
     {
     }
 

@@ -11,7 +11,8 @@ namespace Squid.Core.Halibut.DataStreamStorage;
 /// through the shared database. Halibut calls <see cref="StoreDataStreams"/> once per message before queueing it and <see cref="RehydrateDataStreams"/> once on
 /// the pod that collects it; it never says when a message is cancelled, times out or is never collected, so a stored stream is deleted when its reader is
 /// done and the orphan sweep removes the rest. The whole message is stored in one transaction (none of it is visible until all of it is stored, and a failure
-/// leaves nothing), sealed chunk by chunk with a fresh data key that only the master key can open, so no secret is ever at rest in the clear.
+/// leaves nothing), sealed chunk by chunk with a data key (one per rotation period, see <see cref="RotatingDataStreamKeys"/>) that only the master key can open,
+/// so no secret is ever at rest in the clear.
 /// </summary>
 public sealed class DistributedDataStreamStore : IStoreDataStreamsForDistributedQueues, ISingletonDependency
 {
@@ -19,17 +20,17 @@ public sealed class DistributedDataStreamStore : IStoreDataStreamsForDistributed
     internal static readonly byte[] Metadata = [1];
 
     private readonly IDataStreamPersistence _persistence;
-    private readonly IDataStreamKeyProtector _keys;
+    private readonly RotatingDataStreamKeys _keys;
     private readonly DataStreamStorageOptions _options;
 
     public DistributedDataStreamStore(IDataStreamPersistence persistence, IDataStreamKeyProtector keys, HalibutSetting setting) : this(persistence, keys, DataStreamStorageOptions.From(setting))
     {
     }
 
-    internal DistributedDataStreamStore(IDataStreamPersistence persistence, IDataStreamKeyProtector keys, DataStreamStorageOptions options)
+    internal DistributedDataStreamStore(IDataStreamPersistence persistence, IDataStreamKeyProtector keys, DataStreamStorageOptions options, TimeProvider clock = null)
     {
         _persistence = persistence;
-        _keys = keys;
+        _keys = new RotatingDataStreamKeys(keys, options.KeyRotation, clock ?? TimeProvider.System);
         _options = options;
     }
 
@@ -37,8 +38,7 @@ public sealed class DistributedDataStreamStore : IStoreDataStreamsForDistributed
     {
         if (dataStreams.Count == 0) return Metadata;
 
-        var key = _keys.NewKey();
-        var protectedKey = _keys.Wrap(key);
+        var (key, protectedKey) = _keys.Current();
 
         await using var batch = await _persistence.BeginBatchAsync(cancellationToken).ConfigureAwait(false);
 
@@ -87,9 +87,9 @@ public sealed class DistributedDataStreamStore : IStoreDataStreamsForDistributed
         return headers;
     }
 
-    // A message's streams share one wrapped key, so it is unwrapped (PBKDF2) once, not once per stream.
+    // A message's streams share one wrapped key, and so do the messages of a rotation period: each is unwrapped (PBKDF2) once per pod, not once per stream.
     private Dictionary<string, byte[]> UnwrapKeys(IEnumerable<StoredDataStreamHeader> headers)
-        => headers.GroupBy(h => h.ProtectedKey).ToDictionary(g => g.Key, g => _keys.Unwrap(g.Key, g.First().StreamId));
+        => headers.GroupBy(h => h.ProtectedKey).ToDictionary(g => g.Key, g => _keys.Resolve(g.Key, g.First().StreamId));
 
     private void Rehydrate(IRehydrateDataStream dataStream, StoredDataStreamHeader header, byte[] key)
         => dataStream.Rehydrate(() => new DataStreamRehydrationData(new DataStreamReadStream(_persistence, header, key), new DeleteWhenDisposed(_persistence, header.StreamId)));
