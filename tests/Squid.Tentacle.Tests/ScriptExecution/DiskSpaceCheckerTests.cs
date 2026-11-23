@@ -13,7 +13,7 @@ public class DiskSpaceCheckerTests
         var tempDir = Path.GetTempPath();
         var (available, total) = DiskSpaceChecker.GetDiskSpace(tempDir);
 
-        if (total > 0 && (double)available / total < 0.10)
+        if (total > 0 && available < DiskSpaceChecker.RequiredFreeBytes(total))
         {
             Should.Throw<IOException>(() => DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(tempDir));
         }
@@ -112,6 +112,78 @@ public class DiskSpaceCheckerTests
         {
             DiskSpaceChecker.Enabled = prev;
         }
+    }
+
+    private const long GiB = 1024L * 1024 * 1024;
+    private const long TiB = 1024 * GiB;
+
+    [Theory]
+    [InlineData(100 * GiB, 10 * GiB)]          // 10% of the volume, below the ceiling: unchanged behaviour
+    [InlineData(200 * GiB, 20 * GiB)]          // exactly at the ceiling
+    [InlineData(20 * TiB, 20 * GiB)]           // large shared volume: capped, not 2 TiB
+    [InlineData(500 * 1024 * 1024, 50 * 1024 * 1024)]
+    [InlineData(1000, 1024 * 1024)]            // the 1 MB floor survives
+    public void RequiredFreeBytes_IsTenPercentCappedAtTheCeiling_NeverBelowTheFloor(long total, long expected)
+    {
+        DiskSpaceChecker.RequiredFreeBytes(total).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void LargeSharedVolume_NinetyOnePercentFull_StillHasEnoughSpace()
+    {
+        // A 20 TiB NFS export at 91% used has 1.8 TiB free: the uncapped 10% rule demanded 2 TiB and
+        // failed every StartScript (and the K8s agent readiness probe) on a volume with ample room.
+        var total = 20 * TiB;
+        var available = (long)(total * 0.09);
+
+        Should.NotThrow(() => DiskSpaceChecker.EnsureEnoughFreeSpace("/mnt/nfs", available, total));
+    }
+
+    [Fact]
+    public void LargeSharedVolume_BelowTheCeiling_StillFails_AndExplainsTheCap()
+    {
+        var total = 20 * TiB;
+
+        var message = Should.Throw<IOException>(() => DiskSpaceChecker.EnsureEnoughFreeSpace("/mnt/nfs", 5 * GiB, total)).Message;
+
+        message.ShouldContain("/mnt/nfs");
+        message.ShouldContain("capped at");
+    }
+
+    [Fact]
+    public void SmallVolume_TenPercentRuleIsUnchanged()
+    {
+        Should.Throw<IOException>(() => DiskSpaceChecker.EnsureEnoughFreeSpace("/data", 5 * GiB, 100 * GiB));
+        Should.NotThrow(() => DiskSpaceChecker.EnsureEnoughFreeSpace("/data", 11 * GiB, 100 * GiB));
+    }
+
+    [Theory]
+    [InlineData(0L, DiskSpaceChecker.DefaultMaxRequiredFreeBytes)]
+    [InlineData(-5L, DiskSpaceChecker.DefaultMaxRequiredFreeBytes)]
+    [InlineData(1000L, DiskSpaceChecker.DefaultMaxRequiredFreeBytes)]     // below the 1 MB floor: nonsense, use the default
+    [InlineData(5L * GiB, 5L * GiB)]
+    public void Configure_AppliesValidCeiling_AndFallsBackToDefaultForInvalid(long configured, long expected)
+    {
+        var previous = DiskSpaceChecker.MaxRequiredFreeBytes;
+
+        try
+        {
+            DiskSpaceChecker.Configure(configured);
+
+            DiskSpaceChecker.MaxRequiredFreeBytes.ShouldBe(expected);
+        }
+        finally
+        {
+            DiskSpaceChecker.Configure(previous);
+        }
+    }
+
+    [Fact]
+    public void WorkspaceUsage_LargeVolumeUnderTenPercentButAboveTheCeiling_IsNotLowSpace()
+    {
+        var usage = new DiskSpaceChecker.WorkspaceUsage(18 * TiB + 200 * GiB, 20 * TiB, 1800 * GiB);
+
+        usage.IsLowSpace.ShouldBeFalse();
     }
 
     [Theory]

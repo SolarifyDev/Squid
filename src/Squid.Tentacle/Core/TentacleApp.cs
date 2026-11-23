@@ -35,6 +35,8 @@ public sealed class TentacleApp
             "Squid Tentacle starting. Flavor={Flavor}, ServerUrl={ServerUrl}",
             tentacleSettings.Flavor, tentacleSettings.ServerUrl);
 
+        Squid.Tentacle.ScriptExecution.DiskSpaceChecker.Configure(tentacleSettings.DiskSpaceMaxRequiredFreeBytes);
+
         var certManager = _dependencies.CertificateManagerFactory(tentacleSettings.CertsPath);
         var tentacleCert = certManager.LoadOrCreateCertificate();
         var subscriptionId = certManager.LoadOrCreateSubscriptionId(tentacleSettings.SubscriptionId);

@@ -7,8 +7,11 @@ namespace Squid.Tentacle.Tests.ScriptExecution;
 /// <summary>
 /// Fidelity tier: HIGH. Real production classes against real OS filesystems; expectations come from
 /// <c>df -P -k</c>, not from the implementation. The "separate filesystem" cases need a mount that is
-/// NOT the root filesystem: Linux uses /dev/shm (tmpfs), macOS attaches a small HFS+ disk image
-/// (<c>hdiutil</c>, no root needed). Hosts with neither skip those cases. Windows is skipped (no df).
+/// NOT the root filesystem: Linux uses /dev/shm (tmpfs); the "fill the volume" cases need a SMALL volume, so Linux
+/// mounts an 8 MB tmpfs through passwordless sudo (GitHub-hosted runners have it) and macOS attaches a small HFS+
+/// disk image (<c>hdiutil</c>, no root needed). Where the platform should support a fillable volume (Linux with
+/// sudo, macOS, or any CI run) failing to create one FAILS the test instead of silently passing. Windows is
+/// skipped (no df).
 /// </summary>
 [Trait("Category", "TentacleDiskSpaceE2E")]
 public class DiskSpaceCheckerRealMountTests
@@ -90,9 +93,9 @@ public class DiskSpaceCheckerRealMountTests
     [Fact]
     public void EnsureDiskHasEnoughFreeSpace_FullSeparateFilesystem_Throws_EvenWhenRootHasSpace()
     {
-        using var volume = SeparateVolume.TryCreate();
+        using var volume = SeparateVolume.CreateFillable();
 
-        if (volume == null || !volume.CanFill) return;
+        if (volume == null) return;
 
         volume.FillTo(freeFraction: 0.02);
 
@@ -119,9 +122,9 @@ public class DiskSpaceCheckerRealMountTests
     [Fact]
     public void WorkspaceUsage_OnSeparateFilesystem_ReportsThatFilesystemsFreeSpace()
     {
-        using var volume = SeparateVolume.TryCreate();
+        using var volume = SeparateVolume.CreateFillable();
 
-        if (volume == null || !volume.CanFill) return;
+        if (volume == null) return;
 
         volume.FillTo(freeFraction: 0.02);
 
@@ -201,6 +204,23 @@ public class DiskSpaceCheckerRealMountTests
         }
     }
 
+    private static int RunExit(string file, string args)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo(file, args) { RedirectStandardOutput = true, RedirectStandardError = true });
+
+            process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+
+            return process.ExitCode;
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
+    }
+
     private static string Run(string file, string args)
     {
         var info = new ProcessStartInfo(file, args) { RedirectStandardOutput = true, RedirectStandardError = true };
@@ -227,13 +247,65 @@ public class DiskSpaceCheckerRealMountTests
 
         public string Path { get; }
 
-        public bool CanFill => _imagePath != null;
+        public bool CanFill => _imagePath != null || _mountedTmpfs;
+
+        private bool _mountedTmpfs;
 
         public static SeparateVolume TryCreate()
         {
             if (OperatingSystem.IsLinux()) return TryCreateLinux();
 
             return OperatingSystem.IsMacOS() ? TryCreateMac() : null;
+        }
+
+        /// <summary>
+        /// A small volume the test can fill. Returns null ONLY where it is legitimately unsupported (Windows, or a
+        /// developer Linux box without passwordless sudo outside CI); anywhere the platform should support it a
+        /// creation failure fails the test, so these cases can no longer pass by silently doing nothing.
+        /// </summary>
+        public static SeparateVolume CreateFillable()
+        {
+            if (OperatingSystem.IsWindows()) return null;
+
+            var volume = OperatingSystem.IsLinux() ? TryCreateLinuxTmpfs() : TryCreateMac();
+
+            if (volume is { CanFill: true }) return volume;
+
+            volume?.Dispose();
+
+            if (ShouldSupportFillableVolume())
+                Assert.Fail("Could not create a small fillable volume on a platform that should support one. " +
+                            (OperatingSystem.IsLinux() ? "Check `sudo -n mount -t tmpfs -o size=8m tmpfs <dir>` works for this user." : "Check `hdiutil create/attach` works."));
+
+            Console.WriteLine("[DiskSpaceCheckerRealMountTests] no fillable volume available on this developer host (no passwordless sudo) - case skipped.");
+
+            return null;
+        }
+
+        private static bool ShouldSupportFillableVolume()
+        {
+            if (OperatingSystem.IsMacOS()) return true;
+
+            var onCi = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")) || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_ACTIONS"));
+
+            return onCi || RunExit("sudo", "-n true") == 0;
+        }
+
+        private static SeparateVolume TryCreateLinuxTmpfs()
+        {
+            if (RunExit("sudo", "-n true") != 0) return null;
+
+            var dir = Directory.CreateTempSubdirectory("squid-tmpfs-").FullName;
+
+            if (RunExit("sudo", $"-n mount -t tmpfs -o size=8m,mode=1777 tmpfs \"{dir}\"") != 0 || !DiffersFromRoot(dir))
+            {
+                RunExit("sudo", $"-n umount \"{dir}\"");
+                Directory.Delete(dir, true);
+
+                return null;
+            }
+
+            return new SeparateVolume(dir, dir, null) { _mountedTmpfs = true };
         }
 
         private static SeparateVolume TryCreateLinux()
@@ -275,7 +347,12 @@ public class DiskSpaceCheckerRealMountTests
 
         public void Dispose()
         {
-            if (_imagePath != null)
+            if (_mountedTmpfs)
+            {
+                RunExit("sudo", $"-n umount \"{Path}\"");
+                if (Directory.Exists(_dir)) Directory.Delete(_dir, true);
+            }
+            else if (_imagePath != null)
             {
                 Run("hdiutil", $"detach -force \"{Path}\"");
                 Directory.Delete(_dir, true);
