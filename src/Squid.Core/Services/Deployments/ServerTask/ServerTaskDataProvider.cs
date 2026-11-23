@@ -33,6 +33,9 @@ public interface IServerTaskDataProvider : IScopedDependency
 
     Task<bool> IsImportedAsync(int serverTaskId, CancellationToken cancellationToken = default);
 
+    /// <summary>A cheap existence probe (no entity load) for "a user asked this running task to cancel" — the row is <c>Cancelling</c>.</summary>
+    Task<bool> IsCancelRequestedAsync(int serverTaskId, CancellationToken cancellationToken = default);
+
     Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default);
 }
 
@@ -245,6 +248,12 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     {
         return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> IsCancelRequestedAsync(int serverTaskId, CancellationToken cancellationToken = default)
+    {
+        return await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == serverTaskId && t.State == TaskState.Cancelling)
+            .AnyAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default)

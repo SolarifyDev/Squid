@@ -3,13 +3,14 @@ using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline.Phases;
 using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Cancel;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Core.Services.Jobs;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
-public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient) : IDeploymentTaskExecutor
+public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhase> phases, IDeploymentLifecycle lifecycle, IDeploymentCompletionHandler completion, ITaskCancellationRegistry registry, IServerTaskDataProvider serverTaskDataProvider, ISquidBackgroundJobClient backgroundJobClient, IServerTaskCancelWatcher cancelWatcher = null) : IDeploymentTaskExecutor
 {
     private const int CompletionTimeoutSeconds = 30;
 
@@ -68,6 +69,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
 
+        IAsyncDisposable cancelWatch = null;
+
         try
         {
             var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
@@ -89,7 +92,11 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             var ordered = phases.OrderBy(p => p.Order).ToList();
 
             foreach (var phase in ordered)
+            {
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
+
+                cancelWatch ??= StartCancelWatchOnceClaimed(ctx);
+            }
 
             if (IsLeaseLost(ctx)) return;
 
@@ -214,10 +221,22 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         finally
         {
+            if (cancelWatch != null) await cancelWatch.DisposeAsync().ConfigureAwait(false);
+
             registry.Unregister(serverTaskId);
 
             if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    // Only a pipeline that holds the task's lease (the claim fenced out any live owner) watches for a cross-pod cancel: a duplicate delivery of a
+    // task another pod is running must never be cancelled — and so complete the task — on that pod's behalf. The signal is the same registry cancel
+    // a same-pod cancel uses, so user-cancel precedence, the remote CancelScript and Cancelling → Cancelled are identical for both.
+    private IAsyncDisposable StartCancelWatchOnceClaimed(DeploymentTaskContext ctx)
+    {
+        if (cancelWatcher == null || ctx.Lease == null) return null;
+
+        return cancelWatcher.Start(ctx.ServerTaskId, () => registry.TryCancel(ctx.ServerTaskId));
     }
 
     /// <summary>

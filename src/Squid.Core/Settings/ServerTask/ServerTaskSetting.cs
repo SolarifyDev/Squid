@@ -9,9 +9,12 @@ public class ServerTaskSetting : IConfigurationSetting
         var section = configuration.GetSection("ServerTask");
 
         Lease = section.GetSection("Lease").Get<ServerTaskLeaseSettings>() ?? new ServerTaskLeaseSettings();
+        CancelWatch = section.GetSection("CancelWatch").Get<ServerTaskCancelWatchSettings>() ?? new ServerTaskCancelWatchSettings();
     }
 
     public ServerTaskLeaseSettings Lease { get; set; } = new();
+
+    public ServerTaskCancelWatchSettings CancelWatch { get; set; } = new();
 }
 
 public class ServerTaskLeaseSettings
@@ -21,4 +24,10 @@ public class ServerTaskLeaseSettings
 
     /// <summary>How long a lease may go unrenewed before the reaper recovers the task. Never below three renewal intervals when read.</summary>
     public int StaleSeconds { get; set; } = 300;
+}
+
+public class ServerTaskCancelWatchSettings
+{
+    /// <summary>How often the pod running a deployment checks whether a user cancelled it from another pod. Non-positive values fall back to 3 seconds.</summary>
+    public int PollIntervalSeconds { get; set; } = 3;
 }
