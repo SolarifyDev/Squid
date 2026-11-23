@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Entities;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Core.Services.Deployments.Runbooks.Exceptions;
 using Squid.Message.Enums;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -210,7 +211,8 @@ public class RunbookAggregateDataProvider(
         runbook.Description = description;
         runbook.TagsJson = tagsJson;
 
-        await repository.UpdateAsync(runbook, cancellationToken).ConfigureAwait(false);
+        // The service supplies a tracked Runbook. Save only the changed metadata
+        // so a concurrent publication cannot be overwritten by a stale pointer.
         await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
         return runbook;
@@ -422,6 +424,9 @@ public class RunbookAggregateDataProvider(
         {
             var aggregate = await GetOwnedAggregateAsync(runbookId, projectId, spaceId, ct)
                 .ConfigureAwait(false);
+
+            if (await repository.AnyAsync<RunbookSnapshot>(s => s.RunbookId == runbookId, ct).ConfigureAwait(false))
+                throw RunbookConflictException.PublishedDelete(runbookId);
 
             var variables = await repository.Query<Variable>()
                 .Where(v => v.VariableSetId == aggregate.Runbook.VariableSetId)

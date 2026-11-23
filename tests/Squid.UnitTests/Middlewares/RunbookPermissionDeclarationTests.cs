@@ -13,6 +13,7 @@ public class RunbookPermissionDeclarationTests
     [InlineData(typeof(UpdateRunbookCommand), Permission.RunbookEdit)]
     [InlineData(typeof(CopyRunbookCommand), Permission.RunbookEdit)]
     [InlineData(typeof(DeleteRunbookCommand), Permission.RunbookEdit)]
+    [InlineData(typeof(PublishRunbookCommand), Permission.RunbookPublish)]
     [InlineData(typeof(GetRunbookRequest), Permission.RunbookView)]
     [InlineData(typeof(GetRunbooksRequest), Permission.RunbookView)]
     public void RunbookMessages_RequireContextSpecificPermission(Type messageType, Permission permission)

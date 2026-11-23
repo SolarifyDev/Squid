@@ -33,5 +33,12 @@ public class RunbookConfiguration : IEntityTypeConfiguration<Runbook>
             .WithMany()
             .HasForeignKey(r => r.VariableSetId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasOne<RunbookSnapshot>()
+            .WithMany()
+            .HasForeignKey(r => new { r.Id, r.PublishedSnapshotId })
+            .HasPrincipalKey(s => new { s.RunbookId, s.Id })
+            .HasConstraintName("fk_runbook_published_snapshot")
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

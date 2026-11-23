@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Runbooks;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
@@ -9,6 +11,7 @@ using Squid.Message.Commands.Deployments.Runbook;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Events;
 using Squid.Message.Models.Deployments.Runbook;
+using Squid.Message.Models.Deployments.Snapshots;
 using Squid.Message.Requests.Events;
 using Squid.Message.Requests.Deployments.Runbook;
 using SquidProject = Squid.Core.Persistence.Entities.Deployments.Project;
@@ -406,6 +409,202 @@ public class RunbookServiceIntegrationTests : TestBase
     }
 
     [Fact]
+    public async Task Publish_CreatesImmutableVersionsAndReturnsCurrentVersion()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var project = await SeedProjectAsync(db);
+            int runbookId = 0;
+            int processId = 0;
+            int actionId = 0;
+
+            await Run<IRunbookService>(async service =>
+            {
+                var created = await service.CreateRunbookAsync(CreateCommand(project, "Publishable Runbook"));
+                runbookId = created.Id;
+                processId = created.ProcessId;
+            });
+
+            var step = await SeedStepAsync(db, processId, 1, "Publish script");
+            var action = await SeedActionAsync(db, step.Id, 1, "Run script");
+            actionId = action.Id;
+            await AddInlineBashScriptAsync(db, action.Id, "echo version-a");
+
+            var first = await Run<IRunbookService, RunbookPublishedSnapshotDto>(service =>
+                service.PublishRunbookAsync(PublishCommand(runbookId, project)));
+            first.Version.ShouldBe(1);
+
+            var actionBody = await db.Set<DeploymentActionProperty>()
+                .SingleAsync(p => p.ActionId == actionId && p.PropertyName == "Squid.Action.Script.ScriptBody");
+            actionBody.PropertyValue = "echo version-b";
+            await db.SaveChangesAsync();
+
+            var second = await Run<IRunbookService, RunbookPublishedSnapshotDto>(service =>
+                service.PublishRunbookAsync(PublishCommand(runbookId, project)));
+            second.Version.ShouldBe(2);
+            second.Id.ShouldNotBe(first.Id);
+
+            db.ChangeTracker.Clear();
+            var snapshots = await db.Set<RunbookSnapshot>()
+                .AsNoTracking()
+                .Where(s => s.RunbookId == runbookId)
+                .OrderBy(s => s.Version)
+                .ToListAsync();
+            snapshots.Count.ShouldBe(2);
+            snapshots[0].Version.ShouldBe(1);
+            snapshots[0].CompressionType.ShouldBe("GZIP");
+            snapshots[0].ContentHash.ShouldNotBeNullOrWhiteSpace();
+            snapshots[0].UncompressedSize.ShouldBeGreaterThan(0);
+            snapshots[1].Version.ShouldBe(2);
+
+            var oldSnapshot = UtilService.DecompressFromGzip<DeploymentProcessSnapshotDataDto>(snapshots[0].SnapshotData);
+            var newSnapshot = UtilService.DecompressFromGzip<DeploymentProcessSnapshotDataDto>(snapshots[1].SnapshotData);
+            oldSnapshot.StepSnapshots.Single().ActionSnapshots.Single().Properties["Squid.Action.Script.ScriptBody"]
+                .ShouldBe("echo version-a");
+            newSnapshot.StepSnapshots.Single().ActionSnapshots.Single().Properties["Squid.Action.Script.ScriptBody"]
+                .ShouldBe("echo version-b");
+            snapshots[0].ContentHash.ShouldBe(UtilService.BuildSnapshotBlob(oldSnapshot).ContentHash);
+
+            await Run<IRunbookService>(async service =>
+            {
+                var detail = await service.GetRunbookAsync(new GetRunbookRequest
+                {
+                    Id = runbookId,
+                    ProjectId = project.Id,
+                    SpaceId = project.SpaceId
+                });
+                detail.PublishedSnapshotId.ShouldBe(second.Id);
+                detail.PublishedSnapshot.Version.ShouldBe(2);
+                await Should.ThrowAsync<RunbookConflictException>(() => service.DeleteRunbookAsync(new DeleteRunbookCommand
+                {
+                    Id = runbookId,
+                    ProjectId = project.Id,
+                    SpaceId = project.SpaceId
+                }));
+            });
+
+            db.ChangeTracker.Clear();
+            (await db.Set<Runbook>().AnyAsync(r => r.Id == runbookId)).ShouldBeTrue();
+            (await db.Set<RunbookSnapshot>().CountAsync(s => s.RunbookId == runbookId)).ShouldBe(2);
+        });
+    }
+
+    [Fact]
+    public async Task Publish_FailureAfterSnapshotInsertRollsBackSnapshotAndPointer()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var project = await SeedProjectAsync(db);
+            var runbook = await Run<IRunbookService, RunbookDto>(async service =>
+                await service.CreateRunbookAsync(CreateCommand(project, "Rollback publication")));
+            var step = await SeedStepAsync(db, runbook.ProcessId, 1, "Publish script");
+            var action = await SeedActionAsync(db, step.Id, 1, "Run script");
+            await AddInlineBashScriptAsync(db, action.Id, "echo rollback");
+
+            await Run<IRunbookService>(async service =>
+            {
+                await Should.ThrowAsync<InvalidOperationException>(() => service.PublishRunbookAsync(
+                    PublishCommand(runbook.Id, project)));
+            }, builder => builder.RegisterInstance(new FailPublicationAfterSnapshotSaveObserver())
+                .As<IRunbookPublicationWriteObserver>());
+
+            db.ChangeTracker.Clear();
+            var persisted = await db.Set<Runbook>().SingleAsync(r => r.Id == runbook.Id);
+            persisted.PublishedSnapshotId.ShouldBeNull();
+            (await db.Set<RunbookSnapshot>().AnyAsync(s => s.RunbookId == runbook.Id)).ShouldBeFalse();
+        });
+    }
+
+    [Fact]
+    public async Task PublicationPersistence_LeavesDraftsUnpublishedAndEnforcesSnapshotOwnershipAndImmutability()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var project = await SeedProjectAsync(db);
+            RunbookDto first = null;
+            RunbookDto second = null;
+            await Run<IRunbookService>(async service =>
+            {
+                first = await service.CreateRunbookAsync(CreateCommand(project, "Unpublished Draft"));
+                second = await service.CreateRunbookAsync(CreateCommand(project, "Other Draft"));
+            });
+
+            db.ChangeTracker.Clear();
+            (await db.Set<Runbook>().SingleAsync(r => r.Id == first.Id)).PublishedSnapshotId.ShouldBeNull();
+            var firstSnapshot = new RunbookSnapshot
+            {
+                RunbookId = first.Id,
+                Version = 1,
+                PublishedAt = DateTimeOffset.UtcNow,
+                PublishedBy = 1,
+                SnapshotData = [1, 2, 3],
+                ContentHash = new string('a', 64),
+                CompressionType = "GZIP",
+                UncompressedSize = 10
+            };
+            var otherSnapshot = new RunbookSnapshot
+            {
+                RunbookId = second.Id,
+                Version = 1,
+                PublishedAt = DateTimeOffset.UtcNow,
+                PublishedBy = 1,
+                SnapshotData = [4, 5, 6],
+                ContentHash = new string('b', 64),
+                CompressionType = "GZIP",
+                UncompressedSize = 10
+            };
+            db.Set<RunbookSnapshot>().AddRange(firstSnapshot, otherSnapshot);
+            await db.SaveChangesAsync();
+
+            var versionViolation = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
+                $"""
+                INSERT INTO runbook_snapshot
+                    (runbook_id, version, published_at, published_by, snapshot_data, content_hash, compression_type, uncompressed_size)
+                VALUES
+                    ({first.Id}, 1, {DateTimeOffset.UtcNow}, 1, {new byte[] { 7, 8, 9 }}, {new string('c', 64)}, 'GZIP', 10)
+                """));
+            versionViolation.ConstraintName.ShouldBe("uq_runbook_snapshot_version");
+
+            var ownershipViolation = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE runbook SET published_snapshot_id = {otherSnapshot.Id} WHERE id = {first.Id}"));
+            ownershipViolation.ConstraintName.ShouldBe("fk_runbook_published_snapshot");
+
+            var immutableViolation = await Should.ThrowAsync<PostgresException>(() => db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE runbook_snapshot SET snapshot_data = {new byte[] { 9, 9, 9 }} WHERE id = {firstSnapshot.Id}"));
+            immutableViolation.SqlState.ShouldBe("55000");
+        });
+    }
+
+    [Fact]
+    public async Task Publish_RejectsUnsupportedDraftWithoutCreatingSnapshot()
+    {
+        await Run<SquidDbContext>(async db =>
+        {
+            var project = await SeedProjectAsync(db);
+            var runbook = await Run<IRunbookService, RunbookDto>(async service =>
+                await service.CreateRunbookAsync(CreateCommand(project, "Unsupported draft")));
+            var step = await SeedStepAsync(db, runbook.ProcessId, 1, "No executable action");
+            var action = await SeedActionAsync(db, step.Id, 1, "Unsupported action");
+            await AddInlineBashScriptAsync(db, action.Id, "echo unsupported");
+            var syntax = await db.Set<DeploymentActionProperty>()
+                .SingleAsync(p => p.ActionId == action.Id && p.PropertyName == "Squid.Action.Script.Syntax");
+            syntax.PropertyValue = "PowerShell";
+            await db.SaveChangesAsync();
+
+            await Run<IRunbookService>(async service =>
+            {
+                var error = await Should.ThrowAsync<RunbookValidationException>(() =>
+                    service.PublishRunbookAsync(PublishCommand(runbook.Id, project)));
+                error.Code.ShouldBe("runbook.unsupported_draft");
+            });
+
+            db.ChangeTracker.Clear();
+            (await db.Set<Runbook>().SingleAsync(r => r.Id == runbook.Id)).PublishedSnapshotId.ShouldBeNull();
+            (await db.Set<RunbookSnapshot>().AnyAsync(s => s.RunbookId == runbook.Id)).ShouldBeFalse();
+        });
+    }
+
+    [Fact]
     public async Task List_IsBoundedAndProjectScoped()
     {
         await Run<SquidDbContext>(async db =>
@@ -451,6 +650,39 @@ public class RunbookServiceIntegrationTests : TestBase
                 Tags = tags.ToList()
             }
         };
+    }
+
+    private static PublishRunbookCommand PublishCommand(int runbookId, SquidProject project) => new()
+    {
+        Id = runbookId,
+        ProjectId = project.Id,
+        SpaceId = project.SpaceId
+    };
+
+    private static async Task AddInlineBashScriptAsync(SquidDbContext db, int actionId, string body)
+    {
+        var action = await db.Set<DeploymentAction>().SingleAsync(a => a.Id == actionId);
+        action.ActionType = "Squid.Script";
+        db.Set<DeploymentActionProperty>().AddRange(
+            new DeploymentActionProperty
+            {
+                ActionId = actionId,
+                PropertyName = "Squid.Action.Script.ScriptSource",
+                PropertyValue = "Inline"
+            },
+            new DeploymentActionProperty
+            {
+                ActionId = actionId,
+                PropertyName = "Squid.Action.Script.Syntax",
+                PropertyValue = "Bash"
+            },
+            new DeploymentActionProperty
+            {
+                ActionId = actionId,
+                PropertyName = "Squid.Action.Script.ScriptBody",
+                PropertyValue = body
+            });
+        await db.SaveChangesAsync();
     }
 
     private static void AssertDocumentReference(
@@ -621,4 +853,11 @@ public class RunbookServiceIntegrationTests : TestBase
         });
         await db.SaveChangesAsync();
     }
+}
+
+internal sealed class FailPublicationAfterSnapshotSaveObserver : IRunbookPublicationWriteObserver
+{
+    public Task AfterSnapshotSavedBeforePointerUpdateAsync(
+        int runbookId, int snapshotId, CancellationToken cancellationToken = default) =>
+        throw new InvalidOperationException("Injected failure after snapshot insertion.");
 }

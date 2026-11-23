@@ -110,4 +110,6 @@ public enum Permission
     // Interruption (appended — permissions persist by name, but ordinals stay stable for any int consumer)
     // Approve / take responsibility for a manual intervention on behalf of its responsible teams.
     [PermissionScope(PermissionScope.SpaceOnly)] InterruptionSubmitOverride,
+
+    [PermissionScope(PermissionScope.SpaceOnly)] RunbookPublish,
 }
