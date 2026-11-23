@@ -1,56 +1,63 @@
+using System.Linq;
+using Microsoft.Extensions.Configuration;
 using Squid.Core.Services.Deployments.ServerTask.Lease;
+using Squid.Core.Settings.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.ServerTask.Lease;
 
 public class ServerTaskLeaseOptionsTests
 {
-    // Renaming one of these silently drops an operator's override and turns it into a production surprise.
-    [Fact]
-    public void EnvVarNames_ArePinned()
+    private static ServerTaskSetting Bind(params (string Key, string Value)[] pairs)
     {
-        ServerTaskLeaseOptions.RenewIntervalSecondsEnvVar.ShouldBe("SQUID_SERVER_TASK_LEASE_RENEW_INTERVAL_SECONDS");
-        ServerTaskLeaseOptions.StaleSecondsEnvVar.ShouldBe("SQUID_SERVER_TASK_LEASE_STALE_SECONDS");
-        ServerTaskLeaseOptions.ReaperEnabledEnvVar.ShouldBe("SQUID_SERVER_TASK_REAPER_ENABLED");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(pairs.Select(p => new KeyValuePair<string, string>(p.Key, p.Value))).Build();
+
+        return new ServerTaskSetting(configuration);
     }
 
     [Fact]
-    public void Defaults_AreTwentySecondRenewal_FiveMinuteStaleness_ReaperOn()
+    public void NoConfiguration_YieldsTwentySecondRenewal_FiveMinuteStaleness()
     {
-        var options = ServerTaskLeaseOptions.From(_ => null);
+        var options = ServerTaskLeaseOptions.From(Bind());
 
         options.RenewInterval.ShouldBe(TimeSpan.FromSeconds(20));
         options.Stale.ShouldBe(TimeSpan.FromSeconds(300));
-        options.ReaperEnabled.ShouldBeTrue();
+    }
+
+    // Renaming a key silently drops an operator's override; pin the section path and both key names.
+    [Fact]
+    public void ConfigurationKeys_ServerTaskLease_AreBound()
+    {
+        var setting = Bind(("ServerTask:Lease:RenewIntervalSeconds", "30"), ("ServerTask:Lease:StaleSeconds", "600"));
+
+        setting.Lease.RenewIntervalSeconds.ShouldBe(30);
+        setting.Lease.StaleSeconds.ShouldBe(600);
+        ServerTaskLeaseOptions.From(setting).RenewInterval.ShouldBe(TimeSpan.FromSeconds(30));
+        ServerTaskLeaseOptions.From(setting).Stale.ShouldBe(TimeSpan.FromSeconds(600));
+    }
+
+    [Fact]
+    public void Defaults_OfTheBoundSetting_ArePinned()
+    {
+        var setting = Bind();
+
+        setting.Lease.RenewIntervalSeconds.ShouldBe(20);
+        setting.Lease.StaleSeconds.ShouldBe(300);
     }
 
     [Theory]
-    [InlineData("30", "600", 30, 600)]
-    [InlineData("abc", "xyz", 20, 300)]
-    [InlineData("", "", 20, 300)]
-    [InlineData("-5", "0", 20, 300)]
-    [InlineData("1", "300", 5, 300)]      // interval floors at 5s so renewal cannot hammer the database
-    [InlineData("60", "100", 60, 180)]    // stale never drops below three intervals, or one slow renewal would look like a death
-    public void Parsing_FallsBackOrClamps(string interval, string stale, int expectedInterval, int expectedStale)
+    [InlineData(-5, 0, 20, 300)]
+    [InlineData(0, -1, 20, 300)]
+    [InlineData(1, 300, 5, 300)]      // interval floors at 5s so renewal cannot hammer the database
+    [InlineData(60, 100, 60, 180)]    // stale never drops below three intervals, or one slow renewal would look like a death
+    [InlineData(30, 600, 30, 600)]
+    public void Values_FallBackOrClamp(int interval, int stale, int expectedInterval, int expectedStale)
     {
-        var options = ServerTaskLeaseOptions.From(name => name == ServerTaskLeaseOptions.RenewIntervalSecondsEnvVar ? interval : name == ServerTaskLeaseOptions.StaleSecondsEnvVar ? stale : null);
+        var setting = new ServerTaskSetting { Lease = new ServerTaskLeaseSettings { RenewIntervalSeconds = interval, StaleSeconds = stale } };
+
+        var options = ServerTaskLeaseOptions.From(setting);
 
         options.RenewInterval.ShouldBe(TimeSpan.FromSeconds(expectedInterval));
         options.Stale.ShouldBe(TimeSpan.FromSeconds(expectedStale));
-    }
-
-    [Theory]
-    [InlineData(null, true)]
-    [InlineData("", true)]
-    [InlineData("true", true)]
-    [InlineData("garbage", true)]   // a typo must not switch recovery off
-    [InlineData("false", false)]
-    [InlineData(" FALSE ", false)]
-    [InlineData("0", false)]
-    [InlineData("no", false)]
-    [InlineData("Off", false)]
-    public void ReaperEnabled_OnlyAnExplicitFalseyTokenSwitchesItOff(string raw, bool expected)
-    {
-        ServerTaskLeaseOptions.From(name => name == ServerTaskLeaseOptions.ReaperEnabledEnvVar ? raw : null).ReaperEnabled.ShouldBe(expected);
     }
 
     [Fact]

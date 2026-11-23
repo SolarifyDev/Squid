@@ -1,3 +1,5 @@
+using Squid.Core.Settings.ServerTask;
+
 namespace Squid.Core.Services.Deployments.ServerTask.Lease;
 
 /// <summary>
@@ -22,7 +24,7 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
     private readonly TimeProvider _time;
     private readonly ServerTaskLeaseOptions _options;
 
-    public ServerTaskLeaseKeeper(ILifetimeScope lifetimeScope) : this(lifetimeScope, TimeProvider.System, ServerTaskLeaseOptions.FromEnvironment())
+    public ServerTaskLeaseKeeper(ILifetimeScope lifetimeScope, ServerTaskSetting setting) : this(lifetimeScope, TimeProvider.System, ServerTaskLeaseOptions.From(setting))
     {
     }
 

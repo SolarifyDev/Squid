@@ -115,14 +115,6 @@ public class ServerTaskLeaseReaperServiceTests
     }
 
     [Fact]
-    public async Task Disabled_DoesNothingAtAll()
-    {
-        (await Service(enabled: false).ReapStaleAsync()).ShouldBe(0);
-
-        _leases.VerifyNoOtherCalls();
-    }
-
-    [Fact]
     public async Task Candidates_AreReadWithTheConfiguredStalenessAndBatchSize()
     {
         _leases.Setup(l => l.GetStaleAsync(It.IsAny<TimeSpan>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
@@ -130,6 +122,18 @@ public class ServerTaskLeaseReaperServiceTests
         await Service().ReapStaleAsync();
 
         _leases.Verify(l => l.GetStaleAsync(StaleAfter, ServerTaskLeaseOptions.ReaperBatchSize, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // The reaper is always on: the DI constructor, given a setting with no configuration at all, still reads candidates with the default staleness.
+    [Fact]
+    public async Task DefaultSetting_ReapsWithFiveMinuteStaleness_NoDisablePath()
+    {
+        _leases.Setup(l => l.GetStaleAsync(It.IsAny<TimeSpan>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        var service = new ServerTaskLeaseReaperService(_leases.Object, _taskService.Object, _checkpoints.Object, _interruptions.Object, new Squid.Core.Settings.ServerTask.ServerTaskSetting());
+
+        await service.ReapStaleAsync();
+
+        _leases.Verify(l => l.GetStaleAsync(TimeSpan.FromSeconds(300), ServerTaskLeaseOptions.ReaperBatchSize, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -166,6 +170,6 @@ public class ServerTaskLeaseReaperServiceTests
     private void Recovers(StaleServerTask task, string to, int rows)
         => _leases.Setup(l => l.RecoverAsync(task, to, StaleAfter, It.IsAny<CancellationToken>())).ReturnsAsync(rows);
 
-    private ServerTaskLeaseReaperService Service(bool enabled = true)
-        => new(_leases.Object, _taskService.Object, _checkpoints.Object, _interruptions.Object, new ServerTaskLeaseOptions { Stale = StaleAfter, ReaperEnabled = enabled });
+    private ServerTaskLeaseReaperService Service()
+        => new(_leases.Object, _taskService.Object, _checkpoints.Object, _interruptions.Object, new ServerTaskLeaseOptions { Stale = StaleAfter });
 }

@@ -57,5 +57,5 @@ public class ServerTaskServiceClaimFenceTests
     private void Reads(string state)
         => _tasks.Setup(t => t.GetServerTaskByIdNoTrackingAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskEntity { Id = 7, State = state });
 
-    private ServerTaskService Service() => new(_tasks.Object, Mock.Of<IActivityLogDataProvider>(), Mock.Of<IServerTaskLogDataProvider>(), _leases.Object);
+    private ServerTaskService Service() => new(_tasks.Object, Mock.Of<IActivityLogDataProvider>(), Mock.Of<IServerTaskLogDataProvider>(), _leases.Object, new Squid.Core.Settings.ServerTask.ServerTaskSetting());
 }
