@@ -161,6 +161,39 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Machine_WaitIsOneBudgetAcrossInProcessAndRedisLocks()
+    {
+        TimeSpan? redisWait = null;
+        var locks = new HealthCheckInProcessLocks();
+        var redis = new Mock<IRedisSafeRunner>();
+        redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>()))
+            .Returns<string, Func<Task<object>>, TimeSpan?, TimeSpan?, TimeSpan?, RedisServer>((_, logic, _, w, _, _) => { redisWait = w; return logic(); });
+
+        await locks.TryEnterMachineAsync(7, TimeSpan.Zero, CancellationToken.None);
+        var releaser = Task.Run(async () => { await Task.Delay(700); locks.ExitMachine(7); });
+
+        var ran = await Create(redis, locks).TryRunForMachineAsync(7, TimeSpan.FromSeconds(2), () => Task.CompletedTask, CancellationToken.None);
+        await releaser;
+
+        ran.ShouldBeTrue();
+        redisWait.ShouldNotBeNull();
+        redisWait.Value.ShouldBeLessThan(TimeSpan.FromSeconds(1.5), "the in-process wait already consumed part of the caller's 2s budget");
+    }
+
+    [Fact]
+    public async Task Machine_RedisInfrastructureFailure_FallsBackToInProcessLock()
+    {
+        var redis = new Mock<IRedisSafeRunner>();
+        redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>())).ThrowsAsync(new LockAcquireFailedException("k", new Exception("redis down")));
+        var runs = 0;
+
+        var ran = await Create(redis).TryRunForMachineAsync(7, TimeSpan.FromSeconds(1), () => { runs++; return Task.CompletedTask; }, CancellationToken.None);
+
+        ran.ShouldBeTrue();
+        runs.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Sweep_ExceedsDeadline_EndsQuietlyAndTokenWasCancelled()
     {
         var sawCancel = false;
