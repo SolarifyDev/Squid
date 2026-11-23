@@ -18,6 +18,8 @@ public class Runbook : IEntity<int>, IAuditable
 
     public int VariableSetId { get; set; }
 
+    public int? PublishedSnapshotId { get; set; }
+
     // IAuditable
     public DateTimeOffset CreatedDate { get; set; }
     public int CreatedBy { get; set; }

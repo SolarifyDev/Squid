@@ -18,6 +18,10 @@ public class RunbookDto
 
     public int VariableSetId { get; set; }
 
+    public int? PublishedSnapshotId { get; set; }
+
+    public RunbookPublishedSnapshotDto PublishedSnapshot { get; set; }
+
     public DateTimeOffset CreatedDate { get; set; }
 
     public int CreatedBy { get; set; }
@@ -25,4 +29,13 @@ public class RunbookDto
     public DateTimeOffset LastModifiedDate { get; set; }
 
     public int LastModifiedBy { get; set; }
+}
+
+public class RunbookPublishedSnapshotDto
+{
+    public int Id { get; set; }
+    public int RunbookId { get; set; }
+    public int Version { get; set; }
+    public DateTimeOffset PublishedAt { get; set; }
+    public int PublishedBy { get; set; }
 }

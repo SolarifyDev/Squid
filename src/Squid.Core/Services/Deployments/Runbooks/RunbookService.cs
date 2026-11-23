@@ -6,6 +6,7 @@ using Squid.Core.Services.Deployments.Project;
 using Squid.Core.Services.Deployments.Runbooks.Exceptions;
 using Squid.Core.Services.Identity;
 using Squid.Message.Commands.Deployments.Runbook;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Models.Deployments.Runbook;
 using Squid.Message.Requests.Deployments.Runbook;
@@ -30,6 +31,10 @@ public interface IRunbookService : IScopedDependency
         DeleteRunbookCommand command,
         CancellationToken cancellationToken = default);
 
+    Task<RunbookPublishedSnapshotDto> PublishRunbookAsync(
+        PublishRunbookCommand command,
+        CancellationToken cancellationToken = default);
+
     Task<RunbookDto> GetRunbookAsync(
         GetRunbookRequest request,
         CancellationToken cancellationToken = default);
@@ -44,7 +49,8 @@ public class RunbookService(
     IRunbookAggregateDataProvider aggregateDataProvider,
     IProjectDataProvider projectDataProvider,
     IAuthorizationService authorizationService,
-    ICurrentUser currentUser) : IRunbookService
+    ICurrentUser currentUser,
+    IRunbookPublicationDataProvider publicationDataProvider) : IRunbookService
 {
     public async Task<RunbookDto> CreateRunbookAsync(
         CreateRunbookCommand command,
@@ -193,13 +199,31 @@ public class RunbookService(
             cancellationToken).ConfigureAwait(false);
         await EnsurePermissionAsync(project.Id, project.SpaceId, Permission.RunbookEdit, cancellationToken)
             .ConfigureAwait(false);
-        await aggregateDataProvider.DeleteAsync(
-            command.Id,
-            command.ProjectId,
-            spaceId,
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await aggregateDataProvider.DeleteAsync(
+                command.Id, command.ProjectId, spaceId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (RunbookDbExceptionMapper.IsPublishedDeleteConflict(ex))
+        {
+            throw RunbookConflictException.PublishedDelete(command.Id);
+        }
 
         return new DeleteRunbookResponseData { Id = command.Id };
+    }
+
+    public async Task<RunbookPublishedSnapshotDto> PublishRunbookAsync(
+        PublishRunbookCommand command, CancellationToken cancellationToken = default)
+    {
+        var spaceId = command.SpaceId
+            ?? throw new RunbookValidationException(
+                "runbook.space_required", nameof(command.SpaceId), "Runbook space is required.");
+        var project = await ResolveProjectAsync(command.ProjectId, spaceId, cancellationToken).ConfigureAwait(false);
+        await EnsurePermissionAsync(project, Permission.RunbookPublish, cancellationToken).ConfigureAwait(false);
+
+        return await publicationDataProvider.PublishAsync(
+            command.Id, project.Id, project.SpaceId,
+            currentUser.Id ?? CurrentUsers.InternalUser.Id, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<RunbookDto> GetRunbookAsync(
@@ -221,7 +245,12 @@ public class RunbookService(
         await EnsurePermissionAsync(runbook.ProjectId, runbook.SpaceId, Permission.RunbookView, cancellationToken)
             .ConfigureAwait(false);
 
-        return ToDto(runbook);
+        var dto = ToDto(runbook);
+        if (runbook.PublishedSnapshotId is int snapshotId)
+            dto.PublishedSnapshot = await publicationDataProvider
+                .GetPublishedAsync(runbook.Id, snapshotId, cancellationToken).ConfigureAwait(false);
+
+        return dto;
     }
 
     public async Task<GetRunbooksResponseData> GetRunbooksAsync(
@@ -343,6 +372,7 @@ public class RunbookService(
             Tags = RunbookInputNormalizer.DeserializeTags(runbook.TagsJson),
             ProcessId = runbook.ProcessId,
             VariableSetId = runbook.VariableSetId,
+            PublishedSnapshotId = runbook.PublishedSnapshotId,
             CreatedDate = runbook.CreatedDate,
             CreatedBy = runbook.CreatedBy,
             LastModifiedDate = runbook.LastModifiedDate,

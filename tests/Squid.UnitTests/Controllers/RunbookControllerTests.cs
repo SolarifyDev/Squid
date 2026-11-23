@@ -33,6 +33,35 @@ public class RunbookControllerTests
     }
 
     [Fact]
+    public async Task PublishAsync_DispatchesPublishCommandAndReturnsEnvelope()
+    {
+        var mediator = new Mock<IMediator>();
+        var command = new PublishRunbookCommand { Id = 21, ProjectId = 11, SpaceId = 7 };
+        var response = new PublishRunbookResponse
+        {
+            Data = new RunbookPublishedSnapshotDto
+            {
+                Id = 41,
+                RunbookId = 21,
+                Version = 1,
+                PublishedAt = DateTimeOffset.UtcNow,
+                PublishedBy = 9
+            }
+        };
+
+        mediator
+            .Setup(m => m.SendAsync<PublishRunbookCommand, PublishRunbookResponse>(
+                command,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        var controller = new RunbookController(mediator.Object);
+        var result = await controller.PublishAsync(command, CancellationToken.None);
+
+        result.ShouldBeOfType<OkObjectResult>().Value.ShouldBeSameAs(response);
+    }
+
+    [Fact]
     public async Task ListAsync_DispatchesProjectScopedListRequest()
     {
         var mediator = new Mock<IMediator>();

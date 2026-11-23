@@ -23,6 +23,7 @@ public class GlobalExceptionFilter : IExceptionFilter
         {
             ValidationException => HttpStatusCode.BadRequest,
             RunbookNameConflictException => HttpStatusCode.Conflict,
+            RunbookConflictException => HttpStatusCode.Conflict,
             RunbookValidationException => HttpStatusCode.BadRequest,
             DeploymentEntityNotFoundException => HttpStatusCode.NotFound,
             UnauthorizedAccessException => HttpStatusCode.Unauthorized,

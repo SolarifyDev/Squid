@@ -5,6 +5,7 @@ namespace Squid.Core.Services.Deployments.Runbooks;
 public static class RunbookDbExceptionMapper
 {
     public const string NameUniqueIndex = "ux_runbook_project_normalized_name";
+    public const string SnapshotVersionUniqueIndex = "uq_runbook_snapshot_version";
 
     public static bool IsNameConflict(Exception exception)
     {
@@ -14,6 +15,18 @@ public static class RunbookDbExceptionMapper
             ConstraintName: NameUniqueIndex
         };
     }
+
+    public static bool IsPublicationRace(Exception exception) =>
+        FindPostgresException(exception) is { SqlState: PostgresErrorCodes.SerializationFailure }
+            or { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: SnapshotVersionUniqueIndex }
+            or { SqlState: PostgresErrorCodes.ForeignKeyViolation, ConstraintName: "fk_runbook_snapshot_runbook" };
+
+    public static bool IsPublishedDeleteConflict(Exception exception) =>
+        FindPostgresException(exception) is
+        {
+            SqlState: PostgresErrorCodes.ForeignKeyViolation,
+            ConstraintName: "fk_runbook_snapshot_runbook"
+        };
 
     private static PostgresException FindPostgresException(Exception exception)
     {

@@ -117,7 +117,7 @@ public static class BuiltInRoles
         {
             Permission.ProjectView, Permission.ProjectEdit,
             Permission.ProcessView, Permission.ProcessEdit,
-            Permission.RunbookView, Permission.RunbookEdit,
+            Permission.RunbookView, Permission.RunbookEdit, Permission.RunbookPublish,
             Permission.VariableView, Permission.VariableEdit,
             Permission.ReleaseView, Permission.ReleaseCreate,
             Permission.ChannelView, Permission.ChannelCreate, Permission.ChannelEdit, Permission.ChannelDelete,

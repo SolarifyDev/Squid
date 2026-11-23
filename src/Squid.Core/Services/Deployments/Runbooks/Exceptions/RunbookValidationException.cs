@@ -24,3 +24,10 @@ public sealed class RunbookNameConflictException : RunbookValidationException
     {
     }
 }
+
+public sealed class RunbookConflictException(string code, string message)
+    : RunbookValidationException(code, "Id", message)
+{
+    public static RunbookConflictException PublishedDelete(int id) =>
+        new("runbook.published_delete", $"Runbook {id} has published snapshots and cannot be deleted.");
+}

@@ -89,6 +89,19 @@ public class RunbookController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("publish")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(PublishRunbookResponse))]
+    public async Task<IActionResult> PublishAsync(
+        [FromBody] PublishRunbookCommand command,
+        CancellationToken cancellationToken)
+    {
+        var response = await _mediator
+            .SendAsync<PublishRunbookCommand, PublishRunbookResponse>(command, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
     [HttpPost("delete")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(DeleteRunbookResponse))]
     public async Task<IActionResult> DeleteAsync(
