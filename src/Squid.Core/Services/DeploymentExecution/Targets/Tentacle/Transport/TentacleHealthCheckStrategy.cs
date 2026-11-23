@@ -71,7 +71,9 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
         try
         {
             var capsClient = _halibutClientFactory.CreateCapabilitiesClient(endpoint);
-            var response = await capsClient.GetCapabilitiesAsync(new CapabilitiesRequest()).ConfigureAwait(false);
+            // The Halibut async contract carries no CancellationToken, so WaitAsync is what makes the probe honour ct
+            // (the abandoned RPC is bounded by Halibut's own queue timeout).
+            var response = await capsClient.GetCapabilitiesAsync(new CapabilitiesRequest()).WaitAsync(ct).ConfigureAwait(false);
 
             if (response == null)
                 return new HealthCheckResult(false, "Tentacle returned null capabilities response");
@@ -91,6 +93,10 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
             var shellInfo = string.IsNullOrEmpty(shell) ? string.Empty : $", shell={shell}";
 
             return new HealthCheckResult(true, $"Tentacle connected — version {response.AgentVersion}{osInfo}{shellInfo}, services: {string.Join(", ", response.SupportedServices)}");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

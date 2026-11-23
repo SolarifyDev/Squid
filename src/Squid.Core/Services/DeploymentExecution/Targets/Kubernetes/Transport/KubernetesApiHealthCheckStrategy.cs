@@ -43,6 +43,10 @@ public class KubernetesApiHealthCheckStrategy : IHealthCheckStrategy
                 ? new HealthCheckResult(true, $"Health check passed (exit code {result.ExitCode}): {string.Join("\n", result.LogLines ?? new())}")
                 : new HealthCheckResult(false, $"Health check failed (exit code {result.ExitCode}): {result.BuildErrorSummary()}");
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             return new HealthCheckResult(false, $"Health check error: {ex.Message}");

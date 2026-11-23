@@ -66,4 +66,9 @@ public static class ManualHealthCheckErrorCodes
     /// <c>MayBeOfflineAndCanBeSkipped</c> — the offline state is expected and reported as
     /// tolerated, so the FE can render a benign "offline (expected)" rather than a hard error.</summary>
     public const string OfflineTolerated = "offline_tolerated";
+
+    /// <summary>Another health check for the same machine (a sweep on any replica or an earlier
+    /// manual run) still held the per-machine probe lock after the wait — a machine is never
+    /// probed concurrently, so this run did not probe it.</summary>
+    public const string ProbeInProgress = "probe_in_progress";
 }

@@ -44,7 +44,12 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
             var connectionInfo = await BuildConnectionInfoAsync(machine, endpoint, connectivityPolicy, ct).ConfigureAwait(false);
             var customScript = ResolveCustomScript(healthCheckPolicy);
 
-            return await Task.Run(() => ProbeConnectivity(connectionInfo, customScript), ct).ConfigureAwait(false);
+            // Task.Run's token only cancels before the blocking probe starts; WaitAsync makes the caller stop waiting on ct.
+            return await Task.Run(() => ProbeConnectivity(connectionInfo, customScript), ct).WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
