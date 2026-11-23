@@ -39,6 +39,20 @@ public sealed class ScmExitCodeTests
     }
 
     [Fact]
+    public async Task HostedService_FatalPipelineExit_CompletesPromptly_SoScmSeesTheStopAndAppliesItsFailureActions()
+    {
+        var reported = new List<int>();
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        var execute = InvokeExecuteAsync(service, CancellationToken.None);
+        var finished = await Task.WhenAny(execute, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        finished.ShouldBe(execute, "a fatal pipeline must report and request host stop at once; a hang here means SCM never sees STOPPED and never restarts the service");
+        reported.ShouldBe(new[] { 1 });
+    }
+
+    [Fact]
     public async Task HostedService_StopRequested_ReportsZeroToScm()
     {
         var reported = new List<int>();
