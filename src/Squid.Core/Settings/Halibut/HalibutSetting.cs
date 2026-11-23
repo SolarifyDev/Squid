@@ -13,6 +13,7 @@ public class HalibutSetting : IConfigurationSetting
         Liveness = section.GetSection("Liveness").Get<LivenessSettings>() ?? new LivenessSettings();
         CircuitBreaker = section.GetSection("CircuitBreaker").Get<CircuitBreakerSettings>() ?? new CircuitBreakerSettings();
         RpcRetry = section.GetSection("RpcRetry").Get<RpcRetrySettings>() ?? new RpcRetrySettings();
+        Trust = section.GetSection("Trust").Get<TrustSettings>() ?? new TrustSettings();
     }
 
     public PollingSettings Polling { get; set; } = new();
@@ -20,6 +21,27 @@ public class HalibutSetting : IConfigurationSetting
     public LivenessSettings Liveness { get; set; } = new();
     public CircuitBreakerSettings CircuitBreaker { get; set; } = new();
     public RpcRetrySettings RpcRetry { get; set; } = new();
+    public TrustSettings Trust { get; set; } = new();
+}
+
+/// <summary>
+/// How a server replica keeps its polling-agent trust list converged with the database, so an agent registered (or removed) through one
+/// replica is accepted (or rejected) by the others without a restart. A value of zero or less is invalid and falls back to its default.
+/// </summary>
+public class TrustSettings
+{
+    public const int DefaultRefreshIntervalSeconds = 15;
+    public const int DefaultUnauthorizedRefreshMinIntervalSeconds = 2;
+
+    /// <summary>How often the trust list is re-read from the database.</summary>
+    public int RefreshIntervalSeconds { get; set; } = DefaultRefreshIntervalSeconds;
+
+    /// <summary>Minimum gap between refreshes triggered by connections from unknown clients, so unauthenticated traffic cannot drive database load.</summary>
+    public int UnauthorizedRefreshMinIntervalSeconds { get; set; } = DefaultUnauthorizedRefreshMinIntervalSeconds;
+
+    public TimeSpan RefreshInterval => TimeSpan.FromSeconds(RefreshIntervalSeconds > 0 ? RefreshIntervalSeconds : DefaultRefreshIntervalSeconds);
+
+    public TimeSpan UnauthorizedRefreshMinInterval => TimeSpan.FromSeconds(UnauthorizedRefreshMinIntervalSeconds > 0 ? UnauthorizedRefreshMinIntervalSeconds : DefaultUnauthorizedRefreshMinIntervalSeconds);
 }
 
 /// <summary>
