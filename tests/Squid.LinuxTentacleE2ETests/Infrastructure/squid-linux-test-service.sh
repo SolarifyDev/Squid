@@ -119,6 +119,11 @@ read_version() {
 }
 
 cleanup() {
+    # Opt-in simulated drain (a real agent waits for running deployment scripts on SIGTERM).
+    # The marker stays present while draining, like the real agent's still-live process.
+    if [ "${SQUID_TEST_SERVICE_DRAIN_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
+        sleep "$SQUID_TEST_SERVICE_DRAIN_SECONDS"
+    fi
     rm -f "$MARKER_FILE" 2>/dev/null || true
     if [ -n "$HEALTHZ_PID" ] && kill -0 "$HEALTHZ_PID" 2>/dev/null; then
         kill "$HEALTHZ_PID" 2>/dev/null || true

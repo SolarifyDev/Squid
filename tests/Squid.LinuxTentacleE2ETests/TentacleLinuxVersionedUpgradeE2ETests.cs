@@ -135,6 +135,41 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
     }
 
     // ========================================================================
+    // Drain-aware restart — a running deployment script keeps the old agent
+    // draining (SIGTERM -> wait) longer than the script's former fixed 90s
+    // restart cap. The upgrade must wait out the drain (budget sized from the
+    // unit's TimeoutStopSec), not time out into a rollback.
+    // Tier: High - real systemd unit (TimeoutStopSec=330, KillMode=mixed), real
+    // production .sh, real SIGTERM drain in the test service (~100s wall clock).
+    // ========================================================================
+
+    [Fact]
+    public void Versioned_AgentDrainsLongerThanLegacyRestartCap_UpgradeWaitsAndSucceeds()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.InstallVersionedAndStart(
+            ctx.TestServiceScript,
+            initialVersion: V1,
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string> { ["SQUID_TEST_SERVICE_HEALTHZ"] = "1", ["SQUID_TEST_SERVICE_DRAIN_SECONDS"] = "100" },
+            timeoutStop: TimeSpan.FromSeconds(330));
+
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running before the drain scenario");
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: V2));
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2));
+
+        exitCode.ShouldBe(0, customMessage: Tail("a 100s drain exceeds the old fixed 90s restart cap; the drain-aware upgrade MUST wait it out and succeed (exit 4 = it rolled back instead)", exitCode, output));
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe(V2, customMessage: "current MUST point at V2 after the upgrade waited for the drain");
+        ctx.ReadLastUpgradeStatus()!.Status.ShouldBe("SUCCESS");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Version GC — beyond the retention floor, the oldest version is pruned.
     // ========================================================================
 

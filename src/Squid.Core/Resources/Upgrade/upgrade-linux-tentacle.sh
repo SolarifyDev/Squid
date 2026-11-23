@@ -722,14 +722,103 @@ ensure_graceful_stop_dropin() {
   fi
 }
 
+# ── Stop-budget helpers (drain-aware restart / rollback) ─────────────────────
+# The agent drains running deployment scripts on stop (up to ShutdownDrainTimeoutSeconds, 300s) and
+# the unit's TimeoutStopSec (330s) bounds that. Every systemctl wait below is sized from the unit's
+# configured stop timeout instead of a fixed 30/90s, and a unit still `deactivating` is a WAIT, not
+# a failure: moving directories under a live, draining agent is the one thing rollback must not do.
+STOP_BUDGET_FLOOR_SECS=60
+STOP_BUDGET_CEILING_SECS=900
+STOP_BUDGET_MARGIN_SECS=30
+
+# `systemctl show` prints timespans human-formatted ("5min 30s", "1h", "500ms", "infinity").
+# Prints whole seconds (rounded up), "inf" for infinity, nothing when unparseable.
+parse_systemd_timespan_secs() {
+  case "$1" in
+    infinity) echo inf; return 0 ;;
+    "") return 0 ;;
+  esac
+
+  echo "$1" | awk '{
+    total = 0
+    for (i = 1; i <= NF; i++) {
+      n = $i + 0; u = $i; sub(/^[0-9.]+/, "", u)
+      if (u == "us") total += n / 1000000
+      else if (u == "ms") total += n / 1000
+      else if (u == "s" || u == "sec") total += n
+      else if (u == "min") total += n * 60
+      else if (u == "h") total += n * 3600
+      else if (u == "d") total += n * 86400
+      else if (u == "w") total += n * 604800
+      else { print ""; exit }
+    }
+    printf "%d\n", total + 0.999
+  }'
+}
+
+# Seconds to wait for the unit to stop: configured TimeoutStopSec + margin, clamped to [floor, ceiling].
+compute_stop_budget_secs() {
+  local raw secs budget
+  raw=$(systemctl show -p TimeoutStopUSec "$SERVICE_NAME" 2>/dev/null | sed 's/^TimeoutStopUSec=//' || true)
+  secs=$(parse_systemd_timespan_secs "$raw")
+
+  if [ "$secs" = "inf" ]; then echo "$STOP_BUDGET_CEILING_SECS"; return 0; fi
+  if ! [ "${secs:-0}" -gt 0 ] 2>/dev/null; then echo "$STOP_BUDGET_FLOOR_SECS"; return 0; fi
+
+  budget=$((secs + STOP_BUDGET_MARGIN_SECS))
+  if [ "$budget" -lt "$STOP_BUDGET_FLOOR_SECS" ]; then budget="$STOP_BUDGET_FLOOR_SECS"; fi
+  if [ "$budget" -gt "$STOP_BUDGET_CEILING_SECS" ]; then budget="$STOP_BUDGET_CEILING_SECS"; fi
+
+  echo "$budget"
+}
+
+unit_active_state() {
+  systemctl show -p ActiveState "$SERVICE_NAME" 2>/dev/null | sed 's/^ActiveState=//' || true
+}
+
+# 0 once the unit is fully stopped (inactive/failed); 1 if it is still stopping/running after the budget.
+wait_unit_stopped() {
+  local i state
+  for i in $(seq 1 "$STOP_BUDGET_SECS"); do
+    state=$(unit_active_state)
+    case "$state" in
+      inactive|failed|"") return 0 ;;
+    esac
+    sleep 1
+  done
+
+  return 1
+}
+
+# Stop the unit and wait until systemd reports it stopped (a drain in progress is waited out).
+stop_unit_and_wait() {
+  timeout "$STOP_BUDGET_SECS" sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  wait_unit_stopped
+}
+
+# Rollback must not move directories under a live agent: bail out critically instead.
+stop_unit_or_fail_rollback() {
+  if stop_unit_and_wait; then return 0; fi
+
+  echo "::error:: CRITICAL: $SERVICE_NAME still not stopped after ${STOP_BUDGET_SECS}s (state: $(unit_active_state)); refusing to touch install directories under a live agent."
+  emit_event B rollback-fail "Unit still stopping after ${STOP_BUDGET_SECS}s; install directories left untouched"
+  write_status "ROLLBACK_CRITICAL_FAILED" "Service still stopping after ${STOP_BUDGET_SECS}s; install directories not modified, previous version intact"
+  exit 9
+}
+
+STOP_BUDGET_SECS=$(compute_stop_budget_secs)
+# restart = stop (drain) + start; start keeps a 60s allowance on top.
+RESTART_TIMEOUT_SECS=$((STOP_BUDGET_SECS + 60))
+echo "[upgrade] Unit stop budget ${STOP_BUDGET_SECS}s, restart timeout ${RESTART_TIMEOUT_SECS}s"
+
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
 emit_event B restart-start "Running systemctl restart $SERVICE_NAME"
 HEALTH_OK=0
 START_OK=1
-timeout 90 sudo systemctl restart "$SERVICE_NAME" || {
-  echo "::error:: systemctl restart exceeded 90s or returned non-zero — taking rollback path."
-  emit_event B restart-fail "systemctl restart failed or timed out (90s)"
+timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" || {
+  echo "::error:: systemctl restart exceeded ${RESTART_TIMEOUT_SECS}s or returned non-zero — taking rollback path."
+  emit_event B restart-fail "systemctl restart failed or timed out (${RESTART_TIMEOUT_SECS}s)"
   START_OK=0
 }
 
@@ -844,7 +933,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
   emit_event B rollback-start "Versioned rollback: repointing current to previous version"
   write_status "ROLLING_BACK" "Health check failed after restart — repointing current to previous version"
 
-  timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  stop_unit_or_fail_rollback
 
   sudo ln -sfn "$OLD_VER_TARGET" "$INSTALL_DIR/current.tmp"
   if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
@@ -884,7 +973,7 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
   emit_event B rollback-start "Tarball method: restoring previous version from .bak directory"
   write_status "ROLLING_BACK" "Health check failed after restart — restoring previous version from $BAK_DIR"
 
-  timeout 30 sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+  stop_unit_or_fail_rollback
   sudo rm -rf "$INSTALL_DIR"
   sudo mv "$BAK_DIR" "$INSTALL_DIR"
   timeout 30 sudo systemctl start "$SERVICE_NAME"
@@ -929,13 +1018,15 @@ if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" 
   emit_event B rollback-start "Auto-rollback via snapshot .deb at $SQUID_UPGRADE_ROLLBACK_SNAPSHOT"
   write_status "ROLLING_BACK" "Health check failed; restoring previous version via dpkg -i snapshot"
 
+  stop_unit_or_fail_rollback
+
   ROLLBACK_INSTALL_OK=0
   if sudo dpkg -i --force-downgrade "$SQUID_UPGRADE_ROLLBACK_SNAPSHOT" >/dev/null 2>&1; then
     ROLLBACK_INSTALL_OK=1
   fi
 
   if [ "$ROLLBACK_INSTALL_OK" = "1" ]; then
-    timeout 30 sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+    timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
 
     ROLLBACK_OK=0
     for i in $(seq 1 30); do
@@ -986,8 +1077,10 @@ if [ "$INSTALL_METHOD" = "yum" ] && [ -n "${OLD_VERSION_RPM:-}" ] && [ "$OLD_VER
     emit_event B rollback-start "Auto-rollback via $YUM_BIN_FOR_ROLLBACK downgrade to ${OLD_VERSION_RPM}"
     write_status "ROLLING_BACK" "Health check failed; restoring previous version via $YUM_BIN_FOR_ROLLBACK downgrade"
 
+    stop_unit_or_fail_rollback
+
     if sudo "$YUM_BIN_FOR_ROLLBACK" downgrade -y "squid-tentacle-${OLD_VERSION_RPM}" >/dev/null 2>&1; then
-      timeout 30 sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+      timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
 
       ROLLBACK_OK=0
       for i in $(seq 1 30); do
