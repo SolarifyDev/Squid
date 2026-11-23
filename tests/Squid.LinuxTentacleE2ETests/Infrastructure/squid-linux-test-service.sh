@@ -119,15 +119,20 @@ read_version() {
 }
 
 cleanup() {
+    # The healthz responder goes down FIRST: a lingering child answering 200 on the shared port during
+    # (or after a timed-out wait for) the simulated drain below would make the NEXT service's failing
+    # healthz look healthy.
+    if [ -n "$HEALTHZ_PID" ] && kill -0 "$HEALTHZ_PID" 2>/dev/null; then
+        kill "$HEALTHZ_PID" 2>/dev/null || true
+    fi
+
     # Opt-in simulated drain (a real agent waits for running deployment scripts on SIGTERM).
     # The marker stays present while draining, like the real agent's still-live process.
     if [ "${SQUID_TEST_SERVICE_DRAIN_SECONDS:-0}" -gt 0 ] 2>/dev/null; then
         sleep "$SQUID_TEST_SERVICE_DRAIN_SECONDS"
     fi
+
     rm -f "$MARKER_FILE" 2>/dev/null || true
-    if [ -n "$HEALTHZ_PID" ] && kill -0 "$HEALTHZ_PID" 2>/dev/null; then
-        kill "$HEALTHZ_PID" 2>/dev/null || true
-    fi
     exit 0
 }
 

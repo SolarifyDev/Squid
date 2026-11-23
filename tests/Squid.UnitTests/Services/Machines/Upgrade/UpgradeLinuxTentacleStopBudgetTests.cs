@@ -111,6 +111,26 @@ public sealed class UpgradeLinuxTentacleStopBudgetTests : IDisposable
         RenderedScript.ShouldContain("\n    stop_unit_or_fail_rollback\n\n    if sudo \"$YUM_BIN_FOR_ROLLBACK\" downgrade", customMessage: "yum: wait before dnf replaces files");
     }
 
+    [Fact]
+    public void TestService_StopsItsHealthzResponder_BeforeTheSimulatedDrain()
+    {
+        // The E2E harness waits only 30s for `systemctl stop`; a responder that survived the drain kept
+        // answering 200 on the shared port and made the next test's failing healthz look healthy.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, ".git")) && !Directory.Exists(Path.Combine(dir.FullName, ".git"))) dir = dir.Parent;
+
+        dir.ShouldNotBeNull();
+
+        var script = File.ReadAllText(Path.Combine(dir.FullName, "tests", "Squid.LinuxTentacleE2ETests", "Infrastructure", "squid-linux-test-service.sh"));
+        var cleanup = script.Substring(script.IndexOf("cleanup() {", StringComparison.Ordinal));
+        var kill = cleanup.IndexOf("kill \"$HEALTHZ_PID\"", StringComparison.Ordinal);
+        var drain = cleanup.IndexOf("sleep \"$SQUID_TEST_SERVICE_DRAIN_SECONDS\"", StringComparison.Ordinal);
+
+        kill.ShouldBeGreaterThan(-1);
+        drain.ShouldBeGreaterThan(kill);
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         var count = 0;
