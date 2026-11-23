@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Autofac;
+using Microsoft.Extensions.Configuration;
 using Halibut;
 using Halibut.Diagnostics;
 using Halibut.Queue.QueuedDataStreams;
@@ -16,6 +17,7 @@ using Shouldly;
 using Squid.Core.Halibut.DataStreamStorage;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence;
+using Squid.Core.Settings.Caching;
 using Squid.Core.Settings.Halibut;
 using Squid.IntegrationTests.Base;
 using Squid.Message.Contracts.Tentacle;
@@ -28,12 +30,11 @@ namespace Squid.E2ETests.HalibutStorage;
 /// connection, the agent), Halibut's real <see cref="RedisPendingRequestQueueFactory"/> over a real Redis, the real <see cref="DistributedDataStreamStore"/> of each
 /// pod over a real Postgres, and Squid's real <c>IScriptService</c> contract carrying real <see cref="ScriptFile"/> DataStreams. The agent is an in-process runtime
 /// with a recording script service, not the Tentacle binary. The production wiring of the queue comes later; this proves the store works inside the real queue.
-/// Needs Redis at 127.0.0.1:6379; without it the test returns early (and says so) like the OS-guarded Tentacle E2Es.
+/// Redis is the <c>RedisCacheConnectionString</c> of the E2E appsettings (the redis service container of the PR workflow, or a local one); an unreachable Redis FAILS the test.
 /// </summary>
-[Trait("Category", "HalibutRedisQueueE2E")]
+[Trait("Category", "E2E")]
 public class HalibutRedisQueueDataStreamE2ETests : TestBase
 {
-    private const string RedisEndpoint = "127.0.0.1:6379";
     private const string Marker = "E2E-PLAINTEXT-MARKER-secret-value-77c1";
 
     public HalibutRedisQueueDataStreamE2ETests() : base("HalibutRedisQueueDataStreamE2E", "squid_e2e_halibut_redis_queue_data_stream")
@@ -43,13 +44,9 @@ public class HalibutRedisQueueDataStreamE2ETests : TestBase
     [Fact]
     public async Task ScriptFiles_StoredByThePodThatTookTheRequest_ReachTheAgent_ThroughThePodHoldingItsConnection()
     {
-        if (!RedisAvailable())
-        {
-            Console.WriteLine($"SKIPPED: no Redis at {RedisEndpoint}; the real Redis queue cannot be exercised.");
-            return;
-        }
+        var redis = RequireRedis();
 
-        using var ctx = new PodsContext(CurrentScope);
+        using var ctx = new PodsContext(CurrentScope, redis);
         var package = new Generated(20 * 1024 * 1024 + 3, 11);
         var variables = Encoding.UTF8.GetBytes($"{{\"Squid.Account.Password\":\"{Marker}\"}}");
         var sensitive = RandomNumberGenerator.GetBytes(4096);
@@ -91,19 +88,31 @@ public class HalibutRedisQueueDataStreamE2ETests : TestBase
         return (long)await command.ExecuteScalarAsync();
     }
 
-    private static bool RedisAvailable()
+    private string RequireRedis()
     {
+        var connectionString = new RedisCacheConnectionStringSetting(CurrentScope.Resolve<IConfiguration>()).Value;
+        var (host, port) = HostAndPort(StackExchange.Redis.ConfigurationOptions.Parse(connectionString).EndPoints[0]);
+
         try
         {
             using var client = new TcpClient();
 
-            return client.ConnectAsync("127.0.0.1", 6379).Wait(TimeSpan.FromSeconds(2)) && client.Connected;
+            if (client.ConnectAsync(host, port).Wait(TimeSpan.FromSeconds(5)) && client.Connected) return connectionString;
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            return false;
         }
+
+        throw new InvalidOperationException($"Redis is not reachable at {host}:{port} (RedisCacheConnectionString in tests/Squid.E2ETests/appsettings.json). This test runs Halibut's real Redis queue and cannot run without it. Start one locally with: docker run -d --name squid-redis -p 6379:6379 redis:7");
     }
+
+    private static (string Host, int Port) HostAndPort(System.Net.EndPoint endpoint)
+        => endpoint switch
+        {
+            System.Net.DnsEndPoint dns => (dns.Host, dns.Port),
+            System.Net.IPEndPoint ip => (ip.Address.ToString(), ip.Port),
+            _ => throw new InvalidOperationException($"Unsupported Redis endpoint {endpoint}")
+        };
 
     // ── Test context ────────────────────────────────────────────────────────
 
@@ -113,14 +122,17 @@ public class HalibutRedisQueueDataStreamE2ETests : TestBase
         private readonly HalibutRuntime _takingPod;
         private readonly HalibutRuntime _holdingPod;
         private readonly HalibutRuntime _agent;
+        private readonly string _redisConnectionString;
 
         public CountingStore TakingPodStore { get; }
         public CountingStore HoldingPodStore { get; }
         public RecordingScriptService Agent { get; } = new();
         public IAsyncScriptService Client { get; }
 
-        public PodsContext(ILifetimeScope scope)
+        public PodsContext(ILifetimeScope scope, string redisConnectionString)
         {
+            _redisConnectionString = redisConnectionString;
+
             // Each pod is its own store instance over the shared database, as two replicas would be.
             TakingPodStore = new CountingStore(NewStore(scope));
             HoldingPodStore = new CountingStore(NewStore(scope));
@@ -154,7 +166,7 @@ public class HalibutRedisQueueDataStreamE2ETests : TestBase
         private HalibutRuntime BuildPod(X509Certificate2 cert, IStoreDataStreamsForDistributedQueues store, string prefix, HalibutTimeoutsAndLimits limits)
         {
             var logFactory = new LogFactory();
-            var redis = new RedisFacade(RedisEndpoint, prefix, logFactory.ForPrefix("redis"));
+            var redis = new RedisFacade(_redisConnectionString, prefix, logFactory.ForPrefix("redis"));
             var watch = new WatchForRedisLosingAllItsData(redis, logFactory.ForPrefix("watch"));
 
             _disposables.Add(redis);

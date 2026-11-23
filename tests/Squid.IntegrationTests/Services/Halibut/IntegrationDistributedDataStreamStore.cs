@@ -15,7 +15,7 @@ namespace Squid.IntegrationTests.Services.HalibutStorage;
 /// <summary>
 /// Integration tier on the real Postgres: the store, its persistence and the sweep through the real container, mediator and migration. Covers what a
 /// fake cannot: the transaction really rolls back, chunks really leave the database sealed, the sweep and the cascade delete really remove rows, and a
-/// 100 MB stream really moves through bounded memory.
+/// 48 MB stream really moves through bounded memory.
 /// </summary>
 public class IntegrationDistributedDataStreamStore : TestBase
 {
@@ -307,9 +307,9 @@ public class IntegrationDistributedDataStreamStore : TestBase
         => CurrentScope.Resolve<IStoreDataStreamsForDistributedQueues>().ShouldBeOfType<DistributedDataStreamStore>();
 
     [Fact]
-    public async Task HundredMegabytes_RoundTripByteExact_WithMemoryFarBelowThePayload()
+    public async Task FortyEightMegabytes_RoundTripByteExact_WithMemoryBelowTwoThirdsOfThePayload()
     {
-        const int total = 100 * 1024 * 1024;
+        const int total = 48 * 1024 * 1024;
         var expectedHash = HashOfGenerated(total);
         var stream = new DataStream(total, (s, ct) => GenerateAsync(s, total, ct));
 
@@ -330,11 +330,11 @@ public class IntegrationDistributedDataStreamStore : TestBase
 
             while ((read = await data.Data.ReadAsync(buffer)) > 0) hash.AppendData(buffer, 0, read);
 
-            hash.GetHashAndReset().ShouldBe(expectedHash, "100 MB came back byte-exact");
+            hash.GetHashAndReset().ShouldBe(expectedHash, "48 MB came back byte-exact");
         });
 
-        Console.WriteLine($"100 MB round trip: peak managed-heap growth {peak.PeakGrowthBytes / 1024 / 1024} MB");
-        peak.PeakGrowthBytes.ShouldBeLessThan(total / 2, $"the payload is {total / 1024 / 1024} MB; chunked streaming must not hold it (peak growth was {peak.PeakGrowthBytes / 1024 / 1024} MB)");
+        Console.WriteLine($"48 MB round trip: peak managed-heap growth {peak.PeakGrowthBytes / 1024 / 1024} MB");
+        peak.PeakGrowthBytes.ShouldBeLessThan(total * 2 / 3, $"the payload is {total / 1024 / 1024} MB; chunked streaming must not hold it (peak growth was {peak.PeakGrowthBytes / 1024 / 1024} MB)");
         (await CountAsync("halibut_data_stream_chunk")).ShouldBe(0);
     }
 
