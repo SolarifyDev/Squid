@@ -37,8 +37,9 @@ public class LocalScriptServiceV2StateCorrectnessTests : IDisposable
         var waiter = NewCommand("echo never", ScriptIsolationLevel.FullIsolation, TimeSpan.FromSeconds(6));
         service.StartScript(holder);
 
+        var baseline = service.CancellationRegistryCountForTests;
         var blockedStart = Task.Run(() => service.StartScript(waiter));
-        Thread.Sleep(600);
+        WaitUntilWaiterIsBlockedOnMutex(service, baseline);
         var status = service.GetStatus(new ScriptStatusRequestV2(waiter.ScriptTicket, 0));
 
         status.State.ShouldBe(ScriptStateV2.Pending, "a Start that is still waiting for the mutex has no state file yet; UnknownTicket makes the server re-dispatch the script");
@@ -46,6 +47,36 @@ public class LocalScriptServiceV2StateCorrectnessTests : IDisposable
         service.CancelScript(new CancelScriptCommandV2(waiter.ScriptTicket, 0));
         service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0));
         Should.Throw<AggregateException>(() => blockedStart.Wait(TimeSpan.FromSeconds(20)), "the cancelled waiter's Start unwinds with a cancellation");
+    }
+
+    [Fact]
+    public void GetStatus_StartLeavesInFlightBetweenTheStateLookupAndTheFlagRead_ReportsPending_NotUnknownTicket()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var hook = new FirstExistsHookFactory();
+        var service = NewService(hook);
+        var holder = NewCommand("sleep 30", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(1));
+        var waiter = NewCommand("echo never", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(1));
+        service.StartScript(holder);
+
+        var baseline = service.CancellationRegistryCountForTests;
+        var blockedStart = Task.Run(() => service.StartScript(waiter));
+        WaitUntilWaiterIsBlockedOnMutex(service, baseline);
+
+        // Forces the interleaving: while GetStatus is inside its state lookup, the Start finishes and leaves _startsInFlight.
+        hook.Arm(() =>
+        {
+            service.CancelScript(new CancelScriptCommandV2(waiter.ScriptTicket, 0));
+            Should.Throw<AggregateException>(() => blockedStart.Wait(WaitLimit), "the cancelled waiter's Start unwinds and leaves the in-flight set");
+        });
+
+        var status = service.GetStatus(new ScriptStatusRequestV2(waiter.ScriptTicket, 0));
+
+        hook.Fired.ShouldBeTrue("the interleaving hook must run inside GetStatus's state lookup");
+        status.State.ShouldBe(ScriptStateV2.Pending, "the in-flight flag must be read before the state lookup; reading it after lets a finishing Start look unknown and the server re-dispatches the script");
+
+        service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0));
     }
 
     [Fact]
@@ -109,9 +140,9 @@ public class LocalScriptServiceV2StateCorrectnessTests : IDisposable
         second.FinalStatus!.ExitCode.ShouldBe(4);
     }
 
-    private LocalScriptService NewService()
+    private LocalScriptService NewService(IScriptStateStoreFactory? factory = null)
     {
-        var service = new LocalScriptService(new ScriptStateStoreFactory(), null, new ScriptTombstoneStore(_tombstoneDir));
+        var service = new LocalScriptService(factory ?? new ScriptStateStoreFactory(), null, new ScriptTombstoneStore(_tombstoneDir));
         _services.Add(service);
         return service;
     }
@@ -151,6 +182,62 @@ public class LocalScriptServiceV2StateCorrectnessTests : IDisposable
         WaitUntil(() => (status = service.GetStatus(new ScriptStatusRequestV2(ticket, 0))).State == ScriptStateV2.Completed);
 
         return status!;
+    }
+
+    // StartScript registers the per-ticket cancellation token immediately before it blocks on the isolation mutex (no state file is written before that).
+    private static void WaitUntilWaiterIsBlockedOnMutex(LocalScriptService service, int registryCountBeforeWaiter)
+    {
+        var sw = Stopwatch.StartNew();
+
+        while (service.CancellationRegistryCountForTests <= registryCountBeforeWaiter)
+        {
+            if (sw.Elapsed > WaitLimit)
+                throw new TimeoutException($"the waiting Start never reached the isolation mutex within {WaitLimit.TotalSeconds}s (cancellation registry count stayed at {registryCountBeforeWaiter}); check that StartScript still registers the soft-cancel token before TryAcquireBlocking");
+
+            Thread.Sleep(5);
+        }
+    }
+
+    // Runs a callback inside the first Exists() call after Arm, then reports "no state file" - used to force a Start/GetStatus interleaving.
+    private sealed class FirstExistsHookFactory : IScriptStateStoreFactory
+    {
+        private readonly ScriptStateStoreFactory _inner = new();
+        private Action? _armed;
+
+        public bool Fired { get; private set; }
+
+        public void Arm(Action onFirstExists) => _armed = onFirstExists;
+
+        public IScriptStateStore Create(string workspace) => new HookedStore(_inner.Create(workspace), this);
+
+        private void OnExists()
+        {
+            var hook = Interlocked.Exchange(ref _armed, null);
+
+            if (hook == null) return;
+
+            hook();
+            Fired = true;
+        }
+
+        private sealed class HookedStore(IScriptStateStore inner, FirstExistsHookFactory owner) : IScriptStateStore
+        {
+            public string WorkspacePath => inner.WorkspacePath;
+
+            public bool Exists()
+            {
+                var armedBefore = owner._armed != null;
+                owner.OnExists();
+
+                return !armedBefore && inner.Exists();
+            }
+
+            public ScriptState Load() => inner.Load();
+
+            public void Save(ScriptState state) => inner.Save(state);
+
+            public void Delete() => inner.Delete();
+        }
     }
 
     private static void WaitUntil(Func<bool> condition)

@@ -5,12 +5,14 @@ using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Kubernetes;
 using Squid.Tentacle.ScriptExecution;
 using Squid.Tentacle.ScriptExecution.State;
+using Squid.Tentacle.Tests.Health;
 using Squid.Tentacle.Tests.Support;
 using Xunit;
 
 namespace Squid.Tentacle.Tests.ScriptExecution;
 
 [Trait("Category", TentacleTestCategories.Kubernetes)]
+[Collection(TentacleMetricsCollection.Name)]
 public sealed class ScriptPodServiceCrashSafetyTests : IDisposable
 {
     private readonly string _tempWorkspace = Path.Combine(Path.GetTempPath(), $"squid-pod-crash-test-{Guid.NewGuid():N}");

@@ -806,6 +806,38 @@ stop_unit_or_fail_rollback() {
   exit 9
 }
 
+# Rollback acceptance: a unit counts as started only once it has stayed `active` on the SAME process for
+# ROLLBACK_SETTLE_SECS. A single is-active poll is not enough: a broken previous version under Type=simple
+# is briefly `active` before it exits (and Restart=on-failure brings it back with a new MainPID), which
+# reported a dead agent as ROLLED_BACK.
+ROLLBACK_START_BUDGET_SECS=30
+ROLLBACK_SETTLE_SECS=5
+
+unit_main_pid() {
+  systemctl show -p MainPID "$SERVICE_NAME" 2>/dev/null | sed 's/^MainPID=//' || true
+}
+
+wait_unit_stably_active() {
+  local i state pid stable_pid="" stable_for=0
+  for i in $(seq 1 $((ROLLBACK_START_BUDGET_SECS + ROLLBACK_SETTLE_SECS))); do
+    state=$(unit_active_state)
+    pid=$(unit_main_pid)
+
+    if [ "$state" != "active" ] || [ "${pid:-0}" = "0" ]; then
+      stable_pid=""; stable_for=0
+    elif [ "$pid" = "$stable_pid" ]; then
+      stable_for=$((stable_for + 1))
+      if [ "$stable_for" -ge "$ROLLBACK_SETTLE_SECS" ]; then return 0; fi
+    else
+      stable_pid="$pid"; stable_for=0
+    fi
+
+    sleep 1
+  done
+
+  return 1
+}
+
 STOP_BUDGET_SECS=$(compute_stop_budget_secs)
 # restart = stop (drain) + start; start keeps a 60s allowance on top.
 RESTART_TIMEOUT_SECS=$((STOP_BUDGET_SECS + 60))
@@ -947,13 +979,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
   timeout 30 sudo systemctl start "$SERVICE_NAME"
 
   ROLLBACK_OK=0
-  for i in $(seq 1 30); do
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-      ROLLBACK_OK=1
-      break
-    fi
-    sleep 1
-  done
+  if wait_unit_stably_active; then ROLLBACK_OK=1; fi
 
   if [ "$ROLLBACK_OK" = "1" ]; then
     echo "Rollback succeeded; agent is healthy on the previous version."
@@ -979,13 +1005,7 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
   timeout 30 sudo systemctl start "$SERVICE_NAME"
 
   ROLLBACK_OK=0
-  for i in $(seq 1 30); do
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-      ROLLBACK_OK=1
-      break
-    fi
-    sleep 1
-  done
+  if wait_unit_stably_active; then ROLLBACK_OK=1; fi
 
   if [ "$ROLLBACK_OK" = "1" ]; then
     echo "Rollback to previous version succeeded; agent is healthy on the old binary."
