@@ -1659,6 +1659,8 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
             return;
         }
 
+        ReleaseIsolationAfterExit(running);
+
         lock (running.TerminalGate)
         {
             if (running.Finalized || running.CancelRequested) return;
@@ -1666,6 +1668,14 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
             PersistCompleteState(running, running.Process.ExitCode);
         }
     }
+
+    /// <summary>
+    /// Isolation protects the RUNNING process, not the bookkeeping that follows. Holding the lock until the server's
+    /// CompleteScript arrives would wedge every later script on the same mutex whenever that call is lost for good
+    /// (the server proceeds on the exit code it already saw via GetStatus). The handle is idempotent, so the later
+    /// Complete/Cancel release is a no-op.
+    /// </summary>
+    private static void ReleaseIsolationAfterExit(RunningScript running) => running.IsolationHandle?.Dispose();
 
     private static void MarkCancelRequested(RunningScript running)
     {
