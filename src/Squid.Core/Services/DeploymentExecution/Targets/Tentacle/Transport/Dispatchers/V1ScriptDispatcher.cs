@@ -1,4 +1,5 @@
 using Halibut;
+using Squid.Core.Services.DeploymentExecution.Infrastructure;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
@@ -12,7 +13,9 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle.Dispatchers;
 /// arguments live ONLY here, and several of them share a type (<c>string</c> mutex name vs correlation
 /// task id, <c>TimeSpan</c> timeout vs wait duration), so their order is pinned by
 /// <c>HalibutDispatchBehaviourPinningTests</c> — and recognises an unknown ticket by the Tentacle's
-/// <c>Complete + UnknownResult (-1)</c> answer.
+/// <c>Complete + UnknownResult (-1)</c> answer. The V1-typed members (<see cref="CreateClient"/>,
+/// <see cref="PrepareStart"/>, <see cref="IsUnknownTicket"/>) are what <see cref="V1ScriptSession"/> is
+/// built from; the <see cref="IScriptDispatcher"/> surface only adds the neutral session around them.
 /// </summary>
 public sealed class V1ScriptDispatcher : IScriptDispatcher
 {
@@ -21,6 +24,20 @@ public sealed class V1ScriptDispatcher : IScriptDispatcher
     public V1ScriptDispatcher(IHalibutClientFactory halibutClientFactory)
     {
         _halibutClientFactory = halibutClientFactory;
+    }
+
+    public ScriptProtocolVersion Version => ScriptProtocolVersion.V1;
+
+    public IScriptAgentSession Open(ServiceEndPoint endpoint, ScriptSessionContext context)
+    {
+        var raw = CreateClient(endpoint);
+
+        // GetStatus / Cancel / Complete survive a brief dropped connection inside a time budget; every
+        // exhausted budget rethrows the original exception, so the pause path is unchanged and the
+        // breaker still sees ONE failure per dispatch (retries never touch it). StartScript stays unretried.
+        var retrying = new RetryingScriptClient(raw, context.Retry, context.ScriptTimeout, context.Ct);
+
+        return new V1ScriptSession(this, raw, retrying, context);
     }
 
     public IAsyncScriptService CreateClient(ServiceEndPoint endpoint) => _halibutClientFactory.CreateClient(endpoint);
