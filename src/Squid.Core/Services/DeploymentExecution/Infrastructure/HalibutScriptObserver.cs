@@ -134,6 +134,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
         // endpoint are both available — null-safe for tests and pre-wiring callers.
         using var livenessCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var livenessTask = StartLivenessProbeLoop(machine, endpoint, livenessCts);
+        using var stopRetryingCts = BindStopRetryingOnLivenessFault(scriptClient, livenessTask);
 
         while (statusResponse.State != ProcessState.Complete)
         {
@@ -171,8 +172,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 // rather than waiting the full scriptTimeout.
                 if (livenessTask.IsFaulted)
                 {
-                    var unreachable = livenessTask.Exception?.Flatten().InnerExceptions
-                        .OfType<AgentUnreachableException>().FirstOrDefault();
+                    var unreachable = FindUnreachable(livenessTask);
                     if (unreachable != null)
                     {
                         Log.Warning("[Deploy] Agent {MachineName} unreachable after {Failures} consecutive probe failures — aborting wait",
@@ -188,8 +188,7 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
                 throw;
             }
 
-            statusResponse = await scriptClient.GetStatusAsync(
-                new ScriptStatusRequest(ticket, statusResponse.NextLogSequence)).ConfigureAwait(false);
+            statusResponse = await GetStatusOrInterruptAsync(machine, scriptClient, ticket, statusResponse.NextLogSequence, shouldCancelRemoteScript, livenessTask, ct).ConfigureAwait(false);
 
             allLogs.AddRange(statusResponse.Logs);
             await TruncateAndStreamMarkerAsync().ConfigureAwait(false);
@@ -253,6 +252,54 @@ public sealed class HalibutScriptObserver : IHalibutScriptObserver
             ExitCode = completeResponse.ExitCode,
             OutputStreamed = streamed && !streamFailed
         };
+    }
+
+    private static AgentUnreachableException FindUnreachable(Task livenessTask)
+        => livenessTask.Exception?.Flatten().InnerExceptions.OfType<AgentUnreachableException>().FirstOrDefault();
+
+    /// <summary>
+    /// A retrying client keeps re-asking a dead agent for up to its budget; once the liveness probe has
+    /// declared the agent unreachable that is pointless, so the retries are told to stop. Returns the
+    /// registration to dispose; null for a plain client (no retries, nothing to stop).
+    /// </summary>
+    private static CancellationTokenSource BindStopRetryingOnLivenessFault(IAsyncScriptService scriptClient, Task livenessTask)
+    {
+        if (scriptClient is not IStopRetryingAware aware) return null;
+
+        var stopRetryingCts = new CancellationTokenSource();
+        aware.BindStopRetrying(stopRetryingCts.Token);
+        _ = livenessTask.ContinueWith(_ => { try { stopRetryingCts.Cancel(); } catch (ObjectDisposedException) { } }, TaskContinuationOptions.OnlyOnFaulted);
+
+        return stopRetryingCts;
+    }
+
+    /// <summary>
+    /// GetStatus with the interruption handling the polling loop applies elsewhere: a cancellation that
+    /// fires while a (retrying) call is backing off cancels-or-leaves the remote script exactly like a
+    /// cancellation during the poll delay; a transient failure that coincides with the liveness probe
+    /// giving up surfaces as <see cref="AgentUnreachableException"/> — the same pause signal the loop
+    /// raises — but only for a retrying client, so plain clients keep surfacing their own exception.
+    /// </summary>
+    private static async Task<ScriptStatusResponse> GetStatusOrInterruptAsync(Machine machine, IAsyncScriptService scriptClient, ScriptTicket ticket, long nextLogSequence, RemoteScriptCancelDecision shouldCancelRemoteScript, Task livenessTask, CancellationToken ct)
+    {
+        try
+        {
+            return await scriptClient.GetStatusAsync(new ScriptStatusRequest(ticket, nextLogSequence)).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            await CancelUnlessPausingAsync(scriptClient, ticket, nextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: true).ConfigureAwait(false);
+            throw;
+        }
+        catch (Exception) when (scriptClient is IStopRetryingAware && livenessTask.IsFaulted && FindUnreachable(livenessTask) != null)
+        {
+            var unreachable = FindUnreachable(livenessTask);
+
+            Log.Warning("[Deploy] Agent {MachineName} unreachable after {Failures} consecutive probe failures — aborting wait", machine.Name, unreachable.ConsecutiveFailures);
+            await CancelUnlessPausingAsync(scriptClient, ticket, nextLogSequence, shouldCancelRemoteScript, interruptionIsFinal: false).ConfigureAwait(false);
+
+            throw unreachable;
+        }
     }
 
     private Task StartLivenessProbeLoop(Machine machine, ServiceEndPoint? endpoint, CancellationTokenSource linkedCts)
