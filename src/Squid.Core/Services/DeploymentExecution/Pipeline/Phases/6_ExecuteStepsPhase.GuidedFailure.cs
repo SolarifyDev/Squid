@@ -77,9 +77,7 @@ public sealed partial class ExecuteStepsPhase
         // On resume, the failing batch replays so the resolved interruption can be applied.
         await PersistCheckpointAsync(_currentBatchIndex - 1, ct).ConfigureAwait(false);
 
-        await serverTaskService.TransitionStateAsync(_ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
-
-        throw new DeploymentSuspendedException(_ctx.ServerTaskId);
+        throw await DeploymentSuspension.PauseAsync(serverTaskService, _ctx.ServerTaskId, _ctx, ct).ConfigureAwait(false);
     }
 
     private static ActionDirective ApplyExcludeAndSkip(DeploymentTargetContext tc)

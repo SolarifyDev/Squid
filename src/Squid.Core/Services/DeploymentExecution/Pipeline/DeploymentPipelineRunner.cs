@@ -65,12 +65,14 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         var registryCts = registry.Register(serverTaskId);
         using var timeoutCts = new CancellationTokenSource(DeploymentTimeout);
+        using var leaseLostCts = new CancellationTokenSource();
 
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(registryCts.Token, ct, timeoutCts.Token, leaseLostCts.Token);
 
-        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(registryCts, timeoutCts, ct);
+        ctx.ShouldCancelRemoteScript = BuildRemoteScriptCancelDecision(ctx, registryCts, timeoutCts, leaseLostCts, ct);
 
         IAsyncDisposable cancelWatch = null;
+        IDisposable leaseLostLink = null;
 
         try
         {
@@ -99,6 +101,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 PromoteOnceClaimed(ctx, registryCts);
 
                 cancelWatch ??= StartCancelWatchOnceClaimed(ctx);
+
+                leaseLostLink ??= StopWhenLeaseLost(ctx, leaseLostCts);
             }
 
             if (IsLeaseLost(ctx)) return;
@@ -145,6 +149,13 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 ctx,
                 () => completion.OnPausedAsync(ctx, CancellationToken.None),
                 new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }));
+        }
+        catch (OperationCanceledException) when (HasLostLease(ctx))
+        {
+            // The lease was taken from this run (the reaper recovered the task, another run took it over, or this run could not renew for so long that it
+            // must assume so): the lease-lost signal stopped the pipeline. The task belongs to someone else now, so nothing is written — not the state, the
+            // checkpoint or a completion record — and the agent scripts are left running for whoever resumes it (see BuildRemoteScriptCancelDecision).
+            Log.Warning("[Deploy] Task {TaskId} was stopped because this run lost its lease; leaving the task and its agent scripts to the new owner", serverTaskId);
         }
         catch (OperationCanceledException) when (IsHostShutdown(registryCts, ct))
         {
@@ -233,6 +244,8 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         finally
         {
+            leaseLostLink?.Dispose();
+
             if (cancelWatch != null) await cancelWatch.DisposeAsync().ConfigureAwait(false);
 
             registry.Unregister(serverTaskId, registryCts);
@@ -284,19 +297,30 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         return cancelWatcher.Start(ctx.ServerTaskId, () => registry.TryCancel(ctx.ServerTaskId));
     }
 
+    // The run only watches for losing the lease once it holds one (after the claim); a lease that was already lost by then stops the run at once.
+    private static IDisposable StopWhenLeaseLost(DeploymentTaskContext ctx, CancellationTokenSource leaseLostCts)
+    {
+        if (ctx.Lease == null) return null;
+
+        return ctx.Lease.LostToken.Register(leaseLostCts.Cancel);
+    }
+
+    private static bool HasLostLease(DeploymentTaskContext ctx) => ctx.Lease is { IsLost: true };
+
     /// <summary>
     /// Whether an in-flight remote script must be cancelled on the agent when the run is interrupted:
     /// on every interruption EXCEPT a recognised pause, so any cancellation source not listed here
     /// (e.g. a required step's fail-fast peer cancellation, whose task then Fails) keeps the legacy
     /// cancel behaviour instead of silently orphaning the script. A pause — the task keeps its in-flight
     /// pointer for resume — is: not user-cancelled AND (a resumable deployment timeout fired OR the
-    /// external job token (host shutdown) fired). Reads the source flags (set before any linked token's
+    /// external job token (host shutdown) fired OR a step suspended the task for an interruption), or a
+    /// lost lease (whoever owns the task now decides what happens to its scripts, even if the user also cancelled). Reads the source flags (set before any linked token's
     /// callbacks run), never a linked token, so the observer cannot see its own cancellation before the
     /// decision flips; <paramref name="externalCt"/> is a source token, not linked, so it is race-free too.
     /// </summary>
-    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(CancellationTokenSource registryCts, CancellationTokenSource timeoutCts, CancellationToken externalCt)
+    private RemoteScriptCancelDecision BuildRemoteScriptCancelDecision(DeploymentTaskContext ctx, CancellationTokenSource registryCts, CancellationTokenSource timeoutCts, CancellationTokenSource leaseLostCts, CancellationToken externalCt)
     {
-        bool IsPausing() => !registryCts.IsCancellationRequested && ((TimeoutResumable && timeoutCts.IsCancellationRequested) || externalCt.IsCancellationRequested);
+        bool IsPausing() => leaseLostCts.IsCancellationRequested || (!registryCts.IsCancellationRequested && ((TimeoutResumable && timeoutCts.IsCancellationRequested) || externalCt.IsCancellationRequested || ctx.Suspended != null));
 
         return () => !IsPausing();
     }

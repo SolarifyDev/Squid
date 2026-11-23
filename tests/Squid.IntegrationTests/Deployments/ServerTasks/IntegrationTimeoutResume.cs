@@ -25,7 +25,8 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
     [Fact]
     public async Task OnTimedOut_PausesTask_AndPreservesCheckpoint()
     {
-        var taskId = await SeedExecutingTaskAsync();
+        var runOwner = Squid.Core.Services.Deployments.ServerTask.Lease.ServerTaskLeaseOwner.NewRun();
+        var taskId = await SeedExecutingTaskAsync(runOwner);
 
         await Run<IDeploymentCheckpointService>(async checkpointService =>
         {
@@ -40,7 +41,7 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
 
         await Run<IDeploymentCompletionHandler>(async handler =>
         {
-            var ctx = new DeploymentTaskContext { ServerTaskId = taskId };
+            var ctx = new DeploymentTaskContext { ServerTaskId = taskId, LeaseOwner = runOwner };
             await handler.OnTimedOutAsync(ctx, new DeploymentTimeoutException(taskId, TimeSpan.FromMinutes(60)), CancellationToken.None);
         });
 
@@ -67,7 +68,8 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
         // Pins the fail-fast escape hatch (SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE=false
         // routes timeouts here): the historical Failed + checkpoint-deleted
         // behaviour, intentionally unrecoverable.
-        var taskId = await SeedExecutingTaskAsync();
+        var runOwner = Squid.Core.Services.Deployments.ServerTask.Lease.ServerTaskLeaseOwner.NewRun();
+        var taskId = await SeedExecutingTaskAsync(runOwner);
 
         await Run<IDeploymentCheckpointService>(async checkpointService =>
         {
@@ -82,7 +84,7 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
 
         await Run<IDeploymentCompletionHandler>(async handler =>
         {
-            var ctx = new DeploymentTaskContext { ServerTaskId = taskId };
+            var ctx = new DeploymentTaskContext { ServerTaskId = taskId, LeaseOwner = runOwner };
             await handler.OnFailureAsync(ctx, new DeploymentTimeoutException(taskId, TimeSpan.FromMinutes(60)), CancellationToken.None);
         });
 
@@ -97,7 +99,8 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
         });
     }
 
-    private async Task<int> SeedExecutingTaskAsync()
+    // The run that is executing holds the lease: its completion writes apply only while the row carries its owner.
+    private async Task<int> SeedExecutingTaskAsync(string leaseOwner)
     {
         var taskId = 0;
 
@@ -123,7 +126,9 @@ public class IntegrationTimeoutResume : ServerTaskFixtureBase
                 HasWarningsOrErrors = false,
                 ServerNodeId = Guid.NewGuid(),
                 DurationSeconds = 0,
-                DataVersion = Guid.NewGuid().ToByteArray()
+                DataVersion = Guid.NewGuid().ToByteArray(),
+                LeaseOwner = leaseOwner,
+                LeaseRenewedAt = DateTimeOffset.UtcNow
             };
 
             await repository.InsertAsync(task);

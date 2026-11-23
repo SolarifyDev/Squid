@@ -188,9 +188,14 @@ public class DeploymentPipelineRunnerLeaseTests
 
         public bool LoseOnStart { get; set; }
 
-        public IServerTaskLease Start(int serverTaskId)
+        public List<string> Owners { get; } = new();
+
+        public IServerTaskLease Start(int serverTaskId) => Start(serverTaskId, ServerTaskLeaseOwner.Current);
+
+        public IServerTaskLease Start(int serverTaskId, string leaseOwner)
         {
             Started.Add(serverTaskId);
+            Owners.Add(leaseOwner);
 
             var lease = new RecordingLease { IsLost = LoseOnStart };
             Leases.Add(lease);
@@ -201,9 +206,24 @@ public class DeploymentPipelineRunnerLeaseTests
 
     private sealed class RecordingLease : IServerTaskLease
     {
+        private readonly CancellationTokenSource _lost = new();
+
         public bool IsLost { get; set; }
 
+        public CancellationToken LostToken => _lost.Token;
+
+        public bool Released { get; private set; }
+
         public bool Disposed { get; private set; }
+
+        public void Release() => Released = true;
+
+        public void Lose()
+        {
+            IsLost = true;
+
+            _lost.Cancel();
+        }
 
         public ValueTask DisposeAsync()
         {

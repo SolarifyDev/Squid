@@ -6,7 +6,9 @@ namespace Squid.Core.Services.Deployments.ServerTask;
 
 public partial class ServerTaskService
 {
-    public async Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default)
+    public Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default) => StartExecutingAsync(taskId, ServerTaskLeaseOwner.Current, ct);
+
+    public async Task<StartExecutingResult> StartExecutingAsync(int taskId, string leaseOwner, CancellationToken ct = default)
     {
         var task = await _serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(taskId, ct).ConfigureAwait(false);
 
@@ -16,11 +18,11 @@ public partial class ServerTaskService
         var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))
-            await ClaimOrFenceAsync(task, TaskState.Pending, ct).ConfigureAwait(false);
+            await ClaimOrFenceAsync(task, TaskState.Pending, leaseOwner, ct).ConfigureAwait(false);
         else if (isResumed)
-            await ClaimOrFenceAsync(task, TaskState.Paused, ct).ConfigureAwait(false);
+            await ClaimOrFenceAsync(task, TaskState.Paused, leaseOwner, ct).ConfigureAwait(false);
         else if (string.Equals(task.State, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-            await FenceAlreadyExecutingAsync(task, ct).ConfigureAwait(false);
+            await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
         else
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
 
@@ -33,24 +35,24 @@ public partial class ServerTaskService
     // Two deliveries can both read the task as Pending/Paused; only one CAS wins. The loser finds the row Executing — the winner's — and must take
     // the same fenced path as any duplicate delivery to a running task, never fall into a failure path that would fail the winner's live deployment.
     // Any other state after a lost CAS keeps the original transition error.
-    private async Task ClaimOrFenceAsync(Persistence.Entities.Deployments.ServerTask task, string from, CancellationToken ct)
+    private async Task ClaimOrFenceAsync(Persistence.Entities.Deployments.ServerTask task, string from, string leaseOwner, CancellationToken ct)
     {
         try
         {
-            await _serverTaskDataProvider.TransitionStateAsync(task.Id, from, TaskState.Executing, ct).ConfigureAwait(false);
+            await _serverTaskDataProvider.TransitionStateAsync(task.Id, from, TaskState.Executing, leaseOwner, ct).ConfigureAwait(false);
         }
         catch (ServerTaskStateTransitionException ex) when (string.Equals(ex.FromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
         {
-            await FenceAlreadyExecutingAsync(task, ct).ConfigureAwait(false);
+            await FenceAlreadyExecutingAsync(task, leaseOwner, ct).ConfigureAwait(false);
         }
     }
 
     // A task delivered while already Executing is either a dead owner's task being re-run (Hangfire retry) or a duplicate delivery to a live one.
     // The lease tells them apart in one atomic UPDATE: it is taken only when nobody holds it or its holder went silent — never because the
     // holder is this same process, which would let a duplicate delivery in the same pod run beside the live pipeline.
-    private async Task FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
+    private async Task FenceAlreadyExecutingAsync(Persistence.Entities.Deployments.ServerTask task, string leaseOwner, CancellationToken ct)
     {
-        var rows = await _serverTaskLeaseDataProvider.ClaimRunningAsync(task.Id, ServerTaskLeaseOwner.Current, _leaseStale, ct).ConfigureAwait(false);
+        var rows = await _serverTaskLeaseDataProvider.ClaimRunningAsync(task.Id, leaseOwner, _leaseStale, ct).ConfigureAwait(false);
 
         if (rows == 0)
             throw new ServerTaskOwnedByLiveProcessException(task.Id, await ReadLeaseOwnerAsync(task, ct).ConfigureAwait(false));
@@ -115,6 +117,8 @@ public partial class ServerTaskService
     }
 
     public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken ct = default) => _serverTaskDataProvider.TransitionStateAsync(taskId, expectedCurrentState, newState, ct);
+
+    public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken ct = default) => _serverTaskDataProvider.TransitionStateAsync(taskId, expectedCurrentState, newState, leaseOwner, ct);
 
     public Task UpdateActivityNodeStatusAsync(long nodeId, DeploymentActivityLogNodeStatus status, DateTimeOffset? endedAt = null, CancellationToken ct = default) => _activityLogDataProvider.UpdateNodeStatusAsync(nodeId, status, endedAt, ct: ct);
 

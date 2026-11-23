@@ -46,7 +46,7 @@ public class DeploymentCompletionHandlerTests
 
         await _sut.OnFailureAsync(ctx, new Exception("test error"), CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, currentState, TaskState.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, currentState, TaskState.Failed, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class DeploymentCompletionHandlerTests
         var order = new List<string>();
         var canceller = new Mock<IInFlightScriptCanceller>();
         canceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
-        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
         _checkpointService.Setup(c => c.DeleteAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
         var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
 
@@ -99,7 +99,7 @@ public class DeploymentCompletionHandlerTests
 
         await _sut.OnCancelledAsync(ctx, CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -136,7 +136,7 @@ public class DeploymentCompletionHandlerTests
 
         await _sut.OnPausedAsync(ctx, CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -155,7 +155,7 @@ public class DeploymentCompletionHandlerTests
 
         await Should.NotThrowAsync(() => _sut.OnPausedAsync(ctx, CancellationToken.None));
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── The guard is shared by all three pause outcomes ──────────────────
@@ -191,7 +191,7 @@ public class DeploymentCompletionHandlerTests
         await Should.NotThrowAsync(() => InvokePauseAsync(outcome, ctx),
             customMessage: $"{outcome} must not attempt the illegal Cancelling -> Paused transition.");
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -212,7 +212,7 @@ public class DeploymentCompletionHandlerTests
 
         await Should.NotThrowAsync(() => InvokePauseAsync(outcome, ctx));
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -228,7 +228,7 @@ public class DeploymentCompletionHandlerTests
 
         await InvokePauseAsync(outcome, ctx);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -245,7 +245,7 @@ public class DeploymentCompletionHandlerTests
 
         await _sut.OnPausedAsync(ctx, CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -282,7 +282,7 @@ public class DeploymentCompletionHandlerTests
 
         await _sut.OnTimedOutAsync(ctx, new Exception("timed out"), CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -327,6 +327,62 @@ public class DeploymentCompletionHandlerTests
     }
 
     // ========== Helpers ==========
+
+    // ========== A run that lost the task's lease ==========
+
+    private void TaskIsNowLeasedToAnotherRun(string state)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = state });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Squid.Core.Services.Deployments.ServerTask.Exceptions.ServerTaskLeaseNotHeldException(1, "this-run", "the-new-run"));
+    }
+
+    // The state write is the one thing that tells a run it lost the task; everything after it (the checkpoint the new run resumes from, the auto
+    // deployments a finished task triggers) belongs to whoever owns the task now.
+    [Fact]
+    public async Task OnSuccess_WhenAnotherRunHoldsTheLease_RecordsNothingMore()
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+
+        await _sut.OnSuccessAsync(CreateContext(), CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _autoDeployService.Verify(a => a.TriggerAutoDeploymentsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnFailure_WhenAnotherRunHoldsTheLease_DoesNotDeleteTheCheckpointTheNewRunResumesFrom()
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+
+        await _sut.OnFailureAsync(CreateContext(), new Exception("boom"), CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnCancelled_WhenAnotherRunHoldsTheLease_DoesNotDeleteTheCheckpoint()
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Cancelling);
+
+        await _sut.OnCancelledAsync(CreateContext(), CancellationToken.None);
+
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(PauseOutcome.Suspended)]
+    [InlineData(PauseOutcome.TimedOut)]
+    [InlineData(PauseOutcome.Transient)]
+    public async Task AnyPauseOutcome_WhenAnotherRunNowOwnsTheExecutingTask_IsRefusedQuietly(PauseOutcome outcome)
+    {
+        // The run that paused the task earlier is still unwinding when the resume claims it; its late pause must not pause the new run's task.
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+
+        await Should.NotThrowAsync(() => InvokePauseAsync(outcome, CreateContext()));
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(1, TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once, "the pause is attempted under this run's lease only");
+    }
 
     private static DeploymentTaskContext CreateContext()
     {

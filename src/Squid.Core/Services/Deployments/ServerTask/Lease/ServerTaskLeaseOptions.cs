@@ -20,6 +20,13 @@ public sealed class ServerTaskLeaseOptions
 
     public TimeSpan Stale { get; init; } = TimeSpan.FromSeconds(DefaultStaleSeconds);
 
+    /// <summary>
+    /// How long a run may go without one successful renewal before it assumes the lease is lost and stops: two renewal intervals short of the stale
+    /// threshold, so it stops BEFORE the reaper may recover the task (the reaper's clock is the database's; this one is local and only counts from the
+    /// last answer received, so the margin absorbs a slow answer and the tick granularity). Always positive: Stale is at least three intervals.
+    /// </summary>
+    public TimeSpan SelfFence => Stale - 2 * RenewInterval;
+
     public static ServerTaskLeaseOptions From(ServerTaskSetting setting)
     {
         var lease = setting.Lease ?? new ServerTaskLeaseSettings();

@@ -12,7 +12,13 @@ public interface IServerTaskService : IScopedDependency
 {
     Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default);
 
+    /// <summary>Claims the task for the pipeline RUN named by <paramref name="leaseOwner"/>: the claim stamps that run's lease, and every later write the run makes is conditional on holding it.</summary>
+    Task<StartExecutingResult> StartExecutingAsync(int taskId, string leaseOwner, CancellationToken ct = default);
+
     Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken ct = default);
+
+    /// <summary>A state write made by one pipeline run: out of Executing/Cancelling it applies only while <paramref name="leaseOwner"/> still holds the lease (otherwise <see cref="Exceptions.ServerTaskLeaseNotHeldException"/>).</summary>
+    Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken ct = default);
 
     Task<Persistence.Entities.Deployments.ActivityLog> AddActivityNodeAsync(int taskId, long? parentId, string name, DeploymentActivityLogNodeType nodeType, DeploymentActivityLogNodeStatus status, int sortOrder, CancellationToken ct = default);
 

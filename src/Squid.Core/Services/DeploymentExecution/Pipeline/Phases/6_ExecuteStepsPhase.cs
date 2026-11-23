@@ -87,6 +87,10 @@ public sealed partial class ExecuteStepsPhase(
 
         await EnsureCheckpointRowAsync(ct).ConfigureAwait(false);
 
+        // A step that suspends the task cancels this token: every sibling step and target stops (leaving its agent script running) instead of
+        // carrying on behind a Paused task that a resume may then pick up. The checkpoint writes keep using the run's own token.
+        using var runCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _ctx.SuspendToken);
+
         foreach (var batch in batches)
         {
             if (_ctx.ResumeFromBatchIndex.HasValue && _currentBatchIndex <= _ctx.ResumeFromBatchIndex.Value)
@@ -99,16 +103,29 @@ public sealed partial class ExecuteStepsPhase(
             using var batchSpan = DeploymentTracing.StartBatch(_currentBatchIndex);
 
             var batchEntries = batch.Select(step => (Step: step, SortOrder: stepSortOrderByStep[step])).ToList();
-            var batchResults = batch.Count == 1
-                ? [await ExecuteStepAcrossTargetsAsync(batchEntries[0].Step, batchEntries[0].SortOrder, ct).ConfigureAwait(false)]
-                : await Task.WhenAll(batchEntries.Select(entry =>
-                    ExecuteStepAcrossTargetsAsync(entry.Step, entry.SortOrder, ct))).ConfigureAwait(false);
+            var batchResults = await ExecuteBatchAsync(batchEntries, runCts.Token).ConfigureAwait(false);
 
             ApplyBatchResults(batchResults);
 
             await PersistCheckpointAsync(_currentBatchIndex, ct).ConfigureAwait(false);
 
             _currentBatchIndex++;
+        }
+    }
+
+    // Every step of the batch runs at once. A suspend cancels the siblings, whose own cancellation exceptions must not mask it: the suspension is
+    // what the runner has to see (the task is already Paused), so it wins over whatever the stopped siblings threw.
+    private async Task<StepExecutionResult[]> ExecuteBatchAsync(List<(DeploymentStepDto Step, int SortOrder)> entries, CancellationToken ct)
+    {
+        var running = entries.Select(entry => ExecuteStepAcrossTargetsAsync(entry.Step, entry.SortOrder, ct)).ToList();
+
+        try
+        {
+            return await Task.WhenAll(running).ConfigureAwait(false);
+        }
+        catch (Exception) when (_ctx.Suspended != null)
+        {
+            throw _ctx.Suspended;
         }
     }
 

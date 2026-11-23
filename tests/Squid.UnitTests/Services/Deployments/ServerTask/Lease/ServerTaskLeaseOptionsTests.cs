@@ -60,6 +60,29 @@ public class ServerTaskLeaseOptionsTests
         options.Stale.ShouldBe(TimeSpan.FromSeconds(expectedStale));
     }
 
+    [Theory]
+    [InlineData(20, 300, 260)]
+    [InlineData(5, 15, 5)]
+    [InlineData(10, 30, 10)]
+    public void SelfFence_IsTwoIntervalsShortOfTheStaleThreshold_SoARunStopsBeforeTheReaperMayRecoverIt(int interval, int stale, int expectedFence)
+    {
+        var options = ServerTaskLeaseOptions.From(new ServerTaskSetting { Lease = new ServerTaskLeaseSettings { RenewIntervalSeconds = interval, StaleSeconds = stale } });
+
+        options.SelfFence.ShouldBe(TimeSpan.FromSeconds(expectedFence));
+        options.SelfFence.ShouldBeLessThan(options.Stale);
+    }
+
+    [Fact]
+    public void NewRun_IsDistinctPerRun_ExtendsTheProcessIdentity_AndFitsTheColumn()
+    {
+        var first = ServerTaskLeaseOwner.NewRun();
+        var second = ServerTaskLeaseOwner.NewRun();
+
+        first.ShouldNotBe(second);
+        first.ShouldStartWith(ServerTaskLeaseOwner.Current + "/");
+        first.Length.ShouldBeLessThanOrEqualTo(200);
+    }
+
     [Fact]
     public void LeaseOwner_IsStablePerProcess_AndFitsTheColumn()
     {

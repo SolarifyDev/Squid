@@ -1,3 +1,4 @@
+using Autofac;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.Checkpoints;
@@ -390,6 +391,97 @@ public class IntegrationServerTaskLease : TestBase
             return ex;
         }
     });
+
+    // ===== A lease belongs to one RUN, not to the process =====
+
+    // Out of a running state a run's write applies only while the row still carries that run's lease; another run's row is refused and left untouched.
+    [Theory]
+    [InlineData(TaskState.Executing, TaskState.Paused)]
+    [InlineData(TaskState.Executing, TaskState.Success)]
+    [InlineData(TaskState.Executing, TaskState.Failed)]
+    [InlineData(TaskState.Cancelling, TaskState.Cancelled)]
+    [InlineData(TaskState.Cancelling, TaskState.Failed)]
+    public async Task ARunsWrite_OutOfARunningState_IsRefusedWhenAnotherRunHoldsTheLease(string from, string to)
+    {
+        const string runA = "host:1:proc/run-a";
+        const string runB = "host:1:proc/run-b";
+        var id = await SeedAsync(from, $"deploy:run-{from}-{to}", leaseOwner: runB, leaseAge: TimeSpan.FromSeconds(5));
+
+        var ex = await Run<IServerTaskDataProvider, ServerTaskLeaseNotHeldException>(p => Should.ThrowAsync<ServerTaskLeaseNotHeldException>(() => p.TransitionStateAsync(id, from, to, runA)));
+
+        ex.ExpectedOwner.ShouldBe(runA);
+        ex.CurrentOwner.ShouldBe(runB);
+        var untouched = await LoadAsync(id);
+        untouched.State.ShouldBe(from);
+        untouched.LeaseOwner.ShouldBe(runB);
+        untouched.CompletedTime.ShouldBeNull();
+
+        await Run<IServerTaskDataProvider>(p => p.TransitionStateAsync(id, from, to, runB)).ConfigureAwait(false);
+
+        (await LoadAsync(id)).State.ShouldBe(to, "the run that holds the lease writes freely");
+    }
+
+    // The ownership condition is for running states only: the claim (from Pending/Paused) and every non-run caller carry no owner and are unconditional.
+    [Fact]
+    public async Task AWriteWithoutAnOwner_IsUnconditional_AsEveryNonRunCallerIs()
+    {
+        var id = await SeedAsync(TaskState.Executing, "deploy:run-null", leaseOwner: "host:1:proc/run-b", leaseAge: TimeSpan.FromSeconds(5));
+
+        await Run<IServerTaskDataProvider>(p => p.TransitionStateAsync(id, TaskState.Executing, TaskState.Cancelling)).ConfigureAwait(false);
+
+        (await LoadAsync(id)).State.ShouldBe(TaskState.Cancelling);
+    }
+
+    // Two runs of one task in one process (the resume starts while the paused run is still unwinding): each claim stamps its own run, so the older run's
+    // late pause is refused instead of pausing the newer run's task, and only the newer run's renewals keep the lease.
+    [Fact]
+    public async Task ASecondRunInTheSameProcess_OwnsTheLease_TheFirstRunsLateWritesAreRefused()
+    {
+        var runA = ServerTaskLeaseOwner.NewRun();
+        var runB = ServerTaskLeaseOwner.NewRun();
+        var id = await SeedAsync(TaskState.Pending, "deploy:two-runs");
+
+        await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id, runA)).ConfigureAwait(false);
+        (await LoadAsync(id)).LeaseOwner.ShouldBe(runA);
+
+        await Run<IServerTaskService>(s => s.TransitionStateAsync(id, TaskState.Executing, TaskState.Paused, runA)).ConfigureAwait(false);   // run A pauses itself
+        await Run<IServerTaskService, StartExecutingResult>(s => s.StartExecutingAsync(id, runB)).ConfigureAwait(false);                       // the resume claims it
+
+        var row = await LoadAsync(id);
+        row.State.ShouldBe(TaskState.Executing);
+        row.LeaseOwner.ShouldBe(runB);
+
+        await Run<IServerTaskService>(s => Should.ThrowAsync<ServerTaskLeaseNotHeldException>(() => s.TransitionStateAsync(id, TaskState.Executing, TaskState.Paused, runA))).ConfigureAwait(false);
+        (await Renew(id, runA)).ShouldBe(0, "run A must not keep the lease alive for run B's row");
+        (await Renew(id, runB)).ShouldBe(1);
+        (await LoadAsync(id)).State.ShouldBe(TaskState.Executing);
+    }
+
+    // The real keeper against the real database: a run that releases its lease (it pauses itself) and then sees its renewal find nothing is not "lost".
+    [Fact]
+    public async Task Keeper_ARunThatPausesItself_AfterRelease_IsNotLost_ButOneThatIsTakenOverIs()
+    {
+        var runA = ServerTaskLeaseOwner.NewRun();
+        var paused = await SeedAsync(TaskState.Executing, "deploy:keeper-release", leaseOwner: runA, leaseAge: TimeSpan.Zero);
+        var takenOver = await SeedAsync(TaskState.Executing, "deploy:keeper-takeover", leaseOwner: runA, leaseAge: TimeSpan.Zero);
+
+        await Run<ILifetimeScope>(async scope =>
+        {
+            var keeper = new ServerTaskLeaseKeeper(scope, TimeProvider.System, new ServerTaskLeaseOptions { RenewInterval = TimeSpan.FromMilliseconds(100), Stale = TimeSpan.FromMinutes(5) });
+            await using var releasing = keeper.Start(paused, runA);
+            await using var losing = keeper.Start(takenOver, runA);
+            await Task.Delay(300).ConfigureAwait(false);
+
+            releasing.Release();
+            await Run<IServerTaskService>(s => s.TransitionStateAsync(paused, TaskState.Executing, TaskState.Paused, runA)).ConfigureAwait(false);
+            await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(takenOver, "other-run", TimeSpan.Zero)).ConfigureAwait(false);
+            await Task.Delay(600).ConfigureAwait(false);
+
+            releasing.IsLost.ShouldBeFalse("the run cleared its own lease");
+            losing.IsLost.ShouldBeTrue("another run took the lease");
+            losing.LostToken.IsCancellationRequested.ShouldBeTrue();
+        }).ConfigureAwait(false);
+    }
 
     private Task<int> Claim(int id, string owner) => Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, owner, StaleAfter));
 

@@ -9,10 +9,10 @@ public sealed class LoadTaskPhase(IServerTaskService serverTaskService, IServerT
 
     public async Task ExecuteAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        var result = await serverTaskService.StartExecutingAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        var result = await serverTaskService.StartExecutingAsync(ctx.ServerTaskId, ctx.LeaseOwner, ct).ConfigureAwait(false);
 
         // Only a claim that succeeded (and fenced out a live owner) starts renewing; the runner releases it on every exit path.
-        ctx.Lease = leaseKeeper.Start(ctx.ServerTaskId);
+        ctx.Lease = leaseKeeper.Start(ctx.ServerTaskId, ctx.LeaseOwner);
 
         ctx.Task = result.Task;
         ctx.IsResume = result.IsResumed;

@@ -1,4 +1,5 @@
 using System.Data;
+using System.Linq.Expressions;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Lease;
@@ -18,6 +19,13 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task UpdateServerTaskStateAsync(int taskId, string state, bool forceSave = true, CancellationToken cancellationToken = default);
 
     Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// A transition made by one pipeline RUN. Out of a running state (Executing/Cancelling) it applies only while <paramref name="leaseOwner"/> still holds the
+    /// row's lease, and throws <see cref="ServerTaskLeaseNotHeldException"/> when another run does; into Executing it stamps <paramref name="leaseOwner"/> as the
+    /// claimant. A null owner is the unconditional form used by every non-run caller (cancel, resume, API).
+    /// </summary>
+    Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken = default);
 
     Task<List<Persistence.Entities.Deployments.ServerTask>> GetAllServerTasksAsync(CancellationToken cancellationToken = default);
 
@@ -117,7 +125,10 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         }
     }
 
-    public async Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default)
+    public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, CancellationToken cancellationToken = default)
+        => TransitionStateAsync(taskId, expectedCurrentState, newState, null, cancellationToken);
+
+    public async Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken = default)
     {
         TaskState.EnsureValidTransition(expectedCurrentState, newState);
 
@@ -128,7 +139,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
         try
         {
-            rowsAffected = await ExecuteStateUpdateAsync(taskId, expectedCurrentState, newState, now, dataVersion, cancellationToken).ConfigureAwait(false);
+            rowsAffected = await ExecuteStateUpdateAsync(ExpectedRow(taskId, expectedCurrentState, leaseOwner), newState, leaseOwner, now, dataVersion, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (IsActiveSlotConflict(ex, newState))
         {
@@ -136,8 +147,19 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         }
 
         if (rowsAffected == 0)
-            await ThrowTransitionErrorAsync(taskId, newState, cancellationToken).ConfigureAwait(false);
+            await ThrowTransitionErrorAsync(taskId, expectedCurrentState, newState, leaseOwner, cancellationToken).ConfigureAwait(false);
     }
+
+    // A run leaves a running state only while it still holds the lease: another run's row is never this run's to pause, finish or cancel.
+    private static Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> ExpectedRow(int taskId, string expectedCurrentState, string leaseOwner)
+    {
+        if (leaseOwner == null || !IsRunOwned(expectedCurrentState)) return t => t.Id == taskId && t.State == expectedCurrentState;
+
+        return t => t.Id == taskId && t.State == expectedCurrentState && t.LeaseOwner == leaseOwner;
+    }
+
+    private static bool IsRunOwned(string state)
+        => string.Equals(state, TaskState.Executing, StringComparison.OrdinalIgnoreCase) || string.Equals(state, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase);
 
     // A second pod's →Executing transition for a ConcurrencyTag that already has an active task
     // violates the ux_server_task_active_per_tag unique partial index (Postgres 23505). Only
@@ -164,16 +186,16 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         return task?.ConcurrencyTag ?? string.Empty;
     }
 
-    private Task<int> ExecuteStateUpdateAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    private Task<int> ExecuteStateUpdateAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, string leaseOwner, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
     {
-        if (TaskState.IsTerminal(newState)) return UpdateToTerminalAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
+        if (TaskState.IsTerminal(newState)) return UpdateToTerminalAsync(row, newState, now, dataVersion, ct);
 
-        if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)) return UpdateToExecutingAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
+        if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)) return UpdateToExecutingAsync(row, newState, leaseOwner ?? ServerTaskLeaseOwner.Current, now, dataVersion, ct);
 
-        if (string.Equals(newState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return UpdateToPausedAsync(taskId, expectedCurrentState, newState, now, dataVersion, ct);
+        if (string.Equals(newState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return UpdateToPausedAsync(row, newState, now, dataVersion, ct);
 
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.Id == taskId && t.State == expectedCurrentState,
+            row,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now),
@@ -181,10 +203,10 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     }
 
     // A task that left the running states has no live owner: its lease is cleared so a stale one can never be mistaken for a running task's.
-    private Task<int> UpdateToTerminalAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    private Task<int> UpdateToTerminalAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
     {
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.Id == taskId && t.State == expectedCurrentState,
+            row,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
@@ -194,13 +216,11 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             ct);
     }
 
-    // The claim stamps this process's lease in the same statement, on the database clock, so there is no unleased window between claiming and the first renewal.
-    private Task<int> UpdateToExecutingAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    // The claim stamps the claiming run's lease in the same statement, on the database clock, so there is no unleased window between claiming and the first renewal.
+    private Task<int> UpdateToExecutingAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, string owner, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
     {
-        var owner = ServerTaskLeaseOwner.Current;
-
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.Id == taskId && t.State == expectedCurrentState,
+            row,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
@@ -210,10 +230,10 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             ct);
     }
 
-    private Task<int> UpdateToPausedAsync(int taskId, string expectedCurrentState, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    private Task<int> UpdateToPausedAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
     {
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
-            t => t.Id == taskId && t.State == expectedCurrentState,
+            row,
             s => s.SetProperty(t => t.State, newState)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
@@ -222,13 +242,17 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             ct);
     }
 
-    private async Task ThrowTransitionErrorAsync(int taskId, string newState, CancellationToken cancellationToken)
+    // The row is in the expected state but belongs to another run's lease: that is "not held", distinct from a state mismatch.
+    private async Task ThrowTransitionErrorAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken)
     {
         var task = await _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.Id == taskId)
             .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
+
+        if (leaseOwner != null && IsRunOwned(expectedCurrentState) && string.Equals(task.State, expectedCurrentState, StringComparison.OrdinalIgnoreCase))
+            throw new ServerTaskLeaseNotHeldException(taskId, leaseOwner, task.LeaseOwner);
 
         throw new ServerTaskStateTransitionException(task.State, newState);
     }

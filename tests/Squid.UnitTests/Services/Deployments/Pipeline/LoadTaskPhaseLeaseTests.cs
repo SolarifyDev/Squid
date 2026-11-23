@@ -20,25 +20,46 @@ public class LoadTaskPhaseLeaseTests
     [Fact]
     public async Task SuccessfulClaim_StartsTheLeaseForThatTask_AndHandsItToTheContext()
     {
-        _service.Setup(s => s.StartExecutingAsync(42, It.IsAny<CancellationToken>())).ReturnsAsync(new StartExecutingResult(new ServerTaskEntity { Id = 42 }, false));
-        _keeper.Setup(k => k.Start(42)).Returns(_lease.Object);
+        _service.Setup(s => s.StartExecutingAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new StartExecutingResult(new ServerTaskEntity { Id = 42 }, false));
+        _keeper.Setup(k => k.Start(42, It.IsAny<string>())).Returns(_lease.Object);
         var ctx = new DeploymentTaskContext { ServerTaskId = 42 };
 
         await new LoadTaskPhase(_service.Object, _keeper.Object).ExecuteAsync(ctx, CancellationToken.None);
 
-        _keeper.Verify(k => k.Start(42), Times.Once);
+        _keeper.Verify(k => k.Start(42, It.IsAny<string>()), Times.Once);
         ctx.Lease.ShouldBeSameAs(_lease.Object);
     }
 
     [Fact]
     public async Task ClaimRefusedByALiveOwner_StartsNoLease()
     {
-        _service.Setup(s => s.StartExecutingAsync(42, It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskOwnedByLiveProcessException(42, "pod-a:1:x"));
+        _service.Setup(s => s.StartExecutingAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>())).ThrowsAsync(new ServerTaskOwnedByLiveProcessException(42, "pod-a:1:x"));
         var ctx = new DeploymentTaskContext { ServerTaskId = 42 };
 
         await Should.ThrowAsync<ServerTaskOwnedByLiveProcessException>(() => new LoadTaskPhase(_service.Object, _keeper.Object).ExecuteAsync(ctx, CancellationToken.None));
 
-        _keeper.Verify(k => k.Start(It.IsAny<int>()), Times.Never);
+        _keeper.Verify(k => k.Start(It.IsAny<int>(), It.IsAny<string>()), Times.Never);
         ctx.Lease.ShouldBeNull();
+    }
+
+    // The run's identity is chosen once, on the context: the claim stamps it and the keeper renews it, so both must be handed the SAME owner.
+    [Fact]
+    public async Task ClaimAndLease_AreBothMadeAsTheRun_NotAsTheProcess()
+    {
+        _service.Setup(s => s.StartExecutingAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new StartExecutingResult(new ServerTaskEntity { Id = 42 }, false));
+        _keeper.Setup(k => k.Start(42, It.IsAny<string>())).Returns(_lease.Object);
+        var ctx = new DeploymentTaskContext { ServerTaskId = 42 };
+
+        await new LoadTaskPhase(_service.Object, _keeper.Object).ExecuteAsync(ctx, CancellationToken.None);
+
+        ctx.LeaseOwner.ShouldStartWith(ServerTaskLeaseOwner.Current + "/");
+        _service.Verify(s => s.StartExecutingAsync(42, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _keeper.Verify(k => k.Start(42, ctx.LeaseOwner), Times.Once);
+    }
+
+    [Fact]
+    public void TwoRunsOfTheSameTask_HaveDifferentLeaseOwners()
+    {
+        new DeploymentTaskContext { ServerTaskId = 42 }.LeaseOwner.ShouldNotBe(new DeploymentTaskContext { ServerTaskId = 42 }.LeaseOwner);
     }
 }
