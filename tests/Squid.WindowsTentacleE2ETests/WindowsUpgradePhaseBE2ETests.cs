@@ -206,6 +206,9 @@ $serviceName = '{serviceName}'
 $installDir = '{installDir.Replace("'", "''")}'
 $extractDir = '{extractDir.Replace("'", "''")}'
 
+# Mirror of Suspend-FailureActions: SCM must not restart a failing binary mid-swap.
+& sc.exe failureflag $serviceName 0 2>&1 | Out-Null
+
 # Stop service. SCM blocks until OnStop completes; the marker file written
 # by the test service is deleted by OnStop, so file-in-use can't bite the
 # subsequent Move-Item.
@@ -232,8 +235,8 @@ Move-Item -Path $extractDir -Destination $installDir -Force
 # Restart service. New binary reads version.txt and writes marker.
 Start-Service -Name $serviceName
 
-# Mirror of the production post-health-check step: enable the failure-actions
-# flag so SCM restarts the agent after a fatal (non-crash) exit. Real sc.exe.
+# Mirror of the production post-health-check step (Set-ScmRecoveryPolicy): the failure-actions flag so
+# SCM restarts the agent after a fatal (non-crash) exit.
 & sc.exe failureflag $serviceName 1 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {{ exit 21 }}
 

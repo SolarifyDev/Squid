@@ -288,6 +288,84 @@ function Invoke-WithRetry {
     }
 }
 
+# -- SCM failure-actions suspension (Phase B swap window) ----------------------
+# With the failure-actions flag on (set at `service install` since 1.9.x), SCM restarts an agent
+# that stops with a non-zero exit code after 10s. During the swap / Invoke-Rollback that would
+# start a failing NEW binary (or the half-restored one) mid-swap and race the junction repoint /
+# Move-Item. So Phase B turns the flag OFF before it stops the service and the `finally` at the
+# bottom turns it back ON on EVERY exit path: success, rollback and failure. The restart actions
+# themselves (`sc failure`) are never touched here.
+$script:FailureFlagSuspended = $false
+# Settle window: WindowsServiceHost.DefaultRestartDelayMs (10s) + margin.
+$SCM_RESTART_SETTLE_SECONDS = 15
+
+function Suspend-FailureActions {
+    if ($null -eq (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) { return }
+
+    try {
+        & sc.exe failureflag $SERVICE_NAME 0 2>&1 | Out-Null
+
+        if ($LASTEXITCODE -eq 0) {
+            $script:FailureFlagSuspended = $true
+            Append-UpgradeLog "[upgrade] Suspended SCM failure actions for the swap window"
+        }
+        else {
+            Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag 0 exit $LASTEXITCODE -- SCM may restart a failing binary during the swap"
+        }
+    }
+    catch {
+        Append-UpgradeLog "::warning:: [upgrade] Could not suspend failure actions (best-effort): $($_.Exception.Message)"
+    }
+}
+
+# Re-enables restart-on-failure. Soft-fail.
+function Set-ScmRecoveryPolicy {
+    try {
+        & sc.exe failureflag $SERVICE_NAME 1 2>&1 | Out-Null
+
+        if ($LASTEXITCODE -ne 0) {
+            Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag exit $LASTEXITCODE -- a fatal agent error will not auto-restart until you run: sc failureflag $SERVICE_NAME 1"
+        }
+        else {
+            Append-UpgradeLog "[upgrade] Enabled restart-on-failure flag for $SERVICE_NAME"
+        }
+    }
+    catch {
+        Append-UpgradeLog "::warning:: [upgrade] Could not set recovery policy (best-effort): $($_.Exception.Message)"
+    }
+}
+
+function Restore-FailureActions {
+    if (-not $script:FailureFlagSuspended) { return }
+
+    $script:FailureFlagSuspended = $false
+    Set-ScmRecoveryPolicy
+}
+
+# A service that FAILED (STOPPED with a non-zero WIN32_EXIT_CODE) may have an SCM restart action
+# already scheduled (10s delay) that disabling the flag cannot cancel. Wait for it to fire so the
+# caller sees (and stops) the restarted process instead of swapping binaries under it.
+function Wait-ScmPendingRestartToSettle {
+    try {
+        $query = (& sc.exe query $SERVICE_NAME 2>&1 | Out-String)
+
+        if ($query -notmatch 'STOPPED') { return }
+        if ($query -notmatch 'WIN32_EXIT_CODE\s*:\s*(\d+)' -or [int]$Matches[1] -eq 0) { return }
+
+        Append-UpgradeLog "[upgrade] Service stopped with a failure exit code; waiting up to ${SCM_RESTART_SETTLE_SECONDS}s for a pending SCM restart to settle"
+        $deadline = (Get-Date).AddSeconds($SCM_RESTART_SETTLE_SECONDS)
+
+        while ((Get-Date) -lt $deadline) {
+            $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
+            if ($null -ne $svc -and $svc.Status -ne 'Stopped') { return }
+            Start-Sleep -Seconds 1
+        }
+    }
+    catch {
+        Append-UpgradeLog "[upgrade] Pending-restart check skipped (best-effort): $($_.Exception.Message)"
+    }
+}
+
 # -- Event timeline helper -- append one structured event (parity with the -----
 # Linux script's emit_event). One JSON object per line:
 #   {"t":"2026-06-01T02:57:04Z","phase":"A","kind":"start","msg":"..."}
@@ -354,6 +432,10 @@ function Invoke-Rollback {
     )
 
     Append-UpgradeLog "::warning:: [rollback] Initiating rollback: $Reason"
+
+    # Failure actions are suspended for Phase B, but a restart SCM scheduled BEFORE that (or after a
+    # hard crash) can still be pending -- let it land so the stop below sees the real state.
+    Wait-ScmPendingRestartToSettle
 
     # Stop new service first if it managed to come up (degraded but running).
     # Best-effort -- SCM may already have force-killed it.
@@ -751,6 +833,9 @@ try {
     # Entering Phase B -- events emitted from here are tagged phase 'B'.
     $script:CURRENT_PHASE = 'B'
 
+    Suspend-FailureActions
+    Wait-ScmPendingRestartToSettle
+
     $serviceWasRunning = $false
     $svc = Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue
 
@@ -935,29 +1020,16 @@ try {
         Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s -- proceeding anyway, server will retry on next health probe (set SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true to roll back instead)"
     }
 
-    # -- Failure-actions flag (idempotent, best-effort) -----------------------
-    # Agents installed before the flag existed have `sc failure` restart actions but
-    # SCM ignores them for a graceful STOPPED with a non-zero exit code (how a fatal
-    # agent error is reported), so a fatal error left the agent stopped forever.
-    # Set the flag HERE -- after the health check, past every Invoke-Rollback exit --
-    # NOT before Start-Service: with the flag on, a new binary that fails at startup
-    # would be restarted by SCM (10s delay) while Invoke-Rollback is swapping the
-    # junction / restarting, racing the rollback. Rollback paths all `exit`, so they
-    # can never reach this line. Soft-fail: the upgrade itself already succeeded.
+    # -- Recovery policy (idempotent, best-effort) ----------------------------
+    # Agents installed before the flag existed have `sc failure` restart actions but SCM ignores
+    # them for a graceful STOPPED with a non-zero exit code (how a fatal agent error is reported),
+    # so a fatal error left the agent stopped forever. Apply the flag HERE -- after the health check, past every
+    # Invoke-Rollback exit -- so a new binary that fails at startup is never restarted by SCM while
+    # Invoke-Rollback swaps the junction. Rollback / failure exits re-apply it from the `finally`.
+    # Soft-fail: the upgrade itself already succeeded.
     if ($null -ne (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) {
-        try {
-            & sc.exe failureflag $SERVICE_NAME 1 2>&1 | Out-Null
-
-            if ($LASTEXITCODE -ne 0) {
-                Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag exit $LASTEXITCODE -- a fatal agent error will not auto-restart until you run: sc failureflag $SERVICE_NAME 1"
-            }
-            else {
-                Append-UpgradeLog "[upgrade] Enabled restart-on-failure flag for $SERVICE_NAME"
-            }
-        }
-        catch {
-            Append-UpgradeLog "::warning:: [upgrade] Could not set failure-actions flag (best-effort): $($_.Exception.Message)"
-        }
+        Set-ScmRecoveryPolicy
+        $script:FailureFlagSuspended = $false
     }
 
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
@@ -1001,5 +1073,6 @@ try {
     exit 0
 }
 finally {
+    Restore-FailureActions
     Remove-Item -Path $LOCK_FILE -Force -ErrorAction SilentlyContinue
 }
