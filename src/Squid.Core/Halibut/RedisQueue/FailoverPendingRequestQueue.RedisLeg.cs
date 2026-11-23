@@ -10,13 +10,24 @@ public sealed partial class FailoverPendingRequestQueue
     /// <summary>A request taken from Redis that no dequeue was waiting for. Exactly one of the dequeue that reads it and the expiry that gives up on it claims it.</summary>
     private sealed class ParkedRequest(RequestMessageWithCancellationToken request, IPendingRequestQueue origin)
     {
+        private readonly CancellationTokenSource _claimedSignal = new();
         private int _claimed;
 
         public RequestMessageWithCancellationToken Request { get; } = request;
 
         public IPendingRequestQueue Origin { get; } = origin;
 
-        public bool TryClaim() => Interlocked.Exchange(ref _claimed, 1) == 0;
+        /// <summary>Cancelled the moment the item is claimed, so the expiry that watches it stops at once instead of being kept alive (with the request) for as long as the agent stays connected.</summary>
+        public CancellationToken Claimed => _claimedSignal.Token;
+
+        public bool TryClaim()
+        {
+            if (Interlocked.Exchange(ref _claimed, 1) != 0) return false;
+
+            _claimedSignal.Cancel();
+
+            return true;
+        }
     }
 
     /// <summary>
@@ -97,9 +108,11 @@ public sealed partial class FailoverPendingRequestQueue
     {
         try
         {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, parked.Claimed);
+
             while (true)
             {
-                await Task.Delay(_options.LivenessWindow, _clock, _lifetime.Token).ConfigureAwait(false);
+                await Task.Delay(_options.LivenessWindow, _clock, stop.Token).ConfigureAwait(false);
 
                 if (_presence.IsLive) continue;
 
@@ -113,10 +126,18 @@ public sealed partial class FailoverPendingRequestQueue
         }
     }
 
+    // A parked item whose requester has since cancelled is not handed out: Halibut would fail sending it and drop the agent's connection. Like the local queue's
+    // BeginTransfer it is skipped, and the requester's queue is told so that it can release the request.
     private bool TryTakeParked(out ParkedRequest parked)
     {
         while (_parked.Reader.TryRead(out parked))
-            if (parked.TryClaim()) return true;
+        {
+            if (!parked.TryClaim()) continue;
+
+            if (!parked.Request.CancellationToken.IsCancellationRequested) return true;
+
+            _ = FailAsync(parked, "the request was cancelled before the agent collected it");
+        }
 
         parked = null;
 
