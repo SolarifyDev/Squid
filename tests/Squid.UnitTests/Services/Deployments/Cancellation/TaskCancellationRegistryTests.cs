@@ -50,15 +50,68 @@ public class TaskCancellationRegistryTests
     }
 
     [Fact]
-    public void Register_Twice_ReplacesOldCts()
+    public void Register_WhileAnotherRunIsRegistered_NeverDisposesOrDisplacesIt()
+    {
+        var registry = new TaskCancellationRegistry();
+        var live = registry.Register(1);
+
+        var duplicate = registry.Register(1);
+
+        duplicate.ShouldNotBeSameAs(live);
+        registry.TryCancel(1).ShouldBeTrue();
+        live.IsCancellationRequested.ShouldBeTrue("the cancel must reach the run that was registered first");
+        duplicate.IsCancellationRequested.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Promote_MakesTheClaimingRunTheCancelTarget_WithoutDisposingTheReplacedSource()
     {
         var registry = new TaskCancellationRegistry();
         var first = registry.Register(1);
-        var second = registry.Register(1);
+        var claimed = new CancellationTokenSource();
 
-        second.ShouldNotBeSameAs(first);
+        registry.Promote(1, claimed);
+
         registry.TryCancel(1).ShouldBeTrue();
-        second.IsCancellationRequested.ShouldBeTrue();
+        claimed.IsCancellationRequested.ShouldBeTrue();
+        first.IsCancellationRequested.ShouldBeFalse();
+        Should.NotThrow(() => first.Cancel());
+    }
+
+    [Fact]
+    public void UnregisterOwn_WhenAnotherRunIsRegistered_LeavesThatEntryAlone()
+    {
+        var registry = new TaskCancellationRegistry();
+        var live = registry.Register(1);
+        var duplicate = registry.Register(1);
+
+        registry.Unregister(1, duplicate);
+
+        registry.TryCancel(1).ShouldBeTrue();
+        live.IsCancellationRequested.ShouldBeTrue();
+        Should.Throw<ObjectDisposedException>(() => duplicate.Cancel(), "the caller's own source is disposed");
+    }
+
+    [Fact]
+    public void UnregisterOwn_WhenStillRegistered_RemovesIt()
+    {
+        var registry = new TaskCancellationRegistry();
+        var own = registry.Register(1);
+
+        registry.Unregister(1, own);
+
+        registry.TryCancel(1).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TryCancel_AfterTheRegisteredSourceWasDisposed_ReturnsFalseInsteadOfThrowing()
+    {
+        var registry = new TaskCancellationRegistry();
+        var cts = registry.Register(1);
+
+        cts.Dispose();
+
+        registry.TryCancel(1).ShouldBeFalse();
     }
 
     [Fact]
