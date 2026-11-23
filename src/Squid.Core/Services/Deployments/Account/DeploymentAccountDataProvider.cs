@@ -30,8 +30,11 @@ public interface IDeploymentAccountDataProvider : IScopedDependency
 /// upgrade naturally on the next save. Reads use the repository's AsNoTracking query so
 /// decrypting the in-memory entity can never be flushed back to the DB as plaintext.</para>
 /// </summary>
-public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork unitOfWork, IAtRestSecretProtector protector) : IDeploymentAccountDataProvider
+public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork unitOfWork, IAtRestSecretProtector protector, IScopedDbGate dbGate = null) : IDeploymentAccountDataProvider
 {
+    // Parallel targets load their account through this scope's shared DbContext, so that read goes through the gate.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     // The V2 envelope derives its key from a random per-payload salt, so the legacy
     // KDF-scope argument (a V1-only deterministic-salt input) is irrelevant for accounts,
     // which only ever write V2. Pass a constant.
@@ -42,8 +45,8 @@ public class DeploymentAccountDataProvider(IRepository repository, IUnitOfWork u
         // QueryNoTracking so the decrypt below mutates a DETACHED entity — a tracked entity
         // would be detected as Modified and a later in-scope SaveChanges (the deploy pipeline
         // shares one DbContext across phases) would flush the plaintext back to the column.
-        var account = await repository.QueryNoTracking<DeploymentAccount>(a => a.Id == accountId)
-            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var account = await _dbGate.RunAsync(() => repository.QueryNoTracking<DeploymentAccount>(a => a.Id == accountId)
+            .FirstOrDefaultAsync(cancellationToken), cancellationToken).ConfigureAwait(false);
 
         return await DecryptCredentialsAsync(account).ConfigureAwait(false);
     }

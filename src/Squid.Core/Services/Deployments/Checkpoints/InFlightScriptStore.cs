@@ -94,8 +94,12 @@ public interface IInFlightScriptStore : IScopedDependency
     Task<bool> IsMachineBusyAsync(int machineId, CancellationToken cancellationToken = default);
 }
 
-public sealed class InFlightScriptStore(IRepository repository) : IInFlightScriptStore
+public sealed class InFlightScriptStore(IRepository repository, IScopedDbGate dbGate = null) : IInFlightScriptStore
 {
+    // The per-task stripes below serialise a task's read-modify-write across scopes; this per-scope gate additionally keeps these calls off the
+    // scope's DbContext while any other gated service (interruptions, checkpoints, feeds) is using it. Always taken before a stripe.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
     // Bounded lock stripes — one async gate per stripe, NOT one per task, so the
     // set never grows over the server's lifetime. A task always maps to the same
     // stripe (so its own RMW serialises); distinct tasks colliding on a stripe
@@ -125,7 +129,10 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
     public async Task<IReadOnlyList<InFlightScript>> ListAsync(int serverTaskId, CancellationToken cancellationToken = default)
         => await ReadAsync(serverTaskId, InFlightScriptMap.List, cancellationToken).ConfigureAwait(false) ?? Array.Empty<InFlightScript>();
 
-    private async Task<T> ReadAsync<T>(int serverTaskId, Func<string, T> project, CancellationToken cancellationToken)
+    private Task<T> ReadAsync<T>(int serverTaskId, Func<string, T> project, CancellationToken cancellationToken)
+        => _dbGate.RunAsync(() => ReadStripedAsync(serverTaskId, project, cancellationToken), cancellationToken);
+
+    private async Task<T> ReadStripedAsync<T>(int serverTaskId, Func<string, T> project, CancellationToken cancellationToken)
     {
         // The read MUST take the same per-task stripe as the writes. A parallel
         // batch dispatches to several targets at once on one Hangfire worker, and
@@ -170,7 +177,10 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
         return jsons.Any(json => InFlightScriptMap.ContainsMachine(json, machineId));
     }
 
-    private async Task MutateAsync(int serverTaskId, Func<string, string> mutate, CancellationToken cancellationToken)
+    private Task MutateAsync(int serverTaskId, Func<string, string> mutate, CancellationToken cancellationToken)
+        => _dbGate.RunAsync(() => MutateStripedAsync(serverTaskId, mutate, cancellationToken), cancellationToken);
+
+    private async Task MutateStripedAsync(int serverTaskId, Func<string, string> mutate, CancellationToken cancellationToken)
     {
         var gate = LockFor(serverTaskId);
 

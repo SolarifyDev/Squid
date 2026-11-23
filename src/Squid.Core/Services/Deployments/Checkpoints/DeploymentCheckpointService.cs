@@ -21,9 +21,15 @@ public interface IDeploymentCheckpointService : IScopedDependency
     Task DeleteAsync(int serverTaskId, CancellationToken ct = default);
 }
 
-public class DeploymentCheckpointService(IRepository repository, IUnitOfWork unitOfWork) : IDeploymentCheckpointService
+public class DeploymentCheckpointService(IRepository repository, IUnitOfWork unitOfWork, IScopedDbGate dbGate = null) : IDeploymentCheckpointService
 {
-    public async Task SaveAsync(DeploymentExecutionCheckpoint checkpoint, CancellationToken ct = default)
+    // A guided failure saves the checkpoint from a parallel step while its siblings use the same scoped DbContext, so the writes go through the gate.
+    private readonly IScopedDbGate _dbGate = dbGate ?? new ScopedDbGate();
+
+    public Task SaveAsync(DeploymentExecutionCheckpoint checkpoint, CancellationToken ct = default)
+        => _dbGate.RunAsync(() => SaveGatedAsync(checkpoint, ct), ct);
+
+    private async Task SaveGatedAsync(DeploymentExecutionCheckpoint checkpoint, CancellationToken ct)
     {
         var rowsAffected = await repository.ExecuteUpdateAsync<DeploymentExecutionCheckpoint>(
             c => c.ServerTaskId == checkpoint.ServerTaskId,
@@ -50,7 +56,10 @@ public class DeploymentCheckpointService(IRepository repository, IUnitOfWork uni
         return await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task EnsureExistsAsync(int serverTaskId, int deploymentId, CancellationToken ct = default)
+    public Task EnsureExistsAsync(int serverTaskId, int deploymentId, CancellationToken ct = default)
+        => _dbGate.RunAsync(() => EnsureExistsGatedAsync(serverTaskId, deploymentId, ct), ct);
+
+    private async Task EnsureExistsGatedAsync(int serverTaskId, int deploymentId, CancellationToken ct)
     {
         var exists = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
             .AnyAsync(ct).ConfigureAwait(false);

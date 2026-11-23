@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Db;
 using System.Text.Json;
 using Squid.Core.Services.Machines;
 using Squid.Message.Constants;
@@ -21,9 +22,13 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
 {
     private readonly IMachineDataProvider _machineDataProvider;
 
-    public DeploymentTargetFinder(IMachineDataProvider machineDataProvider)
+    // A health-check step re-finds targets while parallel steps use the same scoped DbContext, so the machine reads go through the gate.
+    private readonly IScopedDbGate _dbGate;
+
+    public DeploymentTargetFinder(IMachineDataProvider machineDataProvider, IScopedDbGate dbGate = null)
     {
         _machineDataProvider = machineDataProvider;
+        _dbGate = dbGate ?? new ScopedDbGate();
     }
 
     public async Task<List<Persistence.Entities.Deployments.Machine>> FindTargetsAsync(Persistence.Entities.Deployments.Deployment deployment, CancellationToken cancellationToken)
@@ -44,14 +49,14 @@ public class DeploymentTargetFinder : IDeploymentTargetFinder
     {
         if (deployment.MachineId > 0)
         {
-            var machine = await _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, ct).ConfigureAwait(false);
+            var machine = await _dbGate.RunAsync(() => _machineDataProvider.GetMachinesByIdAsync(deployment.MachineId, ct), ct).ConfigureAwait(false);
             
             return machine != null ? [machine] : [];
         }
 
         var environmentIds = new HashSet<int> { deployment.EnvironmentId };
         
-        return await _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), ct).ConfigureAwait(false);
+        return await _dbGate.RunAsync(() => _machineDataProvider.GetMachinesByFilterAsync(environmentIds, new HashSet<string>(), ct), ct).ConfigureAwait(false);
     }
 
     private static List<Persistence.Entities.Deployments.Machine> FilterByEnvironment(List<Persistence.Entities.Deployments.Machine> candidates, int environmentId)
