@@ -43,10 +43,9 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly ICalamariPayloadBuilder _payloadBuilder;
     private readonly IHalibutScriptObserver _observer;
     private readonly IMachineCircuitBreakerRegistry _breakerRegistry;
-    private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
     private readonly IInFlightScriptStore _inFlightStore;
     private readonly RpcRetryHandler _rpcRetry;
-    private readonly IScriptDispatcher _scriptDispatcher;
+    private readonly IScriptDispatcherSelector _dispatcherSelector;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -58,15 +57,17 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         IMachineRuntimeCapabilitiesCache capabilitiesCache = null,
         IInFlightScriptStore inFlightStore = null,
         RpcRetryHandler rpcRetry = null,
-        IScriptDispatcher scriptDispatcher = null)
+        IScriptDispatcherSelector dispatcherSelector = null)
     {
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
-        _capabilitiesCache = capabilitiesCache;
         _inFlightStore = inFlightStore;
         _rpcRetry = rpcRetry ?? new RpcRetryHandler(halibutSetting.RpcRetry);
-        _scriptDispatcher = scriptDispatcher ?? new V1ScriptDispatcher(halibutClientFactory);
+
+        // Composed without a selector (tests, V1-only wiring): V1 is the only dispatcher, which is also what
+        // every cold-cache machine gets. Production injects the selector with every registered dispatcher.
+        _dispatcherSelector = dispatcherSelector ?? new ScriptDispatcherSelector(new IScriptDispatcher[] { new V1ScriptDispatcher(halibutClientFactory) }, capabilitiesCache);
         _defaultScriptTimeout = TimeSpan.FromMinutes(Math.Max(1, halibutSetting.Polling.ScriptTimeoutMinutes));
     }
 
@@ -105,19 +106,13 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
         try
         {
-            // P0-E.3: log the protocol dispatch decision from the capabilities cache.
-            // Observability today; the branch site is already wired for E.2's V2 rollout.
-            LogProtocolDispatchDecision(request.Machine.Id, request.Machine.Name);
-
-            var scriptClient = _scriptDispatcher.CreateClient(endpoint);
-
             try
             {
                 ScriptExecutionResult result;
                 if (plan is PackagedPayloadExecutionPlan packagedPlan)
-                    result = await ExecuteCalamariViaHalibutAsync(packagedPlan, scriptClient, endpoint, ct).ConfigureAwait(false);
+                    result = await ExecuteCalamariViaHalibutAsync(packagedPlan, endpoint, ct).ConfigureAwait(false);
                 else
-                    result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, scriptClient, endpoint, ct).ConfigureAwait(false);
+                    result = await ExecuteDirectScriptViaHalibutAsync((DirectScriptExecutionPlan)plan, endpoint, ct).ConfigureAwait(false);
 
                 breaker?.RecordSuccess();
                 return result;
@@ -148,7 +143,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     private async Task<ScriptExecutionResult> ExecuteCalamariViaHalibutAsync(
-        PackagedPayloadExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
+        PackagedPayloadExecutionPlan plan, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var payload = _payloadBuilder.Build(request, request.Syntax);
@@ -165,30 +160,31 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(payload.SensitiveBytes), payload.SensitivePassword)
         };
 
-        var dispatch = BuildDispatch(request, scriptClient, endpoint, scriptBody, scriptFiles);
+        var dispatch = BuildDispatch(request, endpoint, scriptBody, scriptFiles, ct);
 
         return await DispatchOrReattachAsync(dispatch, ct).ConfigureAwait(false);
     }
 
     private async Task<ScriptExecutionResult> ExecuteDirectScriptViaHalibutAsync(
-        DirectScriptExecutionPlan plan, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, CancellationToken ct)
+        DirectScriptExecutionPlan plan, ServiceEndPoint endpoint, CancellationToken ct)
     {
         var request = plan.Request;
         var (variableBytes, sensitiveBytes, password) =
             ScriptExecutionHelper.CreateVariableFileContents(request.Variables);
 
         var scriptFiles = BuildDirectScriptFiles(request.DeploymentFiles, request.PackageReferences, variableBytes, sensitiveBytes, password);
-        var dispatch = BuildDispatch(request, scriptClient, endpoint, request.ScriptBody, scriptFiles);
+        var dispatch = BuildDispatch(request, endpoint, request.ScriptBody, scriptFiles, ct);
 
         return await DispatchOrReattachAsync(dispatch, ct).ConfigureAwait(false);
     }
 
     /// <summary>
     /// Everything one dispatch needs, protocol-neutral: the ticket / timeout / mutex name are decided here
-    /// (shared by every <see cref="IScriptDispatcher"/>), and the dispatcher only validates the spec and
-    /// prepares its start call — before any in-flight record or agent probe.
+    /// (shared by every <see cref="IScriptDispatcher"/>), the dispatcher is chosen from what the agent
+    /// ADVERTISED, and its session validates the spec and prepares its start call — before any in-flight
+    /// record or agent probe.
     /// </summary>
-    private DispatchContext BuildDispatch(ScriptExecutionRequest request, IAsyncScriptService scriptClient, ServiceEndPoint endpoint, string scriptBody, ScriptFile[] scriptFiles)
+    private DispatchContext BuildDispatch(ScriptExecutionRequest request, ServiceEndPoint endpoint, string scriptBody, ScriptFile[] scriptFiles, CancellationToken ct)
     {
         // Ticket is fresh-per-attempt (Guid) so a retry doesn't trap on agent-side
         // state from the previous attempt. The isolation mutex name is MACHINE-SCOPED
@@ -207,41 +203,47 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
             TargetNamespace = request.TargetNamespace
         };
 
-        var start = _scriptDispatcher.PrepareStart(scriptClient, spec);
+        var dispatcher = _dispatcherSelector.ForMachine(request.Machine.Id);
+        var context = new ScriptSessionContext(_rpcRetry, spec.Timeout, ct, _observer);
+        var session = dispatcher.Open(endpoint, context);
+        var start = session.PrepareStart(spec);
 
-        return new DispatchContext(request, scriptClient, endpoint, spec, start);
+        Log.Debug("[Deploy] Machine {MachineName} dispatching via script service {ProtocolVersion}", request.Machine.Name, session.Version);
+
+        return new DispatchContext(request, endpoint, spec, context, session, start);
     }
 
-    /// <summary>One dispatch: the request, the RAW agent client, the endpoint, the protocol-neutral spec and the dispatcher's prepared start call.</summary>
-    private sealed record DispatchContext(ScriptExecutionRequest Request, IAsyncScriptService Client, ServiceEndPoint Endpoint, ScriptDispatchSpec Spec, Func<Task<ScriptStatusResponse>> Start);
+    /// <summary>One dispatch: the request, the endpoint, the protocol-neutral spec, the session opened for the chosen version and its prepared start call.</summary>
+    private sealed record DispatchContext(ScriptExecutionRequest Request, ServiceEndPoint Endpoint, ScriptDispatchSpec Spec, ScriptSessionContext Context, IScriptAgentSession Session, Func<Task<AgentScriptStatus>> Start);
+
+    /// <summary>A ticket a prior run recorded, with the protocol version it was dispatched with.</summary>
+    private sealed record RecordedDispatch(string TicketId, ScriptProtocolVersion Version);
+
+    /// <summary>
+    /// Scope the in-flight slot to the (machine, step, action) dispatch unit, NOT the machine alone: a
+    /// parallel batch can dispatch two scripts to one machine at once (two StartWithPrevious steps sharing
+    /// a target role), and a machine-only key would make the second dispatch re-attach to the first's
+    /// ticket and skip its own script. Keyed by the stable, process-unique step/action ids — display names
+    /// carry no uniqueness guarantee.
+    /// </summary>
+    private static DispatchSlot SlotFor(ScriptExecutionRequest request) => new(request.Machine.Id, request.StepId, request.ActionId);
 
     /// <summary>
     /// Dispatch a script to the agent and observe it to completion — or, on a
     /// resumed deployment, re-attach to a still-running script from a prior
     /// (crashed) run instead of launching a duplicate. The in-flight ScriptTicket
-    /// is recorded <b>before</b> <c>StartScript</c> and cleared once observation
-    /// completes, so a server crash (or a lost RPC response) anywhere from the
-    /// moment the agent launches the script leaves a durable pointer the next run
-    /// can re-attach to — never a duplicate dispatch.
+    /// (with the protocol version it is dispatched with) is recorded <b>before</b>
+    /// <c>StartScript</c> and cleared once observation completes, so a server crash
+    /// (or a lost RPC response) anywhere from the moment the agent launches the
+    /// script leaves a durable pointer the next run can re-attach to — never a
+    /// duplicate dispatch.
     /// </summary>
     private async Task<ScriptExecutionResult> DispatchOrReattachAsync(DispatchContext dispatch, CancellationToken ct)
     {
         var request = dispatch.Request;
+        var slot = SlotFor(request);
 
-        // Scope the in-flight slot to the (machine, step, action) dispatch unit, NOT
-        // the machine alone: a parallel batch can dispatch two scripts to one machine
-        // at once (two StartWithPrevious steps sharing a target role), and a
-        // machine-only key would make the second dispatch re-attach to the first's
-        // ticket and skip its own script. Keyed by the stable, process-unique
-        // step/action ids — display names carry no uniqueness guarantee.
-        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
-
-        // GetStatus / Cancel / Complete survive a brief dropped connection inside a time budget; every
-        // exhausted budget rethrows the original exception, so the pause path below is unchanged and the
-        // breaker still sees ONE failure per dispatch (retries never touch it). StartScript stays unretried.
-        var scriptClient = new RetryingScriptClient(dispatch.Client, _rpcRetry, dispatch.Spec.Timeout, ct);
-
-        var reattached = await TryReattachAsync(dispatch, scriptClient, ct).ConfigureAwait(false);
+        var reattached = await TryReattachAsync(dispatch, slot, ct).ConfigureAwait(false);
         if (reattached != null) return reattached;
 
         // Record-before-RPC: persist the ticket we are about to dispatch BEFORE
@@ -252,25 +254,27 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         // time. With the record first, resume always knows a ticket to re-probe:
         // TryReattachAsync re-attaches if the agent has it, and falls through to a
         // clean fresh dispatch (via the unknown-ticket answer) if the
-        // script never actually started. The agent is idempotent for a known
-        // ticket, so even a retried StartScript returns status, not a second run.
+        // script never actually started. The version is part of the same write, so a
+        // resume probes in the dialect the script was started with. The agent is
+        // idempotent for a known ticket, so even a retried StartScript returns status,
+        // not a second run.
         if (_inFlightStore != null)
-            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, dispatch.Spec.Ticket.TaskId, ct).ConfigureAwait(false);
+            await _inFlightStore.RecordDispatchedAsync(request.ServerTaskId, slot, dispatch.Spec.Ticket.TaskId, dispatch.Session.Version, ct).ConfigureAwait(false);
 
         var startResponse = await dispatch.Start().ConfigureAwait(false);
 
         Log.Information("[Deploy] Dispatching script to agent {MachineName} with ticket {Ticket}",
             request.Machine.Name, dispatch.Spec.Ticket);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, dispatch.Spec.Ticket, dispatch.Spec.Timeout, ct, request.Masker, startResponse, dispatch.Endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
+        var result = await dispatch.Session.ObserveAsync(request, dispatch.Endpoint, dispatch.Spec.Ticket, startResponse).ConfigureAwait(false);
 
         // Clear the in-flight pointer ONLY on a definitive observation — i.e. the
-        // observer RETURNED (script completed, reported a non-zero exit, or hit the
-        // per-script timeout and was cancelled). On a THROW (a transient RPC drop
-        // that outlived Halibut's retries, an unreachable agent, or cancellation)
-        // the script may still be running on the agent, so we PRESERVE the pointer:
-        // the deployment pauses and a resumed run re-attaches to the still-running
-        // script instead of dispatching a duplicate.
+        // observer RETURNED (script completed, reported a non-zero exit, hit the
+        // per-script timeout and was cancelled, or the agent reported the outcome lost).
+        // On a THROW (a transient RPC drop that outlived Halibut's retries, an unreachable
+        // agent, or cancellation) the script may still be running on the agent, so we
+        // PRESERVE the pointer: the deployment pauses and a resumed run re-attaches to
+        // the still-running script instead of dispatching a duplicate.
         await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
 
         return result;
@@ -283,72 +287,121 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     }
 
     /// <summary>
-    /// If a prior run recorded an in-flight ticket for this machine and the agent
-    /// still has a usable script for it, observe that script to completion and
-    /// return its result (no duplicate dispatch). Returns <see langword="null"/>
-    /// — meaning "dispatch fresh" — when there is no record, the probe fails, or
-    /// the agent no longer knows the ticket (<see cref="IScriptDispatcher.IsUnknownTicket"/>).
-    /// The fresh-dispatch fallback is exactly today's behaviour, so re-attach can only
-    /// ever AVOID a duplicate, never change a deployment that wasn't resuming.
+    /// If a prior run recorded an in-flight ticket for this dispatch unit and the agent still has a usable
+    /// script for it, observe that script to completion and return its result (no duplicate dispatch).
+    /// The probe and the observation use the protocol version the script was dispatched with, not the one
+    /// the agent advertises now. Returns <see langword="null"/> — meaning "dispatch fresh" — when there is
+    /// no record, a V1 probe fails non-transiently, or the agent says it never had the ticket
+    /// (<see cref="IScriptAgentSession.IsUnknownTicket"/>). A script whose result the agent lost fails the
+    /// action instead (<see cref="LostScriptResult"/>): it may have run, so it must not run again.
     /// </summary>
-    private async Task<ScriptExecutionResult> TryReattachAsync(DispatchContext dispatch, IAsyncScriptService scriptClient, CancellationToken ct)
+    private async Task<ScriptExecutionResult> TryReattachAsync(DispatchContext dispatch, DispatchSlot slot, CancellationToken ct)
     {
         if (_inFlightStore == null) return null;
 
         var request = dispatch.Request;
+        var recorded = await ReadRecordedDispatchAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
 
-        // Same dispatch-unit scope as DispatchOrReattachAsync: only re-attach to a
-        // ticket recorded for THIS (machine, step, action), never to a sibling step
-        // concurrently dispatching to the same machine.
-        var slot = new DispatchSlot(request.Machine.Id, request.StepId, request.ActionId);
+        if (recorded == null) return null;
 
-        var existingTicketId = await _inFlightStore.TryGetTicketAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-        if (string.IsNullOrEmpty(existingTicketId)) return null;
+        var existingTicket = new ScriptTicket(recorded.TicketId);
+        var session = OpenSessionFor(dispatch, recorded.Version);
+        var probe = await ProbeRecordedTicketAsync(request, session, existingTicket, ct).ConfigureAwait(false);
 
-        var existingTicket = new ScriptTicket(existingTicketId);
-
-        ScriptStatusResponse probe;
-        try
-        {
-            probe = await scriptClient.GetStatusAsync(new ScriptStatusRequest(existingTicket, 0)).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // A TRANSIENT probe failure (the agent is still unreachable on resume)
-            // must NOT clear the pointer or dispatch fresh — the recorded script may
-            // still be running, so a fresh dispatch would duplicate it. Preserve the
-            // pointer and propagate so the deployment pauses again; a later resume
-            // re-probes. Only a non-transient probe error falls back to a fresh
-            // dispatch (today's behaviour).
-            if (TransientFailureClassifier.IsTransient(ex))
-            {
-                Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
-                    request.Machine.Name, existingTicketId);
-                throw;
-            }
-
-            Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
-                request.Machine.Name, existingTicketId);
-            await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
-            return null;
-        }
-
-        if (_scriptDispatcher.IsUnknownTicket(probe))
+        if (probe == null || session.IsUnknownTicket(probe))
         {
             await _inFlightStore.ClearAsync(request.ServerTaskId, slot, ct).ConfigureAwait(false);
             return null;
         }
 
-        Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, state {State}) after resume — skipping duplicate dispatch.",
-            request.Machine.Name, existingTicketId, probe.State);
+        if (probe.State == AgentScriptState.ResultLost)
+            return await FailLostResultAsync(request, existingTicket, slot).ConfigureAwait(false);
 
-        var result = await _observer.ObserveAndCompleteAsync(request.Machine, scriptClient, existingTicket, dispatch.Spec.Timeout, ct, request.Masker, probe, dispatch.Endpoint, request.OutputSink, request.ShouldCancelRemoteScript).ConfigureAwait(false);
+        Log.Information("[Deploy] Re-attaching to in-flight script on agent {MachineName} (ticket {Ticket}, protocol {ProtocolVersion}, state {State}) after resume — skipping duplicate dispatch.",
+            request.Machine.Name, recorded.TicketId, session.Version, probe.State);
+
+        var result = await session.ObserveAsync(request, dispatch.Endpoint, existingTicket, probe).ConfigureAwait(false);
 
         // Clear only on a definitive observation; preserve on a throw so a further
         // resume re-attaches again (same rationale as DispatchOrReattachAsync).
         await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
 
         return result;
+    }
+
+    private async Task<RecordedDispatch> ReadRecordedDispatchAsync(int serverTaskId, DispatchSlot slot, CancellationToken ct)
+    {
+        var ticketId = await _inFlightStore.TryGetTicketAsync(serverTaskId, slot, ct).ConfigureAwait(false);
+
+        if (string.IsNullOrEmpty(ticketId)) return null;
+
+        var version = await _inFlightStore.TryGetProtocolAsync(serverTaskId, slot, ct).ConfigureAwait(false);
+
+        return new RecordedDispatch(ticketId, version ?? ScriptProtocolVersion.V1);
+    }
+
+    /// <summary>
+    /// The session for the version a script was recorded with: the one already opened for this dispatch when
+    /// it is the same version, otherwise the recorded version's dispatcher. The recorded version always
+    /// wins — even if the agent no longer advertises it (rolled back, or this pod's cache is stale): the
+    /// script lives in the agent's V2 state, V1 cannot ask about it, and mapping a V1 "unknown" onto it
+    /// would re-run it. If the agent really cannot answer, the probe throws and the pointer is preserved.
+    /// </summary>
+    private IScriptAgentSession OpenSessionFor(DispatchContext dispatch, ScriptProtocolVersion recordedVersion)
+    {
+        if (recordedVersion == dispatch.Session.Version) return dispatch.Session;
+
+        if (!_dispatcherSelector.Advertises(dispatch.Request.Machine.Id, recordedVersion))
+            Log.Warning("[Deploy] Script on agent {MachineName} was dispatched with protocol {ProtocolVersion}, which the agent does not currently advertise; re-attaching with that version anyway so the script is never re-run.", dispatch.Request.Machine.Name, recordedVersion);
+
+        return _dispatcherSelector.ForVersion(recordedVersion).Open(dispatch.Endpoint, dispatch.Context);
+    }
+
+    /// <summary>
+    /// Probes the recorded ticket. Returns <see langword="null"/> — "dispatch fresh" — only for a non-transient
+    /// failure of a protocol that has no explicit unknown answer (V1). A TRANSIENT probe failure (the agent is
+    /// still unreachable on resume) must NOT clear the pointer or dispatch fresh — the recorded script may still
+    /// be running, so a fresh dispatch would duplicate it: the pointer is preserved and the exception propagates
+    /// so the deployment pauses again.
+    /// </summary>
+    private static async Task<AgentScriptStatus> ProbeRecordedTicketAsync(ScriptExecutionRequest request, IScriptAgentSession session, ScriptTicket ticket, CancellationToken ct)
+    {
+        try
+        {
+            return await session.ProbeAsync(ticket).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            if (TransientFailureClassifier.IsTransient(ex))
+            {
+                Log.Information(ex, "[Deploy] Re-attach probe hit a transient failure for agent {MachineName} (ticket {Ticket}); preserving in-flight pointer for a later resume.",
+                    request.Machine.Name, ticket.TaskId);
+                throw;
+            }
+
+            if (!session.ProbeFailureMeansUnknownTicket)
+            {
+                Log.Warning(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}, protocol {ProtocolVersion}); the protocol answers unknown explicitly, so this is not evidence the script did not run — preserving the in-flight pointer.",
+                    request.Machine.Name, ticket.TaskId, session.Version);
+                throw;
+            }
+
+            Log.Information(ex, "[Deploy] Re-attach probe failed for agent {MachineName} (ticket {Ticket}); dispatching fresh.",
+                request.Machine.Name, ticket.TaskId);
+
+            return null;
+        }
+    }
+
+    private async Task<ScriptExecutionResult> FailLostResultAsync(ScriptExecutionRequest request, ScriptTicket ticket, DispatchSlot slot)
+    {
+        Log.Error("[Deploy] Agent {MachineName} lost the result of script {Ticket}; failing the action instead of re-running it", request.Machine.Name, ticket.TaskId);
+
+        var lost = LostScriptResult.Build(AgentScriptState.ResultLost, request.Machine.Name, ticket, new List<string>());
+
+        await ClearInFlightAsync(request.ServerTaskId, slot).ConfigureAwait(false);
+
+        return lost;
     }
 
     /// <summary>
@@ -399,35 +452,6 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     /// </summary>
     internal static string GenerateTicketId(int serverTaskId, string stepName, string actionName, int machineId)
         => Guid.NewGuid().ToString("N");
-
-    /// <summary>
-    /// P0-E.3: emit a structured log line naming which script-service protocol
-    /// version we're about to dispatch, based on the cached capabilities from the
-    /// last health check. Server-side V2 isn't implemented yet (E.2, 🏔️ ARCH), so
-    /// we always dispatch V1 regardless of the cache — but the read site is now
-    /// wired and operators get visibility today.
-    /// </summary>
-    private void LogProtocolDispatchDecision(int machineId, string machineName)
-    {
-        if (_capabilitiesCache == null) return;
-
-        var caps = _capabilitiesCache.TryGet(machineId);
-
-        if (caps == MachineRuntimeCapabilities.Empty)
-        {
-            Log.Debug(
-                "[Deploy] Machine {MachineName} has no cached capabilities — dispatching V1 " +
-                "(cache cold; first health check hasn't landed yet)",
-                machineName);
-            return;
-        }
-
-        var version = caps.SupportsScriptServiceV2 ? "v2-capable" : "v1-only";
-        Log.Debug(
-            "[Deploy] Machine {MachineName} protocol: {ProtocolVersion} (cached services: " +
-            "[{Services}]). Dispatching V1 — V2 server-side not yet implemented (E.2).",
-            machineName, version, string.Join(", ", caps.SupportedServices));
-    }
 
     internal static ServiceEndPoint? ParseMachineEndpoint(Persistence.Entities.Deployments.Machine machine)
     {

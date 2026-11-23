@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.Deployments.Checkpoints;
 
@@ -59,6 +60,24 @@ public interface IInFlightScriptStore : IScopedDependency
     Task<string?> TryGetTicketAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Records the ticket together with the script-service protocol version it is dispatched with, in ONE
+    /// write before the start RPC, so a resume re-attaches in the SAME dialect the script was started with
+    /// (a record can never exist with a ticket but without its version). The default forwards to the
+    /// version-less overload, i.e. an implementer that does not persist a version records a V1 dispatch;
+    /// <see cref="InFlightScriptStore"/> overrides it.
+    /// </summary>
+    Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol, CancellationToken cancellationToken = default)
+        => RecordDispatchedAsync(serverTaskId, slot, scriptTicket, cancellationToken);
+
+    /// <summary>
+    /// The protocol version the slot's recorded script was dispatched with. A record written before version
+    /// negotiation existed is <see cref="ScriptProtocolVersion.V1"/>; <see langword="null"/> means the
+    /// store does not know (no checkpoint row / not overridden), which callers treat as V1.
+    /// </summary>
+    Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+        => Task.FromResult<ScriptProtocolVersion?>(null);
+
+    /// <summary>
     /// Cross-task: is ANY deployment currently holding an in-flight script on <paramref name="machineId"/>?
     /// Scans the (small, retention-bounded) set of checkpoints that still carry in-flight entries — a
     /// checkpoint exists only for an active or paused deployment, and is deleted on success. The tentacle
@@ -84,10 +103,19 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
     public Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, CancellationToken cancellationToken = default)
         => MutateAsync(serverTaskId, current => InFlightScriptMap.Add(current, slot, scriptTicket), cancellationToken);
 
+    public Task RecordDispatchedAsync(int serverTaskId, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol, CancellationToken cancellationToken = default)
+        => MutateAsync(serverTaskId, current => InFlightScriptMap.Add(current, slot, scriptTicket, protocol), cancellationToken);
+
     public Task ClearAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
         => MutateAsync(serverTaskId, current => InFlightScriptMap.Remove(current, slot), cancellationToken);
 
-    public async Task<string?> TryGetTicketAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+    public Task<string?> TryGetTicketAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+        => ReadAsync(serverTaskId, json => InFlightScriptMap.TryGet(json, slot), cancellationToken);
+
+    public Task<ScriptProtocolVersion?> TryGetProtocolAsync(int serverTaskId, DispatchSlot slot, CancellationToken cancellationToken = default)
+        => ReadAsync<ScriptProtocolVersion?>(serverTaskId, json => InFlightScriptMap.GetProtocol(json, slot), cancellationToken);
+
+    private async Task<T> ReadAsync<T>(int serverTaskId, Func<string, T> project, CancellationToken cancellationToken)
     {
         // The read MUST take the same per-task stripe as the writes. A parallel
         // batch dispatches to several targets at once on one Hangfire worker, and
@@ -104,7 +132,7 @@ public sealed class InFlightScriptStore(IRepository repository) : IInFlightScrip
             var row = await repository.QueryNoTracking<DeploymentExecutionCheckpoint>(c => c.ServerTaskId == serverTaskId)
                 .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
 
-            return row == null ? null : InFlightScriptMap.TryGet(row.InFlightScriptsJson ?? "[]", slot);
+            return row == null ? default : project(row.InFlightScriptsJson ?? "[]");
         }
         finally
         {

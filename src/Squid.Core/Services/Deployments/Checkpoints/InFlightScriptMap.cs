@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
+using Squid.Message.Models.Deployments.Execution;
 
 namespace Squid.Core.Services.Deployments.Checkpoints;
 
@@ -31,15 +33,24 @@ public static class InFlightScriptMap
         [property: JsonPropertyName("m")] int MachineId,
         [property: JsonPropertyName("s")] int StepId,
         [property: JsonPropertyName("a")] int ActionId,
-        [property: JsonPropertyName("t")] string Ticket);
+        [property: JsonPropertyName("t")] string Ticket,
+        [property: JsonPropertyName("v"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Protocol = null);
 
-    /// <summary>Record (or replace) the in-flight ticket for one dispatch slot.</summary>
+    /// <summary>Record (or replace) the in-flight ticket for one dispatch slot (a V1 dispatch).</summary>
     public static string Add(string json, DispatchSlot slot, string scriptTicket)
+        => Add(json, slot, scriptTicket, ScriptProtocolVersion.V1);
+
+    /// <summary>
+    /// Record (or replace) the in-flight ticket together with the protocol version it was dispatched
+    /// with. A V1 entry omits the <c>"v"</c> field, so V1 records stay byte-identical to what servers
+    /// without version negotiation wrote and read; only a non-V1 entry carries <c>"v"</c>.
+    /// </summary>
+    public static string Add(string json, DispatchSlot slot, string scriptTicket, ScriptProtocolVersion protocol)
     {
         var entries = Parse(json);
 
         entries.RemoveAll(e => Matches(e, slot));
-        entries.Add(new Entry(slot.MachineId, slot.StepId, slot.ActionId, scriptTicket));
+        entries.Add(new Entry(slot.MachineId, slot.StepId, slot.ActionId, scriptTicket, protocol == ScriptProtocolVersion.V1 ? null : protocol.ToString()));
 
         return Serialize(entries);
     }
@@ -59,6 +70,22 @@ public static class InFlightScriptMap
     /// <see langword="null"/> if none.</summary>
     public static string? TryGet(string json, DispatchSlot slot)
         => Parse(json).FirstOrDefault(e => Matches(e, slot))?.Ticket;
+
+    /// <summary>
+    /// The protocol version the slot's script was dispatched with. A record without the field (written
+    /// before version negotiation existed) is V1. A version this server does not know throws rather than
+    /// guessing V1: probing a script in a dialect it was not started with can read "unknown" and re-run it.
+    /// </summary>
+    public static ScriptProtocolVersion GetProtocol(string json, DispatchSlot slot)
+    {
+        var recorded = Parse(json).FirstOrDefault(e => Matches(e, slot))?.Protocol;
+
+        if (string.IsNullOrEmpty(recorded)) return ScriptProtocolVersion.V1;
+
+        if (Enum.TryParse<ScriptProtocolVersion>(recorded, ignoreCase: false, out var version) && Enum.IsDefined(version)) return version;
+
+        throw new UnsupportedScriptProtocolException(recorded);
+    }
 
     /// <summary>True if ANY in-flight entry targets <paramref name="machineId"/> — i.e. a script
     /// is dispatched to that machine's agent and not yet observed to completion. Used by the
