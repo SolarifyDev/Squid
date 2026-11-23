@@ -3,6 +3,7 @@ using Squid.Message.Contracts.Tentacle;
 using Squid.Tentacle.Configuration;
 using Squid.Tentacle.Health;
 using Squid.Tentacle.ScriptExecution;
+using Squid.Tentacle.ScriptExecution.V2;
 using Serilog;
 using RFS = Squid.Tentacle.ScriptExecution.ResilientFileSystem;
 
@@ -266,6 +267,9 @@ public class KubernetesPodMonitor
         foreach (var dir in RFS.GetDirectories(_tentacleSettings.WorkspacePath))
         {
             var ticketId = Path.GetFileName(dir);
+
+            if (ticketId == ScriptTombstoneStore.WorkspaceDirectoryName)
+                continue;
 
             if (activeTickets.ContainsKey(ticketId))
                 continue;

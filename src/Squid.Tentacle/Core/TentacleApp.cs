@@ -64,8 +64,8 @@ public sealed class TentacleApp
         Log.Information("Registered with server. MachineId={MachineId}, ServerThumbprint={ServerThumbprint}",
             registration.MachineId, registration.ServerThumbprint);
 
-        var scriptService = new BackendScriptServiceAdapter(runtime.ScriptBackend);
-        var capabilitiesService = new CapabilitiesService(runtime.Metadata);
+        var scriptService = BuildScriptService(runtime.ScriptBackend);
+        var capabilitiesService = new CapabilitiesService(runtime.Metadata, scriptService is Squid.Message.Contracts.Tentacle.V2.IScriptServiceV2);
 
         await using var halibutHost = _dependencies.HalibutHostFactory(tentacleCert, scriptService, tentacleSettings, capabilitiesService);
 
@@ -142,6 +142,14 @@ public sealed class TentacleApp
         var tentacleSettings = new TentacleSettings();
         configuration.GetSection("Tentacle").Bind(tentacleSettings);
         return tentacleSettings;
+    }
+
+    // V2 is exposed only when the backend serves it; the same check drives the capability the server gates on.
+    internal static Squid.Message.Contracts.Tentacle.IScriptService BuildScriptService(ITentacleScriptBackend backend)
+    {
+        return backend is Squid.Message.Contracts.Tentacle.V2.IScriptServiceV2 v2
+            ? new BackendScriptServiceV2Adapter(backend, v2)
+            : new BackendScriptServiceAdapter(backend);
     }
 
     private static async Task WaitForShutdownAsync(CancellationToken ct)

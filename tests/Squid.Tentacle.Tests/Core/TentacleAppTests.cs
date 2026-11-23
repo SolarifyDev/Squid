@@ -325,6 +325,38 @@ public class TentacleAppTests : TimedTestBase
         tentacle.HealthCheckPort.ShouldBe(18080);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunAsync_HandsHostAScriptService_ThatImplementsV2_OnlyWhenTheBackendServesV2(bool backendServesV2)
+    {
+        using var cert = CreateCertificate();
+        ITentacleScriptBackend backend = backendServesV2 ? new Squid.Tentacle.ScriptExecution.LocalScriptService() : new FakeScriptBackend();
+        var flavor = new FakeFlavor("KubernetesAgent", new FakeRegistrar(), backend, [], []);
+        IScriptService handedToHost = null;
+        ICapabilitiesService capabilitiesHandedToHost = null;
+        var halibutHost = new FakeHalibutHost();
+
+        var app = new TentacleApp(new TentacleAppDependencies
+        {
+            CertificateManagerFactory = _ => new FakeCertificateManager(cert, "sub-v2"),
+            BuiltInFlavorsProvider = () => [flavor],
+            FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+            HalibutHostFactory = (_, script, _, caps) => { handedToHost = script; capabilitiesHandedToHost = caps; return halibutHost; },
+            HealthCheckServerFactory = (_, _, _) => new FakeHealthServer()
+        });
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+        var runTask = app.RunAsync(new TentacleSettings { Flavor = "KubernetesAgent", ServerCommsUrl = "https://localhost:10943" }, CreateEmptyConfiguration(), cts.Token);
+
+        await WaitUntilAsync(() => halibutHost.StartCalls == 1, TestCancellationToken);
+        cts.Cancel();
+        await runTask;
+
+        (handedToHost is Squid.Message.Contracts.Tentacle.V2.IScriptServiceV2).ShouldBe(backendServesV2);
+        capabilitiesHandedToHost.GetCapabilities(new CapabilitiesRequest()).SupportedServices.Contains(ScriptServiceCapabilities.V2).ShouldBe(backendServesV2, "the capability the server gates on must match what the host registers");
+    }
+
     private static IConfiguration CreateEmptyConfiguration()
         => new ConfigurationBuilder().Build();
 

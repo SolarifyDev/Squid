@@ -17,6 +17,23 @@ public class CapabilitiesServiceTests
         response.SupportedServices.ShouldContain("ICapabilitiesService/v1");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void GetCapabilities_AdvertisesScriptServiceV2_OnlyWhenTheAgentServesIt(bool serves)
+    {
+        var response = new CapabilitiesService(metadata: null, advertiseScriptServiceV2: serves).GetCapabilities(new CapabilitiesRequest());
+
+        response.SupportedServices.Contains(ScriptServiceCapabilities.V2).ShouldBe(serves);
+        response.SupportedServices.ShouldContain("IScriptService/v1", "V1 stays advertised either way so old servers keep working");
+    }
+
+    [Fact]
+    public void GetCapabilities_DefaultConstructor_AdvertisesScriptServiceV2()
+    {
+        new CapabilitiesService().GetCapabilities(new CapabilitiesRequest()).SupportedServices.ShouldContain("IScriptService/v2");
+    }
+
     [Fact]
     public void GetCapabilities_ReturnsAgentVersion()
     {

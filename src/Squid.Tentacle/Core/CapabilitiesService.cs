@@ -62,6 +62,7 @@ public class CapabilitiesService : ICapabilitiesService
     /// </summary>
     public static int MaxUpgradeLogBytesValue => MaxUpgradeLogBytes;
 
+    private readonly bool _advertiseScriptServiceV2;
     private readonly Dictionary<string, string> _metadata;
     private readonly Squid.Tentacle.Platform.IUpgradeStatusStorage _upgradeStorage;
 
@@ -82,9 +83,15 @@ public class CapabilitiesService : ICapabilitiesService
     ///     <item><see cref="Squid.Tentacle.Platform.NullUpgradeStatusStorage"/> (fallback)</item>
     ///   </list>
     /// </summary>
-    public CapabilitiesService(Dictionary<string, string> metadata,
-        Squid.Tentacle.Platform.IUpgradeStatusStorage upgradeStorage)
+    public CapabilitiesService(Dictionary<string, string> metadata, bool advertiseScriptServiceV2)
+        : this(metadata, Squid.Tentacle.Platform.UpgradeStatusStorageFactory.Resolve(), advertiseScriptServiceV2)
     {
+    }
+
+    public CapabilitiesService(Dictionary<string, string> metadata,
+        Squid.Tentacle.Platform.IUpgradeStatusStorage upgradeStorage, bool advertiseScriptServiceV2 = true)
+    {
+        _advertiseScriptServiceV2 = advertiseScriptServiceV2;
         _metadata = MergeWithRuntimeCapabilities(metadata);
         _upgradeStorage = upgradeStorage ?? new Squid.Tentacle.Platform.NullUpgradeStatusStorage();
     }
@@ -109,10 +116,20 @@ public class CapabilitiesService : ICapabilitiesService
 
         return new CapabilitiesResponse
         {
-            SupportedServices = new List<string> { "IScriptService/v1", "ICapabilitiesService/v1" },
+            SupportedServices = BuildSupportedServices(),
             AgentVersion = AssemblyVersion.Canonical,
             Metadata = metadataForThisCall
         };
+    }
+
+    private List<string> BuildSupportedServices()
+    {
+        var services = new List<string> { "IScriptService/v1", "ICapabilitiesService/v1" };
+
+        if (_advertiseScriptServiceV2)
+            services.Add(ScriptServiceCapabilities.V2);
+
+        return services;
     }
 
     /// <summary>
