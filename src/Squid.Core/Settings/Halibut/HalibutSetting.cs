@@ -15,6 +15,7 @@ public class HalibutSetting : IConfigurationSetting
         RpcRetry = section.GetSection("RpcRetry").Get<RpcRetrySettings>() ?? new RpcRetrySettings();
         Trust = section.GetSection("Trust").Get<TrustSettings>() ?? new TrustSettings();
         DataStreamStorage = section.GetSection("DataStreamStorage").Get<DataStreamStorageSettings>() ?? new DataStreamStorageSettings();
+        RedisQueue = section.GetSection("RedisQueue").Get<RedisQueueSettings>() ?? new RedisQueueSettings();
     }
 
     public PollingSettings Polling { get; set; } = new();
@@ -24,6 +25,43 @@ public class HalibutSetting : IConfigurationSetting
     public RpcRetrySettings RpcRetry { get; set; } = new();
     public TrustSettings Trust { get; set; } = new();
     public DataStreamStorageSettings DataStreamStorage { get; set; } = new();
+    public RedisQueueSettings RedisQueue { get; set; } = new();
+}
+
+/// <summary>
+/// The cross-pod leg of the polling-agent queue: a request goes to Redis only when no live poller of its agent is attached to the pod that issues it.
+/// A value of zero or less (or a blank prefix) is invalid and falls back to its default.
+/// </summary>
+public class RedisQueueSettings
+{
+    public const string DefaultKeyPrefix = "squid";
+    public const int DefaultLivenessWindowSeconds = 15;
+    public const int DefaultFailureThreshold = 3;
+    public const int DefaultOpenDurationSeconds = 5;
+    public const int DefaultProbeIntervalSeconds = 3;
+    public const int DefaultProbeTimeoutSeconds = 2;
+    public const int DefaultKeyRotationMinutes = 10;
+
+    /// <summary>Prefix of every Redis key the queue writes. Two Squid installations sharing one Redis must use different prefixes.</summary>
+    public string KeyPrefix { get; set; } = DefaultKeyPrefix;
+
+    /// <summary>How long after its last sign of life (a dequeue started or ended, a request handed out or answered) a poller still counts as attached to this pod. Must cover the gap while an agent reconnects.</summary>
+    public int LivenessWindowSeconds { get; set; } = DefaultLivenessWindowSeconds;
+
+    /// <summary>Consecutive Redis failures before the breaker opens and cross-pod requests fail fast.</summary>
+    public int FailureThreshold { get; set; } = DefaultFailureThreshold;
+
+    /// <summary>How long the breaker stays open before the next ping may close it.</summary>
+    public int OpenDurationSeconds { get; set; } = DefaultOpenDurationSeconds;
+
+    /// <summary>How often Redis is pinged to detect an outage or its end.</summary>
+    public int ProbeIntervalSeconds { get; set; } = DefaultProbeIntervalSeconds;
+
+    /// <summary>A ping slower than this counts as a failure.</summary>
+    public int ProbeTimeoutSeconds { get; set; } = DefaultProbeTimeoutSeconds;
+
+    /// <summary>How long one data key seals queued messages before a new one is made. Wrapping a key costs a 600k-iteration PBKDF2, so it is done per period, not per message.</summary>
+    public int KeyRotationMinutes { get; set; } = DefaultKeyRotationMinutes;
 }
 
 /// <summary>
