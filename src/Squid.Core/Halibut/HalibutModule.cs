@@ -69,8 +69,12 @@ public class HalibutModule : Module
 
             LogTimeoutOverrides(halibutTimeoutsAndLimits);
 
+            var refresher = ctx.Resolve<IPollingTrustRefresher>();
+
             var halibutRuntime = new HalibutRuntimeBuilder()
                 .WithServiceFactory(services)
+                .WithTrustProvider(ctx.Resolve<SnapshotTrustProvider>())
+                .WithOnUnauthorizedClientConnect((_, thumbprint) => BlockAndRefreshTrust(refresher, thumbprint))
                 .WithServerCertificate(serverCert)
                 .WithHalibutTimeoutsAndLimits(halibutTimeoutsAndLimits)
                 .Build();
@@ -83,7 +87,20 @@ public class HalibutModule : Module
 
         }).As<HalibutRuntime>().SingleInstance();
 
+        builder.RegisterType<SnapshotTrustProvider>().AsSelf().SingleInstance();
+
+        builder.RegisterType<PollingTrustRefresher>().As<IPollingTrustRefresher>().As<IStartable>().SingleInstance();
+
         builder.RegisterType<PollingTrustDistributor>().As<IPollingTrustDistributor>().As<IStartable>().SingleInstance();
+    }
+
+    // An unknown client is still rejected (this callback must stay synchronous, so it cannot wait for the database); the refresh it
+    // triggers makes the agent's next reconnect succeed if it was registered through another replica.
+    private static UnauthorizedClientConnectResponse BlockAndRefreshTrust(IPollingTrustRefresher refresher, string thumbprint)
+    {
+        refresher.OnUnauthorizedClient(thumbprint);
+
+        return UnauthorizedClientConnectResponse.BlockConnection;
     }
 
     /// <summary>
