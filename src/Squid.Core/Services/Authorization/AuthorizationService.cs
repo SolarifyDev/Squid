@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.Teams;
@@ -14,7 +15,11 @@ public interface IAuthorizationService : IScopedDependency
     Task<IReadOnlyList<ResourceScopeGrant>> GetResourceScopeGrantsAsync(int userId, Permission permission, CancellationToken ct = default);
 }
 
-public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUserRoleDataProvider scopedUserRoleDataProvider, IUserRoleDataProvider userRoleDataProvider) : IAuthorizationService
+public class AuthorizationService(
+    ITeamDataProvider teamDataProvider,
+    IScopedUserRoleDataProvider scopedUserRoleDataProvider,
+    IUserRoleDataProvider userRoleDataProvider,
+    IRepository repository) : IAuthorizationService
 {
     public async Task<PermissionCheckResult> CheckPermissionAsync(PermissionCheckRequest request, CancellationToken ct = default)
     {
@@ -89,48 +94,78 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
 
     public async Task<IReadOnlyList<ResourceScopeGrant>> GetResourceScopeGrantsAsync(int userId, Permission permission, CancellationToken ct = default)
     {
-        var teamIds = await teamDataProvider.GetTeamIdsByUserIdAsync(userId, ct).ConfigureAwait(false);
-        if (teamIds.Count == 0) return Array.Empty<ResourceScopeGrant>();
+        var rows = await LoadResourceScopeGrantRowsAsync(userId, permission, ct).ConfigureAwait(false);
 
-        var scopedRoles = await scopedUserRoleDataProvider.GetByTeamIdsAsync(teamIds, ct).ConfigureAwait(false);
-        if (scopedRoles.Count == 0) return Array.Empty<ResourceScopeGrant>();
+        return MapResourceScopeGrants(rows, permission);
+    }
 
-        var permissionsByRoleId = await BatchLoadPermissionsAsync(scopedRoles, ct).ConfigureAwait(false);
+    private async Task<List<ResourceScopeGrantRow>> LoadResourceScopeGrantRowsAsync(
+        int userId,
+        Permission permission,
+        CancellationToken ct)
+    {
+        var permissionName = permission.ToString();
+        var administerSystemName = Permission.AdministerSystem.ToString();
+        var roles = repository.QueryNoTracking<ScopedUserRole>(null);
+        var members = repository.QueryNoTracking<TeamMember>(null);
+        var permissions = repository.QueryNoTracking<UserRolePermission>(null);
+        var projects = repository.QueryNoTracking<ScopedUserRoleProject>(null);
+        var environments = repository.QueryNoTracking<ScopedUserRoleEnvironment>(null);
+        var groups = repository.QueryNoTracking<ScopedUserRoleProjectGroup>(null);
 
-        if (HasAdministerSystem(scopedRoles, permissionsByRoleId))
+        return await (from role in roles
+            join member in members on role.TeamId equals member.TeamId
+            where member.UserId == userId &&
+                  permissions.Any(permissionRow => permissionRow.UserRoleId == role.UserRoleId &&
+                                                   (permissionRow.Permission == permissionName ||
+                                                    permissionRow.Permission == administerSystemName))
+            select new ResourceScopeGrantRow
+            {
+                SpaceId = role.SpaceId,
+                HasRequestedPermission = permissions.Any(permissionRow =>
+                    permissionRow.UserRoleId == role.UserRoleId && permissionRow.Permission == permissionName),
+                HasAdministerSystem = permissions.Any(permissionRow =>
+                    permissionRow.UserRoleId == role.UserRoleId && permissionRow.Permission == administerSystemName),
+                ProjectIds = projects
+                    .Where(scope => scope.ScopedUserRoleId == role.Id)
+                    .Select(scope => scope.ProjectId)
+                    .ToList(),
+                EnvironmentIds = environments
+                    .Where(scope => scope.ScopedUserRoleId == role.Id)
+                    .Select(scope => scope.EnvironmentId)
+                    .ToList(),
+                ProjectGroupIds = groups
+                    .Where(scope => scope.ScopedUserRoleId == role.Id)
+                    .Select(scope => scope.ProjectGroupId)
+                    .ToList()
+            }).AsSingleQuery().ToListAsync(ct).ConfigureAwait(false);
+    }
+
+    private static IReadOnlyList<ResourceScopeGrant> MapResourceScopeGrants(
+        List<ResourceScopeGrantRow> rows,
+        Permission permission)
+    {
+        if (rows.Any(row => row.SpaceId == null && row.HasAdministerSystem))
             return new[] { new ResourceScopeGrant() };
 
-        var filteredRoles = FilterByPermissionScope(scopedRoles, permission);
-        var permissionName = permission.ToString();
         var grants = new List<ResourceScopeGrant>();
 
-        foreach (var scopedRole in filteredRoles)
+        foreach (var row in rows)
         {
-            if (!permissionsByRoleId.TryGetValue(scopedRole.UserRoleId, out var permissions))
+            if (!row.HasRequestedPermission) continue;
+            if (permission.CanApplyAtSystemLevel() && !permission.CanApplyAtSpaceLevel() && row.SpaceId != null)
                 continue;
 
-            if (!permissions.Contains(permissionName))
-                continue;
-
-            grants.Add(await BuildResourceScopeGrantAsync(scopedRole, ct).ConfigureAwait(false));
+            grants.Add(new ResourceScopeGrant
+            {
+                SpaceId = row.SpaceId,
+                ProjectIds = row.ProjectIds.ToHashSet(),
+                EnvironmentIds = row.EnvironmentIds.ToHashSet(),
+                ProjectGroupIds = row.ProjectGroupIds.ToHashSet()
+            });
         }
 
         return grants;
-    }
-
-    private async Task<ResourceScopeGrant> BuildResourceScopeGrantAsync(ScopedUserRole scopedRole, CancellationToken ct)
-    {
-        var projectIds = await scopedUserRoleDataProvider.GetProjectScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
-        var environmentIds = await scopedUserRoleDataProvider.GetEnvironmentScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
-        var projectGroupIds = await scopedUserRoleDataProvider.GetProjectGroupScopeAsync(scopedRole.Id, ct).ConfigureAwait(false);
-
-        return new ResourceScopeGrant
-        {
-            SpaceId = scopedRole.SpaceId,
-            ProjectIds = projectIds.ToHashSet(),
-            EnvironmentIds = environmentIds.ToHashSet(),
-            ProjectGroupIds = projectGroupIds.ToHashSet(),
-        };
     }
 
     private static bool HasAdministerSystem(List<ScopedUserRole> scopedRoles, Dictionary<int, List<string>> permissionsByRoleId)
@@ -146,14 +181,6 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
         }
 
         return false;
-    }
-
-    private static List<ScopedUserRole> FilterByPermissionScope(List<ScopedUserRole> scopedRoles, Permission permission)
-    {
-        if (permission.CanApplyAtSystemLevel() && !permission.CanApplyAtSpaceLevel())
-            return scopedRoles.Where(r => r.SpaceId == null).ToList();
-
-        return scopedRoles;
     }
 
     private static List<ScopedUserRole> FilterBySpace(List<ScopedUserRole> scopedRoles, Permission permission, int? spaceId)
@@ -278,4 +305,15 @@ public class AuthorizationService(ITeamDataProvider teamDataProvider, IScopedUse
 
         return true;
     }
+
+    private sealed class ResourceScopeGrantRow
+    {
+        public int? SpaceId { get; init; }
+        public bool HasRequestedPermission { get; init; }
+        public bool HasAdministerSystem { get; init; }
+        public List<int> ProjectIds { get; init; }
+        public List<int> EnvironmentIds { get; init; }
+        public List<int> ProjectGroupIds { get; init; }
+    }
+
 }

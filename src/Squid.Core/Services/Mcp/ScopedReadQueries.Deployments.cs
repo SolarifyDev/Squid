@@ -85,8 +85,6 @@ public partial class ScopedReadQueries
 
         var accessRows = from deployment in repository.QueryNoTracking<Deployment>()
             where deployment.TaskId == request.TaskId && deployment.SpaceId == request.SpaceId
-            where !repository.QueryNoTracking<Deployment>(null)
-                .Any(other => other.TaskId == request.TaskId && other.Id != deployment.Id)
             join space in repository.QueryNoTracking<Space>() on deployment.SpaceId equals space.Id
             join project in repository.QueryNoTracking<Project>() on
                 new { ProjectId = deployment.ProjectId, SpaceId = deployment.SpaceId } equals
@@ -99,6 +97,7 @@ public partial class ScopedReadQueries
                 new { EnvironmentId = environment.Id, SpaceId = environment.SpaceId }
             join task in repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>() on
                 deployment.TaskId equals (int?)task.Id
+            join uniqueDeployment in QueryUniquelyAssociatedDeployments() on deployment.Id equals uniqueDeployment.Id
             where task.ProjectId == project.Id &&
                   task.EnvironmentId == environment.Id &&
                   (!task.SpaceId.HasValue || task.SpaceId == space.Id)
@@ -156,6 +155,14 @@ public partial class ScopedReadQueries
             row => row.ProjectGroupId, row => row.EnvironmentId);
     }
 
+    private IQueryable<Deployment> QueryUniquelyAssociatedDeployments()
+    {
+        return repository.QueryNoTracking<Deployment>()
+            .Where(deployment => deployment.TaskId.HasValue &&
+                                 !repository.QueryNoTracking<Deployment>(null).Any(other =>
+                                     other.TaskId == deployment.TaskId && other.Id != deployment.Id));
+    }
+
     private IQueryable<DeploymentHistoryRow> BuildDeploymentHistoryQuery(IQueryable<DeploymentScopeRow> scopes)
     {
         return from scope in scopes
@@ -172,6 +179,9 @@ public partial class ScopedReadQueries
             join task in repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>() on
                 deployment.TaskId equals (int?)task.Id into tasks
             from task in tasks.DefaultIfEmpty()
+            join uniqueDeployment in QueryUniquelyAssociatedDeployments() on deployment.Id equals uniqueDeployment.Id
+                into uniqueDeployments
+            from uniqueDeployment in uniqueDeployments.DefaultIfEmpty()
             select new DeploymentHistoryRow
             {
                 Id = deployment.Id,
@@ -181,7 +191,8 @@ public partial class ScopedReadQueries
                     ? release.Version
                     : null,
                 TaskId = deployment.TaskId,
-                HasMatchingTask = task != null && task.ProjectId == scope.ProjectId &&
+                HasMatchingTask = task != null && uniqueDeployment != null &&
+                                  task.ProjectId == scope.ProjectId &&
                                   task.EnvironmentId == scope.EnvironmentId &&
                                   (!task.SpaceId.HasValue || task.SpaceId == scope.SpaceId),
                 TaskStateValue = task == null ? null : task.State,

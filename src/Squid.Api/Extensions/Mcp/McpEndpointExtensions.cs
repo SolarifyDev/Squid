@@ -26,12 +26,6 @@ public static class McpEndpointExtensions
         "X-API-KEY"
     ];
 
-    internal static readonly HashSet<string> KnownProtocolMethods = new(StringComparer.Ordinal)
-    {
-        "tools/list",
-        "tools/call"
-    };
-
     public static LoggerConfiguration ConfigureMcpLogging(this LoggerConfiguration loggerConfiguration)
     {
         return loggerConfiguration

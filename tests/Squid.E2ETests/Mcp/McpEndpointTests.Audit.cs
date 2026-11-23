@@ -34,6 +34,37 @@ public partial class McpEndpointTests
     }
 
     [Fact]
+    public async Task Audit_LegacyToolRequestsWithoutMcpMethod_UseDispatchedHandlerMethod()
+    {
+        using var client = _fixture.Enabled.CreateClient();
+        var seed = await _fixture.CreateReadToolSeedAsync();
+        const string legacyProtocolVersion = "2025-11-25";
+
+        _fixture.Enabled.LogSink.Clear();
+
+        var list = await SendToolsListAsync(
+            client,
+            apiKey: seed.ApiKey,
+            protocolVersion: legacyProtocolVersion,
+            includePerRequestMetadata: false,
+            includeMcpMethod: false);
+        var call = await SendToolCallAsync(
+            client,
+            seed.ApiKey,
+            "list_projects",
+            new { spaceId = seed.SpaceId, pageSize = 1 },
+            protocolVersion: legacyProtocolVersion,
+            includePerRequestMetadata: false,
+            includeMcpMethod: false);
+
+        list.StatusCode.ShouldBe(HttpStatusCode.OK);
+        call.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var auditLog = string.Join(Environment.NewLine, _fixture.Enabled.LogSink.Messages);
+        _fixture.Enabled.LogSink.ContainsMessage("ProtocolMethod=\"tools/list\"").ShouldBeTrue(auditLog);
+        _fixture.Enabled.LogSink.ContainsMessage("ProtocolMethod=\"tools/call\"").ShouldBeTrue(auditLog);
+    }
+
+    [Fact]
     public async Task Audit_ProductionLoggingHidesMcpSecretsAcrossSuccessAndErrorPaths()
     {
         using var client = _fixture.Enabled.CreateClient();
@@ -132,6 +163,7 @@ public partial class McpEndpointTests
         _fixture.Enabled.LogSink.ContainsMessage(key.ApiKey).ShouldBeFalse();
         var auditLog = string.Join(Environment.NewLine, _fixture.Enabled.LogSink.Messages);
         _fixture.Enabled.LogSink.ContainsMessage("Result=\"protocol_error\"").ShouldBeTrue(auditLog);
+        _fixture.Enabled.LogSink.ContainsMessage("ProtocolMethod=\"unknown\"").ShouldBeTrue(auditLog);
         _fixture.Enabled.LogSink.ContainsMessage("ToolName=\"unknown\"").ShouldBeTrue(auditLog);
     }
 }

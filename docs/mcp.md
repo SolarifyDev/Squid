@@ -29,7 +29,7 @@ Mcp__Enabled=true
 生产必须通过 HTTPS 访问，例如 `https://squid.example.com/mcp`。反向代理需要：
 
 - 终止 TLS，并保留 `/mcp` 路径。
-- 转发 `X-API-KEY`、`Accept`、`Content-Type`、`MCP-Protocol-Version`、`Mcp-Method` 和客户端提供的 `Origin`。
+- 转发 `X-API-KEY`、`Accept`、`Content-Type`、`MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name` 和客户端提供的 `Origin`。
 - 不记录、不回显 API Key、MCP 请求体或工具结果；不要对响应做会产生重复写入的缓存。
 - 将超时设置为允许正常查询完成，并保持无状态请求转发。
 
@@ -92,6 +92,18 @@ X-API-KEY: <temporary-api-key>
 
 ## 客户端配置
 
+### 临时 Key 输入（不回显、不落命令历史）
+
+在 Bash 或 Zsh 中运行下面的命令，输入 Key 后按回车。验收时为只有所需读取权限的账户创建临时 Key。
+
+```bash
+printf 'Squid MCP API key: '
+IFS= read -rs SQUID_API_KEY && export SQUID_API_KEY
+printf '\n'
+```
+
+这段命令读取 Key 时不会回显，也不会将输入写入 shell 历史。验收结束后执行 `unset SQUID_API_KEY` 并撤销临时 Key。
+
 ### Codex（桌面端与 CLI）
 
 同一台主机上的 Codex 桌面端和 CLI 共用用户级 `~/.codex/config.toml`。加入以下配置，并将 URL 换成 Squid 实例的 `/mcp` 地址。Codex 从 `SQUID_API_KEY` 环境变量读取 Key 并发送 `X-API-KEY` 请求头。
@@ -102,15 +114,7 @@ url = "https://squid.example.com/mcp"
 env_http_headers = { "X-API-KEY" = "SQUID_API_KEY" }
 ```
 
-在 Bash 或 Zsh 中运行以下命令，输入 Squid API Key 并按回车。Key 不会回显，也不会写入 shell 历史。
-
-```bash
-printf 'Squid MCP API key: '
-IFS= read -rs SQUID_API_KEY && export SQUID_API_KEY
-printf '\n'
-```
-
-在同一个终端启动 `codex`，输入 `/mcp` 查看 `squid` 和可用工具。桌面端可在 **Settings → MCP servers** 查看服务配置。`SQUID_API_KEY` 需要在运行 Codex 的进程环境中可读，另开终端执行 `export` 不会更新已经运行的桌面端进程。
+先在当前终端按“临时 Key 输入”完成不回显设置。在同一个终端启动 `codex`，输入 `/mcp` 查看 `squid` 和可用工具。桌面端可在 **Settings → MCP servers** 查看服务配置。`SQUID_API_KEY` 需要在运行 Codex 的进程环境中可读，另开终端执行 `export` 不会更新已经运行的桌面端进程。
 
 如果桌面端无法读取变量，可在个人 `~/.codex/config.toml` 中将 `env_http_headers` 替换为 `http_headers = { "X-API-KEY" = "<your-squid-api-key>" }`，然后重启桌面端。这个写法以明文保存 Key，仅用于本机个人配置。可用 `chmod 600 ~/.codex/config.toml` 限制该文件只有本人能读写。
 
@@ -126,11 +130,9 @@ printf '\n'
 
 已验证安装版本：MCP Inspector `2.16.0`，临时 Node.js `24.22.3`。Inspector `2.16.0` 的 engines 要求 Node.js `^22.23.4 || ^24.22.1 || >=26.12.1`；低于该范围不应作为验收环境。
 
-先只在当前临时 shell 设置 Key：
+先按“临时 Key 输入”完成不回显设置，只使用临时的最小读取权限 Key。
 
-```bash
-export SQUID_API_KEY='<temporary-api-key>'
-```
+Inspector CLI 的 `--header` 参数会包含展开后的 Key。能查看该进程参数的本机用户或工具也能读到 Key。以下示例用于隔离环境验收，请使用临时、最小权限的 Key，并在验收结束后立即撤销。
 
 协议握手、发现和调用：
 
@@ -199,9 +201,10 @@ async def main():
 asyncio.run(main())
 ```
 
+在当前终端按“临时 Key 输入”设置 `SQUID_API_KEY`，然后运行：
+
 ```bash
 export SQUID_MCP_URL='https://squid.example.com/mcp'
-export SQUID_API_KEY='<temporary-api-key>'
 python your_client.py
 ```
 
@@ -250,12 +253,9 @@ VS Code 1.147 的官方配置说明指出：Copilot harness 不转发编辑器 p
 }
 ```
 
-```bash
-export SQUID_API_KEY='<temporary-api-key>'
-code /path/to/workspace
-```
+先按“临时 Key 输入”设置最小读取权限 Key，再从同一终端运行 `code /path/to/workspace`。
 
-若工作区表单拒绝 `${...}`，在源码 `.mcp.json` 中编辑引用，不要把提示框限制当作可写入明文 Key 的理由。验收结束后执行 `unset SQUID_API_KEY` 并撤销测试 Key。
+若工作区表单拒绝 `${...}`，在源码 `.mcp.json` 中编辑引用，不要把提示框限制当作可写入明文 Key 的理由。验收结束后执行 `unset SQUID_API_KEY` 并撤销临时 Key。
 
 ### OAuth-only 客户端
 
@@ -297,10 +297,12 @@ Squid MCP 首版只接受 `X-API-KEY`，不提供 OAuth 发现、授权码流程
 部署历史保留仍在数据库中的部署记录。`list_deployments`：
 
 - 第一页首项是该授权范围内按 `createdAt`、`id` 倒序的最近一次部署尝试。
-- `latestSuccessfulDeployment` 在同一授权范围的完整部署集合中选取关联任务状态为 `Success` 的第一条，不受当前页限制。
-- 最近一次尝试和最近一次成功可能指向不同记录。
-- 成功摘要没有记录时为 `null`。
-- 任务缺失或状态缺失时 `state` 返回 `Unknown`，不猜测成功或失败。
+- 只有任务与部署记录形成唯一关联时，历史行才采用该任务状态。
+- `latestSuccessfulDeployment` 在同一授权范围的完整部署集合中选取唯一关联任务状态为 `Success` 的第一条，不受当前页限制。
+- 最近一次尝试和最近一次成功可能指向不同记录；成功摘要没有记录时为 `null`。
+- 任务无法匹配到该部署或同一 `taskId` 关联多条部署记录时，历史行保留原始 `taskId`，`state` 返回 `Unknown`，`completedAt` 为 `null`。
+- 任务状态缺失或无法识别时，`state` 返回 `Unknown`。`Unknown` 记录不会进入成功摘要。
+- `get_task_status` 同样只解析唯一任务关联；重复关联按不可见处理，不猜测对应部署。
 - 这些字段描述 Squid 中的记录，不声称验证了目标机器上的真实运行版本或产物内容。
 
 时间字段使用带时区的 ISO 8601 字符串。`createdAt` 表示记录创建时间，`completedAt` 表示关联任务完成时间；排序使用部署记录的 `createdAt` 和 `id`。

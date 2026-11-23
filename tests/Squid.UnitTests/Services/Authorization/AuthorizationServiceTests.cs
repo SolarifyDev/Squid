@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
@@ -13,11 +14,16 @@ public class AuthorizationServiceTests
     private readonly Mock<ITeamDataProvider> _teamDataProvider = new();
     private readonly Mock<IScopedUserRoleDataProvider> _scopedUserRoleDataProvider = new();
     private readonly Mock<IUserRoleDataProvider> _userRoleDataProvider = new();
+    private readonly Mock<IRepository> _repository = new();
     private readonly AuthorizationService _sut;
 
     public AuthorizationServiceTests()
     {
-        _sut = new AuthorizationService(_teamDataProvider.Object, _scopedUserRoleDataProvider.Object, _userRoleDataProvider.Object);
+        _sut = new AuthorizationService(
+            _teamDataProvider.Object,
+            _scopedUserRoleDataProvider.Object,
+            _userRoleDataProvider.Object,
+            _repository.Object);
     }
 
     // ========== CheckPermissionAsync ==========

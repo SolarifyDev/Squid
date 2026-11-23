@@ -206,6 +206,42 @@ public class ScopedDeploymentReadTests : TestBase
     }
 
     [Fact]
+    public async Task History_DuplicateTaskAssociationIsUnknownAndExcludedFromSummary()
+    {
+        const int userId = 1013;
+
+        await SeedCatalogAsync().ConfigureAwait(false);
+        await GrantAsync(userId, roleId: 1114, teamId: 1214, scopedRoleId: 1314, Permission.DeploymentView, TestSpaceId).ConfigureAwait(false);
+
+        await Run<SquidDbContext>(async db =>
+        {
+            db.Set<ServerTaskEntity>().Add(TaskEntity(
+                1420, TestProjectId, TestEnvironmentId, TaskState.Success, BaseTime, BaseTime.AddMinutes(5)));
+            db.Set<DeploymentEntity>().AddRange(
+                DeploymentEntity(1520, 1420, 9501, TestProjectId, TestEnvironmentId),
+                DeploymentEntity(1521, 1420, 9501, TestProjectId, TestEnvironmentId));
+            await db.SaveChangesAsync();
+            await SetDeploymentCreatedAtAsync(db, 1520, BaseTime.AddMinutes(1));
+            await SetDeploymentCreatedAtAsync(db, 1521, BaseTime.AddMinutes(2));
+        }).ConfigureAwait(false);
+
+        var response = await QueryAsync<ListVisibleDeploymentsRequest, ListVisibleDeploymentsResponse>(
+            userId,
+            DeploymentHistoryRequest()).ConfigureAwait(false);
+
+        response.Data.Items.Count.ShouldBe(2);
+        foreach (var item in response.Data.Items)
+        {
+            item.TaskId.ShouldBe(1420);
+            item.State.ShouldBe("Unknown");
+            item.CompletedAt.ShouldBeNull();
+        }
+
+        response.LatestSuccessfulDeployment.ShouldBeNull(
+            "a task associated with more than one deployment has no unique success summary");
+    }
+
+    [Fact]
     public async Task History_DoesNotSummarizeForbiddenDeployment()
     {
         const int userId = 1004;

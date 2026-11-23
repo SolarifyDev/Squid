@@ -14,14 +14,18 @@ public partial class McpEndpointTests
         string? bearerToken = null,
         string? origin = null,
         string? mcpName = null,
-        string? payloadMarker = null)
+        string? payloadMarker = null,
+        string protocolVersion = McpEndpointFixture.ProtocolVersion,
+        bool includePerRequestMetadata = true,
+        bool includeMcpMethod = true)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
 
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Accept.ParseAdd("text/event-stream");
-        request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", McpEndpointFixture.ProtocolVersion);
-        request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/list");
+        request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", protocolVersion);
+        if (includeMcpMethod)
+            request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/list");
 
         if (!string.IsNullOrEmpty(apiKey))
             request.Headers.TryAddWithoutValidation("X-API-KEY", apiKey);
@@ -36,7 +40,7 @@ public partial class McpEndpointTests
             request.Headers.TryAddWithoutValidation("Mcp-Name", mcpName);
 
         request.Content = new StringContent(
-            CreateToolsListBody(payloadMarker),
+            CreateToolsListBody(payloadMarker, includePerRequestMetadata),
             Encoding.UTF8,
             "application/json");
 
@@ -46,15 +50,32 @@ public partial class McpEndpointTests
         return (response.StatusCode, body);
     }
 
-    private static string CreateToolsListBody(string? payloadMarker)
+    private static string CreateToolsListBody(
+        string? payloadMarker,
+        bool includePerRequestMetadata)
     {
-        if (string.IsNullOrEmpty(payloadMarker)) return McpEndpointFixture.ToolsListBody;
+        if (includePerRequestMetadata)
+        {
+            if (string.IsNullOrEmpty(payloadMarker)) return McpEndpointFixture.ToolsListBody;
 
-        return McpEndpointFixture.ToolsListBody
-            .Replace("\"id\": 1", $"\"id\": \"{payloadMarker}\"")
-            .Replace(
-                "\"io.modelcontextprotocol/clientCapabilities\": {}",
-                $"\"io.modelcontextprotocol/clientCapabilities\": {{}}, \"test/payload\": \"{payloadMarker}\"");
+            return McpEndpointFixture.ToolsListBody
+                .Replace("\"id\": 1", $"\"id\": \"{payloadMarker}\"")
+                .Replace(
+                    "\"io.modelcontextprotocol/clientCapabilities\": {}",
+                    $"\"io.modelcontextprotocol/clientCapabilities\": {{}}, \"test/payload\": \"{payloadMarker}\"");
+        }
+
+        var parameters = new Dictionary<string, object>();
+        if (!string.IsNullOrEmpty(payloadMarker))
+            parameters["test/payload"] = payloadMarker;
+
+        return JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = string.IsNullOrEmpty(payloadMarker) ? "1" : payloadMarker,
+            method = "tools/list",
+            @params = parameters
+        });
     }
 
     private static Task<(HttpStatusCode StatusCode, string Body)> SendToolCallAsync(
@@ -78,7 +99,8 @@ public partial class McpEndpointTests
         string toolName,
         object arguments,
         string protocolVersion,
-        bool includePerRequestMetadata)
+        bool includePerRequestMetadata,
+        bool includeMcpMethod = true)
     {
         var parameters = new Dictionary<string, object>
         {
@@ -106,7 +128,8 @@ public partial class McpEndpointTests
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.Accept.ParseAdd("text/event-stream");
         request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", protocolVersion);
-        request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
+        if (includeMcpMethod)
+            request.Headers.TryAddWithoutValidation("Mcp-Method", "tools/call");
         request.Headers.TryAddWithoutValidation("Mcp-Name", toolName);
         request.Headers.TryAddWithoutValidation("X-API-KEY", apiKey);
         request.Content = new StringContent(body, Encoding.UTF8, "application/json");

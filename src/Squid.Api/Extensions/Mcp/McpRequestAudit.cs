@@ -10,7 +10,7 @@ internal static class McpRequestAudit
     internal static void LogRequest(Microsoft.Extensions.Logging.ILogger logger, HttpContext context, long started)
     {
         var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var protocolMethod = GetProtocolMethod(context.Request);
+        var protocolMethod = context.Items[SquidMcpAudit.ProtocolMethodItemKey] as string ?? "unknown";
         var durationMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
         var resultCategory = GetResultCategory(context);
         var toolName = context.Items[SquidMcpAudit.ToolNameItemKey] as string ?? "unknown";
@@ -25,18 +25,6 @@ internal static class McpRequestAudit
             durationMs,
             resultCategory,
             context.TraceIdentifier);
-    }
-
-    private static string GetProtocolMethod(HttpRequest request)
-    {
-        if (!request.Headers.TryGetValue("Mcp-Method", out var methods) || methods.Count != 1)
-            return "unknown";
-
-        var method = methods[0];
-
-        return !string.IsNullOrWhiteSpace(method) && McpEndpointExtensions.KnownProtocolMethods.Contains(method)
-            ? method
-            : "unknown";
     }
 
     private static string GetResultCategory(HttpContext context)

@@ -232,15 +232,19 @@ public class UserRoleService(
 
     public async Task<ScopedUserRoleDto> UpdateRoleScopeAsync(UpdateRoleScopeCommand command, CancellationToken ct = default)
     {
-        await scopedUserRoleDataProvider.SetProjectScopeAsync(command.ScopedUserRoleId, command.ProjectIds, ct).ConfigureAwait(false);
-        await scopedUserRoleDataProvider.SetEnvironmentScopeAsync(command.ScopedUserRoleId, command.EnvironmentIds, ct).ConfigureAwait(false);
-        await scopedUserRoleDataProvider.SetProjectGroupScopeAsync(command.ScopedUserRoleId, command.ProjectGroupIds, ct).ConfigureAwait(false);
-
-        var scopedRoles = await scopedUserRoleDataProvider.GetByTeamIdsAsync(new List<int> { command.TeamId }, ct).ConfigureAwait(false);
-        var scopedRole = scopedRoles.FirstOrDefault(r => r.Id == command.ScopedUserRoleId);
+        var scopedRole = await scopedUserRoleDataProvider
+            .GetByTeamAndIdAsync(command.TeamId, command.ScopedUserRoleId, ct)
+            .ConfigureAwait(false);
 
         if (scopedRole == null)
             throw new InvalidOperationException($"Scoped user role {command.ScopedUserRoleId} not found");
+
+        await scopedUserRoleDataProvider.ReplaceScopesAsync(
+            command.ScopedUserRoleId,
+            command.ProjectIds,
+            command.EnvironmentIds,
+            command.ProjectGroupIds,
+            ct).ConfigureAwait(false);
 
         return await BuildScopedUserRoleDtoAsync(scopedRole, ct).ConfigureAwait(false);
     }

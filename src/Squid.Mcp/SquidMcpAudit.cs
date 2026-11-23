@@ -9,6 +9,7 @@ namespace Squid.Mcp;
 
 public static class SquidMcpAudit
 {
+    public const string ProtocolMethodItemKey = "Squid.Mcp.Audit.ProtocolMethod";
     public const string ToolNameItemKey = "Squid.Mcp.Audit.ToolName";
     public const string ResultCategoryItemKey = "Squid.Mcp.Audit.ResultCategory";
     public const string RelatedIdItemKey = "Squid.Mcp.Audit.RelatedId";
@@ -43,12 +44,30 @@ public static class SquidMcpAudit
             httpContext.Items[RelatedIdItemKey] = relatedId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    internal static void RecordListTools(IServiceProvider services)
+    {
+        RecordProtocolMethod(services, "tools/list");
+    }
+
+    internal static void RecordToolCall(IServiceProvider services)
+    {
+        RecordProtocolMethod(services, "tools/call");
+    }
+
     internal static void RecordProtocolError(IServiceProvider services)
     {
         var accessor = services?.GetService<IHttpContextAccessor>();
         var httpContext = accessor?.HttpContext;
         if (httpContext != null)
             httpContext.Items[ResultCategoryItemKey] = "protocol_error";
+    }
+
+    private static void RecordProtocolMethod(IServiceProvider services, string protocolMethod)
+    {
+        var accessor = services?.GetService<IHttpContextAccessor>();
+        var httpContext = accessor?.HttpContext;
+        if (httpContext != null)
+            httpContext.Items[ProtocolMethodItemKey] = protocolMethod;
     }
 
     private static string GetResultCategory(CallToolResult result)

@@ -24,12 +24,21 @@ public static class SquidMcpExtensions
 
                     await next(context, cancellationToken).ConfigureAwait(false);
                 }))
-            .WithListToolsHandler((_, _) => ValueTask.FromResult(new ListToolsResult
+            .WithListToolsHandler((context, _) =>
             {
-                Tools = ReadToolCatalog.ToolDefinitions.ToList()
-            }))
+                SquidMcpAudit.RecordListTools(context.Services);
+
+                return ValueTask.FromResult(new ListToolsResult
+                {
+                    Tools = ReadToolCatalog.ToolDefinitions.ToList()
+                });
+            })
             .WithCallToolHandler((context, cancellationToken) =>
-                ReadToolCatalog.CallAsync(context, cancellationToken));
+            {
+                SquidMcpAudit.RecordToolCall(context.Services);
+
+                return ReadToolCatalog.CallAsync(context, cancellationToken);
+            });
 
         return services;
     }

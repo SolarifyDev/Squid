@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
@@ -30,12 +31,13 @@ public class InterruptionAuthorizationServiceTests
     private readonly Mock<ITeamDataProvider> _teamDataProvider = new();
     private readonly Mock<IScopedUserRoleDataProvider> _scopedRoles = new();
     private readonly Mock<IUserRoleDataProvider> _roles = new();
+    private readonly Mock<IRepository> _repository = new();
     private readonly Mock<IDeploymentDataProvider> _deployments = new();
     private readonly InterruptionAuthorizationService _sut;
 
     public InterruptionAuthorizationServiceTests()
     {
-        var authorizationService = new AuthorizationService(_teamDataProvider.Object, _scopedRoles.Object, _roles.Object);
+        var authorizationService = new AuthorizationService(_teamDataProvider.Object, _scopedRoles.Object, _roles.Object, _repository.Object);
 
         _sut = new InterruptionAuthorizationService(_teamDataProvider.Object, authorizationService, _deployments.Object);
 
@@ -190,7 +192,7 @@ public class InterruptionAuthorizationServiceTests
     public async Task OverrideDisabled_NonMembersAreDeniedEvenWithTheOverride_AndTeamMembersAreUnaffected(string caller)
     {
         ArrangeCaller(caller);
-        var sut = new InterruptionAuthorizationService(_teamDataProvider.Object, new AuthorizationService(_teamDataProvider.Object, _scopedRoles.Object, _roles.Object), _deployments.Object) { AdministratorOverrideEnabled = false };
+        var sut = new InterruptionAuthorizationService(_teamDataProvider.Object, new AuthorizationService(_teamDataProvider.Object, _scopedRoles.Object, _roles.Object, _repository.Object), _deployments.Object) { AdministratorOverrideEnabled = false };
 
         (await sut.GetAccessAsync(Interruption(ResponsibleTeamId.ToString()), UserId)).ShouldBe(InterruptionAccess.Denied);
         (await sut.GetAccessAsync(Interruption(null), UserId)).ShouldBe(InterruptionAccess.Unrestricted);
