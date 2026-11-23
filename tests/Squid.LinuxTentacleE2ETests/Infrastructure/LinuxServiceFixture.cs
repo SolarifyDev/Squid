@@ -223,7 +223,7 @@ public sealed class LinuxServiceFixture : IDisposable
     /// version directory (per-version version.txt + marker) — the production
     /// versioned shape the upgrade script's blue-green path operates on.
     /// </summary>
-    public void InstallVersionedAndStart(string testServiceScriptSourcePath, string initialVersion, TimeSpan startTimeout, IReadOnlyDictionary<string, string> extraEnvironment = null)
+    public void InstallVersionedAndStart(string testServiceScriptSourcePath, string initialVersion, TimeSpan startTimeout, IReadOnlyDictionary<string, string> extraEnvironment = null, TimeSpan? timeoutStop = null)
     {
         if (!IsAvailable) throw new PlatformNotSupportedException("LinuxServiceFixture only runs on Linux with passwordless sudo");
 
@@ -265,6 +265,7 @@ public sealed class LinuxServiceFixture : IDisposable
         var unitContent = unitBuilder
             .AppendLine($"ExecStart=/usr/bin/env bash {execTarget}")
             .AppendLine("KillMode=mixed")
+            .AppendLine(timeoutStop.HasValue ? $"TimeoutStopSec={(int)timeoutStop.Value.TotalSeconds}" : "# TimeoutStopSec: systemd default")
             .AppendLine("Restart=no")
             .AppendLine()
             .AppendLine("[Install]")

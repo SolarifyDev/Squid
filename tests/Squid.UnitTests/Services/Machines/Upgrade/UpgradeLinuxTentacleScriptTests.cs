@@ -308,7 +308,7 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // Audit H-7: without timeout, a hung systemd unit eats the entire
         // Halibut script budget. Both restart (90s) and fallback stop (30s)
         // are wrapped. Rollback paths also wrap systemctl calls.
-        RenderedScript.ShouldContain("timeout 90 sudo systemctl restart",
+        RenderedScript.ShouldContain("timeout \"$RESTART_TIMEOUT_SECS\" sudo systemctl restart",
             customMessage: "main service restart (in scope) must be capped");
         RenderedScript.ShouldContain("timeout 30 sudo systemctl start",
             customMessage: "rollback start must be capped");
@@ -1179,7 +1179,7 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // The stop that performs this upgrade must run under the old settings (unchanged proven
         // behaviour); the drop-in takes effect for the next stop. The server reads the LAST event
         // as the outcome, so the drop-in's own event must precede the terminal `success` event.
-        var restart = RenderedScript.IndexOf("timeout 90 sudo systemctl restart", StringComparison.Ordinal);
+        var restart = RenderedScript.IndexOf("timeout \"$RESTART_TIMEOUT_SECS\" sudo systemctl restart", StringComparison.Ordinal);
         var versionCheck = RenderedScript.IndexOf("RUNNING_VERSION=$(timeout 5", StringComparison.Ordinal);
         var call = RenderedScript.IndexOf("\n  ensure_graceful_stop_dropin\n", StringComparison.Ordinal);
         var successEvent = RenderedScript.IndexOf("emit_event B success ", StringComparison.Ordinal);
