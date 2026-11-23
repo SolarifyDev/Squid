@@ -288,7 +288,8 @@ public sealed class TentacleLinuxServiceCommandE2ETests
     //
     //   [Unit]
     //   Description=...
-    //   After=network.target
+    //   After=network-online.target
+    //   Wants=network-online.target
     //   StartLimitBurst=3                  ← give-up-after-3-failures cap
     //   StartLimitIntervalSec=120          ← within a 120s window
     //
@@ -300,6 +301,7 @@ public sealed class TentacleLinuxServiceCommandE2ETests
     //   Restart=on-failure                 ← only restart on FAILED exit
     //   RestartSec=10                      ← wait 10s between attempts
     //   KillSignal=SIGINT
+    //   KillMode=mixed                     ← only the agent gets KillSignal
     //   TimeoutStopSec=330                 ← drain timeout coordination
     //
     // Coverage at unit tier: ServiceCommandTests.GenerateUnitFile_PinsTimeoutStopSec330
@@ -368,6 +370,14 @@ public sealed class TentacleLinuxServiceCommandE2ETests
         content.ShouldContain("TimeoutStopSec=330",
             customMessage: "unit file MUST contain 'TimeoutStopSec=330' — coordinated with TentacleSettings.DefaultShutdownDrainTimeoutSeconds=300. " +
                           "Lower value = systemd SIGKILLs the agent BEFORE drain completes, abruptly terminating in-flight scripts WITHOUT cancellation cleanup.");
+
+        // KillMode=mixed — only the agent gets KillSignal on stop so its drain can protect running
+        // scripts; the default control-group would SIGINT every script process immediately.
+        content.ShouldContain("KillMode=mixed",
+            customMessage: "unit file MUST contain 'KillMode=mixed' — without it `systemctl stop/restart` signals every deployment script in the cgroup at once and the in-process drain protects nothing.");
+
+        content.ShouldContain("After=network-online.target");
+        content.ShouldContain("Wants=network-online.target");
 
         // Cleanup via production CLI.
         var (uninstallExit, _) = ctx.Binary.SudoRun("service", "uninstall", "--service-name", ctx.ServiceName);

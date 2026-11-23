@@ -340,7 +340,7 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // incident: ANY `systemctl stop|start|restart squid-tentacle` before
         // the scope-detach exec is a self-kill. The detach point MUST come
         // before any service-manipulation command.
-        var scopeExecIdx = RenderedScript.IndexOf("exec sudo systemd-run --scope", StringComparison.Ordinal);
+        var scopeExecIdx = RenderedScript.IndexOf("\n  exec sudo systemd-run --scope --collect", StringComparison.Ordinal);
         scopeExecIdx.ShouldBeGreaterThan(-1, "scope exec boundary must be present");
 
         var preScope = RenderedScript.Substring(0, scopeExecIdx);
@@ -1141,6 +1141,56 @@ public sealed class UpgradeLinuxTentacleScriptTests
         p.WaitForExit(TimeSpan.FromSeconds(10));
 
         return (p.ExitCode, stdout, stderr);
+    }
+
+    // ── Graceful-stop migration + drain-exempt hand-off ─────────────────────
+
+    [Fact]
+    public void Script_DrainExemptMarker_NameMatchesAgentConstant_AndIsCreatedBeforeScopeExec()
+    {
+        // Producer (this script) / consumer (LocalScriptService drain) seam: the tracked upgrade
+        // process outlives the agent restart it triggers, so the agent must be told to skip it.
+        Squid.Tentacle.ScriptExecution.LocalScriptService.DrainExemptMarkerFileName.ShouldBe(".squid-drain-exempt");
+        RenderedScript.ShouldContain($"\"$PWD/{Squid.Tentacle.ScriptExecution.LocalScriptService.DrainExemptMarkerFileName}\"");
+
+        var marker = RenderedScript.IndexOf(": > \"$PWD/.squid-drain-exempt\"", StringComparison.Ordinal);
+        var exec = RenderedScript.IndexOf("\n  exec sudo systemd-run --scope --collect", StringComparison.Ordinal);
+
+        marker.ShouldBeGreaterThan(0);
+        exec.ShouldBeGreaterThan(marker, "the marker must exist before exec replaces the tracked process with sudo");
+    }
+
+    [Fact]
+    public void Script_GracefulStopDropIn_HasExpectedContentAndIsSoftFailing()
+    {
+        RenderedScript.ShouldContain("ensure_graceful_stop_dropin()");
+        RenderedScript.ShouldContain("/etc/systemd/system/${SERVICE_NAME}.service.d");
+        RenderedScript.ShouldContain("Wants=network-online.target");
+        RenderedScript.ShouldContain("After=network-online.target");
+        RenderedScript.ShouldContain("KillMode=mixed");
+        RenderedScript.ShouldContain("sudo systemctl daemon-reload");
+        RenderedScript.ShouldContain("emit_event B dropin-skipped", customMessage: "failure to write the drop-in must log + continue, never fail the upgrade");
+        RenderedScript.ShouldContain("Graceful-stop drop-in already present", customMessage: "must be idempotent");
+    }
+
+    [Fact]
+    public void Script_GracefulStopDropIn_IsAppliedAfterRestartSucceeded_AndBeforeTheTerminalSuccessEvent()
+    {
+        // The stop that performs this upgrade must run under the old settings (unchanged proven
+        // behaviour); the drop-in takes effect for the next stop. The server reads the LAST event
+        // as the outcome, so the drop-in's own event must precede the terminal `success` event.
+        var restart = RenderedScript.IndexOf("timeout 90 sudo systemctl restart", StringComparison.Ordinal);
+        var versionCheck = RenderedScript.IndexOf("RUNNING_VERSION=$(timeout 5", StringComparison.Ordinal);
+        var call = RenderedScript.IndexOf("\n  ensure_graceful_stop_dropin\n", StringComparison.Ordinal);
+        var successEvent = RenderedScript.IndexOf("emit_event B success ", StringComparison.Ordinal);
+        var successStatus = RenderedScript.IndexOf("write_status \"SUCCESS\"", StringComparison.Ordinal);
+
+        restart.ShouldBeGreaterThan(0);
+        versionCheck.ShouldBeGreaterThan(restart);
+        call.ShouldBeGreaterThan(versionCheck);
+        successEvent.ShouldBeGreaterThan(call);
+        successStatus.ShouldBeGreaterThan(call);
+        CountOccurrences(RenderedScript, "ensure_graceful_stop_dropin\n").ShouldBe(1, "called exactly once, on the success path only");
     }
 
     private static int CountOccurrences(string haystack, string needle)

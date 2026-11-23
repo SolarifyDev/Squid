@@ -20,7 +20,8 @@ public class ServiceCommandTests
 
         unit.ShouldContain("[Unit]");
         unit.ShouldContain("Description=Squid Tentacle Agent (squid-tentacle)");
-        unit.ShouldContain("After=network.target");
+        unit.ShouldContain("After=network-online.target");
+        unit.ShouldContain("Wants=network-online.target");
 
         unit.ShouldContain("[Service]");
         unit.ShouldContain("Type=simple");
@@ -39,6 +40,9 @@ public class ServiceCommandTests
         unit.ShouldContain("StartLimitIntervalSec=120");
         unit.ShouldContain("StartLimitAction=none");
         unit.ShouldContain("KillSignal=SIGINT");
+        // KillMode=mixed: only the agent gets SIGINT so its drain can protect running scripts;
+        // control-group (the default) would signal every script process at once.
+        unit.ShouldContain("KillMode=mixed");
         // : bumped 60 → 330 to cover the drain-default-300 + 30 grace.
         // Without this, systemd SIGKILLs Tentacle mid-drain, abruptly terminating
         // in-flight scripts. See SystemdServiceHost.BuildUnitFile XML doc.
