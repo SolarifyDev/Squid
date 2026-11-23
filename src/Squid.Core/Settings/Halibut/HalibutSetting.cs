@@ -14,6 +14,7 @@ public class HalibutSetting : IConfigurationSetting
         CircuitBreaker = section.GetSection("CircuitBreaker").Get<CircuitBreakerSettings>() ?? new CircuitBreakerSettings();
         RpcRetry = section.GetSection("RpcRetry").Get<RpcRetrySettings>() ?? new RpcRetrySettings();
         Trust = section.GetSection("Trust").Get<TrustSettings>() ?? new TrustSettings();
+        DataStreamStorage = section.GetSection("DataStreamStorage").Get<DataStreamStorageSettings>() ?? new DataStreamStorageSettings();
     }
 
     public PollingSettings Polling { get; set; } = new();
@@ -22,6 +23,7 @@ public class HalibutSetting : IConfigurationSetting
     public CircuitBreakerSettings CircuitBreaker { get; set; } = new();
     public RpcRetrySettings RpcRetry { get; set; } = new();
     public TrustSettings Trust { get; set; } = new();
+    public DataStreamStorageSettings DataStreamStorage { get; set; } = new();
 }
 
 /// <summary>
@@ -42,6 +44,23 @@ public class TrustSettings
     public TimeSpan RefreshInterval => TimeSpan.FromSeconds(RefreshIntervalSeconds > 0 ? RefreshIntervalSeconds : DefaultRefreshIntervalSeconds);
 
     public TimeSpan UnauthorizedRefreshMinInterval => TimeSpan.FromSeconds(UnauthorizedRefreshMinIntervalSeconds > 0 ? UnauthorizedRefreshMinIntervalSeconds : DefaultUnauthorizedRefreshMinIntervalSeconds);
+}
+
+/// <summary>
+/// Where the data streams of a queued Halibut request wait for the pod that holds the agent's connection (the shared database).
+/// A value of zero or less is invalid and falls back to its default; a chunk size above <see cref="MaxChunkBytes"/> is lowered to it.
+/// </summary>
+public class DataStreamStorageSettings
+{
+    public const int DefaultChunkBytes = 1024 * 1024;
+    public const int MaxChunkBytes = 32 * 1024 * 1024;
+    public const int DefaultOrphanTtlMinutes = 60;
+
+    /// <summary>Size of one stored chunk. Each chunk is one row and the only buffer a store or a read holds, so memory stays near this size however large the stream is.</summary>
+    public int ChunkBytes { get; set; } = DefaultChunkBytes;
+
+    /// <summary>Age after which a stored stream nobody collected (its request was cancelled, timed out or never picked up) is removed. Must outlast the longest request pickup wait.</summary>
+    public int OrphanTtlMinutes { get; set; } = DefaultOrphanTtlMinutes;
 }
 
 /// <summary>
