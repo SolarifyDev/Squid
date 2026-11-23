@@ -49,6 +49,50 @@ public sealed class WindowsUpgradeScriptResourceTests
         return reader.ReadToEnd();
     }
 
+    // -- failureflag step: existing fleet must get restart-on-fatal on upgrade ------
+    // Ordering matters: with the flag on, SCM restarts a new binary that fails at startup
+    // (10s delay) -- racing Invoke-Rollback's junction swap / Start-Service if the flag were
+    // set before the health check. So it must sit after every rollback call site.
+
+    [Fact]
+    public void FailureFlagStep_IsPresent_AndPureAscii()
+    {
+        var script = LoadResource();
+
+        script.ShouldContain("& sc.exe failureflag $SERVICE_NAME 1");
+        script.All(c => c < 128).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void FailureFlagStep_RunsAfterHealthCheck_AndAfterEveryRollbackCallSite_BeforeSuccessStatus()
+    {
+        var script = LoadResource();
+
+        var firstMention = script.IndexOf("failureflag", System.StringComparison.Ordinal);
+        var flag = script.IndexOf("& sc.exe failureflag", System.StringComparison.Ordinal);
+        var lastRollbackCall = script.LastIndexOf("Invoke-Rollback -Reason", System.StringComparison.Ordinal);
+        var healthLoopEnd = script.IndexOf("if (-not $healthOk)", System.StringComparison.Ordinal);
+        var success = script.LastIndexOf("Write-UpgradeStatus -Status 'SUCCESS'", System.StringComparison.Ordinal);
+
+        flag.ShouldBeGreaterThan(lastRollbackCall);
+        flag.ShouldBeGreaterThan(healthLoopEnd);
+        flag.ShouldBeLessThan(success);
+        firstMention.ShouldBeGreaterThan(lastRollbackCall);
+    }
+
+    [Fact]
+    public void Rollback_StopsServiceBeforeSwappingBinaries()
+    {
+        var script = LoadResource();
+        var body = script.Substring(script.IndexOf("function Invoke-Rollback", System.StringComparison.Ordinal));
+
+        var stop = body.IndexOf("Stop-Service", System.StringComparison.Ordinal);
+
+        stop.ShouldBeGreaterThan(-1);
+        stop.ShouldBeLessThan(body.IndexOf("New-Item -ItemType Junction", System.StringComparison.Ordinal));
+        stop.ShouldBeLessThan(body.IndexOf("Move-Item -Path $bakDir", System.StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Resource_IsEmbeddedInSquidCoreAssembly()
     {

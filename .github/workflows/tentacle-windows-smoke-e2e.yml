@@ -43,7 +43,7 @@ on:
       test_filter:
         description: "xUnit --filter override for the smoke subset"
         required: false
-        default: "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke"
+        default: "Category=WindowsServiceHostE2E|Category=TentacleScmFatalRecoveryE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke"
       host_test_filter:
         description: "xUnit --filter override for the Windows-host Calamari smoke subset"
         required: false
@@ -128,7 +128,7 @@ jobs:
       - name: Run Windows lifecycle smoke subset
         shell: pwsh
         run: |
-          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke" }
+          $filter = if ("${{ github.event.inputs.test_filter }}") { "${{ github.event.inputs.test_filter }}" } else { "Category=WindowsServiceHostE2E|Category=TentacleScmFatalRecoveryE2E|Category=TentacleUpgradeLifecycleE2E|Category=WindowsUpgradeShaVerifyE2E|Category=WindowsUpgradeWrapperE2E|Category=WindowsUpgradeServiceE2E|Category=TentacleInstallScriptE2E|Category=WindowsServiceDeployE2E|Category=CalamariLookupE2E|Category=DeployPackageWindowsSmoke" }
           $resultsDir = Join-Path $env:RUNNER_TEMP "windows-lifecycle-smoke-results"
           dotnet test tests/Squid.WindowsTentacleE2ETests/Squid.WindowsTentacleE2ETests.csproj `
             --configuration Release --no-restore `

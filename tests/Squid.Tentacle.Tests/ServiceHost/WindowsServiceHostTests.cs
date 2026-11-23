@@ -248,6 +248,21 @@ public sealed class WindowsServiceHostTests
     }
 
     [Fact]
+    public void BuildScFailureFlagArgs_PinsFailureActionsFlagOn()
+    {
+        // Without `failureflag 1`, SCM only runs the restart actions when the process
+        // CRASHES. A fatal agent error is a graceful STOPPED with a non-zero exit code,
+        // which only triggers recovery when this flag is set.
+        WindowsServiceHost.BuildScFailureFlagArgs("squid-tentacle").ShouldBe(new[] { "failureflag", "squid-tentacle", "1" });
+    }
+
+    [Fact]
+    public void BuildScFailureFlagArgs_BlankName_Throws()
+    {
+        Should.Throw<ArgumentException>(() => WindowsServiceHost.BuildScFailureFlagArgs(" "));
+    }
+
+    [Fact]
     public void BuildScFailureArgs_NoArgOverload_RoutesThroughDefaultsViaConstants()
     {
         // The no-arg overload must derive its values from the public-const

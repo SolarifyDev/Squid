@@ -140,7 +140,8 @@ static async Task<int> RunUnderScmLifetimeAsync(string[] args)
                 services.AddHostedService(sp =>
                 {
                     var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
-                    capturedService = new TentacleScmHostedService(args, lifetime);
+                    var reporter = ScmExitCode.ReporterFor(sp.GetRequiredService<IHostLifetime>());
+                    capturedService = new TentacleScmHostedService(args, lifetime, reporter);
                     return capturedService;
                 });
             })

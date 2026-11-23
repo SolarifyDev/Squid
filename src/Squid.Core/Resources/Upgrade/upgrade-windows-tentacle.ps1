@@ -935,6 +935,31 @@ try {
         Append-UpgradeLog "::warning:: Healthcheck didn't respond within ${totalWaitSeconds}s -- proceeding anyway, server will retry on next health probe (set SQUID_TARGET_WINDOWS_TENTACLE_HEALTHCHECK_FATAL=true to roll back instead)"
     }
 
+    # -- Failure-actions flag (idempotent, best-effort) -----------------------
+    # Agents installed before the flag existed have `sc failure` restart actions but
+    # SCM ignores them for a graceful STOPPED with a non-zero exit code (how a fatal
+    # agent error is reported), so a fatal error left the agent stopped forever.
+    # Set the flag HERE -- after the health check, past every Invoke-Rollback exit --
+    # NOT before Start-Service: with the flag on, a new binary that fails at startup
+    # would be restarted by SCM (10s delay) while Invoke-Rollback is swapping the
+    # junction / restarting, racing the rollback. Rollback paths all `exit`, so they
+    # can never reach this line. Soft-fail: the upgrade itself already succeeded.
+    if ($null -ne (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) {
+        try {
+            & sc.exe failureflag $SERVICE_NAME 1 2>&1 | Out-Null
+
+            if ($LASTEXITCODE -ne 0) {
+                Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag exit $LASTEXITCODE -- a fatal agent error will not auto-restart until you run: sc failureflag $SERVICE_NAME 1"
+            }
+            else {
+                Append-UpgradeLog "[upgrade] Enabled restart-on-failure flag for $SERVICE_NAME"
+            }
+        }
+        catch {
+            Append-UpgradeLog "::warning:: [upgrade] Could not set failure-actions flag (best-effort): $($_.Exception.Message)"
+        }
+    }
+
     Write-UpgradeStatus -Status 'SUCCESS' -InstallMethod $INSTALL_METHOD -Detail "Upgrade to $TARGET_VERSION complete"
     Append-UpgradeLog "[upgrade] Upgrade complete -- version $TARGET_VERSION installed via $INSTALL_METHOD"
 
