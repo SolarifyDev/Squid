@@ -73,6 +73,43 @@ public class TentacleAppTests : TimedTestBase
     }
 
     [Fact]
+    public async Task RunAsync_AppliesTheConfiguredDiskSpaceCeiling_ToTheDiskSpaceChecker()
+    {
+        // Wiring guard: Configure() alone is unit-tested; this fails if RunAsync stops calling it.
+        var previous = Squid.Tentacle.ScriptExecution.DiskSpaceChecker.MaxRequiredFreeBytes;
+
+        try
+        {
+            using var cert = CreateCertificate();
+            var hook = new FakeStartupHook("hook-disk");
+            var flavor = new FakeFlavor("ListeningAgent", new FakeRegistrar(), new FakeScriptBackend(), [hook], [],
+                communicationMode: TentacleCommunicationMode.Listening, listeningPort: 12346);
+            var app = new TentacleApp(new TentacleAppDependencies
+            {
+                CertificateManagerFactory = _ => new FakeCertificateManager(cert, "sub-disk"),
+                BuiltInFlavorsProvider = () => [flavor],
+                FlavorResolverFactory = flavors => new TentacleFlavorResolver(flavors),
+                HalibutHostFactory = (_, _, _, _) => new FakeHalibutHost(),
+                HealthCheckServerFactory = (_, _, _) => new FakeHealthServer()
+            });
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(TestCancellationToken);
+            var settings = new TentacleSettings { Flavor = "ListeningAgent", DiskSpaceMaxRequiredFreeBytes = 7L * 1024 * 1024 * 1024 };
+            var runTask = app.RunAsync(settings, CreateEmptyConfiguration(), cts.Token);
+
+            await WaitUntilAsync(() => hook.Calls == 1, TestCancellationToken);
+            cts.Cancel();
+            await runTask;
+
+            Squid.Tentacle.ScriptExecution.DiskSpaceChecker.MaxRequiredFreeBytes.ShouldBe(7L * 1024 * 1024 * 1024);
+        }
+        finally
+        {
+            Squid.Tentacle.ScriptExecution.DiskSpaceChecker.Configure(previous);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_ListeningMode_Calls_StartListening_With_Correct_Port()
     {
         using var cert = CreateCertificate();

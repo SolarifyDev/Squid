@@ -99,6 +99,26 @@ public class TentacleSettings
     public int ShutdownDrainTimeoutSeconds { get; set; } = DefaultShutdownDrainTimeoutSeconds;
 
     /// <summary>
+    /// Absolute ceiling (bytes) on the free space the pre-script disk check requires. The check
+    /// demands 10% of the workspace volume, which on a large shared volume (a 20 TB NFS export at 91%
+    /// used still has 1.8 TB free) would fail every script and mark the K8s agent not-ready; the
+    /// requirement is <c>min(10% of volume, this)</c>, never below 1 MB. Values below 1 MB (including
+    /// 0 / negative) fall back to <see cref="Squid.Tentacle.ScriptExecution.DiskSpaceChecker.DefaultMaxRequiredFreeBytes"/> (20 GiB).
+    /// Config key: <c>Tentacle:DiskSpaceMaxRequiredFreeBytes</c>.
+    /// </summary>
+    public long DiskSpaceMaxRequiredFreeBytes { get; set; } = Squid.Tentacle.ScriptExecution.DiskSpaceChecker.DefaultMaxRequiredFreeBytes;
+
+    public const int DefaultDiskSpaceReadinessTimeoutSeconds = 2;
+
+    /// <summary>
+    /// Wall-clock cap (seconds) on the readiness probe's workspace disk check. A statfs on a hung
+    /// hard-mounted NFS volume never returns; the probe reports not-ready after this long instead of
+    /// hanging the health endpoint. Values &lt;= 0 fall back to the default (2). Config key:
+    /// <c>Tentacle:DiskSpaceReadinessTimeoutSeconds</c>.
+    /// </summary>
+    public int DiskSpaceReadinessTimeoutSeconds { get; set; } = DefaultDiskSpaceReadinessTimeoutSeconds;
+
+    /// <summary>
     /// Explicit flag set to <c>"true"</c> by the <c>register</c> command after a
     /// successful registration. Used by <see cref="TentacleFlavor.ResolveRegistrar"/>
     /// to distinguish "already registered → skip" from "user supplied ServerCertificate

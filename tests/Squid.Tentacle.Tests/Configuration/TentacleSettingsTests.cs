@@ -1,4 +1,6 @@
+using Microsoft.Extensions.Configuration;
 using Squid.Tentacle.Configuration;
+using Squid.Tentacle.Core;
 
 namespace Squid.Tentacle.Tests.Configuration;
 
@@ -10,6 +12,30 @@ public class TentacleSettingsTests
         var settings = new TentacleSettings();
 
         settings.PollingConnectionCount.ShouldBe(5);
+    }
+
+    [Fact]
+    public void DiskSpaceSettings_Defaults_ArePinned()
+    {
+        var settings = new TentacleSettings();
+
+        settings.DiskSpaceMaxRequiredFreeBytes.ShouldBe(20L * 1024 * 1024 * 1024);
+        settings.DiskSpaceReadinessTimeoutSeconds.ShouldBe(2);
+    }
+
+    [Fact]
+    public void DiskSpaceSettings_BindFromTheTentacleSection_UnderPinnedKeyNames()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string>
+        {
+            ["Tentacle:DiskSpaceMaxRequiredFreeBytes"] = "5368709120",
+            ["Tentacle:DiskSpaceReadinessTimeoutSeconds"] = "7"
+        }).Build();
+
+        var settings = TentacleApp.LoadTentacleSettings(config);
+
+        settings.DiskSpaceMaxRequiredFreeBytes.ShouldBe(5368709120L);
+        settings.DiskSpaceReadinessTimeoutSeconds.ShouldBe(7);
     }
 
     [Fact]

@@ -40,6 +40,18 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
         return metadata;
     }
 
+    /// <summary>
+    /// Appends the workspace readiness checks in the order they must run: the NFS watchdog verdict (a flag read)
+    /// FIRST, the disk check LAST. <c>All(...)</c> short-circuits, so a hung NFS mount that the watchdog already
+    /// flagged is never statfs'd by the readiness probe.
+    /// </summary>
+    internal static void AddWorkspaceReadinessChecks(List<Func<bool>> readinessChecks, Func<bool> nfsHealthy, Func<bool> diskReady)
+    {
+        if (nfsHealthy != null) readinessChecks.Add(nfsHealthy);
+
+        readinessChecks.Add(diskReady);
+    }
+
     public TentacleFlavorRuntime CreateRuntime(TentacleFlavorContext context)
     {
         var tentacleSettings = context.TentacleSettings;
@@ -103,20 +115,23 @@ public sealed class KubernetesAgentFlavor : ITentacleFlavor
             startupHooks.Add(new ClusterVersionDetector(k8sClient));
 
             readinessChecks.Add(() => apiProbe.IsHealthy);
-            readinessChecks.Add(() => DiskSpaceChecker.HasSufficientSpace(tentacleSettings.WorkspacePath));
 
             var watchdogEnabled = string.Equals(Environment.GetEnvironmentVariable("WATCHDOG_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
+            Func<bool> nfsHealthy = null;
 
             if (!watchdogEnabled)
             {
                 var nfsWatchdog = new NfsWatchdog(scriptPodService.WorkspaceBasePath, podOps, kubernetesSettings);
                 backgroundTasks.Add(new ResilientBackgroundTask(nfsWatchdog));
-                readinessChecks.Add(() => nfsWatchdog.IsHealthy);
+                nfsHealthy = () => nfsWatchdog.IsHealthy;
             }
             else
             {
                 Log.Information("External watchdog sidecar is enabled, skipping in-process NFS watchdog");
             }
+
+            var diskProbe = new DiskSpaceReadinessProbe(tentacleSettings.WorkspacePath, tentacleSettings.DiskSpaceReadinessTimeoutSeconds);
+            AddWorkspaceReadinessChecks(readinessChecks, nfsHealthy, diskProbe.IsReady);
         }
 
         Func<bool> CombinedReadiness()
