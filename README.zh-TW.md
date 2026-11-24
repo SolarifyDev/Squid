@@ -50,29 +50,11 @@
 
 ## 🚀 快速開始
 
-**執行 Server**（需要 PostgreSQL 與 Redis）
-
 ```bash
-docker build -f Dockerfile.Api -t squid-api .
-docker run --rm -p 8080:8080 -p 10943:10943 squid-api
+docker run -d --name squid -p 8080:8080 -p 10943:10943 -v squid-data:/data squidcd/squid
 ```
 
-**連接部署目標**
-
-```bash
-# Linux Tentacle
-curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | bash
-
-# Kubernetes Agent
-helm upgrade --install squid-agent deploy/helm/kubernetes-agent
-```
-
-```powershell
-# Windows Tentacle
-irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.ps1 | iex
-```
-
-> 正式環境請透過環境變數或金鑰管理系統注入資料庫、憑證與加密金鑰。
+<img src="branding/readme/setup-wizard.png" alt="Squid 首次啟動引導頁：選擇內建或自己的 PostgreSQL、建立管理員、確認伺服器網址，然後安裝" width="100%">
 
 ## 🔄 從 Octopus 遷移
 
