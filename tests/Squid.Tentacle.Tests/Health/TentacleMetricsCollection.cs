@@ -24,6 +24,7 @@ namespace Squid.Tentacle.Tests.Health;
 /// <item><c>TentacleMetricsTests</c> — direct counter assertions</item>
 /// <item><c>MetricsPersistenceTests</c> — direct counter assertions via persistence</item>
 /// <item><c>ScriptPodServiceTests</c> — exercises <c>ScriptStarted</c>/<c>ScriptCompleted</c></item>
+/// <item><c>ScriptPodServiceCrashSafetyTests</c> — constructs <c>ScriptPodService</c></item>
 /// <item><c>ScriptRecoveryServiceTests</c> — constructs <c>ScriptPodService</c></item>
 /// <item><c>KubernetesPodMonitorTests</c> — exercises <c>SetManagedPods</c>/<c>OrphanedPodCleaned</c></item>
 /// <item><c>KubernetesPodMonitorIntegrationTests</c> — exercises <c>ScriptPodService</c></item>

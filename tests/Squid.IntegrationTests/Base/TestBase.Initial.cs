@@ -25,6 +25,11 @@ public partial class TestBase
         ClearDatabaseRecords();
     }
 
+    // Lets a test class that runs beside log-capturing fixtures keep its sink on the process-wide Log.Logger this base replaces.
+    protected virtual void ConfigureLogger(LoggerConfiguration configuration)
+    {
+    }
+
     private void RegisterBaseContainer(ContainerBuilder containerBuilder)
     {
         var configuration = new ConfigurationBuilder()
@@ -32,12 +37,15 @@ public partial class TestBase
             .AddJsonFile("appsettings.json", false, true)
             .Build();
 
-        var logger = new LoggerConfiguration()
+        var loggerConfiguration = new LoggerConfiguration()
             .MinimumLevel.Information()
             .Enrich.WithProperty("ApplicationContext", "Squid")
             .Enrich.FromLogContext()
-            .WriteTo.Console()
-            .CreateLogger();
+            .WriteTo.Console();
+
+        ConfigureLogger(loggerConfiguration);
+
+        var logger = loggerConfiguration.CreateLogger();
 
         Log.Logger = logger;
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Hosting;
 using Squid.Tentacle.Instance;
 using Squid.Tentacle.Platform;
 using Squid.Tentacle.ServiceHost;
@@ -29,7 +30,10 @@ namespace Squid.WindowsTentacleE2ETests;
 [Collection(WindowsTentacleHostStateCollection.Name)]
 public sealed class TentacleScmFatalExitRecoveryE2ETests
 {
-    private static readonly TimeSpan RestartBound = TimeSpan.FromSeconds(150);
+    // One fatal->restart cycle = the host's graceful-stop wait + the production restart delay; the bound covers every restart the
+    // production policy grants plus a fixed margin for sc.exe latency, so a change to either production value moves the wait with it.
+    private static readonly TimeSpan RestartCycle = new HostOptions().ShutdownTimeout + TimeSpan.FromMilliseconds(WindowsServiceHost.DefaultRestartDelayMs);
+    private static readonly TimeSpan RestartBound = RestartCycle * WindowsServiceHost.DefaultRestartCount + TimeSpan.FromSeconds(30);
     private static readonly TimeSpan NoRestartObservation = TimeSpan.FromSeconds(30);
 
     [Fact]
@@ -43,7 +47,7 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
 
         // Install may report a start error if the agent dies before SCM sees RUNNING; the service
         // registration is what matters here, asserted via sc query below.
-        host.Install(ctx.BuildInstallRequest());
+        var installExit = host.Install(ctx.BuildInstallRequest());
 
         RunSc("query", ctx.ServiceName).stdout.ShouldContain("SERVICE_NAME",
             customMessage: $"Service '{ctx.ServiceName}' was not created. Run `sc query {ctx.ServiceName}` and check Install output.");
@@ -55,7 +59,7 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
 
         observation.DistinctPids.Count.ShouldBeGreaterThanOrEqualTo(2,
             customMessage: $"SCM did not restart '{ctx.ServiceName}' within {RestartBound.TotalSeconds}s after a fatal agent error. " +
-                           $"Seen PIDs: [{string.Join(", ", observation.DistinctPids)}]; non-zero WIN32_EXIT_CODE while STOPPED seen: {observation.SawNonZeroExitCode}. " +
+                           $"Install exit: {installExit}. Last sc queryex: {observation.LastScOutput.ReplaceLineEndings(" ")}. Seen PIDs: [{string.Join(", ", observation.DistinctPids)}]; non-zero WIN32_EXIT_CODE while STOPPED seen: {observation.SawNonZeroExitCode}. " +
                            $"If the exit code was never non-zero the agent is not reporting failure to SCM (ServiceBase.ExitCode); " +
                            $"if it was, check `sc qfailure {ctx.ServiceName}` / `sc qfailureflag {ctx.ServiceName}` and Event Viewer > System.");
 
@@ -152,18 +156,21 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
 
     // ── sc.exe observation ───────────────────────────────────────────────────
 
-    private sealed record Observation(HashSet<int> DistinctPids, bool SawNonZeroExitCode, bool SawRunning);
+    private sealed record Observation(HashSet<int> DistinctPids, bool SawNonZeroExitCode, bool SawRunning, string LastScOutput);
 
     private static Observation ObserveUntilSecondProcess(string serviceName, TimeSpan bound, bool stopAtFirstRunning = false)
     {
         var pids = new HashSet<int>();
         var sawNonZero = false;
         var sawRunning = false;
+        var lastOutput = string.Empty;
         var deadline = DateTime.UtcNow + bound;
 
         while (DateTime.UtcNow < deadline)
         {
             var (_, stdout, _) = RunSc("queryex", serviceName);
+
+            lastOutput = stdout;
             var pid = ParsePid(stdout);
 
             if (pid > 0) pids.Add(pid);
@@ -175,7 +182,7 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
             Thread.Sleep(500);
         }
 
-        return new Observation(pids, sawNonZero, sawRunning);
+        return new Observation(pids, sawNonZero, sawRunning, lastOutput);
     }
 
     private static int ReadWin32ExitCode(string serviceName) => ParseWin32ExitCode(RunSc("query", serviceName).stdout);

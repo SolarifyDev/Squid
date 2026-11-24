@@ -35,10 +35,14 @@ public partial class LocalScriptService
 
     public ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request)
     {
+        // Read the flag BEFORE the state lookup: a Start that writes its state and then leaves _startsInFlight between the two
+        // reads would otherwise look unknown, and UnknownTicket makes the server re-dispatch (the script runs twice).
+        var startInFlight = _startsInFlight.ContainsKey(request.Ticket.TaskId);
+
         if (TryBuildStatusV2(request.Ticket, request.LastLogSequence, out var status)) return status!;
 
-        // A Start still waiting for the isolation mutex has no state file yet; UnknownTicket here makes the server re-dispatch.
-        if (_startsInFlight.ContainsKey(request.Ticket.TaskId)) return ScriptV2Mapping.Pending(request.Ticket, request.LastLogSequence);
+        // A Start still waiting for the isolation mutex has no state file yet.
+        if (startInFlight) return ScriptV2Mapping.Pending(request.Ticket, request.LastLogSequence);
 
         return ReadReleasedStatusV2(request.Ticket, request.LastLogSequence);
     }
@@ -74,9 +78,12 @@ public partial class LocalScriptService
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
+            // Flag first for the same reason as GetStatus: a Start finishing between the _scripts and _startsInFlight reads must not look absent.
+            var startInFlight = _startsInFlight.ContainsKey(ticket.TaskId);
+
             if (_scripts.TryRemove(ticket.TaskId, out var running)) return CompleteRunningV2(ticket, command.LastLogSequence, running);
 
-            if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
+            if (startInFlight) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotRunningV2(ticket, command.LastLogSequence);
         }

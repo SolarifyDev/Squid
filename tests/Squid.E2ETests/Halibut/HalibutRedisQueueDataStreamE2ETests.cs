@@ -13,6 +13,8 @@ using Halibut.Queue.Redis.RedisDataLossDetection;
 using Halibut.Queue.Redis.RedisHelpers;
 using Halibut.ServiceModel;
 using Npgsql;
+using Serilog;
+using Squid.E2ETests.Infrastructure;
 using Shouldly;
 using Squid.Core.Halibut.DataStreamStorage;
 using Microsoft.EntityFrameworkCore;
@@ -40,6 +42,9 @@ public class HalibutRedisQueueDataStreamE2ETests : TestBase
     public HalibutRedisQueueDataStreamE2ETests() : base("HalibutRedisQueueDataStreamE2E", "squid_e2e_halibut_redis_queue_data_stream")
     {
     }
+
+    // TestBase replaces the process-wide Log.Logger; without the multiplex sink every parallel fixture's CapturingLogSink silently loses events from that moment on.
+    protected override void ConfigureLogger(LoggerConfiguration configuration) => configuration.WriteTo.Sink(MultiplexCapturingSink.Instance);
 
     [Fact]
     public async Task ScriptFiles_StoredByThePodThatTookTheRequest_ReachTheAgent_ThroughThePodHoldingItsConnection()
