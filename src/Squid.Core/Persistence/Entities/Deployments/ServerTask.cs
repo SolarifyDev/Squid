@@ -54,6 +54,11 @@ public class ServerTask : IEntity<int>, IAuditable
 
     public bool HasPendingInterruptions { get; set; }
 
+    public bool IsTriggerTask { get; set; }
+
+    // A host-shutdown pause can resume on ordinary job redelivery. Other pauses require an explicit resume.
+    public bool ResumeOnRedelivery { get; set; }
+
     // Lease: the process running the pipeline stamps itself here and renews it on the database clock; NULL = never leased (pre-lease rows, older servers).
     public string LeaseOwner { get; set; }
 

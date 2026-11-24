@@ -163,7 +163,7 @@ public class ManualInterventionE2ETests
         {
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
             {
-                await executor.ProcessAsync(serverTaskId, cts.Token).ConfigureAwait(false);
+                await executor.ProcessAsync(serverTaskId, cts.Token, resume: true).ConfigureAwait(false);
             }).ConfigureAwait(false);
         }
         catch (DeploymentAbortedException)

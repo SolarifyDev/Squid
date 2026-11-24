@@ -59,7 +59,98 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
     internal TimeSpan DeploymentTimeout { get; init; } = ResolveDeploymentTimeout();
     internal bool TimeoutResumable { get; init; } = ResolveTimeoutResumable();
 
-    public async Task ProcessAsync(int serverTaskId, CancellationToken ct)
+    public async Task ProcessAsync(int serverTaskId, CancellationToken ct, bool resume = false)
+    {
+        Persistence.Entities.Deployments.ServerTask task;
+
+        try
+        {
+            task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // The job can be interrupted on its first read, before it has claimed a lease.
+            await PauseForHostShutdownAsync(new DeploymentTaskContext { ServerTaskId = serverTaskId }).ConfigureAwait(false);
+            throw;
+        }
+
+        if (task?.IsTriggerTask != true)
+        {
+            await ExecuteAsync(serverTaskId, task, resume, ct).ConfigureAwait(false);
+            return;
+        }
+
+        var paused = task.State == TaskState.Paused && (resume || task.ResumeOnRedelivery);
+
+        await serverTaskDataProvider.RunWithTriggerTaskLockAsync(serverTaskId, waitForOwner: paused,
+            () => DeliverOwnedTaskAsync(serverTaskId, resume, paused ? task.DataVersion : null, ct), ct).ConfigureAwait(false);
+    }
+
+    private async Task DeliverOwnedTaskAsync(int taskId, bool resume, byte[] pausedVersion, CancellationToken ct)
+    {
+        var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(taskId, ct).ConfigureAwait(false);
+
+        if (task?.IsTriggerTask != true) return;
+        if (pausedVersion != null && !pausedVersion.AsSpan().SequenceEqual(task.DataVersion)) return;
+        if (task.State is not (TaskState.Pending or TaskState.Executing or TaskState.Paused or TaskState.Cancelling)) return;
+
+        await ExecuteAsync(taskId, task, resume, ct).ConfigureAwait(false);
+    }
+
+    private async Task ExecuteAsync(
+        int taskId, Persistence.Entities.Deployments.ServerTask task, bool resume, CancellationToken ct)
+    {
+        if (task != null)
+        {
+            if (TaskState.IsTerminal(task.State)) return;
+            if (task.State == TaskState.Paused && !resume && !task.ResumeOnRedelivery) return;
+            if (await serverTaskDataProvider.IsImportedAsync(taskId, ct).ConfigureAwait(false)) return;
+
+            if (task.IsTriggerTask && task.State == TaskState.Cancelling)
+            {
+                await TryCompleteUnleasedCancellationAsync(taskId, ct).ConfigureAwait(false);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(task.ConcurrencyTag)
+                && await serverTaskDataProvider.HasActiveTaskWithTagAsync(task.ConcurrencyTag, taskId, ct).ConfigureAwait(false))
+            {
+                await RequeueAsync(taskId, resume, task.IsTriggerTask, ct).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        await RunDeploymentAsync(taskId, task?.IsTriggerTask == true, resume, ct).ConfigureAwait(false);
+    }
+
+    private async Task TryCompleteUnleasedCancellationAsync(int taskId, CancellationToken ct)
+    {
+        var context = new DeploymentTaskContext { ServerTaskId = taskId };
+
+        if (!await serverTaskDataProvider.TryClaimUnleasedCancellationAsync(taskId, context.LeaseOwner, ct).ConfigureAwait(false)) return;
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+        lifecycle.Initialize(context);
+
+        await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token).ConfigureAwait(false);
+        await completion.OnCancelledAsync(context, timeout.Token).ConfigureAwait(false);
+    }
+
+    private async Task RequeueAsync(int taskId, bool resume, bool requireJob, CancellationToken ct)
+    {
+        Log.Information("[Deploy] Task {TaskId} waiting for concurrency slot; re-enqueuing in {Delay}s", taskId, ConcurrencyRequeueDelay.TotalSeconds);
+
+        var jobId = backgroundJobClient.Schedule<IDeploymentTaskExecutor>(
+            executor => executor.ProcessAsync(taskId, CancellationToken.None, resume), ConcurrencyRequeueDelay);
+
+        if (requireJob && string.IsNullOrWhiteSpace(jobId))
+            throw new InvalidOperationException($"The background job client did not schedule deployment task {taskId} for its concurrency slot.");
+
+        if (!string.IsNullOrEmpty(jobId))
+            await serverTaskDataProvider.SetJobIdAsync(taskId, jobId, ct).ConfigureAwait(false);
+    }
+
+    private async Task RunDeploymentAsync(int serverTaskId, bool isTriggerTask, bool resume, CancellationToken ct)
     {
         var ctx = new DeploymentTaskContext { ServerTaskId = serverTaskId };
 
@@ -76,20 +167,6 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         try
         {
-            var slot = await EvaluateSlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
-
-            if (slot == SlotDecision.AlreadyResolved)
-            {
-                Log.Information("[Deploy] Task {TaskId} is already resolved (terminal or imported from Octopus); skipping run", serverTaskId);
-                return;
-            }
-
-            if (slot == SlotDecision.SlotBusy)
-            {
-                await RequeueForConcurrencySlotAsync(serverTaskId, linkedCts.Token).ConfigureAwait(false);
-                return;
-            }
-
             lifecycle.Initialize(ctx);
 
             var ordered = phases.OrderBy(p => p.Order).ToList();
@@ -107,22 +184,17 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             if (IsLeaseLost(ctx)) return;
 
-            await lifecycle.EmitAsync(new PackagesReleasedEvent(new DeploymentEventContext()), linkedCts.Token);
-
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(CompletionTimeoutSeconds));
+            await lifecycle.EmitAsync(new PackagesReleasedEvent(new DeploymentEventContext()), timeout.Token);
 
-            // P0-A.1 (2026-04-24 audit): cancel wins over fail in the pre-terminal-write
-            // race. If the user clicked cancel (registryCts) or the caller cancelled the
-            // external token (ct) while a step failure was being captured on the context,
-            // the task must end Cancelled — not Failed. Pre-fix the FailureEncountered
-            // check ran first and races produced DeploymentFailedEvent while the UI
-            // showed "cancel requested". Checkpoint + downstream consumers then latched
-            // on the wrong terminal state. We still let timeouts fall through to the
-            // OCE handler below (timeoutCts raises OCE mid-execution, not here). Only the user's
-            // registry cancel wins here: the external token is the job host shutting down, and once every
-            // phase has completed there is nothing left to resume, so the real outcome (Failed/Success) is
-            // recorded with the completion writes' own timeout token and the job returns normally.
-            if (registryCts.Token.IsCancellationRequested)
+            // A user cancel can reach the database before the running pod's watcher sees it.
+            // Once every phase has finished, host shutdown alone leaves the final outcome intact.
+            var userCancelled = registryCts.IsCancellationRequested
+                || await serverTaskDataProvider.IsCancellationRequestedAsync(serverTaskId, timeout.Token).ConfigureAwait(false);
+
+            if (IsLeaseLost(ctx)) return;
+
+            if (userCancelled || registryCts.IsCancellationRequested)
             {
                 await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
                 await completion.OnCancelledAsync(ctx, timeout.Token);
@@ -177,12 +249,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
                 return;
             }
 
-            Log.Information("[Deploy] Task {TaskId} interrupted by host shutdown; pausing for resume on job re-delivery", serverTaskId);
-
-            await SafeCompleteAsync(
-                ctx,
-                () => completion.OnPausedAsync(ctx, CancellationToken.None),
-                new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = HostShutdownPauseReason }));
+            await PauseForHostShutdownAsync(ctx).ConfigureAwait(false);
 
             throw;
         }
@@ -202,21 +269,28 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (ServerTaskOwnedByLiveProcessException ex)
         {
-            // A duplicate delivery of a task a live process is still running (or is cancelling). Nothing is written — not the state, the checkpoint, a
-            // completion record or the remote script — and SafeCompleteAsync is not involved: the owner keeps running alone. If that owner is in fact dead,
-            // the reaper recovers the task once its lease goes stale and resumes it, so dropping the delivery here loses nothing.
-            Log.Warning("[Deploy] Task {TaskId} is already owned by {Owner}; duplicate delivery suppressed", ex.ServerTaskId, ex.LeaseOwner);
+            // Cancellation may have arrived between the trigger's locked read and the claim.
+            // A live or stale lease still belongs to its owner or the reaper.
+            if (isTriggerTask && ex.LeaseOwner == null)
+                await TryCompleteUnleasedCancellationAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            else
+                Log.Warning("[Deploy] Task {TaskId} is already owned by {Owner}; duplicate delivery suppressed", ex.ServerTaskId, ex.LeaseOwner);
+        }
+        catch (ServerTaskStateTransitionException ex) when (ctx.Task == null && ex.ToState == TaskState.Executing && TaskState.IsTerminal(ex.FromState))
+        {
+            // An operator completed cancellation before LoadTaskPhase claimed the task.
+            return;
+        }
+        catch (ServerTaskStateTransitionException ex) when (ctx.Task == null && ex.ToState == TaskState.Executing && ex.FromState == TaskState.Cancelling)
+        {
+            if (isTriggerTask)
+                await TryCompleteUnleasedCancellationAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
         }
         catch (ConcurrencySlotOccupiedException ex)
         {
-            // Lost the environment slot in the TOCTOU window between the free-slot check above
-            // and LoadTaskPhase's atomic →Executing claim — a peer pod's active task held it and
-            // the ux_server_task_active_per_tag unique index rejected this claim. Re-enqueue (the
-            // task stays Pending, or Paused if this was a resume) instead of failing: never
-            // overlapped, never lost. No completion record is written — the deployment has not
-            // started.
             Log.Information("[Deploy] Task {TaskId} lost concurrency slot at claim (tag: {Tag}); re-enqueuing", serverTaskId, ex.ConcurrencyTag);
-            await RequeueForConcurrencySlotAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+
+            await RequeueAsync(serverTaskId, resume, isTriggerTask, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex) when (!timeoutCts.IsCancellationRequested && !registryCts.IsCancellationRequested && !ct.IsCancellationRequested
             && TargetCatchClassifier.IsTransientInfraFailure(ex))
@@ -253,6 +327,16 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
             if (ctx.Lease != null) await ctx.Lease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private Task PauseForHostShutdownAsync(DeploymentTaskContext ctx)
+    {
+        Log.Information("[Deploy] Task {TaskId} interrupted by host shutdown; pausing for resume on job re-delivery", ctx.ServerTaskId);
+
+        ctx.ResumeOnRedelivery = true;
+
+        return SafeCompleteAsync(ctx, () => completion.OnPausedAsync(ctx, CancellationToken.None),
+            new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = HostShutdownPauseReason }));
     }
 
     /// <summary>How long the shutdown-vs-cancel row read may take; the read is async and off any cancellation callback.</summary>
@@ -367,49 +451,6 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             Log.Error(ex, "[Deploy] Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
         }
-    }
-
-    private enum SlotDecision { Proceed, SlotBusy, AlreadyResolved }
-
-    // One read decides the cold-path outcome: (a) AlreadyResolved if the task is terminal —
-    // covers a re-dispatched job whose task was cancelled while it sat re-enqueued, so it
-    // short-circuits instead of trying an illegal Cancelled→Executing claim — or was imported
-    // from Octopus (read-only history, never executed even when its original state was
-    // non-terminal); (b) SlotBusy if
-    // another ACTIVE task (Executing/Paused/Cancelling) holds the same tag's slot; (c) Proceed
-    // otherwise. A false negative on (b) under a race is harmless — LoadTaskPhase's atomic claim
-    // (the unique index) still rejects an overlapping →Executing and re-enqueues. An untagged
-    // task is never slot-blocked.
-    private async Task<SlotDecision> EvaluateSlotAsync(int serverTaskId, CancellationToken ct)
-    {
-        var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, ct).ConfigureAwait(false);
-
-        if (task == null) return SlotDecision.Proceed;
-
-        if (TaskState.IsTerminal(task.State)) return SlotDecision.AlreadyResolved;
-
-        if (await serverTaskDataProvider.IsImportedAsync(serverTaskId, ct).ConfigureAwait(false)) return SlotDecision.AlreadyResolved;
-
-        if (string.IsNullOrEmpty(task.ConcurrencyTag)) return SlotDecision.Proceed;
-
-        return await serverTaskDataProvider.HasActiveTaskWithTagAsync(task.ConcurrencyTag, serverTaskId, ct).ConfigureAwait(false)
-            ? SlotDecision.SlotBusy
-            : SlotDecision.Proceed;
-    }
-
-    // Re-dispatch the still-Pending (or Paused, on resume) task after a short delay so any pod
-    // can retry the slot once the occupant finishes. Replaces the legacy in-process "wait up to
-    // 300s then proceed anyway" poll: the worker is freed immediately and the deployment is never
-    // run while the slot is held. The new job id is persisted to task.JobId so a subsequent
-    // cancel targets THIS scheduled job rather than the already-finished original.
-    private async Task RequeueForConcurrencySlotAsync(int serverTaskId, CancellationToken ct)
-    {
-        Log.Information("[Deploy] Task {TaskId} waiting for concurrency slot; re-enqueuing in {Delay}s", serverTaskId, ConcurrencyRequeueDelay.TotalSeconds);
-
-        var jobId = backgroundJobClient.Schedule<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTaskId, CancellationToken.None), ConcurrencyRequeueDelay);
-
-        if (!string.IsNullOrEmpty(jobId))
-            await serverTaskDataProvider.SetJobIdAsync(serverTaskId, jobId, ct).ConfigureAwait(false);
     }
 
     /// <summary>

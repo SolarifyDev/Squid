@@ -78,97 +78,109 @@ public partial class DeploymentService : IDeploymentService
         _backgroundJobClient = backgroundJobClient;
     }
 
+    public Task<DeploymentCreatedEvent> CreateDeploymentForTriggerAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
+    {
+        if (!_deploymentDataProvider.HasActiveTransaction)
+            throw new InvalidOperationException("Trigger deployment creation requires the caller's transaction.");
+
+        return PersistDeploymentAsync(command, isTriggerTask: true, cancellationToken);
+    }
+
     public async Task<DeploymentCreatedEvent> CreateDeploymentAsync(CreateDeploymentCommand command, CancellationToken cancellationToken = default)
+    {
+        var created = await PersistDeploymentAsync(command, isTriggerTask: false, cancellationToken).ConfigureAwait(false);
+        var taskId = created.TaskId;
+        var jobId = NormalizeUtc(command.QueueTime) is { } time && time > DateTimeOffset.UtcNow
+            ? _backgroundJobClient.Schedule<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(taskId, CancellationToken.None, false), time)
+            : _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(taskId, CancellationToken.None, false));
+
+        if (!string.IsNullOrEmpty(jobId))
+            await _serverTaskDataProvider.ReplaceJobIdAsync(taskId, expectedJobId: null, jobId, cancellationToken).ConfigureAwait(false);
+
+        Log.Information("Queued deployment {DeploymentId} with task {TaskId}, job {JobId}", created.Deployment.Id, taskId, jobId);
+
+        return created;
+    }
+
+    private async Task<DeploymentCreatedEvent> PersistDeploymentAsync(CreateDeploymentCommand command, bool isTriggerTask, CancellationToken ct)
     {
         Log.Information("Creating deployment for release {ReleaseId} to environment {EnvironmentId}", command.ReleaseId, command.EnvironmentId);
 
-        var specificMachineIds = NormalizeMachineIds(command.SpecificMachineIds);
-        var excludedMachineIds = NormalizeMachineIds(command.ExcludedMachineIds);
-        var skipActionIds = NormalizePositiveIds(command.SkipActionIds);
-        var queueTime = NormalizeUtc(command.QueueTime);
-        var queueTimeExpiry = NormalizeUtc(command.QueueTimeExpiry);
-        var deploymentRequestPayload = BuildDeploymentRequestPayload(command, queueTime, queueTimeExpiry, specificMachineIds, excludedMachineIds, skipActionIds);
-
-        var preview = await PreviewInternalAsync(deploymentRequestPayload, DeploymentValidationStage.Create, cancellationToken).ConfigureAwait(false);
-
-        if (!preview.CanDeploy)
-        {
-            var reasons = preview.BlockingReasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-
-            var message = reasons.Count == 0 ? "Deployment preview failed." : string.Join("; ", reasons);
-
-            throw new DeploymentValidationException($"Deployment validation failed for release {command.ReleaseId} and environment {command.EnvironmentId}: {message}");
-        }
-
-        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, cancellationToken).ConfigureAwait(false);
-
-        if (release == null)
-            throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
-
-        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, cancellationToken).ConfigureAwait(false);
-        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(command.EnvironmentId, cancellationToken).ConfigureAwait(false);
-
-        var projectName = project?.Name ?? $"Project-{release.ProjectId}";
-        var environmentName = environment?.Name ?? $"Environment-{command.EnvironmentId}";
-
-        var effectiveQueueTime = queueTime ?? DateTimeOffset.UtcNow;
+        var payload = BuildDeploymentRequestPayload(command);
+        await ValidateCreationAsync(payload, ct).ConfigureAwait(false);
+        var release = await _releaseDataProvider.GetReleaseByIdAsync(command.ReleaseId, ct).ConfigureAwait(false)
+            ?? throw new DeploymentEntityNotFoundException("Release", command.ReleaseId);
         var deployedBy = _currentUser.Id ?? throw new InvalidOperationException("Current user id is required when creating deployment.");
+        var task = await CreateServerTaskAsync(payload, release, isTriggerTask, ct).ConfigureAwait(false);
+        var deployment = BuildDeployment(payload, release, task.Id, deployedBy);
 
-        var serverTask = new Persistence.Entities.Deployments.ServerTask
+        await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: ct).ConfigureAwait(false);
+        Log.Information("Created deployment {DeploymentId} with task {TaskId}", deployment.Id, task.Id);
+
+        return new DeploymentCreatedEvent { TaskId = task.Id, Deployment = _mapper.Map<DeploymentDto>(deployment) };
+    }
+
+    private async Task ValidateCreationAsync(DeploymentRequestPayload payload, CancellationToken ct)
+    {
+        var preview = await PreviewInternalAsync(payload, DeploymentValidationStage.Create, ct).ConfigureAwait(false);
+
+        if (preview.CanDeploy) return;
+
+        var reasons = preview.BlockingReasons.Where(reason => !string.IsNullOrWhiteSpace(reason)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var message = reasons.Count == 0 ? "Deployment preview failed." : string.Join("; ", reasons);
+
+        throw new DeploymentValidationException($"Deployment validation failed for release {payload.ReleaseId} and environment {payload.EnvironmentId}: {message}");
+    }
+
+    private async Task<Persistence.Entities.Deployments.ServerTask> CreateServerTaskAsync(
+        DeploymentRequestPayload payload, Persistence.Entities.Deployments.Release release,
+        bool isTriggerTask, CancellationToken ct)
+    {
+        var project = await _projectDataProvider.GetProjectByIdAsync(release.ProjectId, ct).ConfigureAwait(false);
+        var environment = await _environmentDataProvider.GetEnvironmentByIdAsync(payload.EnvironmentId, ct).ConfigureAwait(false);
+        var projectName = project?.Name ?? $"Project-{release.ProjectId}";
+        var environmentName = environment?.Name ?? $"Environment-{payload.EnvironmentId}";
+
+        var task = new Persistence.Entities.Deployments.ServerTask
         {
-            Name = command.Name ?? "Deploy",
+            Name = payload.Name ?? "Deploy",
             Description = $"Deploy {projectName} release {release.Version} to {environmentName}",
-            QueueTime = effectiveQueueTime,
+            QueueTime = payload.QueueTime ?? DateTimeOffset.UtcNow,
             State = TaskState.Pending,
             ServerTaskType = "Deploy",
             SpaceId = release.SpaceId,
             ProjectId = release.ProjectId,
-            EnvironmentId = command.EnvironmentId,
+            EnvironmentId = payload.EnvironmentId,
             LastModifiedDate = DateTimeOffset.UtcNow,
             BusinessProcessState = "Queued",
             StateOrder = 1,
             Weight = 1,
-            BatchId = 0,
-            ConcurrencyTag = $"deploy:env-{command.EnvironmentId}"
+            ConcurrencyTag = $"deploy:env-{payload.EnvironmentId}",
+            IsTriggerTask = isTriggerTask
         };
 
-        await _serverTaskDataProvider.AddServerTaskAsync(serverTask, cancellationToken: cancellationToken).ConfigureAwait(false);
+        await _serverTaskDataProvider.AddServerTaskAsync(task, cancellationToken: ct).ConfigureAwait(false);
 
-        var deployment = new Persistence.Entities.Deployments.Deployment
+        return task;
+    }
+
+    private static Persistence.Entities.Deployments.Deployment BuildDeployment(
+        DeploymentRequestPayload payload, Persistence.Entities.Deployments.Release release, int taskId, int deployedBy)
+    {
+        return new Persistence.Entities.Deployments.Deployment
         {
-            Name = command.Name ?? $"Deploy {release.Version}",
-            TaskId = serverTask.Id,
+            Name = payload.Name ?? $"Deploy {release.Version}",
+            TaskId = taskId,
             SpaceId = release.SpaceId,
             ChannelId = release.ChannelId,
             ProjectId = release.ProjectId,
-            ReleaseId = command.ReleaseId,
-            EnvironmentId = command.EnvironmentId,
+            ReleaseId = release.Id,
+            EnvironmentId = payload.EnvironmentId,
             DeployedBy = deployedBy,
             CreatedDate = DateTimeOffset.UtcNow,
             ProcessSnapshotId = release.ProjectDeploymentProcessSnapshotId,
             VariableSetSnapshotId = release.ProjectVariableSetSnapshotId,
-            Json = JsonSerializer.Serialize(deploymentRequestPayload)
-        };
-
-        await _deploymentDataProvider.AddDeploymentAsync(deployment, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        var jobId = effectiveQueueTime > DateTimeOffset.UtcNow
-            ? _backgroundJobClient.Schedule<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None), effectiveQueueTime)
-            : _backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.Id, CancellationToken.None));
-
-        if (!string.IsNullOrEmpty(jobId))
-        {
-            serverTask.JobId = jobId;
-            
-            await _serverTaskDataProvider.UpdateServerTaskStateAsync(serverTask.Id, serverTask.State, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-
-        Log.Information("Created deployment {DeploymentId} with task {TaskId}, job {JobId}", deployment.Id, serverTask.Id, jobId);
-
-        return new DeploymentCreatedEvent
-        {
-            TaskId = serverTask.Id,
-            Deployment = _mapper.Map<DeploymentDto>(deployment)
+            Json = JsonSerializer.Serialize(payload)
         };
     }
 
@@ -211,7 +223,7 @@ public partial class DeploymentService : IDeploymentService
             : dateTime.ToUniversalTime();
     }
 
-    private static DeploymentRequestPayload BuildDeploymentRequestPayload(CreateDeploymentCommand command, DateTimeOffset? queueTime, DateTimeOffset? queueTimeExpiry, HashSet<int> specificMachineIds, HashSet<int> excludedMachineIds, HashSet<int> skipActionIds)
+    private static DeploymentRequestPayload BuildDeploymentRequestPayload(CreateDeploymentCommand command)
     {
         return new DeploymentRequestPayload
         {
@@ -222,12 +234,12 @@ public partial class DeploymentService : IDeploymentService
             ForcePackageDownload = command.ForcePackageDownload,
             ForcePackageRedeployment = command.ForcePackageRedeployment,
             UseGuidedFailure = command.UseGuidedFailure,
-            QueueTime = queueTime,
-            QueueTimeExpiry = queueTimeExpiry,
+            QueueTime = NormalizeUtc(command.QueueTime),
+            QueueTimeExpiry = NormalizeUtc(command.QueueTimeExpiry),
             FormValues = command.FormValues ?? new Dictionary<string, string>(),
-            SpecificMachineIds = specificMachineIds.OrderBy(id => id).ToList(),
-            ExcludedMachineIds = excludedMachineIds.OrderBy(id => id).ToList(),
-            SkipActionIds = skipActionIds.OrderBy(id => id).ToList()
+            SpecificMachineIds = NormalizeMachineIds(command.SpecificMachineIds).OrderBy(id => id).ToList(),
+            ExcludedMachineIds = NormalizeMachineIds(command.ExcludedMachineIds).OrderBy(id => id).ToList(),
+            SkipActionIds = NormalizePositiveIds(command.SkipActionIds).OrderBy(id => id).ToList()
         };
     }
 }

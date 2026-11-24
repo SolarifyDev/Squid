@@ -330,7 +330,7 @@ public class KubernetesResumeCheckpointE2ETests
         await PlantCheckpointAsync(serverTaskId, outputVariablesJson: "[]", lastCompletedBatchIndex: 0);
         await SetTaskStateAsync(serverTaskId, TaskState.Paused);
 
-        await ExecutePipelineAsync(serverTaskId);
+        await ExecutePipelineAsync(serverTaskId, resume: true);
 
         ExecutionCapture.CapturedRequests.Count.ShouldBe(2,
             customMessage: "After resume from batch 0, only batches 1 + 2 should re-execute (2 captured requests). " +
@@ -350,7 +350,7 @@ public class KubernetesResumeCheckpointE2ETests
         await PlantCheckpointAsync(serverTaskId, outputVariablesJson: "[]", lastCompletedBatchIndex: 1);
         await SetTaskStateAsync(serverTaskId, TaskState.Paused);
 
-        await ExecutePipelineAsync(serverTaskId);
+        await ExecutePipelineAsync(serverTaskId, resume: true);
 
         ExecutionCapture.CapturedRequests.Count.ShouldBe(1,
             customMessage: "After resume from batch 1, only batch 2 should execute. " +
@@ -379,7 +379,7 @@ public class KubernetesResumeCheckpointE2ETests
         await PlantCheckpointAsync(serverTaskId, outputVariablesJson: "[]", lastCompletedBatchIndex: 0);
         await SetTaskStateAsync(serverTaskId, TaskState.Paused);
 
-        await ExecutePipelineAsync(serverTaskId);
+        await ExecutePipelineAsync(serverTaskId, resume: true);
 
         ExecutionCapture.CapturedRequests.Count.ShouldBe(2,
             customMessage: "Resume after a timeout-pause must skip the already-completed batch 0 and run only " +
@@ -413,11 +413,11 @@ public class KubernetesResumeCheckpointE2ETests
         };
     }
 
-    private async Task ExecutePipelineAsync(int serverTaskId)
+    private async Task ExecutePipelineAsync(int serverTaskId, bool resume = false)
     {
         await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
         {
-            await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+            await executor.ProcessAsync(serverTaskId, CancellationToken.None, resume).ConfigureAwait(false);
         }).ConfigureAwait(false);
     }
 

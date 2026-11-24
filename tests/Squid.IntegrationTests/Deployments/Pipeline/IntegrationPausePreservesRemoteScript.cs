@@ -46,7 +46,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
         (await InFlightTicketAsync(seeded).ConfigureAwait(false)).ShouldBe(agent.StartedTickets[0], "the in-flight pointer must survive the pause for resume");
 
         agent.Finish();
-        await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(30), resumable: true).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, timeout: TimeSpan.FromSeconds(30), resumable: true, resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success, "resume must complete the re-attached script").ConfigureAwait(false);
         agent.StartedTickets.Count.ShouldBe(1, "resume must re-attach, not dispatch a duplicate StartScript");
@@ -215,7 +215,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
             return await repository.QueryNoTracking<DeploymentCompletion>(c => deploymentIds.Contains(c.DeploymentId)).CountAsync().ConfigureAwait(false);
         });
 
-    private async Task RunPipelineAsync(int taskId, IAsyncScriptService agent, TimeSpan timeout, bool resumable, Action<ILifetimeScope> afterAgentPolled = null, CancellationToken externalToken = default, IHalibutScriptObserver observer = null)
+    private async Task RunPipelineAsync(int taskId, IAsyncScriptService agent, TimeSpan timeout, bool resumable, Action<ILifetimeScope> afterAgentPolled = null, CancellationToken externalToken = default, IHalibutScriptObserver observer = null, bool resume = false)
     {
         await Run<ILifetimeScope>(async scope =>
         {
@@ -231,7 +231,7 @@ public class IntegrationPausePreservesRemoteScript : DeploymentFixtureBase
                 TimeoutResumable = resumable
             };
 
-            var run = runner.ProcessAsync(taskId, externalToken);
+            var run = runner.ProcessAsync(taskId, externalToken, resume);
 
             if (afterAgentPolled != null)
             {

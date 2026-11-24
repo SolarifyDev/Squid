@@ -54,7 +54,7 @@ public class IntegrationParallelGuidedFailureResume : DeploymentFixtureBase
         var step3StartsBeforeResume = agent.Starts(Step3Marker);
         var step1StartsBeforeResume = agent.StartsOfStep1;
 
-        await RunPipelineAsync(seeded.TaskId, agent).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agent.StartsOfStep1.ShouldBe(step1StartsBeforeResume + 1, "step 1 was resolved Retry: it must run again on resume");
@@ -82,7 +82,7 @@ public class IntegrationParallelGuidedFailureResume : DeploymentFixtureBase
         agent.Succeed = true;
         var startsBeforeResume = agent.StartsOfStep1;
 
-        await RunPipelineAsync(seeded.TaskId, agent).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         (agent.StartsOfStep1 - startsBeforeResume).ShouldBe(2, "both targets were resolved Retry: each must run again on resume");
@@ -176,7 +176,7 @@ public class IntegrationParallelGuidedFailureResume : DeploymentFixtureBase
             task.State.ShouldBe(expected);
         });
 
-    private Task RunPipelineAsync(int taskId, IAsyncScriptService agent)
+    private Task RunPipelineAsync(int taskId, IAsyncScriptService agent, bool resume = false)
         => Run<ILifetimeScope>(async scope =>
         {
             var runner = new DeploymentPipelineRunner(
@@ -191,7 +191,7 @@ public class IntegrationParallelGuidedFailureResume : DeploymentFixtureBase
                 TimeoutResumable = true
             };
 
-            await runner.ProcessAsync(taskId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+            await runner.ProcessAsync(taskId, CancellationToken.None, resume).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
         }, extraRegistration: b => b.RegisterInstance(new FixedClientFactory(agent)).As<IHalibutClientFactory>().SingleInstance());
 
     // Every script fails until Succeed is set; starts are counted per script (step 2 carries a marker in its body).

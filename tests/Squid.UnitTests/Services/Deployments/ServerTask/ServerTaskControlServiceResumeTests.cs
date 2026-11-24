@@ -37,6 +37,15 @@ public class ServerTaskControlServiceResumeTests
     private static Expression<Func<ISquidBackgroundJobClient, string>> AnyEnqueue() =>
         j => j.Enqueue(It.IsAny<Expression<Func<IDeploymentTaskExecutor, Task>>>(), It.IsAny<string>());
 
+    private static bool IsExplicitResume(Expression<Func<IDeploymentTaskExecutor, Task>> expression)
+    {
+        if (expression.Body is not MethodCallExpression call) return false;
+        if (call.Method.Name != nameof(IDeploymentTaskExecutor.ProcessAsync) || call.Arguments.Count != 3) return false;
+
+        return Expression.Lambda<Func<int>>(call.Arguments[0]).Compile()() == 7
+            && Expression.Lambda<Func<bool>>(call.Arguments[2]).Compile()();
+    }
+
     [Fact]
     public async Task Resume_PausedNoPendingInterruptions_EnqueuesProcessAsync()
     {
@@ -46,7 +55,8 @@ public class ServerTaskControlServiceResumeTests
 
         await _sut.ResumeTaskAsync(7, CancellationToken.None);
 
-        _jobClient.Verify(AnyEnqueue(), Times.Once);
+        _jobClient.Verify(j => j.Enqueue(
+            It.Is<Expression<Func<IDeploymentTaskExecutor, Task>>>(e => IsExplicitResume(e)), It.IsAny<string>()), Times.Once);
     }
 
     [Fact]
@@ -60,8 +70,7 @@ public class ServerTaskControlServiceResumeTests
 
         await _sut.ResumeTaskAsync(7, CancellationToken.None);
 
-        task.JobId.ShouldBe("resume-job-1");
-        _dataProvider.Verify(d => d.UpdateServerTaskStateAsync(7, TaskState.Paused, It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _dataProvider.Verify(d => d.ReplaceJobIdAsync(7, null, "resume-job-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -118,8 +127,9 @@ public class ServerTaskControlServiceResumeTests
 
         await _sut.TryAutoResumeAsync(7, CancellationToken.None);
 
-        _jobClient.Verify(AnyEnqueue(), Times.Once);
-        task.JobId.ShouldBe("auto-job-1");
+        _jobClient.Verify(j => j.Enqueue(
+            It.Is<Expression<Func<IDeploymentTaskExecutor, Task>>>(e => IsExplicitResume(e)), It.IsAny<string>()), Times.Once);
+        _dataProvider.Verify(d => d.ReplaceJobIdAsync(7, null, "auto-job-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -133,6 +143,6 @@ public class ServerTaskControlServiceResumeTests
         await Should.ThrowAsync<ImportedServerTaskReadOnlyException>(() => _sut.ResumeTaskAsync(7, CancellationToken.None));
 
         _jobClient.Verify(AnyEnqueue(), Times.Never);
-        _dataProvider.Verify(d => d.UpdateServerTaskStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _dataProvider.Verify(d => d.ReplaceJobIdAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

@@ -48,7 +48,7 @@ public class IntegrationLeaseFenceRedelivery : DeploymentFixtureBase
         (await LoadAsync(seeded.TaskId).ConfigureAwait(false)).State.ShouldBe(TaskState.Paused, "the reaper recovers the dead owner's task");
         resumeJobs.ShouldBe(1, "and requests the resume the dropped redelivery would have performed");
 
-        await RunAsync(seeded.TaskId, agent).ConfigureAwait(false);
+        await RunAsync(seeded.TaskId, agent, resume: true).ConfigureAwait(false);
 
         (await LoadAsync(seeded.TaskId).ConfigureAwait(false)).State.ShouldBe(TaskState.Success, "the resume job completes the deployment");
         agent.StartedTickets.Count.ShouldBe(1);
@@ -66,7 +66,7 @@ public class IntegrationLeaseFenceRedelivery : DeploymentFixtureBase
         await Run<ILifetimeScope>(async scope =>
         {
             await using var resume = scope.BeginLifetimeScope();
-            var resumed = BuildRunner(resume).ProcessAsync(seeded.TaskId, CancellationToken.None);
+            var resumed = BuildRunner(resume).ProcessAsync(seeded.TaskId, CancellationToken.None, resume: true);
             await agent.Polled.WaitAsync(Bound).ConfigureAwait(false);
 
             await using var duplicate = scope.BeginLifetimeScope();
@@ -116,8 +116,8 @@ public class IntegrationLeaseFenceRedelivery : DeploymentFixtureBase
             TimeoutResumable = true
         };
 
-    private Task RunAsync(int taskId, IAsyncScriptService agent)
-        => Run<ILifetimeScope>(scope => BuildRunner(scope).ProcessAsync(taskId, CancellationToken.None).WaitAsync(Bound), extraRegistration: b => b.RegisterInstance(new FixedClientFactory(agent)).As<IHalibutClientFactory>().SingleInstance());
+    private Task RunAsync(int taskId, IAsyncScriptService agent, bool resume = false)
+        => Run<ILifetimeScope>(scope => BuildRunner(scope).ProcessAsync(taskId, CancellationToken.None, resume).WaitAsync(Bound), extraRegistration: b => b.RegisterInstance(new FixedClientFactory(agent)).As<IHalibutClientFactory>().SingleInstance());
 
     // The reaper through the container, with the control service it resumes through; returns how many resume jobs it queued for the task executor.
     private async Task<int> ReapAsync()

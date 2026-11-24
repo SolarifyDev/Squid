@@ -142,7 +142,8 @@ public class DeploymentPipelineRunnerTests
         var completion = new Mock<IDeploymentCompletionHandler>();
         var phase = new Mock<IDeploymentPipelinePhase>();
         var jobClient = new Mock<ISquidBackgroundJobClient>();
-        var runner = new DeploymentPipelineRunner(new[] { phase.Object }, lifecycle.Object, completion.Object, new TaskCancellationRegistry(), _taskDataProvider.Object, jobClient.Object);
+        var runner = new DeploymentPipelineRunner(new[] { phase.Object }, lifecycle.Object, completion.Object,
+            new TaskCancellationRegistry(), _taskDataProvider.Object, jobClient.Object);
 
         await runner.ProcessAsync(1, CancellationToken.None);
 

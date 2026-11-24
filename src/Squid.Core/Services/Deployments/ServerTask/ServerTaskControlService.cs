@@ -157,13 +157,10 @@ public class ServerTaskControlService(
 
     private async Task<string> EnqueueResumeAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)
     {
-        var jobId = backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(task.Id, CancellationToken.None));
+        var jobId = backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(task.Id, CancellationToken.None, true));
 
         if (!string.IsNullOrEmpty(jobId))
-        {
-            task.JobId = jobId;
-            await serverTaskDataProvider.UpdateServerTaskStateAsync(task.Id, task.State, cancellationToken: ct).ConfigureAwait(false);
-        }
+            await serverTaskDataProvider.ReplaceJobIdAsync(task.Id, task.JobId, jobId, ct).ConfigureAwait(false);
 
         return jobId;
     }

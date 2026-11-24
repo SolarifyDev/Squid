@@ -5,6 +5,8 @@ namespace Squid.Core.Services.Deployments.Deployments;
 
 public interface IDeploymentDataProvider : IScopedDependency
 {
+    bool HasActiveTransaction { get; }
+
     Task<Deployment> GetDeploymentByIdAsync(int deploymentId, CancellationToken cancellationToken = default);
 
     Task<Deployment> GetDeploymentByTaskIdAsync(int taskId, CancellationToken cancellationToken = default);
@@ -18,6 +20,11 @@ public interface IDeploymentDataProvider : IScopedDependency
 
 public class DeploymentDataProvider(IRepository repository, IUnitOfWork unitOfWork) : IDeploymentDataProvider
 {
+    public bool HasActiveTransaction
+    {
+        get { return repository.Database.CurrentTransaction != null; }
+    }
+
     public async Task<Deployment> GetDeploymentByIdAsync(int deploymentId, CancellationToken cancellationToken = default)
     {
         return await repository.GetByIdAsync<Deployment>(deploymentId, cancellationToken: cancellationToken).ConfigureAwait(false);

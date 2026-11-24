@@ -58,6 +58,7 @@ public class DeploymentTaskContext
 
     // Resume
     public bool IsResume { get; set; }
+    public bool ResumeOnRedelivery { get; set; }
     public int? ResumeFromBatchIndex { get; set; }
     public List<VariableDto> RestoredOutputVariables { get; set; } = new();
 

@@ -16,7 +16,7 @@ using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 namespace Squid.UnitTests.Services.Deployments;
 
 /// <summary>
-/// Pins the runner's environment concurrency-slot behaviour. The legacy in-process poll
+/// Pins the task consumer's environment concurrency-slot behaviour. The legacy in-process poll
 /// ("wait up to 300s, then proceed anyway") is replaced by a single read-only free-slot check:
 /// if the slot is free the deployment runs; if it is busy the still-Pending task is re-enqueued
 /// (no worker held, never run-anyway), and a TOCTOU claim race (LoadTaskPhase's atomic
@@ -126,7 +126,7 @@ public class ConcurrencyTagTests
     public async Task SlotClaimRace_RequeuesInsteadOfFailing()
     {
         // The free-slot check passes, but the claim (LoadTaskPhase's atomic →Executing) loses the
-        // race to a peer pod — the unique index throws ConcurrencySlotOccupiedException. The runner
+        // race to a peer pod — the unique index throws ConcurrencySlotOccupiedException. The task consumer
         // must re-enqueue (Pending, retried), NOT fail the task.
         _taskDataProvider.Setup(p => p.GetServerTaskByIdNoTrackingAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ServerTaskEntity { Id = 1, ConcurrencyTag = "deploy:env-5" });
@@ -167,6 +167,7 @@ public class ConcurrencyTagTests
 
     private DeploymentPipelineRunner CreateRunner(params IDeploymentPipelinePhase[] phases)
     {
-        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry, _taskDataProvider.Object, _backgroundJobClient.Object);
+        return new DeploymentPipelineRunner(phases, _lifecycle.Object, _completion.Object, _registry,
+            _taskDataProvider.Object, _backgroundJobClient.Object);
     }
 }

@@ -8,6 +8,7 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Message.Models.Deployments.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
@@ -120,6 +121,175 @@ public class DeploymentCompletionHandlerTests
         await _sut.OnCancelledAsync(ctx, CancellationToken.None);
 
         _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnCancelled_Executing_TransitionsThroughCancellingInOrder()
+    {
+        var ctx = CreateContext();
+        var transitions = new List<string>();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(ctx.ServerTaskId, It.IsAny<string>(), It.IsAny<string>(), ctx.LeaseOwner, It.IsAny<CancellationToken>()))
+            .Callback<int, string, string, string, CancellationToken>((_, from, to, _, _) => transitions.Add($"{from}->{to}"))
+            .Returns(Task.CompletedTask);
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        transitions.ShouldBe(new[] { "Executing->Cancelling", "Cancelling->Cancelled" });
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Pending)]
+    [InlineData(TaskState.Paused)]
+    [InlineData(TaskState.Cancelling)]
+    public async Task OnCancelled_NotExecuting_TransitionsDirectlyToCancelled(string currentState)
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, currentState, TaskState.Cancelled, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Success)]
+    [InlineData(TaskState.Failed)]
+    [InlineData(TaskState.Cancelled)]
+    [InlineData(TaskState.TimedOut)]
+    [InlineData("cancelled")]
+    public async Task OnCancelled_TerminalTask_DoesNotRepeatCompletion(string currentState)
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OnCancelled_CalledTwice_RecordsCompletionOnce()
+    {
+        var ctx = CreateContext();
+        var task = new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing };
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(task);
+        _serverTaskService.Setup(s => s.TransitionStateAsync(ctx.ServerTaskId, It.IsAny<string>(), It.IsAny<string>(), ctx.LeaseOwner, It.IsAny<CancellationToken>()))
+            .Callback<int, string, string, string, CancellationToken>((_, _, to, _, _) => task.State = to)
+            .Returns(Task.CompletedTask);
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        task.State.ShouldBe(TaskState.Cancelled);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnCancelled_DeploymentNotLoaded_ResolvesByTaskAndRecordsCompletion()
+    {
+        var ctx = new DeploymentTaskContext { ServerTaskId = 7 };
+        _deploymentDataProvider.Setup(d => d.GetDeploymentByTaskIdAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Deployment { Id = 12, SpaceId = 3 });
+        _deploymentDataProvider.Setup(d => d.GetDeploymentByIdAsync(12, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Deployment { Id = 12, SpaceId = 3 });
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _deploymentDataProvider.Verify(d => d.GetDeploymentByTaskIdAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(
+            It.Is<DeploymentCompletion>(dc => dc.DeploymentId == 12 && dc.SpaceId == 3 && dc.State == TaskState.Failed),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnCancelled_DeploymentMissing_StillCancelsAndCleansCheckpoint()
+    {
+        var ctx = new DeploymentTaskContext { ServerTaskId = 7 };
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _deploymentDataProvider.Verify(d => d.GetDeploymentByTaskIdAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task OnCancelled_OperatorAlreadyStartedCancelling_CompletesCancellation()
+    {
+        var ctx = CreateContext();
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Cancelling, ctx.LeaseOwner, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Cancelling, TaskState.Cancelling));
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Cancelling, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Executing, TaskState.Success)]
+    [InlineData(TaskState.Executing, TaskState.Failed)]
+    [InlineData(TaskState.Executing, TaskState.Cancelled)]
+    [InlineData(TaskState.Executing, TaskState.TimedOut)]
+    [InlineData(TaskState.Cancelling, TaskState.Success)]
+    [InlineData(TaskState.Cancelling, TaskState.Failed)]
+    [InlineData(TaskState.Cancelling, TaskState.Cancelled)]
+    [InlineData(TaskState.Cancelling, TaskState.TimedOut)]
+    public async Task OnCancelled_TaskBecameTerminalDuringTransition_DoesNotRepeatCompletion(string initialState, string terminalState)
+    {
+        var ctx = CreateContext();
+        var targetState = initialState == TaskState.Executing ? TaskState.Cancelling : TaskState.Cancelled;
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = initialState });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(ctx.ServerTaskId, initialState, targetState, ctx.LeaseOwner, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ServerTaskStateTransitionException(terminalState, targetState));
+
+        await _sut.OnCancelledAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Executing, TaskState.Pending, TaskState.Cancelling)]
+    [InlineData(TaskState.Executing, TaskState.Paused, TaskState.Cancelling)]
+    [InlineData(TaskState.Cancelling, TaskState.Executing, TaskState.Cancelled)]
+    [InlineData(TaskState.Cancelling, TaskState.Paused, TaskState.Cancelled)]
+    [InlineData(TaskState.Executing, TaskState.Cancelled, TaskState.Failed)]
+    public async Task OnCancelled_UnexpectedTransitionConflict_Propagates(string initialState, string actualState, string targetState)
+    {
+        var ctx = CreateContext();
+        var exception = new ServerTaskStateTransitionException(actualState, targetState);
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = initialState });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(ctx.ServerTaskId, It.IsAny<string>(), It.IsAny<string>(), ctx.LeaseOwner, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(exception);
+
+        var thrown = await Should.ThrowAsync<ServerTaskStateTransitionException>(() => _sut.OnCancelledAsync(ctx, CancellationToken.None));
+
+        thrown.ShouldBeSameAs(exception);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ========== OnPausedAsync ==========
@@ -246,6 +416,21 @@ public class DeploymentCompletionHandlerTests
         await _sut.OnPausedAsync(ctx, CancellationToken.None);
 
         _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Paused, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(TaskState.Executing, 1)]
+    [InlineData(TaskState.Cancelling, 0)]
+    public async Task OnPaused_HostShutdown_PersistsRedeliveryOnlyWhileExecuting(string state, int expectedWrites)
+    {
+        var ctx = new DeploymentTaskContext { ServerTaskId = 1, ResumeOnRedelivery = true };
+        _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = state });
+
+        await _sut.OnPausedAsync(ctx, CancellationToken.None);
+
+        _serverTaskService.Verify(s => s.PauseForRedeliveryAsync(ctx.ServerTaskId, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Exactly(expectedWrites));
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

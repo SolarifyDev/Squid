@@ -2,5 +2,6 @@ namespace Squid.Core.Services.DeploymentExecution;
 
 public interface IDeploymentTaskExecutor : IScopedDependency
 {
-    Task ProcessAsync(int serverTaskId, CancellationToken ct);
+    [Hangfire.AutomaticRetry(Attempts = 3)]
+    Task ProcessAsync(int serverTaskId, CancellationToken ct, bool resume = false);
 }

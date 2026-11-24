@@ -31,6 +31,7 @@ public sealed class AuditDocumentRegistry : IAuditDocumentRegistry
     private static readonly Dictionary<Type, Mapping> Mappings = new()
     {
         [typeof(Project)] = new("Project", e => { var p = (Project)e; return new AuditDocumentKeys { SpaceId = p.SpaceId, ProjectId = p.Id, Name = p.Name }; }),
+        [typeof(ProjectTrigger)] = new("ProjectTrigger", e => { var t = (ProjectTrigger)e; return new AuditDocumentKeys { SpaceId = t.SpaceId, ProjectId = t.ProjectId, Name = t.Name }; }),
         [typeof(Release)] = new("Release", e => { var r = (Release)e; return new AuditDocumentKeys { SpaceId = r.SpaceId, ProjectId = r.ProjectId, ReleaseId = r.Id, Name = r.Version }; }),
         [typeof(Environment)] = new("Environment", e => { var x = (Environment)e; return new AuditDocumentKeys { SpaceId = x.SpaceId, EnvironmentId = x.Id, Name = x.Name }; }),
         [typeof(Machine)] = new("Machine", e => { var m = (Machine)e; return new AuditDocumentKeys { SpaceId = m.SpaceId, MachineId = m.Id, Name = m.Name }; }),

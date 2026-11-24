@@ -32,6 +32,18 @@ public class AuditDocumentRegistryTests
     }
 
     [Fact]
+    public void ProjectTrigger_MapsToOwningProjectWithoutConfigurationContents()
+    {
+        var trigger = new ProjectTrigger { Id = 7, ProjectId = 5, SpaceId = 2, Name = "Nightly" };
+
+        _registry.TryDescribe(trigger, out var type, out var keys).ShouldBeTrue();
+        type.ShouldBe("ProjectTrigger");
+        keys.SpaceId.ShouldBe(2);
+        keys.ProjectId.ShouldBe(5);
+        keys.Name.ShouldBe("Nightly");
+    }
+
+    [Fact]
     public void Machine_MapsToMachineFeedKey()
     {
         _registry.TryDescribe(new Machine { Id = 7, SpaceId = 2, Name = "web-01" }, out var type, out var keys).ShouldBeTrue();
@@ -73,7 +85,7 @@ public class AuditDocumentRegistryTests
         AuditDocumentRegistry.RegisteredDocumentTypes.ShouldBe(new[]
         {
             "Project", "Release", "Environment", "Machine", "DeploymentAccount",
-            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate"
+            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate", "ProjectTrigger"
         }, ignoreOrder: true);
     }
 }

@@ -61,7 +61,7 @@ public class AutoDeployService(
                 release.Id, environmentId);
 
             backgroundJobClient.Enqueue<IDeploymentTaskExecutor>(
-                executor => executor.ProcessAsync(0, CancellationToken.None),
+                executor => executor.ProcessAsync(0, CancellationToken.None, false),
                 queue: "deployment");
         }
     }

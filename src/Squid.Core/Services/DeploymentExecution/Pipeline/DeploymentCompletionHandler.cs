@@ -45,16 +45,74 @@ public sealed class DeploymentCompletionHandler(
 
     public async Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
+        var task = await serverTaskService.GetTaskAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+        var fromState = task?.State ?? TaskState.Cancelling;
 
-        if (ctx.Deployment != null)
-            await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
+        if (TaskState.IsTerminal(fromState)) return;
 
         await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
 
-        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
+        if (!await TryRecordCancellationAsync(ctx, fromState, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
+
+        Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
+    }
+
+    private async Task<bool> TryRecordCancellationAsync(DeploymentTaskContext ctx, string fromState, CancellationToken ct)
+    {
+        try
+        {
+            await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
+            {
+                var source = fromState;
+                if (string.Equals(source, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
+                {
+                    await EnsureCancellingAsync(ctx, cancellationToken).ConfigureAwait(false);
+                    source = TaskState.Cancelling;
+                }
+
+                await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, source, TaskState.Cancelled, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
+                await RecordCancelledCompletionAsync(ctx, cancellationToken).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+
+            return true;
+        }
+        catch (ServerTaskLeaseNotHeldException ex)
+        {
+            Log.Warning("[Deploy] Task {TaskId} is now leased to another run ({Owner}); cancellation was refused", ctx.ServerTaskId, ex.CurrentOwner);
+
+            return false;
+        }
+        catch (ServerTaskStateTransitionException ex) when (TaskState.IsTerminal(ex.FromState)
+            && (string.Equals(ex.ToState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(ex.ToState, TaskState.Cancelled, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+    }
+
+    private async Task EnsureCancellingAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Cancelling, ctx.LeaseOwner, ct).ConfigureAwait(false);
+        }
+        catch (ServerTaskStateTransitionException ex) when (
+            string.Equals(ex.FromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(ex.ToState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
+        {
+            // An operator already requested cancellation after the state was read.
+        }
+    }
+
+    private async Task RecordCancelledCompletionAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        ctx.Deployment ??= await deploymentDataProvider.GetDeploymentByTaskIdAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
+
+        if (ctx.Deployment == null) return;
+
+        await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
     }
 
     // The one place that guarantees "a task that reaches Cancelled has no agent script left running": whichever path led here, and whatever the
@@ -190,7 +248,10 @@ public sealed class DeploymentCompletionHandler(
         {
             await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
             {
-                await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, toState, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
+                if (toState == TaskState.Paused && ctx.ResumeOnRedelivery)
+                    await serverTaskService.PauseForRedeliveryAsync(ctx.ServerTaskId, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
+                else
+                    await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, toState, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
 
             return true;

@@ -5,6 +5,7 @@ using Mediator.Net.Pipeline;
 using Squid.Core.Extensions;
 using Squid.Core.Services.OctopusImport;
 using Squid.Message.Commands.OctopusImport;
+using Squid.Message.Commands.ProjectTriggers;
 
 namespace Squid.Core.Middlewares.Logging;
 
@@ -39,6 +40,9 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
 
     private static object GetSafeMessage(IMessage message)
     {
+        if (message is ProjectTriggerWriteCommand trigger)
+            return new { trigger.ProjectId, trigger.SpaceId };
+
         if (message is UploadOctopusImportCommand upload)
         {
             return new

@@ -55,7 +55,7 @@ public class IntegrationSuspendInParallelBatch : DeploymentFixtureBase
             await ResolveInterruptionAsync(seeded.TaskId).ConfigureAwait(false);
 
             await using var podB = scope.BeginLifetimeScope();
-            var runB = BuildRunner(podB).ProcessAsync(seeded.TaskId, CancellationToken.None);
+            var runB = BuildRunner(podB).ProcessAsync(seeded.TaskId, CancellationToken.None, resume: true);
 
             await WaitForStateAsync(seeded.TaskId, TaskState.Executing).ConfigureAwait(false);
             agent.Finish();

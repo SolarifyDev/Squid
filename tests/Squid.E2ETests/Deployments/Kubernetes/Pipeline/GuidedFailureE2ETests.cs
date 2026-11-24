@@ -83,7 +83,7 @@ public class GuidedFailureE2ETests
         {
             await _fixture.Run<IDeploymentTaskExecutor>(async executor =>
             {
-                await executor.ProcessAsync(serverTaskId, CancellationToken.None).ConfigureAwait(false);
+                await executor.ProcessAsync(serverTaskId, CancellationToken.None, resume: true).ConfigureAwait(false);
             }).ConfigureAwait(false);
         }
         catch (DeploymentAbortedException)

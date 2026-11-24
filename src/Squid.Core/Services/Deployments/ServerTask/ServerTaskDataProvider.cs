@@ -37,6 +37,16 @@ public interface IServerTaskDataProvider : IScopedDependency
 
     Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default);
 
+    Task ReplaceJobIdAsync(int taskId, string expectedJobId, string jobId, CancellationToken ct);
+
+    Task RunWithTriggerTaskLockAsync(int taskId, bool waitForOwner, Func<Task> run, CancellationToken ct);
+
+    Task<bool> IsCancellationRequestedAsync(int taskId, CancellationToken ct);
+
+    Task<bool> TryClaimUnleasedCancellationAsync(int taskId, string leaseOwner, CancellationToken ct);
+
+    Task PauseForRedeliveryAsync(int taskId, string leaseOwner, CancellationToken ct);
+
     Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
 
     Task<bool> IsImportedAsync(int serverTaskId, CancellationToken cancellationToken = default);
@@ -47,7 +57,7 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default);
 }
 
-public class ServerTaskDataProvider : IServerTaskDataProvider
+public partial class ServerTaskDataProvider : IServerTaskDataProvider
 {
     private readonly IRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
@@ -135,7 +145,10 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     public Task TransitionStateAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken = default)
         => _dbGate.RunAsync(() => TransitionStateGatedAsync(taskId, expectedCurrentState, newState, leaseOwner, cancellationToken), cancellationToken);
 
-    private async Task TransitionStateGatedAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken)
+    public Task PauseForRedeliveryAsync(int taskId, string leaseOwner, CancellationToken ct)
+        => _dbGate.RunAsync(() => TransitionStateGatedAsync(taskId, TaskState.Executing, TaskState.Paused, leaseOwner, ct, resumeOnRedelivery: true), ct);
+
+    private async Task TransitionStateGatedAsync(int taskId, string expectedCurrentState, string newState, string leaseOwner, CancellationToken cancellationToken, bool resumeOnRedelivery = false)
     {
         TaskState.EnsureValidTransition(expectedCurrentState, newState);
 
@@ -146,7 +159,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
         try
         {
-            rowsAffected = await ExecuteStateUpdateAsync(ExpectedRow(taskId, expectedCurrentState, leaseOwner), newState, leaseOwner, now, dataVersion, cancellationToken).ConfigureAwait(false);
+            rowsAffected = await ExecuteStateUpdateAsync(ExpectedRow(taskId, expectedCurrentState, leaseOwner), newState, leaseOwner, now, dataVersion, resumeOnRedelivery, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (IsActiveSlotConflict(ex, newState))
         {
@@ -193,13 +206,13 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         return task?.ConcurrencyTag ?? string.Empty;
     }
 
-    private Task<int> ExecuteStateUpdateAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, string leaseOwner, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    private Task<int> ExecuteStateUpdateAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, string leaseOwner, DateTimeOffset now, byte[] dataVersion, bool resumeOnRedelivery, CancellationToken ct)
     {
         if (TaskState.IsTerminal(newState)) return UpdateToTerminalAsync(row, newState, now, dataVersion, ct);
 
         if (string.Equals(newState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)) return UpdateToExecutingAsync(row, newState, leaseOwner ?? ServerTaskLeaseOwner.Current, now, dataVersion, ct);
 
-        if (string.Equals(newState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return UpdateToPausedAsync(row, newState, now, dataVersion, ct);
+        if (string.Equals(newState, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return UpdateToPausedAsync(row, newState, now, dataVersion, resumeOnRedelivery, ct);
 
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             row,
@@ -215,6 +228,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             row,
             s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.ResumeOnRedelivery, false)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
                   .SetProperty(t => t.CompletedTime, now)
@@ -229,6 +243,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             row,
             s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.ResumeOnRedelivery, false)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
                   .SetProperty(t => t.StartTime, now)
@@ -237,11 +252,12 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             ct);
     }
 
-    private Task<int> UpdateToPausedAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, DateTimeOffset now, byte[] dataVersion, CancellationToken ct)
+    private Task<int> UpdateToPausedAsync(Expression<Func<Persistence.Entities.Deployments.ServerTask, bool>> row, string newState, DateTimeOffset now, byte[] dataVersion, bool resumeOnRedelivery, CancellationToken ct)
     {
         return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             row,
             s => s.SetProperty(t => t.State, newState)
+                  .SetProperty(t => t.ResumeOnRedelivery, resumeOnRedelivery)
                   .SetProperty(t => t.DataVersion, dataVersion)
                   .SetProperty(t => t.LastModifiedDate, now)
                   .SetProperty(t => t.LeaseOwner, (string)null)
@@ -311,6 +327,14 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             t => t.Id == taskId,
             s => s.SetProperty(t => t.JobId, jobId),
             cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task ReplaceJobIdAsync(int taskId, string expectedJobId, string jobId, CancellationToken ct)
+    {
+        return _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            task => task.Id == taskId && task.JobId == expectedJobId,
+            setters => setters.SetProperty(task => task.JobId, jobId),
+            ct);
     }
 
     public async Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default)

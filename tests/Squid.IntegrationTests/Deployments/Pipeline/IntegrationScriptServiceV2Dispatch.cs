@@ -71,7 +71,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
         InFlightScriptMap.GetProtocol(json, seeded.DispatchSlot).ShouldBe(ScriptProtocolVersion.V2, "the version is persisted with the ticket, in the same write");
 
         agents.V2.Finish();
-        await RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        await RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30), resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agents.V2.StartedTickets.Count.ShouldBe(1, "resume must re-attach, not dispatch a duplicate");
@@ -89,7 +89,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
         await AssertStateAsync(seeded.TaskId, TaskState.Paused).ConfigureAwait(false);
 
         agents.V2.Finish();
-        await RunPipelineAsync(seeded, agents, advertiseV2: false, timeout: TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        await RunPipelineAsync(seeded, agents, advertiseV2: false, timeout: TimeSpan.FromSeconds(30), resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agents.V2.StartedTickets.Count.ShouldBe(1);
@@ -107,7 +107,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
         await AssertStateAsync(seeded.TaskId, TaskState.Paused).ConfigureAwait(false);
 
         agents.V2.LoseResult();
-        await Should.ThrowAsync<Exception>(() => RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30))).ConfigureAwait(false);
+        await Should.ThrowAsync<Exception>(() => RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30), resume: true)).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Failed).ConfigureAwait(false);
         agents.V2.StartedTickets.Count.ShouldBe(1, "a script whose result was lost may have run: it must never be dispatched again");
@@ -128,7 +128,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
         InFlightScriptMap.GetProtocol(json, seeded.DispatchSlot).ShouldBe(ScriptProtocolVersion.V1);
 
         agents.V1.Finish();
-        await RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+        await RunPipelineAsync(seeded, agents, advertiseV2: true, timeout: TimeSpan.FromSeconds(30), resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agents.V1.StartedTickets.Count.ShouldBe(1, "the record has no version, so it is a V1 script: re-attach over V1, never a second dispatch");
@@ -153,7 +153,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
         }).ConfigureAwait(false);
     }
 
-    private async Task RunPipelineAsync(SeededDeployment seeded, Agents agents, bool advertiseV2, TimeSpan timeout)
+    private async Task RunPipelineAsync(SeededDeployment seeded, Agents agents, bool advertiseV2, TimeSpan timeout, bool resume = false)
     {
         var cache = new InMemoryMachineRuntimeCapabilitiesCache();
         cache.Store(seeded.DispatchSlot.MachineId, new Dictionary<string, string> { ["os"] = "Linux" }, "2.0.0", advertiseV2 ? new[] { "IScriptService/v1", ScriptServiceCapabilities.V2 } : new[] { "IScriptService/v1" });
@@ -172,7 +172,7 @@ public class IntegrationScriptServiceV2Dispatch : DeploymentFixtureBase
                 TimeoutResumable = true
             };
 
-            await runner.ProcessAsync(seeded.TaskId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+            await runner.ProcessAsync(seeded.TaskId, CancellationToken.None, resume).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
         }, extraRegistration: b =>
         {
             b.RegisterInstance(cache).As<IMachineRuntimeCapabilitiesCache>().SingleInstance();

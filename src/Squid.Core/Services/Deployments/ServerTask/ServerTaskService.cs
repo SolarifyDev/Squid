@@ -12,6 +12,8 @@ public interface IServerTaskService : IScopedDependency
 {
     Task<StartExecutingResult> StartExecutingAsync(int taskId, CancellationToken ct = default);
 
+    Task PauseForRedeliveryAsync(int taskId, string leaseOwner, CancellationToken ct);
+
     /// <summary>Claims the task for the pipeline RUN named by <paramref name="leaseOwner"/>: the claim stamps that run's lease, and every later write the run makes is conditional on holding it.</summary>
     Task<StartExecutingResult> StartExecutingAsync(int taskId, string leaseOwner, CancellationToken ct = default);
 

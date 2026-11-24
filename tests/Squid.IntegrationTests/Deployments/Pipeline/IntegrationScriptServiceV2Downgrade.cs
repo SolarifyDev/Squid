@@ -46,7 +46,7 @@ public class IntegrationScriptServiceV2Downgrade : DeploymentFixtureBase
         agents.Capabilities.Services = V1Only;
         agents.V1.Know(ticket);
         agents.V1.Finish();
-        await RunPipelineAsync(seeded, agents, cache, TimeSpan.FromSeconds(60)).ConfigureAwait(false);
+        await RunPipelineAsync(seeded, agents, cache, TimeSpan.FromSeconds(60), resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agents.V2.StartedTickets.Count.ShouldBe(1, "the script ran once, over V2, before the downgrade");
@@ -69,7 +69,7 @@ public class IntegrationScriptServiceV2Downgrade : DeploymentFixtureBase
 
         agents.V2.Downgrade();
         agents.Capabilities.Services = V1Only;
-        await Should.ThrowAsync<Exception>(() => RunPipelineAsync(seeded, agents, cache, TimeSpan.FromSeconds(60))).ConfigureAwait(false);
+        await Should.ThrowAsync<Exception>(() => RunPipelineAsync(seeded, agents, cache, TimeSpan.FromSeconds(60), resume: true)).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Failed).ConfigureAwait(false);
         agents.V2.StartedTickets.Count.ShouldBe(1);
@@ -155,7 +155,7 @@ public class IntegrationScriptServiceV2Downgrade : DeploymentFixtureBase
         return cache;
     }
 
-    private async Task RunPipelineAsync(SeededDeployment seeded, Agents agents, InMemoryMachineRuntimeCapabilitiesCache cache, TimeSpan timeout)
+    private async Task RunPipelineAsync(SeededDeployment seeded, Agents agents, InMemoryMachineRuntimeCapabilitiesCache cache, TimeSpan timeout, bool resume = false)
     {
         // Short retry budgets: a V2 call to a V1-only agent is retried inside them before the strategy asks the agent what it speaks.
         var halibut = new HalibutSetting { RpcRetry = new RpcRetrySettings { BudgetSeconds = 1, CancelBudgetSeconds = 1, CompleteBudgetSeconds = 1 } };
@@ -174,7 +174,7 @@ public class IntegrationScriptServiceV2Downgrade : DeploymentFixtureBase
                 TimeoutResumable = true
             };
 
-            await runner.ProcessAsync(seeded.TaskId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+            await runner.ProcessAsync(seeded.TaskId, CancellationToken.None, resume).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
         }, extraRegistration: b =>
         {
             b.RegisterInstance(cache).As<IMachineRuntimeCapabilitiesCache>().SingleInstance();

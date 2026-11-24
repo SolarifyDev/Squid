@@ -51,7 +51,7 @@ public class IntegrationCheckpointStepKeyedResume : DeploymentFixtureBase
 
         await SubmitRetryAsync(seeded.TaskId).ConfigureAwait(false);
         agent.Step2Succeeds = true;
-        await RunPipelineAsync(seeded.TaskId, agent).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agent.Starts(Step2Marker).ShouldBe(2, "the retried step 2 must actually run again on the machine");
@@ -73,7 +73,7 @@ public class IntegrationCheckpointStepKeyedResume : DeploymentFixtureBase
         await SubmitRetryAsync(seeded.TaskId).ConfigureAwait(false);
         var startsBeforeResume = agent.TotalStarts;
 
-        await RunPipelineAsync(seeded.TaskId, agent).ConfigureAwait(false);
+        await RunPipelineAsync(seeded.TaskId, agent, resume: true).ConfigureAwait(false);
 
         await AssertStateAsync(seeded.TaskId, TaskState.Success).ConfigureAwait(false);
         agent.TotalStarts.ShouldBe(startsBeforeResume, "legacy machine-level entry covers every step of the batch on that machine, so nothing re-runs");
@@ -144,7 +144,7 @@ public class IntegrationCheckpointStepKeyedResume : DeploymentFixtureBase
             task.State.ShouldBe(expected);
         });
 
-    private Task RunPipelineAsync(int taskId, IAsyncScriptService agent)
+    private Task RunPipelineAsync(int taskId, IAsyncScriptService agent, bool resume = false)
         => Run<ILifetimeScope>(async scope =>
         {
             var runner = new DeploymentPipelineRunner(
@@ -159,7 +159,7 @@ public class IntegrationCheckpointStepKeyedResume : DeploymentFixtureBase
                 TimeoutResumable = true
             };
 
-            await runner.ProcessAsync(taskId, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
+            await runner.ProcessAsync(taskId, CancellationToken.None, resume).WaitAsync(TimeSpan.FromSeconds(90)).ConfigureAwait(false);
         }, extraRegistration: b => b.RegisterInstance(new FixedClientFactory(agent)).As<IHalibutClientFactory>().SingleInstance());
 
     // Step 1 (any script without the marker) always succeeds. Step 2 fails its first run, but only after step 1's
