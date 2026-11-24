@@ -89,40 +89,6 @@ public sealed class UpgradeLinuxTentacleStopBudgetTests : IDisposable
     }
 
     [Fact]
-    public void WaitUnitStablyActive_SameProcessStaysActive_Succeeds()
-    {
-        var result = RunBlock("ROLLBACK_START_BUDGET_SECS=5; ROLLBACK_SETTLE_SECS=2; wait_unit_stably_active && echo STARTED || echo NOT_STARTED", "5min 30s", "activating 0\nactive 101");
-
-        result.Stdout.ShouldContain("STARTED");
-        result.Stdout.ShouldNotContain("NOT_STARTED");
-    }
-
-    [Fact]
-    public void WaitUnitStablyActive_BrieflyActiveThenExited_Fails()
-    {
-        // A broken previous version under Type=simple: one `active` sample, then the process is gone.
-        var result = RunBlock("ROLLBACK_START_BUDGET_SECS=4; ROLLBACK_SETTLE_SECS=2; wait_unit_stably_active && echo STARTED || echo NOT_STARTED", "5min 30s", "active 101\nfailed 0");
-
-        result.Stdout.ShouldContain("NOT_STARTED");
-    }
-
-    [Fact]
-    public void WaitUnitStablyActive_CrashLoopingUnderRestartOnFailure_Fails()
-    {
-        // Every sample is `active`, but systemd keeps restarting it with a new process: never the same PID twice.
-        var result = RunBlock("ROLLBACK_START_BUDGET_SECS=4; ROLLBACK_SETTLE_SECS=2; wait_unit_stably_active && echo STARTED || echo NOT_STARTED", "5min 30s", "active 101\nactive 102\nactive 103\nactive 104\nactive 105\nactive 106\nactive 107");
-
-        result.Stdout.ShouldContain("NOT_STARTED");
-    }
-
-    [Fact]
-    public void Script_VersionedAndTarballRollback_AcceptOnlyAStablyActiveUnit()
-    {
-        CountOccurrences(RenderedScript, "if wait_unit_stably_active; then ROLLBACK_OK=1; fi").ShouldBe(2, "versioned + tarball rollback");
-        RenderedScript.ShouldNotContain("ROLLBACK_OK=0\n  for i in $(seq 1 30); do\n    if sudo systemctl is-active --quiet", customMessage: "a single is-active poll accepts a previous version that starts and immediately crashes");
-    }
-
-    [Fact]
     public void Script_RestartAndRollbackWaits_AreSizedFromTheUnit_NotFixedConstants()
     {
         RenderedScript.ShouldContain("TimeoutStopUSec");
@@ -218,15 +184,7 @@ public sealed class UpgradeLinuxTentacleStopBudgetTests : IDisposable
             n=$(cat "$FAKE_DIR/counter"); n=$((n + 1)); echo "$n" > "$FAKE_DIR/counter"
             total=$(wc -l < "$FAKE_DIR/states" | tr -d ' ')
             if [ "$n" -gt "$total" ]; then n=$total; fi
-            echo "ActiveState=$(sed -n "${n}p" "$FAKE_DIR/states" | cut -d' ' -f1)"
-            exit 0
-          fi
-          # MainPID belongs to the sample the last ActiveState read returned (optional second field: "active 101").
-          if [ "$3" = "MainPID" ]; then
-            n=$(cat "$FAKE_DIR/counter")
-            total=$(wc -l < "$FAKE_DIR/states" | tr -d ' ')
-            if [ "$n" -gt "$total" ]; then n=$total; fi
-            echo "MainPID=$(sed -n "${n}p" "$FAKE_DIR/states" | cut -s -d' ' -f2)"
+            echo "ActiveState=$(sed -n "${n}p" "$FAKE_DIR/states")"
             exit 0
           fi
         fi

@@ -806,42 +806,58 @@ stop_unit_or_fail_rollback() {
   exit 9
 }
 
-# Rollback acceptance: a unit counts as started only once it has stayed `active` on the SAME process for
-# ROLLBACK_SETTLE_SECS. A single is-active poll is not enough: a broken previous version under Type=simple
-# is briefly `active` before it exits (and Restart=on-failure brings it back with a new MainPID), which
-# reported a dead agent as ROLLED_BACK.
-ROLLBACK_START_BUDGET_SECS=30
-ROLLBACK_SETTLE_SECS=5
-
-unit_main_pid() {
-  systemctl show -p MainPID "$SERVICE_NAME" 2>/dev/null | sed 's/^MainPID=//' || true
-}
-
-wait_unit_stably_active() {
-  local i state pid stable_pid="" stable_for=0
-  for i in $(seq 1 $((ROLLBACK_START_BUDGET_SECS + ROLLBACK_SETTLE_SECS))); do
-    state=$(unit_active_state)
-    pid=$(unit_main_pid)
-
-    if [ "$state" != "active" ] || [ "${pid:-0}" = "0" ]; then
-      stable_pid=""; stable_for=0
-    elif [ "$pid" = "$stable_pid" ]; then
-      stable_for=$((stable_for + 1))
-      if [ "$stable_for" -ge "$ROLLBACK_SETTLE_SECS" ]; then return 0; fi
-    else
-      stable_pid="$pid"; stable_for=0
-    fi
-
-    sleep 1
-  done
-
-  return 1
-}
-
 STOP_BUDGET_SECS=$(compute_stop_budget_secs)
 # restart = stop (drain) + start; start keeps a 60s allowance on top.
 RESTART_TIMEOUT_SECS=$((STOP_BUDGET_SECS + 60))
 echo "[upgrade] Unit stop budget ${STOP_BUDGET_SECS}s, restart timeout ${RESTART_TIMEOUT_SECS}s"
+
+# ── Service health predicates (one definition for the forward check AND every rollback) ──
+# Healthy = unit active AND /healthz answers. `is-active` alone is not proof:
+# the unit is Type=simple, so systemd reports `active` as soon as the process
+# is forked — a binary that exits on startup reads as active on the first probe.
+service_healthy() {
+  sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1
+}
+
+# Proof for a restored version that /healthz can't vouch for (no curl, or the
+# pre-upgrade baseline never answered /healthz): the unit stays active across a
+# settle window with the same main process and no restarts. A crashing binary
+# either leaves `active` or is restarted under a new PID. `systemctl show` is
+# readable without privileges.
+service_stays_active() {
+  local pid restarts
+  sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
+  pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || true)
+  restarts=$(systemctl show -p NRestarts --value "$SERVICE_NAME" 2>/dev/null || true)
+  if [ -z "$pid" ] || [ "$pid" = "0" ]; then return 1; fi
+  sleep 5
+  sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
+  [ "$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || true)" = "$pid" ] || return 1
+  [ "$(systemctl show -p NRestarts --value "$SERVICE_NAME" 2>/dev/null || true)" = "$restarts" ]
+}
+
+# The version we rolled back to answered /healthz before the upgrade → hold it
+# to the forward check. Otherwise (baseline FAIL/unknown) demanding /healthz
+# would escalate a faithful restore of the pre-upgrade state to
+# ROLLBACK_CRITICAL_FAILED, so require a settled active unit instead.
+restored_service_healthy() {
+  if [ "${BASELINE_HEALTHZ_PRE:-unknown}" = "OK" ]; then
+    service_healthy
+  else
+    service_stays_active
+  fi
+}
+
+wait_for_restored_service() {
+  local i
+  for i in $(seq 1 30); do
+    if restored_service_healthy; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
 
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
@@ -857,12 +873,10 @@ timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" || {
 # ── Health check loop ────────────────────────────────────────────────────────
 if [ "$START_OK" = "1" ]; then
   for i in $(seq 1 "$HEALTHCHECK_RETRIES"); do
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-      if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
-        HEALTH_OK=1
-        emit_event B healthz-pass "Service active and healthz responded OK after $i second(s)"
-        break
-      fi
+    if service_healthy; then
+      HEALTH_OK=1
+      emit_event B healthz-pass "Service active and healthz responded OK after $i second(s)"
+      break
     fi
     sleep 1
   done
@@ -979,7 +993,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
   timeout 30 sudo systemctl start "$SERVICE_NAME"
 
   ROLLBACK_OK=0
-  if wait_unit_stably_active; then ROLLBACK_OK=1; fi
+  if wait_for_restored_service; then ROLLBACK_OK=1; fi
 
   if [ "$ROLLBACK_OK" = "1" ]; then
     echo "Rollback succeeded; agent is healthy on the previous version."
@@ -1005,7 +1019,7 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
   timeout 30 sudo systemctl start "$SERVICE_NAME"
 
   ROLLBACK_OK=0
-  if wait_unit_stably_active; then ROLLBACK_OK=1; fi
+  if wait_for_restored_service; then ROLLBACK_OK=1; fi
 
   if [ "$ROLLBACK_OK" = "1" ]; then
     echo "Rollback to previous version succeeded; agent is healthy on the old binary."
@@ -1049,15 +1063,7 @@ if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" 
     timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
 
     ROLLBACK_OK=0
-    for i in $(seq 1 30); do
-      if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-        if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
-          ROLLBACK_OK=1
-          break
-        fi
-      fi
-      sleep 1
-    done
+    if wait_for_restored_service; then ROLLBACK_OK=1; fi
 
     if [ "$ROLLBACK_OK" = "1" ]; then
       emit_event B rollback-ok "Auto-rolled back to ${BASELINE_VERSION:-previous version} via apt snapshot"
@@ -1103,15 +1109,7 @@ if [ "$INSTALL_METHOD" = "yum" ] && [ -n "${OLD_VERSION_RPM:-}" ] && [ "$OLD_VER
       timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
 
       ROLLBACK_OK=0
-      for i in $(seq 1 30); do
-        if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-          if command -v curl >/dev/null 2>&1 && curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1; then
-            ROLLBACK_OK=1
-            break
-          fi
-        fi
-        sleep 1
-      done
+      if wait_for_restored_service; then ROLLBACK_OK=1; fi
 
       if [ "$ROLLBACK_OK" = "1" ]; then
         emit_event B rollback-ok "Auto-rolled back to ${BASELINE_VERSION:-${OLD_VERSION_RPM}} via $YUM_BIN_FOR_ROLLBACK downgrade"
