@@ -125,15 +125,20 @@ public partial class LocalScriptService
         return TryBuildPersistedStatusV2(ticket, lastLogSequence, out status);
     }
 
-    private static ScriptStatusResponseV2 BuildStatusV2(ScriptTicket ticket, RunningScript running, long lastLogSequence)
+    private ScriptStatusResponseV2 BuildStatusV2(ScriptTicket ticket, RunningScript running, long lastLogSequence)
     {
+        // Read before draining: see BuildStatus.
+        var exited = running.Process.HasExited;
+
         AwaitOutputDrained(running);
 
         var (logs, next) = ReadLogsAndCursor(running, lastLogSequence - 1);
 
+        StatusLogsReadHookForTests?.Invoke();
+
         if (running.V2CancelExitCode is { } canceled) return ScriptV2Mapping.Completed(ticket, canceled, logs, next);
 
-        return running.Process.HasExited
+        return exited
             ? ScriptV2Mapping.Completed(ticket, running.Process.ExitCode, logs, next)
             : ScriptV2Mapping.Running(ticket, logs, next);
     }
