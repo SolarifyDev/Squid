@@ -48,11 +48,16 @@ public class Startup
 
         app.UseSerilogRequestLogging();
         app.UseCorrelate();
+        app.UseBundledSpaFiles(env);
         app.UseRouting();
         app.UseCors();
         app.UseAuthentication();
         app.UseAuthorization();
-        app.UseEndpoints(endpoints => { endpoints.MapControllers(); });
+        app.UseEndpoints(endpoints =>
+        {
+            endpoints.MapControllers();
+            endpoints.MapBundledSpaFallback(env);
+        });
         app.UseSquidHangfire(Configuration);
     }
 }
