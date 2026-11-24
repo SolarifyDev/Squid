@@ -1,17 +1,16 @@
-using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
 using Squid.Core.Services.DeploymentExecution.Exceptions;
-using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Identity;
 using Squid.Message.Enums;
 using Squid.Message.Models.Authorization;
+using ServerTaskEntity = Squid.Core.Persistence.Entities.Deployments.ServerTask;
 
 namespace Squid.Core.Services.Deployments.Runbooks;
 
 public interface IRunbookTaskAccessGuard : IScopedDependency
 {
-    Task EnsureCanViewAsync(ServerTask task, CancellationToken cancellationToken = default);
+    Task EnsureCanViewAsync(ServerTaskEntity task, CancellationToken cancellationToken = default);
 }
 
 public sealed class RunbookTaskAccessGuard(
@@ -20,7 +19,7 @@ public sealed class RunbookTaskAccessGuard(
     IAuthorizationService authorizationService,
     ICurrentUser currentUser) : IRunbookTaskAccessGuard
 {
-    public async Task EnsureCanViewAsync(ServerTask task, CancellationToken cancellationToken = default)
+    public async Task EnsureCanViewAsync(ServerTaskEntity task, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(task?.ServerTaskType, RunbookTaskTypes.Runbook, StringComparison.OrdinalIgnoreCase))
             return;
