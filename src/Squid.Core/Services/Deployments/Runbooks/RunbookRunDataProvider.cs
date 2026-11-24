@@ -59,6 +59,7 @@ public sealed class RunbookRunDataProvider(
     public async Task<bool> TryClaimAsync(int serverTaskId, CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
+        var dataVersion = Guid.NewGuid().ToByteArray();
         var rows = await repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             task => task.Id == serverTaskId
                     && task.ServerTaskType == RunbookTaskTypes.Runbook
@@ -67,7 +68,7 @@ public sealed class RunbookRunDataProvider(
                 .SetProperty(task => task.State, TaskState.Executing)
                 .SetProperty(task => task.StartTime, now)
                 .SetProperty(task => task.LastModifiedDate, now)
-                .SetProperty(task => task.DataVersion, Guid.NewGuid().ToByteArray()),
+                .SetProperty(task => task.DataVersion, dataVersion),
             cancellationToken).ConfigureAwait(false);
 
         return rows == 1;

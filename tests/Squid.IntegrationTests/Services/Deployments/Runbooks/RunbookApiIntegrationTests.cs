@@ -554,13 +554,19 @@ public class RunbookApiIntegrationTests : TestBase
 
         await Run<IMediator, ISquidBackgroundJobClient, SquidDbContext>(async (mediator, jobs, db) =>
         {
-            var unavailable = await mediator.SendAsync<RunRunbookCommand, RunRunbookResponse>(command);
+            var rejected = await mediator.SendAsync<RunRunbookCommand, RunRunbookResponse>(command);
 
-            unavailable.Code.ShouldBe(HttpStatusCode.ServiceUnavailable);
-            jobs.ShouldBeOfType<MockSquidBackgroundJobClient>().EnqueuedJobs.ShouldBeEmpty();
-            (await db.Set<ServerTask>().AnyAsync(task => task.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+            rejected.Code.ShouldBe(HttpStatusCode.Accepted);
+            rejected.Data.State.ShouldBe(TaskState.Failed);
+            jobs.ShouldBeOfType<MockSquidBackgroundJobClient>().EnqueuedJobs.ShouldHaveSingleItem();
+
+            var failedTask = await db.Set<ServerTask>().AsNoTracking().SingleAsync(task => task.Id == rejected.Data.TaskId);
+            failedTask.State.ShouldBe(TaskState.Failed);
+            failedTask.CompletedTime.ShouldNotBeNull();
+            failedTask.ErrorMessage.ShouldContain("Runbook execution could not be dispatched");
         }, CurrentUser(RunnerUserId));
 
+        const string queuedJobId = "runbook-test-job";
         RunbookRunDto accepted = null;
         await Run<IMediator, ISquidBackgroundJobClient>(async (mediator, jobs) =>
         {
@@ -577,7 +583,8 @@ public class RunbookApiIntegrationTests : TestBase
         }, builder =>
         {
             CurrentUser(RunnerUserId)(builder);
-            builder.RegisterType<AdmissionTestExecutor>().As<IRunbookTaskExecutor>();
+            builder.RegisterInstance(new MockSquidBackgroundJobClient { AsyncJobId = queuedJobId })
+                .As<ISquidBackgroundJobClient>();
         });
 
         var republished = await Run<IRunbookService, RunbookPublishedSnapshotDto>(service =>
@@ -598,8 +605,19 @@ public class RunbookApiIntegrationTests : TestBase
             saved.Task.Id.ShouldBe(accepted.TaskId);
             saved.Task.ServerTaskType.ShouldBe(RunbookTaskTypes.Runbook);
             saved.Task.State.ShouldBe(TaskState.Pending);
+            saved.Task.JobId.ShouldBe(queuedJobId);
             (await db.Set<Deployment>().AnyAsync(d => d.ProjectId == fixture.Project.Id)).ShouldBeFalse();
             (await db.Set<Release>().AnyAsync(r => r.ProjectId == fixture.Project.Id)).ShouldBeFalse();
+        });
+
+        await Run<IRunbookRunDataProvider, SquidDbContext>(async (runs, db) =>
+        {
+            (await runs.TryClaimAsync(accepted.TaskId)).ShouldBeTrue();
+            (await runs.TryClaimAsync(accepted.TaskId)).ShouldBeFalse();
+
+            var claimed = await db.Set<ServerTask>().SingleAsync(task => task.Id == accepted.TaskId);
+            claimed.State.ShouldBe(TaskState.Executing);
+            claimed.StartTime.ShouldNotBeNull();
         });
     }
 
@@ -749,12 +767,6 @@ public class RunbookApiIntegrationTests : TestBase
         public int? Id => 8888;
         public string Name => "System";
         public bool IsInternal => true;
-    }
-
-    private sealed class AdmissionTestExecutor : IRunbookTaskExecutor
-    {
-        public Task ProcessAsync(int serverTaskId, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("Admission tests must not execute Runbook jobs.");
     }
 }
 

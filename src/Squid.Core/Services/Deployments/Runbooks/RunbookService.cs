@@ -473,6 +473,7 @@ public class RunbookService(
             .CreateAsync(run, cancellationToken)
             .ConfigureAwait(false);
 
+        var responseState = task.State;
         try
         {
             var jobId = backgroundJobClient.Enqueue<IRunbookTaskExecutor>(
@@ -492,7 +493,8 @@ public class RunbookService(
             var currentTask = await serverTaskDataProvider
                 .GetServerTaskByIdNoTrackingAsync(task.Id, CancellationToken.None)
                 .ConfigureAwait(false);
-            task.State = currentTask?.State ?? TaskState.Failed;
+            // The bulk update bypasses EF tracking. Do not modify the tracked task.
+            responseState = currentTask?.State ?? TaskState.Failed;
         }
 
         return new RunbookRunDto
@@ -506,7 +508,7 @@ public class RunbookService(
             SpaceId = run.SpaceId,
             EnvironmentId = run.EnvironmentId,
             InitiatedBy = run.InitiatedBy,
-            State = task.State,
+            State = responseState,
             CreatedDate = run.CreatedDate
         };
     }

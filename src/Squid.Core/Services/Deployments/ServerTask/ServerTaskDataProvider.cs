@@ -265,6 +265,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
     public async Task<bool> FailPendingRunbookDispatchAsync(int taskId, string errorMessage, CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
+        var dataVersion = Guid.NewGuid().ToByteArray();
         var rows = await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
             task => task.Id == taskId
                     && task.ServerTaskType == RunbookTaskTypes.Runbook
@@ -275,7 +276,7 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
                 .SetProperty(task => task.HasWarningsOrErrors, true)
                 .SetProperty(task => task.CompletedTime, now)
                 .SetProperty(task => task.LastModifiedDate, now)
-                .SetProperty(task => task.DataVersion, Guid.NewGuid().ToByteArray()),
+                .SetProperty(task => task.DataVersion, dataVersion),
             cancellationToken).ConfigureAwait(false);
 
         return rows == 1;

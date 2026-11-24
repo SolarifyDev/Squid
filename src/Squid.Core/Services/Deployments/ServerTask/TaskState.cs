@@ -31,7 +31,7 @@ public static class TaskState
     private static readonly Dictionary<string, HashSet<string>> ValidTransitions =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            [Pending] = new(StringComparer.OrdinalIgnoreCase) { Executing, Failed, Cancelled, TimedOut },
+            [Pending] = new(StringComparer.OrdinalIgnoreCase) { Executing, Cancelled, TimedOut },
             [Executing] = new(StringComparer.OrdinalIgnoreCase) { Success, Failed, Cancelling, Paused },
             [Cancelling] = new(StringComparer.OrdinalIgnoreCase) { Cancelled, Failed },
             [Paused] = new(StringComparer.OrdinalIgnoreCase) { Executing, Failed, Cancelled },
