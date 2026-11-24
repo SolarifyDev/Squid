@@ -3,6 +3,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.OctopusImport.Octopus;
 using Squid.Core.Services.OctopusImport.SourceMap;
+using Squid.Core.Services.Deployments.Runbooks;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
@@ -27,6 +28,10 @@ public interface IServerTaskDataProvider : IScopedDependency
     Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default);
 
     Task SetJobIdAsync(int taskId, string jobId, CancellationToken cancellationToken = default);
+
+    Task SetErrorMessageAsync(int taskId, string errorMessage, CancellationToken cancellationToken = default);
+
+    Task<bool> FailPendingRunbookDispatchAsync(int taskId, string errorMessage, CancellationToken cancellationToken = default);
 
     Task<bool> HasActiveTaskWithTagAsync(string tag, int excludeId, CancellationToken cancellationToken = default);
 
@@ -246,6 +251,37 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
             cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task SetErrorMessageAsync(int taskId, string errorMessage, CancellationToken cancellationToken = default)
+    {
+        await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            task => task.Id == taskId,
+            setters => setters
+                .SetProperty(task => task.ErrorMessage, errorMessage)
+                .SetProperty(task => task.HasWarningsOrErrors, true)
+                .SetProperty(task => task.LastModifiedDate, DateTimeOffset.UtcNow),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> FailPendingRunbookDispatchAsync(int taskId, string errorMessage, CancellationToken cancellationToken = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var dataVersion = Guid.NewGuid().ToByteArray();
+        var rows = await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
+            task => task.Id == taskId
+                    && task.ServerTaskType == RunbookTaskTypes.Runbook
+                    && task.State == TaskState.Pending,
+            setters => setters
+                .SetProperty(task => task.State, TaskState.Failed)
+                .SetProperty(task => task.ErrorMessage, errorMessage)
+                .SetProperty(task => task.HasWarningsOrErrors, true)
+                .SetProperty(task => task.CompletedTime, now)
+                .SetProperty(task => task.LastModifiedDate, now)
+                .SetProperty(task => task.DataVersion, dataVersion),
+            cancellationToken).ConfigureAwait(false);
+
+        return rows == 1;
+    }
+
     public async Task SetHasPendingInterruptionsAsync(int taskId, bool hasPending, CancellationToken cancellationToken = default)
     {
         await _repository.ExecuteUpdateAsync<Persistence.Entities.Deployments.ServerTask>(
@@ -256,7 +292,8 @@ public class ServerTaskDataProvider : IServerTaskDataProvider
 
     public async Task<(int TotalCount, List<Persistence.Entities.Deployments.ServerTask> Items)> GetServerTasksByProjectAsync(int projectId, string state, int skip, int take, CancellationToken cancellationToken = default)
     {
-        var query = _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(t => t.ProjectId == projectId);
+        var query = _repository.QueryNoTracking<Persistence.Entities.Deployments.ServerTask>(
+            t => t.ProjectId == projectId && t.ServerTaskType != RunbookTaskTypes.Runbook);
 
         if (!string.IsNullOrEmpty(state))
             query = query.Where(t => t.State == state);

@@ -1,6 +1,7 @@
 using Squid.Core.Services.Deployments.ActivityLog;
 using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.Runbooks;
 
 namespace Squid.Core.Services.Deployments.ServerTask;
 
@@ -61,15 +62,18 @@ public partial class ServerTaskService : IServerTaskService
     private readonly IServerTaskDataProvider _serverTaskDataProvider;
     private readonly IActivityLogDataProvider _activityLogDataProvider;
     private readonly IServerTaskLogDataProvider _serverTaskLogDataProvider;
+    private readonly IRunbookTaskAccessGuard _runbookTaskAccessGuard;
 
     public ServerTaskService(
         IServerTaskDataProvider serverTaskDataProvider,
         IActivityLogDataProvider activityLogDataProvider,
-        IServerTaskLogDataProvider serverTaskLogDataProvider)
+        IServerTaskLogDataProvider serverTaskLogDataProvider,
+        IRunbookTaskAccessGuard runbookTaskAccessGuard = null)
     {
         _serverTaskDataProvider = serverTaskDataProvider;
         _activityLogDataProvider = activityLogDataProvider;
         _serverTaskLogDataProvider = serverTaskLogDataProvider;
+        _runbookTaskAccessGuard = runbookTaskAccessGuard;
     }
 
     private static int NormalizePageSize(int? take)
