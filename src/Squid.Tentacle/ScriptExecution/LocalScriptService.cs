@@ -43,6 +43,9 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     /// <summary>Test-only — observe the per-ticket CTS registry's live entry count.
     /// Used to verify Cleanup is called on every exit path of LocalScriptService.</summary>
     internal int CancellationRegistryCountForTests => _cancellationRegistry.CountForTests;
+
+    /// <summary>Test-only — runs after a status poll has read the log file and before it decides the script's state.</summary>
+    internal Action? StatusLogsReadHookForTests { get; set; }
     private readonly IScriptStateStoreFactory _stateStoreFactory;
     private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;
@@ -389,8 +392,12 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         catch { /* Best-effort early return — polling will catch final state */ }
     }
 
-    private static ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
+    private ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
     {
+        // Exit is read ONCE, before draining. Reading it after the log file let a process that exited in between be
+        // reported Complete with logs read while it was still running, i.e. without its final lines.
+        var exited = running.Process.HasExited;
+
         // Drain AsyncStreamReader callbacks on the FIRST poll that observes
         // HasExited=true. Without this, GetStatus can return state=Complete
         // with stdout lines still in flight on the threadpool — the line is
@@ -413,8 +420,11 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         // ReadLogsAndCursor's XML for the race that the previous two-source
         // code (ReadLogs + LogWriter.NextSequence) opened.
         var (logs, nextSequence) = ReadLogsAndCursor(running, afterSequence);
-        var state = running.Process.HasExited ? ProcessState.Complete : ProcessState.Running;
-        var exitCode = running.Process.HasExited ? running.Process.ExitCode : 0;
+
+        StatusLogsReadHookForTests?.Invoke();
+
+        var state = exited ? ProcessState.Complete : ProcessState.Running;
+        var exitCode = exited ? running.Process.ExitCode : 0;
 
         return new ScriptStatusResponse(ticket, state, exitCode, logs, nextSequence);
     }
