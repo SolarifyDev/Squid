@@ -1,0 +1,29 @@
+# Squid Server — all-in-one.
+#
+#   docker compose up -d      then open http://localhost:8080 and follow the setup
+#
+# With nothing set, Squid uses its built-in PostgreSQL and Redis (data in the squid-data volume)
+# and shows a setup wizard. Uncomment any SQUID_* line to configure that part up front; setting
+# SQUID_ADMIN_PASSWORD (or SQUID_DB) skips the wizard entirely.
+services:
+  squid:
+    image: squidcd/squid:latest
+    container_name: squid
+    restart: unless-stopped
+    stop_grace_period: 60s   # let the built-in database shut down cleanly
+    ports:
+      - "8080:8080"     # web UI + API
+      - "10943:10943"   # Tentacle / agent polling
+    volumes:
+      - squid-data:/data
+    environment:
+      TZ: "UTC"
+      # SQUID_DB: "Host=postgres;Database=squid;Username=squid;Password=change-me"
+      # SQUID_REDIS: "redis:6379,password=change-me"
+      # SQUID_ADMIN_USER: "admin"
+      # SQUID_ADMIN_PASSWORD: "change-me-please"
+      # SQUID_URL: "https://squid.example.com"
+      # SQUID_POLLING_URL: "https://squid.example.com:10943"
+
+volumes:
+  squid-data:

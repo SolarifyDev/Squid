@@ -50,29 +50,11 @@ Enterprise-grade delivery for Kubernetes, Linux, Windows, SSH, and AI agents.<br
 
 ## 🚀 Quick start
 
-**Run the server** (requires PostgreSQL and Redis)
-
 ```bash
-docker build -f Dockerfile.Api -t squid-api .
-docker run --rm -p 8080:8080 -p 10943:10943 squid-api
+docker run -d --name squid -p 8080:8080 -p 10943:10943 -v squid-data:/data squidcd/squid
 ```
 
-**Connect a target**
-
-```bash
-# Linux Tentacle
-curl -fsSL https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.sh | bash
-
-# Kubernetes Agent
-helm upgrade --install squid-agent deploy/helm/kubernetes-agent
-```
-
-```powershell
-# Windows Tentacle
-irm https://raw.githubusercontent.com/SolarifyDev/Squid/main/deploy/scripts/install-tentacle.ps1 | iex
-```
-
-> In production, inject database, certificate, and encryption-key settings through environment variables or a secret manager.
+<img src="branding/readme/setup-wizard.png" alt="Squid first-run setup page: choose the built-in or your own PostgreSQL, create the administrator, confirm the server URLs, then install" width="100%">
 
 ## 🔄 Migrating from Octopus
 

@@ -1,0 +1,65 @@
+name: Squid Image E2E
+
+# Builds the all-in-one image (Dockerfile.Api, target squid) from this commit + SquidWeb main and runs every
+# documented start mode against it: setup wizard, unattended, external PostgreSQL, generated admin.
+on:
+  pull_request:
+    paths:
+      - 'src/Squid.Api/**'
+      - 'src/Squid.Core/**'
+      - 'src/Squid.Message/**'
+      - 'docker/squid/**'
+      - 'deploy/docker/squid/**'
+      - 'deploy/scripts/install-squid.sh'
+      - 'Dockerfile.Api'
+      - '.github/workflows/squid-image-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      squidweb_ref:
+        description: 'SquidWeb ref to bundle'
+        required: false
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout SquidWeb
+        uses: actions/checkout@v4
+        with:
+          repository: SolarifyDev/SquidWeb
+          ref: ${{ inputs.squidweb_ref || 'main' }}
+          path: .squidweb
+          token: ${{ secrets.SQUIDWEB_READ_TOKEN || github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build all-in-one image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.Api
+          target: squid
+          load: true
+          tags: squid:local
+          build-contexts: squidweb=.squidweb
+
+      - name: Run image E2E
+        run: deploy/docker/squid/e2e-test.sh squid:local
+
+      - name: Smoke-test install-squid.sh (wizard link)
+        run: |
+          out="$(deploy/scripts/install-squid.sh --image squid:local --name squid-install-smoke --volume squid-install-smoke --port 18080 --polling-port 20943)"
+          echo "$out"
+          echo "$out" | grep -q '/setup?token=' || { echo "install-squid.sh did not print a setup link"; exit 1; }
+
+      - name: Clean up install smoke
+        if: always()
+        run: docker rm -f squid-install-smoke; docker volume rm squid-install-smoke || true

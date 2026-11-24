@@ -1,35 +1,39 @@
 using System.Security.Cryptography.X509Certificates;
 using Autofac.Extensions.DependencyInjection;
+using Squid.Api.Setup;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Settings.Logging;
 using Squid.Core.Settings.SelfCert;
+using Squid.Core.Settings.Setup;
 using Squid.Core.Settings.System;
+using Squid.Core.Setup;
+using Squid.Core.Setup.Configuration;
+using Squid.Core.Setup.Embedded;
 
 namespace Squid.Api;
 
 public class Program
 {
-    public static void Main(string[] args)
+    public static async Task Main(string[] args)
     {
-        var configuration = new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json")
-            .AddEnvironmentVariables()
-            .Build();
-
-        var apiKey = new SerilogApiKeySetting(configuration).Value;
-        var serverUrl = new SerilogServerUrlSetting(configuration).Value;
+        var configuration = BuildConfiguration();
         var application = new SerilogApplicationSetting(configuration).Value;
 
-        Log.Logger = new LoggerConfiguration()
-            .Enrich.FromLogContext()
-            .Enrich.WithProperty("Application", application)
-            .WriteTo.Console()
-            .WriteTo.Seq(serverUrl, apiKey: apiKey)
-            .CreateLogger();
+        Log.Logger = CreateLogger(configuration, application);
 
         try
         {
             Log.Information("Configuring api host ({ApplicationContext})...", application);
+
+            await using var embedded = new EmbeddedServiceHost(new ProcessRunner(), new DataDirectorySetting(configuration).Value);
+
+            configuration = BootstrapDataDirectory(configuration);
+
+            await FirstRunSetup.EnsureCompletedAsync(args, configuration, embedded);
+
+            configuration = BuildConfiguration();
+
+            await embedded.StartConfiguredAsync(new EmbeddedServicesSetting(configuration), CancellationToken.None);
 
             new DbUpRunner(new SquidConnectionString(configuration).Value).Run();
 
@@ -37,22 +41,50 @@ public class Program
 
             Log.Information("Starting api host ({ApplicationContext})...", application);
 
-            webHost.Run();
+            await webHost.RunAsync();
         }
         catch (Exception ex)
         {
             Log.Fatal(ex, "Program terminated unexpectedly ({ApplicationContext})!", application);
+
+            Environment.ExitCode = 1;
         }
         finally
         {
-            Log.CloseAndFlush();
+            await Log.CloseAndFlushAsync();
         }
+    }
+
+    private static IConfiguration BuildConfiguration() =>
+        new ConfigurationBuilder()
+            .AddJsonFile("appsettings.json")
+            .AddEnvironmentVariables()
+            .AddDataDirectoryFile()
+            .Build();
+
+    /// <summary>Self-contained installs: fill in missing per-install secrets, then re-read so they apply.</summary>
+    private static IConfiguration BootstrapDataDirectory(IConfiguration configuration) => DataDirectoryBootstrapper.Run(configuration) ? BuildConfiguration() : configuration;
+
+    private static Serilog.Core.Logger CreateLogger(IConfiguration configuration, string application)
+    {
+        var apiKey = new SerilogApiKeySetting(configuration).Value;
+        var serverUrl = new SerilogServerUrlSetting(configuration).Value;
+
+        var logger = new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Application", application)
+            .WriteTo.Console();
+
+        if (!string.IsNullOrWhiteSpace(serverUrl)) logger.WriteTo.Seq(serverUrl, apiKey: apiKey);
+
+        return logger.CreateLogger();
     }
 
     private static IHostBuilder CreateHostBuilder(string[] args, IConfiguration configuration) =>
         Host.CreateDefaultBuilder(args)
             .UseSerilog()
             .ConfigureLogging(l => l.AddSerilog(Log.Logger))
+            .ConfigureAppConfiguration(c => c.AddDataDirectoryFile())
             .UseServiceProviderFactory(new AutofacServiceProviderFactory())
             .ConfigureContainer<ContainerBuilder>(builder =>
             {

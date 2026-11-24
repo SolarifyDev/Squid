@@ -1,3 +1,11 @@
+# syntax=docker/dockerfile:1
+# Two images from one build:
+#   default target  -> the API server image (unchanged behaviour)
+#   --target squid  -> the all-in-one image: API + bundled web UI + optional built-in PostgreSQL /
+#                      Redis + first-run setup. Needs the SquidWeb sources as a named context:
+#
+#   docker buildx build -f Dockerfile.Api --target squid --build-context squidweb=../SquidWeb -t squid:local .
+#
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 ARG TARGETARCH
 
@@ -46,7 +54,7 @@ RUN PWSH_VERSION=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell
     chmod +x /opt/powershell/pwsh
 
 # Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS api
 
 RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 
@@ -66,3 +74,48 @@ EXPOSE 443
 EXPOSE 10943
 
 ENTRYPOINT ["dotnet", "Squid.Api.dll"]
+
+# ── All-in-one: web UI (arch-independent output, built on the build platform) ──
+FROM --platform=$BUILDPLATFORM node:20-alpine AS web
+WORKDIR /web
+RUN apk add --no-cache git
+COPY --from=squidweb package.json ./
+COPY --from=squidweb package-lock.json* pnpm-lock.yaml* ./
+RUN npm install --force
+COPY --from=squidweb . .
+RUN rm -rf dist node_modules/.vite && npm run build
+# Same-origin build: empty base URLs make the UI call the server that served it.
+RUN VITE_API_BASE_URL= VITE_AUTH_BASE_URL= npx -y @import-meta-env/cli@0.7.4 -x .env.example -p dist/index.html
+
+# ── All-in-one image ──
+FROM api AS squid
+
+# Built-in database / cache (only started when chosen) + tini as PID 1 so the daemonised
+# postgres / redis children are reaped. No default cluster: Squid initialises its own in /data.
+# The postgres account gets a FIXED uid/gid so a cluster in /data stays owned by it across image
+# rebuilds (package install order would otherwise decide the uid).
+RUN groupadd --system --gid 999 postgres \
+    && useradd --system --uid 999 --gid 999 --home-dir /var/lib/postgresql --shell /bin/bash postgres \
+    && mkdir -p /etc/postgresql-common \
+    && echo 'create_main_cluster = false' > /etc/postgresql-common/createcluster.conf \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql redis-server tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=web /web/dist /app/wwwroot
+COPY docker/squid/appsettings.json /app/appsettings.json
+COPY docker/squid/entrypoint.sh /usr/local/bin/squid-entrypoint
+
+ENV ASPNETCORE_HTTP_PORTS=8080
+
+VOLUME /data
+EXPOSE 8080 10943
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=4 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /api/setup/status HTTP/1.0\r\n\r\n" >&3 && grep -q "200 OK" <&3'
+
+ENTRYPOINT ["tini", "--", "squid-entrypoint"]
+CMD ["dotnet", "Squid.Api.dll"]
+
+# ── Default target: the API image, exactly as before ──
+FROM api
