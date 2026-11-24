@@ -12,6 +12,9 @@ public partial class ServerTaskService
         if (task == null)
             throw new ServerTaskNotFoundException(taskId);
 
+        if (string.Equals(task.ServerTaskType, Squid.Core.Services.Deployments.Runbooks.RunbookTaskTypes.Runbook, StringComparison.OrdinalIgnoreCase))
+            throw new RunbookTaskOperationNotSupportedException(taskId, "Deployment execution");
+
         var isResumed = string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase);
 
         if (string.Equals(task.State, TaskState.Pending, StringComparison.OrdinalIgnoreCase))

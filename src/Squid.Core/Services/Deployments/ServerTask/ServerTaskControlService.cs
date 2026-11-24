@@ -34,6 +34,8 @@ public class ServerTaskControlService(
         if (task == null)
             throw new ServerTaskNotFoundException(serverTaskId);
 
+        EnsureSupportedTaskType(task);
+
         if (TaskState.IsTerminal(task.State))
             throw new ServerTaskStateTransitionException(task.State, TaskState.Cancelled);
 
@@ -73,6 +75,8 @@ public class ServerTaskControlService(
 
         if (task == null)
             throw new ServerTaskNotFoundException(serverTaskId);
+
+        EnsureSupportedTaskType(task);
 
         if (!string.Equals(task.State, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
             throw new ServerTaskStateTransitionException(task.State, TaskState.Cancelled);
@@ -119,6 +123,8 @@ public class ServerTaskControlService(
         if (task == null)
             throw new ServerTaskNotFoundException(serverTaskId);
 
+        EnsureSupportedTaskType(task);
+
         if (!string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase))
             throw new ServerTaskStateTransitionException(task.State, TaskState.Executing);
 
@@ -137,6 +143,7 @@ public class ServerTaskControlService(
         var task = await serverTaskDataProvider.GetServerTaskByIdAsync(serverTaskId, ct).ConfigureAwait(false);
 
         if (task == null) return;
+        if (string.Equals(task.ServerTaskType, Squid.Core.Services.Deployments.Runbooks.RunbookTaskTypes.Runbook, StringComparison.OrdinalIgnoreCase)) return;
         if (!string.Equals(task.State, TaskState.Paused, StringComparison.OrdinalIgnoreCase)) return;
         if (task.HasPendingInterruptions) return;
 
@@ -151,6 +158,16 @@ public class ServerTaskControlService(
     {
         if (await serverTaskDataProvider.IsImportedAsync(serverTaskId, ct).ConfigureAwait(false))
             throw new ImportedServerTaskReadOnlyException(serverTaskId);
+
+        var task = await serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(serverTaskId, ct).ConfigureAwait(false);
+        if (task != null)
+            EnsureSupportedTaskType(task);
+    }
+
+    private static void EnsureSupportedTaskType(Persistence.Entities.Deployments.ServerTask task)
+    {
+        if (string.Equals(task.ServerTaskType, Squid.Core.Services.Deployments.Runbooks.RunbookTaskTypes.Runbook, StringComparison.OrdinalIgnoreCase))
+            throw new RunbookTaskOperationNotSupportedException(task.Id, "Task mutation");
     }
 
     private async Task<string> EnqueueResumeAsync(Persistence.Entities.Deployments.ServerTask task, CancellationToken ct)

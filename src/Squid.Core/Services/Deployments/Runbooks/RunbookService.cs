@@ -473,13 +473,26 @@ public class RunbookService(
             .CreateAsync(run, cancellationToken)
             .ConfigureAwait(false);
 
-        var jobId = backgroundJobClient.Enqueue<IRunbookTaskExecutor>(
-            executor => executor.ProcessAsync(task.Id, CancellationToken.None));
-        if (!string.IsNullOrEmpty(jobId))
+        try
         {
+            var jobId = backgroundJobClient.Enqueue<IRunbookTaskExecutor>(
+                executor => executor.ProcessAsync(task.Id, CancellationToken.None));
+            if (string.IsNullOrEmpty(jobId))
+                throw new InvalidOperationException("The Runbook execution job was not accepted by the background queue.");
+
             await serverTaskDataProvider
                 .SetJobIdAsync(task.Id, jobId, CancellationToken.None)
                 .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            await serverTaskDataProvider.FailPendingRunbookDispatchAsync(task.Id,
+                    $"Runbook execution could not be dispatched: {exception.Message}", CancellationToken.None)
+                .ConfigureAwait(false);
+            var currentTask = await serverTaskDataProvider
+                .GetServerTaskByIdNoTrackingAsync(task.Id, CancellationToken.None)
+                .ConfigureAwait(false);
+            task.State = currentTask?.State ?? TaskState.Failed;
         }
 
         return new RunbookRunDto

@@ -7,6 +7,8 @@ public partial class ServerTaskService
     public async Task<ServerTaskSummaryDto> GetTaskAsync(int taskId, CancellationToken ct = default)
     {
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
+        if (task != null && _runbookTaskAccessGuard != null)
+            await _runbookTaskAccessGuard.EnsureCanViewAsync(task, ct).ConfigureAwait(false);
         
         return MapTask(task);
     }
@@ -18,6 +20,8 @@ public partial class ServerTaskService
         var task = await _serverTaskDataProvider.GetServerTaskByIdAsync(taskId, ct).ConfigureAwait(false);
         
         if (task == null) return null;
+        if (_runbookTaskAccessGuard != null)
+            await _runbookTaskAccessGuard.EnsureCanViewAsync(task, ct).ConfigureAwait(false);
 
         var tailPerNode = NormalizeTail(tail);
         var flatNodes = await _activityLogDataProvider.GetTreeByTaskIdAsync(taskId, ct).ConfigureAwait(false);
@@ -59,6 +63,7 @@ public partial class ServerTaskService
 
     public async Task<ServerTaskLogPageDto> GetTaskLogsAsync(int taskId, long? afterSequenceNumber = null, int? take = null, CancellationToken ct = default)
     {
+        await EnsureRunbookTaskReadableAsync(taskId, ct).ConfigureAwait(false);
         var pageSize = NormalizePageSize(take);
         
         var logs = await _serverTaskLogDataProvider
@@ -69,6 +74,7 @@ public partial class ServerTaskService
 
     public async Task<ServerTaskLogPageDto> GetTaskNodeLogsAsync(int taskId, long nodeId, long? afterSequenceNumber = null, int? take = null, CancellationToken ct = default)
     {
+        await EnsureRunbookTaskReadableAsync(taskId, ct).ConfigureAwait(false);
         var pageSize = NormalizePageSize(take);
         
         var logs = await _serverTaskLogDataProvider
@@ -100,5 +106,15 @@ public partial class ServerTaskService
             LastSequenceNumber = lastSequence,
             NextAfterSequenceNumber = lastSequence
         };
+    }
+
+    private async Task EnsureRunbookTaskReadableAsync(int taskId, CancellationToken ct)
+    {
+        if (_runbookTaskAccessGuard == null)
+            return;
+
+        var task = await _serverTaskDataProvider.GetServerTaskByIdNoTrackingAsync(taskId, ct).ConfigureAwait(false);
+        if (task != null)
+            await _runbookTaskAccessGuard.EnsureCanViewAsync(task, ct).ConfigureAwait(false);
     }
 }
