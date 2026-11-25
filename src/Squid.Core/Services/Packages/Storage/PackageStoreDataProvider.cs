@@ -60,11 +60,22 @@ public class PackageStoreDataProvider(IUnitOfWork unitOfWork, IRepository reposi
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
     }
 
+    // A tracked delete (not ExecuteDelete) so the save is audited. The row is locked first: a concurrent SetDefault must wait for this transaction,
+    // so a store that becomes the default can never be deleted underneath it.
     public async Task<bool> DeleteIfNotDefaultAsync(int id, CancellationToken ct)
     {
-        var deleted = await repository.ExecuteDeleteAsync<PackageStore>(s => s.Id == id && !s.IsDefault, ct).ConfigureAwait(false);
+        await using var transaction = await repository.Database.BeginTransactionAsync(ct).ConfigureAwait(false);
 
-        return deleted > 0;
+        var rows = await repository.FromSqlRaw<PackageStore>("SELECT * FROM package_store WHERE id = {0} FOR UPDATE", id).ToListAsync(ct).ConfigureAwait(false);
+        var store = rows.SingleOrDefault();
+
+        if (store == null || store.IsDefault) return false;
+
+        await repository.DeleteAsync(store, ct).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+        await transaction.CommitAsync(ct).ConfigureAwait(false);
+
+        return true;
     }
 
     public async Task<bool> SetDefaultAsync(int id, CancellationToken ct)

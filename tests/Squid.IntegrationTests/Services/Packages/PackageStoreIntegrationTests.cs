@@ -306,6 +306,61 @@ public class PackageStoreIntegrationTests : TestBase
             builder => builder.RegisterInstance<ICurrentUser>(new UnprivilegedUser()).SingleInstance()));
     }
 
+    [Fact]
+    public async Task TestSettings_UsesTheStoredSecretWhenLeftEmpty_AndChangesNothingInTheDatabase()
+    {
+        var dto = await CreateAsync(NewSecretStore());
+        var before = await RawRowAsync(dto.Id);
+
+        var result = await Run<IPackageStoreService, PackageBlobStoreTestResult>(service => service.TestSettingsAsync(new TestPackageStoreSettingsCommand
+        {
+            Kind = SecretKind, StoreId = dto.Id,
+            Properties = new Dictionary<string, string> { ["Endpoint"] = "https://edited-but-unsaved" },
+            Secrets = new Dictionary<string, string> { ["Token"] = "" }
+        }, CancellationToken.None));
+
+        result.Message.ShouldBe($"token={Token}", "the stored (decrypted) secret fills the empty field");
+
+        var after = await RawRowAsync(dto.Id);
+
+        after.Properties.ShouldBe(before.Properties);
+        after.Secret.ShouldBe(before.Secret);
+        after.LastModifiedDate.ShouldBe(before.LastModifiedDate);
+        after.LastTestedDate.ShouldBeNull();
+        after.LastTestSucceeded.ShouldBeNull();
+        after.LastTestMessage.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TestSettings_OfAnUnsavedFileSystemFolder_RunsTheRealProbe_AndCreatesNoStore()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"squid-it-unsaved-{Guid.NewGuid():N}");
+
+        try
+        {
+            var result = await Run<IMediator, TestPackageStoreSettingsResponse>(mediator => mediator.SendAsync<TestPackageStoreSettingsCommand, TestPackageStoreSettingsResponse>(
+                new TestPackageStoreSettingsCommand { Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = root } }));
+
+            result.Data.Success.ShouldBeTrue(result.Data.Message);
+            Directory.Exists(root).ShouldBeTrue();
+            Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+            (await Run<IRepository, int>(repository => repository.QueryNoTracking<PackageStore>().CountAsync())).ShouldBe(0);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TestSettings_WithInvalidSettings_ThrowsTheProblems()
+    {
+        var ex = await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => Run<IPackageStoreService>(service => service.TestSettingsAsync(
+            new TestPackageStoreSettingsCommand { Kind = SecretKind, Properties = new Dictionary<string, string>() }, CancellationToken.None)));
+
+        ex.Problems.Count.ShouldBe(2);
+    }
+
     private async Task TrySetDefaultAsync(int id)
     {
         try
@@ -352,7 +407,7 @@ public class PackageStoreIntegrationTests : TestBase
 
         public IPackageBlobStore Create(PackageBlobStoreConfiguration configuration) => new ProbeStore(configuration);
 
-        public Task<PackageBlobStoreTestResult> TestAsync(PackageBlobStoreConfiguration configuration, CancellationToken ct) => Task.FromResult(new PackageBlobStoreTestResult { Success = true, Message = "ok" });
+        public Task<PackageBlobStoreTestResult> TestAsync(PackageBlobStoreConfiguration configuration, CancellationToken ct) => Task.FromResult(new PackageBlobStoreTestResult { Success = true, Message = $"token={configuration.Secret("Token")}" });
 
         public sealed class ProbeStore(PackageBlobStoreConfiguration configuration) : IPackageBlobStore
         {

@@ -84,4 +84,14 @@ public class PackageStoreController(IMediator mediator) : ControllerBase
 
         return Ok(response);
     }
+
+    /// <summary>Tests settings that are not saved yet (the "Test" button on a form); writes nothing.</summary>
+    [HttpPost("test-settings")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(TestPackageStoreSettingsResponse))]
+    public async Task<IActionResult> TestPackageStoreSettingsAsync([FromBody] TestPackageStoreSettingsCommand command, CancellationToken ct)
+    {
+        var response = await mediator.SendAsync<TestPackageStoreSettingsCommand, TestPackageStoreSettingsResponse>(command, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
 }

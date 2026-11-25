@@ -82,4 +82,41 @@ public sealed class FileSystemProviderContractTests : IDisposable
         result.Success.ShouldBeFalse();
         result.Message.ShouldNotBeNullOrWhiteSpace();
     }
+
+    /// <summary>The frontend reads the field kind by name; the number would silently change meaning if the enum were reordered.</summary>
+    [Fact]
+    public void FieldKind_IsSentByName_AndReadBackFromTheName()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(Provider().Describe(), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        json.ShouldContain("\"kind\":\"Path\"");
+        json.ShouldNotContain("\"kind\":3");
+
+        var back = System.Text.Json.JsonSerializer.Deserialize<PackageStoreFieldDescriptor>("{\"key\":\"K\",\"kind\":\"Secret\"}", new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+
+        back.Kind.ShouldBe(PackageStoreFieldKind.Secret);
+    }
+
+    [Fact]
+    public async Task TestSettings_Through_TheService_ReallyRunsTheFileSystemProbeOnAnUnsavedFolder()
+    {
+        var table = new Support.FakePackageStoreDataProvider();
+        var service = new PackageStoreService(table, [Provider()]);
+
+        var result = await service.TestSettingsAsync(new Squid.Message.Commands.PackageStorage.TestPackageStoreSettingsCommand { Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = _temp } }, CancellationToken.None);
+
+        result.Success.ShouldBeTrue(result.Message);
+        Directory.Exists(_temp).ShouldBeTrue("the probe wrote into the unsaved folder");
+        Directory.EnumerateFiles(_temp, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+        table.Rows.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void GetWarnings_SurfacesTheApplicationFolderWarning_ForARootInsideTheApplicationFolder()
+    {
+        var inside = Path.Combine(AppContext.BaseDirectory, "packages");
+
+        Provider().GetWarnings(Config(inside)).ShouldContain(w => w.Contains("inside the application folder"));
+        Provider().GetWarnings(Config(_temp)).ShouldNotContain(w => w.Contains("inside the application folder"));
+    }
 }
