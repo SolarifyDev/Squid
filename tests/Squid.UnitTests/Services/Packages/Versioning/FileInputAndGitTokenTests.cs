@@ -42,6 +42,9 @@ public class FileInputAndGitTokenTests
     [InlineData("1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.zip")]
     public async Task FileVersion_AHostileFileName_IsAnsweredFastNotMatchedForever(string fileName)
     {
+        // Building the patterns and JIT are one-time costs, not what is being timed.
+        await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context("Acme.1.0.0.zip"), null, CancellationToken.None);
+
         var watch = System.Diagnostics.Stopwatch.StartNew();
 
         try
