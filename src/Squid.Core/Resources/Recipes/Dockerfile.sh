@@ -2,7 +2,9 @@ set -euo pipefail
 
 # ---- Dockerfile app: built from the package's Dockerfile --------------------------------------------------------------
 APP_NAME={{AppName}}
-CONTAINER_NAME={{ContainerName}}
+CONTAINER_NAME_BASE={{ContainerNameBase}}
+PROJECT_ID={{ProjectId}}
+ENVIRONMENT_ID={{EnvironmentId}}
 HOST_PORT={{HostPort}}
 CONTAINER_PORT={{ContainerPort}}
 HEALTH_PATH={{HealthPath}}
@@ -27,5 +29,5 @@ prepare_image() {
 }
 
 start_container() {
-  docker run -d --name "$1" --restart unless-stopped --label "squid.app=$APP_NAME" -p "$2" "$IMAGE"
+  docker run -d --name "$1" --restart unless-stopped --label "squid.app=$CONTAINER_NAME" -p "$2" "$IMAGE"
 }

@@ -86,6 +86,6 @@ public class DockerfileRecipeTests
         var script = ScriptOf(await _recipe.RenderAsync(Context(Of(Dockerfile(), (PackageFactKeys.DockerfileExposePort, "80")), "a'; rm -rf / #"), CancellationToken.None));
 
         script.ShouldContain("APP_NAME='a'\\''; rm -rf / #'");
-        script.ShouldContain("CONTAINER_NAME='squid-app-a-rm-rf'");
+        script.ShouldContain("CONTAINER_NAME_BASE='squid-a-rm-rf'");
     }
 }

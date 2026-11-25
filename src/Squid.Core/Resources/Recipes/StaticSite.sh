@@ -2,7 +2,9 @@ set -euo pipefail
 
 # ---- Static site: served by a Caddy container -----------------------------------------------------------------------
 APP_NAME={{AppName}}
-CONTAINER_NAME={{ContainerName}}
+CONTAINER_NAME_BASE={{ContainerNameBase}}
+PROJECT_ID={{ProjectId}}
+ENVIRONMENT_ID={{EnvironmentId}}
 HOST_PORT={{HostPort}}
 CONTAINER_PORT={{ContainerPort}}
 HEALTH_PATH={{HealthPath}}
@@ -26,7 +28,7 @@ prepare_image() {
 }
 
 start_container() {
-  docker run -d --name "$1" --restart unless-stopped --label "squid.app=$APP_NAME" -p "$2" \
+  docker run -d --name "$1" --restart unless-stopped --label "squid.app=$CONTAINER_NAME" -p "$2" \
     --mount "type=bind,source=$SITE_DIR,target=/srv,readonly" \
     "$IMAGE" caddy file-server --root /srv --listen ":$CONTAINER_PORT"
 }

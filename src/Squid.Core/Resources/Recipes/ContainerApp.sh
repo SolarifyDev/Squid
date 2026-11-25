@@ -7,6 +7,13 @@
 # the new one is started on the real port and checked again. If that fails, the new one is removed and the old one is
 # started again, so a version that cannot run never replaces one that can.
 
+# One container per project and environment on a host: the process is shared by every environment, so the environment can only be read at deploy time.
+# Both ids are numbers substituted by the deployment (names are not used: a name with a quote in it would break out of the script), and they are checked here.
+case "$PROJECT_ID$ENVIRONMENT_ID" in
+  ''|*[!0-9]*) printf 'ERROR: the project and environment ids are not available to this script.\n' >&2; exit 1 ;;
+esac
+
+CONTAINER_NAME="${CONTAINER_NAME_BASE}-p${PROJECT_ID}-e${ENVIRONMENT_ID}"
 CANDIDATE_NAME="${CONTAINER_NAME}-candidate"
 PREVIOUS_NAME="${CONTAINER_NAME}-previous"
 

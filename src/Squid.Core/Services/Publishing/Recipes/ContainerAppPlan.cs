@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Core.Services.Publishing.Inspectors;
 using Squid.Core.Utils;
@@ -13,9 +15,10 @@ public static class ContainerAppPlan
     public const string DeployPackageStepName = "Deploy package";
     public const int HealthTimeoutSeconds = 60;
     public const string DefaultHealthPath = "/";
-    public const string ContainerNamePrefix = "squid-app-";
+    public const string ContainerNamePrefix = "squid-";
 
-    private const int MaxSlugLength = 48;
+    private const int MaxSlugLength = 28;
+    private const int HashLength = 6;
     private const string FallbackSlug = "app";
     private const string InstallationDirectoryMode = "Versioned";
 
@@ -25,14 +28,20 @@ public static class ContainerAppPlan
     /// </summary>
     public static string InstallDirToken { get; } = "#{" + SpecialVariables.Output.Variable(DeployPackageStepName, SpecialVariables.Action.InstallationDirectoryPath) + "}";
 
-    public static string ContainerName(string packageId)
+    /// <summary>
+    /// The readable part of the container and image name: <c>squid-</c> and the slugged package id. A slug longer than the cap is cut and a short hash of the whole id is
+    /// appended, so two long ids that share a prefix still differ. The deploy-time part (<c>-p{project id}-e{environment id}</c>) is added by the script.
+    /// </summary>
+    public static string ContainerNameBase(string packageId)
     {
         var slug = SlugGenerator.Generate(packageId);
 
-        slug = slug.Length > MaxSlugLength ? slug[..MaxSlugLength].Trim('-') : slug;
+        if (slug.Length == 0) slug = FallbackSlug;
 
-        return ContainerNamePrefix + (slug.Length == 0 ? FallbackSlug : slug);
+        return ContainerNamePrefix + (slug.Length > MaxSlugLength ? slug[..(MaxSlugLength - HashLength - 1)].Trim('-') + "-" + Hash(packageId) : slug);
     }
+
+    private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToLowerInvariant()))).ToLowerInvariant()[..HashLength];
 
     /// <summary>The values of the placeholders every container script has. A recipe adds its own and renders its template with them.</summary>
     public static Dictionary<string, string> CommonValues(RecipeRenderContext context, string healthPath, int containerPort)
@@ -40,7 +49,9 @@ public static class ContainerAppPlan
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["AppName"] = ShellQuote.Literal("packageId", context.PackageId),
-            ["ContainerName"] = ShellQuote.Literal("packageId", ContainerName(context.PackageId)),
+            ["ContainerNameBase"] = ShellQuote.Literal("packageId", ContainerNameBase(context.PackageId)),
+            ["ProjectId"] = "'#{" + SpecialVariables.Project.Id + "}'",
+            ["EnvironmentId"] = "'#{" + SpecialVariables.Environment.Id + "}'",
             ["HostPort"] = context.HostPort.ToString(CultureInfo.InvariantCulture),
             ["ContainerPort"] = containerPort.ToString(CultureInfo.InvariantCulture),
             ["HealthPath"] = ShellQuote.Literal(PackageFactKeys.SquidHealthPath, healthPath),

@@ -113,7 +113,9 @@ public class StaticSiteRecipeTests
         script.ShouldContain("CONTAINER_PORT=80");
         script.ShouldContain("SERVER_IMAGE='caddy:2'");
         script.ShouldContain($"HEALTH_TIMEOUT_SECONDS={ContainerAppPlan.HealthTimeoutSeconds}");
-        script.ShouldContain("CONTAINER_NAME='squid-app-acme-web'");
+        script.ShouldContain("CONTAINER_NAME_BASE='squid-acme-web'");
+        script.ShouldContain("PROJECT_ID='#{Squid.Project.Id}'");
+        script.ShouldContain("ENVIRONMENT_ID='#{Squid.Environment.Id}'");
         script.ShouldNotContain("{{");
     }
 
@@ -128,7 +130,7 @@ public class StaticSiteRecipeTests
         script.ShouldContain("SITE_SUB_PATH='$(touch pwned);`id`\"'\\''x'");
         script.ShouldContain("APP_NAME='Evil'\\''$(id)'");
         script.ShouldContain("HEALTH_PATH='/a;b'");
-        script.ShouldContain("CONTAINER_NAME='squid-app-evil-id'");
+        script.ShouldContain("CONTAINER_NAME_BASE='squid-evil-id'");
     }
 
     [Fact]

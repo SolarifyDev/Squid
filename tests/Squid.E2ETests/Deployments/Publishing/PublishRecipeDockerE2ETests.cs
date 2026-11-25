@@ -149,6 +149,42 @@ public class PublishRecipeDockerE2ETests
     }
 
     [Fact]
+    public async Task TheSameApp_InTwoEnvironments_OnTwoPorts_BothStayUp_AndRedeployingOneLeavesTheOther()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var staging = new PublishedApp();
+        using var production = new PublishedApp();
+
+        production.CopyIdentityOf(staging, environmentId: 2);
+
+        (await staging.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("staging-one"))).ExitCode.ShouldBe(0);
+        (await production.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("production-one"))).ExitCode.ShouldBe(0);
+
+        staging.ContainerName.ShouldNotBe(production.ContainerName);
+        (await staging.GetAsync("/")).ShouldBe("staging-one");
+        (await production.GetAsync("/")).ShouldBe("production-one");
+
+        (await staging.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("staging-two"), version: "2.0.0")).ExitCode.ShouldBe(0);
+
+        (await staging.GetAsync("/")).ShouldBe("staging-two");
+        (await production.GetAsync("/")).ShouldBe("production-one", "deploying staging must not replace production's container");
+    }
+
+    [Fact]
+    public async Task ScriptWithoutTheDeploymentIds_RefusesToRun()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        var run = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("x"), keepIdTokens: true);
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("ids are not available", Case.Sensitive, run.Describe("a script whose ids were not substituted must stop before touching docker"));
+    }
+
+    [Fact]
     public async Task NoDocker_FailsEarly_WithAClearMessage()
     {
         if (!DockerUsable.Value) return;
@@ -179,11 +215,23 @@ public class PublishRecipeDockerE2ETests
             HostPort = FreePort();
         }
 
-        public string PackageId { get; }
+        public string PackageId { get; private set; }
 
         public int HostPort { get; set; }
 
-        public string ContainerName => ContainerAppPlan.ContainerName(PackageId);
+        public int ProjectId { get; set; } = 7000 + Random.Shared.Next(1000);
+
+        public int EnvironmentId { get; set; } = 1;
+
+        public void CopyIdentityOf(PublishedApp other, int environmentId)
+        {
+            PackageId = other.PackageId;
+            ProjectId = other.ProjectId;
+            EnvironmentId = environmentId;
+        }
+
+        // The deployment's two ids make the name; the same app in another environment is another container.
+        public string ContainerName => $"{ContainerAppPlan.ContainerNameBase(PackageId)}-p{ProjectId}-e{EnvironmentId}";
 
         public string EmptyPathDirectory
         {
@@ -210,7 +258,7 @@ public class PublishRecipeDockerE2ETests
             return files.ToArray();
         }
 
-        public async Task<ScriptRun> DeployAsync(IDeployRecipe recipe, (string Path, string Content)[] files, string version = "1.0.0", int? healthTimeoutSeconds = null, string environmentPath = null)
+        public async Task<ScriptRun> DeployAsync(IDeployRecipe recipe, (string Path, string Content)[] files, string version = "1.0.0", int? healthTimeoutSeconds = null, string environmentPath = null, bool keepIdTokens = false)
         {
             var archive = Path.Combine(_root, $"package-{++_deployments}.zip");
             var installDir = Path.Combine(_root, $"install-{_deployments}");
@@ -220,7 +268,7 @@ public class PublishRecipeDockerE2ETests
 
             var facts = await InspectAsync(archive);
             var plan = await recipe.RenderAsync(new RecipeRenderContext { PackageId = PackageId, Facts = facts, HostPort = HostPort, TargetRoles = ["web"] }, CancellationToken.None);
-            var script = UseStandInServer(Substitute(plan.Steps[1].Actions[0].Properties["Squid.Action.Script.ScriptBody"], installDir, version, healthTimeoutSeconds));
+            var script = UseStandInServer(Substitute(plan.Steps[1].Actions[0].Properties["Squid.Action.Script.ScriptBody"], installDir, version, healthTimeoutSeconds, keepIdTokens));
             var scriptPath = Path.Combine(_root, $"deploy-{_deployments}.sh");
 
             await File.WriteAllTextAsync(scriptPath, script);
@@ -236,16 +284,21 @@ public class PublishRecipeDockerE2ETests
         }
 
         // The deployment's own substitution turns the two #{...} tokens into the extraction folder and the release number before the script reaches the target.
-        private static string Substitute(string script, string installDir, string version, int? healthTimeoutSeconds)
+        private string Substitute(string script, string installDir, string version, int? healthTimeoutSeconds, bool keepIdTokens)
         {
             var variables = new VariableDictionary();
 
             variables.Set(Squid.Message.Constants.SpecialVariables.Output.Variable(ContainerAppPlan.DeployPackageStepName, Squid.Message.Constants.SpecialVariables.Action.InstallationDirectoryPath), installDir);
             variables.Set(Squid.Message.Constants.SpecialVariables.Release.Number, version);
+            if (!keepIdTokens)
+            {
+                variables.Set(Squid.Message.Constants.SpecialVariables.Project.Id, ProjectId.ToString());
+                variables.Set(Squid.Message.Constants.SpecialVariables.Environment.Id, EnvironmentId.ToString());
+            }
 
             var expanded = VariableExpander.ExpandString(script, variables);
 
-            expanded.ShouldNotContain("#{", Case.Sensitive, "every variable in the script must have been substituted");
+            if (!keepIdTokens) expanded.ShouldNotContain("#{", Case.Sensitive, "every variable in the script must have been substituted");
 
             return healthTimeoutSeconds == null ? expanded : ShortenHealthTimeout(expanded, healthTimeoutSeconds.Value);
         }
