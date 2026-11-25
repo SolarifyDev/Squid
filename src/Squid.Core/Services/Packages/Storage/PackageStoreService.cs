@@ -95,6 +95,19 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         return result;
     }
 
+    public async Task<PackageBlobStoreTestResult> TestSettingsAsync(TestPackageStoreSettingsCommand command, CancellationToken ct)
+    {
+        var provider = ResolveProvider(command.Kind);
+        var stored = await LoadStoredSecretsAsync(command, ct).ConfigureAwait(false);
+        var secrets = command.Secrets ?? new Dictionary<string, string>();
+
+        EnsureSettingsValid(provider, command.Properties, secrets, stored);
+
+        var configuration = new PackageBlobStoreConfiguration { Properties = command.Properties ?? new Dictionary<string, string>(), Secrets = PackageStoreSettings.MergeSecrets(stored, secrets) };
+
+        return await provider.TestAsync(configuration, ct).ConfigureAwait(false);
+    }
+
     public List<PackageStoreProviderDescriptor> DescribeProviders()
     {
         return providers.Select(p => p.Describe()).OrderBy(d => d.DisplayName, StringComparer.Ordinal).ToList();
