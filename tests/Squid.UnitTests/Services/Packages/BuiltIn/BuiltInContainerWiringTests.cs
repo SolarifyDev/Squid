@@ -74,6 +74,8 @@ public class BuiltInContainerWiringTests
 
         scope.Resolve<IBuiltInPackagePushService>().ShouldBeOfType<BuiltInPackagePushService>();
         scope.Resolve<IBuiltInPackageQueryService>().ShouldBeOfType<BuiltInPackageQueryService>();
+        scope.Resolve<IBuiltInUploadAcceptor>().ShouldBeOfType<BuiltInUploadAcceptor>();
+        scope.Resolve<IBuiltInPackageCatalog>().ShouldBeOfType<BuiltInPackageCatalog>();
         scope.Resolve<IBuiltInPackageUsage>().ShouldBeOfType<BuiltInPackageUsage>();
         scope.Resolve<IBuiltInFeedLocator>().ShouldBeOfType<BuiltInFeedService>();
         scope.Resolve<IBuiltInFeedProvisioner>().ShouldBeOfType<BuiltInFeedService>();

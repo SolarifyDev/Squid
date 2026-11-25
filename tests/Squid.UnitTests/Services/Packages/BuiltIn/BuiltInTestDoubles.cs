@@ -301,7 +301,7 @@ internal sealed class PushHarness
 
     public BuiltInPackagePushService Service(Squid.Core.Services.Identity.ICurrentUser user = null)
     {
-        return new BuiltInPackagePushService(new FakeFeedLocator(Feed), Packages, new BuiltInVersionResolver(Assigner, Rules), new BuiltInBlobWriter(Stores, Registry), new BuiltInPackageRecorder(Packages, Usage, user, TimeProvider.System), new BuiltInArchiveVerifier(new PackageInspectionService(Inspectors)));
+        return new BuiltInPackagePushService(new BuiltInPackageCatalog(new FakeFeedLocator(Feed), Packages), new BuiltInUploadAcceptor(new BuiltInArchiveVerifier(new PackageInspectionService(Inspectors))), new BuiltInVersionResolver(Assigner, Rules), new BuiltInBlobWriter(Stores, Registry), new BuiltInPackageRecorder(Packages, Usage, user, TimeProvider.System));
     }
 
     public static Squid.Message.Commands.BuiltInPackages.PushBuiltInPackageCommand Push(byte[] bytes, string fileName = "Acme.Web.1.0.0.zip", string packageId = null, string version = null, bool replace = false)
