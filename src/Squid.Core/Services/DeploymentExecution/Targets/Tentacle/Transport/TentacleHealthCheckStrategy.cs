@@ -35,17 +35,15 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
     internal const string UpgradeLogMetadataKey = "upgradeLog";
 
     private readonly IHalibutClientFactory _halibutClientFactory;
-    private readonly IMachineRuntimeCapabilitiesCache _capabilitiesCache;
-    private readonly IMachineRuntimeCapabilitiesPersistence _capabilitiesPersistence;
+    private readonly IMachineCapabilitiesRecorder _capabilitiesRecorder;
     private readonly IUpgradeDispatchLockReconciler _upgradeLockReconciler;
     private readonly IUpgradeEventTimelineStore _upgradeEventStore;
     private readonly IUpgradeTracePersister _upgradeTracePersister;
 
-    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineRuntimeCapabilitiesCache capabilitiesCache = null, IMachineRuntimeCapabilitiesPersistence capabilitiesPersistence = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null, IUpgradeTracePersister upgradeTracePersister = null)
+    public TentacleHealthCheckStrategy(IHalibutClientFactory halibutClientFactory, IMachineCapabilitiesRecorder capabilitiesRecorder = null, IUpgradeDispatchLockReconciler upgradeLockReconciler = null, IUpgradeEventTimelineStore upgradeEventStore = null, IUpgradeTracePersister upgradeTracePersister = null)
     {
         _halibutClientFactory = halibutClientFactory;
-        _capabilitiesCache = capabilitiesCache;
-        _capabilitiesPersistence = capabilitiesPersistence;
+        _capabilitiesRecorder = capabilitiesRecorder;
         _upgradeLockReconciler = upgradeLockReconciler;
         _upgradeEventStore = upgradeEventStore;
         _upgradeTracePersister = upgradeTracePersister;
@@ -78,8 +76,7 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
             if (response == null)
                 return new HealthCheckResult(false, "Tentacle returned null capabilities response");
 
-            CacheCapabilitiesFor(machine, response);
-            await PersistCapabilitiesForAsync(machine, response, ct).ConfigureAwait(false);
+            await RecordCapabilitiesAsync(machine, response, ct).ConfigureAwait(false);
 
             await ProcessUpgradeStatusAsync(machine, response, ct).ConfigureAwait(false);
 
@@ -104,52 +101,18 @@ public class TentacleHealthCheckStrategy : IHealthCheckStrategy
         }
     }
 
-    private void CacheCapabilitiesFor(Machine machine, CapabilitiesResponse response)
-    {
-        if (_capabilitiesCache == null || machine == null) return;
-
-        // P0-E.3: also cache the SupportedServices list so the execution strategy
-        // can pick the V1/V2 protocol without another capabilities RPC per script.
-        _capabilitiesCache.Store(machine.Id, response.Metadata, response.AgentVersion, response.SupportedServices);
-    }
-
     /// <summary>
-    /// H2 — write-through to the DB-backed persistence so the next server pod
-    /// restart hydrates the cache from this snapshot instead of starting cold.
-    /// Best-effort: a failed DB write logs a warning but does NOT fail the
-    /// health check (the in-memory cache is still updated and the next
-    /// successful health-check probe will retry the persistence write).
+    /// Hands the response to the one capabilities write path, which persists it, stamps the cache with the stamp the
+    /// database gave the row (so a pod's clock can never outrank another pod's invalidation) and also caches the
+    /// SupportedServices list the execution strategy uses to pick the V1/V2 protocol. A failed DB write is logged and
+    /// swallowed by the recorder: it never fails the health check, the next probe retries it.
     /// </summary>
-    private async Task PersistCapabilitiesForAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
+    private async Task RecordCapabilitiesAsync(Machine machine, CapabilitiesResponse response, CancellationToken ct)
     {
-        if (_capabilitiesPersistence == null || machine == null) return;
+        if (_capabilitiesRecorder == null || machine == null) return;
 
-        var capabilities = BuildCapabilitiesFromResponse(response);
-
-        try
-        {
-            await _capabilitiesPersistence.SaveAsync(machine.Id, capabilities, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            // Don't fail the health check on a DB hiccup — in-memory cache
-            // already has the fresh data so this run completes normally; the
-            // NEXT successful health check will retry the persistence write.
-            Log.Warning(ex,
-                "Failed to persist runtime capabilities for machine {MachineId} to DB. " +
-                "In-memory cache is up to date; next health check will retry the DB write.",
-                machine.Id);
-        }
+        await _capabilitiesRecorder.RecordAsync(machine.Id, response, ct).ConfigureAwait(false);
     }
-
-    /// <summary>
-    /// Project the agent's <see cref="CapabilitiesResponse"/> into the
-    /// canonical <see cref="MachineRuntimeCapabilities"/> shape the
-    /// persistence layer serialises. Keep this method in lockstep with
-    /// <see cref="InMemoryMachineRuntimeCapabilitiesCache.Store"/>'s field
-    /// reads — both consume the same agent-side <c>metadata</c> dictionary.
-    /// </summary>
-    private static MachineRuntimeCapabilities BuildCapabilitiesFromResponse(CapabilitiesResponse response) => MachineCapabilitiesRecorder.Map(response);
 
     /// <summary>
     /// Parse the agent's upgrade-status JSON ONCE and dispatch to two
