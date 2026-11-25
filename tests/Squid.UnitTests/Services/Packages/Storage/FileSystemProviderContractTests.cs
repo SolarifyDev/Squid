@@ -101,7 +101,7 @@ public sealed class FileSystemProviderContractTests : IDisposable
     public async Task TestSettings_Through_TheService_ReallyRunsTheFileSystemProbeOnAnUnsavedFolder()
     {
         var table = new Support.FakePackageStoreDataProvider();
-        var service = new PackageStoreService(table, [Provider()]);
+        var service = new PackageStoreService(table, [Provider()], []);
 
         var result = await service.TestSettingsAsync(new Squid.Message.Commands.PackageStorage.TestPackageStoreSettingsCommand { Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = _temp } }, CancellationToken.None);
 
