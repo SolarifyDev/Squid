@@ -105,13 +105,15 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
         if (resume == AutoResume.Requested) await RequestResumeAsync(task, ct).ConfigureAwait(false);
     }
 
-    internal enum AutoResume { NotApplicable, Requested, LimitReached }
+    internal enum AutoResume { NotApplicable, Requested, LimitReached, Disabled }
 
     // The log lines the reaper wrote before this recovery are the count of earlier recoveries of the task: no extra column, and a task an operator resumed
     // by hand keeps its history, so one that keeps stopping its server eventually waits for a human.
     private async Task<AutoResume> DecideAutoResumeAsync(StaleServerTask task, CancellationToken ct)
     {
         if (_controlService == null) return AutoResume.NotApplicable;
+
+        if (_options.MaxAutoResumes == 0) return AutoResume.Disabled;
 
         try
         {
@@ -179,6 +181,7 @@ public sealed class ServerTaskLeaseReaperService : IServerTaskLeaseReaperService
     {
         AutoResume.Requested => "Its progress is saved and it is being resumed automatically from the last checkpoint.",
         AutoResume.LimitReached => "Its progress is saved, but it was already resumed automatically after earlier stops, so resume it manually to continue from the last checkpoint.",
+        AutoResume.Disabled => "Its progress is saved, and automatic resume is turned off, so resume it manually to continue from the last checkpoint.",
         _ => "Its progress is saved: resume it to continue from the last checkpoint."
     };
 }
