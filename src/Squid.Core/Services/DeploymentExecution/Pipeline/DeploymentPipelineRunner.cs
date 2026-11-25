@@ -241,6 +241,17 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         }
         catch (Exception ex)
         {
+            // The user's cancel wins over whatever ended the run (e.g. a pause write refused because the row is already Cancelling): resolving a
+            // Cancelling row as Failed would end the user's cancel Failed and leave the agent scripts running.
+            if (await IsUserCancelPersistedAsync(serverTaskId).ConfigureAwait(false))
+            {
+                Log.Information(ex, "[Deploy] Task {TaskId} ended with an error but the user had cancelled it; completing the cancel", serverTaskId);
+
+                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+
+                return;
+            }
+
             await SafeCompleteAsync(ctx, () => completion.OnFailureAsync(ctx, ex, CancellationToken.None), new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }));
             throw;
         }
