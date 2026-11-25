@@ -133,12 +133,68 @@ public class MachineHealthSweepIntegrationTests : TestBase
         setting.SweepDeadlineSeconds.ShouldBe(300);
     }
 
+    [Fact]
+    public async Task DueListQuery_OnPostgres_ReturnsNeverCheckedFirst_ThenOldestCheck_ThenId()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var recent = await SeedMachineAsync(m => m.HealthLastChecked = now).ConfigureAwait(false);
+        var neverB = await SeedMachineAsync(m => m.HealthLastChecked = null).ConfigureAwait(false);
+        var oldest = await SeedMachineAsync(m => m.HealthLastChecked = now.AddHours(-3)).ConfigureAwait(false);
+        var neverA = await SeedMachineAsync(m => m.HealthLastChecked = null).ConfigureAwait(false);
+        var older = await SeedMachineAsync(m => m.HealthLastChecked = now.AddHours(-1)).ConfigureAwait(false);
+        var mine = new HashSet<int> { recent, neverB, oldest, neverA, older };
+
+        var listed = await Run<IMachineDataProvider, List<Machine>>(p => p.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(CancellationToken.None)).ConfigureAwait(false);
+
+        listed.Select(m => m.Id).Where(mine.Contains).ShouldBe(new[] { neverB, neverA, oldest, older, recent }, "Postgres sorts NULLs LAST by default; never-checked machines must still come first");
+    }
+
+    [Fact]
+    public async Task Sweep_MachineWithoutItsFullTimeoutLeft_IsDeferred_PersistedHealthUntouched_AndProbedFirstNextSweep()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var first = await SeedMachineAsync(m => { m.HealthStatus = MachineHealthStatus.Healthy; m.HealthLastChecked = now.AddHours(-3); }).ConfigureAwait(false);
+        var late = await SeedMachineAsync(m => { m.HealthStatus = MachineHealthStatus.Unavailable; m.HealthLastChecked = now.AddHours(-2); m.UnavailableSince = now.AddDays(-1); m.HealthDetail = "down earlier"; }).ConfigureAwait(false);
+        var later = await SeedMachineAsync(m => { m.HealthStatus = MachineHealthStatus.Healthy; m.HealthLastChecked = now.AddMinutes(-90); m.HealthDetail = "ok earlier"; }).ConfigureAwait(false);
+        var lateBefore = await LoadMachineAsync(late).ConfigureAwait(false);
+        var laterBefore = await LoadMachineAsync(later).ConfigureAwait(false);
+
+        // The first machine's probe takes the sweep to 50s before its deadline: too little for the next machines' full 75s timeout + 5s grace.
+        var clock = new ShiftedClock();
+        var strategy = new FakeStrategy();
+        var order = new ConcurrentQueue<int>();
+        strategy.Behavior = (id, _) => { order.Enqueue(id); clock.Shift = TimeSpan.FromSeconds(250); return Task.FromResult(new HealthCheckResult(true, "ok")); };
+
+        await RunSweepAsync(strategy, new HealthCheckInProcessLocks(), probeTimeoutSeconds: 0, maxParallelism: 1, time: clock).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+        order.ToList().ShouldBe(new List<int> { first }, customMessage: "only the least recently checked machine fits; the others are deferred, not probed with a shortened timeout");
+        (await LoadMachineAsync(first).ConfigureAwait(false)).HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+        AssertHealthUntouched(await LoadMachineAsync(late).ConfigureAwait(false), lateBefore);
+        AssertHealthUntouched(await LoadMachineAsync(later).ConfigureAwait(false), laterBefore);
+
+        order.Clear();
+        strategy.Behavior = (id, _) => { order.Enqueue(id); return Task.FromResult(new HealthCheckResult(true, "ok")); };
+
+        await RunSweepAsync(strategy, new HealthCheckInProcessLocks(), probeTimeoutSeconds: 0, maxParallelism: 1, time: new ShiftedClock()).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+        order.ToList().ShouldBe(new List<int> { late, later }, customMessage: "the deferred machines kept their old check time, so the next sweep probes them first, oldest first");
+        (await LoadStatusesAsync(new List<int> { late, later }).ConfigureAwait(false)).ShouldAllBe(s => s == MachineHealthStatus.Healthy);
+    }
+
+    private static void AssertHealthUntouched(Machine after, Machine before)
+    {
+        after.HealthStatus.ShouldBe(before.HealthStatus);
+        after.HealthLastChecked.ShouldBe(before.HealthLastChecked);
+        after.UnavailableSince.ShouldBe(before.UnavailableSince);
+        after.HealthDetail.ShouldBe(before.HealthDetail);
+    }
+
     // ── helpers ──
 
-    private Task RunSweepAsync(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism = 4, int sweepDeadlineSeconds = 300)
-        => RunWithOverridesAsync<object>(strategy, locks, probeTimeoutSeconds, maxParallelism, async svc => { await svc.AutoHealthCheckForAllAsync().ConfigureAwait(false); return null; }, sweepDeadlineSeconds);
+    private Task RunSweepAsync(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism = 4, int sweepDeadlineSeconds = 300, TimeProvider time = null)
+        => RunWithOverridesAsync<object>(strategy, locks, probeTimeoutSeconds, maxParallelism, async svc => { await svc.AutoHealthCheckForAllAsync().ConfigureAwait(false); return null; }, sweepDeadlineSeconds, time);
 
-    private async Task<T> RunWithOverridesAsync<T>(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism, Func<IMachineHealthCheckService, Task<T>> action, int sweepDeadlineSeconds = 300)
+    private async Task<T> RunWithOverridesAsync<T>(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism, Func<IMachineHealthCheckService, Task<T>> action, int sweepDeadlineSeconds = 300, TimeProvider time = null)
     {
         var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = probeTimeoutSeconds, MaxParallelism = maxParallelism, SweepDeadlineSeconds = sweepDeadlineSeconds };
         var transport = new Mock<IDeploymentTransport>();
@@ -152,7 +208,7 @@ public class MachineHealthSweepIntegrationTests : TestBase
             builder.RegisterInstance(Redis.Value).Keyed<ConnectionMultiplexer>(RedisServer.System).ExternallyOwned();
             builder.RegisterInstance(Redis.Value).Keyed<ConnectionMultiplexer>(RedisServer.Vector).ExternallyOwned();
             builder.RegisterInstance(registry.Object).As<ITransportRegistry>();
-            builder.Register(c => new MachineHealthCheckCoordinator(c.Resolve<IRedisSafeRunner>(), c.Resolve<ILifetimeScope>(), locks, options)).As<IMachineHealthCheckCoordinator>().InstancePerLifetimeScope();
+            builder.Register(c => new MachineHealthCheckCoordinator(c.Resolve<IRedisSafeRunner>(), c.Resolve<ILifetimeScope>(), locks, options, time)).As<IMachineHealthCheckCoordinator>().InstancePerLifetimeScope();
         }).ConfigureAwait(false);
     }
 
@@ -174,6 +230,22 @@ public class MachineHealthSweepIntegrationTests : TestBase
 
         return ids;
     }
+
+    private async Task<int> SeedMachineAsync(Action<Machine> configure)
+    {
+        var id = (await SeedMachinesAsync(1).ConfigureAwait(false)).Single();
+
+        await Run<IMachineDataProvider>(async p =>
+        {
+            var machine = await p.GetMachinesByIdAsync(id, CancellationToken.None).ConfigureAwait(false);
+            configure(machine);
+            await p.UpdateMachineAsync(machine, cancellationToken: CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        return id;
+    }
+
+    private Task<Machine> LoadMachineAsync(int id) => Run<IMachineDataProvider, Machine>(p => p.GetMachinesByIdAsync(id, CancellationToken.None));
 
     private Task SetNeverCheckedAsync(int machineId, bool due)
         => Run<IMachineDataProvider>(async p =>
@@ -205,6 +277,14 @@ public class MachineHealthSweepIntegrationTests : TestBase
             if (DateTime.UtcNow > deadline) throw new TimeoutException("probe condition not reached within 20s");
             await Task.Delay(20).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>The real clock and real timers, with a wall-clock reading the test can push forward to stand for time already spent in the sweep.</summary>
+    private sealed class ShiftedClock : TimeProvider
+    {
+        public TimeSpan Shift { get; set; }
+
+        public override DateTimeOffset GetUtcNow() => TimeProvider.System.GetUtcNow() + Shift;
     }
 
     private sealed class FakeStrategy : IHealthCheckStrategy

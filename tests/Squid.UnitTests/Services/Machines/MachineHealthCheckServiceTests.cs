@@ -593,10 +593,9 @@ public class MachineHealthCheckServiceTests
 
     private void SetupMachineList(params Machine[] machines)
     {
-        // P1-D.8 (Phase-8): health-check sweep now uses the explicit
-        // cross-space method instead of the obsolete nullable-spaceId entry.
-        _machineDataProvider.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((machines.Length, machines.ToList()));
+        // The health-check sweep lists every space's machines, least recently checked first.
+        _machineDataProvider.Setup(p => p.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(machines.ToList());
 
         // The sweep re-loads each due machine by id in its own scope.
         foreach (var machine in machines)

@@ -179,8 +179,9 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         // under InternalUser / Hangfire) and legitimately scans every space.
         // Use the explicitly-named cross-space method instead of the
         // (now obsolete) nullable-spaceId entry — makes the cross-space
-        // intent visible at the call site.
-        var (_, machines) = await _machineDataProvider.GetMachinesAllSpacesPagingAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        // intent visible at the call site. Least recently checked first, so a
+        // machine a previous sweep had to defer is probed first in this one.
+        var machines = await _machineDataProvider.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(cancellationToken).ConfigureAwait(false);
         var dueIds = new List<int>();
 
         foreach (var machine in machines.Where(m => !m.IsDisabled))

@@ -1,7 +1,9 @@
 namespace Squid.Core.Services.Machines.HealthCheck.Exceptions;
 
-/// <summary>A probe was about to start so late in its sweep that the sweep would cancel it before it could record a result. The machine stays due for the next sweep.</summary>
-public sealed class SweepBudgetExhaustedException(TimeSpan remaining) : InvalidOperationException($"Health check sweep has {remaining.TotalSeconds:0.#}s left, too little to run and record another probe")
+/// <summary>A probe was not started because its full timeout plus the time to record its result no longer fits in the sweep. Nothing is recorded; the machine stays due for the next sweep.</summary>
+public sealed class SweepBudgetExhaustedException(TimeSpan timeout, TimeSpan remaining) : InvalidOperationException($"Health check sweep has {remaining.TotalSeconds:0.#}s left, too little to run a probe with its full {timeout.TotalSeconds:0.#}s timeout and record the result")
 {
+    public TimeSpan Timeout { get; } = timeout;
+
     public TimeSpan Remaining { get; } = remaining;
 }

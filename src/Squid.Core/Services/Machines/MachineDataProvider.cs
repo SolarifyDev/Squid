@@ -46,6 +46,12 @@ public interface IMachineDataProvider : IScopedDependency
     /// </summary>
     Task<(int count, List<Machine>)> GetMachinesAllSpacesPagingAsync(int? pageIndex = null, int? pageSize = null, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Every machine across ALL spaces, least recently health-checked first: never-checked machines, then by <c>HealthLastChecked</c>, then by id.
+    /// System-internal (the health-check sweep): a machine the sweep had to defer keeps its old check time, so it is first in the next sweep.
+    /// </summary>
+    Task<List<Machine>> GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(CancellationToken cancellationToken = default);
+
     Task<Machine> GetMachinesByIdAsync(int id, CancellationToken cancellationToken);
 
     Task<List<Machine>> GetMachinesByIdsAsync(List<int> ids, CancellationToken cancellationToken);
@@ -104,6 +110,11 @@ public class MachineDataProvider(IUnitOfWork unitOfWork, IRepository repository)
     {
         var query = repository.Query<Machine>();
         return await PageAsync(query, pageIndex, pageSize, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<List<Machine>> GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(CancellationToken cancellationToken = default)
+    {
+        return await repository.QueryNoTracking<Machine>().OrderBy(m => m.HealthLastChecked != null).ThenBy(m => m.HealthLastChecked).ThenBy(m => m.Id).ToListAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task<(int count, List<Machine>)> PageAsync(IQueryable<Machine> query, int? pageIndex, int? pageSize, CancellationToken cancellationToken)

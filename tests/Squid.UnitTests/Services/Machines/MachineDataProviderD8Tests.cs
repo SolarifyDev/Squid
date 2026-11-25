@@ -73,6 +73,20 @@ public sealed class MachineDataProviderD8Tests
     }
 
     [Fact]
+    public async Task LeastRecentlyCheckedFirst_NeverCheckedFirst_ThenOldestCheck_ThenId_AcrossSpaces()
+    {
+        var (provider, _) = NewProvider();
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var (name, spaceId, lastChecked) in new[] { ("recent", 1, (DateTimeOffset?)now), ("never-b", 2, null), ("oldest", 3, now.AddHours(-3)), ("never-a", 1, null), ("older", 2, now.AddHours(-1)) })
+            await provider.AddMachineAsync(new Machine { Name = name, SpaceId = spaceId, Endpoint = "{}", Roles = "[]", HealthLastChecked = lastChecked }, forceSave: true);
+
+        var machines = await provider.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(CancellationToken.None);
+
+        machines.Select(m => m.Name).ShouldBe(new[] { "never-b", "never-a", "oldest", "older", "recent" });
+    }
+
+    [Fact]
     public async Task LegacyNullEntry_StillRoutesCorrectly_ButObsoleteFlagsTheCallSite()
     {
         // Back-compat: the obsolete-marked legacy method still works —
