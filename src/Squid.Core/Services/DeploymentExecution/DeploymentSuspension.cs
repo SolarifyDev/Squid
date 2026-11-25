@@ -45,5 +45,8 @@ public static class DeploymentSuspension
         }
     }
 
-    private static bool EndsTheRunItself(Exception ex) => ex is OperationCanceledException || ex is ServerTaskStateTransitionException { FromState: TaskState.Cancelling };
+    /// <summary>The pause write was refused because the user's cancel landed first (the row is Cancelling): not an action failure, the run's cancel outcome ends it.</summary>
+    public static bool IsRefusedByCancel(Exception ex) => ex is ServerTaskStateTransitionException { FromState: TaskState.Cancelling };
+
+    private static bool EndsTheRunItself(Exception ex) => ex is OperationCanceledException || IsRefusedByCancel(ex);
 }
