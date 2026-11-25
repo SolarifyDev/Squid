@@ -74,9 +74,9 @@ public class DeploymentCompletionHandlerTests
     }
 
     // The single place enforcing "a task that reaches Cancelled has no agent script left running": whatever the observer decided when its token
-    // fired, the scripts still recorded in flight are cancelled after the owned state write succeeded and before the checkpoint holding them is deleted.
+    // fired, the scripts still recorded in flight are cancelled before the state is written and before the checkpoint holding them is deleted.
     [Fact]
-    public async Task OnCancelled_CancelsTheInFlightAgentScripts_AfterTheOwnedStateWrite_AndBeforeTheCheckpointDelete()
+    public async Task OnCancelled_CancelsTheInFlightAgentScripts_BeforeTheStateWriteAndTheCheckpointDelete()
     {
         var order = new List<string>();
         var canceller = new Mock<IInFlightScriptCanceller>();
@@ -87,7 +87,7 @@ public class DeploymentCompletionHandlerTests
 
         await sut.OnCancelledAsync(new DeploymentTaskContext { ServerTaskId = 1 }, CancellationToken.None);
 
-        order.ShouldBe(["transition", "cancel-scripts", "delete-checkpoint"]);
+        order.ShouldBe(["cancel-scripts", "transition", "delete-checkpoint"]);
     }
 
     // ========== OnCancelledAsync ==========
@@ -384,13 +384,14 @@ public class DeploymentCompletionHandlerTests
         _serverTaskService.Verify(s => s.TransitionStateAsync(1, TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once, "the pause is attempted under this run's lease only");
     }
 
-    // A run whose lease was taken over (silently, e.g. after a VM freeze) learns it only from the owned state write: the completion record and the
-    // remote CancelScript are side effects of the outcome and belong to the new owner, so they must come after that write succeeded.
+    // A run whose lease was taken over (silently, e.g. after a VM freeze) learns it only from the owned state write: the completion record is a side
+    // effect of the outcome and belongs to the new owner, so it must come after that write succeeded. (Cancelling the scripts of a Cancelling task is
+    // not: whichever run owns the task cancels the same scripts, so the cancel path does it first — see OnCancelled_CancelsTheInFlightAgentScripts_….)
     [Theory]
     [InlineData(CompletionOutcome.Success)]
     [InlineData(CompletionOutcome.Failure)]
     [InlineData(CompletionOutcome.Cancelled)]
-    public async Task WhenAnotherRunHoldsTheLease_NoCompletionRecordAndNoRemoteCancelIsMade(CompletionOutcome outcome)
+    public async Task WhenAnotherRunHoldsTheLease_NoCompletionRecordIsWritten(CompletionOutcome outcome)
     {
         TaskIsNowLeasedToAnotherRun(TaskState.Executing);
         var canceller = new Mock<IInFlightScriptCanceller>();
@@ -399,7 +400,6 @@ public class DeploymentCompletionHandlerTests
         await Drive(sut, outcome, CreateContext());
 
         _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
-        canceller.Verify(c => c.CancelAllAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]

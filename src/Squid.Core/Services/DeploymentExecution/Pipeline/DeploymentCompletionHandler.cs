@@ -46,12 +46,14 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
 
+        // Scripts first, so a task that reaches Cancelled never has an agent script left running (a crash between the two would otherwise orphan it).
+        // Safe even from a run that lost the lease: the task is Cancelling, and whichever run owns it cancels the same scripts.
+        await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
+
         if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
 
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
-
-        await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }

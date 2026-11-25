@@ -76,9 +76,10 @@ public class IntegrationLeaseOwnershipOnExit : DeploymentFixtureBase
         (await CompletionCountAsync(seeded.TaskId).ConfigureAwait(false)).ShouldBe(ownsTheLease ? 1 : 0);
     }
 
-    // A cancelled outcome from a run that lost the task must not cancel the scripts the new owner is running (or re-attached to).
+    // A cancelled outcome from a run that lost the task still cancels the task's agent scripts (the task is Cancelling, so its owner cancels the same
+    // scripts; doing it first means Cancelled never coexists with a live script), but it leaves the row, its outcome and its checkpoint to the owner.
     [Fact]
-    public async Task ACancelledOutcomeFromARunThatLostTheTask_DoesNotCancelTheAgentScript()
+    public async Task ACancelledOutcomeFromARunThatLostTheTask_CancelsTheScriptsButLeavesTheRowToItsOwner()
     {
         var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
         var agent = new BlockingAgent();
@@ -92,14 +93,16 @@ public class IntegrationLeaseOwnershipOnExit : DeploymentFixtureBase
 
             await SetRowAsync(seeded.TaskId, TaskState.Cancelling, "usurper:1:run").ConfigureAwait(false);
 
-            await DriveOutcomeAsync(seeded.TaskId, CompletionOutcome.Cancelled, "stale:1:run").ConfigureAwait(false);
+            await ReportCancelledFromAsync(pod, seeded.TaskId, "stale:1:run").ConfigureAwait(false);
 
-            agent.CancelCalls.ShouldBe(0, "the script belongs to the run that owns the task now");
+            agent.CancelCalls.ShouldBeGreaterThan(0, "the task is being cancelled: its scripts must be stopped whichever run reports it");
+
+            var row = await LoadTaskAsync(seeded.TaskId).ConfigureAwait(false);
+            row.State.ShouldBe(TaskState.Cancelling);
+            row.LeaseOwner.ShouldBe("usurper:1:run");
 
             await run.WaitAsync(Bound).ConfigureAwait(false);
         }, extraRegistration: b => RegisterFastLease(b, agent)).ConfigureAwait(false);
-
-        agent.CancelCalls.ShouldBe(0);
     }
 
     // A takeover run of the same task in the same process (the first run's lease went stale) is the task's cancel target: the user's cancel ends it, and the
@@ -157,6 +160,15 @@ public class IntegrationLeaseOwnershipOnExit : DeploymentFixtureBase
                 default: await handler.OnCancelledAsync(ctx, CancellationToken.None).ConfigureAwait(false); break;
             }
         });
+
+    // Resolved from the run's own scope, so the remote CancelScript reaches this test's agent (a fresh container would not).
+    private static async Task ReportCancelledFromAsync(ILifetimeScope scope, int taskId, string runOwner)
+    {
+        var deployment = await scope.Resolve<IDeploymentDataProvider>().GetDeploymentByTaskIdAsync(taskId, CancellationToken.None).ConfigureAwait(false);
+        var ctx = new DeploymentTaskContext { ServerTaskId = taskId, Deployment = deployment, LeaseOwner = runOwner };
+
+        await scope.Resolve<IDeploymentCompletionHandler>().OnCancelledAsync(ctx, CancellationToken.None).ConfigureAwait(false);
+    }
 
     private static void RegisterFastLease(ContainerBuilder builder, BlockingAgent agent)
     {
