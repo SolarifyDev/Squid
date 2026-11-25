@@ -293,41 +293,104 @@ function Invoke-WithRetry {
 # that stops with a non-zero exit code after 10s. During the swap / Invoke-Rollback that would
 # start a failing NEW binary (or the half-restored one) mid-swap and race the junction repoint /
 # Move-Item. So Phase B turns the flag OFF before it stops the service and the `finally` at the
-# bottom turns it back ON on EVERY exit path: success, rollback and failure. The restart actions
+# bottom puts it back on EVERY exit path: success, rollback and failure. The restart actions
 # themselves (`sc failure`) are never touched here.
+#
+# The `finally` does not run when this process is hard-killed (host reboot, terminated process), which
+# would leave the flag off forever. So before suspending, the ORIGINAL flag value is recorded in a marker
+# file next to the lock; the finally restores that value (an operator who deliberately runs with the flag
+# off keeps it off) and the agent re-applies it at startup when it finds a marker whose owner is gone
+# (ScmRecoveryReassertion). Marker name + JSON keys are a contract with FailureFlagMarker.cs.
 $script:FailureFlagSuspended = $false
+$script:OriginalFailureFlag = 1
+$FAILURE_FLAG_MARKER = Join-Path $STATUS_DIR ('failureflag-suspended-' + $SERVICE_NAME + '.json')
 # Settle window: WindowsServiceHost.DefaultRestartDelayMs (10s) + margin.
 $SCM_RESTART_SETTLE_SECONDS = 15
+
+# 1 / 0 from `sc qfailureflag`, $null when it cannot be read.
+function Get-ScmFailureFlag {
+    try {
+        $out = (& sc.exe qfailureflag $SERVICE_NAME 2>&1 | Out-String)
+
+        if ($LASTEXITCODE -ne 0) { return $null }
+        if ($out -match ':\s*TRUE\b') { return 1 }
+        if ($out -match ':\s*FALSE\b') { return 0 }
+    }
+    catch { }
+
+    return $null
+}
+
+# The original recorded by an earlier, hard-killed run wins: the flag currently reads 0 only because that run
+# suspended it, so it is not the operator's value. Otherwise read it; unreadable defaults to the installed policy (1).
+function Resolve-OriginalFailureFlag {
+    try {
+        if (Test-Path $FAILURE_FLAG_MARKER) {
+            $prior = Get-Content -Path $FAILURE_FLAG_MARKER -Raw -ErrorAction Stop | ConvertFrom-Json
+
+            if ($prior.originalFlag -eq 0 -or $prior.originalFlag -eq 1) { return [int]$prior.originalFlag }
+        }
+    }
+    catch { }
+
+    $current = Get-ScmFailureFlag
+
+    if ($null -eq $current) { return 1 }
+
+    return $current
+}
+
+function Write-FailureFlagMarker {
+    $ownerStartTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+    $json = @{ service = $SERVICE_NAME; originalFlag = $script:OriginalFailureFlag; ownerPid = $PID; ownerStartUtcTicks = $ownerStartTicks } | ConvertTo-Json -Compress
+    $temp = "$FAILURE_FLAG_MARKER.tmp"
+
+    Set-Content -Path $temp -Value $json -Encoding ASCII -Force
+    Move-Item -Path $temp -Destination $FAILURE_FLAG_MARKER -Force
+}
+
+function Remove-FailureFlagMarker {
+    Remove-Item -Path $FAILURE_FLAG_MARKER -Force -ErrorAction SilentlyContinue
+}
 
 function Suspend-FailureActions {
     if ($null -eq (Get-Service -Name $SERVICE_NAME -ErrorAction SilentlyContinue)) { return }
 
     try {
+        $script:OriginalFailureFlag = Resolve-OriginalFailureFlag
+        Write-FailureFlagMarker
         & sc.exe failureflag $SERVICE_NAME 0 2>&1 | Out-Null
 
         if ($LASTEXITCODE -eq 0) {
             $script:FailureFlagSuspended = $true
-            Append-UpgradeLog "[upgrade] Suspended SCM failure actions for the swap window"
+            Append-UpgradeLog "[upgrade] Suspended SCM failure actions for the swap window (original flag: $($script:OriginalFailureFlag))"
         }
         else {
+            Remove-FailureFlagMarker
             Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag 0 exit $LASTEXITCODE -- SCM may restart a failing binary during the swap"
         }
     }
     catch {
+        Remove-FailureFlagMarker
         Append-UpgradeLog "::warning:: [upgrade] Could not suspend failure actions (best-effort): $($_.Exception.Message)"
     }
 }
 
-# Re-enables restart-on-failure. Soft-fail.
+# Sets the restart-on-failure flag (default 1: the policy `service install` applies). Soft-fail. The marker is
+# only stale once the flag is back at its final value, so it is removed on success and kept on failure for the
+# agent's startup re-assert.
 function Set-ScmRecoveryPolicy {
+    param([int] $Flag = 1)
+
     try {
-        & sc.exe failureflag $SERVICE_NAME 1 2>&1 | Out-Null
+        & sc.exe failureflag $SERVICE_NAME $Flag 2>&1 | Out-Null
 
         if ($LASTEXITCODE -ne 0) {
-            Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag exit $LASTEXITCODE -- a fatal agent error will not auto-restart until you run: sc failureflag $SERVICE_NAME 1"
+            Append-UpgradeLog "::warning:: [upgrade] sc.exe failureflag exit $LASTEXITCODE -- a fatal agent error will not auto-restart until you run: sc failureflag $SERVICE_NAME $Flag"
         }
         else {
-            Append-UpgradeLog "[upgrade] Enabled restart-on-failure flag for $SERVICE_NAME"
+            Remove-FailureFlagMarker
+            Append-UpgradeLog "[upgrade] Set SCM failure-actions flag for $SERVICE_NAME to $Flag"
         }
     }
     catch {
@@ -335,11 +398,12 @@ function Set-ScmRecoveryPolicy {
     }
 }
 
+# Rollback / failure exits: put back what was there before the suspend, not a hardcoded 1.
 function Restore-FailureActions {
     if (-not $script:FailureFlagSuspended) { return }
 
     $script:FailureFlagSuspended = $false
-    Set-ScmRecoveryPolicy
+    Set-ScmRecoveryPolicy -Flag $script:OriginalFailureFlag
 }
 
 # A service that FAILED (STOPPED with a non-zero WIN32_EXIT_CODE) may have an SCM restart action

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Serilog;
+using Squid.Tentacle.ServiceHost;
 
 namespace Squid.Tentacle.Core;
 
@@ -49,12 +50,14 @@ public sealed class TentacleScmHostedService : BackgroundService
     private readonly string[] _args;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Action<int>? _reportServiceExitCode;
+    private readonly Action _reassertScmRecovery;
 
-    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null)
+    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null, Action? reassertScmRecovery = null)
     {
         _args = args ?? throw new ArgumentNullException(nameof(args));
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
         _reportServiceExitCode = reportServiceExitCode;
+        _reassertScmRecovery = reassertScmRecovery ?? (() => ScmRecoveryReassertion.RunForThisHost());
     }
 
     /// <summary>
@@ -73,6 +76,10 @@ public sealed class TentacleScmHostedService : BackgroundService
 
         Log.Information("Squid Tentacle launched under SCM lifetime — args: [{Args}]",
             string.Join(", ", _args));
+
+        // An upgrade killed mid-swap leaves the SCM failure-actions flag suspended; put it back before anything
+        // else can fail so this very run is already covered by the restart policy. Best-effort, never throws.
+        _reassertScmRecovery();
 
         try
         {

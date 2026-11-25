@@ -59,7 +59,9 @@ public sealed class WindowsUpgradeScriptResourceTests
     {
         var script = LoadResource();
 
-        script.ShouldContain("& sc.exe failureflag $SERVICE_NAME 1");
+        script.ShouldContain("function Set-ScmRecoveryPolicy");
+        script.ShouldContain("param([int] $Flag = 1)");
+        script.ShouldContain("& sc.exe failureflag $SERVICE_NAME $Flag");
         script.All(c => c < 128).ShouldBeTrue();
     }
 
@@ -110,6 +112,69 @@ public sealed class WindowsUpgradeScriptResourceTests
         finallyBlock.IndexOf("Restore-FailureActions", System.StringComparison.Ordinal)
             .ShouldBeLessThan(finallyBlock.IndexOf("Remove-Item -Path $LOCK_FILE", System.StringComparison.Ordinal));
         script.ShouldContain("$script:FailureFlagSuspended = $true", customMessage: "restore must only act when the suspend succeeded");
+    }
+
+    // -- hard-kill safety: the suspended flag must be recoverable without the finally block ----
+
+    [Fact]
+    public void Suspend_RecordsTheOriginalFlagInAMarker_BeforeTurningTheFlagOff()
+    {
+        var script = LoadResource();
+        var suspend = script.Substring(script.IndexOf("function Suspend-FailureActions", System.StringComparison.Ordinal));
+
+        var resolve = suspend.IndexOf("Resolve-OriginalFailureFlag", System.StringComparison.Ordinal);
+        var marker = suspend.IndexOf("Write-FailureFlagMarker", System.StringComparison.Ordinal);
+        var off = suspend.IndexOf("& sc.exe failureflag $SERVICE_NAME 0", System.StringComparison.Ordinal);
+
+        resolve.ShouldBeGreaterThan(-1);
+        marker.ShouldBeGreaterThan(resolve);
+        off.ShouldBeGreaterThan(marker, "a kill between the flag going off and the marker existing would be unrecoverable");
+    }
+
+    [Fact]
+    public void Restore_PutsBackTheOriginalValue_NotAHardcodedOne()
+    {
+        var script = LoadResource();
+        var restore = script.Substring(script.IndexOf("function Restore-FailureActions", System.StringComparison.Ordinal), 300);
+
+        restore.ShouldContain("Set-ScmRecoveryPolicy -Flag $script:OriginalFailureFlag");
+    }
+
+    [Fact]
+    public void Resolve_PrefersAnEarlierKilledRunsRecordedOriginal_OverTheCurrentSuspendedReading()
+    {
+        var script = LoadResource();
+        var resolve = script.Substring(script.IndexOf("function Resolve-OriginalFailureFlag", System.StringComparison.Ordinal), 800);
+
+        resolve.IndexOf("Get-Content -Path $FAILURE_FLAG_MARKER", System.StringComparison.Ordinal)
+            .ShouldBeLessThan(resolve.IndexOf("Get-ScmFailureFlag", System.StringComparison.Ordinal),
+                "the live flag reads 0 only because the killed run suspended it - reading it first would record the wrong original");
+    }
+
+    [Fact]
+    public void FailureFlagMarker_ContractWithTheAgent_IsPinned()
+    {
+        // Producer (this script) and consumer (FailureFlagMarker / ScmRecoveryReassertion in the agent) are separate
+        // codebases joined only by this file: drift here silently disables the startup self-heal.
+        var script = LoadResource();
+
+        script.ShouldContain($"'{Squid.Tentacle.ServiceHost.FailureFlagMarker.FilePrefix}'");
+        script.ShouldContain($"{Squid.Tentacle.ServiceHost.FailureFlagMarker.FileExtension}')");
+        script.ShouldContain("$STATUS_DIR  = Join-Path $env:ProgramData 'Squid\\Tentacle\\upgrade'");
+        Squid.Tentacle.ServiceHost.FailureFlagMarker.UpgradeSubDirectory.ShouldBe("upgrade");
+
+        foreach (var key in new[] { "service", nameof(Squid.Tentacle.ServiceHost.FailureFlagMarker.OriginalFlag), nameof(Squid.Tentacle.ServiceHost.FailureFlagMarker.OwnerPid), nameof(Squid.Tentacle.ServiceHost.FailureFlagMarker.OwnerStartUtcTicks) })
+            script.ShouldContain($"{char.ToLowerInvariant(key[0])}{key.Substring(1)} = ", customMessage: $"marker JSON key '{key}' missing from Write-FailureFlagMarker");
+    }
+
+    [Fact]
+    public void Marker_IsClearedOnlyOnceTheFlagIsBackAtItsFinalValue()
+    {
+        var script = LoadResource();
+        var setPolicy = script.Substring(script.IndexOf("function Set-ScmRecoveryPolicy", System.StringComparison.Ordinal), 900);
+
+        setPolicy.IndexOf("Remove-FailureFlagMarker", System.StringComparison.Ordinal)
+            .ShouldBeGreaterThan(setPolicy.IndexOf("$LASTEXITCODE -ne 0", System.StringComparison.Ordinal), "removed only in the success branch; a failed sc call must leave it for the agent's startup re-assert");
     }
 
     [Fact]
