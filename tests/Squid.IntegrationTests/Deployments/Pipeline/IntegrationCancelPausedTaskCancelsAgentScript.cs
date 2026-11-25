@@ -1,5 +1,6 @@
 using Autofac;
 using Halibut;
+using Halibut.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -90,6 +91,38 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
         agents.V1.CancelCalls.ShouldBe(0);
     }
 
+    // Agent downgraded out-of-band while the task was paused (script pods survive a helm rollback): the V2 cancel finds no service, the agent
+    // answers capabilities without V2, so the same ticket must be cancelled over V1 - not left running while the checkpoint is released.
+    [Fact]
+    public async Task CancelAfterTheAgentWasDowngraded_CancelsTheV2TicketOverV1()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        var agents = new Agents { AdvertiseV2For = seeded.DispatchSlot.MachineId };
+        await PauseAsync(seeded, agents).ConfigureAwait(false);
+        agents.V2.CancelFailure = new ServiceNotFoundHalibutClientException("no such service");
+        agents.AgentAdvertisesV2 = false;
+
+        await Run<IServerTaskControlService>(s => s.CancelTaskAsync(seeded.TaskId), agents.Register).ConfigureAwait(false);
+
+        agents.V1.CancelledTickets.ShouldBe(agents.V2.StartedTickets, "the downgraded agent must be told to cancel the ticket over V1");
+        await AssertStateAsync(seeded.TaskId, TaskState.Cancelled).ConfigureAwait(false);
+    }
+
+    // A transient V2 failure while the agent still advertises V2 is an outage, not a downgrade: no V1 guess.
+    [Fact]
+    public async Task TransientV2CancelFailure_WhileTheAgentStillAdvertisesV2_DoesNotFallBackToV1()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        var agents = new Agents { AdvertiseV2For = seeded.DispatchSlot.MachineId };
+        await PauseAsync(seeded, agents).ConfigureAwait(false);
+        agents.V2.CancelFailure = new HalibutClientException("connection reset");
+
+        await Run<IServerTaskControlService>(s => s.CancelTaskAsync(seeded.TaskId), agents.Register).ConfigureAwait(false);
+
+        agents.V1.CancelCalls.ShouldBe(0);
+        await AssertStateAsync(seeded.TaskId, TaskState.Cancelled).ConfigureAwait(false);
+    }
+
     [Fact]
     public async Task UnreachableAgent_DoesNotBlockTheCancel_TaskStillEndsCancelled_WithinABound()
     {
@@ -176,6 +209,7 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
         public CancelRecordingV1Agent V1 { get; } = new();
         public CancelRecordingV2Agent V2 { get; } = new();
         public int AdvertiseV2For { get; set; } = -1;
+        public volatile bool AgentAdvertisesV2 = true;
 
         public void Register(ContainerBuilder b)
         {
@@ -193,9 +227,16 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
 
         public IAsyncScriptServiceV2 CreateScriptServiceV2Client(ServiceEndPoint endpoint) => V2;
 
-        public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint) => throw new NotSupportedException();
+        public IAsyncCapabilitiesService CreateCapabilitiesClient(ServiceEndPoint endpoint) => new CapabilitiesAgent(this);
 
         public IAsyncClientFileTransferService CreateFileTransferClient(ServiceEndPoint endpoint) => throw new NotSupportedException();
+    }
+
+    // What the agent answers when asked what it speaks now.
+    private sealed class CapabilitiesAgent(Agents agents) : IAsyncCapabilitiesService
+    {
+        public Task<CapabilitiesResponse> GetCapabilitiesAsync(CapabilitiesRequest request)
+            => Task.FromResult(new CapabilitiesResponse { AgentVersion = "2.0.0", SupportedServices = agents.AgentAdvertisesV2 ? new List<string> { "IScriptService/v1", ScriptServiceCapabilities.V2 } : new List<string> { "IScriptService/v1" } });
     }
 
     // Script stays Running forever (the timeout pauses it); records every CancelScript.
@@ -233,6 +274,7 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
     {
         public List<string> StartedTickets { get; } = new();
         public List<string> CancelledTickets { get; } = new();
+        public volatile Exception CancelFailure;
 
         public Task<ScriptStatusResponseV2> StartScriptAsync(StartScriptCommandV2 command)
         {
@@ -245,6 +287,8 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
 
         public Task<ScriptStatusResponseV2> CancelScriptAsync(CancelScriptCommandV2 command)
         {
+            if (CancelFailure != null) throw CancelFailure;
+
             lock (CancelledTickets) CancelledTickets.Add(command.Ticket.TaskId);
 
             return Task.FromResult(Resp(command.Ticket, ScriptStateV2.Completed));
