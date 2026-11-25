@@ -10,11 +10,23 @@ public class ServerTaskSetting : IConfigurationSetting
 
         Lease = section.GetSection("Lease").Get<ServerTaskLeaseSettings>() ?? new ServerTaskLeaseSettings();
         CancelWatch = section.GetSection("CancelWatch").Get<ServerTaskCancelWatchSettings>() ?? new ServerTaskCancelWatchSettings();
+        TerminalWrite = section.GetSection("TerminalWrite").Get<ServerTaskTerminalWriteSettings>() ?? new ServerTaskTerminalWriteSettings();
     }
 
     public ServerTaskLeaseSettings Lease { get; set; } = new();
 
     public ServerTaskCancelWatchSettings CancelWatch { get; set; } = new();
+
+    public ServerTaskTerminalWriteSettings TerminalWrite { get; set; } = new();
+}
+
+public class ServerTaskTerminalWriteSettings
+{
+    /// <summary>How many times the transaction that writes a task's terminal state and its DeploymentCompletion is tried when the database fails transiently (a dropped connection, a serialization failure) before the failure is surfaced. Non-positive values fall back to 3.</summary>
+    public int MaxAttempts { get; set; } = 3;
+
+    /// <summary>The wait before the first retry; each further retry waits three times as long. Negative values fall back to 200.</summary>
+    public int RetryDelayMilliseconds { get; set; } = 200;
 }
 
 public class ServerTaskLeaseSettings
