@@ -51,6 +51,7 @@ public sealed partial class FailoverPendingRequestQueue
     private async Task<ResponseMessage> QueueOnRedisAsync(IPendingRequestQueue redis, RequestMessage request, CancellationToken ct)
     {
         Interlocked.Increment(ref _onRedis);
+        SignalRedisRequestQueued();
 
         try
         {
@@ -63,6 +64,12 @@ public sealed partial class FailoverPendingRequestQueue
     }
 
     private bool HasRequestsOnRedis => Volatile.Read(ref _onRedis) > 0;
+
+    /// <summary>Cancelled when this pod puts a request on Redis. Read it before <see cref="HasRequestsOnRedis"/>, so a request queued between the two reads is not missed (same contract as <see cref="IReplicaPresence.OtherReplicaAppeared"/>).</summary>
+    private CancellationToken RedisRequestQueued => Volatile.Read(ref _redisRequestQueued).Token;
+
+    // Called after the count is raised: a reader that took the token before the swap is woken by the cancel, one that takes it after sees the count.
+    private void SignalRedisRequestQueued() => Interlocked.Exchange(ref _redisRequestQueued, new CancellationTokenSource()).Cancel();
 
     /// <summary>
     /// Waits in the local queue. If the request was queued here only because a poller of the agent was attached, and that poller is then gone (the agent reconnected
