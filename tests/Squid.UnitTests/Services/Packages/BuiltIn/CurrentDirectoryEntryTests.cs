@@ -70,41 +70,91 @@ public class CurrentDirectoryEntryTests : IDisposable
         }
     }
 
+    // The extractor's naming is what every external-feed deployment (for example the Kubernetes YAML handler, which reads Files) already depends on. It was
+    // deliberately left alone when the safety check learned about "./": a leading "./" only disappears through its wrapper-directory rule.
     [Fact]
-    public void Extractor_GivesDotSlashEntriesTheSameNamesAsUnprefixedOnes_ForTarGzAndZip()
+    public void Extractor_NamingForDotSlashArchives_IsExactlyWhatItAlwaysWas()
     {
-        var prefixedTar = PackageArchiveExtractor.Extract(TestArchives.TarGz(("./pkg/values.yaml", "a: 1"), ("./pkg/sub/b.json", "{}")));
-        var plainTar = PackageArchiveExtractor.Extract(TestArchives.TarGz(("pkg/values.yaml", "a: 1"), ("pkg/sub/b.json", "{}")));
-        var prefixedZip = PackageArchiveExtractor.Extract(TestArchives.Zip(("./pkg/values.yaml", "a: 1"), ("./pkg/sub/b.json", "{}")));
-        var plainZip = PackageArchiveExtractor.Extract(TestArchives.Zip(("pkg/values.yaml", "a: 1"), ("pkg/sub/b.json", "{}")));
+        var entries = new[] { ("./manifests/a.yaml", "a: 1"), ("./base/deployment.yaml", "b: 1"), ("./overlay/deployment.yaml", "c: 1"), ("./values.yaml", "d: 1"), ("./top/", "") };
 
-        prefixedTar.Keys.OrderBy(k => k).ShouldBe(plainTar.Keys.OrderBy(k => k));
-        prefixedZip.Keys.OrderBy(k => k).ShouldBe(plainZip.Keys.OrderBy(k => k));
-        prefixedTar.Keys.OrderBy(k => k).ShouldBe(["sub/b.json", "values.yaml"]);
+        foreach (var archive in new[] { TestArchives.TarGz(entries), TestArchives.Zip(entries) })
+        {
+            var files = PackageArchiveExtractor.Extract(archive);
+
+            files.Keys.OrderBy(k => k).ShouldBe(["base/deployment.yaml", "manifests/a.yaml", "overlay/deployment.yaml", "values.yaml"]);
+            files["base/deployment.yaml"].ShouldBe(System.Text.Encoding.UTF8.GetBytes("b: 1"));
+            files["overlay/deployment.yaml"].ShouldBe(System.Text.Encoding.UTF8.GetBytes("c: 1"));
+        }
     }
 
     [Fact]
-    public void Extractor_RootFilesOfADotSlashArchive_AreUnprefixed()
+    public async Task ExternalHttpFeed_PackageWithDotSlashEntries_KeepsItsNamesThroughTheRealDownloader()
     {
-        PackageArchiveExtractor.Extract(TarGzWithDirs()).Keys.OrderBy(k => k).ShouldBe(["app.yaml", "package.json"]); // assets/ is the wrapper directory the extractor has always stripped
-        PackageArchiveExtractor.Extract(TestArchives.Zip(("./package.json", "{}"), ("./values.yaml", "a: 1"))).Keys.OrderBy(k => k).ShouldBe(["package.json", "values.yaml"]);
+        var bytes = TestArchives.TarGz(("./manifests/a.yaml", "a: 1"), ("./base/deployment.yaml", "b"), ("./overlay/deployment.yaml", "c"));
+        var factory = new Mock<Squid.Core.Services.Http.ISquidHttpClientFactory>();
+
+        factory.Setup(f => f.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>())).Returns(() => new System.Net.Http.HttpClient(new StubHandler(bytes)));
+
+        var fetcher = PackageContentFetchWiring(factory.Object);
+        var result = await fetcher.FetchAsync(new Squid.Core.Persistence.Entities.Deployments.ExternalFeed { Id = 1, FeedType = "Generic", FeedUri = "https://feed.example" }, "pkg", "1.0.0", CancellationToken.None);
+
+        result.Files.Keys.OrderBy(k => k).ShouldBe(["base/deployment.yaml", "manifests/a.yaml", "overlay/deployment.yaml"]);
+    }
+
+    private static Squid.Core.Services.DeploymentExecution.Packages.IPackageContentFetcher PackageContentFetchWiring(Squid.Core.Services.Http.ISquidHttpClientFactory factory)
+    {
+        var downloader = new FeedPackageDownloader(factory);
+
+        return new RoutingPackageContentFetcher([], new Squid.Core.Services.DeploymentExecution.Packages.Sources.Generic.GenericFeedPackageSource(downloader));
+    }
+
+    private sealed class StubHandler(byte[] body) : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.ByteArrayContent(body) });
+        }
     }
 
     [Fact]
-    public void ExternalFeedPackage_WithDotSlashEntries_ExtractsTheSameNamesThroughTheHttpSource()
+    public void Extractor_TwoEntriesWithOneName_StillLastWins_AndWarns()
     {
-        var bytes = TestArchives.TarGz(("./Chart.yaml", "name: x"), ("./values.yaml", "a: 1"));
-        var viaPlain = PackageArchiveExtractor.Extract(TestArchives.TarGz(("Chart.yaml", "name: x"), ("values.yaml", "a: 1")));
+        var sink = new CollectingSink();
+        var previous = Serilog.Log.Logger;
 
-        PackageArchiveExtractor.Extract(bytes).Keys.OrderBy(k => k).ShouldBe(viaPlain.Keys.OrderBy(k => k));
-        PackageArchiveExtractor.Extract(bytes).Keys.OrderBy(k => k).ShouldBe(["Chart.yaml", "values.yaml"]);
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration().WriteTo.Sink(sink).CreateLogger();
+
+        try
+        {
+            var files = PackageArchiveExtractor.Extract(TestArchives.Zip(("a/x.yaml", "first"), ("b/x.yaml", "second")));
+
+            files.Keys.ShouldBe(["x.yaml"]);
+            files["x.yaml"].ShouldBe(System.Text.Encoding.UTF8.GetBytes("second"));
+            sink.Warnings.ShouldContain(w => w.Contains("x.yaml"));
+        }
+        finally
+        {
+            Serilog.Log.Logger = previous;
+        }
+    }
+
+    private sealed class CollectingSink : Serilog.Core.ILogEventSink
+    {
+        public List<string> Warnings { get; } = new();
+
+        public void Emit(Serilog.Events.LogEvent logEvent)
+        {
+            if (logEvent.Level == Serilog.Events.LogEventLevel.Warning) Warnings.Add(logEvent.RenderMessage());
+        }
     }
 
     [Theory]
-    [InlineData(BuiltInPackageFormat.Zip)]
-    [InlineData(BuiltInPackageFormat.TarGz)]
-    public void TextReader_FindsDotSlashManifests_AndListsThemAtTheRoot(BuiltInPackageFormat format)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TextReader_FindsDotSlashManifests_AndListsThemAtTheRoot(bool zip)
     {
+        var format = zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz;
+
         var entries = new[] { ("./", ""), ("./package.json", "{\"version\":\"4.5.6\"}"), ("./src/x.txt", "x") };
         var path = Write(format == BuiltInPackageFormat.Zip ? TestArchives.Zip(entries) : TestArchives.TarGz(entries));
         var reader = new PackageArchiveTextReader(path, format);

@@ -25,13 +25,11 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     {
         var provider = ResolveProvider(command.Kind);
         var name = RequireName(command.Kind, command.Name);
-        var secrets = command.Secrets ?? new Dictionary<string, string>();
-
-        EnsureSettingsValid(provider, command.Properties, secrets, new Dictionary<string, string>());
+        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, StoredSecrets.None);
 
         await EnsureNameFreeAsync(name, null, ct).ConfigureAwait(false);
 
-        var store = new PackageStore { Name = name, Kind = command.Kind, Properties = SerializeProperties(command.Properties), Secret = PackageStoreConfigurationMapper.SerializeSettings(secrets) };
+        var store = new PackageStore { Name = name, Kind = command.Kind, Properties = SerializeProperties(configuration.Properties), Secret = PackageStoreConfigurationMapper.SerializeSettings(configuration.Secrets) };
 
         await dataProvider.AddAsync(store, ct).ConfigureAwait(false);
 
@@ -43,18 +41,17 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var store = await LoadAsync(command.Id, ct).ConfigureAwait(false);
         var provider = ResolveProvider(store.Kind);
         var name = RequireName(store.Kind, command.Name);
-        var stored = PackageStoreConfigurationMapper.ParseSettings(store.Secret);
-        var secrets = command.Secrets ?? new Dictionary<string, string>();
-
-        EnsureSettingsValid(provider, command.Properties, secrets, stored);
+        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, SelectReusable(provider, command.Properties, store));
 
         await EnsureNameFreeAsync(name, store.Id, ct).ConfigureAwait(false);
 
-        store.Name = name;
-        store.Properties = SerializeProperties(command.Properties);
-        store.Secret = PackageStoreConfigurationMapper.SerializeSettings(PackageStoreSettings.MergeSecrets(stored, secrets));
+        var settingsChanged = !SameSettings(configuration.Properties, PackageStoreConfigurationMapper.ParseSettingsLeniently(store.Properties)) || !SameSettings(configuration.Secrets, PackageStoreConfigurationMapper.ParseSettingsLeniently(store.Secret));
 
-        await dataProvider.UpdateAsync(store, ct).ConfigureAwait(false);
+        store.Name = name;
+        store.Properties = SerializeProperties(configuration.Properties);
+        store.Secret = PackageStoreConfigurationMapper.SerializeSettings(configuration.Secrets);
+
+        await dataProvider.UpdateAsync(store, settingsChanged, ct).ConfigureAwait(false);
 
         return await GetAsync(store.Id, ct).ConfigureAwait(false);
     }
@@ -70,9 +67,12 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
 
         var deleted = await dataProvider.DeleteIfNotDefaultAsync(id, ct).ConfigureAwait(false);
 
-        // Not deleted although it existed and was not the default a moment ago: it was made the default in between.
-        if (!deleted)
-            throw new DefaultPackageStoreDeletionException(id);
+        if (deleted) return;
+
+        // Not deleted although it existed and was not the default a moment ago: it was removed, or made the default, in between.
+        await LoadAsync(id, ct).ConfigureAwait(false);
+
+        throw new DefaultPackageStoreDeletionException(id);
     }
 
     public async Task<PackageStoreDto> SetDefaultAsync(int id, CancellationToken ct)
@@ -90,7 +90,9 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var store = await LoadAsync(id, ct).ConfigureAwait(false);
         var provider = ResolveProvider(store.Kind);
 
-        var result = await provider.TestAsync(PackageStoreConfigurationMapper.ToConfiguration(store), ct).ConfigureAwait(false);
+        var result = await TestSavedAsync(provider, store, ct).ConfigureAwait(false);
+
+        result.Warnings = BuildWarnings(provider, ReadConfiguration(store, new List<string>()));
 
         await dataProvider.RecordTestResultAsync(id, result.Success, result.Message, ct).ConfigureAwait(false);
 
@@ -100,14 +102,14 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     public async Task<PackageBlobStoreTestResult> TestSettingsAsync(TestPackageStoreSettingsCommand command, CancellationToken ct)
     {
         var provider = ResolveProvider(command.Kind);
-        var stored = await LoadStoredSecretsAsync(command, ct).ConfigureAwait(false);
-        var secrets = command.Secrets ?? new Dictionary<string, string>();
+        var stored = await LoadStoredSecretsAsync(provider, command, ct).ConfigureAwait(false);
+        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, stored);
 
-        EnsureSettingsValid(provider, command.Properties, secrets, stored);
+        var result = await provider.TestAsync(configuration, ct).ConfigureAwait(false);
 
-        var configuration = new PackageBlobStoreConfiguration { Properties = command.Properties ?? new Dictionary<string, string>(), Secrets = PackageStoreSettings.MergeSecrets(stored, secrets) };
+        result.Warnings = BuildWarnings(provider, configuration);
 
-        return await provider.TestAsync(configuration, ct).ConfigureAwait(false);
+        return result;
     }
 
     public List<PackageStoreProviderDescriptor> DescribeProviders()
@@ -125,5 +127,23 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     private IPackageBlobStoreProvider ResolveProvider(string kind)
     {
         return providers.FirstOrDefault(p => p.Kind == kind) ?? throw new PackageStoreProviderNotFoundException(kind);
+    }
+
+    // A saved row whose settings cannot be read is a failed test, not an error: the operator opens it to fix it.
+    private static async Task<PackageBlobStoreTestResult> TestSavedAsync(IPackageBlobStoreProvider provider, PackageStore store, CancellationToken ct)
+    {
+        try
+        {
+            return await provider.TestAsync(PackageStoreConfigurationMapper.ToConfiguration(store), ct).ConfigureAwait(false);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            return new PackageBlobStoreTestResult { Success = false, Message = $"The saved settings are invalid: {ex.Message}" };
+        }
+    }
+
+    private static bool SameSettings(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b)
+    {
+        return a.Count == b.Count && a.All(pair => b.TryGetValue(pair.Key, out var other) && other == pair.Value);
     }
 }

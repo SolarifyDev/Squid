@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Squid.Core.Setup;
 
 namespace Squid.Core.Services.Packages.Storage.Providers.FileSystem;
@@ -7,7 +8,7 @@ namespace Squid.Core.Services.Packages.Storage.Providers.FileSystem;
 /// (the approach of <see cref="DataVolumeInspector"/>). Returns a warning only when it can tell the folder is on the container's own filesystem or
 /// in an anonymous Docker volume; not Linux, no mountinfo, or any other mount (named volume, bind mount, host disk) gives none.
 /// </summary>
-public static class FileSystemRootPersistenceInspector
+public static partial class FileSystemRootPersistenceInspector
 {
     private const string OverlayType = "overlay";
 
@@ -57,8 +58,8 @@ public static class FileSystemRootPersistenceInspector
         return new MountEntry(Unescape(fields[4]), fields[3], fields[separator + 1]);
     }
 
-    // mountinfo writes a space in a path as \040.
-    private static string Unescape(string path) => path.Replace("\\040", " ");
+    // mountinfo writes a space, tab, newline or backslash in a path as a three-digit octal escape (\040, \011, \012, \134).
+    private static string Unescape(string path) => OctalEscape().Replace(path, m => ((char)Convert.ToInt32(m.Groups[1].Value, 8)).ToString());
 
     private static bool Contains(string mountPoint, string path)
     {
@@ -83,4 +84,7 @@ public static class FileSystemRootPersistenceInspector
     {
         public bool IsContainerRoot => MountPoint == "/" && FilesystemType == OverlayType;
     }
+
+    [GeneratedRegex(@"\\([0-7]{3})")]
+    private static partial Regex OctalEscape();
 }

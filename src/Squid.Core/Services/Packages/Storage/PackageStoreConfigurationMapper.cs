@@ -22,6 +22,19 @@ public static class PackageStoreConfigurationMapper
         return parsed.ToDictionary(pair => pair.Key, pair => pair.Value ?? string.Empty);
     }
 
+    /// <summary>Like <see cref="ParseSettings"/>, but a column that is not valid settings JSON counts as no settings, so a broken row can still be repaired by an edit.</summary>
+    public static Dictionary<string, string> ParseSettingsLeniently(string json)
+    {
+        try
+        {
+            return ParseSettings(json);
+        }
+        catch (JsonException)
+        {
+            return new Dictionary<string, string>();
+        }
+    }
+
     /// <summary>Null when there are no settings, so the column stays null rather than holding "{}".</summary>
     public static string SerializeSettings(IReadOnlyDictionary<string, string> settings)
     {

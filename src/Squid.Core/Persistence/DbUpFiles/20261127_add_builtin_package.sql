@@ -2,6 +2,35 @@
 -- version is one row of builtin_package that points at its file (store_id + blob_key) in a package store. Nothing reads or writes these tables until
 -- somebody pushes a package, so this changes no existing behaviour. Additive and re-runnable.
 
+-- Refuse to continue on data the index below cannot hold, with a message that says what to fix, instead of a raw index error. A feed type is matched exactly
+-- ('BuiltIn'), so a feed typed 'builtin' or 'BUILTIN' is neither the built-in feed nor allowed to stay next to it; and the built-in feed has no URI, so one that has
+-- a URI is a feed somebody created by hand and must not be adopted as the space's own.
+DO $$
+DECLARE
+    conflict text;
+BEGIN
+    SELECT string_agg('feed ' || id || ' (space ' || space_id || ') has the type "' || feed_type || '"', '; ') INTO conflict
+    FROM external_feed WHERE lower(feed_type) = 'builtin' AND feed_type <> 'BuiltIn';
+
+    IF conflict IS NOT NULL THEN
+        RAISE EXCEPTION 'Built-in feed migration cannot run: %. The type BuiltIn is reserved for the built-in package feed. Change the type of these feeds (or delete them) and start Squid again.', conflict;
+    END IF;
+
+    SELECT string_agg('space ' || space_id || ' has ' || n || ' feeds of type BuiltIn (ids ' || ids || ')', '; ') INTO conflict
+    FROM (SELECT space_id, count(*) AS n, string_agg(id::text, ', ') AS ids FROM external_feed WHERE feed_type = 'BuiltIn' GROUP BY space_id HAVING count(*) > 1) d;
+
+    IF conflict IS NOT NULL THEN
+        RAISE EXCEPTION 'Built-in feed migration cannot run: %. Each space may have only one feed of type BuiltIn. Change the type of the extra feeds (or delete them) and start Squid again.', conflict;
+    END IF;
+
+    SELECT string_agg('feed ' || id || ' (space ' || space_id || ') has the URI "' || feed_uri || '"', '; ') INTO conflict
+    FROM external_feed WHERE feed_type = 'BuiltIn' AND feed_uri <> '';
+
+    IF conflict IS NOT NULL THEN
+        RAISE EXCEPTION 'Built-in feed migration cannot run: %. A feed of type BuiltIn must have no URI, so it cannot be adopted as the space built-in feed. Change the type of these feeds (or delete them) and start Squid again.', conflict;
+    END IF;
+END $$;
+
 -- At most one built-in feed per space: the data seeder and the space-creation path insert with ON CONFLICT DO NOTHING against this index, so two
 -- replicas starting together cannot both create one.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_external_feed_builtin_per_space ON external_feed (space_id) WHERE feed_type = 'BuiltIn';

@@ -529,7 +529,7 @@ public class PublishRecipeDockerE2ETests
         {
             IPackageInspector[] inspectors = [new FileMarkerInspector(), new NodeInspector(), new SquidYamlInspector(), new DockerfileInspector()];
 
-            return await new PackageInspectionService(inspectors).InspectAsync(archive, BuiltInPackageFormat.Zip, CancellationToken.None);
+            return (await new BuiltInArchiveVerifier(new PackageInspectionService(inspectors)).VerifyAsync(archive, BuiltInPackageFormat.Zip, "pkg", CancellationToken.None)).Facts;
         }
 
         // The deployment's own substitution turns the two #{...} tokens into the extraction folder and the release number before the script reaches the target.

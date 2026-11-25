@@ -3,8 +3,14 @@ using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Publishing;
 
-public interface IPackageInspectionService : IScopedDependency
+internal interface IPackageInspectionService : IScopedDependency
 {
-    /// <summary>Runs every inspector over the archive at <paramref name="path"/>. Never throws for a bad package or a bad inspector: a failure becomes a fact.</summary>
-    Task<PackageFacts> InspectAsync(string path, BuiltInPackageFormat format, CancellationToken ct);
+    /// <summary>A scanner asking for every file the registered inspectors declared. Give it to the walk that reads the archive, then pass what it collected to <see cref="InspectAsync"/>.</summary>
+    PackageArchiveScanner CreateScanner();
+
+    /// <summary>
+    /// Runs every inspector over what the walk collected, in memory. Never throws for a bad inspector: a failure becomes a fact. The archive at <paramref name="path"/> is
+    /// only opened again for a file no inspector declared.
+    /// </summary>
+    Task<PackageFacts> InspectAsync(string path, BuiltInPackageFormat format, PackageArchiveScan scan, CancellationToken ct);
 }

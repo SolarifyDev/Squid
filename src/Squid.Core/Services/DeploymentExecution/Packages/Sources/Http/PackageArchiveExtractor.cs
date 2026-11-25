@@ -44,7 +44,7 @@ internal static class PackageArchiveExtractor
 
                 using var ms = new MemoryStream();
                 entry.DataStream.CopyTo(ms);
-                files[NormalizeEntryPath(entry.Name)] = ms.ToArray();
+                AddFile(files, NormalizeEntryPath(entry.Name), ms.ToArray());
             }
 
             return files.Count > 0;
@@ -78,7 +78,7 @@ internal static class PackageArchiveExtractor
 
             using var ms = new MemoryStream();
             entryStream.CopyTo(ms);
-            files[relativePath] = ms.ToArray();
+            AddFile(files, relativePath, ms.ToArray());
         }
 
         return files;
@@ -102,21 +102,31 @@ internal static class PackageArchiveExtractor
             using var entryStream = entry.Open();
             using var ms = new MemoryStream();
             entryStream.CopyTo(ms);
-            files[relativePath] = ms.ToArray();
+            AddFile(files, relativePath, ms.ToArray());
         }
 
         return files;
     }
 
-    private static bool IsIncludedFile(string path)
+    // Two entries can map to one name once the wrapper directory is stripped (a/x.yaml and b/x.yaml both become x.yaml). The later one has always won;
+    // that stays, because deployments that work today must keep working, but it is no longer silent.
+    private static void AddFile(Dictionary<string, byte[]> files, string path, byte[] content)
+    {
+        if (files.ContainsKey(path))
+            Serilog.Log.Warning("[Deploy] Package archive has several entries that map to the file name {FileName}; the last one is used", path);
+
+        files[path] = content;
+    }
+
+    internal static bool IsIncludedFile(string path)
     {
         var ext = Path.GetExtension(path);
         return YamlExtensions.Contains(ext);
     }
 
-    private static string NormalizeEntryPath(string entryPath)
+    internal static string NormalizeEntryPath(string entryPath)
     {
-        var normalized = PackageArchiveSafety.StripLeadingCurrentDirectory(entryPath).TrimStart('/');
+        var normalized = entryPath.Replace('\\', '/').TrimStart('/');
 
         // Strip leading directory (common in archives: chartname/templates/file.yaml)
         var firstSlash = normalized.IndexOf('/');

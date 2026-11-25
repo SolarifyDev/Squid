@@ -153,6 +153,176 @@ public sealed class FileSystemPackageBlobStoreTests : IDisposable
         await Should.ThrowAsync<InvalidPackageBlobKeyException>(() => ListAsync("../"));
     }
 
+    [Fact]
+    public async Task Put_SweepsStagingFilesOlderThanTheMaxAge_AndKeepsRecentOnes()
+    {
+        var old = PlantStagingFile("crashed-write", age: FileSystemPackageBlobStore.StagingMaxAge + TimeSpan.FromHours(1));
+        var recent = PlantStagingFile("in-flight-write", age: TimeSpan.FromHours(1));
+
+        await PutTextAsync("a.zip", "a");
+
+        File.Exists(old).ShouldBeFalse("a staging file left by a crash must not stay forever");
+        File.Exists(recent).ShouldBeTrue("a recent staging file may belong to a write that is still running");
+        (await ListAsync("")).ShouldBe(["a.zip"]);
+    }
+
+    [Fact]
+    public async Task StagingSweep_RunsAtMostOncePerInterval_PerStore()
+    {
+        var offset = TimeSpan.Zero;
+        var store = new FileSystemPackageBlobStore(_root, () => DateTime.UtcNow + offset);
+        var firstOld = PlantStagingFile("old-1", FileSystemPackageBlobStore.StagingMaxAge + TimeSpan.FromHours(1));
+
+        await store.PutAsync("a.zip", new MemoryStream(new byte[] { 1 }), CancellationToken.None);
+
+        File.Exists(firstOld).ShouldBeFalse();
+
+        var secondOld = PlantStagingFile("old-2", FileSystemPackageBlobStore.StagingMaxAge + TimeSpan.FromHours(1));
+
+        await store.PutAsync("b.zip", new MemoryStream(new byte[] { 1 }), CancellationToken.None);
+
+        File.Exists(secondOld).ShouldBeTrue("the sweep ran less than an interval ago, so this write does not repeat it");
+
+        offset = FileSystemPackageBlobStore.StagingSweepInterval + TimeSpan.FromMinutes(1);
+
+        await store.PutAsync("c.zip", new MemoryStream(new byte[] { 1 }), CancellationToken.None);
+
+        File.Exists(secondOld).ShouldBeFalse("an interval later the next write sweeps again");
+    }
+
+    [Fact]
+    public async Task StagingSweep_NeverTouchesBlobs_EvenOldOnes()
+    {
+        await PutTextAsync("keep/old.zip", "x");
+        File.SetLastWriteTimeUtc(Path.Combine(_root, "keep", "old.zip"), DateTime.UtcNow.AddDays(-400));
+        PlantStagingFile("old", TimeSpan.FromDays(3));
+
+        _store.SweepStaging();
+
+        (await _store.ExistsAsync("keep/old.zip", CancellationToken.None)).ShouldBeTrue();
+        StagingFiles().ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void TryFlushDirectory_NeverThrows_ForAFolderOrAMissingOne()
+    {
+        Directory.CreateDirectory(_root);
+
+        Should.NotThrow(() => FileSystemPackageBlobStore.TryFlushDirectory(_root));
+        Should.NotThrow(() => FileSystemPackageBlobStore.TryFlushDirectory(Path.Combine(_root, "missing")));
+    }
+
+    [Fact]
+    public async Task ListKeys_HidesTheProbeFolder_InAnyCase_ButNotSimilarlyNamedFolders()
+    {
+        await PutTextAsync(".squid-probe/abc", "p");
+        await PutTextAsync("app/.squid-probe/inner.zip", "x");
+        await PutTextAsync(".squid-probex/real.zip", "x");
+
+        (await ListAsync("")).ShouldBe(new[] { "app/.squid-probe/inner.zip", ".squid-probex/real.zip" }.OrderBy(k => k, StringComparer.Ordinal).ToList());
+        (await ListAsync(".squid-probe/")).ShouldBeEmpty();
+        (await _store.ExistsAsync(".squid-probe/abc", CancellationToken.None)).ShouldBeTrue("hidden from listings, not from direct access: the store test needs it");
+    }
+
+    [Fact]
+    public async Task OpenRead_OfAKeyThatNamesAFolder_IsBlobNotFound()
+    {
+        await PutTextAsync("acme/web/1.0.zip", "x");
+
+        await Should.ThrowAsync<PackageBlobNotFoundException>(async () => await _store.OpenReadAsync("acme/web", CancellationToken.None));
+        (await _store.ExistsAsync("acme", CancellationToken.None)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ASymlinkedFolderUnderTheRoot_IsNotFollowed_ByPutOpenExistsOrDelete()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var outside = Path.Combine(Path.GetTempPath(), $"squid-outside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(outside);
+        Directory.CreateDirectory(_root);
+        await File.WriteAllTextAsync(Path.Combine(outside, "secret.zip"), "outside data");
+        Directory.CreateSymbolicLink(Path.Combine(_root, "link"), outside);
+
+        try
+        {
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(() => _store.PutAsync("link/new.zip", new MemoryStream(new byte[] { 1 }), CancellationToken.None));
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(async () => await _store.OpenReadAsync("link/secret.zip", CancellationToken.None));
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(async () => await _store.ExistsAsync("link/secret.zip", CancellationToken.None));
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(async () => await _store.DeleteAsync("link/secret.zip", CancellationToken.None));
+
+            File.Exists(Path.Combine(outside, "new.zip")).ShouldBeFalse("nothing may be written through the link");
+            File.ReadAllText(Path.Combine(outside, "secret.zip")).ShouldBe("outside data", "nothing may be deleted through the link");
+            (await ListAsync("")).ShouldBeEmpty("a listing does not follow the link either");
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ASymlinkedFile_AndADanglingSymlink_UnderTheRoot_AreNotFollowed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var outside = Path.Combine(Path.GetTempPath(), $"squid-outside-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(outside, "outside data");
+        Directory.CreateDirectory(_root);
+        File.CreateSymbolicLink(Path.Combine(_root, "file.zip"), outside);
+        File.CreateSymbolicLink(Path.Combine(_root, "dangling.zip"), Path.Combine(Path.GetTempPath(), $"squid-missing-{Guid.NewGuid():N}"));
+
+        try
+        {
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(async () => await _store.OpenReadAsync("file.zip", CancellationToken.None));
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(async () => await _store.DeleteAsync("file.zip", CancellationToken.None));
+            await Should.ThrowAsync<InvalidPackageBlobKeyException>(() => _store.PutAsync("dangling.zip", new MemoryStream(new byte[] { 1 }), CancellationToken.None));
+
+            File.ReadAllText(outside).ShouldBe("outside data");
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
+    [Fact]
+    public async Task TheRootItselfMayBeASymlink_OnlyWhatIsBeneathItIsChecked()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var real = Path.Combine(Path.GetTempPath(), $"squid-real-root-{Guid.NewGuid():N}");
+        var linkedRoot = Path.Combine(Path.GetTempPath(), $"squid-linked-root-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(real);
+        Directory.CreateSymbolicLink(linkedRoot, real);
+
+        try
+        {
+            var store = new FileSystemPackageBlobStore(linkedRoot);
+
+            await store.PutAsync("a/b.zip", new MemoryStream(new byte[] { 7 }), CancellationToken.None);
+
+            File.Exists(Path.Combine(real, "a", "b.zip")).ShouldBeTrue();
+        }
+        finally
+        {
+            File.Delete(linkedRoot);
+            Directory.Delete(real, recursive: true);
+        }
+    }
+
+    private string PlantStagingFile(string name, TimeSpan age)
+    {
+        var staging = Path.Combine(_root, FileSystemBlobKey.StagingFolderName);
+        Directory.CreateDirectory(staging);
+
+        var path = Path.Combine(staging, name);
+        File.WriteAllText(path, "partial");
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow - age);
+
+        return path;
+    }
+
     private async Task PutTextAsync(string key, string text) => await _store.PutAsync(key, new MemoryStream(Encoding.UTF8.GetBytes(text)), CancellationToken.None);
 
     private async Task<byte[]> ReadAllAsync(string key)

@@ -16,6 +16,9 @@ public class PackageStoreDto : IBaseModel
 
     public bool IsDefault { get; set; }
 
+    /// <summary>Read-only: where the store keeps its data, resolved by the provider (for a local folder left empty, the folder it resolves to). Null when it cannot be worked out.</summary>
+    public string Location { get; set; }
+
     public DateTimeOffset? LastTestedDate { get; set; }
 
     public bool? LastTestSucceeded { get; set; }

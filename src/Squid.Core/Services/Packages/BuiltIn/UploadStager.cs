@@ -4,10 +4,10 @@ using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 namespace Squid.Core.Services.Packages.BuiltIn;
 
 /// <summary>A pushed file as it sits in a temp file: where, how big and what its SHA-256 (lower-case hex) is.</summary>
-public sealed record StagedUpload(string Path, long SizeBytes, string Sha256);
+internal sealed record StagedUpload(string Path, long SizeBytes, string Sha256);
 
 /// <summary>Copies an upload to a temp file while hashing it and enforcing the size limit, reading the stream once and never holding the file in memory.</summary>
-public static class UploadStager
+internal static class UploadStager
 {
     private const int BufferSize = 81920;
 

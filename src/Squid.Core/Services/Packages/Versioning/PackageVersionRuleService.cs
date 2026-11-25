@@ -27,22 +27,23 @@ public sealed class PackageVersionRuleService(IRepository repository, IPackageVe
     {
         await EnsureFeedAsync(spaceId, feedId, ct).ConfigureAwait(false);
 
-        var rule = await repository.QueryNoTracking<PackageVersionRule>(r => r.FeedId == feedId && r.PackageId == packageId).FirstOrDefaultAsync(ct).ConfigureAwait(false);
+        var id = NormalizePackageId(packageId);
+        var rule = await FindRuleAsync(feedId, id, ct).ConfigureAwait(false);
 
-        return rule == null ? DefaultRule(feedId, packageId) : ToDto(rule);
+        return rule == null ? DefaultRule(feedId, id) : ToDto(rule);
     }
 
     public async Task<PackageVersionRuleDto> SetRuleAsync(SetPackageVersionRuleCommand command, CancellationToken ct)
     {
         await EnsureFeedAsync(command.SpaceId, command.FeedId, ct).ConfigureAwait(false);
 
-        var packageId = RequirePackageId(command.PackageId);
+        var packageId = NormalizePackageId(command.PackageId);
         var template = command.VersionTemplate?.Trim();
 
         await assigner.PreviewAsync(template, PackageVersionSampleContext.Create(command.FeedId, packageId), ct).ConfigureAwait(false);
         await UpsertAsync(command.FeedId, packageId, template, ct).ConfigureAwait(false);
 
-        return new PackageVersionRuleDto { FeedId = command.FeedId, PackageId = packageId, VersionTemplate = template };
+        return ToDto(await FindRuleAsync(command.FeedId, packageId, ct).ConfigureAwait(false));
     }
 
     public async Task<List<PackageVersionRuleDto>> ListRulesAsync(int? spaceId, int feedId, CancellationToken ct)
@@ -63,7 +64,8 @@ public sealed class PackageVersionRuleService(IRepository repository, IPackageVe
             throw new PackageVersionFeedNotFoundException(feedId);
     }
 
-    private static string RequirePackageId(string packageId)
+    // The one place a package id is read from a request: trimmed, and looked up ignoring case (the unique index is on lower(package_id)).
+    private static string NormalizePackageId(string packageId)
     {
         if (string.IsNullOrWhiteSpace(packageId))
             throw new ValidationException("PackageId is required");
@@ -74,13 +76,20 @@ public sealed class PackageVersionRuleService(IRepository repository, IPackageVe
         return packageId.Trim();
     }
 
+    private Task<PackageVersionRule> FindRuleAsync(int feedId, string packageId, CancellationToken ct)
+    {
+        var lowered = packageId.ToLowerInvariant();
+
+        return repository.QueryNoTracking<PackageVersionRule>(r => r.FeedId == feedId && r.PackageId.ToLower() == lowered).FirstOrDefaultAsync(ct);
+    }
+
     private async Task UpsertAsync(int feedId, string packageId, string template, CancellationToken ct)
     {
         var userId = currentUser?.Id ?? CurrentUsers.InternalUser.Id;
 
         await repository.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO package_version_rule (feed_id, package_id, version_template, created_by, last_modified_by) VALUES ({feedId}, {packageId}, {template}, {userId}, {userId})
-            ON CONFLICT (feed_id, package_id) DO UPDATE SET version_template = EXCLUDED.version_template, last_modified_date = now(), last_modified_by = EXCLUDED.last_modified_by
+            ON CONFLICT (feed_id, lower(package_id)) DO UPDATE SET version_template = EXCLUDED.version_template, last_modified_date = now(), last_modified_by = EXCLUDED.last_modified_by
             """, ct).ConfigureAwait(false);
     }
 

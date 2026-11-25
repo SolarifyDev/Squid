@@ -25,6 +25,9 @@ public class PackageStoreFieldDescriptor : IBaseModel
 
     public bool Required { get; set; }
 
+    /// <summary>Marks the field whose value says where the store keeps its data (a folder, a bucket); a screen shows it as the store's location.</summary>
+    public bool IsLocation { get; set; }
+
     public string Default { get; set; }
 
     public string Placeholder { get; set; }
@@ -33,4 +36,11 @@ public class PackageStoreFieldDescriptor : IBaseModel
 
     /// <summary>The allowed values of a <see cref="PackageStoreFieldKind.Select"/> field.</summary>
     public List<string> Options { get; set; } = new();
+
+    /// <summary>
+    /// For a <see cref="PackageStoreFieldKind.Secret"/> field: the keys of the non-secret fields it is bound to (an endpoint, a bucket). A stored secret is
+    /// only reused while every bound field still has its stored value; change one and the secret must be entered again, so a stored credential can never
+    /// be sent to a destination someone else just typed in. Empty means the secret is not tied to any field.
+    /// </summary>
+    public List<string> BoundTo { get; set; } = new();
 }

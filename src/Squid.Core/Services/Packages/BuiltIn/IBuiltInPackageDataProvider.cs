@@ -22,6 +22,9 @@ public interface IBuiltInPackageDataProvider : IScopedDependency
     /// <summary>Adds the version. Throws <c>PackageVersionAlreadyExistsException</c> when it exists, even when another push added it a moment ago.</summary>
     Task InsertAsync(BuiltInPackage package, CancellationToken ct);
 
-    /// <summary>Overwrites what the stored version points at (its file and who published it when and how), keeping its id, package id and version.</summary>
+    /// <summary>
+    /// Overwrites what the stored version points at (its file, fingerprint and who published it when and how), keeping its id, package id and version. Atomic with a
+    /// check that no release selects the version: throws <c>PackageVersionInUseException</c> and changes nothing when one does.
+    /// </summary>
     Task ReplaceContentAsync(int id, BuiltInPackage content, CancellationToken ct);
 }

@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Core.Services.Packages.Versioning.Tokens;
 
@@ -33,6 +34,57 @@ public class FileInputAndGitTokenTests
         var ex = await Should.ThrowAsync<VersionTokenValueMissingException>(() => new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None));
 
         ex.Message.ShouldBe(message);
+    }
+
+    [Theory]
+    [InlineData("a_", "!.zip")]
+    [InlineData("a-", "!.1.2.zip")]
+    [InlineData("a.", "1x.zip")]
+    [InlineData("1.", ".zip")]
+    public async Task FileVersion_AHostileFileName_IsAnsweredFastNotMatchedForever(string unit, string suffix)
+    {
+        // As long as the cap allows: the old backtracking pattern needed seconds at 49 characters and doubled with every extra pair, so at this length it would never finish.
+        var fileName = string.Concat(Enumerable.Repeat(unit, (FileVersionToken.MaxFileNameLength - suffix.Length) / unit.Length)) + suffix;
+
+        // Building the patterns and JIT are one-time costs, not what is being timed.
+        await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context("Acme.1.0.0.zip"), null, CancellationToken.None);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None);
+        }
+        catch (VersionTokenValueMissingException)
+        {
+        }
+
+        fileName.Length.ShouldBeGreaterThan(190);
+        watch.ElapsedMilliseconds.ShouldBeLessThan(1000);
+    }
+
+    [Fact]
+    public async Task FileVersion_AFileNameLongerThanTheLimit_IsRejectedUpFront()
+    {
+        var fileName = new string('a', FileVersionToken.MaxFileNameLength) + ".1.0.0.zip";
+
+        var ex = await Should.ThrowAsync<VersionTokenValueMissingException>(() => new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None));
+
+        ex.Message.ShouldBe($"Version token '{{file.version}}' has no value: the file name is {fileName.Length} characters long, the limit is 200");
+    }
+
+    [Fact]
+    public async Task FileVersion_AFileNameAtTheLimit_StillWorks()
+    {
+        var fileName = new string('a', FileVersionToken.MaxFileNameLength - ".1.0.0.zip".Length) + ".1.0.0.zip";
+
+        (await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None)).ShouldBe("1.0.0");
+    }
+
+    [Fact]
+    public async Task FileVersion_OnlyAnExtension_HasNoVersion()
+    {
+        await Should.ThrowAsync<VersionTokenValueMissingException>(() => new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(".zip"), null, CancellationToken.None));
     }
 
     [Fact]

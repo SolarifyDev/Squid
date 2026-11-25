@@ -54,20 +54,6 @@ public class PushInspectionTests
     }
 
     [Fact]
-    public async Task Push_OfIdenticalBytes_DoesNotInspectAgain()
-    {
-        var bytes = TestArchives.Zip(("index.html", "<html/>"));
-        var spy = new CountingInspector();
-
-        _h.Inspectors = [spy];
-
-        await _h.Service().PushAsync(PushHarness.Push(bytes), CancellationToken.None);
-        await _h.Service().PushAsync(PushHarness.Push(bytes), CancellationToken.None);
-
-        spy.Runs.ShouldBe(1);
-    }
-
-    [Fact]
     public async Task Push_ThatIsRefusedBeforeInspection_NeverInspects()
     {
         var spy = new CountingInspector();

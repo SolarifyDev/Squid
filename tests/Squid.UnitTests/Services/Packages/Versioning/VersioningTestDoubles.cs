@@ -15,6 +15,16 @@ internal sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
     public override TimeZoneInfo LocalTimeZone { get; } = TimeZoneInfo.CreateCustomTimeZone("plus9", TimeSpan.FromHours(9), "plus9", "plus9");
 }
 
+/// <summary>A clock that moves on every reading, to prove an assignment reads it once.</summary>
+internal sealed class AdvancingTimeProvider(DateTimeOffset start, TimeSpan step) : TimeProvider
+{
+    private int _readings;
+
+    public int Readings => _readings;
+
+    public override DateTimeOffset GetUtcNow() => start + step * _readings++;
+}
+
 /// <summary>Counter store in memory with the semantics of the real one: per scope, starting at 1, and it remembers every call.</summary>
 internal sealed class FakeCounterStore : IPackageVersionCounterStore
 {
@@ -50,8 +60,8 @@ internal static class VersioningTestContexts
 
     public static PackageVersionAssigner AssignerWith(FakeCounterStore store, TimeProvider time)
     {
-        IVersionTokenSource[] sources = [new CounterToken(store, time), new DateToken(time), new FileVersionToken(), new SourceVersionToken(), new GitShaToken(), new InputToken()];
+        IVersionTokenSource[] sources = [new CounterToken(store), new DateToken(), new FileVersionToken(), new SourceVersionToken(), new GitShaToken(), new InputToken()];
 
-        return new PackageVersionAssigner(sources);
+        return new PackageVersionAssigner(sources, time);
     }
 }

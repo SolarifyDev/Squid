@@ -16,7 +16,9 @@ internal static class Inspect
 
     public static Task<PackageFacts> TarGzAsync(params (string Name, string Content)[] entries) => RunAsync(TestArchives.TarGz(entries), BuiltInPackageFormat.TarGz);
 
-    public static async Task<PackageFacts> RunAsync(byte[] archive, BuiltInPackageFormat format, params IPackageInspector[] inspectors)
+    public static async Task<PackageFacts> RunAsync(byte[] archive, BuiltInPackageFormat format, params IPackageInspector[] inspectors) => await RunAsync(archive, format, CancellationToken.None, inspectors);
+
+    public static async Task<PackageFacts> RunAsync(byte[] archive, BuiltInPackageFormat format, CancellationToken ct, params IPackageInspector[] inspectors)
     {
         var path = Path.Combine(Path.GetTempPath(), $"squid-inspect-{Guid.NewGuid():N}");
 
@@ -24,7 +26,9 @@ internal static class Inspect
 
         try
         {
-            return await new PackageInspectionService(inspectors.Length == 0 ? AllInspectors() : inspectors).InspectAsync(path, format, CancellationToken.None);
+            var verifier = new BuiltInArchiveVerifier(new PackageInspectionService(inspectors.Length == 0 ? AllInspectors() : inspectors));
+
+            return (await verifier.VerifyAsync(path, format, "pkg", ct)).Facts;
         }
         finally
         {

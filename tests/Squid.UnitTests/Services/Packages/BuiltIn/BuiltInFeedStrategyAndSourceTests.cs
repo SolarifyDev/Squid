@@ -44,7 +44,7 @@ public class BuiltInFeedStrategyAndSourceTests
 
     [Theory]
     [InlineData("BuiltIn", true)]
-    [InlineData("builtin", true)]
+    [InlineData("builtin", false)]
     [InlineData("NuGet", false)]
     [InlineData("Docker", false)]
     [InlineData("GitHub", false)]

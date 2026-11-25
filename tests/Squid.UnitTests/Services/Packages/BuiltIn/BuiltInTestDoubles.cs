@@ -87,11 +87,14 @@ internal sealed class FakeBuiltInPackageDataProvider : IBuiltInPackageDataProvid
 
     public int Replaces { get; private set; }
 
-    public BuiltInPackage Seed(int feedId, string packageId, string version, string sha256, DateTimeOffset? published = null, int storeId = 1)
+    /// <summary>Makes the replace fail the way the atomic release check does.</summary>
+    public bool BlockReplace { get; set; }
+
+    public BuiltInPackage Seed(int feedId, string packageId, string version, string sha256, DateTimeOffset? published = null, int storeId = 1, string fingerprint = null)
     {
         sha256 = sha256.PadRight(64, '0');
 
-        var row = new BuiltInPackage { Id = _nextId++, FeedId = feedId, PackageId = packageId, Version = version, Sha256 = sha256, FileExtension = ".zip", StoreId = storeId, BlobKey = BuiltInBlobKey.For(sha256, ".zip"), SizeBytes = 10, PublishedDate = published ?? DateTimeOffset.UtcNow, Source = "api" };
+        var row = new BuiltInPackage { Id = _nextId++, FeedId = feedId, PackageId = packageId, Version = version, Sha256 = sha256, ContentFingerprint = fingerprint, FileExtension = ".zip", StoreId = storeId, BlobKey = BuiltInBlobKey.For(sha256, ".zip"), SizeBytes = 10, PublishedDate = published ?? DateTimeOffset.UtcNow, Source = "api" };
 
         _rows.Add(row);
         _canonical.TryAdd((feedId, packageId.ToLowerInvariant()), packageId);
@@ -142,11 +145,14 @@ internal sealed class FakeBuiltInPackageDataProvider : IBuiltInPackageDataProvid
     {
         Replaces++;
 
+        if (BlockReplace) throw new PackageVersionInUseException(content.PackageId, content.Version);
+
         var row = _rows.Single(r => r.Id == id);
 
         row.FileExtension = content.FileExtension;
         row.SizeBytes = content.SizeBytes;
         row.Sha256 = content.Sha256;
+        row.ContentFingerprint = content.ContentFingerprint;
         row.StoreId = content.StoreId;
         row.BlobKey = content.BlobKey;
         row.Source = content.Source;
@@ -295,7 +301,7 @@ internal sealed class PushHarness
 
     public BuiltInPackagePushService Service(Squid.Core.Services.Identity.ICurrentUser user = null)
     {
-        return new BuiltInPackagePushService(new FakeFeedLocator(Feed), Packages, Usage, Assigner, Rules, Stores, Registry, new PackageInspectionService(Inspectors), user, TimeProvider.System);
+        return new BuiltInPackagePushService(new BuiltInPackageCatalog(new FakeFeedLocator(Feed), Packages), new BuiltInUploadAcceptor(new BuiltInArchiveVerifier(new PackageInspectionService(Inspectors))), new BuiltInVersionResolver(Assigner, Rules), new BuiltInBlobWriter(Stores, Registry), new BuiltInPackageRecorder(Packages, Usage, user, TimeProvider.System));
     }
 
     public static Squid.Message.Commands.BuiltInPackages.PushBuiltInPackageCommand Push(byte[] bytes, string fileName = "Acme.Web.1.0.0.zip", string packageId = null, string version = null, bool replace = false)

@@ -152,6 +152,8 @@ public class PackageStoreAuditIntegrationTests : TestBase
             ]
         };
 
+        public IReadOnlyList<string> ValidateConfiguration(PackageBlobStoreConfiguration configuration) => [];
+
         public IPackageBlobStore Create(PackageBlobStoreConfiguration configuration) => throw new NotSupportedException();
 
         public Task<PackageBlobStoreTestResult> TestAsync(PackageBlobStoreConfiguration configuration, CancellationToken ct) => Task.FromResult(new PackageBlobStoreTestResult { Success = true, Message = "ok" });

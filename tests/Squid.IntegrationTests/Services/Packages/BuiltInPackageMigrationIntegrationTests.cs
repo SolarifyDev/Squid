@@ -141,6 +141,71 @@ public sealed class BuiltInPackageMigrationIntegrationTests : IDisposable
         (await ScalarAsync("SELECT count(*)::int FROM external_feed")).ShouldBe(1);
     }
 
+    // The script already ran with the rest of the migrations, so its index is dropped to put the database back in the state it was in before the script, then
+    // conflicting rows are added and the script is run again by hand.
+    private async Task<PostgresException> RunScriptAgainstAsync(string insertSql)
+    {
+        await ExecuteAsync("DROP INDEX ux_external_feed_builtin_per_space");
+        await ExecuteAsync(insertSql);
+
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, ScriptName));
+        var ex = await Should.ThrowAsync<PostgresException>(() => ExecuteAsync(script));
+
+        (await ScalarAsync("SELECT count(*)::int FROM pg_indexes WHERE indexname = 'ux_external_feed_builtin_per_space'")).ShouldBe(0, "nothing is created when the script refuses");
+
+        return ex;
+    }
+
+    [Fact]
+    public async Task Migration_TwoBuiltInFeedsInASpace_FailsWithAnActionableMessage_NotARawIndexError()
+    {
+        var ex = await RunScriptAgainstAsync("INSERT INTO external_feed (feed_type, feed_uri, name, slug, space_id, last_modified_date) VALUES ('BuiltIn', '', 'a', 'a', 1, now()), ('BuiltIn', '', 'b', 'b', 1, now())");
+
+        ex.MessageText.ShouldContain("space 1 has 2 feeds of type BuiltIn");
+        ex.MessageText.ShouldContain("Each space may have only one feed of type BuiltIn");
+        ex.ConstraintName.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("builtin")]
+    [InlineData("BUILTIN")]
+    public async Task Migration_ACaseVariantOfTheReservedType_FailsWithAnActionableMessage(string type)
+    {
+        var ex = await RunScriptAgainstAsync($"INSERT INTO external_feed (feed_type, feed_uri, name, slug, space_id, last_modified_date) VALUES ('{type}', 'https://x', 'a', 'a', 4, now())");
+
+        ex.MessageText.ShouldContain($"has the type \"{type}\"");
+        ex.MessageText.ShouldContain("reserved for the built-in package feed");
+    }
+
+    [Fact]
+    public async Task Migration_ABuiltInFeedWithAUri_IsNotAdopted_ItFailsWithAnActionableMessage()
+    {
+        var ex = await RunScriptAgainstAsync("INSERT INTO external_feed (feed_type, feed_uri, name, slug, space_id, last_modified_date) VALUES ('BuiltIn', 'https://old.example', 'old', 'old', 2, now())");
+
+        ex.MessageText.ShouldContain("has the URI \"https://old.example\"");
+        ex.MessageText.ShouldContain("must have no URI");
+    }
+
+    [Fact]
+    public async Task Migration_OnCleanData_ThenCreatesTheIndex()
+    {
+        await ExecuteAsync("DROP INDEX ux_external_feed_builtin_per_space");
+        await ExecuteAsync("INSERT INTO external_feed (feed_type, feed_uri, name, slug, space_id, last_modified_date) VALUES ('BuiltIn', '', 'a', 'a', 1, now()), ('NuGet', 'https://x', 'b', 'b', 1, now())");
+        await ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, ScriptName)));
+
+        (await ScalarAsync("SELECT count(*)::int FROM pg_indexes WHERE indexname = 'ux_external_feed_builtin_per_space'")).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task TheFingerprintMigration_AddsANullableColumn_AndRunsTwice()
+    {
+        var script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, "20261128_add_builtin_package_content_fingerprint.sql"));
+
+        await ExecuteAsync(script);
+
+        (await ScalarAsync("SELECT count(*)::int FROM information_schema.columns WHERE table_name = 'builtin_package' AND column_name = 'content_fingerprint' AND is_nullable = 'YES'")).ShouldBe(1);
+    }
+
     private async Task ExecuteAsync(string sql)
     {
         await using var connection = new NpgsqlConnection(_connectionString);

@@ -5,28 +5,24 @@ using Squid.Message.Models.PackageVersioning;
 namespace Squid.Core.Services.Packages.Versioning.Tokens;
 
 /// <summary><c>{date}</c> or <c>{date:format}</c>: the current UTC time in a .NET custom date format, <c>yyyy.MM.dd</c> by default.</summary>
-public sealed class DateToken(TimeProvider time = null) : IVersionTokenSource
+public sealed class DateToken : IVersionTokenSource
 {
     public const string TokenName = "date";
 
     public const string DefaultFormat = "yyyy.MM.dd";
 
-    private readonly TimeProvider _time = time ?? TimeProvider.System;
-
     public string Token => TokenName;
 
     public Task<string> ResolveAsync(VersionTokenContext context, string argument, CancellationToken ct)
     {
-        var format = argument ?? DefaultFormat;
-
-        return Task.FromResult(Format(format));
+        return Task.FromResult(Format(context.Now, argument ?? DefaultFormat));
     }
 
-    private string Format(string format)
+    private static string Format(DateTimeOffset now, string format)
     {
         try
         {
-            return _time.GetUtcNow().ToString(format, CultureInfo.InvariantCulture);
+            return now.ToUniversalTime().ToString(format, CultureInfo.InvariantCulture);
         }
         catch (FormatException ex)
         {
