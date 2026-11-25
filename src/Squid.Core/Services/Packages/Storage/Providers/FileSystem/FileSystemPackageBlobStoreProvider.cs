@@ -47,9 +47,9 @@ public sealed class FileSystemPackageBlobStoreProvider(DataDirectorySetting data
 
     public IReadOnlyList<string> GetWarnings(PackageBlobStoreConfiguration configuration)
     {
-        var warning = FileSystemRootPersistenceInspector.FindWarning(ResolveRoot(configuration));
+        var root = ResolveRoot(configuration);
 
-        return warning == null ? [] : [warning];
+        return new[] { FileSystemRootResolver.FindApplicationFolderWarning(root, AppContext.BaseDirectory), FileSystemRootPersistenceInspector.FindWarning(root) }.Where(w => w != null).ToList();
     }
 
     private string ResolveRoot(PackageBlobStoreConfiguration configuration)

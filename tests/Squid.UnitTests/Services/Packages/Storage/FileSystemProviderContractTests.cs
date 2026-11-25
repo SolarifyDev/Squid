@@ -110,4 +110,13 @@ public sealed class FileSystemProviderContractTests : IDisposable
         Directory.EnumerateFiles(_temp, "*", SearchOption.AllDirectories).ShouldBeEmpty();
         table.Rows.ShouldBeEmpty();
     }
+
+    [Fact]
+    public void GetWarnings_SurfacesTheApplicationFolderWarning_ForARootInsideTheApplicationFolder()
+    {
+        var inside = Path.Combine(AppContext.BaseDirectory, "packages");
+
+        Provider().GetWarnings(Config(inside)).ShouldContain(w => w.Contains("inside the application folder"));
+        Provider().GetWarnings(Config(_temp)).ShouldNotContain(w => w.Contains("inside the application folder"));
+    }
 }
