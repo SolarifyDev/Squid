@@ -224,6 +224,9 @@ public partial class LocalScriptService
 
     private static bool ShouldIssueCancelV2(RunningScript running) => !running.V2CancelIssued && !running.V2Canceled && IsProcessRunning(running);
 
+    /// <summary>Test-only: runs in a V2 Cancel after it flagged the script as cancelled and before it kills the process.</summary>
+    internal Action? AfterCancelFlaggedHookForTests { get; set; }
+
     // Kills the process and waits (bounded) for it and its output to go away. Must run without the ticket lock.
     private void IssueCancelV2(ScriptTicket ticket, RunningScript running)
     {
@@ -232,6 +235,8 @@ public partial class LocalScriptService
         // Flag BEFORE the kill so the exit callback does not record the kill signal's exit code.
         MarkCancelRequested(running);
         running.V2CancelIssued = true;
+
+        AfterCancelFlaggedHookForTests?.Invoke();
 
         try
         {

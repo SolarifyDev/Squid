@@ -510,6 +510,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         ReleaseMutexForTicket(ticketId);
     }
 
+    /// <summary>Test-only: runs after a queued script is marked in-flight and before it is removed from the pending queue.</summary>
+    internal Action? BetweenStartMarkAndDequeueHookForTests { get; set; }
+
     private void ProcessPendingScripts(int depth = 0)
     {
         if (_draining) return;
@@ -545,6 +548,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             // Visible as "starting" from before the script leaves the pending queue until its pod is tracked.
             _startsInFlight[kvp.Key] = 0;
+
+            BetweenStartMarkAndDequeueHookForTests?.Invoke();
 
             if (!_pendingScripts.TryRemove(kvp.Key, out var pending))
             {
