@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 
@@ -47,6 +48,33 @@ public class BuiltInPackageIdsTests
     public void Resolve_InvalidExplicitId_IsRefused(string id)
     {
         Should.Throw<InvalidPackageIdException>(() => BuiltInPackageIds.Resolve(id, null));
+    }
+
+    [Theory]
+    [InlineData("a_", 127)]
+    [InlineData("a.", 127)]
+    [InlineData("a-", 127)]
+    [InlineData("aa_", 85)]
+    public void Resolve_AdversarialFailingIds_AreRefusedWithinAFractionOfASecond(string unit, int repeats)
+    {
+        var id = string.Concat(Enumerable.Repeat(unit, repeats)) + "!";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Should.Throw<InvalidPackageIdException>(() => BuiltInPackageIds.Resolve(id, null));
+
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void Resolve_AdversarialFileNames_AtTheLengthCap_AreHandledQuickly()
+    {
+        var name = string.Concat(Enumerable.Repeat("a_", 90)) + "!.zip";
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        Should.Throw<PackageIdRequiredException>(() => BuiltInPackageIds.Resolve(null, name));
+        Should.Throw<PackageIdRequiredException>(() => BuiltInPackageIds.Resolve(null, new string('a', 300) + ".1.0.0.zip"));
+
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1));
     }
 
     [Fact]
