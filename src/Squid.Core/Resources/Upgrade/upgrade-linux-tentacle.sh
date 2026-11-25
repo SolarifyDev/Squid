@@ -797,12 +797,15 @@ stop_unit_and_wait() {
 }
 
 # Rollback must not move directories under a live agent: bail out critically instead.
+# $1 = what state the install is in on this path (it differs per install method), shown to the operator.
 stop_unit_or_fail_rollback() {
+  local install_state="${1:-install state unknown; inspect before retrying}"
+
   if stop_unit_and_wait; then return 0; fi
 
   echo "::error:: CRITICAL: $SERVICE_NAME still not stopped after ${STOP_BUDGET_SECS}s (state: $(unit_active_state)); refusing to touch install directories under a live agent."
   emit_event B rollback-fail "Unit still stopping after ${STOP_BUDGET_SECS}s; install directories left untouched"
-  write_status "ROLLBACK_CRITICAL_FAILED" "Service still stopping after ${STOP_BUDGET_SECS}s; install directories not modified, previous version intact"
+  write_status "ROLLBACK_CRITICAL_FAILED" "Service still stopping after ${STOP_BUDGET_SECS}s; rollback not attempted: $install_state"
   exit 9
 }
 
@@ -821,33 +824,45 @@ service_healthy() {
   curl -fsS --max-time 5 "$HEALTHCHECK_URL" >/dev/null 2>&1
 }
 
-# Proof for a restored version that /healthz can't vouch for (no curl, or the
-# pre-upgrade baseline never answered /healthz): the unit stays active across a
-# settle window with the same main process and no restarts. A crashing binary
-# either leaves `active` or is restarted under a new PID. `systemctl show` is
-# readable without privileges.
+# Observation window of the settle check. The production unit is Restart=on-failure with
+# RestartSec=10: a binary that crashes u seconds after start is down (activating/auto-restart) for
+# [u, u+10] and then back under a NEW PID with NRestarts+1. Sampling every second for 15s therefore
+# catches any crash within the first 15s of uptime (the 10s restart gap plus 5s for startup crashes);
+# the previous single 5s look only covered the first 5s of uptime, i.e. not even one restart cycle.
+SETTLE_WINDOW_SECS=15
+
+unit_main_pid() { systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || true; }
+unit_restart_count() { systemctl show -p NRestarts --value "$SERVICE_NAME" 2>/dev/null || true; }
+
+# Proof that a restored version survives: the unit stays active across the settle window with the same
+# main process and no restarts. Required for EVERY baseline (healthz alone is a single instant: a binary
+# that answers /healthz and crashes seconds later would otherwise read as restored). `systemctl show`
+# is readable without privileges.
 service_stays_active() {
-  local pid restarts
+  local pid restarts i
   sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
-  pid=$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || true)
-  restarts=$(systemctl show -p NRestarts --value "$SERVICE_NAME" 2>/dev/null || true)
+  pid=$(unit_main_pid)
+  restarts=$(unit_restart_count)
   if [ -z "$pid" ] || [ "$pid" = "0" ]; then return 1; fi
-  sleep 5
-  sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
-  [ "$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || true)" = "$pid" ] || return 1
-  [ "$(systemctl show -p NRestarts --value "$SERVICE_NAME" 2>/dev/null || true)" = "$restarts" ]
+
+  for i in $(seq 1 "$SETTLE_WINDOW_SECS"); do
+    sleep 1
+    sudo systemctl is-active --quiet "$SERVICE_NAME" || return 1
+    [ "$(unit_main_pid)" = "$pid" ] || return 1
+    [ "$(unit_restart_count)" = "$restarts" ] || return 1
+  done
 }
 
-# The version we rolled back to answered /healthz before the upgrade → hold it
-# to the forward check. Otherwise (baseline FAIL/unknown) demanding /healthz
-# would escalate a faithful restore of the pre-upgrade state to
-# ROLLBACK_CRITICAL_FAILED, so require a settled active unit instead.
+# The version we rolled back to must survive the settle window (same PID, no restarts). When it also
+# answered /healthz before the upgrade, it is additionally held to the forward check. When the baseline
+# never answered (FAIL/unknown), demanding /healthz would escalate a faithful restore of the pre-upgrade
+# state to ROLLBACK_CRITICAL_FAILED, so the settle alone vouches for it.
 restored_service_healthy() {
   if [ "${BASELINE_HEALTHZ_PRE:-unknown}" = "OK" ]; then
-    service_healthy
-  else
-    service_stays_active
+    service_healthy || return 1
   fi
+
+  service_stays_active
 }
 
 wait_for_restored_service() {
@@ -857,6 +872,16 @@ wait_for_restored_service() {
     sleep 1
   done
   return 1
+}
+
+# Bring the unit back during rollback. A crash-on-start upgrade burns systemd's start limit
+# (StartLimitBurst=3 / 120s) while the health window runs: until `reset-failed` clears the counter
+# every start/restart is refused, even over a perfectly good restored binary. Neither step may abort
+# the script (`set -e`): wait_for_restored_service is the only judge of whether the unit came back.
+# $1 = systemctl verb (start | restart), $2 = timeout seconds.
+rollback_start_unit() {
+  sudo systemctl reset-failed "$SERVICE_NAME" 2>/dev/null || true
+  timeout "$2" sudo systemctl "$1" "$SERVICE_NAME" 2>/dev/null || true
 }
 
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
@@ -979,7 +1004,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
   emit_event B rollback-start "Versioned rollback: repointing current to previous version"
   write_status "ROLLING_BACK" "Health check failed after restart — repointing current to previous version"
 
-  stop_unit_or_fail_rollback
+  stop_unit_or_fail_rollback "install directories not modified, previous version intact"
 
   sudo ln -sfn "$OLD_VER_TARGET" "$INSTALL_DIR/current.tmp"
   if ! sudo mv -T "$INSTALL_DIR/current.tmp" "$INSTALL_DIR/current"; then
@@ -990,7 +1015,7 @@ if [ "$IS_VERSIONED" = "1" ]; then
     exit 9
   fi
 
-  timeout 30 sudo systemctl start "$SERVICE_NAME"
+  rollback_start_unit start 30
 
   ROLLBACK_OK=0
   if wait_for_restored_service; then ROLLBACK_OK=1; fi
@@ -1013,10 +1038,10 @@ if [ "$INSTALL_METHOD" = "tarball" ]; then
   emit_event B rollback-start "Tarball method: restoring previous version from .bak directory"
   write_status "ROLLING_BACK" "Health check failed after restart — restoring previous version from $BAK_DIR"
 
-  stop_unit_or_fail_rollback
+  stop_unit_or_fail_rollback "install directory not modified; the new version is still installed and the previous version is preserved in $BAK_DIR"
   sudo rm -rf "$INSTALL_DIR"
   sudo mv "$BAK_DIR" "$INSTALL_DIR"
-  timeout 30 sudo systemctl start "$SERVICE_NAME"
+  rollback_start_unit start 30
 
   ROLLBACK_OK=0
   if wait_for_restored_service; then ROLLBACK_OK=1; fi
@@ -1052,7 +1077,7 @@ if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" 
   emit_event B rollback-start "Auto-rollback via snapshot .deb at $SQUID_UPGRADE_ROLLBACK_SNAPSHOT"
   write_status "ROLLING_BACK" "Health check failed; restoring previous version via dpkg -i snapshot"
 
-  stop_unit_or_fail_rollback
+  stop_unit_or_fail_rollback "the new package is still installed; the pre-upgrade snapshot .deb was not applied, manual downgrade required"
 
   ROLLBACK_INSTALL_OK=0
   if sudo dpkg -i --force-downgrade "$SQUID_UPGRADE_ROLLBACK_SNAPSHOT" >/dev/null 2>&1; then
@@ -1060,7 +1085,7 @@ if [ "$INSTALL_METHOD" = "apt" ] && [ -n "${SQUID_UPGRADE_ROLLBACK_SNAPSHOT:-}" 
   fi
 
   if [ "$ROLLBACK_INSTALL_OK" = "1" ]; then
-    timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+    rollback_start_unit restart "$RESTART_TIMEOUT_SECS"
 
     ROLLBACK_OK=0
     if wait_for_restored_service; then ROLLBACK_OK=1; fi
@@ -1103,10 +1128,10 @@ if [ "$INSTALL_METHOD" = "yum" ] && [ -n "${OLD_VERSION_RPM:-}" ] && [ "$OLD_VER
     emit_event B rollback-start "Auto-rollback via $YUM_BIN_FOR_ROLLBACK downgrade to ${OLD_VERSION_RPM}"
     write_status "ROLLING_BACK" "Health check failed; restoring previous version via $YUM_BIN_FOR_ROLLBACK downgrade"
 
-    stop_unit_or_fail_rollback
+    stop_unit_or_fail_rollback "the new package is still installed; the downgrade was not applied, manual downgrade required"
 
     if sudo "$YUM_BIN_FOR_ROLLBACK" downgrade -y "squid-tentacle-${OLD_VERSION_RPM}" >/dev/null 2>&1; then
-      timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" 2>/dev/null || true
+      rollback_start_unit restart "$RESTART_TIMEOUT_SECS"
 
       ROLLBACK_OK=0
       if wait_for_restored_service; then ROLLBACK_OK=1; fi

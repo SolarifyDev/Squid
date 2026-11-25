@@ -80,6 +80,25 @@ public sealed class UpgradeLinuxTentacleStopBudgetTests : IDisposable
     }
 
     [Fact]
+    public void StopUnitOrFailRollback_ReportsTheCallersInstallState_NotAHardcodedClaim()
+    {
+        var result = RunBlock("STOP_BUDGET_SECS=2; stop_unit_or_fail_rollback 'new package still installed; manual downgrade required'", "5min 30s", "deactivating");
+
+        result.ExitCode.ShouldBe(9);
+        result.Stdout.ShouldContain("new package still installed; manual downgrade required");
+        result.Stdout.ShouldNotContain("previous version intact", customMessage: "the claim is false for tarball / apt / yum and must come from the caller");
+    }
+
+    [Fact]
+    public void Script_EveryRollbackPath_PassesItsOwnInstallState()
+    {
+        RenderedScript.ShouldContain("stop_unit_or_fail_rollback \"install directories not modified, previous version intact\"");
+        RenderedScript.ShouldContain("the new version is still installed and the previous version is preserved in $BAK_DIR");
+        RenderedScript.ShouldContain("stop_unit_or_fail_rollback \"the new package is still installed; the pre-upgrade snapshot .deb was not applied");
+        RenderedScript.ShouldContain("stop_unit_or_fail_rollback \"the new package is still installed; the downgrade was not applied");
+    }
+
+    [Fact]
     public void StopUnitOrFailRollback_DrainCompletes_ReturnsSoCallerMayProceed()
     {
         var result = RunBlock("STOP_BUDGET_SECS=10; stop_unit_or_fail_rollback; echo SAFE_TO_MOVE_DIRS", "5min 30s", "deactivating\ninactive");
@@ -101,14 +120,12 @@ public sealed class UpgradeLinuxTentacleStopBudgetTests : IDisposable
     [Fact]
     public void Script_EveryRollbackBranch_WaitsForUnitStopBeforeTouchingInstallFiles()
     {
-        CountOccurrences(RenderedScript, "\n  stop_unit_or_fail_rollback\n").ShouldBe(3, "versioned + tarball + apt rollback");
-        CountOccurrences(RenderedScript, "\n    stop_unit_or_fail_rollback\n").ShouldBe(1, "yum rollback");
-        CountOccurrences(RenderedScript, "\n  stop_unit_or_fail_rollback\n\n  ROLLBACK_INSTALL_OK").ShouldBe(1, "apt rollback");
+        System.Text.RegularExpressions.Regex.Matches(RenderedScript, @"\n {2,4}stop_unit_or_fail_rollback """).Count.ShouldBe(4, "versioned + tarball + apt + yum rollback");
 
-        RenderedScript.ShouldContain("\n  stop_unit_or_fail_rollback\n\n  sudo ln -sfn \"$OLD_VER_TARGET\"", customMessage: "versioned: wait before repointing current");
-        RenderedScript.ShouldContain("\n  stop_unit_or_fail_rollback\n  sudo rm -rf \"$INSTALL_DIR\"\n  sudo mv \"$BAK_DIR\"", customMessage: "tarball: wait before removing the live install dir");
-        RenderedScript.ShouldContain("\n  stop_unit_or_fail_rollback\n\n  ROLLBACK_INSTALL_OK=0\n  if sudo dpkg -i --force-downgrade", customMessage: "apt: wait before dpkg replaces files");
-        RenderedScript.ShouldContain("\n    stop_unit_or_fail_rollback\n\n    if sudo \"$YUM_BIN_FOR_ROLLBACK\" downgrade", customMessage: "yum: wait before dnf replaces files");
+        RenderedScript.ShouldContain("\n  stop_unit_or_fail_rollback \"install directories not modified, previous version intact\"\n\n  sudo ln -sfn \"$OLD_VER_TARGET\"", customMessage: "versioned: wait before repointing current");
+        RenderedScript.ShouldContain("preserved in $BAK_DIR\"\n  sudo rm -rf \"$INSTALL_DIR\"\n  sudo mv \"$BAK_DIR\"", customMessage: "tarball: wait before removing the live install dir");
+        RenderedScript.ShouldContain("manual downgrade required\"\n\n  ROLLBACK_INSTALL_OK=0\n  if sudo dpkg -i --force-downgrade", customMessage: "apt: wait before dpkg replaces files");
+        RenderedScript.ShouldContain("manual downgrade required\"\n\n    if sudo \"$YUM_BIN_FOR_ROLLBACK\" downgrade", customMessage: "yum: wait before dnf replaces files");
     }
 
     [Fact]

@@ -135,6 +135,49 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
     }
 
     // ========================================================================
+    // Crash-on-start upgrade under the PRODUCTION restart policy. During the
+    // health window systemd restarts the crashing V2 binary until
+    // StartLimitBurst=3 / 120s refuses further starts (start-limit-hit). The
+    // rollback's `systemctl start` is then refused until `reset-failed` clears
+    // the counter; before the fix `set -e` killed the script here, leaving
+    // last-upgrade.json at ROLLING_BACK and the agent down.
+    // Tier: High - real systemd unit (Restart=on-failure, RestartSec=10,
+    // StartLimit*), real production .sh. ~90s wall clock (health window).
+    // ========================================================================
+
+    [Fact]
+    public void Versioned_CrashOnStart_StartLimitHit_RollbackStillRestoresV1()
+    {
+        if (!LinuxLifecycleContext.IsAvailable) return;
+
+        using var ctx = new LinuxLifecycleContext();
+
+        ctx.Fixture.UseProductionRestartPolicy = true;
+        ctx.Fixture.InstallVersionedAndStart(
+            ctx.TestServiceScript,
+            initialVersion: V1,
+            startTimeout: TimeSpan.FromSeconds(15),
+            extraEnvironment: new Dictionary<string, string> { ["SQUID_TEST_SERVICE_HEALTHZ"] = "1" });
+
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running before the crash-on-start scenario");
+
+        ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: V2, crashOnStart: true));
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2));
+
+        exitCode.ShouldBe(4, customMessage: Tail("crash-on-start rollback MUST exit 4 (ROLLED_BACK) even after start-limit-hit; exit 9 or a script killed mid-rollback means the start was refused and not reset", exitCode, output));
+
+        var status = ctx.ReadLastUpgradeStatus();
+        status.ShouldNotBeNull(customMessage: $"last-upgrade.json MUST be written. Path: {ctx.StatusFilePath}");
+        status.Status.ShouldBe("ROLLED_BACK", customMessage: $"status MUST be ROLLED_BACK, not stuck at ROLLING_BACK. Got '{status.Status}'. Detail: {status.Detail}");
+
+        ReadThroughCurrent(ctx, "version.txt").ShouldBe(V1, customMessage: "current MUST be repointed back to V1");
+        WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(30)).ShouldBeTrue("the V1 service MUST be running again after rollback");
+        ctx.Fixture.IsActive().ShouldBeTrue(customMessage: "service MUST be active on the previous version after rollback (check `systemctl status`: start-limit-hit means reset-failed was not issued)");
+
+        ctx.MarkClean();
+    }
+
+    // ========================================================================
     // Drain-aware restart — a running deployment script keeps the old agent
     // draining (SIGTERM -> wait) longer than the script's former fixed 90s
     // restart cap. The upgrade must wait out the drain (budget sized from the

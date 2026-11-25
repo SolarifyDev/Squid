@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.IO;
 using System.Text.RegularExpressions;
 using Squid.Core.Services.Machines.Upgrade;
@@ -30,6 +31,10 @@ public sealed class UpgradeLinuxRollbackHealthTests
     [InlineData("OK", "1", "100", "0", true, "1", true)]
     [InlineData("OK", "1", "100", "0", true, "0", false)]        // active (just forked) but /healthz down = crashing binary
     [InlineData("OK", "0", "100", "0", true, "1", false)]        // not active
+    // Baseline OK is NOT enough on its own: answers /healthz once, then crashes inside the settle window.
+    [InlineData("OK", "1 1 0", "100", "0", true, "1", false)]          // dies after answering healthz
+    [InlineData("OK", "1", "100 100 200", "0", true, "1", false)]      // re-exec'd after answering healthz
+    [InlineData("OK", "1", "100", "0 0 1", true, "1", false)]          // systemd restarted it after healthz
     // Baseline never answered /healthz (FAIL/unknown) or no curl → settle window.
     [InlineData("FAIL", "1", "100", "0", true, "0", true)]       // stays active, same PID, no restarts
     [InlineData("unknown", "1", "100", "0", false, "0", true)]   // no curl on host, stable unit
@@ -43,6 +48,79 @@ public sealed class UpgradeLinuxRollbackHealthTests
         var result = RunPredicate("restored_service_healthy", baselineHealthz, isActiveSeq, mainPidSeq, nRestartsSeq, hasCurl, curlOk);
 
         (result.ExitCode == 0).ShouldBe(expectedHealthy, $"baseline={baselineHealthz} is-active={isActiveSeq} MainPID={mainPidSeq} NRestarts={nRestartsSeq} curl={hasCurl}/{curlOk}\nstdout:{result.Stdout}\nstderr:{result.Stderr}");
+    }
+
+    [Theory]
+    [InlineData("OK")]
+    [InlineData("FAIL")]
+    [InlineData("unknown")]
+    public void SettleWindow_StableUnit_ObservesLongerThanOneRestartCycle(string baselineHealthz)
+    {
+        var result = RunPredicate("restored_service_healthy", baselineHealthz, "1", "100", "0", hasCurl: true, curlOk: "1");
+
+        result.ExitCode.ShouldBe(0, result.Stderr);
+        var slept = int.Parse(Regex.Match(result.Stdout, @"sleep-total=(\d+)").Groups[1].Value);
+
+        // The production unit is RestartSec=10: a crash-restart cycle is >10s, so a window of 5s (the old
+        // value) could never see a binary that crashes and waits to be restarted.
+        slept.ShouldBeGreaterThan(ProductionRestartSec, $"settle window ({slept}s) must span at least one RestartSec={ProductionRestartSec} crash-restart cycle");
+    }
+
+    [Fact]
+    public void SettleWindow_ProductionRestartSec_IsPinnedToTheUnitTheScriptSupervises()
+    {
+        // Drift detector: the window above is justified against SystemdServiceHost's RestartSec.
+        var unit = File.ReadAllText(Path.Combine(RepoRoot(), "src", "Squid.Tentacle", "ServiceHost", "SystemdServiceHost.cs"));
+
+        unit.ShouldContain($"RestartSec={ProductionRestartSec}", customMessage: "production RestartSec changed - re-derive SETTLE_WINDOW_SECS in upgrade-linux-tentacle.sh");
+    }
+
+    [Fact]
+    public void SettleWindow_CrashLateInTheWindow_StillCaught()
+    {
+        // Crash-restart observed at second 14 (PID changes): the old 5s window never reaches it.
+        var pids = string.Join(" ", Enumerable.Repeat("100", 14)) + " 200";
+
+        var result = RunPredicate("service_stays_active", "FAIL", "1", pids, "0", hasCurl: true, curlOk: "1");
+
+        result.ExitCode.ShouldNotBe(0, "a restart at second 14 of the settle window must fail the restored-service proof");
+    }
+
+    // ── Rollback start: survives systemd's start limit ──────────────────────
+
+    [Theory]
+    [InlineData("start", 30)]
+    [InlineData("restart", 360)]
+    public void RollbackStartUnit_StartLimitHit_ResetsFailedCounterThenStarts(string verb, int budget)
+    {
+        var result = RunStartLimitScenario($"rollback_start_unit {verb} {budget}", refuseUntilResetFailed: true);
+
+        result.Stdout.ShouldContain("AFTER_START", customMessage: "a refused start must not kill the script under set -e");
+        result.Stdout.ShouldContain("RESTORED");
+        var calls = result.Stdout.Split('\n').Where(l => l.StartsWith("call:")).ToList();
+        var reset = calls.FindIndex(c => c == "call:reset-failed squid-tentacle");
+        var start = calls.FindIndex(c => c == $"call:{verb} squid-tentacle");
+
+        reset.ShouldBeGreaterThanOrEqualTo(0, "reset-failed must be issued");
+        start.ShouldBeGreaterThan(reset, "reset-failed must come BEFORE the start, otherwise start-limit-hit refuses it");
+    }
+
+    [Fact]
+    public void RollbackStartUnit_StartRefusedAnyway_IsNonFatalAndHealthPredicateDecides()
+    {
+        var result = RunStartLimitScenario("rollback_start_unit start 30", refuseUntilResetFailed: false, neverStarts: true);
+
+        result.Stdout.ShouldContain("AFTER_START", customMessage: "start failure is non-fatal; wait_for_restored_service is the judge");
+        result.Stdout.ShouldContain("NOT_RESTORED");
+    }
+
+    [Fact]
+    public void EveryRollbackPath_StartsThroughTheResetFailedHelper()
+    {
+        CountOccurrences(RenderedScript, "rollback_start_unit start 30").ShouldBe(2, "versioned + tarball");
+        CountOccurrences(RenderedScript, "rollback_start_unit restart \"$RESTART_TIMEOUT_SECS\"").ShouldBe(2, "apt + yum");
+        Regex.Matches(RenderedScript, @"timeout 30 sudo systemctl start").Count.ShouldBe(0, "no rollback path may start the unit without reset-failed");
+        Regex.Matches(RenderedScript, @"^\s+timeout ""\$RESTART_TIMEOUT_SECS"" sudo systemctl restart", RegexOptions.Multiline).Count.ShouldBe(0);
     }
 
     [Fact]
@@ -146,7 +224,7 @@ public sealed class UpgradeLinuxRollbackHealthTests
               eval "echo \${$idx}"
             }
             sudo() { "$@"; }
-            sleep() { :; }
+            sleep() { echo "$1" >> "$STUB_DIR/sleeps"; }
             systemctl() {
               case "$1" in
                 is-active) [ "$(next_value is-active '{{isActiveSeq}}')" = "1" ] ;;
@@ -163,6 +241,7 @@ public sealed class UpgradeLinuxRollbackHealthTests
             rc=0
             {{function}} || rc=$?
             echo "is-active-calls=$(cat "$STUB_DIR/is-active" 2>/dev/null || echo 0)"
+            echo "sleep-total=$(awk '{ s += $1 } END { print s + 0 }' "$STUB_DIR/sleeps" 2>/dev/null || echo 0)"
             exit $rc
             """;
     }
@@ -208,6 +287,63 @@ public sealed class UpgradeLinuxRollbackHealthTests
         p.WaitForExit(TimeSpan.FromSeconds(20));
 
         return (p.ExitCode, stdout, stderr);
+    }
+
+    private const int ProductionRestartSec = 10;
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (dir != null && !Directory.Exists(Path.Combine(dir.FullName, "src", "Squid.Tentacle"))) dir = dir.Parent;
+
+        return dir?.FullName ?? throw new InvalidOperationException("repo root not found");
+    }
+
+    private static (int ExitCode, string Stdout, string Stderr) RunStartLimitScenario(string startStep, bool refuseUntilResetFailed, bool neverStarts = false)
+    {
+        var bash = ResolveBash() ?? throw new InvalidOperationException("bash not found");
+        var dir = Directory.CreateTempSubdirectory("squid-startlimit-").FullName;
+        var harness = Path.Combine(dir, "harness.sh");
+
+        File.WriteAllText(harness, $$"""
+            set -euo pipefail
+            STATE='{{dir}}'
+            SERVICE_NAME=squid-tentacle
+            HEALTHCHECK_URL=http://127.0.0.1:8080/healthz
+            BASELINE_HEALTHZ_PRE=FAIL
+            sudo() { "$@"; }
+            timeout() { shift; "$@"; }
+            sleep() { :; }
+            # Stub of a unit that is in start-limit-hit: start/restart are refused until reset-failed.
+            systemctl() {
+              echo "call:$*"
+              case "$1" in
+                reset-failed) touch "$STATE/reset" ;;
+                start|restart)
+                  if [ '{{neverStarts}}' = 'True' ]; then return 1; fi
+                  if [ '{{refuseUntilResetFailed}}' = 'True' ] && [ ! -f "$STATE/reset" ]; then return 1; fi
+                  touch "$STATE/active" ;;
+                is-active) [ -f "$STATE/active" ] ;;
+                show) case "$3" in MainPID) echo 100 ;; NRestarts) echo 0 ;; esac ;;
+              esac
+            }
+
+            {{ExtractPredicates()}}
+
+            {{startStep}}
+            echo AFTER_START
+            if wait_for_restored_service; then echo RESTORED; else echo NOT_RESTORED; fi
+            """);
+
+        try
+        {
+            return RunProcess(bash, harness);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     private static int CountOccurrences(string haystack, string needle) => Regex.Matches(haystack, Regex.Escape(needle)).Count;
