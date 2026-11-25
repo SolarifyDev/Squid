@@ -47,6 +47,18 @@ public class ExternalFeedBuiltInGuardTests
     }
 
     [Theory]
+    [InlineData("BuiltIn", "builtin")]
+    [InlineData("NuGet", "BUILTIN")]
+    [InlineData("builtin", "builtin")]
+    [InlineData("builtin", "BuiltIn")]
+    public async Task Update_AnyCasingOfTheReservedType_IsRefusedUnlessTheExactBuiltInFeedKeepsItsExactType(string from, string to)
+    {
+        Existing(new ExternalFeed { Id = 7, FeedType = from });
+
+        await Should.ThrowAsync<BuiltInFeedTypeChangeException>(() => _sut.UpdateExternalFeedAsync(new UpdateExternalFeedCommand { Id = 7, FeedType = to }, CancellationToken.None));
+    }
+
+    [Theory]
     [InlineData("BuiltIn", "NuGet")]
     [InlineData("NuGet", "BuiltIn")]
     [InlineData("BuiltIn", null)]

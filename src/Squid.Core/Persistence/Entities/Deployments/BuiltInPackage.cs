@@ -17,7 +17,11 @@ public class BuiltInPackage : IEntity<int>
 
     public long SizeBytes { get; set; }
 
+    /// <summary>SHA-256 of the archive file; names the blob and guards a deployment against a file the store altered.</summary>
     public string Sha256 { get; set; }
+
+    /// <summary>SHA-256 over the sorted normalised paths and per-file content hashes, so the same files packed differently (another zip tool, a tar.gz) match. Null for rows pushed before it existed, which never dedupe.</summary>
+    public string ContentFingerprint { get; set; }
 
     public int StoreId { get; set; }
 

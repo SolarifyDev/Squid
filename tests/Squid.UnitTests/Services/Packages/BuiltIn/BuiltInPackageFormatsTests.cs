@@ -50,10 +50,12 @@ public class BuiltInPackageFormatsTests : IDisposable
     }
 
     [Theory]
-    [InlineData(BuiltInPackageFormat.Zip, ".zip")]
-    [InlineData(BuiltInPackageFormat.TarGz, ".tar.gz")]
-    public void ExtensionOf_IsTheRealExtensionOfEachFormat(BuiltInPackageFormat format, string expected)
+    [InlineData(true, ".zip")]
+    [InlineData(false, ".tar.gz")]
+    public void ExtensionOf_IsTheRealExtensionOfEachFormat(bool zip, string expected)
     {
+        var format = zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz;
+
         BuiltInPackageFormats.ExtensionOf(format).ShouldBe(expected);
     }
 
@@ -143,10 +145,12 @@ public class BuiltInPackageFormatsTests : IDisposable
     }
 
     [Theory]
-    [InlineData(BuiltInPackageFormat.Zip)]
-    [InlineData(BuiltInPackageFormat.TarGz)]
-    public void TextReader_AFileOverTheCap_IsTreatedAsMissing(BuiltInPackageFormat format)
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TextReader_AFileOverTheCap_IsTreatedAsMissing(bool zip)
     {
+        var format = zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz;
+
         var big = new string('x', PackageArchiveTextReader.MaxTextBytes + 1);
         var path = Write(format == BuiltInPackageFormat.Zip ? TestArchives.Zip(("package.json", big)) : TestArchives.TarGz(("package.json", big)));
 

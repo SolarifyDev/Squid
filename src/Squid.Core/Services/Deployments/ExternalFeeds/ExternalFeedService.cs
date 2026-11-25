@@ -33,7 +33,7 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
 {
     public async Task<ExternalFeedCreatedEvent> CreateExternalFeedAsync(CreateExternalFeedCommand command, CancellationToken cancellationToken)
     {
-        if (BuiltInFeed.IsBuiltIn(command.FeedType))
+        if (BuiltInFeed.IsReservedType(command.FeedType))
             throw new BuiltInFeedCreationException();
 
         var externalFeed = mapper.Map<Persistence.Entities.Deployments.ExternalFeed>(command);
@@ -128,7 +128,10 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
 
     private static void EnsureBuiltInTypeUnchanged(Persistence.Entities.Deployments.ExternalFeed entity, string newFeedType)
     {
-        if (BuiltInFeed.IsBuiltIn(entity.FeedType) != BuiltInFeed.IsBuiltIn(newFeedType))
+        var keepsBuiltIn = BuiltInFeed.IsBuiltIn(entity.FeedType) && BuiltInFeed.IsBuiltIn(newFeedType);
+
+        // Any casing of the reserved type counts as the built-in type here, so "builtin" cannot slip past as a different one.
+        if (!keepsBuiltIn && (BuiltInFeed.IsReservedType(entity.FeedType) || BuiltInFeed.IsReservedType(newFeedType)))
             throw new BuiltInFeedTypeChangeException(entity.Id, entity.FeedType, newFeedType);
     }
 

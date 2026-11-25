@@ -68,7 +68,8 @@ public class OctopusImportDestinationDataProvider(IRepository repository) : IOct
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false));
 
-        resources.AddRange(await repository.QueryNoTracking<ExternalFeed>(x => x.SpaceId == destinationSpaceId)
+        // The space's own built-in feed is Squid's, not something an import can match or overwrite, whatever an Octopus feed is called.
+        resources.AddRange(await repository.QueryNoTracking<ExternalFeed>(x => x.SpaceId == destinationSpaceId && x.FeedType != Squid.Message.Constants.BuiltInFeed.FeedType)
             .Select(x => new OctopusImportDestinationResource(
                 x.Id, x.SpaceId, OctopusResourceKind.Feed, x.Name, x.Slug, x.LastModifiedDate))
             .ToListAsync(cancellationToken)

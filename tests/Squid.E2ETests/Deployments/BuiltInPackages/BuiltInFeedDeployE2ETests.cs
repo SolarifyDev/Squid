@@ -70,27 +70,93 @@ public class BuiltInFeedDeployE2ETests : IClassFixture<Deployments.DeploymentPip
     public async Task PushedPackage_SelectedByARelease_IsDeliveredToTheDeploymentFromTheBuiltInFeed()
     {
         var pushed = BuildPackage();
+
+        var deployed = await PushAndDeployAsync(pushed, $"{PackageId}.1.0.7.zip", "1.0.7");
+
+        File.Exists(deployed.Acquired).ShouldBeTrue($"the deployment should have acquired the pushed package at {deployed.Acquired}");
+        (await File.ReadAllBytesAsync(deployed.Acquired)).ShouldBe(pushed, "the acquired file must be exactly the bytes that were pushed");
+
+        // The release now relies on that version, so the feed refuses to overwrite it.
+        await Should.ThrowAsync<PackageVersionInUseException>(() => PushAsync(BuildPackageVariant(), $"{PackageId}.1.0.7.zip", version: "1.0.7", replace: true));
+
+        Directory.Delete(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deployed.DeploymentId), recursive: true);
+    }
+
+    [Fact]
+    public async Task PushedTarGz_KeepsItsRealExtension_AndIsDeliveredByteForByte()
+    {
+        var pushed = BuildTarGz();
+
+        var deployed = await PushAndDeployAsync(pushed, $"{PackageId}.1.0.8.tar.gz", "1.0.8");
+
+        deployed.Acquired.ShouldEndWith($"{PackageId}.1.0.8.tar.gz");
+        (await File.ReadAllBytesAsync(deployed.Acquired)).ShouldBe(pushed);
+
+        Directory.Delete(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deployed.DeploymentId), recursive: true);
+    }
+
+    [Fact]
+    public async Task ReplacedVersion_IsDeliveredWithTheReplacementsBytes_NotTheOriginals()
+    {
+        var feedId = await SeedBuiltInFeedAsync();
+        var original = BuildPackage();
+        var replacement = BuildPackageVariant();
+
+        await PushAsync(original, $"{PackageId}.1.0.9.zip", version: "1.0.9");
+        await PushAsync(replacement, $"{PackageId}.1.0.9.zip", version: "1.0.9", replace: true);
+
+        var serverTask = await SeedDeploymentAsync(feedId, "1.0.9");
+
+        await RunPipelineAsync(serverTask);
+
+        var acquired = Path.Combine(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), Hex(replacement), $"{PackageId}.1.0.9.zip");
+
+        (await File.ReadAllBytesAsync(acquired)).ShouldBe(replacement);
+        Directory.Exists(Path.Combine(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), Hex(original))).ShouldBeFalse();
+
+        Directory.Delete(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), recursive: true);
+    }
+
+    private sealed record Deployed(string Acquired, int DeploymentId);
+
+    private async Task<Deployed> PushAndDeployAsync(byte[] pushed, string fileName, string version)
+    {
         var feedId = await SeedBuiltInFeedAsync();
 
-        var push = await PushAsync(pushed, version: "1.0.7");
-        var serverTask = await SeedDeploymentAsync(feedId, push.Package.Version);
+        await PushAsync(pushed, fileName, version);
 
+        var serverTask = await SeedDeploymentAsync(feedId, version);
+
+        await RunPipelineAsync(serverTask);
+
+        var extension = fileName.EndsWith(".tar.gz", StringComparison.Ordinal) ? ".tar.gz" : ".zip";
+
+        return new Deployed(Path.Combine(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), Hex(pushed), $"{PackageId}.{version}{extension}"), serverTask.DeploymentId);
+    }
+
+    private async Task RunPipelineAsync(Seeded serverTask)
+    {
         _fixture.ExecutionCapture.Clear();
 
         await _fixture.Run<IDeploymentTaskExecutor>(executor => executor.ProcessAsync(serverTask.ServerTaskId, CancellationToken.None));
 
         await AssertTaskStateAsync(serverTask.ServerTaskId, TaskState.Success);
 
-        var acquired = Path.Combine(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), Hex(pushed), $"{PackageId}.1.0.7.zip");
-
-        File.Exists(acquired).ShouldBeTrue($"the deployment should have acquired the pushed package at {acquired}");
-        (await File.ReadAllBytesAsync(acquired)).ShouldBe(pushed, "the acquired file must be exactly the bytes that were pushed");
         _fixture.ExecutionCapture.CapturedRequests.ShouldContain(r => r.ScriptBody.Contains("built-in-feed-e2e-marker"), "the step that uses the package ran after it was acquired");
+    }
 
-        // The release now relies on that version, so the feed refuses to overwrite it.
-        await Should.ThrowAsync<PackageVersionInUseException>(() => PushAsync(BuildPackageVariant(), version: "1.0.7", replace: true));
+    private static byte[] BuildTarGz()
+    {
+        using var buffer = new MemoryStream();
 
-        Directory.Delete(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(serverTask.DeploymentId), recursive: true);
+        using (var gzip = new System.IO.Compression.GZipStream(buffer, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        using (var tar = new System.Formats.Tar.TarWriter(gzip, System.Formats.Tar.TarEntryFormat.Pax, leaveOpen: false))
+        {
+            foreach (var (name, content) in new[] { ("./values.yaml", "greeting: hello from a tarball"), ("./bin/app.dll", "binary") })
+                tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(Encoding.UTF8.GetBytes(content)) });
+        }
+
+        return buffer.ToArray();
     }
 
     private static byte[] BuildPackageVariant()
@@ -140,9 +206,9 @@ public class BuiltInFeedDeployE2ETests : IClassFixture<Deployments.DeploymentPip
         return (await _fixture.Run<IBuiltInFeedLocator, ExternalFeed>(l => l.GetAsync(_spaceId, CancellationToken.None))).Id;
     }
 
-    private Task<PushBuiltInPackageResponseData> PushAsync(byte[] bytes, string version, bool replace = false)
+    private Task<PushBuiltInPackageResponseData> PushAsync(byte[] bytes, string fileName, string version, bool replace = false)
     {
-        var command = new PushBuiltInPackageCommand { SpaceId = _spaceId, FileName = $"{PackageId}.{version}.zip", Version = version, Replace = replace, Content = new MemoryStream(bytes), DeclaredSizeBytes = bytes.Length };
+        var command = new PushBuiltInPackageCommand { SpaceId = _spaceId, FileName = fileName, Version = version, Replace = replace, Content = new MemoryStream(bytes), DeclaredSizeBytes = bytes.Length };
 
         return _fixture.Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None));
     }

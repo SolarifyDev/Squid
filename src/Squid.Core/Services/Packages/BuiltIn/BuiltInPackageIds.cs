@@ -38,10 +38,10 @@ public static partial class BuiltInPackageIds
             throw new InvalidPackageIdException(id, $"it is longer than {MaxLength} characters");
 
         if (!ValidId().IsMatch(id))
-            throw new InvalidPackageIdException(id, "it may only contain letters, digits and the separators '.', '-' and '_', and must start and end with a letter or digit");
+            throw new InvalidPackageIdException(id, "it may only contain the ASCII letters and digits and the separators '.', '-' and '_', and must start and end with a letter or digit");
     }
 
-    // The package id of Octopus' file-name pattern, so every id this feed accepts is one its file-name convention can read back.
-    [GeneratedRegex(@"^\w+([_.-]\w+)*$")]
+    // ASCII only, so that lowering an id in C# and with lower() in the database always agree, whatever the server culture is (Turkish I). Every id this feed accepts is one the Octopus file-name convention can read back.
+    [GeneratedRegex("^[A-Za-z0-9]+([_.-][A-Za-z0-9]+)*$")]
     private static partial Regex ValidId();
 }

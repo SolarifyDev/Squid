@@ -6,7 +6,7 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 namespace Squid.Core.Services.Packages.BuiltIn;
 
 /// <summary>Reads manifests (small text files) out of a pushed archive on disk, for the version tokens that read a version from the package itself.</summary>
-public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat format)
+internal sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat format, PackageArchiveInspection inspection = null)
 {
     /// <summary>A manifest bigger than this is treated as missing: manifests are small, and nothing here should inflate a bomb into memory.</summary>
     public const int MaxTextBytes = 1024 * 1024;
@@ -15,11 +15,17 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
     {
         var wanted = Normalize(relativePath);
 
+        // The push walk has already seen every root manifest (or found there is none), so asking again would unpack the archive again for nothing.
+        if (inspection != null && PackageArchiveInspector.IsRootManifest(wanted))
+            return Task.FromResult(inspection.RootManifests.GetValueOrDefault(wanted));
+
         return Task.FromResult(format == BuiltInPackageFormat.Zip ? ReadFromZip(wanted) : ReadFromTar(wanted));
     }
 
     public Task<IReadOnlyList<string>> ListRootFileNamesAsync(CancellationToken ct)
     {
+        if (inspection != null) return Task.FromResult(inspection.RootFileNames);
+
         IReadOnlyList<string> names = format == BuiltInPackageFormat.Zip ? ListZipRoot() : ListTarRoot();
 
         return Task.FromResult(names);

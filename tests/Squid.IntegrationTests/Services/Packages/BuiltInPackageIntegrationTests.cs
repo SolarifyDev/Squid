@@ -13,6 +13,7 @@ using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Packages.Storage.Exceptions;
+using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.Spaces;
 using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Commands.Deployments.ExternalFeed;
@@ -52,7 +53,12 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
 
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
         {
-            using var writer = new StreamWriter(zip.CreateEntry("index.html").Open(), new UTF8Encoding(false));
+            // A fixed time: CreateEntry stamps "now" at 2 s granularity, so the same content would be different bytes across a boundary.
+            var entry = zip.CreateEntry("index.html");
+
+            entry.LastWriteTime = new DateTimeOffset(2024, 1, 2, 3, 4, 6, TimeSpan.Zero);
+
+            using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
 
             writer.Write(content);
         }
@@ -500,5 +506,152 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         var feed = await Run<IBuiltInFeedLocator, ExternalFeed>(l => l.GetAsync(setup.SpaceId, CancellationToken.None));
 
         (await Run<IPackageContentFetcher, PackageFetchResult>(f => f.FetchAsync(feed, "Acme.Web", "1.0.1", CancellationToken.None))).RawBytes.ShouldBe(one);
+    }
+
+    // === hardening ===
+
+    [Fact]
+    public async Task Push_SameFilesAsTarGzAfterZip_IsADuplicate_ThroughTheRealIndex()
+    {
+        var setup = await SetUpAsync();
+        var zip = Zip("same files");
+        var first = await PushAsync(setup.SpaceId, zip, packageId: "Acme.Web");
+        var again = await PushAsync(setup.SpaceId, TarGzOf("index.html", "same files"), fileName: "Acme.Web.1.0.0.tar.gz", packageId: "Acme.Web");
+
+        again.Deduplicated.ShouldBeTrue();
+        again.Package.Version.ShouldBe(first.Package.Version);
+        (await RowsAsync()).Single().ContentFingerprint.ShouldNotBeNullOrEmpty();
+        (await ScalarAsync("SELECT COALESCE(MAX(value), 0) AS \"Value\" FROM package_version_counter")).ShouldBe(1);
+    }
+
+    private static byte[] TarGzOf(string name, string content)
+    {
+        using var buffer = new MemoryStream();
+
+        using (var gzip = new GZipStream(buffer, CompressionLevel.Fastest, leaveOpen: true))
+        using (var tar = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: false))
+            tar.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = new MemoryStream(Encoding.UTF8.GetBytes(content)) });
+
+        return buffer.ToArray();
+    }
+
+    [Fact]
+    public async Task Push_AnExplicitNewVersionWithTheLatestsContent_IsStored_ThroughTheRealIndex()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("same"), version: "1.0.0");
+
+        var second = await PushAsync(setup.SpaceId, Zip("same"), version: "2.0.0");
+
+        second.Deduplicated.ShouldBeFalse();
+        (await RowsAsync()).Select(r => r.Version).ShouldBe(["1.0.0", "2.0.0"]);
+    }
+
+    // The release lands between the early check and the row update, i.e. while the file write is going on. The seam is a decorator of the index that creates the
+    // release just before the real update runs; nothing sleeps.
+    [Fact]
+    public async Task Replace_WhenAReleaseSelectsTheVersionAfterTheEarlyCheck_IsRefusedByTheAtomicUpdate_AndChangesNothing()
+    {
+        var setup = await SetUpAsync();
+        var original = Zip("original");
+
+        await PushAsync(setup.SpaceId, original, version: "1.0.0");
+
+        var command = new PushBuiltInPackageCommand { SpaceId = setup.SpaceId, FileName = "Acme.Web.1.0.0.zip", Version = "1.0.0", Replace = true, Content = new MemoryStream(Zip("replacement")) };
+
+        await Should.ThrowAsync<PackageVersionInUseException>(() => Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None), builder =>
+            builder.Register(c => new ReleaseAppearsBeforeReplace(new BuiltInPackageDataProvider(c.Resolve<IRepository>(), c.Resolve<IUnitOfWork>()), c.Resolve<IRepository>(), c.Resolve<IUnitOfWork>(), setup.FeedId)).As<IBuiltInPackageDataProvider>().InstancePerLifetimeScope()));
+
+        (await RowsAsync()).Single().Sha256.ShouldBe(Sha(original));
+    }
+
+    private sealed class ReleaseAppearsBeforeReplace(BuiltInPackageDataProvider inner, IRepository repository, IUnitOfWork unitOfWork, int feedId) : IBuiltInPackageDataProvider
+    {
+        public Task<string> ResolveCanonicalIdAsync(int f, string p, CancellationToken ct) => inner.ResolveCanonicalIdAsync(f, p, ct);
+        public Task<BuiltInPackage> GetAsync(int f, string p, string v, CancellationToken ct) => inner.GetAsync(f, p, v, ct);
+        public Task<List<BuiltInPackage>> ListVersionsAsync(int f, string p, CancellationToken ct) => inner.ListVersionsAsync(f, p, ct);
+        public Task<List<Squid.Message.Models.BuiltInPackages.BuiltInPackageDto>> ListPackagesAsync(int f, string filter, int take, CancellationToken ct) => inner.ListPackagesAsync(f, filter, take, ct);
+        public Task InsertAsync(BuiltInPackage package, CancellationToken ct) => inner.InsertAsync(package, ct);
+
+        public async Task ReplaceContentAsync(int id, BuiltInPackage content, CancellationToken ct)
+        {
+            await repository.InsertAsync(new ReleaseSelectedPackage { ReleaseId = 1, FeedId = feedId, ActionName = "Deploy", PackageReferenceName = "ACME.WEB", Version = "1.0.0" }, ct);
+            await unitOfWork.SaveChangesAsync(ct);
+
+            await inner.ReplaceContentAsync(id, content, ct);
+        }
+    }
+
+    [Fact]
+    public async Task Push_WhenTheStoredBlobIsTruncatedOnDisk_APushOfTheSameFileRepairsIt()
+    {
+        var setup = await SetUpAsync();
+        var bytes = Zip("heal me");
+
+        await PushAsync(setup.SpaceId, bytes, version: "1.0.0");
+
+        var blob = BlobFiles().Single();
+
+        await File.WriteAllBytesAsync(blob, bytes[..(bytes.Length / 2)]);
+        await PushAsync(setup.SpaceId, bytes, version: "2.0.0");
+
+        (await File.ReadAllBytesAsync(blob)).ShouldBe(bytes);
+    }
+
+    [Fact]
+    public async Task Ids_AreMatchedIgnoringCase_UnderTheTurkishCulture()
+    {
+        var setup = await SetUpAsync();
+        var previous = System.Globalization.CultureInfo.CurrentCulture;
+
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("tr-TR");
+
+        try
+        {
+            await PushAsync(setup.SpaceId, Zip("one"), packageId: "TITLE.INDEX", version: "1.0.0");
+            await InsertSelectionAsync(setup.FeedId, "title.index", "1.0.0");
+
+            (await Run<IBuiltInPackageUsage, bool>(u => u.IsVersionSelectedByReleaseAsync(setup.FeedId, "Title.Index", "1.0.0", CancellationToken.None))).ShouldBeTrue();
+
+            var found = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "title.index", Version = "1.0.0" }, CancellationToken.None));
+            var second = await PushAsync(setup.SpaceId, Zip("two"), packageId: "title.index", version: "1.0.1");
+            var listed = await Run<IBuiltInPackageQueryService, ListBuiltInPackagesResponseData>(q => q.ListPackagesAsync(new ListBuiltInPackagesRequest { SpaceId = setup.SpaceId, Filter = "TITLE" }, CancellationToken.None));
+
+            found.PackageId.ShouldBe("TITLE.INDEX");
+            second.Package.PackageId.ShouldBe("TITLE.INDEX");
+            listed.Packages.Single().VersionCount.ShouldBe(2);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
+    public async Task OctopusImport_NeverSeesTheBuiltInFeedAsADestinationFeed()
+    {
+        var setup = await SetUpAsync();
+
+        await Run<IExternalFeedService>(s => s.CreateExternalFeedAsync(new CreateExternalFeedCommand { FeedType = "NuGet", FeedUri = "https://x", Name = "Built-in feed", Slug = "builtin2", SpaceId = setup.SpaceId }, CancellationToken.None));
+
+        var resources = await Run<IOctopusImportDestinationDataProvider, IReadOnlyList<OctopusImportDestinationResource>>(p => p.GetResourcesAsync(setup.SpaceId, CancellationToken.None));
+        var feeds = resources.Where(r => r.Kind == Squid.Core.Services.OctopusImport.Octopus.OctopusResourceKind.Feed).ToList();
+
+        feeds.Count.ShouldBe(1);
+        feeds.Single().Id.ShouldNotBe(setup.FeedId);
+    }
+
+    [Fact]
+    public async Task ALegacyBuiltInTypedFeedWithAUri_IsNeverAdopted_ByTheProvisionerOrTheSeeder()
+    {
+        var space = await CreateSpaceRowAsync("legacy");
+
+        await Run<IRepository>(r => r.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO external_feed (feed_type, feed_uri, name, slug, space_id, last_modified_date) VALUES ('BuiltIn', 'https://old.example', 'old', 'old', {space}, now())"));
+
+        var ex = await Should.ThrowAsync<BuiltInFeedConflictException>(() => Run<IBuiltInFeedProvisioner>(p => p.EnsureAsync(space, CancellationToken.None)));
+
+        ex.Message.ShouldContain("https://old.example");
+        await Should.ThrowAsync<BuiltInFeedConflictException>(() => new BuiltInFeedSeeder().SeedAsync(CurrentScope));
     }
 }

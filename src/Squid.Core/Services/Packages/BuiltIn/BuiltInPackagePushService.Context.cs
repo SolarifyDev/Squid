@@ -1,10 +1,9 @@
 using Squid.Core.Persistence.Entities.Deployments;
-using Squid.Core.Services.Packages.Storage;
 using Squid.Message.Commands.BuiltInPackages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
-public sealed partial class BuiltInPackagePushService
+internal sealed partial class BuiltInPackagePushService
 {
     private sealed class PushContext(PushBuiltInPackageCommand command)
     {
@@ -16,15 +15,14 @@ public sealed partial class BuiltInPackagePushService
         // Upload
         public StagedUpload Staged { get; set; }
         public BuiltInPackageFormat Format { get; set; }
+        public PackageArchiveInspection Inspection { get; set; }
 
         // Version
         public string Version { get; set; }
         public BuiltInPackage Replacing { get; set; }
 
         // Storage
-        public int StoreId { get; set; }
-        public IPackageBlobStore Store { get; set; }
-        public string BlobKey { get; set; }
+        public StoredBlob Blob { get; set; }
 
         // Result
         public BuiltInPackage Recorded { get; set; }
