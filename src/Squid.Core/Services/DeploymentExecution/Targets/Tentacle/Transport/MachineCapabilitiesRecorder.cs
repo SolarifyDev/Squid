@@ -27,22 +27,25 @@ public sealed class MachineCapabilitiesRecorder : IMachineCapabilitiesRecorder
 
     public async Task<MachineRuntimeCapabilities> RecordAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
     {
-        _cache.Store(machineId, response.Metadata ?? new Dictionary<string, string>(), response.AgentVersion, response.SupportedServices);
+        var persistedAt = await PersistAsync(machineId, response, ct).ConfigureAwait(false);
 
-        await PersistAsync(machineId, response, ct).ConfigureAwait(false);
+        _cache.Store(machineId, response.Metadata ?? new Dictionary<string, string>(), response.AgentVersion, response.SupportedServices, persistedAt);
 
         return _cache.TryGet(machineId);
     }
 
-    private async Task PersistAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
+    /// <summary>The timestamp the row was stamped with (what <c>LoadIfNewerAsync</c> compares against), or null when the write failed and the cache falls back to the local clock.</summary>
+    private async Task<DateTimeOffset?> PersistAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
     {
         try
         {
-            await _store.RunAsync(async persistence => { await persistence.SaveAsync(machineId, Map(response), ct).ConfigureAwait(false); return true; }).ConfigureAwait(false);
+            return await _store.RunAsync(persistence => persistence.SaveAsync(machineId, Map(response), ct)).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.Warning(ex, "Failed to persist runtime capabilities for machine {MachineId}; this pod's cache is current and the next probe retries the write.", machineId);
+
+            return null;
         }
     }
 

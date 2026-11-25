@@ -34,7 +34,8 @@ public interface IMachineRuntimeCapabilitiesPersistence
     /// tracking, no concurrent-write race with concurrent <c>UpdateMachineAsync</c>
     /// calls.
     /// </summary>
-    Task SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct);
+    /// <returns>The exact <c>runtime_capabilities_updated_at</c> value written, so the caller can stamp its in-memory copy with the timestamp other pods will compare against.</returns>
+    Task<DateTimeOffset> SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct);
 
     /// <summary>
     /// Load every machine row with non-NULL <c>runtime_capabilities_json</c> for
@@ -93,7 +94,7 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         _dbGate = dbGate ?? new ScopedDbGate();
     }
 
-    public async Task SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct)
+    public async Task<DateTimeOffset> SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(capabilities);
 
@@ -116,6 +117,8 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
             s => s.SetProperty(m => m.RuntimeCapabilitiesJson, json)
                   .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)now),
             ct), ct).ConfigureAwait(false);
+
+        return now;
     }
 
     public async Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct)
