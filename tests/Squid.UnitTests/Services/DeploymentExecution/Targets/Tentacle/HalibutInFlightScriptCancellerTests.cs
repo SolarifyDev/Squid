@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Halibut;
+using Halibut.Exceptions;
 using Squid.Core.Halibut.Resilience;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Infrastructure;
@@ -167,6 +168,93 @@ public class HalibutInFlightScriptCancellerTests
         _events.ShouldBeEmpty();
     }
 
+    // ── Agent downgraded since the V2 ticket was recorded ───────────────────
+
+    private static MachineRuntimeCapabilities V1OnlyAgent() => new() { SupportedServices = new[] { "IScriptService/v1" } };
+
+    private static MachineRuntimeCapabilities V2Agent() => new() { SupportedServices = new[] { "IScriptService/v1", "IScriptService/v2" } };
+
+    [Theory]
+    [InlineData(typeof(ServiceNotFoundHalibutClientException))]
+    [InlineData(typeof(MethodNotFoundHalibutClientException))]
+    [InlineData(typeof(HalibutClientException))]
+    public async Task AV2Cancel_ThatFails_WhenTheAgentWithdrewV2_IsRetriedOverV1(Type failure)
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent() };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = (Exception)Activator.CreateInstance(failure, "no such service") };
+
+        await Canceller(new FakeV1Agent(_events), v2, refresher: refresher).CancelAllAsync(TaskId);
+
+        _events.ShouldBe(["V2.Cancel:v2-ticket", "Caps.Refresh:1", "V1.Cancel:v2-ticket"]);
+    }
+
+    [Fact]
+    public async Task AV2Cancel_ThatFails_WhileTheAgentStillAdvertisesV2_DoesNotFallBack()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V2Agent() };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new HalibutClientException("connection reset") };
+
+        await Should.NotThrowAsync(() => Canceller(new FakeV1Agent(_events), v2, refresher: refresher).CancelAllAsync(TaskId));
+
+        _events.ShouldNotContain("V1.Cancel:v2-ticket");
+        refresher.RefreshCalls.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task AV2Cancel_ThatFails_WhenTheAgentDoesNotAnswerCapabilities_DoesNotFallBack()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = null };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new HalibutClientException("unreachable") };
+
+        await Should.NotThrowAsync(() => Canceller(new FakeV1Agent(_events), v2, refresher: refresher).CancelAllAsync(TaskId));
+
+        _events.ShouldNotContain("V1.Cancel:v2-ticket");
+    }
+
+    [Fact]
+    public async Task AV2Cancel_ThatFailsWithANonProtocolError_DoesNotAskTheAgentOrFallBack()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent() };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new InvalidOperationException("boom") };
+
+        await Should.NotThrowAsync(() => Canceller(new FakeV1Agent(_events), v2, refresher: refresher).CancelAllAsync(TaskId));
+
+        refresher.RefreshCalls.ShouldBe(0);
+        _events.ShouldNotContain("V1.Cancel:v2-ticket");
+    }
+
+    [Fact]
+    public async Task AV1Cancel_ThatFails_NeverAsksTheAgentForCapabilities()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v1-ticket", ScriptProtocolVersion.V1));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent() };
+
+        await Should.NotThrowAsync(() => Canceller(new ThrowingV1Agent(), new FakeV2Agent(_events), refresher: refresher).CancelAllAsync(TaskId));
+
+        refresher.RefreshCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AFailingV2Cancel_WithoutARefresher_DoesNotFallBack()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new ServiceNotFoundHalibutClientException("no such service") };
+
+        await Should.NotThrowAsync(() => Canceller(new FakeV1Agent(_events), v2).CancelAllAsync(TaskId));
+
+        _events.ShouldBe(["V2.Cancel:v2-ticket"]);
+    }
+
     [Fact]
     public async Task AFailingStoreRead_DoesNotThrow()
     {
@@ -184,15 +272,15 @@ public class HalibutInFlightScriptCancellerTests
             _machines.Setup(m => m.GetMachinesByIdAsync(id, It.IsAny<CancellationToken>())).ReturnsAsync(new Machine { Id = id, Name = $"agent-{id}", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-cancel","Thumbprint":"AABBCCDD"}""" });
     }
 
-    private HalibutInFlightScriptCanceller Canceller(IAsyncScriptService v1, IAsyncScriptServiceV2 v2, TimeSpan? cancelBudget = null, TimeSpan? grace = null)
-        => Canceller(new FakeClientFactories(v1, v2), cancelBudget, grace);
+    private HalibutInFlightScriptCanceller Canceller(IAsyncScriptService v1, IAsyncScriptServiceV2 v2, TimeSpan? cancelBudget = null, TimeSpan? grace = null, IMachineCapabilitiesRefresher refresher = null)
+        => Canceller(new FakeClientFactories(v1, v2), cancelBudget, grace, refresher);
 
-    private HalibutInFlightScriptCanceller Canceller(FakeClientFactories factories, TimeSpan? cancelBudget = null, TimeSpan? grace = null)
+    private HalibutInFlightScriptCanceller Canceller(FakeClientFactories factories, TimeSpan? cancelBudget = null, TimeSpan? grace = null, IMachineCapabilitiesRefresher refresher = null)
     {
         var selector = new ScriptDispatcherSelector(new IScriptDispatcher[] { new V1ScriptDispatcher(factories), new V2ScriptDispatcher(factories) });
         var budget = cancelBudget ?? TimeSpan.FromMilliseconds(200);
 
-        return new HalibutInFlightScriptCanceller(_store.Object, _machines.Object, selector, new HalibutScriptObserver(), new RpcRetryHandler(budget, budget, budget), grace ?? TimeSpan.FromSeconds(1));
+        return new HalibutInFlightScriptCanceller(_store.Object, _machines.Object, selector, new HalibutScriptObserver(), new RpcRetryHandler(budget, budget, budget), grace ?? TimeSpan.FromSeconds(1), refresher);
     }
 
     private sealed class ThrowingV1Agent : IAsyncScriptService

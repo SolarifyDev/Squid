@@ -44,6 +44,7 @@ internal sealed class FakeV2Agent : IAsyncScriptServiceV2
     public Queue<Exception> StartFailuresBeforeRunning { get; } = new();
     public Queue<Exception> StartFailuresAfterRunning { get; } = new();
     public Exception GetStatusFailure { get; set; }
+    public Exception CancelFailure { get; set; }
     public Action OnGetStatus { get; set; }
     public int StartCalls { get; private set; }
 
@@ -94,6 +95,8 @@ internal sealed class FakeV2Agent : IAsyncScriptServiceV2
     {
         var id = command.Ticket.TaskId;
         _events.Add($"V2.Cancel:{id}");
+
+        if (CancelFailure != null) throw CancelFailure;
 
         if (Scripts.TryGetValue(id, out var script))
         {
