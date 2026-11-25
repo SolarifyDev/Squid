@@ -1697,11 +1697,18 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
         lock (running.TerminalGate)
         {
-            if (running.Finalized || running.CancelRequested) return;
+            // Exit can be delivered twice (the Exited event and the post-subscribe HasExited check): persist once, or a second
+            // delivery re-creates a state the server has already consumed through another instance.
+            if (running.Finalized || running.CancelRequested || running.NaturalExitPersisted) return;
 
             PersistCompleteState(running, running.Process.ExitCode);
+
+            running.NaturalExitPersisted = true;
         }
     }
+
+    /// <summary>Test-only: delivers the process-exit notification for a tracked script again, as the runtime may.</summary>
+    internal void RedeliverNaturalExitForTests(string ticketId) => PersistNaturalExit(_scripts[ticketId]);
 
     /// <summary>
     /// Isolation protects the RUNNING process, not the bookkeeping that follows. Holding the lock until the server's
@@ -1899,6 +1906,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
         /// <summary>Set (under <see cref="TerminalGate"/>) once CompleteScript/CancelScript recorded the final result.</summary>
         public bool Finalized;
+        public bool NaturalExitPersisted;
 
         /// <summary>Set by V2 CancelScript so later status/complete calls report Canceled instead of the kill signal's exit code.</summary>
         public volatile bool V2Canceled;
