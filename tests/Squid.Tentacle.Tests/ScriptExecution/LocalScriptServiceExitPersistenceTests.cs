@@ -62,6 +62,25 @@ public class LocalScriptServiceExitPersistenceTests : IDisposable
         status.ExitCode.ShouldBe(5);
     }
 
+    // The runtime can deliver a process exit twice (Exited event + the post-subscribe HasExited check). Once another instance has
+    // consumed the recorded state, a second delivery on the original instance must not write it again.
+    [Fact]
+    public void NaturalExitDeliveredTwice_AfterTheStateWasConsumed_DoesNotRecreateIt()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var original = Abandoned();
+        var ticket = StartScript(original, "exit 3");
+        WaitForPersistedComplete(ticket);
+
+        new LocalScriptService().CompleteScript(new CompleteScriptCommand(ticket, 0));
+        new ScriptStateStore(WorkDir(ticket)).Exists().ShouldBeFalse("precondition: the completing instance consumed the state");
+
+        original.RedeliverNaturalExitForTests(ticket.TaskId);
+
+        new ScriptStateStore(WorkDir(ticket)).Exists().ShouldBeFalse("a repeated exit delivery must not re-create a state the server already consumed");
+    }
+
     [Fact]
     public void RestartAfterScriptExited_CompleteScript_ReturnsRealExitCodeAndLogs_ThenConsumesState()
     {
