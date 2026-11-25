@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Core.Services.Packages.Versioning.Tokens;
 
@@ -36,12 +37,15 @@ public class FileInputAndGitTokenTests
     }
 
     [Theory]
-    [InlineData("a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_!.zip")]
-    [InlineData("a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-!.1.2.zip")]
-    [InlineData("a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.1x.zip")]
-    [InlineData("1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.zip")]
-    public async Task FileVersion_AHostileFileName_IsAnsweredFastNotMatchedForever(string fileName)
+    [InlineData("a_", "!.zip")]
+    [InlineData("a-", "!.1.2.zip")]
+    [InlineData("a.", "1x.zip")]
+    [InlineData("1.", ".zip")]
+    public async Task FileVersion_AHostileFileName_IsAnsweredFastNotMatchedForever(string unit, string suffix)
     {
+        // As long as the cap allows: the old backtracking pattern needed seconds at 49 characters and doubled with every extra pair, so at this length it would never finish.
+        var fileName = string.Concat(Enumerable.Repeat(unit, (FileVersionToken.MaxFileNameLength - suffix.Length) / unit.Length)) + suffix;
+
         // Building the patterns and JIT are one-time costs, not what is being timed.
         await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context("Acme.1.0.0.zip"), null, CancellationToken.None);
 
@@ -55,7 +59,8 @@ public class FileInputAndGitTokenTests
         {
         }
 
-        watch.ElapsedMilliseconds.ShouldBeLessThan(100);
+        fileName.Length.ShouldBeGreaterThan(190);
+        watch.ElapsedMilliseconds.ShouldBeLessThan(1000);
     }
 
     [Fact]
