@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.PackageStorage;
 using Squid.Core.Persistence.Entities.Events;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Message.Commands.PackageStorage;
@@ -20,6 +21,14 @@ public class PackageStoreAuditIntegrationTests : TestBase
 
     public PackageStoreAuditIntegrationTests() : base("PackageStoreAudit", "squid_it_package_store_audit", builder => builder.RegisterType<AuditSecretProvider>().As<IPackageBlobStoreProvider>().SingleInstance())
     {
+        ResetPackageStores();
+    }
+
+    // The migration seeds a default store, and the base class only truncates after a test: whichever test runs first in a fresh database would see that row.
+    // Start every test from an empty table so no test depends on the seed or on the order the tests run in.
+    private void ResetPackageStores()
+    {
+        Run<IRepository>(repository => repository.ExecuteDeleteAsync<PackageStore>(s => s.Id > 0)).GetAwaiter().GetResult();
     }
 
     private Task<PackageStoreDto> CreateAsync(string name = "Audited") => Run<IPackageStoreService, PackageStoreDto>(service => service.CreateAsync(new CreatePackageStoreCommand
