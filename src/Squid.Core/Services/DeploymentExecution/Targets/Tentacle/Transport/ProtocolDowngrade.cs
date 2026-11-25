@@ -27,31 +27,72 @@ internal static class ProtocolDowngrade
         return capabilities != null && !capabilities.SupportsScriptServiceV2;
     }
 
+    /// <summary>What a fall-back cancel needs after the V2 attempt besides the capabilities refresh (which has its own, configurable bound): room for the V1 call to retry a blip or two.</summary>
+    internal static readonly TimeSpan V1CancelReserve = TimeSpan.FromSeconds(5);
+
     /// <summary>
     /// Cancels a script over the version it runs under — and, for the one cancel of one script, shares ONE deadline of cancel budget + grace across the
     /// V2 attempt, the capabilities refresh and the V1 retry (the caller may be an HTTP request). A V2 cancel that fails because the agent was downgraded
     /// since (a pod rollback keeps its script pods) is retried over V1: both dialects share one agent script state, so a V1 cancel of a V2 ticket is valid.
-    /// Used by the in-flight canceller and by the observer's mid-run cancel, so both treat a downgraded agent alike. Any other failure propagates unchanged.
+    /// The V2 attempt may spend only <see cref="V2Share"/> of that deadline, so the refresh and the V1 call always keep their reserve: a rolled-back agent
+    /// answers V2 with transport errors the retry loop would otherwise keep retrying for the whole budget. Used by the in-flight canceller and by the
+    /// observer's mid-run cancel, so both treat a downgraded agent alike. Any other failure propagates unchanged.
     /// </summary>
     internal static async Task<CancelOutcome> CancelAsync(IScriptAgentSession session, ScriptSessionContext context, CancelTarget target, CancellationToken ct)
     {
+        var time = context.Downgrade?.Time ?? TimeProvider.System;
+        var total = context.Retry.CancelBudget + (context.Downgrade?.Grace ?? HalibutInFlightScriptCanceller.DefaultCancelGrace);
+
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(context.Retry.CancelBudget + (context.Downgrade?.Grace ?? HalibutInFlightScriptCanceller.DefaultCancelGrace));
+        using var deadlineTimer = ArmDeadline(deadline, total, time);
+
+        using var v2Deadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        using var v2Timer = ArmDeadline(v2Deadline, V2Share(session, context, total), time);
 
         try
         {
-            return new CancelOutcome(session.Version, await session.CancelAsync(target.Ticket).WaitAsync(deadline.Token).ConfigureAwait(false));
+            return new CancelOutcome(session.Version, await session.CancelAsync(target.Ticket).WaitAsync(v2Deadline.Token).ConfigureAwait(false));
         }
-        catch (Exception ex) when (context.Downgrade != null && IsPossibleMismatch(session.Version, ex))
+        catch (Exception ex) when (ShouldTryV1(session, context, ex, v2Deadline, deadline))
         {
             if (!await AgentWithdrewV2Async(context.Downgrade.Refresher, target.MachineId, target.Endpoint, deadline.Token).ConfigureAwait(false)) throw;
 
-            Log.Warning(ex, "[Cancel] Agent of machine {MachineId} no longer advertises script service V2; cancelling V2 ticket {Ticket} over V1", target.MachineId, target.Ticket.TaskId);
-
-            var v1 = context.Downgrade.Selector.ForVersion(ScriptProtocolVersion.V1).Open(target.Endpoint, context);
-
-            return new CancelOutcome(v1.Version, await v1.CancelAsync(target.Ticket).WaitAsync(deadline.Token).ConfigureAwait(false));
+            return await CancelOverV1Async(context, target, ex, deadline.Token).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// How much of the one deadline the V2 attempt may spend: all of it when no fall-back can follow, otherwise what is left after the reserve (the refresh
+    /// timeout plus <see cref="V1CancelReserve"/>), but never under a quarter of it so a small configured budget still gives V2 a real attempt.
+    /// </summary>
+    internal static TimeSpan V2Share(IScriptAgentSession session, ScriptSessionContext context, TimeSpan total)
+    {
+        if (context.Downgrade?.Refresher == null || session.Version != ScriptProtocolVersion.V2) return total;
+
+        var reserve = context.Downgrade.Refresher.RefreshTimeout + V1CancelReserve;
+
+        return TimeSpan.FromTicks(Math.Max((total - reserve).Ticks, total.Ticks / 4));
+    }
+
+    private static ITimer ArmDeadline(CancellationTokenSource source, TimeSpan after, TimeProvider time) => time.CreateTimer(_ => source.Cancel(), null, after, Timeout.InfiniteTimeSpan);
+
+    /// <summary>A V2 cancel that failed like a V1-only agent would answer, or whose share of the deadline ran out while the overall deadline (and the caller) still stand.</summary>
+    private static bool ShouldTryV1(IScriptAgentSession session, ScriptSessionContext context, Exception ex, CancellationTokenSource v2Deadline, CancellationTokenSource deadline)
+    {
+        if (context.Downgrade == null) return false;
+
+        var shareSpent = ex is OperationCanceledException && v2Deadline.IsCancellationRequested && !deadline.IsCancellationRequested;
+
+        return IsPossibleMismatch(session.Version, ex) || (session.Version == ScriptProtocolVersion.V2 && shareSpent);
+    }
+
+    private static async Task<CancelOutcome> CancelOverV1Async(ScriptSessionContext context, CancelTarget target, Exception v2Failure, CancellationToken deadline)
+    {
+        Log.Warning(v2Failure, "[Cancel] Agent of machine {MachineId} no longer advertises script service V2; cancelling V2 ticket {Ticket} over V1", target.MachineId, target.Ticket.TaskId);
+
+        var v1 = context.Downgrade.Selector.ForVersion(ScriptProtocolVersion.V1).Open(target.Endpoint, context);
+
+        return new CancelOutcome(v1.Version, await v1.CancelAsync(target.Ticket).WaitAsync(deadline).ConfigureAwait(false));
     }
 }
 
