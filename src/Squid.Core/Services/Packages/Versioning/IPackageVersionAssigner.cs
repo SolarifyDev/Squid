@@ -2,6 +2,10 @@ using Squid.Message.Models.PackageVersioning;
 
 namespace Squid.Core.Services.Packages.Versioning;
 
+/// <remarks>
+/// Counters are keyed by the package id as given (trimmed, case-sensitive), so callers must pass the canonical package id of the package, the one the feed stores it
+/// under. <c>{date}</c> is the UTC date, read once per call. The built-in feed upload uses <see cref="AssignAsync"/> to version every uploaded package.
+/// </remarks>
 public interface IPackageVersionAssigner : IScopedDependency
 {
     /// <summary>

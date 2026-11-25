@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 
 namespace Squid.Core.Services.Deployments.Channels;
 
@@ -56,31 +57,31 @@ public class ChannelVersionRuleValidator : IChannelVersionRuleValidator
 
     internal static bool SatisfiesRule(string version, ChannelVersionRule rule)
     {
-        if (!TryParseVersion(version, out var semVer)) return true;
+        if (!TryParseVersion(version, out var parsed)) return true;
 
-        if (!string.IsNullOrWhiteSpace(rule.VersionRange) && !SatisfiesVersionRange(semVer, rule.VersionRange))
+        if (!string.IsNullOrWhiteSpace(rule.VersionRange) && !SatisfiesVersionRange(parsed, rule.VersionRange))
             return false;
 
-        if (!string.IsNullOrWhiteSpace(rule.PreReleaseTag) && !SatisfiesPreReleaseTag(semVer.PreRelease, rule.PreReleaseTag))
+        if (!string.IsNullOrWhiteSpace(rule.PreReleaseTag) && !SatisfiesPreReleaseTag(parsed.PreRelease, rule.PreReleaseTag))
             return false;
 
         return true;
     }
 
-    internal static bool SatisfiesVersionRange(SemVer version, string rangeNotation)
+    internal static bool SatisfiesVersionRange(FeedVersion version, string rangeNotation)
     {
         if (!TryParseRange(rangeNotation, out var min, out var minInclusive, out var max, out var maxInclusive))
             return true;
 
         if (min != null)
         {
-            var cmp = CompareVersions(version, min.Value);
+            var cmp = version.CompareNumeric(min);
             if (minInclusive ? cmp < 0 : cmp <= 0) return false;
         }
 
         if (max != null)
         {
-            var cmp = CompareVersions(version, max.Value);
+            var cmp = version.CompareNumeric(max);
             if (maxInclusive ? cmp > 0 : cmp >= 0) return false;
         }
 
@@ -101,30 +102,9 @@ public class ChannelVersionRuleValidator : IChannelVersionRuleValidator
         }
     }
 
-    internal static bool TryParseVersion(string input, out SemVer result)
-    {
-        result = default;
-        if (string.IsNullOrWhiteSpace(input)) return false;
+    internal static bool TryParseVersion(string input, out FeedVersion result) => FeedVersion.TryParse(input, out result);
 
-        var preReleaseIndex = input.IndexOf('-');
-        var versionPart = preReleaseIndex >= 0 ? input[..preReleaseIndex] : input;
-        var preRelease = preReleaseIndex >= 0 ? input[(preReleaseIndex + 1)..] : null;
-
-        var parts = versionPart.Split('.');
-        if (parts.Length < 2) return false;
-
-        if (!int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
-            return false;
-
-        var patch = 0;
-        if (parts.Length >= 3 && !int.TryParse(parts[2], out patch))
-            return false;
-
-        result = new SemVer(major, minor, patch, preRelease);
-        return true;
-    }
-
-    internal static bool TryParseRange(string notation, out SemVer? min, out bool minInclusive, out SemVer? max, out bool maxInclusive)
+    internal static bool TryParseRange(string notation, out FeedVersion min, out bool minInclusive, out FeedVersion max, out bool maxInclusive)
     {
         min = null;
         max = null;
@@ -185,17 +165,6 @@ public class ChannelVersionRuleValidator : IChannelVersionRuleValidator
         return min != null || max != null;
     }
 
-    internal static int CompareVersions(SemVer a, SemVer b)
-    {
-        var cmp = a.Major.CompareTo(b.Major);
-        if (cmp != 0) return cmp;
-
-        cmp = a.Minor.CompareTo(b.Minor);
-        if (cmp != 0) return cmp;
-
-        return a.Patch.CompareTo(b.Patch);
-    }
-
     private static string FormatRuleSummary(ChannelVersionRule rule)
     {
         var parts = new List<string>();
@@ -208,6 +177,4 @@ public class ChannelVersionRuleValidator : IChannelVersionRuleValidator
 
         return parts.Count > 0 ? string.Join(", ", parts) : "channel version rule";
     }
-
-    internal record struct SemVer(int Major, int Minor, int Patch, string PreRelease);
 }
