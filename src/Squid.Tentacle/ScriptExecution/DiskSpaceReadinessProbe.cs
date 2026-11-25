@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Squid.Tentacle.Configuration;
 using Serilog;
 
@@ -7,8 +8,10 @@ namespace Squid.Tentacle.ScriptExecution;
 /// Readiness wrapper around <see cref="DiskSpaceChecker.HasSufficientSpace"/> that cannot hang the
 /// health endpoint. A statfs on a hung hard-mounted NFS volume blocks forever; this runs the check on a
 /// pool thread, waits at most <c>timeout</c>, and reports not-ready on timeout. At most ONE check is ever
-/// in flight: while a previous one is still stuck, later probes return not-ready immediately instead of
-/// stranding another thread each time.
+/// in flight, and overlapping probes share it: a later probe waits for the in-flight check only for what is
+/// left of ITS timeout budget (measured from when that check started), so a healthy check that is merely
+/// still running does not flap readiness, while a check stuck past its budget returns not-ready immediately
+/// instead of stranding another thread (or another full timeout) per probe.
 /// </summary>
 public sealed class DiskSpaceReadinessProbe
 {
@@ -17,6 +20,7 @@ public sealed class DiskSpaceReadinessProbe
     private readonly Func<string, bool> _check;
     private readonly object _gate = new();
     private Task<bool> _inflight;
+    private long _inflightStartedAt;
 
     public DiskSpaceReadinessProbe(string path, int timeoutSeconds, Func<string, bool> check = null)
     {
@@ -34,32 +38,35 @@ public sealed class DiskSpaceReadinessProbe
 
     public bool IsReady()
     {
-        var task = StartOrNull();
+        var (task, budget) = StartOrJoin();
 
-        if (task == null) return false;
+        if (budget <= TimeSpan.Zero && !task.IsCompleted)
+        {
+            Log.Debug("Previous workspace disk check for {Path} has used its whole budget; reporting not ready", _path);
+            return false;
+        }
 
-        return WaitForResult(task);
+        return WaitForResult(task, budget);
     }
 
-    private Task<bool> StartOrNull()
+    private (Task<bool> Task, TimeSpan Budget) StartOrJoin()
     {
         lock (_gate)
         {
             if (_inflight is { IsCompleted: false })
-            {
-                Log.Debug("Previous workspace disk check for {Path} is still blocked; reporting not ready", _path);
-                return null;
-            }
+                return (_inflight, _timeout - Stopwatch.GetElapsedTime(_inflightStartedAt));
 
-            return _inflight = Task.Run(() => _check(_path));
+            _inflightStartedAt = Stopwatch.GetTimestamp();
+
+            return (_inflight = Task.Run(() => _check(_path)), _timeout);
         }
     }
 
-    private bool WaitForResult(Task<bool> task)
+    private bool WaitForResult(Task<bool> task, TimeSpan budget)
     {
         try
         {
-            if (task.Wait(_timeout)) return task.Result;
+            if (task.Wait(budget > TimeSpan.Zero ? budget : TimeSpan.Zero)) return task.Result;
 
             Log.Warning("Workspace disk check for {Path} did not return within {Timeout}; reporting not ready (is the volume hung?)", _path, _timeout);
             return false;
