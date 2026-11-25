@@ -148,6 +148,10 @@ public class DeploymentPipelineRunnerLeaseLossTests
         {
         }
 
+        public void Fence()
+        {
+        }
+
         public void Lose()
         {
             IsLost = true;

@@ -73,6 +73,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         IAsyncDisposable cancelWatch = null;
         IDisposable leaseLostLink = null;
+        var promoted = false;
 
         try
         {
@@ -98,9 +99,9 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             {
                 await phase.ExecuteAsync(ctx, linkedCts.Token);
 
-                PromoteOnceClaimed(ctx, registryCts);
+                promoted = promoted || PromoteOnceClaimed(ctx, registryCts);
 
-                cancelWatch ??= StartCancelWatchOnceClaimed(ctx);
+                cancelWatch ??= StartCancelWatchOnceClaimed(ctx, registryCts);
 
                 leaseLostLink ??= StopWhenLeaseLost(ctx, leaseLostCts);
             }
@@ -280,22 +281,26 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
     }
 
     // This run only becomes the task's registered cancel target once it holds the lease: a duplicate delivery that the claim fences out must
-    // never displace (and so never disable user-cancel or the cancel watcher for) the live run that owns the task. Idempotent.
-    private void PromoteOnceClaimed(DeploymentTaskContext ctx, CancellationTokenSource registryCts)
+    // never displace (and so never disable user-cancel or the cancel watcher for) the live run that owns the task. A run promotes itself at most once,
+    // and never after it lost its lease: a takeover run that promoted meanwhile owns the entry, and a later phase of the older run must not take it back.
+    private bool PromoteOnceClaimed(DeploymentTaskContext ctx, CancellationTokenSource registryCts)
     {
-        if (ctx.Lease == null) return;
+        if (ctx.Lease == null || ctx.Lease.IsLost) return false;
 
         registry.Promote(ctx.ServerTaskId, registryCts);
+
+        return true;
     }
 
     // Only a pipeline that holds the task's lease (the claim fenced out any live owner) watches for a cross-pod cancel: a duplicate delivery of a
     // task another pod is running must never be cancelled — and so complete the task — on that pod's behalf. The signal is the same registry cancel
-    // a same-pod cancel uses, so user-cancel precedence, the remote CancelScript and Cancelling → Cancelled are identical for both.
-    private IAsyncDisposable StartCancelWatchOnceClaimed(DeploymentTaskContext ctx)
+    // a same-pod cancel uses (this run's own source), so user-cancel precedence, the remote CancelScript and Cancelling → Cancelled are identical for both.
+    // It cancels this run's source, never whatever the registry holds for the task id: a different run of the task may hold it, and the watch is one-shot.
+    private IAsyncDisposable StartCancelWatchOnceClaimed(DeploymentTaskContext ctx, CancellationTokenSource registryCts)
     {
         if (cancelWatcher == null || ctx.Lease == null) return null;
 
-        return cancelWatcher.Start(ctx.ServerTaskId, () => registry.TryCancel(ctx.ServerTaskId));
+        return cancelWatcher.Start(ctx.ServerTaskId, registryCts.Cancel);
     }
 
     // The run only watches for losing the lease once it holds one (after the claim); a lease that was already lost by then stops the run at once.

@@ -384,6 +384,49 @@ public class DeploymentCompletionHandlerTests
         _serverTaskService.Verify(s => s.TransitionStateAsync(1, TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once, "the pause is attempted under this run's lease only");
     }
 
+    // A run whose lease was taken over (silently, e.g. after a VM freeze) learns it only from the owned state write: the completion record is a side
+    // effect of the outcome and belongs to the new owner, so it must come after that write succeeded. (Cancelling the scripts of a Cancelling task is
+    // not: whichever run owns the task cancels the same scripts, so the cancel path does it first — see OnCancelled_CancelsTheInFlightAgentScripts_….)
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenAnotherRunHoldsTheLease_NoCompletionRecordIsWritten(CompletionOutcome outcome)
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        await Drive(sut, outcome, CreateContext());
+
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenTheRunStillOwnsTheLease_TheCompletionRecordIsWrittenAfterTheStateWrite(CompletionOutcome outcome)
+    {
+        var order = new List<string>();
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
+        _completionDataProvider.Setup(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("record")).Returns(Task.CompletedTask);
+
+        await Drive(_sut, outcome, CreateContext());
+
+        order.ShouldBe(["transition", "record"]);
+    }
+
+    public enum CompletionOutcome { Success, Failure, Cancelled }
+
+    private static Task Drive(DeploymentCompletionHandler sut, CompletionOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    {
+        CompletionOutcome.Success => sut.OnSuccessAsync(ctx, CancellationToken.None),
+        CompletionOutcome.Failure => sut.OnFailureAsync(ctx, new Exception("boom"), CancellationToken.None),
+        _ => sut.OnCancelledAsync(ctx, CancellationToken.None)
+    };
+
     private static DeploymentTaskContext CreateContext()
     {
         return new DeploymentTaskContext

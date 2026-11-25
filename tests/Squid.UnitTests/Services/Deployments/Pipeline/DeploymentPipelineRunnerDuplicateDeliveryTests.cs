@@ -137,6 +137,10 @@ public class DeploymentPipelineRunnerDuplicateDeliveryTests
         {
         }
 
+        public void Fence()
+        {
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }
