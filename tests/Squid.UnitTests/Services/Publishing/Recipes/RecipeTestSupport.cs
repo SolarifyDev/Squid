@@ -22,9 +22,9 @@ internal static class RecipeFacts
 
     public static (string, string) Root(string root) => (PackageFactKeys.ArchiveRoot, root);
 
-    public static RecipeRenderContext Context(PackageFacts facts, string packageId = "Acme.Web", int hostPort = 8080, params string[] roles)
+    public static RecipeRenderContext Context(PackageFacts facts, string packageId = "Acme.Web", params string[] roles)
     {
-        return new RecipeRenderContext { PackageId = packageId, Facts = facts, HostPort = hostPort, TargetRoles = roles.Length == 0 ? ["web"] : roles.ToList() };
+        return new RecipeRenderContext { PackageId = packageId, Facts = facts, TargetRoles = roles.Length == 0 ? ["web"] : roles.ToList() };
     }
 
     public static string ScriptOf(DeploymentPlan plan) => plan.Steps[1].Actions[0].Properties["Squid.Action.Script.ScriptBody"];

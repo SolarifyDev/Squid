@@ -148,27 +148,240 @@ public class PublishRecipeDockerE2ETests
         app.ContainersOf().ShouldBe([app.ContainerName]);
     }
 
-    [Fact]
-    public async Task TheSameApp_InTwoEnvironments_OnTwoPorts_BothStayUp_AndRedeployingOneLeavesTheOther()
+    public static TheoryData<string> HostileNames => new()
+    {
+        "Joe's site",
+        "x'$(touch PWNED)'",
+        "back`touch PWNED`tick",
+        "two\nlines; touch PWNED",
+        "spaces and \"quotes\" and $HOME"
+    };
+
+    [Theory]
+    [MemberData(nameof(HostileNames))]
+    public async Task AHostileProjectOrEnvironmentNameInTheExtractionPath_NeverExecutes_AndTheDeployWorks(string hostile)
     {
         if (!DockerUsable.Value) return;
 
-        using var staging = new PublishedApp();
-        using var production = new PublishedApp();
+        // The extraction folder holds the project and environment names; the deployment hands the script that path through its own variable substitution.
+        using var site = new PublishedApp();
+        using var docker = new PublishedApp();
 
-        production.CopyIdentityOf(staging, environmentId: 2);
+        await site.UseServerImageAsync();
 
-        (await staging.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("staging-one"))).ExitCode.ShouldBe(0);
-        (await production.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("production-one"))).ExitCode.ShouldBe(0);
+        var siteRun = await site.DeployAsync(new StaticSiteRecipe(), [("index.html", "<h1>hostile static</h1>")], installParent: Path.Combine(site.Root, hostile));
+        var dockerRun = await docker.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("hostile docker"), installParent: Path.Combine(docker.Root, hostile));
 
-        staging.ContainerName.ShouldNotBe(production.ContainerName);
-        (await staging.GetAsync("/")).ShouldBe("staging-one");
-        (await production.GetAsync("/")).ShouldBe("production-one");
+        siteRun.ExitCode.ShouldBe(0, siteRun.Describe("a path with shell syntax in it must not break the static site deploy"));
+        dockerRun.ExitCode.ShouldBe(0, dockerRun.Describe("a path with shell syntax in it must not break the Dockerfile deploy"));
+        (await site.GetAsync("/")).ShouldBe("<h1>hostile static</h1>");
+        (await docker.GetAsync("/")).ShouldBe("hostile docker");
+        File.Exists(Path.Combine(site.Root, "PWNED")).ShouldBeFalse("the hostile text ran as a command");
+        File.Exists(Path.Combine(docker.Root, "PWNED")).ShouldBeFalse("the hostile text ran as a command");
+    }
 
-        (await staging.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("staging-two"), version: "2.0.0")).ExitCode.ShouldBe(0);
+    [Theory]
+    [InlineData("1.0'$(touch PWNED)'")]
+    [InlineData("1.0\"; touch PWNED; \"")]
+    [InlineData("`touch PWNED`")]
+    [InlineData(".leading-dot")]
+    [InlineData("-leading-dash")]
+    public async Task AHostileReleaseNumber_NeverExecutes_AndTheImageGetsAValidTag(string release)
+    {
+        if (!DockerUsable.Value) return;
 
-        (await staging.GetAsync("/")).ShouldBe("staging-two");
-        (await production.GetAsync("/")).ShouldBe("production-one", "deploying staging must not replace production's container");
+        using var app = new PublishedApp();
+
+        var run = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("x"), version: release);
+
+        run.ExitCode.ShouldBe(0, run.Describe("a release number with shell syntax in it must not break the deploy"));
+        File.Exists(Path.Combine(app.Root, "PWNED")).ShouldBeFalse("the release number ran as a command");
+
+        var tag = app.ImageTags().Single();
+
+        tag.ShouldMatch("^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$");
+        (await app.GetAsync("/")).ShouldBe("x");
+    }
+
+    [Fact]
+    public async Task AfterEachSuccessfulSwap_OnlyTheRunningAndThePreviousImageAreKept()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        foreach (var version in new[] { "1.0.0", "2.0.0", "3.0.0" })
+            (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp($"content-{version}"), version: version)).ExitCode.ShouldBe(0);
+
+        app.ImageTags().Order().ToArray().ShouldBe(["2.0.0", "3.0.0"], "after three releases the first one's image must be gone, the previous one kept for a rollback");
+        (await app.GetAsync("/")).ShouldBe("content-3.0.0");
+    }
+
+    [Fact]
+    public async Task AFailedDeploy_NeverRemovesAnImage()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("one"), version: "1.0.0")).ExitCode.ShouldBe(0);
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("two", command: "[\"sh\",\"-c\",\"exit 1\"]"), version: "2.0.0")).ExitCode.ShouldNotBe(0);
+
+        app.ImageTags().Order().ToArray().ShouldBe(["1.0.0", "2.0.0"]);
+    }
+
+    [Fact]
+    public async Task KilledOutrightAfterTheRunningVersionWasStopped_TheNextDeployStartsItAgain_BeforeAnythingElse()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => s.PauseAfter = "stop"), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+        app.IsRunning(app.ContainerName).ShouldBeFalse("the old version was stopped, and the script has not yet renamed it");
+        running.Kill();
+
+        app.ContainersOf().ShouldBe([app.ContainerName], "killed between stopping and renaming: the old container is left stopped under the live name");
+        app.IsRunning(app.ContainerName).ShouldBeFalse();
+
+        var next = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-three"), version: "3.0.0");
+
+        next.ExitCode.ShouldBe(0, next.Describe("the next deploy must recover and then deploy"));
+        next.Output.ShouldContain("found stopped", Case.Sensitive, next.Describe("recovery must start the stopped live container first"));
+        (await app.GetAsync("/")).ShouldBe("version-three");
+        app.ContainersOf().ShouldBe([app.ContainerName]);
+    }
+
+    [Fact]
+    public async Task KilledOutrightAfterTheRunningVersionWasStopped_AndTheNextDeployFails_TheOldVersionIsServingAgain()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => s.PauseAfter = "stop"), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+        running.Kill();
+
+        var next = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-three", command: "[\"sh\",\"-c\",\"exit 1\"]"), version: "3.0.0");
+
+        next.ExitCode.ShouldNotBe(0);
+        (await app.GetAsync("/")).ShouldBe("version-one", "recovery brought the stopped version back even though the new deploy then failed");
+    }
+
+    [Fact]
+    public async Task StoppedAfterTheRunningVersionWasStopped_ThePreviousOneIsRestored_ByTheTrap()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => s.PauseAfter = "stop"), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+
+        var ended = running.Terminate();
+
+        ended.ExitCode.ShouldBe(143, ended.Describe("SIGTERM ends the script with 143 after its trap ran"));
+        ended.Output.ShouldContain("restoring the previous version", Case.Sensitive, ended.Describe("the trap must say it put the old version back"));
+        (await app.GetAsync("/")).ShouldBe("version-one");
+        app.ContainersOf().ShouldBe([app.ContainerName]);
+    }
+
+    [Fact]
+    public async Task StoppedWhileWaitingForTheNewVersionOnTheRealPort_ThePreviousOneIsRestored_AndTheNewOneRemoved()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => { s.PauseAfter = "run"; s.PauseNth = 2; }), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+        app.ContainersOf().ShouldBe([app.ContainerName, app.ContainerName + "-previous"], "mid-swap: the new container is live and the old one is kept stopped as -previous");
+
+        var ended = running.Terminate();
+
+        ended.ExitCode.ShouldBe(143);
+        (await app.GetAsync("/")).ShouldBe("version-one");
+        app.ContainersOf().ShouldBe([app.ContainerName], "the new container and -previous are both gone: the old one is back under the live name");
+    }
+
+    [Fact]
+    public async Task KilledOutrightWhileTheNewVersionIsHealthy_TheNextDeployConfirmsItBeforeRemovingThePreviousOne()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => { s.PauseAfter = "run"; s.PauseNth = 2; }), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+        running.Kill();
+
+        app.ContainersOf().ShouldBe([app.ContainerName, app.ContainerName + "-previous"], "killed mid-swap: both are left");
+
+        var next = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-three"), version: "3.0.0");
+
+        next.ExitCode.ShouldBe(0, next.Describe("the next deploy settles the interrupted swap and goes on"));
+        (await app.GetAsync("/")).ShouldBe("version-three");
+        app.ContainersOf().ShouldBe([app.ContainerName]);
+    }
+
+    [Fact]
+    public async Task KilledOutrightWhileTheNewVersionIsNotHealthy_TheNextDeployRestoresThePreviousOne_NeverDeletingTheLastKnownGood()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        // The new version starts on the real port and is then stopped, so it is live but dead; the script is killed while it waits for it.
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => { s.StopAfterRun = 2; s.PauseAfter = "run"; s.PauseNth = 2; }), "2.0.0");
+
+        await running.WaitUntilPausedAsync();
+        running.Kill();
+
+        app.ContainersOf().ShouldBe([app.ContainerName, app.ContainerName + "-previous"]);
+
+        // The next deploy fails at its own candidate check; what matters is that recovery already put the last known-good version back.
+        var next = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-three", command: "[\"sh\",\"-c\",\"exit 1\"]"), version: "3.0.0");
+
+        next.ExitCode.ShouldNotBe(0);
+        (await app.GetAsync("/")).ShouldBe("version-one", "the previous container was the last known-good and must have been restored, not deleted");
+    }
+
+    [Fact]
+    public async Task ANewVersionThatPassesTheCandidateCheckButDiesOnTheRealPort_IsReplacedByThePreviousOne()
+    {
+        if (!DockerUsable.Value) return;
+
+        using var app = new PublishedApp();
+
+        (await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-one"))).ExitCode.ShouldBe(0);
+
+        // The shim stops the container the second docker run (the real-port one) started: the candidate was fine, the real one is not.
+        var running = await app.StartAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("version-two"), app.NewShim(s => s.StopAfterRun = 2), "2.0.0");
+        var ended = await running.WaitForExitAsync();
+
+        ended.ExitCode.ShouldNotBe(0, ended.Describe("a new version that dies on the real port must fail the deployment"));
+        ended.Output.ShouldContain("Any previous version is being restored", Case.Sensitive, ended.Describe("the real-port health check must have noticed"));
+        (await app.GetAsync("/")).ShouldBe("version-one", "the previous version is serving again");
+        app.ContainersOf().ShouldBe([app.ContainerName]);
     }
 
     [Fact]
@@ -181,7 +394,7 @@ public class PublishRecipeDockerE2ETests
         var run = await app.DeployAsync(new DockerfileRecipe(), PublishedApp.DockerfileApp("x"), keepIdTokens: true);
 
         run.ExitCode.ShouldNotBe(0);
-        run.Output.ShouldContain("ids are not available", Case.Sensitive, run.Describe("a script whose ids were not substituted must stop before touching docker"));
+        run.Output.ShouldContain("did not give this script", Case.Sensitive, run.Describe("a script whose ids were not substituted must stop before touching docker"));
     }
 
     [Fact]
@@ -237,9 +450,17 @@ public class PublishRecipeDockerE2ETests
         {
             get
             {
-                var directory = Path.Combine(_root, "empty-path");
+                // A PATH with the tools the script's prelude needs and no docker.
+                var directory = Path.Combine(_root, "no-docker-path");
 
                 Directory.CreateDirectory(directory);
+
+                foreach (var tool in new[] { "base64", "tr", "cut", "sed", "head", "wc" })
+                {
+                    var source = new[] { "/usr/bin", "/bin" }.Select(d => Path.Combine(d, tool)).First(File.Exists);
+
+                    if (!File.Exists(Path.Combine(directory, tool))) File.CreateSymbolicLink(Path.Combine(directory, tool), source);
+                }
 
                 return directory;
             }
@@ -258,22 +479,50 @@ public class PublishRecipeDockerE2ETests
             return files.ToArray();
         }
 
-        public async Task<ScriptRun> DeployAsync(IDeployRecipe recipe, (string Path, string Content)[] files, string version = "1.0.0", int? healthTimeoutSeconds = null, string environmentPath = null, bool keepIdTokens = false)
+        public string Root => _root;
+
+        public async Task<ScriptRun> DeployAsync(IDeployRecipe recipe, (string Path, string Content)[] files, string version = "1.0.0", int? healthTimeoutSeconds = null, string environmentPath = null, bool keepIdTokens = false, string installParent = null)
+        {
+            var scriptPath = await PrepareAsync(recipe, files, version, healthTimeoutSeconds, keepIdTokens, installParent);
+
+            return Run("/bin/bash", [scriptPath], environmentPath, TimeSpan.FromMinutes(5), _root);
+        }
+
+        // Starts the script and returns while it runs, with the docker shim in front of the real docker so a test can stop it at a chosen point.
+        public async Task<RunningScript> StartAsync(IDeployRecipe recipe, (string Path, string Content)[] files, DockerShim shim, string version = "1.0.0")
+        {
+            var scriptPath = await PrepareAsync(recipe, files, version, null, false, null);
+
+            return RunningScript.Start(scriptPath, shim, _root);
+        }
+
+        public DockerShim NewShim(Action<DockerShim> configure)
+        {
+            var shim = new DockerShim(Path.Combine(_root, $"shim-{++_shims}"));
+
+            configure(shim);
+
+            return shim;
+        }
+
+        private int _shims;
+
+        private async Task<string> PrepareAsync(IDeployRecipe recipe, (string Path, string Content)[] files, string version, int? healthTimeoutSeconds, bool keepIdTokens, string installParent)
         {
             var archive = Path.Combine(_root, $"package-{++_deployments}.zip");
-            var installDir = Path.Combine(_root, $"install-{_deployments}");
+            var installDir = Path.Combine(installParent ?? _root, $"install-{_deployments}");
 
             WriteZip(archive, files);
             ZipFile.ExtractToDirectory(archive, installDir);
 
             var facts = await InspectAsync(archive);
-            var plan = await recipe.RenderAsync(new RecipeRenderContext { PackageId = PackageId, Facts = facts, HostPort = HostPort, TargetRoles = ["web"] }, CancellationToken.None);
+            var plan = await recipe.RenderAsync(new RecipeRenderContext { PackageId = PackageId, Facts = facts, TargetRoles = ["web"] }, CancellationToken.None);
             var script = UseStandInServer(Substitute(plan.Steps[1].Actions[0].Properties["Squid.Action.Script.ScriptBody"], installDir, version, healthTimeoutSeconds, keepIdTokens));
             var scriptPath = Path.Combine(_root, $"deploy-{_deployments}.sh");
 
             await File.WriteAllTextAsync(scriptPath, script);
 
-            return Run("/bin/bash", [scriptPath], environmentPath, TimeSpan.FromMinutes(5));
+            return scriptPath;
         }
 
         private static async Task<PackageFacts> InspectAsync(string archive)
@@ -290,6 +539,8 @@ public class PublishRecipeDockerE2ETests
 
             variables.Set(Squid.Message.Constants.SpecialVariables.Output.Variable(ContainerAppPlan.DeployPackageStepName, Squid.Message.Constants.SpecialVariables.Action.InstallationDirectoryPath), installDir);
             variables.Set(Squid.Message.Constants.SpecialVariables.Release.Number, version);
+            variables.Set(Squid.Message.Models.Publishing.PlanInputVariables.Name(Squid.Message.Models.Publishing.PlanInputNames.HostPort), HostPort.ToString());
+
             if (!keepIdTokens)
             {
                 variables.Set(Squid.Message.Constants.SpecialVariables.Project.Id, ProjectId.ToString());
@@ -299,6 +550,8 @@ public class PublishRecipeDockerE2ETests
             var expanded = VariableExpander.ExpandString(script, variables);
 
             if (!keepIdTokens) expanded.ShouldNotContain("#{", Case.Sensitive, "every variable in the script must have been substituted");
+
+            expanded.ShouldNotContain(installDir, Case.Sensitive, "the extraction folder must reach the script only as Base64, never as text");
 
             return healthTimeoutSeconds == null ? expanded : ShortenHealthTimeout(expanded, healthTimeoutSeconds.Value);
         }
@@ -383,6 +636,8 @@ public class PublishRecipeDockerE2ETests
             return await response.Content.ReadAsStringAsync();
         }
 
+        public bool IsRunning(string name) => Run("docker", ["inspect", "--format", "{{.State.Running}}", name], null, TimeSpan.FromSeconds(30)).Output.Trim() == "true";
+
         public string[] ContainersOf()
         {
             var listed = Run("docker", ["ps", "-a", "--format", "{{.Names}}", "--filter", $"name={ContainerName}"], null, TimeSpan.FromSeconds(30));
@@ -423,9 +678,11 @@ public class PublishRecipeDockerE2ETests
         public string Describe(string message) => $"{message}\n--- exit code {ExitCode}, output ---\n{Output}";
     }
 
-    private static ScriptRun Run(string file, IEnumerable<string> arguments, string pathOverride, TimeSpan timeout)
+    private static ScriptRun Run(string file, IEnumerable<string> arguments, string pathOverride, TimeSpan timeout, string workingDirectory = null)
     {
         var info = new ProcessStartInfo(file) { RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true };
+
+        if (workingDirectory != null) info.WorkingDirectory = workingDirectory;
 
         foreach (var argument in arguments) info.ArgumentList.Add(argument);
 
@@ -449,6 +706,136 @@ public class PublishRecipeDockerE2ETests
         process.WaitForExit();
 
         lock (output) return new ScriptRun(process.ExitCode, output.ToString());
+    }
+
+    /// <summary>
+    /// A stand-in for the <c>docker</c> command that runs the real one and then, on request, stops the container it just started and/or pauses itself so the test can signal the
+    /// script at an exact point of the swap. It is a test tool only: the production script has no hook for it.
+    /// </summary>
+    private sealed class DockerShim
+    {
+        private readonly string _directory;
+
+        public DockerShim(string directory)
+        {
+            _directory = directory;
+
+            Directory.CreateDirectory(Path.Combine(directory, "bin"));
+            Directory.CreateDirectory(Path.Combine(directory, "state"));
+
+            var path = Path.Combine(directory, "bin", "docker");
+
+            File.WriteAllText(path, Script);
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        /// <summary>Pause (sleep) after the Nth call of this docker subcommand has finished.</summary>
+        public string PauseAfter { get; set; }
+
+        public int PauseNth { get; set; } = 1;
+
+        /// <summary>Stop the container the Nth <c>docker run</c> started, right after it started.</summary>
+        public int? StopAfterRun { get; set; }
+
+        public string PausedMarker => Path.Combine(_directory, "state", "paused");
+
+        public IReadOnlyDictionary<string, string> Environment => new Dictionary<string, string>
+        {
+            ["PATH"] = Path.Combine(_directory, "bin") + ":" + System.Environment.GetEnvironmentVariable("PATH"),
+            ["SHIM_REAL_DOCKER"] = RealDocker(),
+            ["SHIM_STATE"] = Path.Combine(_directory, "state"),
+            ["SHIM_PAUSE_AFTER"] = PauseAfter ?? string.Empty,
+            ["SHIM_PAUSE_NTH"] = PauseNth.ToString(),
+            ["SHIM_STOP_AFTER_RUN"] = StopAfterRun?.ToString() ?? string.Empty
+        };
+
+        private static string RealDocker() => Run("/bin/bash", ["-c", "command -v docker"], null, TimeSpan.FromSeconds(10)).Output.Trim();
+
+        private const string Script = "#!/bin/bash\nreal=\"$SHIM_REAL_DOCKER\"\nsub=\"$1\"\nstate=\"$SHIM_STATE\"\n\"$real\" \"$@\"\ncode=$?\ncount=\"$state/$sub.count\"\nn=$(( $(cat \"$count\" 2>/dev/null || echo 0) + 1 ))\necho \"$n\" > \"$count\"\nif [ \"$sub\" = run ] && [ -n \"$SHIM_STOP_AFTER_RUN\" ] && [ \"$n\" = \"$SHIM_STOP_AFTER_RUN\" ]; then\n  name=\"\"; prev=\"\"\n  for a in \"$@\"; do if [ \"$prev\" = --name ]; then name=\"$a\"; fi; prev=\"$a\"; done\n  \"$real\" stop \"$name\" >/dev/null 2>&1\nfi\nif [ -n \"$SHIM_PAUSE_AFTER\" ] && [ \"$sub\" = \"$SHIM_PAUSE_AFTER\" ] && [ \"$n\" = \"$SHIM_PAUSE_NTH\" ]; then\n  : > \"$state/paused\"\n  exec sleep 300\nfi\nexit $code\n";
+    }
+
+    /// <summary>A script started in the background: it can be waited for, or signalled while it sits at the shim's pause.</summary>
+    private sealed class RunningScript
+    {
+        private readonly Process _process;
+        private readonly StringBuilder _output = new();
+        private readonly DockerShim _shim;
+
+        private RunningScript(Process process, DockerShim shim)
+        {
+            _process = process;
+            _shim = shim;
+        }
+
+        public string Output
+        {
+            get
+            {
+                lock (_output) return _output.ToString();
+            }
+        }
+
+        public static RunningScript Start(string scriptPath, DockerShim shim, string workingDirectory)
+        {
+            var info = new ProcessStartInfo("/bin/bash") { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = workingDirectory };
+
+            info.ArgumentList.Add(scriptPath);
+
+            foreach (var (key, value) in shim.Environment) info.Environment[key] = value;
+
+            var process = Process.Start(info)!;
+            var running = new RunningScript(process, shim);
+
+            process.OutputDataReceived += (_, e) => { lock (running._output) running._output.AppendLine(e.Data); };
+            process.ErrorDataReceived += (_, e) => { lock (running._output) running._output.AppendLine(e.Data); };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            return running;
+        }
+
+        public async Task<ScriptRun> WaitForExitAsync()
+        {
+            if (!await Task.Run(() => _process.WaitForExit(300_000))) throw new TimeoutException($"The script did not end. Output:\n{Output}");
+
+            _process.WaitForExit();
+
+            return new ScriptRun(_process.ExitCode, Output);
+        }
+
+        public async Task WaitUntilPausedAsync()
+        {
+            var deadline = DateTime.UtcNow.AddMinutes(3);
+
+            while (!File.Exists(_shim.PausedMarker))
+            {
+                if (_process.HasExited) throw new InvalidOperationException($"The script ended before reaching the pause point. Output:\n{Output}");
+                if (DateTime.UtcNow > deadline) throw new TimeoutException($"The script did not reach the pause point (docker {_shim.PauseAfter} #{_shim.PauseNth}). Output:\n{Output}");
+
+                await Task.Delay(100);
+            }
+        }
+
+        /// <summary>SIGTERM to the script and to the paused command under it, as a stopping agent would; the script's trap then runs.</summary>
+        public ScriptRun Terminate() => Signal("TERM", children: true);
+
+        /// <summary>SIGKILL to the script and the paused command: nothing can trap it, so only the next run can put things right.</summary>
+        public ScriptRun Kill() => Signal("KILL", children: true);
+
+        private ScriptRun Signal(string signal, bool children)
+        {
+            var pid = _process.Id.ToString();
+
+            if (signal == "TERM") Run("/bin/kill", ["-TERM", pid], null, TimeSpan.FromSeconds(10));
+            if (children) Run("/usr/bin/pkill", [$"-{signal}", "-P", pid], null, TimeSpan.FromSeconds(10));
+            if (signal == "KILL") Run("/bin/kill", ["-KILL", pid], null, TimeSpan.FromSeconds(10));
+
+            if (!_process.WaitForExit(120_000)) throw new TimeoutException($"The script did not end after SIG{signal}. Output:\n{Output}");
+
+            _process.WaitForExit();
+
+            return new ScriptRun(_process.ExitCode, Output);
+        }
     }
 
     // Rule 12.8: a port the OS hands out, never a hard-coded one.

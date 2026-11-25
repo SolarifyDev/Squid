@@ -31,6 +31,7 @@ public class PublishServiceTests
     private readonly Mock<IReleaseDataProvider> _releaseData = new();
     private readonly Mock<IReleaseService> _releases = new();
     private readonly Mock<IDeploymentService> _deployments = new();
+    private readonly Mock<IPublishedProjectDataProvider> _data = new();
     private readonly List<PlanApplication> _applications = new();
     private readonly List<CreateReleaseCommand> _releaseCommands = new();
     private readonly List<CreateDeploymentCommand> _deploymentCommands = new();
@@ -41,6 +42,8 @@ public class PublishServiceTests
         _feeds.Setup(f => f.GetAsync(SpaceId, It.IsAny<CancellationToken>())).ReturnsAsync(new ExternalFeed { Id = FeedId });
         _applier.Setup(a => a.ApplyAsync(It.IsAny<PlanApplication>(), It.IsAny<CancellationToken>())).Callback<PlanApplication, CancellationToken>((a, _) => _applications.Add(a)).ReturnsAsync(() => _applied);
         _releases.Setup(r => r.CreateReleaseAsync(It.IsAny<CreateReleaseCommand>(), It.IsAny<CancellationToken>())).Callback<CreateReleaseCommand, CancellationToken>((c, _) => _releaseCommands.Add(c)).ReturnsAsync(new ReleaseCreatedEvent { Release = new ReleaseDto { Id = 700 } });
+        _data.Setup(d => d.RunInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>())).Returns((Func<CancellationToken, Task> work, CancellationToken token) => work(token));
+        _deployments.Setup(d => d.PreviewDeploymentAsync(It.IsAny<DeploymentRequestPayload>(), It.IsAny<CancellationToken>())).ReturnsAsync(new DeploymentPreviewResult { CanDeploy = true });
         _deployments.Setup(d => d.CreateDeploymentAsync(It.IsAny<CreateDeploymentCommand>(), It.IsAny<CancellationToken>())).Callback<CreateDeploymentCommand, CancellationToken>((c, _) => _deploymentCommands.Add(c)).ReturnsAsync(new DeploymentCreatedEvent { TaskId = 9000, Deployment = new DeploymentDto { Id = 800 } });
     }
 
@@ -48,7 +51,7 @@ public class PublishServiceTests
     {
         var registry = new DeployRecipeRegistry([new StaticSiteRecipe(), new DockerfileRecipe()]);
 
-        return new PublishService(_feeds.Object, _packages.Object, registry, _applier.Object, _releaseData.Object, _releases.Object, _deployments.Object);
+        return new PublishService(_feeds.Object, _packages.Object, registry, _applier.Object, _releaseData.Object, _releases.Object, _deployments.Object, _data.Object);
     }
 
     private void StoredPackage(PackageFacts facts, string packageId = "Acme.Web", string version = "1.2.3")
@@ -71,7 +74,7 @@ public class PublishServiceTests
 
     private static PackageFacts StaticAndDockerfile() => Facts((PackageFactKeys.MarkerIndexHtml, "true"), (PackageFactKeys.MarkerIndexHtmlDir, "."), (PackageFactKeys.MarkerDockerfile, "true"), (PackageFactKeys.DockerfileExposePort, "8080"));
 
-    private static PublishPackageCommand Command(string recipe = null, int hostPort = 8080) => new() { SpaceId = SpaceId, PackageId = "Acme.Web", Version = "1.2.3", RecipeKind = recipe, EnvironmentId = 5, TargetRoles = ["web"], HostPort = hostPort, ProjectName = "Acme Web" };
+    private static PublishPackageCommand Command(string recipe = null, int hostPort = 8080) => new() { SpaceId = SpaceId, PackageId = "Acme.Web", Version = "1.2.3", RecipeKind = recipe, EnvironmentId = 5, TargetRoles = ["web"], Inputs = new() { ["hostPort"] = hostPort.ToString() }, ProjectName = "Acme Web" };
 
     [Fact]
     public async Task Publish_StaticSite_AppliesTheRenderedPlan_CreatesTheReleaseAndDeploys()
@@ -92,6 +95,66 @@ public class PublishServiceTests
 
         _deploymentCommands.Single().ShouldSatisfyAllConditions(d => d.ReleaseId.ShouldBe(700), d => d.EnvironmentId.ShouldBe(5), d => d.SpaceId.ShouldBe(SpaceId));
         result.ShouldSatisfyAllConditions(r => r.ProjectId.ShouldBe(7), r => r.ReleaseId.ShouldBe(700), r => r.DeploymentId.ShouldBe(800), r => r.TaskId.ShouldBe(9000), r => r.RecipeKind.ShouldBe("static-site"), r => r.ProjectCreated.ShouldBeTrue());
+    }
+
+    [Fact]
+    public async Task Publish_TakesTheLockOnPackageAndSpace_AndKeepsTheInputsForTheEnvironment()
+    {
+        StoredPackage(StaticOnly());
+
+        await Service().PublishAsync(Command(hostPort: 8081), CancellationToken.None);
+
+        _data.Verify(d => d.LockPackageAsync(SpaceId, "Acme.Web", It.IsAny<CancellationToken>()), Times.Once);
+        _applications.Single().InputValues.ShouldBe(new Dictionary<string, string> { ["hostPort"] = "8081" });
+        _applications.Single().EnvironmentId.ShouldBe(5);
+    }
+
+    [Fact]
+    public async Task Publish_EverythingThatWrites_RunsInsideTheTransaction_AndTheDeploymentIsCreatedAfterIt()
+    {
+        StoredPackage(StaticOnly());
+
+        var order = new List<string>();
+
+        _data.Setup(d => d.RunInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>())).Returns(async (Func<CancellationToken, Task> work, CancellationToken token) =>
+        {
+            order.Add("begin");
+            await work(token);
+            order.Add("commit");
+        });
+        _applier.Setup(a => a.ApplyAsync(It.IsAny<PlanApplication>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("apply")).ReturnsAsync(_applied);
+        _releases.Setup(r => r.CreateReleaseAsync(It.IsAny<CreateReleaseCommand>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("release")).ReturnsAsync(new ReleaseCreatedEvent { Release = new ReleaseDto { Id = 700 } });
+        _deployments.Setup(d => d.PreviewDeploymentAsync(It.IsAny<DeploymentRequestPayload>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("preview")).ReturnsAsync(new DeploymentPreviewResult { CanDeploy = true });
+        _deployments.Setup(d => d.CreateDeploymentAsync(It.IsAny<CreateDeploymentCommand>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("deploy")).ReturnsAsync(new DeploymentCreatedEvent { TaskId = 1, Deployment = new DeploymentDto { Id = 2 } });
+
+        await Service().PublishAsync(Command(), CancellationToken.None);
+
+        order.ShouldBe(["begin", "apply", "release", "preview", "commit", "deploy"]);
+    }
+
+    [Fact]
+    public async Task Publish_ARefusedPreview_IsAValidationFailure_AndNoDeploymentIsCreated()
+    {
+        StoredPackage(StaticOnly());
+        _deployments.Setup(d => d.PreviewDeploymentAsync(It.IsAny<DeploymentRequestPayload>(), It.IsAny<CancellationToken>())).ReturnsAsync(new DeploymentPreviewResult { CanDeploy = false, BlockingReasons = ["Environment 5 is not allowed by lifecycle 1 progression.", "No machine has the role web."] });
+
+        var ex = await Should.ThrowAsync<Squid.Core.Services.DeploymentExecution.Exceptions.DeploymentValidationException>(() => Service().PublishAsync(Command(), CancellationToken.None));
+
+        ex.Message.ShouldContain("lifecycle");
+        ex.Message.ShouldContain("No machine has the role web");
+        _deployments.Verify(d => d.CreateDeploymentAsync(It.IsAny<CreateDeploymentCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Publish_ExistingRelease_GetsItsVariableSnapshotRefreshed_WhenAnInputChanged()
+    {
+        StoredPackage(StaticOnly());
+        _applied.InputsChanged = true;
+        _releaseData.Setup(r => r.GetReleaseByVersionAsync(7, 70, "1.2.3", It.IsAny<CancellationToken>())).ReturnsAsync(new ReleaseEntity { Id = 555 });
+
+        await Service().PublishAsync(Command(), CancellationToken.None);
+
+        _releases.Verify(r => r.UpdateReleaseVariableAsync(It.Is<UpdateReleaseVariableCommand>(c => c.ReleaseId == 555), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -195,7 +258,7 @@ public class PublishServiceTests
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(65536)]
-    public async Task Publish_MissingOrBadHostPort_IsRefused_BeforeAnythingIsWritten(int port)
+    public async Task Publish_BadHostPort_IsRefused_BeforeAnythingIsWritten(int port)
     {
         StoredPackage(StaticOnly());
 
@@ -271,7 +334,7 @@ public class PublishServiceTests
         _releaseData.Setup(r => r.GetReleaseByVersionAsync(7, 70, "1.2.3", It.IsAny<CancellationToken>())).ReturnsAsync(new ReleaseEntity { Id = 555 });
 
         await Should.ThrowAsync<PublishReleaseVersionExistsException>(() => Service().PublishAsync(Command(), CancellationToken.None));
-        _deployments.VerifyNoOtherCalls();
+        _deployments.Verify(d => d.CreateDeploymentAsync(It.IsAny<CreateDeploymentCommand>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

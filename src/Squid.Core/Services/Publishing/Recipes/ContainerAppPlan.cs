@@ -22,11 +22,14 @@ public static class ContainerAppPlan
     private const string FallbackSlug = "app";
     private const string InstallationDirectoryMode = "Versioned";
 
+    /// <summary>The name of the output variable the deploy-package step publishes: the folder the package was extracted into.</summary>
+    public static string InstallDirVariable { get; } = SpecialVariables.Output.Variable(DeployPackageStepName, SpecialVariables.Action.InstallationDirectoryPath);
+
     /// <summary>
-    /// The folder the package was extracted into, as the output variable the deploy-package step publishes. The deployment replaces it in the script before the
-    /// script runs, on the same target (the folder is per environment, project, package and version, so every target resolves to the same path).
+    /// A deployment variable as a script placeholder value. The deployment substitutes <c>#{...}</c> as plain text, and a name (an environment called <c>x'$(cmd)'</c>)
+    /// can hold anything, so the value is Base64 encoded by the deployment (a text of letters, digits, <c>+/=</c>) and decoded by the script's prelude.
     /// </summary>
-    public static string InstallDirToken { get; } = "#{" + SpecialVariables.Output.Variable(DeployPackageStepName, SpecialVariables.Action.InstallationDirectoryPath) + "}";
+    public static string VariableB64(string variable) => "'#{" + variable + " | ToBase64}'";
 
     /// <summary>
     /// The readable part of the container and image name: <c>squid-</c> and the slugged package id. A slug longer than the cap is cut and a short hash of the whole id is
@@ -50,13 +53,13 @@ public static class ContainerAppPlan
         {
             ["AppName"] = ShellQuote.Literal("packageId", context.PackageId),
             ["ContainerNameBase"] = ShellQuote.Literal("packageId", ContainerNameBase(context.PackageId)),
-            ["ProjectId"] = "'#{" + SpecialVariables.Project.Id + "}'",
-            ["EnvironmentId"] = "'#{" + SpecialVariables.Environment.Id + "}'",
-            ["HostPort"] = context.HostPort.ToString(CultureInfo.InvariantCulture),
+            ["ProjectIdB64"] = VariableB64(SpecialVariables.Project.Id),
+            ["EnvironmentIdB64"] = VariableB64(SpecialVariables.Environment.Id),
+            ["HostPortB64"] = VariableB64(PlanInputVariables.Name(PlanInputNames.HostPort)),
             ["ContainerPort"] = containerPort.ToString(CultureInfo.InvariantCulture),
             ["HealthPath"] = ShellQuote.Literal(PackageFactKeys.SquidHealthPath, healthPath),
             ["HealthTimeoutSeconds"] = HealthTimeoutSeconds.ToString(CultureInfo.InvariantCulture),
-            ["InstallDir"] = "'" + InstallDirToken + "'"
+            ["InstallDirB64"] = VariableB64(InstallDirVariable)
         };
     }
 
@@ -92,7 +95,7 @@ public static class ContainerAppPlan
     {
         return new DeploymentPlan
         {
-            Inputs = [new PlanInput { Name = PlanInputNames.HostPort, Description = "The port on the target the app is published on." }],
+            Inputs = [new PlanInput { Name = PlanInputNames.HostPort, Description = "The port on the target the app is published on in this environment.", Type = PlanInputType.TcpPort }],
             Steps =
             [
                 Step(context, DeployPackageStepName, DeployPackageAction(context)),

@@ -21,6 +21,9 @@ public class PlanApplication
     public int? LifecycleId { get; set; }
 
     public DeploymentPlan Plan { get; set; }
+
+    /// <summary>The validated values of the plan's inputs, by input name, for <see cref="EnvironmentId"/>.</summary>
+    public Dictionary<string, string> InputValues { get; set; } = new();
 }
 
 public class AppliedPlan
@@ -33,6 +36,9 @@ public class AppliedPlan
 
     /// <summary>True when an existing project's process was rebuilt because the plan changed; false when it was left as it was, and for a project just created.</summary>
     public bool ProcessUpdated { get; set; }
+
+    /// <summary>True when an input value was added or changed for the environment, so a release made earlier holds an outdated variable snapshot.</summary>
+    public bool InputsChanged { get; set; }
 
     /// <summary>The names of the actions that deploy the package: what a release's selected package refers to.</summary>
     public List<string> PackageActionNames { get; set; } = new();

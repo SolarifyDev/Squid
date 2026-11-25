@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Squid.Core.Services.Publishing;
 
@@ -11,7 +12,34 @@ public sealed record PublishedProjectMarker(string PackageId, string Recipe, str
 {
     public const string JsonKey = "squidPublish";
 
-    public string ToJson() => JsonSerializer.Serialize(new Dictionary<string, object> { [JsonKey] = new Dictionary<string, string> { ["packageId"] = PackageId, ["recipe"] = Recipe, ["planHash"] = PlanHash } });
+    public string ToJson() => ToJson(null);
+
+    /// <summary>
+    /// The project's Json with this marker in it. Whatever else the object holds (the project description the web app keeps there, an import's metadata) is kept; a Json that is empty
+    /// or is not an object has nothing to keep and becomes just the marker.
+    /// </summary>
+    public string ToJson(string existingJson)
+    {
+        var root = ParseObject(existingJson) ?? new JsonObject();
+
+        root[JsonKey] = new JsonObject { ["packageId"] = PackageId, ["recipe"] = Recipe, ["planHash"] = PlanHash };
+
+        return root.ToJsonString();
+    }
+
+    private static JsonObject ParseObject(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        try
+        {
+            return JsonNode.Parse(json) as JsonObject;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     public static PublishedProjectMarker TryParse(string json)
     {

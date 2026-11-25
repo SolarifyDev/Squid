@@ -14,6 +14,42 @@ public class PublishedProjectMarkerTests
         PublishedProjectMarker.TryParse(marker.ToJson()).ShouldBe(marker);
     }
 
+    [Theory]
+    [InlineData("{\"description\":\"Shop\",\"nested\":{\"a\":1}}")]
+    [InlineData("{\"SourceId\":\"Projects-1\"}")]
+    public void ToJson_KeepsEverythingElseInTheObject(string existing)
+    {
+        var merged = new PublishedProjectMarker("p", "r", "h").ToJson(existing);
+
+        var before = System.Text.Json.Nodes.JsonNode.Parse(existing).AsObject();
+        var after = System.Text.Json.Nodes.JsonNode.Parse(merged).AsObject();
+
+        foreach (var pair in before) after[pair.Key]!.ToJsonString().ShouldBe(pair.Value!.ToJsonString());
+
+        PublishedProjectMarker.TryParse(merged).ShouldBe(new PublishedProjectMarker("p", "r", "h"));
+    }
+
+    [Fact]
+    public void ToJson_ReplacesTheOldMarker_NotAddsASecond()
+    {
+        var first = new PublishedProjectMarker("p", "r", "old").ToJson("{\"description\":\"Shop\"}");
+        var second = new PublishedProjectMarker("p", "r", "new").ToJson(first);
+
+        PublishedProjectMarker.TryParse(second).PlanHash.ShouldBe("new");
+        System.Text.RegularExpressions.Regex.Matches(second, "squidPublish").Count.ShouldBe(1);
+        second.ShouldContain("\"description\":\"Shop\"");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("[1,2]")]
+    public void ToJson_WithNothingUsableToKeep_IsJustTheMarker(string existing)
+    {
+        PublishedProjectMarker.TryParse(new PublishedProjectMarker("p", "r", "h").ToJson(existing)).ShouldNotBeNull();
+    }
+
     [Fact]
     public void JsonKey_IsPinned_BecauseItIsStoredInEveryPublishedProject()
     {

@@ -37,16 +37,34 @@ public class PlanPackageReference
     public string PackageId { get; set; }
 }
 
-/// <summary>A value the plan needs from the publish request and has already baked into its scripts.</summary>
+/// <summary>
+/// A value the person publishing has to give for the environment they publish to. Publishing stores it as a project variable scoped to that environment
+/// (<see cref="PlanInputVariables.Name"/>), which the plan's scripts read at deploy time, so one process serves every environment with its own value.
+/// </summary>
 public class PlanInput
 {
     public string Name { get; set; }
 
     public string Description { get; set; }
+
+    public PlanInputType Type { get; set; }
 }
 
-/// <summary>The names of <see cref="PlanInput.Name"/>. Each one is a field of the publish request.</summary>
+public enum PlanInputType
+{
+    TcpPort = 1
+}
+
+/// <summary>The names recipes declare their inputs under.</summary>
 public static class PlanInputNames
 {
     public const string HostPort = "hostPort";
+}
+
+/// <summary>The project variable an input is stored in.</summary>
+public static class PlanInputVariables
+{
+    public const string Prefix = "Squid.Publish.Input.";
+
+    public static string Name(string input) => Prefix + input;
 }

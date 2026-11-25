@@ -7,7 +7,8 @@ namespace Squid.Core.Services.Publishing.Recipes.StaticSite;
 public sealed class StaticSiteRecipe : IDeployRecipe
 {
     public const string RecipeKind = "static-site";
-    public const string ServerImage = "caddy:2";
+    /// <summary>An exact version, so a deployment never runs a different server than the one this recipe was tested with.</summary>
+    public const string ServerImage = "caddy:2.11.9";
     public const int ServerPort = 80;
     public const int FitsScore = 70;
     public const int DockerfilePresentScore = 20;

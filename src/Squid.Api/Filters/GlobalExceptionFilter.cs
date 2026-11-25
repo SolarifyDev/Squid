@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ExternalFeeds.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.Variables.Exceptions;
@@ -68,6 +69,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             BuiltInFeedDeletionException => HttpStatusCode.Conflict,
             BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
             BuiltInFeedCreationException => HttpStatusCode.Conflict,
+            DeploymentValidationException => HttpStatusCode.BadRequest,
             RecipeInputInvalidException => HttpStatusCode.BadRequest,
             PublishFactsMissingException => HttpStatusCode.Conflict,
             PublishRecipeUnknownException => HttpStatusCode.BadRequest,

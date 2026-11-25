@@ -12,8 +12,7 @@ public sealed class DockerfileRecipe : IDeployRecipe
 
     private const string RunStepName = "Build and run";
     private const string Template = "Dockerfile";
-    private const string ReleaseVersionToken = "#{" + SpecialVariables.Release.Number + "}";
-
+    
     public string Kind => RecipeKind;
 
     public RecipeMatch Match(PackageFacts facts)
@@ -28,7 +27,7 @@ public sealed class DockerfileRecipe : IDeployRecipe
         var values = ContainerAppPlan.CommonValues(context, ContainerAppPlan.HealthPath(context.Facts), ResolveContainerPort(context.Facts));
 
         values["BuildSubPath"] = ShellQuote.Literal("archive.root", ContainerAppPlan.SubPath(context.Facts, null));
-        values["ReleaseVersion"] = "'" + ReleaseVersionToken + "'";
+        values["ReleaseVersionB64"] = ContainerAppPlan.VariableB64(SpecialVariables.Release.Number);
 
         return Task.FromResult(ContainerAppPlan.Build(context, RunStepName, RecipeScript.Render(Template, values)));
     }

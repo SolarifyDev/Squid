@@ -23,12 +23,14 @@ using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 namespace Squid.E2ETests.Deployments.Publishing;
 
 /// <summary>
-/// Fidelity tier: HIGH up to the last hop (Pattern 2). A package is pushed through the real push service, published as an app through the real publish service
-/// (recipe, project, process, release, deployment), and the queued deployment is run by the real <c>DeploymentTaskExecutor</c>: real acquisition of the package from the
-/// built-in feed, real variable substitution, the real Tentacle renderer. Only the Tentacle itself is replaced by the capturing strategy, which answers the deploy-package
-/// step the way Calamari does (the <c>setVariable</c> line for the extraction folder), so what the test asserts is the exact script the target would have received.
+/// Fidelity tier: MEDIUM-MOCK. Everything up to the target is real: a package pushed through the real push service, published as an app through the real publish service
+/// (recipe, project, process, variables, release, deployment), and the queued deployment run by the real <c>DeploymentTaskExecutor</c> with real acquisition from the
+/// built-in feed, real variable substitution and the real Tentacle renderer. But the Tentacle itself is a mock: the capturing strategy answers the deploy-package step with
+/// the <c>setVariable</c> line Calamari would print and executes nothing, so what the test asserts is the exact script the target would have received, not that it runs
+/// (the Docker E2E tests run such scripts against a real Docker daemon).
 /// </summary>
 [Trait("Category", "E2E")]
+[Collection(PublishCollections.Pipeline)]
 public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<PublishPipelineE2ETests>>, IDisposable
 {
     private const string Role = "web";
@@ -77,10 +79,12 @@ public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<P
 
         var script = requests[1].ScriptBody;
 
-        script.ShouldContain($"INSTALL_DIR='{InstallDir}'");
+        Decoded(script, "the folder the package was extracted into").ShouldBe(InstallDir);
+        Decoded(script, "the host port").ShouldBe("8088");
+        Decoded(script, "the project id").ShouldBe(published.Data.ProjectId.ToString());
+        script.ShouldNotContain(InstallDir, Case.Sensitive, "a deployment value reaches the script only as Base64");
         script.ShouldContain("SITE_SUB_PATH='site/dist'");
-        script.ShouldContain("HOST_PORT=8088");
-        script.ShouldContain("SERVER_IMAGE='caddy:2'");
+        script.ShouldContain("SERVER_IMAGE='caddy:2.11.9'");
         script.ShouldContain("HEALTH_PATH='/'");
         script.ShouldNotContain("#{", Case.Sensitive, "every variable must be substituted before the script reaches the target");
         requests[1].Syntax.ShouldBe(ScriptSyntax.Bash);
@@ -96,13 +100,23 @@ public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<P
         var requests = await RunAsync(published);
         var script = requests[1].ScriptBody;
 
-        script.ShouldContain($"INSTALL_DIR='{InstallDir}'");
+        Decoded(script, "the folder the package was extracted into").ShouldBe(InstallDir);
+        Decoded(script, "the host port").ShouldBe("8089");
+        Decoded(script, "the release number").ShouldBe("1.2.3");
         script.ShouldContain("BUILD_SUB_PATH='app'");
         script.ShouldContain("CONTAINER_PORT=3000");
-        script.ShouldContain("HOST_PORT=8089");
         script.ShouldContain("HEALTH_PATH='/healthz'");
-        script.ShouldContain("RELEASE_VERSION='1.2.3'");
         script.ShouldNotContain("#{");
+    }
+
+    // The value a script's read_squid_var line was given, decoded the way the script decodes it.
+    private static string Decoded(string script, string label)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(script, $"read_squid_var \\w+ \"{System.Text.RegularExpressions.Regex.Escape(label)}\" '([A-Za-z0-9+/=]+)'");
+
+        match.Success.ShouldBeTrue($"no read_squid_var line for '{label}' with a Base64 value");
+
+        return Encoding.UTF8.GetString(Convert.FromBase64String(match.Groups[1].Value));
     }
 
     private sealed record Published(PublishPackageResponse Response, int FeedId)
@@ -132,7 +146,7 @@ public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<P
 
         await _fixture.Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(s => s.PushAsync(push, CancellationToken.None));
 
-        var command = new PublishPackageCommand { SpaceId = spaceId, PackageId = "Acme.Web", Version = "1.2.3", EnvironmentId = environmentId, TargetRoles = [Role], HostPort = hostPort };
+        var command = new PublishPackageCommand { SpaceId = spaceId, PackageId = "Acme.Web", Version = "1.2.3", EnvironmentId = environmentId, TargetRoles = [Role], Inputs = new() { ["hostPort"] = hostPort.ToString() } };
         var data = await _fixture.Run<IPublishService, PublishPackageResponseData>(s => s.PublishAsync(command, CancellationToken.None));
 
         return new Published(new PublishPackageResponse { Data = data }, feedId);
@@ -156,9 +170,16 @@ public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<P
 
         var captured = _fixture.ExecutionCapture.CapturedRequests.ToList();
 
-        Directory.Delete(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(published.Data.DeploymentId), recursive: true);
+        DeleteAcquired(published.Data.DeploymentId);
 
         return captured;
+    }
+
+    private static void DeleteAcquired(int deploymentId)
+    {
+        var path = PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId);
+
+        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
     }
 
     private async Task<(int SpaceId, int EnvironmentId)> SeedSpaceAsync()
@@ -201,3 +222,15 @@ public class PublishPipelineE2ETests : IClassFixture<DeploymentPipelineFixture<P
         return (spaceId, environmentId);
     }
 }
+
+/// <summary>
+/// The tests that run a whole deployment share one acquisition folder per deployment id (<c>squid-packages/{id}</c>), and every test database starts counting from 1:
+/// run at the same time they would overwrite and delete each other's packages, so they take turns.
+/// </summary>
+public static class PublishCollections
+{
+    public const string Pipeline = "PublishDeploymentPipeline";
+}
+
+[CollectionDefinition(PublishCollections.Pipeline)]
+public sealed class PublishPipelineCollection;

@@ -44,6 +44,16 @@ public class DeploymentPlanApplierTests
         _published.Setup(p => p.FirstLifecycleIdAsync(SpaceId, EnvironmentId, It.IsAny<CancellationToken>())).ReturnsAsync(22);
     }
 
+    private readonly List<(int Set, string Name, int Env, string Value)> _upserts = new();
+    private bool _upsertChanges = true;
+
+    private void CaptureUpserts()
+    {
+        _published.Setup(p => p.UpsertEnvironmentVariableAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, int, string, CancellationToken>((set, name, env, value, _) => _upserts.Add((set, name, env, value)))
+            .ReturnsAsync(() => _upsertChanges);
+    }
+
     private DeploymentPlanApplier Applier() => new(_projects.Object, _projectData.Object, _published.Object, _steps.Object, _stepData.Object, _channels.Object);
 
     private static ProjectEntity NewProject(string json) => new() { Id = ProjectId, SpaceId = SpaceId, DeploymentProcessId = ProcessId, Json = json };
@@ -60,7 +70,7 @@ public class DeploymentPlanApplierTests
         };
     }
 
-    private static PlanApplication Application(DeploymentPlan plan, string kind = "static-site", string name = null) => new() { SpaceId = SpaceId, FeedId = 9, EnvironmentId = EnvironmentId, PackageId = "Acme.Web", RecipeKind = kind, ProjectName = name, Plan = plan };
+    private static PlanApplication Application(DeploymentPlan plan, string kind = "static-site", string name = null) => new() { SpaceId = SpaceId, FeedId = 9, EnvironmentId = EnvironmentId, PackageId = "Acme.Web", RecipeKind = kind, ProjectName = name, Plan = plan, InputValues = new() { ["hostPort"] = "8080" } };
 
     private void ProjectExistsWithMarker(string hash, string kind = "static-site")
     {
@@ -101,6 +111,69 @@ public class DeploymentPlanApplierTests
         await Applier().ApplyAsync(Application(plan), CancellationToken.None);
 
         PublishedProjectMarker.TryParse(updated.Json).ShouldBe(new PublishedProjectMarker("Acme.Web", "static-site", DeploymentPlanFingerprint.Of(plan)));
+    }
+
+    [Fact]
+    public async Task TheRecipesInputs_AreStoredAsVariablesScopedToTheEnvironmentBeingPublished()
+    {
+        CaptureUpserts();
+
+        var applied = await Applier().ApplyAsync(Application(Plan()), CancellationToken.None);
+
+        _upserts.Single().ShouldBe((0, "Squid.Publish.Input.hostPort", EnvironmentId, "8080"));
+        applied.InputsChanged.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task AnUnchangedInput_ReportsNoChange_AndTheProcessIsStillUntouched()
+    {
+        CaptureUpserts();
+        _upsertChanges = false;
+
+        var plan = Plan();
+
+        ProjectExistsWithMarker(DeploymentPlanFingerprint.Of(plan));
+
+        var applied = await Applier().ApplyAsync(Application(plan), CancellationToken.None);
+
+        applied.InputsChanged.ShouldBeFalse();
+        applied.ProcessUpdated.ShouldBeFalse();
+        _steps.Verify(s => s.CreateDeploymentStepAsync(It.IsAny<CreateDeploymentStepCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task APortChange_ForAnEnvironment_NeverRewritesTheSharedProcess()
+    {
+        CaptureUpserts();
+
+        var plan = Plan();
+
+        ProjectExistsWithMarker(DeploymentPlanFingerprint.Of(plan));
+
+        var application = Application(plan);
+
+        application.InputValues["hostPort"] = "9999";
+
+        var applied = await Applier().ApplyAsync(application, CancellationToken.None);
+
+        applied.InputsChanged.ShouldBeTrue();
+        applied.ProcessUpdated.ShouldBeFalse("the port lives in a variable for the environment, not in the process every environment shares");
+        _stepData.Verify(d => d.DeleteDeploymentStepsByProcessIdAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RecordingTheMarker_KeepsWhatElseIsInTheProjectsJson()
+    {
+        var plan = Plan();
+        var project = NewProject("{\"description\":\"My shop\",\"squidPublish\":{\"packageId\":\"Acme.Web\",\"recipe\":\"static-site\",\"planHash\":\"old\"}}");
+
+        _published.Setup(p => p.FindByPackageAsync(SpaceId, "Acme.Web", It.IsAny<CancellationToken>())).ReturnsAsync(project);
+        _projectData.Setup(d => d.GetProjectByIdAsync(ProjectId, It.IsAny<CancellationToken>())).ReturnsAsync(project);
+
+        await Applier().ApplyAsync(Application(plan), CancellationToken.None);
+
+        System.Text.Json.Nodes.JsonNode.Parse(project.Json)["description"].ToString().ShouldBe("My shop");
+        PublishedProjectMarker.TryParse(project.Json).PlanHash.ShouldBe(DeploymentPlanFingerprint.Of(plan));
     }
 
     [Fact]

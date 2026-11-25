@@ -38,6 +38,7 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
         await LoadExistingProjectAsync(ct).ConfigureAwait(false);
         await EnsureProjectAsync(ct).ConfigureAwait(false);
         await SyncProcessAsync(ct).ConfigureAwait(false);
+        await ApplyInputsAsync(ct).ConfigureAwait(false);
         await ResolveChannelAsync(ct).ConfigureAwait(false);
 
         return BuildResult();
@@ -108,9 +109,16 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
 
     private async Task RecordMarkerAsync(string hash, CancellationToken ct)
     {
-        _ctx.Project.Json = Marker(hash).ToJson();
+        _ctx.Project.Json = Marker(hash).ToJson(_ctx.Project.Json);
 
         await projectData.UpdateProjectAsync(_ctx.Project, cancellationToken: ct).ConfigureAwait(false);
+    }
+
+    // The values the recipe asked for are project variables scoped to this environment, so one shared process serves every environment with its own.
+    private async Task ApplyInputsAsync(CancellationToken ct)
+    {
+        foreach (var (name, value) in _ctx.Application.InputValues)
+            _ctx.InputsChanged |= await publishedProjects.UpsertEnvironmentVariableAsync(_ctx.Project.VariableSetId, PlanInputVariables.Name(name), _ctx.Application.EnvironmentId, value, ct).ConfigureAwait(false);
     }
 
     private async Task ResolveChannelAsync(CancellationToken ct)
@@ -124,7 +132,7 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
     {
         var packageActions = _ctx.Application.Plan.Steps.SelectMany(s => s.Actions).Where(a => a.Package != null).Select(a => a.Name).ToList();
 
-        return new AppliedPlan { ProjectId = _ctx.Project.Id, ChannelId = _ctx.ChannelId, ProjectCreated = _ctx.ProjectCreated, ProcessUpdated = _ctx.ProcessUpdated, PackageActionNames = packageActions };
+        return new AppliedPlan { ProjectId = _ctx.Project.Id, ChannelId = _ctx.ChannelId, ProjectCreated = _ctx.ProjectCreated, ProcessUpdated = _ctx.ProcessUpdated, InputsChanged = _ctx.InputsChanged, PackageActionNames = packageActions };
     }
 
     private PublishedProjectMarker Marker(string hash) => new(_ctx.Application.PackageId, _ctx.Application.RecipeKind, hash);
@@ -170,6 +178,7 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
         public ProjectEntity Project { get; set; }
         public bool ProjectCreated { get; set; }
         public bool ProcessUpdated { get; set; }
+        public bool InputsChanged { get; set; }
         public int ChannelId { get; set; }
     }
 }

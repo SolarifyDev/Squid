@@ -25,19 +25,19 @@ public class DockerfileRecipeTests
     [Fact]
     public async Task Render_BuildsAndRuns_AfterDeployPackage()
     {
-        var plan = await _recipe.RenderAsync(Context(Of(Dockerfile(), (PackageFactKeys.DockerfileExposePort, "8080")), "Acme.Api", 9000), CancellationToken.None);
+        var plan = await _recipe.RenderAsync(Context(Of(Dockerfile(), (PackageFactKeys.DockerfileExposePort, "8080")), "Acme.Api"), CancellationToken.None);
 
         plan.Steps.Select(s => s.Name).ShouldBe(["Deploy package", "Build and run"]);
         plan.Steps[0].Actions[0].Package.PackageId.ShouldBe("Acme.Api");
 
         var script = ScriptOf(plan);
 
-        script.ShouldContain("HOST_PORT=9000");
         script.ShouldContain("CONTAINER_PORT=8080");
-        script.ShouldContain("RELEASE_VERSION='#{Squid.Release.Number}'");
-        script.ShouldContain("INSTALL_DIR='#{Squid.Action[Deploy package].Output.Squid.Action.Package.InstallationDirectoryPath}'");
+        script.ShouldContain("'#{Squid.Release.Number | ToBase64}'");
+        script.ShouldContain("'#{Squid.Action[Deploy package].Output.Squid.Action.Package.InstallationDirectoryPath | ToBase64}'");
+        script.ShouldContain("'#{Squid.Publish.Input.hostPort | ToBase64}'");
         script.ShouldContain("docker build");
-        script.ShouldNotContain("{{");
+        script.ShouldNotMatch(@"\{\{\w+\}\}");
     }
 
     [Theory]

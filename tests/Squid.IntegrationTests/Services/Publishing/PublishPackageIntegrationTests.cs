@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
 using Squid.Core.Services.Packages.BuiltIn;
@@ -108,6 +109,64 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         return new Space(spaceId, environmentId);
     }
 
+    private enum Placement
+    {
+        FirstPhase,
+        SecondPhase
+    }
+
+    // Another environment of the same space, in the space's lifecycle (in its first phase, or alone in a second one) and with a machine of the role.
+    private async Task<Space> AddEnvironmentAsync(Space space, string name, Placement placement = Placement.FirstPhase)
+    {
+        var environmentId = 0;
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var environment = new Environment { Name = name, Slug = name.ToLowerInvariant(), SpaceId = space.SpaceId, SortOrder = 1 };
+
+            await repository.InsertAsync(environment);
+            await unitOfWork.SaveChangesAsync();
+
+            environmentId = environment.Id;
+
+            var lifecycle = await repository.QueryNoTracking<Lifecycle>(l => l.SpaceId == space.SpaceId).SingleAsync();
+            var phases = await repository.QueryNoTracking<LifecyclePhase>(p => p.LifecycleId == lifecycle.Id).OrderBy(p => p.SortOrder).ToListAsync();
+            var phaseId = phases[0].Id;
+
+            if (placement == Placement.SecondPhase)
+            {
+                var second = new LifecyclePhase { LifecycleId = lifecycle.Id, Name = name, SortOrder = 1 };
+
+                await repository.InsertAsync(second);
+                await unitOfWork.SaveChangesAsync();
+
+                phaseId = second.Id;
+            }
+
+            await repository.InsertAsync(new LifecyclePhaseEnvironment { PhaseId = phaseId, EnvironmentId = environmentId, TargetType = Squid.Message.Enums.Deployments.LifecyclePhaseEnvironmentTargetType.Optional });
+            await repository.InsertAsync(new Machine { Name = $"web-{name}", Slug = $"web-{name.ToLowerInvariant()}", IsDisabled = false, Roles = DeploymentTargetFinder.SerializeRoles([Role]), EnvironmentIds = DeploymentTargetFinder.SerializeIds([environmentId]), SpaceId = space.SpaceId, Endpoint = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-it2","Thumbprint":"IT-THUMBPRINT-2"}""" });
+            await unitOfWork.SaveChangesAsync();
+        });
+
+        return space with { EnvironmentId = environmentId };
+    }
+
+    private Task<List<(string Name, string Value, string Scope)>> InputVariablesAsync(int projectId)
+    {
+        return QueryAsync(async r =>
+        {
+            var variableSetId = (await r.QueryNoTracking<Project>(p => p.Id == projectId).SingleAsync()).VariableSetId;
+            var rows = await (from v in r.QueryNoTracking<Variable>(x => x.VariableSetId == variableSetId && x.Name.StartsWith("Squid.Publish.Input."))
+                              join s in r.QueryNoTracking<VariableScope>() on v.Id equals s.VariableId
+                              orderby s.ScopeValue
+                              select new { v.Name, v.Value, s.ScopeValue }).ToListAsync();
+
+            return rows.Select(x => (x.Name, x.Value, x.ScopeValue)).ToList();
+        });
+    }
+
+    private async Task<int> CountAsync<T>() where T : class, IEntity => await QueryAsync(r => r.QueryNoTracking<T>().CountAsync());
+
     private Task PushAsync(int spaceId, byte[] bytes, string version)
     {
         var command = new PushBuiltInPackageCommand { SpaceId = spaceId, FileName = $"{PackageId}.{version}.zip", Version = version, Content = new MemoryStream(bytes), DeclaredSizeBytes = bytes.Length };
@@ -115,9 +174,9 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         return Run<IBuiltInPackagePushService, Squid.Message.Commands.BuiltInPackages.PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None));
     }
 
-    private Task<PublishPackageResponseData> PublishAsync(Space space, string version, string recipe = null, int port = 8080, string name = null)
+    private Task<PublishPackageResponseData> PublishAsync(Space space, string version, string recipe = null, int port = 8080, string name = null, string role = Role, int? lifecycleId = null)
     {
-        var command = new PublishPackageCommand { SpaceId = space.SpaceId, PackageId = PackageId, Version = version, RecipeKind = recipe, EnvironmentId = space.EnvironmentId, TargetRoles = [Role], HostPort = port, ProjectName = name };
+        var command = new PublishPackageCommand { SpaceId = space.SpaceId, PackageId = PackageId, Version = version, RecipeKind = recipe, EnvironmentId = space.EnvironmentId, TargetRoles = [role], Inputs = new() { ["hostPort"] = port.ToString() }, ProjectName = name, LifecycleId = lifecycleId };
 
         return Run<IPublishService, PublishPackageResponseData>(publish => publish.PublishAsync(command, CancellationToken.None));
     }
@@ -155,7 +214,11 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         actions.Select(a => a.ActionType).ShouldBe(["Squid.TentaclePackage", "Squid.Script"]);
         stepProperties.ShouldAllBe(p => p.PropertyName == "Squid.Action.TargetRoles" && p.PropertyValue == Role);
         properties.Where(p => p.ActionId == actions[0].Id).ShouldContain(p => p.PropertyName == "Squid.Action.Package.PackageId" && p.PropertyValue == PackageId);
-        properties.Single(p => p.ActionId == actions[1].Id && p.PropertyName == "Squid.Action.Script.ScriptBody").PropertyValue.ShouldContain("HOST_PORT=8080");
+        var script = properties.Single(p => p.ActionId == actions[1].Id && p.PropertyName == "Squid.Action.Script.ScriptBody").PropertyValue;
+
+        script.ShouldContain("Squid.Publish.Input.hostPort | ToBase64");
+        script.ShouldNotContain("8080", Case.Sensitive, "the port is not in the shared process; it is a variable of the environment");
+        (await InputVariablesAsync(project.Id)).ShouldBe([("Squid.Publish.Input.hostPort", "8080", space.EnvironmentId.ToString())]);
 
         var release = await QueryAsync(r => r.QueryNoTracking<ReleaseEntity>(x => x.Id == result.ReleaseId).SingleAsync());
         var selected = await QueryAsync(r => r.QueryNoTracking<ReleaseSelectedPackage>(p => p.ReleaseId == release.Id).ToListAsync());
@@ -290,5 +353,199 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         var result = await PublishAsync(space, "1.0.0");
 
         result.ProjectCreated.ShouldBeTrue("a marked project of another space is not this space's project");
+    }
+
+    [Fact]
+    public async Task ARefusedPublish_KeepsNothing_SoRetryingMeetsTheSameRefusal()
+    {
+        var space = await SetUpAsync();
+
+        await PushAsync(space.SpaceId, Zip(("index.html", "x"), ("Dockerfile", "FROM busybox\nEXPOSE 8080\n")), "1.0.0");
+        await PublishAsync(space, "1.0.0", recipe: "static-site");
+
+        var project = (await QueryAsync(r => r.QueryNoTracking<Project>().SingleAsync()));
+        var stepsBefore = (await StepsAsync(project.DeploymentProcessId)).Select(s => s.Id).ToList();
+        var jsonBefore = project.Json;
+        var releasesBefore = await CountAsync<ReleaseEntity>();
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            await Should.ThrowAsync<PublishReleaseVersionExistsException>(() => PublishAsync(space, "1.0.0", recipe: "dockerfile"), $"attempt {attempt + 1}: a retry must be refused the same way, not silently deploy the old release");
+
+            var after = await QueryAsync(r => r.QueryNoTracking<Project>().SingleAsync());
+
+            (await StepsAsync(after.DeploymentProcessId)).Select(s => s.Id).ShouldBe(stepsBefore, "the refused publish must not have rewritten the process");
+            after.Json.ShouldBe(jsonBefore, "nor the marker");
+            (await CountAsync<ReleaseEntity>()).ShouldBe(releasesBefore);
+            (await CountAsync<Deployment>()).ShouldBe(1);
+        }
+    }
+
+    [Fact]
+    public async Task FourPublishesAtOnce_OfANewPackage_CreateExactlyOneProject_AndNoneFails()
+    {
+        var space = await SetUpAsync();
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => PublishAsync(space, "1.0.0")));
+
+        results.Select(r => r.ProjectId).Distinct().Count().ShouldBe(1);
+        results.Count(r => r.ProjectCreated).ShouldBe(1);
+        results.Select(r => r.ReleaseId).Distinct().Count().ShouldBe(1);
+        (await CountAsync<Project>()).ShouldBe(1);
+        (await CountAsync<ReleaseEntity>()).ShouldBe(1);
+        (await CountAsync<Deployment>()).ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task AnEnvironmentThatIsOnlyInALaterPhase_IsRefusedAsAClearValidationFailure_AndNothingIsCreated()
+    {
+        var space = await SetUpAsync();
+        var later = await AddEnvironmentAsync(space, "Live", Placement.SecondPhase);
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var ex = await Should.ThrowAsync<PublishDefaultsMissingException>(() => PublishAsync(later, "1.0.0"));
+
+        ex.Message.ShouldContain("lifecycle");
+        (await CountAsync<Project>()).ShouldBe(0);
+        (await CountAsync<ReleaseEntity>()).ShouldBe(0);
+        (await CountAsync<Deployment>()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task AnExplicitLifecycleThatCannotDeployToTheEnvironment_IsRefusedByThePreview_AndNothingIsCreated()
+    {
+        var space = await SetUpAsync();
+        var later = await AddEnvironmentAsync(space, "Live", Placement.SecondPhase);
+        var lifecycleId = await QueryAsync(r => r.QueryNoTracking<Lifecycle>().Select(l => l.Id).SingleAsync());
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var ex = await Should.ThrowAsync<Squid.Core.Services.DeploymentExecution.Exceptions.DeploymentValidationException>(() => PublishAsync(later, "1.0.0", lifecycleId: lifecycleId));
+
+        ex.Message.ShouldContain("lifecycle");
+        (await CountAsync<Project>()).ShouldBe(0);
+        (await CountAsync<ReleaseEntity>()).ShouldBe(0);
+        (await CountAsync<Squid.Core.Persistence.Entities.Deployments.VariableSet>()).ShouldBe(0);
+        (await CountAsync<Deployment>()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ARoleNoMachineHas_IsRefusedAsAClearValidationFailure_AndNothingIsCreated()
+    {
+        var space = await SetUpAsync();
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var ex = await Should.ThrowAsync<Squid.Core.Services.DeploymentExecution.Exceptions.DeploymentValidationException>(() => PublishAsync(space, "1.0.0", role: "database"));
+
+        ex.Message.ShouldContain("database");
+        (await CountAsync<Project>()).ShouldBe(0);
+        (await CountAsync<ReleaseEntity>()).ShouldBe(0);
+        (await CountAsync<Deployment>()).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TheDefaultLifecycle_IsOneWhoseFirstPhaseListsTheEnvironment()
+    {
+        var space = await SetUpAsync();
+        var later = await AddEnvironmentAsync(space, "Live", Placement.SecondPhase);
+
+        // A second lifecycle that lists the later environment first, with a higher id than the first one.
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var lifecycle = new Lifecycle { Name = "Live only", Slug = "live-only", SpaceId = space.SpaceId };
+
+            await repository.InsertAsync(lifecycle);
+            await unitOfWork.SaveChangesAsync();
+
+            var phase = new LifecyclePhase { LifecycleId = lifecycle.Id, Name = "Live", SortOrder = 0 };
+
+            await repository.InsertAsync(phase);
+            await unitOfWork.SaveChangesAsync();
+            await repository.InsertAsync(new LifecyclePhaseEnvironment { PhaseId = phase.Id, EnvironmentId = later.EnvironmentId, TargetType = Squid.Message.Enums.Deployments.LifecyclePhaseEnvironmentTargetType.Optional });
+            await unitOfWork.SaveChangesAsync();
+        });
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var result = await PublishAsync(later, "1.0.0");
+
+        (await ProjectAsync(result.ProjectId)).LifecycleId.ShouldBe(await QueryAsync(r => r.QueryNoTracking<Lifecycle>(l => l.Slug == "live-only").Select(l => l.Id).SingleAsync()));
+    }
+
+    [Fact]
+    public async Task TwoEnvironments_GetTheirOwnPort_FromOneSharedProcess_AndTheSameVersionReusesItsRelease()
+    {
+        var space = await SetUpAsync();
+        var staging = await AddEnvironmentAsync(space, "Staging");
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var first = await PublishAsync(space, "1.0.0", port: 8080);
+        var stepsBefore = (await StepsAsync((await ProjectAsync(first.ProjectId)).DeploymentProcessId)).Select(s => s.Id).ToList();
+
+        var second = await PublishAsync(staging, "1.0.0", port: 8081);
+
+        second.ProjectId.ShouldBe(first.ProjectId);
+        second.ProcessUpdated.ShouldBeFalse("a port for another environment does not change the shared process");
+        second.ReleaseId.ShouldBe(first.ReleaseId, "the same version is the same release; its variable snapshot is refreshed");
+        (await StepsAsync((await ProjectAsync(first.ProjectId)).DeploymentProcessId)).Select(s => s.Id).ShouldBe(stepsBefore);
+
+        (await InputVariablesAsync(first.ProjectId)).Select(v => (v.Name, v.Value, v.Scope)).ToList().ShouldBe(
+            new[] { (space.EnvironmentId.ToString(), "8080"), (staging.EnvironmentId.ToString(), "8081") }.OrderBy(x => x.Item1, StringComparer.Ordinal).Select(x => ("Squid.Publish.Input.hostPort", x.Item2, x.Item1)).ToList());
+
+        // Changing one environment's port changes that environment's variable only.
+        await PublishAsync(staging, "1.0.0", port: 9091);
+
+        (await InputVariablesAsync(first.ProjectId)).Select(v => v.Value).OrderBy(v => v).ShouldBe(["8080", "9091"]);
+        (await CountAsync<Squid.Core.Persistence.Entities.Deployments.Variable>()).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task ARecipeChange_KeepsWhatElseIsInTheProjectsJson()
+    {
+        var space = await SetUpAsync();
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+        await PushAsync(space.SpaceId, DockerfileApp(), "1.1.0");
+
+        var first = await PublishAsync(space, "1.0.0");
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var project = await repository.Query<Project>(p => p.Id == first.ProjectId).SingleAsync();
+
+            project.Json = PublishedProjectMarker.TryParse(project.Json) != null ? new PublishedProjectMarker("Acme.Web", "static-site", "x").ToJson("{\"description\":\"My shop\"}") : project.Json;
+
+            await unitOfWork.SaveChangesAsync();
+        });
+
+        await PublishAsync(space, "1.1.0");
+
+        var json = (await ProjectAsync(first.ProjectId)).Json;
+
+        json.ShouldContain("\"description\":\"My shop\"");
+        PublishedProjectMarker.TryParse(json).Recipe.ShouldBe("dockerfile");
+    }
+
+    [Fact]
+    public async Task TheOldestMarkedProject_IsTheOneFound_WhateverOrderTheDatabaseReturns()
+    {
+        var space = await SetUpAsync();
+
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            foreach (var name in new[] { "Second", "First" })
+                await repository.InsertAsync(new Project { Name = name, Slug = name.ToLowerInvariant(), SpaceId = space.SpaceId, Json = new PublishedProjectMarker(PackageId, "static-site", "x").ToJson(), IncludedLibraryVariableSetIds = "[]" });
+
+            await unitOfWork.SaveChangesAsync();
+        });
+
+        var found = await Run<IPublishedProjectDataProvider, Project>(p => p.FindByPackageAsync(space.SpaceId, PackageId, CancellationToken.None));
+
+        found.Name.ShouldBe("Second", "inserted first, so the lowest id");
     }
 }

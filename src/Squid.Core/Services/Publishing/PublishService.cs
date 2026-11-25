@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.Release;
 using Squid.Core.Services.Deployments.Releases.Exceptions;
@@ -8,6 +9,7 @@ using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Message.Commands.Deployments.Deployment;
 using Squid.Message.Commands.Deployments.Release;
 using Squid.Message.Commands.Publishing;
+using Squid.Message.Models.Deployments.Deployment;
 using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Publishing;
@@ -21,7 +23,7 @@ public interface IPublishService : IScopedDependency
     Task<PublishPackageResponseData> PublishAsync(PublishPackageCommand command, CancellationToken ct);
 }
 
-public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDataProvider packages, IDeployRecipeRegistry registry, IDeploymentPlanApplier applier, IReleaseDataProvider releaseData, IReleaseService releases, IDeploymentService deployments) : IPublishService
+public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDataProvider packages, IDeployRecipeRegistry registry, IDeploymentPlanApplier applier, IReleaseDataProvider releaseData, IReleaseService releases, IDeploymentService deployments, IPublishedProjectDataProvider publishedProjects) : IPublishService
 {
     private PublishContext _ctx;
 
@@ -29,15 +31,24 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
     {
         _ctx = new PublishContext { Command = command, TargetRoles = NormalizeRoles(command.TargetRoles) };
 
-        await LoadPackageAsync(ct).ConfigureAwait(false);
-        SelectRecipe();
-        await RenderPlanAsync(ct).ConfigureAwait(false);
-        PlanInputs.EnsureProvided(_ctx.Plan, command);
-        await ApplyPlanAsync(ct).ConfigureAwait(false);
-        await EnsureReleaseAsync(ct).ConfigureAwait(false);
+        await publishedProjects.RunInTransactionAsync(PrepareAsync, ct).ConfigureAwait(false);
         await StartDeploymentAsync(ct).ConfigureAwait(false);
 
         return BuildResponse();
+    }
+
+    // Everything that writes, in one transaction under a lock on (space, package): when any step refuses, nothing is kept, so retrying the same request meets the same state.
+    // The deployment itself is created after the commit: creating it queues a background job, which must not be able to run before the rows it reads are committed.
+    private async Task PrepareAsync(CancellationToken ct)
+    {
+        await publishedProjects.LockPackageAsync(_ctx.Command.SpaceId.GetValueOrDefault(), _ctx.Command.PackageId, ct).ConfigureAwait(false);
+        await LoadPackageAsync(ct).ConfigureAwait(false);
+        SelectRecipe();
+        await RenderPlanAsync(ct).ConfigureAwait(false);
+        _ctx.InputValues = PlanInputs.Validate(_ctx.Plan, _ctx.Command.Inputs);
+        await ApplyPlanAsync(ct).ConfigureAwait(false);
+        await EnsureReleaseAsync(ct).ConfigureAwait(false);
+        await EnsureDeployableAsync(ct).ConfigureAwait(false);
     }
 
     private async Task LoadPackageAsync(CancellationToken ct)
@@ -71,7 +82,7 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
 
     private async Task RenderPlanAsync(CancellationToken ct)
     {
-        var context = new RecipeRenderContext { PackageId = _ctx.Package.PackageId, Facts = _ctx.Facts, HostPort = _ctx.Command.HostPort, TargetRoles = _ctx.TargetRoles };
+        var context = new RecipeRenderContext { PackageId = _ctx.Package.PackageId, Facts = _ctx.Facts, TargetRoles = _ctx.TargetRoles };
 
         _ctx.Plan = await _ctx.Recipe.RenderAsync(context, ct).ConfigureAwait(false);
     }
@@ -88,7 +99,8 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
             ProjectName = _ctx.Command.ProjectName,
             ProjectGroupId = _ctx.Command.ProjectGroupId,
             LifecycleId = _ctx.Command.LifecycleId,
-            Plan = _ctx.Plan
+            Plan = _ctx.Plan,
+            InputValues = _ctx.InputValues
         };
 
         _ctx.Applied = await applier.ApplyAsync(application, ct).ConfigureAwait(false);
@@ -102,7 +114,22 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
         if (existing != null && applied.ProcessUpdated)
             throw new PublishReleaseVersionExistsException(applied.ProjectId, _ctx.Package.Version);
 
+        if (existing != null && applied.InputsChanged)
+            await releases.UpdateReleaseVariableAsync(new UpdateReleaseVariableCommand { SpaceId = _ctx.Package.SpaceId, ReleaseId = existing.Id }, ct).ConfigureAwait(false);
+
         _ctx.ReleaseId = existing?.Id ?? await CreateReleaseAsync(ct).ConfigureAwait(false);
+    }
+
+    // The checks a deployment makes when it is created (the lifecycle lets this release go to the environment, the roles have targets), made before the commit so a refusal keeps nothing.
+    private async Task EnsureDeployableAsync(CancellationToken ct)
+    {
+        var preview = await deployments.PreviewDeploymentAsync(new DeploymentRequestPayload { ReleaseId = _ctx.ReleaseId, EnvironmentId = _ctx.Command.EnvironmentId }, ct).ConfigureAwait(false);
+
+        if (preview.CanDeploy) return;
+
+        var reasons = preview.BlockingReasons.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        throw new DeploymentValidationException($"The package cannot be deployed to environment {_ctx.Command.EnvironmentId}: {(reasons.Count == 0 ? "the deployment preview refused it" : string.Join("; ", reasons))}");
     }
 
     private async Task<int> CreateReleaseAsync(CancellationToken ct)
@@ -177,6 +204,7 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
         // Recipe
         public IDeployRecipe Recipe { get; set; }
         public DeploymentPlan Plan { get; set; }
+        public Dictionary<string, string> InputValues { get; set; }
         public AppliedPlan Applied { get; set; }
 
         // Release and deployment

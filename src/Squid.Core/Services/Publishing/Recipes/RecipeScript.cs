@@ -4,19 +4,20 @@ using System.Text.RegularExpressions;
 namespace Squid.Core.Services.Publishing.Recipes;
 
 /// <summary>
-/// A recipe's bash script: its own template followed by the shared container template, with every <c>{{Name}}</c> replaced by its value in one pass. One
+/// A recipe's bash script: the shared prelude, its own template and the shared container template, with every <c>{{Name}}</c> replaced by its value in one pass. One
 /// pass, so a value that itself contains <c>{{Other}}</c> is never substituted again; a name with no value is an error, so a typo in a template cannot ship.
 /// </summary>
 public static class RecipeScript
 {
     private const string ResourcePrefix = "Squid.Core.Resources.Recipes.";
+    private const string PreludeTemplate = "Prelude";
     private const string ContainerAppTemplate = "ContainerApp";
 
     private static readonly Regex Placeholder = new(@"\{\{(\w+)\}\}", RegexOptions.Compiled);
 
     public static string Render(string recipeTemplate, IReadOnlyDictionary<string, string> values)
     {
-        var template = Load(recipeTemplate) + Load(ContainerAppTemplate);
+        var template = Load(PreludeTemplate) + Load(recipeTemplate) + Load(ContainerAppTemplate);
 
         return Placeholder.Replace(template, match => ValueOf(match.Groups[1].Value, values));
     }

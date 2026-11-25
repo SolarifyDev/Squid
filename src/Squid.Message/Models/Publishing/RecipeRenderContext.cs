@@ -7,7 +7,5 @@ public class RecipeRenderContext
 
     public PackageFacts Facts { get; set; }
 
-    public int HostPort { get; set; }
-
     public List<string> TargetRoles { get; set; } = new();
 }

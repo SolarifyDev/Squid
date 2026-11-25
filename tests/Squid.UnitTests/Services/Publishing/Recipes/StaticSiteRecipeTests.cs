@@ -47,7 +47,7 @@ public class StaticSiteRecipeTests
     [Fact]
     public async Task Render_MakesDeployPackageThenServeSteps_OnTheRequestedRoles()
     {
-        var plan = await _recipe.RenderAsync(Context(Of(Static(), StaticDir(".")), "Acme.Web", 8080, "web", "edge"), CancellationToken.None);
+        var plan = await _recipe.RenderAsync(Context(Of(Static(), StaticDir(".")), "Acme.Web", "web", "edge"), CancellationToken.None);
 
         plan.Steps.Select(s => s.Name).ShouldBe([ContainerAppPlan.DeployPackageStepName, "Serve site"]);
         plan.Steps.ShouldAllBe(s => s.TargetRoles.SequenceEqual(new[] { "web", "edge" }));
@@ -72,7 +72,7 @@ public class StaticSiteRecipeTests
     {
         var plan = await _recipe.RenderAsync(Context(Of(Static(), StaticDir("."))), CancellationToken.None);
 
-        ScriptOf(plan).ShouldContain("INSTALL_DIR='#{Squid.Action[Deploy package].Output.Squid.Action.Package.InstallationDirectoryPath}'");
+        ScriptOf(plan).ShouldContain("read_squid_var INSTALL_DIR \"the folder the package was extracted into\" '#{Squid.Action[Deploy package].Output.Squid.Action.Package.InstallationDirectoryPath | ToBase64}'");
     }
 
     [Theory]
@@ -104,19 +104,21 @@ public class StaticSiteRecipeTests
     }
 
     [Fact]
-    public async Task Render_PortAndServer_AreSubstituted_AndNoPlaceholderIsLeft()
+    public async Task Render_ServerIsPinned_PortComesFromTheEnvironmentsVariable_AndNoPlaceholderIsLeft()
     {
-        var plan = await _recipe.RenderAsync(Context(Of(Static(), StaticDir(".")), "Acme.Web", 9090), CancellationToken.None);
+        var plan = await _recipe.RenderAsync(Context(Of(Static(), StaticDir("."))), CancellationToken.None);
         var script = ScriptOf(plan);
 
-        script.ShouldContain("HOST_PORT=9090");
+        script.ShouldContain("read_squid_var HOST_PORT \"the host port\" '#{Squid.Publish.Input.hostPort | ToBase64}'");
+        script.ShouldNotContain("HOST_PORT=");
         script.ShouldContain("CONTAINER_PORT=80");
-        script.ShouldContain("SERVER_IMAGE='caddy:2'");
+        script.ShouldContain("SERVER_IMAGE='caddy:2.11.9'");
+        StaticSiteRecipe.ServerImage.ShouldMatch(@"^caddy:\d+\.\d+\.\d+$", "an exact version, never a floating tag");
         script.ShouldContain($"HEALTH_TIMEOUT_SECONDS={ContainerAppPlan.HealthTimeoutSeconds}");
         script.ShouldContain("CONTAINER_NAME_BASE='squid-acme-web'");
-        script.ShouldContain("PROJECT_ID='#{Squid.Project.Id}'");
-        script.ShouldContain("ENVIRONMENT_ID='#{Squid.Environment.Id}'");
-        script.ShouldNotContain("{{");
+        script.ShouldContain("'#{Squid.Project.Id | ToBase64}'");
+        script.ShouldContain("'#{Squid.Environment.Id | ToBase64}'");
+        script.ShouldNotMatch(@"\{\{\w+\}\}");
     }
 
     [Fact]
@@ -148,7 +150,7 @@ public class StaticSiteRecipeTests
     {
         var facts = Of(Static(), StaticDir("."), Root("{{HostPort}}"));
 
-        var script = ScriptOf(await _recipe.RenderAsync(Context(facts, "Acme", 9090), CancellationToken.None));
+        var script = ScriptOf(await _recipe.RenderAsync(Context(facts, "Acme"), CancellationToken.None));
 
         script.ShouldContain("SITE_SUB_PATH='{{HostPort}}'");
     }
