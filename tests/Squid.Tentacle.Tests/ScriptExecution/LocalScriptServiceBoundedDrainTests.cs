@@ -189,6 +189,36 @@ public class LocalScriptServiceBoundedDrainTests : IDisposable
         duplicate.Result.State.ShouldBe(ScriptStateV2.Running, "without the drain the output may be incomplete, so the script is not reported finished yet");
     }
 
+    [Fact]
+    public void V2ConcurrentCancels_SecondSkipsTheKillAndTheScriptExitsLeavingAChild_DoNotDrainUnderTheTicketLock()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var service = NewService(TimeSpan.FromSeconds(4));
+        var command = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = "echo own-output; sleep 1.0; sleep 8 & exit 3", ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
+        var sibling = TicketInSameLockSlotAs(command.ScriptTicket);
+        service.StartScript(command);
+        using var firstFlagged = new ManualResetEventSlim();
+        using var releaseFirst = new ManualResetEventSlim();
+        using var secondAboutToLock = new ManualResetEventSlim();
+
+        // The first Cancel flags the script and parks before its kill; the second therefore skips IssueCancelV2, drains nothing yet (the script
+        // is still running), and only then does the script exit by itself leaving a child that holds its stdout: nothing has drained it.
+        service.AfterCancelFlaggedHookForTests = () => { service.AfterCancelFlaggedHookForTests = null; firstFlagged.Set(); releaseFirst.Wait(TimeSpan.FromSeconds(20)); };
+        var first = Task.Run(() => service.CancelScript(new CancelScriptCommandV2(command.ScriptTicket, 0)));
+        firstFlagged.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        service.AfterPreLockDrainHookForTests = () => { service.AfterPreLockDrainHookForTests = null; Thread.Sleep(1800); secondAboutToLock.Set(); };
+        var second = Task.Run(() => service.CancelScript(new CancelScriptCommandV2(command.ScriptTicket, 0)));
+
+        secondAboutToLock.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        Thread.Sleep(300);
+        var (_, elapsed) = Timed(() => service.CompleteScript(new CompleteScriptCommandV2(sibling, 0)));
+        releaseFirst.Set();
+
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1.5), "a Cancel must not drain the leaky script's output pipe while holding the shared ticket lock");
+        Task.WaitAll(new[] { first, second }, TimeSpan.FromSeconds(20)).ShouldBeTrue();
+    }
+
     private StartScriptCommandV2 StartLeakyV2AndWaitForExit(LocalScriptService service)
     {
         var command = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = LeakyScript, ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
