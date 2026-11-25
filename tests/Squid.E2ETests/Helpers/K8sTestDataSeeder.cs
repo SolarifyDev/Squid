@@ -66,7 +66,25 @@ public class K8sTestDataSeeder
 
         await _builder.CreateActionMachineRolesAsync(action.Id, "k8s").ConfigureAwait(false);
 
-        var containerJson = BuildContainerJson(createFeedSecrets);
+        // The feed is created first and the container refers to it by its real id: a space also holds its own built-in feed (seeded at startup, so it can take id 1),
+        // and a hard-coded FeedId = 1 would point the container at that one instead of the registry feed.
+        var feedSuffix = Guid.NewGuid().ToString("N")[..6];
+        var feed = new ExternalFeed
+        {
+            Name = $"DockerHub {feedSuffix}",
+            Slug = $"dockerhub-{feedSuffix}",
+            FeedType = "Docker",
+            FeedUri = "https://index.docker.io/v2",
+            Properties = Squid.Core.Services.Deployments.ExternalFeeds.ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }),
+            Username = "testuser",
+            Password = "testpass",
+            SpaceId = 1
+        };
+
+        await _repository.InsertAsync(feed, ct).ConfigureAwait(false);
+        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        var containerJson = BuildContainerJson(createFeedSecrets, feed.Id);
         var configMapValues = BuildConfigMapValues();
 
         await _builder.CreateActionPropertiesAsync(action.Id,
@@ -114,22 +132,6 @@ public class K8sTestDataSeeder
         await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
         MachineId = machine.Id;
-
-        var feedSuffix = Guid.NewGuid().ToString("N")[..6];
-        var feed = new ExternalFeed
-        {
-            Name = $"DockerHub {feedSuffix}",
-            Slug = $"dockerhub-{feedSuffix}",
-            FeedType = "Docker",
-            FeedUri = "https://index.docker.io/v2",
-            Properties = Squid.Core.Services.Deployments.ExternalFeeds.ExternalFeedProperties.Serialize(new Dictionary<string, string> { ["RegistryPath"] = "docker.io" }),
-            Username = "testuser",
-            Password = "testpass",
-            SpaceId = 1
-        };
-
-        await _repository.InsertAsync(feed, ct).ConfigureAwait(false);
-        await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
 
         var release = await _builder.CreateReleaseAsync(project.Id, channel.Id, "1.0.0").ConfigureAwait(false);
 
@@ -280,7 +282,7 @@ public class K8sTestDataSeeder
         _ => new TokenCredentials { Token = "e2e-test-token" }
     };
 
-    private static string BuildContainerJson(bool createFeedSecrets)
+    private static string BuildContainerJson(bool createFeedSecrets, int feedId)
     {
         return JsonSerializer.Serialize(new object[]
         {
@@ -288,7 +290,7 @@ public class K8sTestDataSeeder
             {
                 ["Name"] = "demo-nginx",
                 ["PackageId"] = "library/nginx",
-                ["FeedId"] = 1,
+                ["FeedId"] = feedId,
                 ["Ports"] = new[] { new { key = "http", value = "80", option = "TCP" } },
                 ["EnvironmentVariables"] = Array.Empty<object>(),
                 ["SecretEnvironmentVariables"] = Array.Empty<object>(),
