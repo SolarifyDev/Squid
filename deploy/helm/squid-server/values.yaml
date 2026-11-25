@@ -1,0 +1,146 @@
+# Squid Server.
+#
+#   helm install squid oci://registry-1.docker.io/squidcd/squid-server
+#
+# With nothing set, Squid uses its built-in PostgreSQL and Redis (data on the persistent volume) and
+# prints a setup link in its log. Set admin.password to skip the setup page. Agents (Tentacles)
+# reach the server on the polling endpoint, see `polling`.
+
+image:
+  # -- Server image: the all-in-one Squid image (web UI, API, built-in PostgreSQL and Redis)
+  repository: squidcd/squid
+  # -- Image tag. Defaults to the chart's appVersion
+  tag: ""
+  # -- Image pull policy
+  pullPolicy: IfNotPresent
+
+# -- Secrets for pulling the image from a private registry, e.g. `[{name: regcred}]`
+imagePullSecrets: []
+
+admin:
+  # -- Administrator created on first start
+  username: admin
+  # -- Administrator password. Empty shows the setup page instead (link in the pod log)
+  password: ""
+
+database:
+  # -- PostgreSQL connection string. Empty uses the built-in PostgreSQL on the persistent volume
+  connectionString: ""
+
+redis:
+  # -- Redis connection string. Empty uses the built-in Redis
+  connectionString: ""
+
+# -- Existing Secret to read credentials from instead of the values above (the chart then creates no
+# Secret). Optional keys: `admin-password`, `database`, `redis`. When moving an existing Squid onto
+# this chart (same database), also add its `master-key` (Security:VariableEncryption:MasterKey),
+# `server-certificate` and `server-certificate-password` (SelfCert:Base64 / SelfCert:Password) and
+# `jwt-key` (Authentication:Jwt:SymmetricKey): without them the new install generates its own, every
+# registered agent stops trusting the server and encrypted variables can no longer be read.
+existingSecret: ""
+
+# -- Address users and agents open the web UI at. Empty derives it from `ingress.host`
+externalUrl: ""
+
+# -- Address agents poll. Empty derives it from `polling.host` and `polling.mode`
+pollingUrl: ""
+
+persistence:
+  # -- Keep the configuration, server certificate, generated keys and built-in database on a volume.
+  # Losing them means every registered agent stops trusting the server
+  enabled: true
+  # -- Volume size
+  size: 10Gi
+  # -- Storage class. Empty uses the cluster default
+  storageClass: ""
+  # -- Use this existing PersistentVolumeClaim instead of creating one
+  existingClaim: ""
+
+service:
+  # -- Service type for the web UI and API
+  type: ClusterIP
+  # -- Service port for the web UI and API
+  port: 8080
+
+ingress:
+  # -- Expose the web UI and API through an Ingress
+  enabled: false
+  # -- Ingress class
+  className: ""
+  # -- Host name of the web UI (also the derived `externalUrl`)
+  host: ""
+  # -- Ingress annotations, e.g. for cert-manager
+  annotations: {}
+  tls:
+    # -- TLS secret for `ingress.host`. Empty serves plain http
+    secretName: ""
+
+# How agents reach the Halibut polling port. Halibut runs its own mutual TLS, so nothing in front of
+# it may terminate TLS.
+polling:
+  # -- `loadBalancer`: a TCP LoadBalancer Service (works as is on AWS, GCP and Azure; for Alibaba
+  # Cloud see examples/alibaba-cloud.yaml in the Squid repository). `ingressPassthrough`: share the
+  # ingress on port 443, routed by host name (NGINX ingress controller with
+  # --enable-ssl-passthrough). `nodePort`: a NodePort Service. `none`: not exposed outside the cluster
+  mode: loadBalancer
+  # -- Halibut polling port
+  port: 10943
+  # -- Host name agents use. Required for `ingressPassthrough`; otherwise derives `pollingUrl`
+  host: ""
+  loadBalancer:
+    # -- Annotations on the LoadBalancer Service, e.g. cloud load balancer settings
+    annotations: {}
+    # -- Fixed load balancer IP, where the cloud supports it
+    loadBalancerIP: ""
+  ingressPassthrough:
+    # -- Ingress class of the passthrough Ingress
+    className: ""
+    # -- Extra annotations on the passthrough Ingress
+    annotations: {}
+  nodePort:
+    # -- Node port. Empty lets Kubernetes assign one
+    port: ""
+
+serviceAccount:
+  # -- Create a service account for the server
+  create: true
+  # -- Service account name. Empty uses the release's full name
+  name: ""
+  # -- Service account annotations, e.g. for cloud workload identity
+  annotations: {}
+  # -- Mount the service account's API token. The server does not call the Kubernetes API itself
+  automount: false
+
+# -- Pod annotations
+podAnnotations: {}
+
+# -- Pod labels
+podLabels: {}
+
+# -- Pod security context
+podSecurityContext: {}
+
+# -- Container security context. The image starts as root so the built-in PostgreSQL can switch to
+# its own user
+securityContext: {}
+
+# -- Extra environment variables for the server container
+extraEnv: []
+
+# -- Container resources
+resources: {}
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity
+affinity: {}
+
+# -- Override the chart name
+nameOverride: ""
+
+# -- Override the full resource name
+fullnameOverride: ""

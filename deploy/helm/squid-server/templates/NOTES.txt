@@ -1,0 +1,39 @@
+{{- $fullname := include "squid-server.fullname" . }}
+{{- $externalUrl := include "squid-server.externalUrl" . }}
+{{- $pollingUrl := include "squid-server.pollingUrl" . }}
+Squid Server is starting (the first start initialises the database and can take a few minutes).
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ $fullname }}
+
+{{- if not (or .Values.admin.password .Values.existingSecret) }}
+
+Finish the setup: open the link Squid prints in its log.
+
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ $fullname }} | grep "setup?token="
+{{- end }}
+
+Web UI: {{ if $externalUrl }}{{ $externalUrl }}{{ else }}not exposed outside the cluster; try
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $fullname }} 8080:{{ .Values.service.port }}   then http://localhost:8080
+  and set ingress.enabled + ingress.host (or externalUrl) so install scripts point at the right address{{ end }}
+
+Agent polling: {{ if $pollingUrl }}{{ $pollingUrl }}{{ else if eq .Values.polling.mode "none" }}not exposed (polling.mode=none){{ else }}address not known yet{{ end }}
+{{- if eq .Values.polling.mode "loadBalancer" }}
+  Polling Service: {{ $fullname }}-polling (TCP {{ .Values.polling.port }}). Its external address:
+    kubectl -n {{ .Release.Namespace }} get svc {{ $fullname }}-polling
+{{- if not $pollingUrl }}
+  Point a DNS name at that address and set polling.host to it, so install scripts carry the right polling URL.
+{{- end }}
+{{- else if eq .Values.polling.mode "ingressPassthrough" }}
+  Shares the ingress on port 443, routed by host name. Requires:
+    - the NGINX ingress controller running with --enable-ssl-passthrough
+    - DNS for {{ .Values.polling.host }} pointing at the ingress
+  Check: the certificate served there must be Squid's own (CN=squid-server), not the ingress's:
+    openssl s_client -connect {{ .Values.polling.host }}:443 -servername {{ .Values.polling.host }} </dev/null | openssl x509 -noout -subject
+{{- else if eq .Values.polling.mode "nodePort" }}
+  Node port: kubectl -n {{ .Release.Namespace }} get svc {{ $fullname }}-polling
+{{- end }}
+{{- if not .Values.persistence.enabled }}
+
+WARNING: persistence is disabled. Restarting the pod loses the configuration, the built-in
+database and the server certificate; every registered agent would stop trusting the server.
+{{- end }}

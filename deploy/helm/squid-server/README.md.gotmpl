@@ -1,0 +1,52 @@
+{{ template "chart.header" . }}
+
+{{ template "chart.description" . }}
+
+## Install
+
+```bash
+helm install squid oci://registry-1.docker.io/squidcd/squid-server
+```
+
+With nothing set, Squid uses its built-in PostgreSQL and Redis (data on the persistent volume) and
+prints a setup link in its log:
+
+```bash
+kubectl logs deploy/squid-squid-server | grep "setup?token="
+```
+
+To skip the setup page, give the administrator password (and your own PostgreSQL for production):
+
+```bash
+helm install squid oci://registry-1.docker.io/squidcd/squid-server \
+  --set admin.password='change-me-please' \
+  --set database.connectionString='Host=postgres;Database=squid;Username=squid;Password=change-me' \
+  --set ingress.enabled=true --set ingress.host=squid.example.com \
+  --set polling.host=squid-polling.example.com
+```
+
+## Agent polling
+
+Agents (Tentacles) connect to the server's Halibut polling port, which runs its own mutual TLS, so
+nothing in front of it may terminate TLS. `polling.mode` picks how it is exposed:
+
+| Mode | What it creates | Use it when |
+|---|---|---|
+| `loadBalancer` (default) | TCP LoadBalancer Service on 10943 | Any cloud; on Alibaba Cloud start from [examples/alibaba-cloud.yaml](https://github.com/SolarifyDev/Squid/blob/main/deploy/helm/squid-server/examples/alibaba-cloud.yaml) |
+| `ingressPassthrough` | Ingress on port 443 routed by host name, TLS passed through | The NGINX ingress controller runs with `--enable-ssl-passthrough` and agents should only need 443 |
+| `nodePort` | NodePort Service | Bare-metal clusters |
+| `none` | Nothing | Agents run inside the cluster |
+
+Set `polling.host` to the name agents use, so the install scripts Squid generates carry the right
+polling URL.
+
+## Moving an existing Squid onto this chart
+
+Point `database.connectionString` at the existing database and put the existing install's keys in
+`existingSecret` (`master-key`, `server-certificate`, `server-certificate-password`, `jwt-key`).
+Without them the new install generates its own: registered agents stop trusting the server and
+encrypted variables can no longer be read.
+
+{{ template "chart.requirementsSection" . }}
+
+{{ template "chart.valuesSection" . }}

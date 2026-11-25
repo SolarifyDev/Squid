@@ -1,0 +1,131 @@
+{{- include "squid-server.validate" . }}
+{{- $externalUrl := include "squid-server.externalUrl" . }}
+{{- $pollingUrl := include "squid-server.pollingUrl" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "squid-server.fullname" . }}
+  labels:
+    {{- include "squid-server.labels" . | nindent 4 }}
+spec:
+  # One server: it owns the data volume, the built-in database and every agent's polling connection.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "squid-server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "squid-server.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "squid-server.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Lets the built-in PostgreSQL shut down cleanly.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: squid
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: halibut
+              containerPort: 10943
+          env:
+            - name: SQUID_ADMIN_USER
+              value: {{ .Values.admin.username | quote }}
+            {{- /* (env var, secret key, inline value). The last four are an existing install's keys:
+                   without them a new install generates its own, and the old one's agents and encrypted data stop working. */}}
+            {{- $secretEnv := list
+                  (list "SQUID_ADMIN_PASSWORD" "admin-password" .Values.admin.password)
+                  (list "SQUID_DB" "database" .Values.database.connectionString)
+                  (list "SQUID_REDIS" "redis" .Values.redis.connectionString)
+                  (list "Security__VariableEncryption__MasterKey" "master-key" "")
+                  (list "SelfCert__Base64" "server-certificate" "")
+                  (list "SelfCert__Password" "server-certificate-password" "")
+                  (list "Authentication__Jwt__SymmetricKey" "jwt-key" "") }}
+            {{- range $secretEnv }}
+            {{- if or $.Values.existingSecret (index . 2) }}
+            - name: {{ index . 0 }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "squid-server.secretName" $ }}
+                  key: {{ index . 1 }}
+                  optional: {{ not (empty $.Values.existingSecret) }}
+            {{- end }}
+            {{- end }}
+            {{- if $externalUrl }}
+            - name: SQUID_URL
+              value: {{ $externalUrl | quote }}
+            {{- end }}
+            {{- if $pollingUrl }}
+            - name: SQUID_POLLING_URL
+              value: {{ $pollingUrl | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # First start can take a few minutes (database initialisation and migrations).
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if not .Values.persistence.enabled }}
+          emptyDir: {}
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" (include "squid-server.fullname" .)) }}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

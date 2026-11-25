@@ -268,3 +268,41 @@ jobs:
         run: |
           docker manifest create --amend "$SQUID_IMAGE:latest" "$SQUID_IMAGE:$IMAGE_TAG-amd64" "$SQUID_IMAGE:$IMAGE_TAG-arm64"
           docker manifest push "$SQUID_IMAGE:latest"
+
+  # Helm chart for the server (deploy/helm/squid-server), versioned with the image it defaults to.
+  # Pushed as oci://registry-1.docker.io/<namespace>/squid-server, next to the image, never onto it.
+  helm-squid-server:
+    runs-on: ubuntu-latest
+    needs: [resolve-tag, manifest-squid]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Verify checkout matches event SHA
+        run: |
+          ACTUAL=$(git rev-parse HEAD)
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "::error::Checkout SHA mismatch. Expected $EXPECTED_SHA, got $ACTUAL"
+            exit 1
+          fi
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Login to Docker Hub OCI registry
+        env:
+          DOCKER_USERNAME: ${{ secrets.SQUID_DOCKER_USERNAME }}
+          DOCKER_PASSWORD: ${{ secrets.SQUID_DOCKER_PASSWORD }}
+        run: echo "$DOCKER_PASSWORD" | helm registry login registry-1.docker.io -u "$DOCKER_USERNAME" --password-stdin
+
+      - name: Package and push Helm chart
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.image_tag }}
+          CHART_REGISTRY: oci://registry-1.docker.io/${{ vars.SQUID_DOCKER_HUB }}
+        run: |
+          cp -r deploy/helm/squid-server "$RUNNER_TEMP/squid-server"
+          sed -i "s/^version:.*/version: ${IMAGE_TAG}/" "$RUNNER_TEMP/squid-server/Chart.yaml"
+          sed -i "s/^appVersion:.*/appVersion: \"${IMAGE_TAG}\"/" "$RUNNER_TEMP/squid-server/Chart.yaml"
+          helm package "$RUNNER_TEMP/squid-server" --destination "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP/squid-server-${IMAGE_TAG}.tgz" "$CHART_REGISTRY"

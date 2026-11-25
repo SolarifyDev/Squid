@@ -1,0 +1,21 @@
+apiVersion: v2
+name: squid-server
+description: Squid Server — the web UI, API and agent polling endpoint, with built-in or external PostgreSQL and Redis
+type: application
+# Rewritten to the release version by the publish workflow.
+version: 0.1.0
+appVersion: "latest"
+kubeVersion: ">=1.23.0-0"
+home: https://github.com/SolarifyDev/Squid
+icon: https://raw.githubusercontent.com/SolarifyDev/Squid/main/branding/squid-logo.png
+sources:
+  - https://github.com/SolarifyDev/Squid
+keywords:
+  - continuous-delivery
+  - deployment
+  - devops
+  - tentacle
+  - halibut
+maintainers:
+  - name: SolarifyDev
+    url: https://github.com/SolarifyDev

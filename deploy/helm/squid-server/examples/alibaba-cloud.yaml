@@ -1,0 +1,35 @@
+# Squid Server on Alibaba Cloud ACK, polling through a dedicated TCP SLB.
+#
+#   helm install squid oci://registry-1.docker.io/squidcd/squid-server -f alibaba-cloud.yaml
+#
+# Besides these values, two things outside the cluster:
+#   - DNS: polling.host -> the SLB's address
+#   - Worker node security group: allow TCP 30000-32767 from 100.64.0.0/10, where the SLB health
+#     checks come from. Without it the SLB marks the backend unhealthy and silently drops agent
+#     connections ("Received EOF" on the agent side).
+
+ingress:
+  enabled: true
+  className: nginx
+  host: squid.example.com
+  tls:
+    secretName: squid-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+
+polling:
+  mode: loadBalancer
+  host: squid-polling.example.com
+  loadBalancer:
+    annotations:
+      # TCP listener and TCP health check; HTTP defaults break the Halibut protocol.
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-protocol-port: "tcp:10943"
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-type: "tcp"
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-healthy-threshold: "2"
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-unhealthy-threshold: "2"
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-health-check-interval: "5"
+      # Agents hold long-lived polling connections.
+      service.beta.kubernetes.io/alibaba-cloud-loadbalancer-persistence-timeout: "3600"
+      # Optional: reuse a pre-allocated SLB so the address survives the Service being recreated.
+      # service.beta.kubernetes.io/alibaba-cloud-loadbalancer-id: "lb-xxxxxxxxxxxx"
+      # service.beta.kubernetes.io/alibaba-cloud-loadbalancer-force-override-listeners: "true"
