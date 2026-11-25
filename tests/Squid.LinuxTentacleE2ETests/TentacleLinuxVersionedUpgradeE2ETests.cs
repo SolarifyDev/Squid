@@ -142,7 +142,7 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
     // the counter; before the fix `set -e` killed the script here, leaving
     // last-upgrade.json at ROLLING_BACK and the agent down.
     // Tier: High - real systemd unit (Restart=on-failure, RestartSec=10,
-    // StartLimit*), real production .sh. ~90s wall clock (health window).
+    // StartLimit*), real production .sh. ~90s wall clock (60s health window).
     // ========================================================================
 
     [Fact]
@@ -162,8 +162,16 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
         WaitForFileContent(ctx.Fixture.VersionedMarkerPath(V1), V1, TimeSpan.FromSeconds(15)).ShouldBeTrue("v1 must be running before the crash-on-start scenario");
 
         ctx.Mirror.StagePreBuiltArchive(ctx.BuildV2BundleTarGz(targetVersion: V2, crashOnStart: true));
-        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2));
+        // Production unit: StartLimitBurst=3, RestartSec=10 -> starts at ~0s, ~10s, ~20s, then the 4th (~30s) is refused
+        // with start-limit-hit. 60 retries (~60s window) puts that refusal ~30s BEFORE the rollback start, so the
+        // scenario no longer depends on sub-second timing; the journal assertion below proves it was reached.
+        var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2, healthcheckRetries: 60));
 
+        var journal = ctx.Fixture.ReadUnitJournal();
+
+        // systemd logs "Start request repeated too quickly." whenever StartLimitBurst refuses a start; the result string varies by version
+        // (systemd 259 reports 'exit-code', older ones 'start-limit-hit').
+        journal.ShouldContain("Start request repeated too quickly", Case.Insensitive, customMessage: Tail($"the crash-looping v2 must have hit systemd's start limit BEFORE the rollback start, otherwise this test does not exercise reset-failed. Unit journal (tail):\n{TailOf(journal, 4000)}", exitCode, output));
         exitCode.ShouldBe(4, customMessage: Tail("crash-on-start rollback MUST exit 4 (ROLLED_BACK) even after start-limit-hit; exit 9 or a script killed mid-rollback means the start was refused and not reset", exitCode, output));
 
         var status = ctx.ReadLastUpgradeStatus();
@@ -348,4 +356,6 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
 
     private static string Tail(string prefix, int exitCode, string output) =>
         $"{prefix}. Got exit {exitCode}.\noutput tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}";
+
+    private static string TailOf(string text, int max) => text.Length <= max ? text : text[^max..];
 }

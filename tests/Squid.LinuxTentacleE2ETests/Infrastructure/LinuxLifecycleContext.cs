@@ -93,7 +93,7 @@ public sealed class LinuxLifecycleContext : IDisposable
     /// only (skips apt + yum probes which would slow tests + introduce
     /// host-config sensitivity).
     /// </summary>
-    public string RenderProductionScriptForVersion(string targetVersion)
+    public string RenderProductionScriptForVersion(string targetVersion, int healthcheckRetries = 10)
     {
         // Load production .sh template directly + substitute all placeholders
         // manually. Mirrors what Windows
@@ -145,7 +145,7 @@ public sealed class LinuxLifecycleContext : IDisposable
             // safe-margin balance: well under production's 90s default,
             // generous enough for any reasonable python3 startup variance.
             // J.L.E.7 first Linux runner pass with retries=1 timed out.
-            .Replace("{{HEALTHCHECK_RETRIES}}", "10", StringComparison.Ordinal)
+            .Replace("{{HEALTHCHECK_RETRIES}}", healthcheckRetries.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{{INSTALL_METHODS}}", installMethodsBlock, StringComparison.Ordinal);
     }
 

@@ -69,10 +69,14 @@ public sealed class UpgradeLinuxRollbackHealthTests
     [Fact]
     public void SettleWindow_ProductionRestartSec_IsPinnedToTheUnitTheScriptSupervises()
     {
-        // Drift detector: the window above is justified against SystemdServiceHost's RestartSec.
+        // Drift detector: the window above is justified against SystemdServiceHost's RestartSec. Anchored to a
+        // whole line of the unit text so the explanatory comment mentioning "RestartSec=10" cannot satisfy it.
         var unit = File.ReadAllText(Path.Combine(RepoRoot(), "src", "Squid.Tentacle", "ServiceHost", "SystemdServiceHost.cs"));
 
-        unit.ShouldContain($"RestartSec={ProductionRestartSec}", customMessage: "production RestartSec changed - re-derive SETTLE_WINDOW_SECS in upgrade-linux-tentacle.sh");
+        var match = Regex.Match(unit, @"^[ \t]*RestartSec=(\d+)[ \t]*\r?$", RegexOptions.Multiline);
+
+        match.Success.ShouldBeTrue("the unit text SystemdServiceHost writes must contain a RestartSec= line of its own");
+        int.Parse(match.Groups[1].Value).ShouldBe(ProductionRestartSec, "production RestartSec changed - re-derive SETTLE_WINDOW_SECS in upgrade-linux-tentacle.sh");
     }
 
     [Fact]
@@ -123,13 +127,59 @@ public sealed class UpgradeLinuxRollbackHealthTests
         Regex.Matches(RenderedScript, @"^\s+timeout ""\$RESTART_TIMEOUT_SECS"" sudo systemctl restart", RegexOptions.Multiline).Count.ShouldBe(0);
     }
 
-    [Fact]
-    public void WaitForRestoredService_CrashingUnit_GivesUpAfterBoundedAttempts()
+    [Theory]
+    [InlineData(7)]
+    [InlineData(30)]
+    [InlineData(90)]   // production default: a restored binary slower than 30s must still get the operator's window
+    [InlineData(200)]
+    public void WaitForRestoredService_CrashingUnit_GivesUpAfterConfiguredHealthcheckBudget(int retries)
     {
-        var result = RunPredicate("wait_for_restored_service", "OK", "1", "100", "0", hasCurl: true, curlOk: "0");
+        var result = RunPredicate("wait_for_restored_service", "OK", "1", "100", "0", hasCurl: true, curlOk: "0", healthcheckRetries: retries);
 
         result.ExitCode.ShouldNotBe(0, $"a unit that is active but never answers /healthz must not count as restored\nstderr:{result.Stderr}");
-        result.Stdout.ShouldContain("is-active-calls=30", customMessage: "the wait must be bounded to the same 30 attempts the rollback loops always had");
+        result.Stdout.ShouldContain($"is-active-calls={retries}", customMessage: "the restore wait must use the same HEALTHCHECK_RETRIES budget as the forward window");
+    }
+
+    [Fact]
+    public void WaitForRestoredService_RestoredBinaryNeedingMoreThanThirtySeconds_StillSucceeds()
+    {
+        var result = RunPredicate("wait_for_restored_service", "OK", string.Join(" ", Enumerable.Repeat("0", 44)) + " 1", "100", "0", hasCurl: true, curlOk: "1", healthcheckRetries: 90);
+
+        result.ExitCode.ShouldBe(0, $"becoming active on attempt 45 is inside the configured 90s budget\nstderr:{result.Stderr}");
+    }
+
+    // ── Forward check: healthz pass + settle ────────────────────────────────
+
+    [Theory]
+    [InlineData("1", "100", "0", true, true)]            // healthy and stable through the settle window
+    [InlineData("1", "100", "0", false, false)]          // never answers /healthz within the window
+    [InlineData("1 1 0", "100", "0", true, false)]       // answers healthz, dies during settle
+    [InlineData("1", "100 100 200", "0", true, false)]   // answers healthz, re-exec'd (new PID) during settle
+    [InlineData("1", "100", "0 0 1", true, false)]       // answers healthz, systemd restarted it during settle
+    [InlineData("0 0 1", "100", "0", true, true)]        // slow start inside the window, then stable
+    public void WaitForUpgradedService_RequiresHealthzThenSettle(string isActiveSeq, string mainPidSeq, string nRestartsSeq, bool curlOk, bool expectedHealthy)
+    {
+        var result = RunPredicate("wait_for_upgraded_service", "OK", isActiveSeq, mainPidSeq, nRestartsSeq, hasCurl: true, curlOk: curlOk ? "1" : "0", healthcheckRetries: 10);
+
+        (result.ExitCode == 0).ShouldBe(expectedHealthy, $"is-active={isActiveSeq} MainPID={mainPidSeq} NRestarts={nRestartsSeq} curl={curlOk}\nstdout:{result.Stdout}\nstderr:{result.Stderr}");
+        result.Stdout.ShouldContain(expectedHealthy ? "event:B healthz-pass" : "event:B healthz-fail");
+    }
+
+    [Fact]
+    public void WaitForUpgradedService_HealthzThenCrashInsideSettle_IsReportedAsSettleFailure()
+    {
+        var result = RunPredicate("wait_for_upgraded_service", "OK", "1 1 0", "100", "0", hasCurl: true, curlOk: "1", healthcheckRetries: 10);
+
+        result.ExitCode.ShouldNotBe(0);
+        result.Stdout.ShouldContain("did not stay active", customMessage: "the failure event must say the settle failed, not that healthz never answered");
+    }
+
+    [Fact]
+    public void ForwardPath_GatesHealthOnTheSettledCheck()
+    {
+        // Wiring seam: the restart section must take HEALTH_OK from the settle-aware check, never from a bare healthz loop.
+        RenderedScript.ShouldContain("if wait_for_upgraded_service; then HEALTH_OK=1; fi");
+        Regex.Matches(RenderedScript, @"seq 1 ""\$HEALTHCHECK_RETRIES""").Count.ShouldBe(2, "exactly the forward function and the restore wait consume the HEALTHCHECK_RETRIES budget");
     }
 
     [Fact]
@@ -181,13 +231,13 @@ public sealed class UpgradeLinuxRollbackHealthTests
 
     // ── Harness ─────────────────────────────────────────────────────────────
 
-    private static (int ExitCode, string Stdout, string Stderr) RunPredicate(string function, string baselineHealthz, string isActiveSeq, string mainPidSeq, string nRestartsSeq, bool hasCurl, string curlOk)
+    private static (int ExitCode, string Stdout, string Stderr) RunPredicate(string function, string baselineHealthz, string isActiveSeq, string mainPidSeq, string nRestartsSeq, bool hasCurl, string curlOk, int healthcheckRetries = 90)
     {
         var bash = ResolveBash() ?? throw new InvalidOperationException("bash not found — cannot execute the upgrade script predicates");
         var stubDir = Directory.CreateTempSubdirectory("squid-rollback-health-").FullName;
         var harnessPath = Path.Combine(stubDir, "harness.sh");
 
-        File.WriteAllText(harnessPath, BuildHarness(function, stubDir, baselineHealthz, isActiveSeq, mainPidSeq, nRestartsSeq, hasCurl, curlOk));
+        File.WriteAllText(harnessPath, BuildHarness(function, stubDir, baselineHealthz, isActiveSeq, mainPidSeq, nRestartsSeq, hasCurl, curlOk, healthcheckRetries));
 
         try
         {
@@ -199,7 +249,7 @@ public sealed class UpgradeLinuxRollbackHealthTests
         }
     }
 
-    private static string BuildHarness(string function, string stubDir, string baselineHealthz, string isActiveSeq, string mainPidSeq, string nRestartsSeq, bool hasCurl, string curlOk)
+    private static string BuildHarness(string function, string stubDir, string baselineHealthz, string isActiveSeq, string mainPidSeq, string nRestartsSeq, bool hasCurl, string curlOk, int healthcheckRetries)
     {
         // Without curl, hide the host's real binary from `command -v curl`.
         var curlStub = hasCurl
@@ -212,6 +262,8 @@ public sealed class UpgradeLinuxRollbackHealthTests
             SERVICE_NAME=squid-tentacle
             HEALTHCHECK_URL=http://127.0.0.1:8080/healthz
             BASELINE_HEALTHZ_PRE='{{baselineHealthz}}'
+            HEALTHCHECK_RETRIES={{healthcheckRetries}}
+            emit_event() { echo "event:$1 $2 $3"; }
 
             # Each call consumes the next value of its sequence; the last value repeats.
             # File-backed so calls inside $(...) subshells advance the same cursor.
