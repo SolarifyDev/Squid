@@ -54,6 +54,12 @@ Enterprise-grade delivery for Kubernetes, Linux, Windows, SSH, and AI agents.<br
 docker run -d --name squid -p 8080:8080 -p 10943:10943 -v squid-data:/data squidcd/squid
 ```
 
+Kubernetes ([chart options](deploy/helm/squid-server/README.md)):
+
+```bash
+helm install squid oci://registry-1.docker.io/squidcd/squid-server
+```
+
 <img src="branding/readme/setup-wizard.png" alt="Squid first-run setup page: choose the built-in or your own PostgreSQL, create the administrator, confirm the server URLs, then install" width="100%">
 
 ## 🔄 Migrating from Octopus
