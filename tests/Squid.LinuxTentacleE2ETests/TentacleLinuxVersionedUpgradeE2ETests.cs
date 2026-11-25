@@ -169,7 +169,9 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
 
         var journal = ctx.Fixture.ReadUnitJournal();
 
-        journal.ShouldContain("start-limit-hit", Case.Insensitive, customMessage: Tail($"the crash-looping v2 must have hit systemd's start limit BEFORE the rollback start, otherwise this test does not exercise reset-failed. Unit journal (tail):\n{TailOf(journal, 4000)}", exitCode, output));
+        // systemd logs "Start request repeated too quickly." whenever StartLimitBurst refuses a start; the result string varies by version
+        // (systemd 259 reports 'exit-code', older ones 'start-limit-hit').
+        journal.ShouldContain("Start request repeated too quickly", Case.Insensitive, customMessage: Tail($"the crash-looping v2 must have hit systemd's start limit BEFORE the rollback start, otherwise this test does not exercise reset-failed. Unit journal (tail):\n{TailOf(journal, 4000)}", exitCode, output));
         exitCode.ShouldBe(4, customMessage: Tail("crash-on-start rollback MUST exit 4 (ROLLED_BACK) even after start-limit-hit; exit 9 or a script killed mid-rollback means the start was refused and not reset", exitCode, output));
 
         var status = ctx.ReadLastUpgradeStatus();
