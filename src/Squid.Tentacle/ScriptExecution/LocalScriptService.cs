@@ -46,6 +46,13 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
     /// <summary>Test-only — runs after a status poll has read the log file and before it decides the script's state.</summary>
     internal Action? StatusLogsReadHookForTests { get; set; }
+
+    /// <summary>Test-only — runs inside V2 CompleteScript between reading the start-in-flight flag and looking the script up.</summary>
+    internal Action? CompleteStateLookupHookForTests { get; set; }
+
+    /// <summary>Test-only — runs right after the pre-lock output drain and before the ticket lock is taken (the window in which a still-running script can exit).</summary>
+    internal Action? AfterPreLockDrainHookForTests { get; set; }
+
     private readonly IScriptStateStoreFactory _stateStoreFactory;
     private readonly IAdmissionPolicySource? _admissionPolicySource;
     private volatile bool _draining;

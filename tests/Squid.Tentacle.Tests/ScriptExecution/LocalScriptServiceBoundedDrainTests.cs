@@ -128,6 +128,22 @@ public class LocalScriptServiceBoundedDrainTests : IDisposable
     }
 
     [Fact]
+    public void V2DuplicateStart_BackgroundChildHoldsStdout_DoesNotBlockOtherTicketsInTheSameLockSlot()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        AssertSameStripeTicketUnaffectedBy(StartLeakyV2AndWaitForExit, (service, leaky) => service.StartScript(leaky));
+    }
+
+    [Fact]
+    public void V2CancelOfSelfExitedScript_BackgroundChildHoldsStdout_DoesNotBlockOtherTicketsInTheSameLockSlot()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        AssertSameStripeTicketUnaffectedBy(StartLeakyV2AndWaitForExit, (service, leaky) => service.CancelScript(new CancelScriptCommandV2(leaky.ScriptTicket, 0)));
+    }
+
+    [Fact]
     public void V2CompleteAndCancel_BackgroundChildHoldsStdout_ReturnWithinBound()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -147,6 +163,83 @@ public class LocalScriptServiceBoundedDrainTests : IDisposable
         Text(complete.FinalStatus!.Logs).ShouldContain("own-output");
         cancelElapsed.ShouldBeLessThan(MustReturnWithin);
         cancel.State.ShouldBe(ScriptStateV2.Completed);
+    }
+
+    [Fact]
+    public void V2DuplicateStart_ScriptExitsAfterThePreLockDrain_ReportsRunningInsteadOfDrainingUnderTheLock()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var service = NewService(TimeSpan.FromSeconds(4));
+        var command = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = "echo own-output; sleep 1.0; sleep 8 & exit 3", ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
+        var sibling = TicketInSameLockSlotAs(command.ScriptTicket);
+        service.StartScript(command);
+
+        // The script is still running during the pre-lock drain (a no-op), then exits and leaves its pipe held before the lock is taken.
+        using var aboutToLock = new ManualResetEventSlim();
+        service.AfterPreLockDrainHookForTests = () => { Thread.Sleep(1800); aboutToLock.Set(); };
+        var duplicate = Task.Run(() => service.StartScript(command));
+
+        aboutToLock.Wait(TimeSpan.FromSeconds(10)).ShouldBeTrue();
+        Thread.Sleep(300);
+        var (_, elapsed) = Timed(() => service.CompleteScript(new CompleteScriptCommandV2(sibling, 0)));
+
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1.5), "a script that exits inside the lock window must not be drained under the ticket lock");
+        duplicate.Wait(TimeSpan.FromSeconds(15)).ShouldBeTrue();
+        duplicate.Result.State.ShouldBe(ScriptStateV2.Running, "without the drain the output may be incomplete, so the script is not reported finished yet");
+    }
+
+    private StartScriptCommandV2 StartLeakyV2AndWaitForExit(LocalScriptService service)
+    {
+        var command = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = LeakyScript, ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
+        service.StartScript(command);
+        Thread.Sleep(900);
+
+        return command;
+    }
+
+    // The script has exited but a background child still holds its stdout; `operation` runs on a thread while a sibling ticket in the same lock stripe is completed.
+    private void AssertSameStripeTicketUnaffectedBy(Func<LocalScriptService, StartScriptCommandV2> startLeaky, Func<LocalScriptService, StartScriptCommandV2, ScriptStatusResponseV2> operation)
+    {
+        var service = NewService(TimeSpan.FromSeconds(4));
+        var leaky = startLeaky(service);
+        var sibling = TicketInSameLockSlotAs(leaky.ScriptTicket);
+
+        var running = Task.Run(() => operation(service, leaky));
+        Thread.Sleep(500);
+        var (_, elapsed) = Timed(() => service.CompleteScript(new CompleteScriptCommandV2(sibling, 0)));
+
+        elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(1.5), "an unrelated ticket sharing the lock stripe must not wait for the leaky script's output pipe");
+        running.Wait(TimeSpan.FromSeconds(15)).ShouldBeTrue();
+        running.Result.State.ShouldBe(ScriptStateV2.Completed, "the drain happens before the lock, so the operation still reports the finished script (with its final output) rather than a premature Running");
+        running.Result.ExitCode.ShouldBe(3);
+        Text(running.Result.Logs).ShouldContain("own-output");
+    }
+
+    [Fact]
+    public void NormalScript_V1AndV2Status_CompleteImmediatelyAfterExitWithoutTruncationNote()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        // Bound is far above the asserted latency: a missing end-of-stream callback makes every normal script wait the whole bound.
+        var service = NewService(TimeSpan.FromSeconds(4));
+        var v1 = StartV1(service, "echo plain-output; exit 0");
+        var v2 = new StartScriptCommandV2 { ScriptTicket = NewTicket(), ScriptBody = "echo plain-output; exit 0", ScriptIsolationMutexTimeout = TimeSpan.FromMinutes(1) };
+        service.StartScript(v2);
+        Thread.Sleep(700);
+
+        var (v1Status, v1Elapsed) = Timed(() => service.GetStatus(new ScriptStatusRequest(v1, 0)));
+
+        v1Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2), "a script with no background child reaches EOF at once and must not wait for the drain bound");
+
+        var (v2Status, v2Elapsed) = Timed(() => service.GetStatus(new ScriptStatusRequestV2(v2.ScriptTicket, 0)));
+
+        v2Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(2));
+        v1Status.State.ShouldBe(ProcessState.Complete);
+        v2Status.State.ShouldBe(ScriptStateV2.Completed);
+        Text(v1Status.Logs).ShouldContain("plain-output");
+        Text(v1Status.Logs).ShouldNotContain("output truncated");
+        Text(v2Status.Logs).ShouldNotContain("output truncated");
     }
 
     private static string Text(IEnumerable<ProcessOutput> logs) => string.Join("\n", logs.Select(l => l.Text));
