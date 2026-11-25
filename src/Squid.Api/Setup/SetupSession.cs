@@ -1,3 +1,4 @@
+using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Setup;
 using Squid.Core.Setup.Embedded;
 using Squid.Core.Setup.Install;
@@ -19,6 +20,7 @@ public sealed class SetupSession
         Embedded = embedded;
         Token = token;
         Capabilities = DetectCapabilities(configuration);
+        PackageStoreProviders = PackageStoreProviderCatalog.Create(configuration);
     }
 
     public IConfiguration Configuration { get; }
@@ -26,6 +28,9 @@ public sealed class SetupSession
     public SetupToken Token { get; }
     public SetupCapabilities Capabilities { get; }
     public SetupProgressTracker Tracker { get; } = new();
+
+    /// <summary>Built from the same configuration (so the same data directory) the installed server reads, with no container or database.</summary>
+    public IReadOnlyList<IPackageBlobStoreProvider> PackageStoreProviders { get; }
 
     public Task Completed => _completed.Task;
 

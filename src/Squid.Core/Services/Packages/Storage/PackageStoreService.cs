@@ -27,7 +27,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var name = RequireName(command.Kind, command.Name);
         var secrets = command.Secrets ?? new Dictionary<string, string>();
 
-        EnsureSettingsValid(provider, command.Properties, secrets, new Dictionary<string, string>());
+        PackageStoreSettingsCheck.EnsureValid(provider, command.Properties, secrets, new Dictionary<string, string>());
 
         await EnsureNameFreeAsync(name, null, ct).ConfigureAwait(false);
 
@@ -46,7 +46,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var stored = PackageStoreConfigurationMapper.ParseSettings(store.Secret);
         var secrets = command.Secrets ?? new Dictionary<string, string>();
 
-        EnsureSettingsValid(provider, command.Properties, secrets, stored);
+        PackageStoreSettingsCheck.EnsureValid(provider, command.Properties, secrets, stored);
 
         await EnsureNameFreeAsync(name, store.Id, ct).ConfigureAwait(false);
 
@@ -99,13 +99,8 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     {
         var provider = ResolveProvider(command.Kind);
         var stored = await LoadStoredSecretsAsync(command, ct).ConfigureAwait(false);
-        var secrets = command.Secrets ?? new Dictionary<string, string>();
 
-        EnsureSettingsValid(provider, command.Properties, secrets, stored);
-
-        var configuration = new PackageBlobStoreConfiguration { Properties = command.Properties ?? new Dictionary<string, string>(), Secrets = PackageStoreSettings.MergeSecrets(stored, secrets) };
-
-        return await provider.TestAsync(configuration, ct).ConfigureAwait(false);
+        return await PackageStoreSettingsCheck.TestAsync(provider, command.Properties, command.Secrets, stored, ct).ConfigureAwait(false);
     }
 
     public List<PackageStoreProviderDescriptor> DescribeProviders()
@@ -122,6 +117,6 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
 
     private IPackageBlobStoreProvider ResolveProvider(string kind)
     {
-        return providers.FirstOrDefault(p => p.Kind == kind) ?? throw new PackageStoreProviderNotFoundException(kind);
+        return PackageStoreSettingsCheck.ResolveProvider(providers, kind);
     }
 }

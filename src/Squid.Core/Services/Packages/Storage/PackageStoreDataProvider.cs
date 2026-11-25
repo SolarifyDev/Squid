@@ -13,7 +13,7 @@ namespace Squid.Core.Services.Packages.Storage;
 public class PackageStoreDataProvider(IUnitOfWork unitOfWork, IRepository repository, IAtRestSecretProtector protector) : IPackageStoreDataProvider
 {
     // The V2 envelope derives its key from a random per-payload salt, so the legacy KDF-scope argument is irrelevant here.
-    private const int SecretKdfScope = 0;
+    public const int SecretKdfScope = 0;
 
     public async Task<List<PackageStore>> GetAllAsync(CancellationToken ct)
     {

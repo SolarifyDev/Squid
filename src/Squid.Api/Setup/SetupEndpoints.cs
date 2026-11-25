@@ -1,4 +1,7 @@
+using Squid.Core.Services.Packages.Storage;
+using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Core.Setup.Install;
+using Squid.Message.Models.PackageStorage;
 using Squid.Message.Models.Setup;
 
 namespace Squid.Api.Setup;
@@ -20,6 +23,8 @@ public static class SetupEndpoints
 
         guarded.MapPost("/database/test", (DatabaseConnectionTestRequest request, CancellationToken ct) => TestDatabaseAsync(session, request, ct));
         guarded.MapPost("/redis/test", (RedisConnectionTestRequest request) => RedisConnectionTester.TestAsync(request.ConnectionString));
+        guarded.MapGet("/package-storage/providers", () => Results.Ok(session.PackageStoreProviders.Select(p => p.Describe()).OrderBy(d => d.DisplayName, StringComparer.Ordinal).ToList()));
+        guarded.MapPost("/package-storage/test", (SetupPackageStorageChoice request, CancellationToken ct) => TestPackageStorageAsync(session, request, ct));
         guarded.MapPost("/install", (SetupInstallRequest request, IHostApplicationLifetime lifetime) => StartInstall(session, request, lifetime));
         guarded.MapGet("/progress", () => Results.Ok(session.Tracker.Snapshot()));
     }
@@ -42,11 +47,26 @@ public static class SetupEndpoints
         return new DatabaseConnectionTestResult { Success = true, DatabaseExists = false, CanCreateDatabase = true, Message = "Built-in PostgreSQL will be initialised in the data directory" };
     }
 
+    /// <summary>Settings the provider rejects come back as a failed test with the reason, like the database test, not as an error status.</summary>
+    private static async Task<PackageBlobStoreTestResult> TestPackageStorageAsync(SetupSession session, SetupPackageStorageChoice request, CancellationToken ct)
+    {
+        try
+        {
+            var provider = PackageStoreSettingsCheck.ResolveProvider(session.PackageStoreProviders, request.Kind);
+
+            return await PackageStoreSettingsCheck.TestAsync(provider, request.Properties, request.Secrets, new Dictionary<string, string>(), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is PackageStoreProviderNotFoundException or PackageStoreConfigurationInvalidException)
+        {
+            return new PackageBlobStoreTestResult { Success = false, Message = ex.Message };
+        }
+    }
+
     private static IResult StartInstall(SetupSession session, SetupInstallRequest request, IHostApplicationLifetime lifetime)
     {
         try
         {
-            SetupRequestValidator.EnsureValid(request, session.Capabilities);
+            SetupRequestValidator.EnsureValid(request, session.Capabilities, session.PackageStoreProviders);
         }
         catch (SetupValidationException ex)
         {
@@ -64,7 +84,7 @@ public static class SetupEndpoints
     {
         try
         {
-            await new SetupInstaller(session.Embedded, session.Configuration, session.Tracker).InstallAsync(request, CancellationToken.None).ConfigureAwait(false);
+            await new SetupInstaller(session.Embedded, session.Configuration, session.Tracker, session.PackageStoreProviders).InstallAsync(request, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception)
         {

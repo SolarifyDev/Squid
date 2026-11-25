@@ -63,6 +63,8 @@ public sealed class SetupHostEndpointTests : IAsyncLifetime
     [InlineData("/api/setup/install", "POST")]
     [InlineData("/api/setup/database/test", "POST")]
     [InlineData("/api/setup/redis/test", "POST")]
+    [InlineData("/api/setup/package-storage/providers", "GET")]
+    [InlineData("/api/setup/package-storage/test", "POST")]
     public async Task EveryOtherEndpoint_RequiresTheToken(string path, string method)
     {
         var request = new HttpRequestMessage(new HttpMethod(method), path) { Content = method == "POST" ? JsonContent.Create(new { }) : null };
@@ -115,6 +117,63 @@ public sealed class SetupHostEndpointTests : IAsyncLifetime
         result.Message.ShouldStartWith("Invalid connection string");
     }
 
+    [Fact]
+    public async Task PackageStorageProviders_ListsTheDescriptors()
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/setup/package-storage/providers");
+        request.Headers.Add(SetupToken.HeaderName, _session.Token.Value);
+
+        var providers = await (await _client.SendAsync(request)).Content.ReadFromJsonAsync<JsonElement>();
+
+        providers.GetArrayLength().ShouldBe(1);
+        providers[0].GetProperty("kind").GetString().ShouldBe("FileSystem");
+        providers[0].GetProperty("fields")[0].GetProperty("key").GetString().ShouldBe("Root");
+    }
+
+    [Fact]
+    public async Task PackageStorageTest_EmptyRoot_ChecksTheDataDirectoryFolder_WithoutADatabase()
+    {
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = "" }, secrets = new Dictionary<string, string>() });
+
+        result.GetProperty("success").GetBoolean().ShouldBeTrue();
+        result.GetProperty("message").GetString().ShouldContain(Path.Combine(_dir.Path, "packages"));
+    }
+
+    [Fact]
+    public async Task PackageStorageTest_ExplicitRoot_WritesAndRemovesItsProbe()
+    {
+        var root = Path.Combine(_dir.Path, "chosen");
+
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = root } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeTrue();
+        result.GetProperty("message").GetString().ShouldContain(root);
+    }
+
+    [Theory]
+    [InlineData("Nope", "No package store provider")]
+    [InlineData("FileSystem", "not a setting")]
+    public async Task PackageStorageTest_BadSettings_ExplainInsteadOfThrowing(string kind, string expected)
+    {
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind, properties = new Dictionary<string, string> { ["Bogus"] = "x" } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeFalse();
+        result.GetProperty("message").GetString().ShouldContain(expected);
+    }
+
+    [Fact]
+    public async Task Install_InvalidPackageStorage_Returns400_AndStartsNothing()
+    {
+        var request = new { database = new { mode = "External", connectionString = "Host=127.0.0.1;Port=1;Database=squid;Username=u;Password=p;Timeout=2" }, redis = new { mode = "External", connectionString = "127.0.0.1:1" }, admin = new { userName = "admin", password = "longenough" }, server = new { externalUrl = "http://localhost:8080" }, packageStorage = new { kind = "Nope" } };
+
+        var response = await PostAsync("/api/setup/install", request);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        body.GetProperty("errors").EnumerateObject().Select(p => p.Name).ShouldBe(new[] { "packageStorage.kind" });
+        _session.Tracker.Snapshot().State.ShouldBe(SetupInstallState.Idle);
+    }
+
     [Theory]
     [InlineData("/setup", HttpStatusCode.OK, true)]
     [InlineData("/projects/123", HttpStatusCode.OK, true)]
@@ -137,6 +196,8 @@ public sealed class SetupHostEndpointTests : IAsyncLifetime
 
         return _client.SendAsync(request);
     }
+
+    private async Task<JsonElement> PostForResultAsync(string path, object body) => await (await PostAsync(path, body)).Content.ReadFromJsonAsync<JsonElement>();
 
     private async Task<SetupProgress> WaitForAsync(Func<SetupProgress, bool> condition)
     {

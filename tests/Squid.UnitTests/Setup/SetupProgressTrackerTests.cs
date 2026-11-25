@@ -34,6 +34,6 @@ public sealed class SetupProgressTrackerTests
     [Fact]
     public void Steps_ArePinned_SoTheWizardShowsAStableList()
     {
-        SetupInstaller.Steps.Select(s => s.Key).ShouldBe(new[] { "database", "redis", "migrate", "persist" });
+        SetupInstaller.Steps.Select(s => s.Key).ShouldBe(new[] { "database", "redis", "migrate", "packageStorage", "persist" });
     }
 }
