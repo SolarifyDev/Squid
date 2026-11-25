@@ -111,6 +111,19 @@ public class MachineHealthSweepIntegrationTests : TestBase
     }
 
     [Fact]
+    public async Task UnconfiguredTimeout_HungProbe_IsPersistedUnavailable_BeforeTheSweepDeadline()
+    {
+        var ids = await SeedMachinesAsync(1).ConfigureAwait(false);
+        var strategy = new FakeStrategy();
+        strategy.Behavior = async (_, ct) => { await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false); return new HealthCheckResult(true, "unreachable"); };
+
+        await RunSweepAsync(strategy, new HealthCheckInProcessLocks(), probeTimeoutSeconds: 0, sweepDeadlineSeconds: 10).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+        (await LoadStatusesAsync(ids).ConfigureAwait(false)).ShouldAllBe(s => s == MachineHealthStatus.Unavailable);
+        (await LoadDetailAsync(ids[0]).ConfigureAwait(false)).ShouldContain("timed out");
+    }
+
+    [Fact]
     public async Task Container_RegistersHealthCheckSetting_WithDefaults()
     {
         var setting = await Run<MachineHealthCheckSetting, MachineHealthCheckSetting>(s => Task.FromResult(s)).ConfigureAwait(false);
@@ -122,12 +135,12 @@ public class MachineHealthSweepIntegrationTests : TestBase
 
     // ── helpers ──
 
-    private Task RunSweepAsync(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism = 4)
-        => RunWithOverridesAsync<object>(strategy, locks, probeTimeoutSeconds, maxParallelism, async svc => { await svc.AutoHealthCheckForAllAsync().ConfigureAwait(false); return null; });
+    private Task RunSweepAsync(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism = 4, int sweepDeadlineSeconds = 300)
+        => RunWithOverridesAsync<object>(strategy, locks, probeTimeoutSeconds, maxParallelism, async svc => { await svc.AutoHealthCheckForAllAsync().ConfigureAwait(false); return null; }, sweepDeadlineSeconds);
 
-    private async Task<T> RunWithOverridesAsync<T>(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism, Func<IMachineHealthCheckService, Task<T>> action)
+    private async Task<T> RunWithOverridesAsync<T>(FakeStrategy strategy, HealthCheckInProcessLocks locks, int probeTimeoutSeconds, int maxParallelism, Func<IMachineHealthCheckService, Task<T>> action, int sweepDeadlineSeconds = 300)
     {
-        var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = probeTimeoutSeconds, MaxParallelism = maxParallelism, SweepDeadlineSeconds = 300 };
+        var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = probeTimeoutSeconds, MaxParallelism = maxParallelism, SweepDeadlineSeconds = sweepDeadlineSeconds };
         var transport = new Mock<IDeploymentTransport>();
         transport.Setup(t => t.HealthChecker).Returns(strategy);
         transport.Setup(t => t.CommunicationStyle).Returns(CommunicationStyle.KubernetesApi);
