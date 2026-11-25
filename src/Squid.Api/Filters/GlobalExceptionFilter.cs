@@ -10,6 +10,7 @@ using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
+using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Message.Response;
 
 namespace Squid.Api.Filters;
@@ -24,6 +25,8 @@ public class GlobalExceptionFilter : IExceptionFilter
             UnauthorizedAccessException => HttpStatusCode.Unauthorized,
             PermissionDeniedException => HttpStatusCode.Forbidden,
             MachineNotFoundException => HttpStatusCode.NotFound,
+            PackageVersionFeedNotFoundException => HttpStatusCode.NotFound,
+            PackageVersionTemplateException => HttpStatusCode.BadRequest,
             MachineNameConflictException => HttpStatusCode.Conflict,
             MachineEndpointUpdateNotApplicableException => HttpStatusCode.BadRequest,
             OctopusImportSessionNotFoundException => HttpStatusCode.NotFound,
