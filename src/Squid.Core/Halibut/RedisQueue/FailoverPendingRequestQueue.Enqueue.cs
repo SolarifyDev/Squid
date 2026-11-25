@@ -63,7 +63,20 @@ public sealed partial class FailoverPendingRequestQueue
         }
     }
 
-    private bool HasRequestsOnRedis => Volatile.Read(ref _onRedis) > 0;
+    private bool HasRequestsOnRedis
+    {
+        get
+        {
+            var any = Volatile.Read(ref _onRedis) > 0;
+
+            AfterRedisRequestCountRead?.Invoke();
+
+            return any;
+        }
+    }
+
+    /// <summary>Test seam, null in production: runs right after the request count was read, so a test can put a Redis enqueue between the <see cref="RedisRequestQueued"/> read and this one and pin their order.</summary>
+    internal Action AfterRedisRequestCountRead { get; set; }
 
     /// <summary>Cancelled when this pod puts a request on Redis. Read it before <see cref="HasRequestsOnRedis"/>, so a request queued between the two reads is not missed (same contract as <see cref="IReplicaPresence.OtherReplicaAppeared"/>).</summary>
     private CancellationToken RedisRequestQueued => Volatile.Read(ref _redisRequestQueued).Token;
