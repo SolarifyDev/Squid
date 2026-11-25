@@ -1,0 +1,52 @@
+namespace Squid.Message.Models.Publishing;
+
+/// <summary>
+/// What a recipe wants a published package to be deployed with: an ordered list of steps made of existing action types, and the inputs the person
+/// publishing has to give. It is data only: turning it into a project and a deployment process is the template applier's job.
+/// </summary>
+public class DeploymentPlan
+{
+    public List<PlanStep> Steps { get; set; } = new();
+
+    public List<PlanInput> Inputs { get; set; } = new();
+}
+
+public class PlanStep
+{
+    public string Name { get; set; }
+
+    public List<string> TargetRoles { get; set; } = new();
+
+    public List<PlanAction> Actions { get; set; } = new();
+}
+
+public class PlanAction
+{
+    public string Name { get; set; }
+
+    public string ActionType { get; set; }
+
+    public Dictionary<string, string> Properties { get; set; } = new();
+
+    /// <summary>Set when the action deploys the published package: the applier adds the built-in feed and the release selects the version.</summary>
+    public PlanPackageReference Package { get; set; }
+}
+
+public class PlanPackageReference
+{
+    public string PackageId { get; set; }
+}
+
+/// <summary>A value the plan needs from the publish request and has already baked into its scripts.</summary>
+public class PlanInput
+{
+    public string Name { get; set; }
+
+    public string Description { get; set; }
+}
+
+/// <summary>The names of <see cref="PlanInput.Name"/>. Each one is a field of the publish request.</summary>
+public static class PlanInputNames
+{
+    public const string HostPort = "hostPort";
+}

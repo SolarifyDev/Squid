@@ -11,6 +11,7 @@ using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage.Exceptions;
+using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Message.Response;
@@ -67,6 +68,13 @@ public class GlobalExceptionFilter : IExceptionFilter
             BuiltInFeedDeletionException => HttpStatusCode.Conflict,
             BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
             BuiltInFeedCreationException => HttpStatusCode.Conflict,
+            RecipeInputInvalidException => HttpStatusCode.BadRequest,
+            PublishFactsMissingException => HttpStatusCode.Conflict,
+            PublishRecipeUnknownException => HttpStatusCode.BadRequest,
+            PublishNoRecipeFitsException => HttpStatusCode.BadRequest,
+            PublishDefaultsMissingException => HttpStatusCode.BadRequest,
+            PublishProjectNameConflictException => HttpStatusCode.Conflict,
+            PublishReleaseVersionExistsException => HttpStatusCode.Conflict,
             _ => HttpStatusCode.InternalServerError
         };
 

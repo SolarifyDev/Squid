@@ -105,10 +105,37 @@ public class BuiltInContainerWiringTests
         using var container = Build();
         using var scope = container.BeginLifetimeScope();
 
-        scope.Resolve<IEnumerable<IPackageInspector>>().Select(i => i.GetType()).ShouldBe([typeof(FileMarkerInspector), typeof(NodeInspector), typeof(SquidYamlInspector)], ignoreOrder: true);
+        scope.Resolve<IEnumerable<IPackageInspector>>().Select(i => i.GetType()).ShouldBe([typeof(FileMarkerInspector), typeof(NodeInspector), typeof(SquidYamlInspector), typeof(DockerfileInspector)], ignoreOrder: true);
         scope.Resolve<IPackageInspectionService>().ShouldBeOfType<PackageInspectionService>();
         scope.Resolve<IDeployRecipeRegistry>().ShouldBeOfType<DeployRecipeRegistry>();
         scope.Resolve<IRecipeRecommendationService>().ShouldBeOfType<RecipeRecommendationService>();
+    }
+
+    [Fact]
+    public void Recipes_AreRegistered_AndTheRegistryFindsThemByKind()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        scope.Resolve<IEnumerable<IDeployRecipe>>().Select(r => r.Kind).ShouldBe(["static-site", "dockerfile"], ignoreOrder: true);
+
+        var registry = scope.Resolve<IDeployRecipeRegistry>();
+
+        registry.Find("static-site").ShouldBeOfType<Squid.Core.Services.Publishing.Recipes.StaticSite.StaticSiteRecipe>();
+        registry.Find("Dockerfile").ShouldBeOfType<Squid.Core.Services.Publishing.Recipes.Dockerfile.DockerfileRecipe>();
+        registry.Find("nope").ShouldBeNull();
+    }
+
+    [Fact]
+    public void PublishPipeline_IsRegistered_AndTheDataProviderIsReachable()
+    {
+        // The publish service itself needs the whole deployment graph (mapper, job client, settings), which this container leaves out on purpose.
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        container.IsRegistered<IPublishService>().ShouldBeTrue();
+        container.IsRegistered<IDeploymentPlanApplier>().ShouldBeTrue();
+        scope.Resolve<IPublishedProjectDataProvider>().ShouldBeOfType<PublishedProjectDataProvider>();
     }
 
     [Fact]

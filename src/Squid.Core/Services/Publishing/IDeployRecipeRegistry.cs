@@ -9,4 +9,7 @@ public interface IDeployRecipeRegistry : IScopedDependency
     /// first whatever it scores; a name that matches no recipe is answered in <see cref="RecipeSelection.UnknownRecipe"/> with the valid names, not thrown.
     /// </summary>
     RecipeSelection Select(PackageFacts facts);
+
+    /// <summary>The recipe with that kind, ignoring case, or null.</summary>
+    IDeployRecipe Find(string kind);
 }

@@ -10,7 +10,7 @@ namespace Squid.UnitTests.Services.Publishing;
 /// <summary>Runs the real inspection service, with the real inspectors, over a real zip or tar.gz written to disk.</summary>
 internal static class Inspect
 {
-    public static IPackageInspector[] AllInspectors() => [new FileMarkerInspector(), new NodeInspector(), new SquidYamlInspector()];
+    public static IPackageInspector[] AllInspectors() => [new FileMarkerInspector(), new NodeInspector(), new SquidYamlInspector(), new DockerfileInspector()];
 
     public static Task<PackageFacts> ZipAsync(params (string Name, string Content)[] entries) => RunAsync(TestArchives.Zip(entries), BuiltInPackageFormat.Zip);
 
@@ -38,6 +38,8 @@ internal sealed class StubRecipe(string kind, int score, params string[] reasons
     public string Kind { get; } = kind;
 
     public RecipeMatch Match(PackageFacts facts) => new() { Score = score, Reasons = reasons };
+
+    public Task<DeploymentPlan> RenderAsync(RecipeRenderContext context, CancellationToken ct) => Task.FromResult(new DeploymentPlan());
 }
 
 internal sealed class ThrowingInspector : IPackageInspector

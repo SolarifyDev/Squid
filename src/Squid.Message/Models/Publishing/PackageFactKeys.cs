@@ -19,6 +19,9 @@ public static class PackageFactKeys
     public const string MarkerIndexHtmlDir = "marker.index-html.dir";
     public const string MarkerSquidYaml = "marker.squid-yaml";
 
+    // Dockerfile
+    public const string DockerfileExposePort = "dockerfile.expose.port";
+
     // Node
     public const string NodePackageJson = "node.package-json";
     public const string NodeBuildScript = "node.build-script";

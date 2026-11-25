@@ -139,6 +139,8 @@ public class PushInspectionTests
         public string Kind { get; } = kind;
 
         public RecipeMatch Match(PackageFacts facts) => new() { Score = facts.Is(key) ? 80 : 0, Reasons = [key] };
+
+        public Task<DeploymentPlan> RenderAsync(RecipeRenderContext context, CancellationToken ct) => Task.FromResult(new DeploymentPlan());
     }
 
     private sealed class CountingInspector : IPackageInspector

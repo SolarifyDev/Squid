@@ -60,6 +60,7 @@
     <EmbeddedResource Include="Resources\Upgrade\*" />
     <EmbeddedResource Include="Resources\Deploy\IIS\*.ps1" />
     <EmbeddedResource Include="Resources\Deploy\WindowsService\*.ps1" />
+    <EmbeddedResource Include="Resources\Recipes\*.sh" />
   </ItemGroup>
 
   <ItemGroup Label="DbUp">
