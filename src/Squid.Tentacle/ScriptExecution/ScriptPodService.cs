@@ -267,13 +267,15 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     private ScriptStatusResponse BuildActiveStatus(ScriptStatusRequest request, ScriptPodContext ctx)
     {
+        // Read the pod's state BEFORE draining its logs: a pod that finished between the two reads would otherwise be reported
+        // Complete with logs read while it was still running (missing its final lines), and a Complete poll releases the isolation mutex.
+        var phase = _podManager.GetPodPhase(ctx.PodName);
+        var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
+
         var logs = DrainLogs(ctx);
 
         if (ctx.EosDetected)
             return new ScriptStatusResponse(request.Ticket, ProcessState.Complete, ctx.EosExitCode, logs, ctx.LogSequence);
-
-        var phase = _podManager.GetPodPhase(ctx.PodName);
-        var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
 
         var state = containerTermination != null
             ? ProcessState.Complete

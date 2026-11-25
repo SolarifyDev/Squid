@@ -25,6 +25,9 @@ public partial class ScriptPodService : IScriptServiceV2
         set => _tombstones = value;
     }
 
+    /// <summary>Test-only: runs between the two reads of <see cref="IsQueuedOrLaunchingV2"/>, i.e. after the pending-queue read and before the in-flight read.</summary>
+    internal Action? LaunchStateReadHookForTests { get; set; }
+
     public ScriptStatusResponseV2 StartScript(StartScriptCommandV2 command)
     {
         var ticket = command.ScriptTicket;
@@ -52,10 +55,13 @@ public partial class ScriptPodService : IScriptServiceV2
     {
         var ticket = request.Ticket;
 
+        // Launch state FIRST, see IsQueuedOrLaunchingV2: a ticket read as "not launching" has either not started or already been tracked.
+        var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+
         if (IsKnownInMemoryV2(ticket.TaskId) && TryReadLiveStatusV2(request, out var live)) return live!;
 
         // The pod is being launched: its persisted state says Starting (or does not exist yet), which must not read as lost or unknown.
-        if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.Pending(ticket, request.LastLogSequence);
+        if (launching) return ScriptV2Mapping.Pending(ticket, request.LastLogSequence);
 
         return ReadFinalStatusV2(ticket, request.LastLogSequence);
     }
@@ -66,11 +72,13 @@ public partial class ScriptPodService : IScriptServiceV2
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
+            var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+
             if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
 
             if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId)) return CancelLiveV2(command);
 
-            if (_startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
+            if (launching) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
             return ReadFinalStatusV2(ticket, command.LastLogSequence);
         }
@@ -82,12 +90,29 @@ public partial class ScriptPodService : IScriptServiceV2
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
+            var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+
             if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId)) return CompleteLiveV2(command);
 
-            if (_pendingScripts.ContainsKey(ticket.TaskId) || _startsInFlight.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
+            if (launching || _pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotLiveV2(ticket);
         }
+    }
+
+    /// <summary>
+    /// A ticket launches by moving pending queue -> in-flight set -> tracked pod, adding to each next set before leaving the previous
+    /// one, so it is always in at least one of them. These reads are not atomic: scanning in the SAME direction (pending, then in-flight,
+    /// then the tracked/persisted state the caller reads afterwards) cannot miss a ticket that moves between them, whereas any other order
+    /// can, and a miss reads as lost or unknown (the server re-dispatches). Callers take this snapshot before any other lookup.
+    /// </summary>
+    private bool IsQueuedOrLaunchingV2(string ticketId)
+    {
+        var queued = _pendingScripts.ContainsKey(ticketId);
+
+        LaunchStateReadHookForTests?.Invoke();
+
+        return queued || _startsInFlight.ContainsKey(ticketId);
     }
 
     private bool IsKnownInMemoryV2(string ticketId)
@@ -96,12 +121,13 @@ public partial class ScriptPodService : IScriptServiceV2
     private bool TryPeekStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
     {
         var ticketId = ticket.TaskId;
+        var launching = IsQueuedOrLaunchingV2(ticketId);
 
         status = true switch
         {
             _ when _terminalResults.TryGetValue(ticketId, out var terminal) => MapTerminalV2(terminal.Response),
             _ when _scripts.TryGetValue(ticketId, out var ctx) => ScriptV2Mapping.Running(ticket, new List<ProcessOutput>(), ctx.LogSequence),
-            _ when _pendingScripts.ContainsKey(ticketId) => ScriptV2Mapping.Pending(ticket, 0),
+            _ when launching || _pendingScripts.ContainsKey(ticketId) => ScriptV2Mapping.Pending(ticket, 0),
             _ => null
         };
 
