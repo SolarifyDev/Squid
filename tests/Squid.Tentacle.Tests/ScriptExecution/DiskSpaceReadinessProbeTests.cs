@@ -79,7 +79,11 @@ public class DiskSpaceReadinessProbeTests
 
         SpinWait.SpinUntil(() => Volatile.Read(ref calls) == 1, TimeSpan.FromSeconds(5)).ShouldBeTrue("the first check must be in flight");
 
-        var overlapping = Enumerable.Range(0, 4).Select(_ => Task.Run(probe.IsReady)).ToArray();
+        // Dedicated threads, and only released once every one of them is running: a pool-queued probe that starts after the release would
+        // legitimately begin a second check, which is not the overlap under test.
+        var overlapping = Enumerable.Range(0, 4).Select(_ => Task.Factory.StartNew(probe.IsReady, TaskCreationOptions.LongRunning)).ToArray();
+
+        SpinWait.SpinUntil(() => overlapping.All(t => t.Status == TaskStatus.Running), TimeSpan.FromSeconds(5)).ShouldBeTrue("every overlapping probe must be running before the check is released");
 
         await Task.Delay(200);
         release.Set();
