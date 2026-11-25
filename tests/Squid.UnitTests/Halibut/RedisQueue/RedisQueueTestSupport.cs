@@ -139,11 +139,16 @@ internal sealed class FakeRedisFactory(FakeRedisQueue queue) : IPendingRequestQu
 
     public Exception CreateFailure { get; set; }
 
+    /// <summary>Runs inside the queue's first use of Redis, i.e. after the routing decision chose Redis and before the request is counted as being on it.</summary>
+    public Action OnCreate { get; set; }
+
     public int Created => Volatile.Read(ref _created);
 
     public IPendingRequestQueue CreateQueue(Uri endpoint)
     {
         Interlocked.Increment(ref _created);
+
+        OnCreate?.Invoke();
 
         if (CreateFailure != null) throw CreateFailure;
 

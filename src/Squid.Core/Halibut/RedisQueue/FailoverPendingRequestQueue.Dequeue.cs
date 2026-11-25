@@ -15,8 +15,9 @@ public sealed partial class FailoverPendingRequestQueue
         if (TryTakeParked(out var parked)) return HandOut(parked.Request, parked.Origin);
 
         var appeared = _replicas.OtherReplicaAppeared;
+        var queuedOnRedis = RedisRequestQueued;
 
-        if (!_replicas.OtherReplicaIsLive && !HasRequestsOnRedis) return HandOut(await DequeueUntilAReplicaAppearsAsync(appeared, cancellationToken).ConfigureAwait(false), _local);
+        if (!_replicas.OtherReplicaIsLive && !HasRequestsOnRedis) return HandOut(await DequeueUntilAReplicaAppearsAsync(appeared, queuedOnRedis, cancellationToken).ConfigureAwait(false), _local);
 
         if (!RedisMayDeliver()) return HandOut(await DequeueLocalOnlyAsync(cancellationToken).ConfigureAwait(false), _local);
 
@@ -25,11 +26,12 @@ public sealed partial class FailoverPendingRequestQueue
 
     /// <summary>
     /// No other replica is alive, so nothing can arrive through Redis and none is listened to (no Redis leg, no subscription): this is Halibut's own local wait, in
-    /// full. It is cut short only if a replica appears, so that the next dequeue listens to Redis too; an early empty answer is an ordinary polling answer.
+    /// full. It is cut short if a replica appears, or if this pod puts a request on Redis (<paramref name="queuedOnRedis"/>: the replica that made it go through Redis
+    /// can already be gone), so that the next dequeue listens to Redis too; an early empty answer is an ordinary polling answer.
     /// </summary>
-    private async Task<RequestMessageWithCancellationToken> DequeueUntilAReplicaAppearsAsync(CancellationToken appeared, CancellationToken ct)
+    private async Task<RequestMessageWithCancellationToken> DequeueUntilAReplicaAppearsAsync(CancellationToken appeared, CancellationToken queuedOnRedis, CancellationToken ct)
     {
-        using var stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(ct, appeared);
+        using var stopWaiting = CancellationTokenSource.CreateLinkedTokenSource(ct, appeared, queuedOnRedis);
 
         try
         {
