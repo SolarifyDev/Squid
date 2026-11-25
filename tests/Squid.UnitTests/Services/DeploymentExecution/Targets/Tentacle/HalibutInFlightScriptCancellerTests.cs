@@ -255,6 +255,51 @@ public class HalibutInFlightScriptCancellerTests
         _events.ShouldBe(["V2.Cancel:v2-ticket"]);
     }
 
+    // The whole cancel of one script (V2 attempt + capabilities refresh + V1 retry) shares ONE deadline of CancelBudget + grace: cancelling a paused task is an HTTP request.
+    [Fact]
+    public async Task AnUnreachableV2Agent_WhoseCapabilitiesCallHangs_IsAbandonedWithinTheOneBound()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent(), RefreshDelay = Timeout.InfiniteTimeSpan };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new HalibutClientException("unreachable") };
+        var canceller = Canceller(new FakeV1Agent(_events), v2, cancelBudget: TimeSpan.FromMilliseconds(100), grace: TimeSpan.FromMilliseconds(200), refresher: refresher);
+
+        await canceller.CancelAllAsync(TaskId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        _events.ShouldNotContain("V1.Cancel:v2-ticket");
+    }
+
+    [Fact]
+    public async Task ADowngradeCancel_WhoseRefreshAndV1RetryAreSlow_StillEndsAtTheOriginalBound_NotASecondBudgetLater()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var budget = TimeSpan.FromSeconds(1.5);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent(), RefreshDelay = TimeSpan.FromSeconds(2.7) };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new ServiceNotFoundHalibutClientException("no such service") };
+        var canceller = Canceller(new HangingV1Agent(), v2, cancelBudget: budget, grace: budget, refresher: refresher);
+        var watch = Stopwatch.StartNew();
+
+        await canceller.CancelAllAsync(TaskId).WaitAsync(TimeSpan.FromSeconds(15));
+
+        _events.ShouldContain("Caps.Refresh:1");
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(3.6), "refresh (2.7s) + a second full 1.5s cancel budget would end at 4.2s; the one shared deadline ends it at 3.0s");
+    }
+
+    [Fact]
+    public async Task ADowngradeCancel_WithinTheBound_StillCancelsOverV1()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "v2-ticket", ScriptProtocolVersion.V2));
+        Machines(1);
+        var refresher = new FakeCapabilitiesRefresher(_events) { AgentAnswer = V1OnlyAgent(), RefreshDelay = TimeSpan.FromMilliseconds(50) };
+        var v2 = new FakeV2Agent(_events) { CancelFailure = new ServiceNotFoundHalibutClientException("no such service") };
+
+        await Canceller(new FakeV1Agent(_events), v2, refresher: refresher).CancelAllAsync(TaskId).WaitAsync(TimeSpan.FromSeconds(10));
+
+        _events.ShouldBe(["V2.Cancel:v2-ticket", "Caps.Refresh:1", "V1.Cancel:v2-ticket"]);
+    }
+
     [Fact]
     public async Task AFailingStoreRead_DoesNotThrow()
     {
