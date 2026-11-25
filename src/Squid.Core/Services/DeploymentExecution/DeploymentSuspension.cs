@@ -1,5 +1,6 @@
 using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 
 namespace Squid.Core.Services.DeploymentExecution;
 
@@ -15,7 +16,7 @@ public static class DeploymentSuspension
     {
         ctx?.Lease?.Release();
 
-        await serverTaskService.TransitionStateAsync(serverTaskId, TaskState.Executing, TaskState.Paused, ctx?.LeaseOwner, ct).ConfigureAwait(false);
+        await WritePauseOrFenceAsync(serverTaskService, serverTaskId, ctx, ct).ConfigureAwait(false);
 
         var suspended = new DeploymentSuspendedException(serverTaskId);
 
@@ -23,4 +24,26 @@ public static class DeploymentSuspension
 
         return suspended;
     }
+
+    // Renewal is already stopped (the keeper must not read the run's own pause as a loss), so a failed write leaves a run nothing keeps alive and that cannot
+    // say whether it still owns the task: it fences itself and stops, instead of working on until the reaper pauses the task and a second run resumes it
+    // beside this one. A cancellation, or a user cancel that landed first (the row is Cancelling), is different: it ends the run through its own handler,
+    // which needs the lease to record the outcome.
+    private static async Task WritePauseOrFenceAsync(IServerTaskService serverTaskService, int serverTaskId, DeploymentTaskContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            await serverTaskService.TransitionStateAsync(serverTaskId, TaskState.Executing, TaskState.Paused, ctx?.LeaseOwner, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!EndsTheRunItself(ex))
+        {
+            Log.Warning(ex, "[Deploy] Task {TaskId} could not be paused after its lease renewal stopped; fencing this run", serverTaskId);
+
+            ctx?.Lease?.Fence();
+
+            throw;
+        }
+    }
+
+    private static bool EndsTheRunItself(Exception ex) => ex is OperationCanceledException || ex is ServerTaskStateTransitionException { FromState: TaskState.Cancelling };
 }

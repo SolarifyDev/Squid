@@ -218,6 +218,10 @@ public class DeploymentPipelineRunnerLeaseTests
 
         public void Release() => Released = true;
 
+        public void Fence()
+        {
+        }
+
         public void Lose()
         {
             IsLost = true;

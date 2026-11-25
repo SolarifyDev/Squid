@@ -117,6 +117,10 @@ public class DeploymentPipelineRunnerCancelWatchTests
         {
         }
 
+        public void Fence()
+        {
+        }
+
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 

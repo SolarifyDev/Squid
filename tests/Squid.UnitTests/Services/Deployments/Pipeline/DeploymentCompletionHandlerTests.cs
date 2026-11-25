@@ -74,9 +74,9 @@ public class DeploymentCompletionHandlerTests
     }
 
     // The single place enforcing "a task that reaches Cancelled has no agent script left running": whatever the observer decided when its token
-    // fired, the scripts still recorded in flight are cancelled before the state is written and before the checkpoint holding them is deleted.
+    // fired, the scripts still recorded in flight are cancelled after the owned state write succeeded and before the checkpoint holding them is deleted.
     [Fact]
-    public async Task OnCancelled_CancelsTheInFlightAgentScripts_BeforeTheStateWriteAndTheCheckpointDelete()
+    public async Task OnCancelled_CancelsTheInFlightAgentScripts_AfterTheOwnedStateWrite_AndBeforeTheCheckpointDelete()
     {
         var order = new List<string>();
         var canceller = new Mock<IInFlightScriptCanceller>();
@@ -87,7 +87,7 @@ public class DeploymentCompletionHandlerTests
 
         await sut.OnCancelledAsync(new DeploymentTaskContext { ServerTaskId = 1 }, CancellationToken.None);
 
-        order.ShouldBe(["cancel-scripts", "transition", "delete-checkpoint"]);
+        order.ShouldBe(["transition", "cancel-scripts", "delete-checkpoint"]);
     }
 
     // ========== OnCancelledAsync ==========
@@ -383,6 +383,49 @@ public class DeploymentCompletionHandlerTests
 
         _serverTaskService.Verify(s => s.TransitionStateAsync(1, TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once, "the pause is attempted under this run's lease only");
     }
+
+    // A run whose lease was taken over (silently, e.g. after a VM freeze) learns it only from the owned state write: the completion record and the
+    // remote CancelScript are side effects of the outcome and belong to the new owner, so they must come after that write succeeded.
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenAnotherRunHoldsTheLease_NoCompletionRecordAndNoRemoteCancelIsMade(CompletionOutcome outcome)
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        await Drive(sut, outcome, CreateContext());
+
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        canceller.Verify(c => c.CancelAllAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenTheRunStillOwnsTheLease_TheCompletionRecordIsWrittenAfterTheStateWrite(CompletionOutcome outcome)
+    {
+        var order = new List<string>();
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
+        _completionDataProvider.Setup(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("record")).Returns(Task.CompletedTask);
+
+        await Drive(_sut, outcome, CreateContext());
+
+        order.ShouldBe(["transition", "record"]);
+    }
+
+    public enum CompletionOutcome { Success, Failure, Cancelled }
+
+    private static Task Drive(DeploymentCompletionHandler sut, CompletionOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    {
+        CompletionOutcome.Success => sut.OnSuccessAsync(ctx, CancellationToken.None),
+        CompletionOutcome.Failure => sut.OnFailureAsync(ctx, new Exception("boom"), CancellationToken.None),
+        _ => sut.OnCancelledAsync(ctx, CancellationToken.None)
+    };
 
     private static DeploymentTaskContext CreateContext()
     {

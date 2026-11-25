@@ -19,10 +19,9 @@ public sealed class DeploymentCompletionHandler(
 {
     public async Task OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        await RecordCompletionAsync(ctx, true, "Deployment completed successfully").ConfigureAwait(false);
-
         if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, ct).ConfigureAwait(false)) return;
 
+        await RecordCompletionAsync(ctx, true, "Deployment completed successfully").ConfigureAwait(false);
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
         await TriggerAutoDeploymentsAsync(ctx, ct).ConfigureAwait(false);
 
@@ -33,12 +32,12 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Error(ex, "[Deploy] Task {TaskId} failed", ctx.ServerTaskId);
 
-        if (ctx.Deployment != null)
-            await RecordCompletionAsync(ctx, false, ex.Message).ConfigureAwait(false);
-
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
         if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, ct).ConfigureAwait(false)) return;
+
+        if (ctx.Deployment != null)
+            await RecordCompletionAsync(ctx, false, ex.Message).ConfigureAwait(false);
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -47,12 +46,12 @@ public sealed class DeploymentCompletionHandler(
     {
         Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
 
+        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
+
         if (ctx.Deployment != null)
             await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
 
         await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
-
-        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -235,7 +234,21 @@ public sealed class DeploymentCompletionHandler(
         return task?.State ?? TaskState.Executing;
     }
 
+    // The record follows the owned state write, so a failure here must not undo or contradict an outcome the task already has (a throw would route a
+    // finished task into the failure path, whose Success -> Failed move is illegal): it is logged and the outcome stands.
     private async Task RecordCompletionAsync(DeploymentTaskContext ctx, bool success, string message)
+    {
+        try
+        {
+            await AddCompletionAsync(ctx, success).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "[Deploy] Failed to record the completion of task {TaskId}: {Message}", ctx.ServerTaskId, message);
+        }
+    }
+
+    private async Task AddCompletionAsync(DeploymentTaskContext ctx, bool success)
     {
         var deployment = await deploymentDataProvider.GetDeploymentByIdAsync(ctx.Deployment.Id).ConfigureAwait(false);
 
