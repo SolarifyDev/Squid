@@ -334,12 +334,18 @@ public sealed class WindowsServiceHost : IServiceHost
     /// service stops itself with a non-zero exit code (not only when the process crashes).
     /// Without it a fatal-but-graceful agent exit leaves the service stopped forever.
     /// </summary>
-    internal static string[] BuildScFailureFlagArgs(string serviceName)
+    internal static string[] BuildScFailureFlagArgs(string serviceName, bool enabled = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
 
-        return new[] { "failureflag", serviceName, "1" };
+        return new[] { "failureflag", serviceName, enabled ? "1" : "0" };
     }
+
+    /// <summary>
+    /// Sets the failure-actions flag. Shared by <see cref="Install"/> (always on) and
+    /// <see cref="ScmRecoveryReassertion"/>, which puts back the value an interrupted upgrade had suspended.
+    /// </summary>
+    internal static int SetFailureFlag(string serviceName, bool enabled) => Sc(BuildScFailureFlagArgs(serviceName, enabled));
 
     internal static string[] BuildScDeleteArgs(string serviceName)
         => new[] { "delete", serviceName };

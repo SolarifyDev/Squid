@@ -188,7 +188,7 @@ public sealed class LinuxLifecycleContext : IDisposable
     ///         to prove the swap actually landed.</item>
     /// </list>
     /// </summary>
-    public byte[] BuildV2BundleTarGz(string targetVersion, bool failHealthz = false, bool omitSquidTentacleBinary = false)
+    public byte[] BuildV2BundleTarGz(string targetVersion, bool failHealthz = false, bool omitSquidTentacleBinary = false, bool crashOnStart = false)
     {
         var serviceScriptBytes = File.ReadAllBytes(TestServiceScript);
 
@@ -218,6 +218,21 @@ public sealed class LinuxLifecycleContext : IDisposable
 
             script = script.Replace(healthyResponse, unhealthyResponse, StringComparison.Ordinal);
             serviceScriptBytes = Encoding.UTF8.GetBytes(script);
+        }
+
+        // Crash-on-start: the service exits 1 immediately after the `version` / `help` fast-paths (so the
+        // upgrade's post-restart version probe still works), before spawning the healthz responder. With the
+        // production restart policy systemd restarts it until StartLimitBurst refuses further starts - the
+        // exact state that made the rollback's plain `systemctl start` fail. Mirrors Windows' `crashOnStart`.
+        if (crashOnStart)
+        {
+            var script = Encoding.UTF8.GetString(serviceScriptBytes);
+            const string sentinel = "HEALTHZ_PID=\"\"\n";
+
+            if (!script.Contains(sentinel))
+                throw new InvalidOperationException($"Cannot inject crashOnStart mutation: test service script does not contain expected sentinel '{sentinel}'.");
+
+            serviceScriptBytes = Encoding.UTF8.GetBytes(script.Replace(sentinel, "exit 1\n" + sentinel, StringComparison.Ordinal));
         }
 
         // version.txt content is the FULL target version (NOT stripped)

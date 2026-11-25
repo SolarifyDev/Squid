@@ -21,7 +21,7 @@ public sealed class ServerTaskLeaseOptions
 
     public TimeSpan Stale { get; init; } = TimeSpan.FromSeconds(DefaultStaleSeconds);
 
-    /// <summary>How many times the reaper resumes a recovered task by itself before leaving it Paused for an operator.</summary>
+    /// <summary>How many times the reaper resumes a recovered task by itself before leaving it Paused for an operator; 0 never resumes automatically.</summary>
     public int MaxAutoResumes { get; init; } = DefaultMaxAutoResumes;
 
     /// <summary>
@@ -37,8 +37,11 @@ public sealed class ServerTaskLeaseOptions
         var interval = Math.Max(MinRenewIntervalSeconds, Positive(lease.RenewIntervalSeconds, DefaultRenewIntervalSeconds));
         var stale = Math.Max(interval * MinStaleIntervals, Positive(lease.StaleSeconds, DefaultStaleSeconds));
 
-        return new ServerTaskLeaseOptions { RenewInterval = TimeSpan.FromSeconds(interval), Stale = TimeSpan.FromSeconds(stale), MaxAutoResumes = Positive(lease.MaxAutoResumes, DefaultMaxAutoResumes) };
+        return new ServerTaskLeaseOptions { RenewInterval = TimeSpan.FromSeconds(interval), Stale = TimeSpan.FromSeconds(stale), MaxAutoResumes = NotNegative(lease.MaxAutoResumes, DefaultMaxAutoResumes) };
     }
+
+    // Zero is a valid value where it means "off" (MaxAutoResumes); only a negative number is nonsense.
+    private static int NotNegative(int value, int fallback) => value >= 0 ? value : fallback;
 
     private static int Positive(int value, int fallback) => value > 0 ? value : fallback;
 }

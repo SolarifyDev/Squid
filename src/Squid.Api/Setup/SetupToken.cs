@@ -9,7 +9,7 @@ namespace Squid.Api.Setup;
 /// <summary>
 /// One-time secret that guards the setup endpoints, so nobody else who can reach the port can
 /// claim a fresh install first. Kept in the data directory (owner-only) so it survives a container
-/// restart during setup and the install script can read it; deleted once setup completes.
+/// restart during setup and the install script can read it; never written to the log; deleted once setup completes.
 /// </summary>
 public sealed class SetupToken
 {

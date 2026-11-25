@@ -32,6 +32,12 @@ public interface IServerTaskLease : IAsyncDisposable
     /// so no renewal ever finds the cleared lease and reads the run's own pause as a loss: the run still has to record how it ended.
     /// </summary>
     void Release();
+
+    /// <summary>
+    /// The run can no longer say whether it still owns the task (its own pause write failed after renewal was stopped): renewal stops and the lease
+    /// is marked lost, so the run stops itself instead of working on while the reaper recovers the task and a second run starts beside it.
+    /// </summary>
+    void Fence();
 }
 
 public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
@@ -87,6 +93,13 @@ public sealed class ServerTaskLeaseKeeper : IServerTaskLeaseKeeper
         public CancellationToken LostToken => _lostSource.Token;
 
         public void Release() => _stop.Cancel();
+
+        public void Fence()
+        {
+            _stop.Cancel();
+
+            MarkLost();
+        }
 
         public async ValueTask DisposeAsync()
         {

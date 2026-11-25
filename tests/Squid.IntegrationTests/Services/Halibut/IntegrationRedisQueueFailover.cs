@@ -4,7 +4,10 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Halibut;
 using Halibut.Diagnostics;
+using Halibut.Queue;
 using Halibut.Queue.MessageStreamWrapping;
+using Halibut.ServiceModel;
+using Halibut.Transport.Protocol;
 using Squid.Core.Halibut.DataStreamStorage;
 using Squid.Core.Halibut.RedisQueue;
 using Squid.Core.Halibut.RedisQueue.Encryption;
@@ -89,6 +92,34 @@ public class IntegrationRedisQueueFailover : TestBase
         _ = afterRecovery;
     }
 
+    // The other replica was killed hard: its heartbeat stops, and once it expires this pod believes it is alone. A request that went through Redis while it still looked
+    // alive is then only on Redis, and the agent that reconnects to THIS pod must collect it from there, not after the pickup timeout.
+    [Fact]
+    public async Task RequestOnRedis_ThenTheOtherReplicaExpires_TheLocalPollerCollectsItWellBeforeThePickupTimeout()
+    {
+        RequireRedis();
+
+        await using var pod = NewPod(RedisAddress);
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var call = pod.Client.StartScriptAsync(Command());
+
+        await WaitUntilAsync(() => pod.HoldsAQueuedRequest(), "the request to reach Redis");
+
+        pod.Replicas.Set(false);
+
+        var collected = await pod.Queue.DequeueAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(6));
+
+        collected.ShouldNotBeNull("the request is collected from Redis by the poller of this pod");
+        timer.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(6), "well before the 8 s pickup timeout");
+
+        await pod.Queue.ApplyResponse(ResponseMessage.FromException(collected.RequestMessage, new InvalidOperationException("answered-by-agent")), collected.RequestMessage.ActivityId);
+
+        var ex = await Should.ThrowAsync<Exception>(() => call);
+
+        ex.ToString().ShouldContain("answered-by-agent", customMessage: "the agent's answer reached the caller; it did not time out");
+    }
+
     private static StartScriptCommand Command()
         => new(new ScriptTicket(Guid.NewGuid().ToString("N")), ScriptMarker, ScriptIsolationLevel.NoIsolation, TimeSpan.FromSeconds(1), null, [], "it-task", TimeSpan.FromSeconds(1), [new ScriptFile("sensitiveVariables.json", DataStream.FromBytes(RandomNumberGenerator.GetBytes(256)), PasswordMarker)]);
 
@@ -121,16 +152,6 @@ public class IntegrationRedisQueueFailover : TestBase
 
     private Pod NewPod(string redisAddress) => new(CurrentScope, redisAddress);
 
-    /// <summary>Another replica is alive: the only situation in which a request goes through Redis.</summary>
-    private static ReplicaPresence PeerPresent()
-    {
-        var presence = new ReplicaPresence();
-
-        presence.Set(true);
-
-        return presence;
-    }
-
     private sealed class Pod : IAsyncDisposable
     {
         private readonly HalibutRuntime _runtime;
@@ -138,8 +159,12 @@ public class IntegrationRedisQueueFailover : TestBase
         private readonly ConnectionMultiplexer _inspector;
         private readonly string _prefix = $"it{Guid.NewGuid():N}";
 
+        private readonly TaskCompletionSource<IPendingRequestQueue> _queue = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Pod(ILifetimeScope scope, string redisAddress)
         {
+            Replicas.Set(true);
+
             var options = new RedisQueueOptions(_prefix, TimeSpan.FromSeconds(5), 2, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromMinutes(10));
             var limits = HalibutTimeoutsAndLimits.RecommendedValues();
             var logFactory = new LogFactory();
@@ -159,6 +184,12 @@ public class IntegrationRedisQueueFailover : TestBase
         }
 
         public RedisQueueHealth Health { get; }
+
+        /// <summary>Another replica is alive to begin with: the only situation in which a request goes through Redis.</summary>
+        public ReplicaPresence Replicas { get; } = new();
+
+        /// <summary>The queue of the test agent, as the polling handler of Halibut sees it.</summary>
+        public IPendingRequestQueue Queue => _queue.Task.GetAwaiter().GetResult();
 
         public IAsyncScriptService Client { get; }
 
@@ -208,7 +239,7 @@ public class IntegrationRedisQueueFailover : TestBase
                 {
                     slot.Value = serializer;
 
-                    return new FailoverPendingRequestQueueFactory(limits, logFactory, _redis, new FailoverQueueContext(Health, options, TimeProvider.System, null, PeerPresent()));
+                    return new CapturingFactory(new FailoverPendingRequestQueueFactory(limits, logFactory, _redis, new FailoverQueueContext(Health, options, TimeProvider.System, null, Replicas)), _queue);
                 })
                 .Build();
         }
@@ -221,6 +252,18 @@ public class IntegrationRedisQueueFailover : TestBase
             foreach (var key in KeysInRedis()) await _inspector.GetDatabase().KeyDeleteAsync(key);
 
             await _inspector.DisposeAsync();
+        }
+    }
+
+    private sealed class CapturingFactory(IPendingRequestQueueFactory inner, TaskCompletionSource<IPendingRequestQueue> sink) : IPendingRequestQueueFactory
+    {
+        public IPendingRequestQueue CreateQueue(Uri endpoint)
+        {
+            var queue = inner.CreateQueue(endpoint);
+
+            sink.TrySetResult(queue);
+
+            return queue;
         }
     }
 }

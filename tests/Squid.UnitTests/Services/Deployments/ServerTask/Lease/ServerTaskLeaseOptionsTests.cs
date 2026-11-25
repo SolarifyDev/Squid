@@ -56,11 +56,11 @@ public class ServerTaskLeaseOptionsTests
     }
 
     [Theory]
-    [InlineData(0, 3)]
+    [InlineData(0, 0)]      // an operator's opt-out: never resume automatically
     [InlineData(-4, 3)]
     [InlineData(1, 1)]
     [InlineData(10, 10)]
-    public void MaxAutoResumes_FallsBackToTheDefault_WhenNotPositive(int configured, int expected)
+    public void MaxAutoResumes_ZeroDisablesAutoResume_NegativeFallsBackToTheDefault(int configured, int expected)
     {
         var setting = new ServerTaskSetting { Lease = new ServerTaskLeaseSettings { MaxAutoResumes = configured } };
 

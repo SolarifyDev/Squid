@@ -69,6 +69,59 @@ public class DiskSpaceReadinessProbeTests
     }
 
     [Fact]
+    public async Task IsReady_OverlappingProbesDuringAHealthyInFlightCheck_ShareItsResult_InsteadOfReportingNotReady()
+    {
+        using var release = new ManualResetEventSlim(false);
+        var calls = 0;
+        var probe = new DiskSpaceReadinessProbe("/ws", TimeSpan.FromSeconds(10), _ => { Interlocked.Increment(ref calls); release.Wait(); return true; });
+
+        var first = Task.Run(probe.IsReady);
+
+        SpinWait.SpinUntil(() => Volatile.Read(ref calls) == 1, TimeSpan.FromSeconds(5)).ShouldBeTrue("the first check must be in flight");
+
+        // Dedicated threads, and only released once every one of them is running: a pool-queued probe that starts after the release would
+        // legitimately begin a second check, which is not the overlap under test.
+        var overlapping = Enumerable.Range(0, 4).Select(_ => Task.Factory.StartNew(probe.IsReady, TaskCreationOptions.LongRunning)).ToArray();
+
+        SpinWait.SpinUntil(() => overlapping.All(t => t.Status == TaskStatus.Running), TimeSpan.FromSeconds(5)).ShouldBeTrue("every overlapping probe must be running before the check is released");
+
+        await Task.Delay(200);
+        release.Set();
+
+        (await first.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue();
+
+        foreach (var probeResult in overlapping)
+            (await probeResult.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeTrue("a healthy check that is merely still running must not flap readiness for the other probes");
+
+        calls.ShouldBe(1, "overlapping probes share the one in-flight check");
+    }
+
+    [Fact]
+    public async Task IsReady_AJoinerWaitsOnlyForTheRemainingBudgetOfTheInFlightCheck_NotAFullTimeoutOfItsOwn()
+    {
+        using var release = new ManualResetEventSlim(false);
+        var probe = new DiskSpaceReadinessProbe("/ws", TimeSpan.FromSeconds(3), _ => { release.Wait(); return true; });
+
+        try
+        {
+            var first = Task.Run(probe.IsReady);
+
+            await Task.Delay(1500);
+
+            var started = DateTime.UtcNow;
+
+            probe.IsReady().ShouldBeFalse();
+
+            (DateTime.UtcNow - started).ShouldBeLessThan(TimeSpan.FromMilliseconds(2400), "the check has already used half its budget; a joiner may not wait a fresh full timeout");
+            (await first.WaitAsync(TimeSpan.FromSeconds(10))).ShouldBeFalse();
+        }
+        finally
+        {
+            release.Set();
+        }
+    }
+
+    [Fact]
     public void IsReady_RecoversOnceTheStuckCheckCompletes()
     {
         using var release = new ManualResetEventSlim(false);

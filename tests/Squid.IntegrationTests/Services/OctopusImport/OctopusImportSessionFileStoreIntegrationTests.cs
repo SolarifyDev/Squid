@@ -215,7 +215,7 @@ public class OctopusImportSessionFileStoreIntegrationTests : TestBase
         var counts = await Run<IOctopusImportSessionFileStore, IReadOnlyDictionary<string, int>>(s => s.CountByFolderAsync(sessionId, OctopusImportSessionFilePaths.StagingPrefix));
 
         counts.OrderBy(c => c.Key, StringComparer.Ordinal).ShouldBe([new("Project", 1), new("Release", 2)]);
-        (await Run<IOctopusImportSessionFileStore, IReadOnlyDictionary<string, int>>(s => s.CountByFolderAsync(sessionId, "history-staging/Release/"))).ShouldBe(new Dictionary<string, int> { ["a.json"] = 1, ["b.json"] = 1 });
+        (await Run<IOctopusImportSessionFileStore, IReadOnlyDictionary<string, int>>(s => s.CountByFolderAsync(sessionId, "history-staging/Release/"))).OrderBy(c => c.Key, StringComparer.Ordinal).ShouldBe([new("a.json", 1), new("b.json", 1)]);
     }
 
     // The cache sweep runs on every server only because the container starts it.

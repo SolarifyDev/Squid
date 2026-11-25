@@ -206,6 +206,13 @@ public class DeployPackageMultiTargetE2ETests
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
 
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
+
+        // Count the LOSER, not the winner: once the loser's PreDeploy fails, fail-fast cancels the winner, which may not get to
+        // log "installed to" (0 is a legitimate outcome for it). The loser always reports. Exactly one rejection means the
+        // atomic mkdir lock had exactly one winner: 0 means the lock admitted both, 2 means a stale lock blocked both.
+        CountLogOccurrences("intentional-second-target-predeploy-failure").ShouldBe(1,
+            "Exactly one target must be refused by the PreDeploy lock. 0 means the lock admitted both targets, 2 means both were refused.");
+
         // PreDeploy runs after commit, so both targets may leave package content on the shared
         // host FS. Durable contract: overall task Failed and package content is present.
         File.Exists(Path.Combine(installDir, "deploy-package-multi-marker.txt"))

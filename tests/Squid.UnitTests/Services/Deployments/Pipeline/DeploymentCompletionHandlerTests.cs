@@ -384,6 +384,102 @@ public class DeploymentCompletionHandlerTests
         _serverTaskService.Verify(s => s.TransitionStateAsync(1, TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once, "the pause is attempted under this run's lease only");
     }
 
+    // A run whose lease was taken over (silently, e.g. after a VM freeze) learns it only from the owned state write: the completion record is a side
+    // effect of the outcome and belongs to the new owner, so it must come after that write succeeded. (Cancelling the scripts of a Cancelling task is
+    // not: whichever run owns the task cancels the same scripts, so the cancel path does it first — see OnCancelled_CancelsTheInFlightAgentScripts_….)
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenAnotherRunHoldsTheLease_NoCompletionRecordIsWritten(CompletionOutcome outcome)
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        await Drive(sut, outcome, CreateContext());
+
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenTheRunStillOwnsTheLease_TheCompletionRecordIsWrittenAfterTheStateWrite(CompletionOutcome outcome)
+    {
+        var order = new List<string>();
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("transition")).Returns(Task.CompletedTask);
+        _completionDataProvider.Setup(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("record")).Returns(Task.CompletedTask);
+
+        await Drive(_sut, outcome, CreateContext());
+
+        order.ShouldBe(["transition", "record"]);
+    }
+
+    // The state write and the record are one transaction: the record is added from INSIDE the transaction closure (not after it) and is saved by the
+    // transaction's own SaveChanges (forceSave false), so a failure of either rolls back both.
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task TheCompletionRecord_IsAddedInsideTheStateTransaction_WithoutItsOwnSave(CompletionOutcome outcome)
+    {
+        var inTransaction = false;
+        var recordedInside = false;
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _genericDataProvider.Setup(g => g.ExecuteInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<CancellationToken, Task>, CancellationToken>(async (action, ct) => { inTransaction = true; try { await action(ct); } finally { inTransaction = false; } });
+        _completionDataProvider.Setup(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), false, It.IsAny<CancellationToken>())).Callback(() => recordedInside = inTransaction).Returns(Task.CompletedTask);
+
+        await Drive(_sut, outcome, CreateContext());
+
+        recordedInside.ShouldBeTrue("the completion record must join the terminal state's transaction");
+    }
+
+    // A failed record insert must propagate (no swallow: the task is not terminal, so the runner's failure path still has a legal transition) and must
+    // detach the rolled-back entity so later saves on the same scoped context do not replay it.
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenTheRecordInsertFails_TheExceptionPropagates_TheEntityIsDetached_AndNothingRunsAfter(CompletionOutcome outcome)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _completionDataProvider.Setup(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db blip"));
+
+        await Should.ThrowAsync<InvalidOperationException>(() => Drive(_sut, outcome, CreateContext()));
+
+        _completionDataProvider.Verify(c => c.Detach(It.IsAny<DeploymentCompletion>()), Times.Never, "nothing was handed to the tracker when the add itself threw");
+        _checkpointService.Verify(c => c.DeleteAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _autoDeployService.Verify(a => a.TriggerAutoDeploymentsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(CompletionOutcome.Success)]
+    [InlineData(CompletionOutcome.Failure)]
+    [InlineData(CompletionOutcome.Cancelled)]
+    public async Task WhenTheTransactionFailsAfterTheRecordWasAdded_TheTrackedEntityIsDetached(CompletionOutcome outcome)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _genericDataProvider.Setup(g => g.ExecuteInTransactionAsync(It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<CancellationToken, Task>, CancellationToken>(async (action, ct) => { await action(ct); throw new InvalidOperationException("commit failed"); });
+
+        await Should.ThrowAsync<InvalidOperationException>(() => Drive(_sut, outcome, CreateContext()));
+
+        _completionDataProvider.Verify(c => c.Detach(It.Is<DeploymentCompletion>(dc => dc.DeploymentId == 1)), Times.Once);
+    }
+
+    public enum CompletionOutcome { Success, Failure, Cancelled }
+
+    private static Task Drive(DeploymentCompletionHandler sut, CompletionOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    {
+        CompletionOutcome.Success => sut.OnSuccessAsync(ctx, CancellationToken.None),
+        CompletionOutcome.Failure => sut.OnFailureAsync(ctx, new Exception("boom"), CancellationToken.None),
+        _ => sut.OnCancelledAsync(ctx, CancellationToken.None)
+    };
+
     private static DeploymentTaskContext CreateContext()
     {
         return new DeploymentTaskContext

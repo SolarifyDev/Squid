@@ -141,6 +141,26 @@ public class MachineRuntimeCapabilitiesSharedStoreTests : TestBase
     }
 
     [Fact]
+    public async Task RecordedCapabilities_CarryTheTimestampOfTheRowThatWasWritten_SoTheSharedCopyIsNotNewerThanTheCache()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        PersistedCapabilitiesSnapshot again = null;
+        DateTimeOffset? rowStamp = null;
+
+        await Run<IMachineCapabilitiesStoreAccess>(async store =>
+        {
+            await new MachineCapabilitiesRecorder(cache, store).RecordAsync(machineId, Agent("IScriptService/v1"), default).ConfigureAwait(false);
+
+            again = await store.RunAsync(p => p.LoadIfNewerAsync(machineId, cache.TryGet(machineId).ObservedAt, default)).ConfigureAwait(false);
+            rowStamp = (await store.RunAsync(p => p.LoadIfNewerAsync(machineId, null, default)).ConfigureAwait(false)).UpdatedAt;
+        }).ConfigureAwait(false);
+
+        cache.TryGet(machineId).ObservedAt.ShouldBe(rowStamp, "the cache must carry the timestamp the DB row was stamped with, not the local clock");
+        again.ShouldBeNull("a cache stamped with the row's own timestamp must not see its own write as newer");
+    }
+
+    [Fact]
     public async Task ParallelSyncsAndRecords_InOneScope_NeverShareADbContext_EveryOneLands()
     {
         // A deployment dispatches to several machines in parallel inside ONE scope. Each capabilities read/write must

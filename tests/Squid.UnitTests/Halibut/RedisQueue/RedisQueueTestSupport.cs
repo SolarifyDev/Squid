@@ -122,7 +122,7 @@ internal sealed class FakeRedisQueue : IPendingRequestQueue
     {
         Interlocked.Increment(ref QueuedCount);
 
-        return OnQueueAndWait(request);
+        return OnQueueAndWait(request).WaitAsync(cancellationToken);
     }
 
     public async ValueTask DisposeAsync()

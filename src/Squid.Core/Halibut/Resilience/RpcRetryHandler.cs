@@ -62,6 +62,7 @@ public sealed class RpcRetryHandler
     {
         var started = _utcNow();
         var attempt = 0;
+        var remaining = budget;
 
         while (true)
         {
@@ -69,7 +70,7 @@ public sealed class RpcRetryHandler
 
             try
             {
-                return await RunAttemptAsync(call, rpcName, boundEachAttempt, budget - (_utcNow() - started)).ConfigureAwait(false);
+                return await RunAttemptAsync(call, rpcName, boundEachAttempt, remaining).ConfigureAwait(false);
             }
             catch (AttemptAbandonedException)
             {
@@ -85,8 +86,11 @@ public sealed class RpcRetryHandler
 
                 if (!await WaitAsync(delay.Value, cancellation, stopRetrying).ConfigureAwait(false)) throw;
 
-                // The wait can overshoot the budget; a bounded call must not start another attempt it could no longer bound.
-                if (boundEachAttempt && budget - (_utcNow() - started) <= TimeSpan.Zero) throw;
+                // One clock read decides both: the wait can overshoot the budget, and a bounded call must not start another attempt it could
+                // no longer bound. The same value then bounds that attempt, so the guard and the bound can never disagree.
+                remaining = budget - (_utcNow() - started);
+
+                if (boundEachAttempt && remaining <= TimeSpan.Zero) throw;
             }
         }
     }

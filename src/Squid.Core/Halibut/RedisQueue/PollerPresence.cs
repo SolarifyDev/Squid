@@ -13,6 +13,7 @@ public sealed class PollerPresence(TimeProvider clock, TimeSpan window)
 {
     private readonly TimeSpan _window = window;
     private readonly ConcurrentDictionary<Guid, byte> _inFlight = new();
+    private readonly object _gate = new();
     private int _outstandingDequeues;
     private int _everSeen;
     private long _lastSignOfLife;
@@ -21,10 +22,26 @@ public sealed class PollerPresence(TimeProvider clock, TimeSpan window)
 
     public IDisposable DequeueStarted()
     {
-        Interlocked.Increment(ref _outstandingDequeues);
-        Touch();
+        lock (_gate)
+        {
+            Interlocked.Increment(ref _outstandingDequeues);
+            Touch();
+        }
 
         return new DequeueScope(this);
+    }
+
+    /// <summary>Runs <paramref name="action"/> only if no poller is live, and keeps a poller from attaching (a dequeue from starting) until it has run, so "nobody is here" cannot go stale before it is acted on.</summary>
+    public bool RunIfNotLive(Action action)
+    {
+        lock (_gate)
+        {
+            if (IsLive) return false;
+
+            action();
+
+            return true;
+        }
     }
 
     public void RequestHandedOut(Guid activityId)

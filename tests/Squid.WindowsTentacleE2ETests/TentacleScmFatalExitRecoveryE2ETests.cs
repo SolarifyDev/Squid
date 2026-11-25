@@ -106,6 +106,104 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
         ctx.MarkClean();
     }
 
+    // ── Startup re-assert of the SCM recovery flag after a killed upgrade ─────
+    // The upgrade script suspends `failureflag` for the swap and records the original in a marker; a hard kill skips its
+    // `finally`. The agent must put the flag back at startup when the marker's owner is gone, restore the RECORDED value
+    // (an operator's deliberate 0 survives) and leave a live upgrade's marker alone.
+    // Tier High: real binary launched by real SCM, real sc failureflag, real marker file in the production upgrade dir.
+    // The fatal-flavour service is deliberate: the re-assert runs before the pipeline, so it must work even when the agent dies at startup.
+
+    [Theory]
+    [InlineData(false, 1, true, true)]    // orphaned marker, original on  -> flag back ON, marker removed
+    [InlineData(false, 0, false, true)]   // orphaned marker, original off -> flag stays OFF (not overwritten), marker removed
+    [InlineData(true, 1, false, false)]   // live upgrade owns the marker  -> flag untouched, marker kept
+    public void StartupReassert_RestoresRecordedFlagOnlyForAnOrphanedMarker(bool ownerAlive, int originalFlag, bool expectFlagOn, bool expectMarkerRemoved)
+    {
+        if (!WindowsTentacleBinaryFixture.IsAvailable) return;
+        if (!WindowsServiceFixture.IsAvailable) return;
+
+        using var ctx = new FatalServiceContext();
+        var markerPath = MarkerPathFor(ctx.ServiceName);
+
+        try
+        {
+            new WindowsServiceHost().Install(ctx.BuildInstallRequest());
+            RunSc("failureflag", ctx.ServiceName, "0").exitCode.ShouldBe(0, customMessage: "could not simulate the suspended flag");
+            WriteMarker(markerPath, ctx.ServiceName, originalFlag, ownerAlive);
+
+            WaitForState(ctx.ServiceName, "STOPPED", RestartCycle).ShouldBeTrue(
+                customMessage: $"fatal agent run did not stop within {RestartCycle.TotalSeconds}s. Check `sc query {ctx.ServiceName}`.");
+
+            // Flag is 0, so SCM does not restart it: the next start is ours. (A start that races an SCM-scheduled restart just fails harmlessly.)
+            RunSc("start", ctx.ServiceName);
+
+            var markerGone = WaitUntil(() => !File.Exists(markerPath), TimeSpan.FromSeconds(expectMarkerRemoved ? 40 : 20));
+
+            markerGone.ShouldBe(expectMarkerRemoved,
+                customMessage: $"marker '{markerPath}' removed={markerGone}, expected {expectMarkerRemoved}. See %ProgramData%\\Squid\\Tentacle\\scm-diagnostic.log and the agent log for 'SCM failure-actions flag'.");
+
+            ReadFailureFlag(ctx.ServiceName).ShouldBe(expectFlagOn,
+                customMessage: $"`sc qfailureflag {ctx.ServiceName}` expected {(expectFlagOn ? "TRUE" : "FALSE")} after startup re-assert (ownerAlive={ownerAlive}, original={originalFlag}).");
+
+            ctx.MarkClean();
+        }
+        finally
+        {
+            try { File.Delete(markerPath); } catch { /* best-effort */ }
+        }
+    }
+
+    private static string MarkerPathFor(string serviceName)
+    {
+        var dir = Path.Combine(PlatformPaths.GetSystemConfigDir(), FailureFlagMarker.UpgradeSubDirectory);
+
+        Directory.CreateDirectory(dir);
+
+        return Path.Combine(dir, FailureFlagMarker.FilePrefix + serviceName + FailureFlagMarker.FileExtension);
+    }
+
+    private static void WriteMarker(string path, string serviceName, int originalFlag, bool ownerAlive)
+    {
+        var (pid, startTicks) = ownerAlive ? CurrentProcessIdentity() : DeadProcessIdentity();
+        var json = $"{{\"service\":\"{serviceName}\",\"originalFlag\":{originalFlag},\"ownerPid\":{pid},\"ownerStartUtcTicks\":{startTicks}}}";
+
+        File.WriteAllText(path, json);
+    }
+
+    private static (int Pid, long StartTicks) CurrentProcessIdentity()
+    {
+        using var self = Process.GetCurrentProcess();
+
+        return (self.Id, self.StartTime.ToUniversalTime().Ticks);
+    }
+
+    // A real process that has already exited: its PID no longer resolves, exactly like a killed upgrade script.
+    private static (int Pid, long StartTicks) DeadProcessIdentity()
+    {
+        using var child = Process.Start(new ProcessStartInfo("cmd.exe", "/c exit 0") { UseShellExecute = false, CreateNoWindow = true })!;
+        var identity = (child.Id, child.StartTime.ToUniversalTime().Ticks);
+
+        child.WaitForExit(10_000);
+
+        return identity;
+    }
+
+    private static bool ReadFailureFlag(string serviceName) => RunSc("qfailureflag", serviceName).stdout.Contains("TRUE", StringComparison.Ordinal);
+
+    private static bool WaitUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition()) return true;
+
+            Thread.Sleep(500);
+        }
+
+        return condition();
+    }
+
     // ── Steps ────────────────────────────────────────────────────────────────
 
     private static void RegisterAgent(HealthyServiceContext ctx, StubSquidServer stub)

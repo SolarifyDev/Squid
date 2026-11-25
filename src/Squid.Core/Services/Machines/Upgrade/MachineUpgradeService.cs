@@ -91,7 +91,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
-    private readonly IMachineRuntimeCapabilitiesPersistence _runtimePersistence;
+    private readonly IMachineCapabilitiesStoreAccess _capabilitiesStore;
     private readonly ITentacleVersionRegistry _versionRegistry;
     private readonly IEnumerable<IMachineUpgradeStrategy> _strategies;
     private readonly IRedisSafeRunner _redisLock;
@@ -99,11 +99,11 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private readonly IUpgradeDispatchMetadataStore _dispatchMetadata;
     private readonly IInFlightScriptStore _inFlightScriptStore;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineRuntimeCapabilitiesPersistence runtimePersistence = null, IUpgradeDispatchMetadataStore dispatchMetadata = null, IInFlightScriptStore inFlightScriptStore = null)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineCapabilitiesStoreAccess capabilitiesStore = null, IUpgradeDispatchMetadataStore dispatchMetadata = null, IInFlightScriptStore inFlightScriptStore = null)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
-        _runtimePersistence = runtimePersistence;
+        _capabilitiesStore = capabilitiesStore;
         _versionRegistry = versionRegistry;
         _strategies = strategies;
         _redisLock = redisLock;
@@ -679,7 +679,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
         var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
 
-        InvalidateCacheIfChanged(machine.Id, outcome);
+        await InvalidateCacheIfChangedAsync(machine.Id, outcome).ConfigureAwait(false);
 
         return BuildResponse(machine, currentVersion, targetVersion, outcome.Status, outcome.Detail);
     }
@@ -705,33 +705,34 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// <see cref="MachineUpgradeStatus"/> value can't accidentally miss
     /// invalidation because the orchestrator never inspects the enum here.</para>
     /// </summary>
-    private void InvalidateCacheIfChanged(int machineId, MachineUpgradeOutcome outcome)
+    private async Task InvalidateCacheIfChangedAsync(int machineId, MachineUpgradeOutcome outcome)
     {
         if (!outcome.AgentVersionMayHaveChanged) return;
 
         _runtimeCache.Invalidate(machineId);
 
-        // H2 — also NULL out the persisted snapshot so the next server pod
-        // restart doesn't hydrate the stale pre-upgrade version. Fire-and-forget
-        // with logging — if the DB write fails, the in-memory invalidation is
-        // already done and the next successful health check will overwrite the
-        // stale row with current data.
-        if (_runtimePersistence == null) return;
+        await TombstonePersistedCapabilitiesAsync(machineId).ConfigureAwait(false);
+    }
 
-        _ = Task.Run(async () =>
+    /// <summary>
+    /// H2 — also tombstone the persisted snapshot so other pods and the next restart don't load the
+    /// pre-upgrade version (a lost tombstone makes the next dispatch's <c>SyncFromStoreAsync</c> re-adopt
+    /// the old snapshot and re-advertise V2 on an agent that just downgraded). Awaited, and run through
+    /// the store-access abstraction so it gets its own lifetime scope and DbContext instead of borrowing
+    /// this request's. A failed write is logged, not thrown: the in-memory invalidation is already done.
+    /// </summary>
+    private async Task TombstonePersistedCapabilitiesAsync(int machineId)
+    {
+        if (_capabilitiesStore == null) return;
+
+        try
         {
-            try
-            {
-                await _runtimePersistence.InvalidateAsync(machineId, CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex,
-                    "Failed to invalidate persisted runtime capabilities for machine {MachineId} after upgrade. " +
-                    "In-memory cache is cleared; next health check will overwrite the stale DB row.",
-                    machineId);
-            }
-        });
+            await _capabilitiesStore.RunAsync(async persistence => { await persistence.InvalidateAsync(machineId, CancellationToken.None).ConfigureAwait(false); return true; }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to invalidate persisted runtime capabilities for machine {MachineId} after upgrade. In-memory cache is cleared; next health check will overwrite the stale DB row.", machineId);
+        }
     }
 
     /// <summary>

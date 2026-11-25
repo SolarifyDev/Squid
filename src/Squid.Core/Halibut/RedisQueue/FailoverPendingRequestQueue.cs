@@ -35,6 +35,7 @@ public sealed partial class FailoverPendingRequestQueue : IPendingRequestQueue
     private readonly object _gate = new();
     private readonly Channel<ParkedRequest> _parked = Channel.CreateUnbounded<ParkedRequest>();
     private readonly ConcurrentDictionary<Guid, IPendingRequestQueue> _origins = new();
+    private int _onRedis;
     private IPendingRequestQueue _redis;
     private Task _redisLeg;
     private bool _disposed;
