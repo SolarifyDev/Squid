@@ -44,10 +44,14 @@ internal sealed class V2ScriptSession : IScriptAgentSession
     /// </summary>
     public Task<AgentScriptStatus> ProbeAsync(ScriptTicket ticket) => _retrying.GetStatusAsync(ticket, 0);
 
-    public Task CancelAsync(ScriptTicket ticket) => _retrying.CancelAsync(ticket, 0);
+    public Task<AgentScriptStatus> CancelAsync(ScriptTicket ticket) => _retrying.CancelAsync(ticket, 0);
 
     public bool IsUnknownTicket(AgentScriptStatus probe) => probe == null || probe.State == AgentScriptState.UnknownTicket;
 
     public Task<ScriptExecutionResult> ObserveAsync(ScriptExecutionRequest request, ServiceEndPoint endpoint, ScriptTicket ticket, AgentScriptStatus initial)
-        => _context.Observer.ObserveAgentScriptAsync(request.Machine, _retrying, ticket, _context.ScriptTimeout, _context.Ct, request.Masker, initial, endpoint, request.OutputSink, request.ShouldCancelRemoteScript);
+        => _context.Observer.ObserveAgentScriptAsync(request.Machine, ObservedClient(request, endpoint), ticket, _context.ScriptTimeout, _context.Ct, request.Masker, initial, endpoint, request.OutputSink, request.ShouldCancelRemoteScript);
+
+    // The cancel the observer sends mid-run (timeout, stop) takes the same V2 to V1 fall-back as the canceller: a rolled-back agent keeps its script running.
+    private IScriptAgentClient ObservedClient(ScriptExecutionRequest request, ServiceEndPoint endpoint)
+        => _context.Downgrade == null ? _retrying : new V1FallbackCancelClient(_retrying, ticket => ProtocolDowngrade.CancelAsync(this, _context, new CancelTarget(request.Machine.Id, endpoint, ticket), CancellationToken.None));
 }
