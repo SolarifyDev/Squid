@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using Serilog;
@@ -54,15 +55,38 @@ public sealed class FailureFlagMarker
         }
     }
 
-    /// <summary>True while the upgrade process that wrote the marker is still running (same PID AND same start time, so a recycled PID does not count).</summary>
-    public bool IsOwnerAlive(Func<int, DateTime?> startTimeUtcOf)
+    /// <summary>
+    /// Whether the upgrade process that wrote the marker is still running (same PID AND same start time, so a recycled
+    /// PID does not count). A lookup that throws <see cref="UnauthorizedAccessException"/> / <see cref="Win32Exception"/>
+    /// (Access Denied reading another account's process) is <see cref="OwnerLiveness.Unreadable"/>, never "dead".
+    /// </summary>
+    public OwnerLiveness GetOwnerLiveness(Func<int, DateTime?> startTimeUtcOf)
     {
-        var start = startTimeUtcOf(OwnerPid);
+        DateTime? start;
 
-        if (start == null) return false;
+        try
+        {
+            start = startTimeUtcOf(OwnerPid);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or Win32Exception)
+        {
+            return OwnerLiveness.Unreadable;
+        }
 
-        return Math.Abs(start.Value.Ticks - OwnerStartUtcTicks) <= StartTimeTolerance.Ticks;
+        if (start == null) return OwnerLiveness.Dead;
+
+        return Math.Abs(start.Value.Ticks - OwnerStartUtcTicks) <= StartTimeTolerance.Ticks ? OwnerLiveness.Alive : OwnerLiveness.Dead;
     }
+
+    /// <summary>True unless the owner is provably gone: an unreadable owner counts as running so a live upgrade is never undermined.</summary>
+    public bool IsOwnerAlive(Func<int, DateTime?> startTimeUtcOf) => GetOwnerLiveness(startTimeUtcOf) != OwnerLiveness.Dead;
+}
+
+public enum OwnerLiveness
+{
+    Dead,
+    Alive,
+    Unreadable
 }
 
 /// <summary>
@@ -70,52 +94,128 @@ public sealed class FailureFlagMarker
 /// the swap window and only its <c>finally</c> turns it back on; a hard kill skips that and a fatal agent error then
 /// never auto-restarts again. At startup the agent looks for markers whose owning upgrade is no longer running and
 /// puts the flag back to the value the upgrade recorded (NOT blindly to 1, so an operator's deliberate 0 survives).
-/// An upgrade that is still running is left alone: it is deliberately holding the flag off.
+/// An upgrade that is still running is left alone (it is deliberately holding the flag off) but is WATCHED: the new
+/// agent is started by the live upgrade script, so if that script is killed afterwards nothing else would ever
+/// re-check; the watcher re-evaluates the marker when the owner exits.
 /// </summary>
 public static class ScmRecoveryReassertion
 {
-    /// <summary>Restores every orphaned marker in <paramref name="directory"/>; returns how many flags were restored. Never throws.</summary>
-    public static int Run(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    /// <summary>How often a live owner is re-probed. One process lookup; bounded by the owner's lifetime and the agent's.</summary>
+    public static readonly TimeSpan OwnerPollInterval = TimeSpan.FromSeconds(5);
+
+    private enum MarkerOutcome
     {
+        Restored,
+        Settled,
+        OwnerRunning
+    }
+
+    private sealed record Pass(int Restored, List<string> Pending);
+
+    /// <summary>One synchronous pass: restores every orphaned marker in <paramref name="directory"/>; returns how many flags were restored. Never throws.</summary>
+    public static int Run(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag) => RunPass(directory, startTimeUtcOf, setFailureFlag).Restored;
+
+    /// <summary>One pass, then waits for every live owner to exit and re-checks its marker. Returns the total flags restored; ends when no marker is pending, or throws <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled.</summary>
+    public static async Task<int> RunAndWatchAsync(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
+    {
+        var pass = RunPass(directory, startTimeUtcOf, setFailureFlag);
+        var watched = await Task.WhenAll(pass.Pending.Select(path => WatchOwnerAsync(path, startTimeUtcOf, setFailureFlag, delay, ct))).ConfigureAwait(false);
+
+        return pass.Restored + watched.Sum();
+    }
+
+    /// <summary>Production wiring: the upgrade state directory, real process lookup, real <c>sc failureflag</c>.</summary>
+    public static Task<int> RunForThisHostAsync(CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows()) return Task.FromResult(0);
+
+        var directory = Path.Combine(PlatformPaths.GetSystemConfigDir(), FailureFlagMarker.UpgradeSubDirectory);
+
+        return RunAndWatchAsync(directory, StartTimeUtcOfProcess, WindowsServiceHost.SetFailureFlag, Task.Delay, ct);
+    }
+
+    private static Pass RunPass(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    {
+        var pending = new List<string>();
+        var restored = 0;
+
         try
         {
-            if (!Directory.Exists(directory)) return 0;
+            if (!Directory.Exists(directory)) return new Pass(0, pending);
 
-            return Directory.GetFiles(directory, FailureFlagMarker.FilePrefix + "*" + FailureFlagMarker.FileExtension).Count(path => RestoreIfOrphaned(path, startTimeUtcOf, setFailureFlag));
+            foreach (var path in Directory.GetFiles(directory, FailureFlagMarker.FilePrefix + "*" + FailureFlagMarker.FileExtension))
+            {
+                var outcome = EvaluateMarker(path, startTimeUtcOf, setFailureFlag);
+
+                if (outcome == MarkerOutcome.Restored) restored++;
+                if (outcome == MarkerOutcome.OwnerRunning) pending.Add(path);
+            }
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "SCM recovery re-assert skipped (best-effort)");
-            return 0;
+        }
+
+        return new Pass(restored, pending);
+    }
+
+    private static async Task<int> WatchOwnerAsync(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
+    {
+        Log.Information("An upgrade is holding the SCM failure-actions flag off; watching it so the flag is restored if it dies ({Marker})", path);
+
+        while (true)
+        {
+            await delay(OwnerPollInterval, ct).ConfigureAwait(false);
+
+            var outcome = EvaluateMarker(path, startTimeUtcOf, setFailureFlag);
+
+            if (outcome != MarkerOutcome.OwnerRunning) return outcome == MarkerOutcome.Restored ? 1 : 0;
         }
     }
 
-    /// <summary>Production wiring: the upgrade state directory, real process lookup, real <c>sc failureflag</c>.</summary>
-    public static int RunForThisHost()
+    /// <summary>Isolated per marker: nothing a single marker does may stop the others from being evaluated.</summary>
+    private static MarkerOutcome EvaluateMarker(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
     {
-        if (!OperatingSystem.IsWindows()) return 0;
-
-        var directory = Path.Combine(PlatformPaths.GetSystemConfigDir(), FailureFlagMarker.UpgradeSubDirectory);
-
-        return Run(directory, StartTimeUtcOfProcess, WindowsServiceHost.SetFailureFlag);
+        try
+        {
+            return RestoreIfOrphaned(path, startTimeUtcOf, setFailureFlag);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "SCM recovery re-assert failed for marker {Marker}; will retry at next start", path);
+            return MarkerOutcome.Settled;
+        }
     }
 
-    private static bool RestoreIfOrphaned(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    private static MarkerOutcome RestoreIfOrphaned(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
     {
-        if (!TryReadMarker(path, out var marker)) return false;
-        if (marker.IsOwnerAlive(startTimeUtcOf)) return false;
+        if (!TryReadMarker(path, out var marker)) return MarkerOutcome.Settled;
+        if (marker.IsOwnerAlive(startTimeUtcOf)) return MarkerOutcome.OwnerRunning;
 
         var exit = setFailureFlag(marker.Service, marker.OriginalFlag == 1);
 
         if (exit != 0)
         {
             Log.Warning("Could not restore SCM failure-actions flag for {Service} (sc.exe exit {Exit}); will retry at next start", marker.Service, exit);
-            return false;
+            return MarkerOutcome.Settled;
         }
 
-        File.Delete(path);
         Log.Information("Restored SCM failure-actions flag for {Service} to {Flag} after an interrupted upgrade", marker.Service, marker.OriginalFlag);
-        return true;
+        TryDeleteMarker(path);
+
+        return MarkerOutcome.Restored;
+    }
+
+    private static void TryDeleteMarker(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warning(ex, "Restored the SCM flag but could not remove marker {Marker}; the next start re-applies the same value", path);
+        }
     }
 
     private static bool TryReadMarker(string path, out FailureFlagMarker marker)
@@ -126,12 +226,13 @@ public static class ScmRecoveryReassertion
         {
             return FailureFlagMarker.TryParse(File.ReadAllText(path), out marker);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return false;
         }
     }
 
+    /// <summary>null = no such process (gone). Access Denied (<see cref="Win32Exception"/>) is deliberately NOT caught: the marker reads it as "unreadable", i.e. possibly alive.</summary>
     private static DateTime? StartTimeUtcOfProcess(int pid)
     {
         try
@@ -140,7 +241,7 @@ public static class ScmRecoveryReassertion
 
             return process.StartTime.ToUniversalTime();
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
         {
             return null;
         }
