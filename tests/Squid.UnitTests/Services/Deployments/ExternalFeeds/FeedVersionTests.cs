@@ -97,7 +97,8 @@ public class FeedVersionTests
     [InlineData("1.0.0-ci.2", "1.0.0-ci.1")]
     [InlineData("1.0.0-ci.1.1", "1.0.0-ci.1")]
     [InlineData("1.0.0-rc", "1.0.0-12")]
-    [InlineData("1.0.0-b", "1.0.0-B")]
+    [InlineData("1.0.0-rc.1", "1.0.0-Beta.1")]
+    [InlineData("1.0.0-RC.1", "1.0.0-beta.1")]
     [InlineData("1.0.0-ci.99999999999999999999", "1.0.0-ci.9")]
     public void PreRelease_HigherPrecedenceSortsFirst(string higher, string lower)
     {
@@ -109,5 +110,29 @@ public class FeedVersionTests
     public void ARevisionOutranksANonRevision_AndAReleaseOutranksItsPreRelease()
     {
         PackageVersionFilter.SortByVersionDescending(["1.0.0-rc.1", "1.0.0", "1.0.0.1-rc.1", "1.0.0.1"]).ShouldBe(["1.0.0.1", "1.0.0.1-rc.1", "1.0.0", "1.0.0-rc.1"]);
+    }
+
+    [Fact]
+    public void PreReleaseText_IsComparedIgnoringCase()
+    {
+        FeedVersion.TryParse("1.0.0-RC.1", out var upper);
+        FeedVersion.TryParse("1.0.0-rc.1", out var lower);
+
+        upper.CompareTo(lower).ShouldBe(0);
+        lower.CompareTo(upper).ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("1.0.0-Beta", "1.0.0-rc")]
+    [InlineData("1.0.0-beta", "1.0.0-RC")]
+    [InlineData("1.0.0-BETA", "1.0.0-rc")]
+    public void BetaIsBelowRc_RegardlessOfCase(string lower, string higher)
+    {
+        PackageVersionFilter.SortByVersionDescending([lower, higher]).ShouldBe([higher, lower]);
+
+        FeedVersion.TryParse(lower, out var a);
+        FeedVersion.TryParse(higher, out var b);
+
+        a.CompareTo(b).ShouldBeLessThan(0);
     }
 }
