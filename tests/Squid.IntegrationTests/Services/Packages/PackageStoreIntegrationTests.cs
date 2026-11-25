@@ -26,6 +26,14 @@ public class PackageStoreIntegrationTests : TestBase
 
     public PackageStoreIntegrationTests() : base("PackageStore", "squid_it_package_store", builder => builder.RegisterType<SecretProbeProvider>().As<IPackageBlobStoreProvider>().SingleInstance())
     {
+        ResetPackageStores();
+    }
+
+    // The migration seeds a default store, and the base class only truncates after a test: whichever test runs first in a fresh database would see that row.
+    // Start every test from an empty table so no test depends on the seed or on the order the tests run in.
+    private void ResetPackageStores()
+    {
+        Run<IRepository>(repository => repository.ExecuteDeleteAsync<PackageStore>(s => s.Id > 0)).GetAwaiter().GetResult();
     }
 
     private static CreatePackageStoreCommand NewSecretStore(string name = "Remote") => new()
