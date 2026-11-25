@@ -8,6 +8,7 @@ using Squid.Message.Models.Deployments.Machine;
 using Squid.Message.Models.Machines;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Services.Machines.HealthCheck.Exceptions;
 
 namespace Squid.Core.Services.Machines;
 
@@ -236,6 +237,10 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
+        }
+        catch (SweepBudgetExhaustedException ex)
+        {
+            Log.Information("Skipping health check for machine {MachineName}: {Reason}; it stays due for the next sweep", machine.Name, ex.Message);
         }
         catch (Exception ex)
         {

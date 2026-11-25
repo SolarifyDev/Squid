@@ -3,6 +3,7 @@ using Autofac;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.HealthCheck;
+using Squid.Core.Services.Machines.HealthCheck.Exceptions;
 using Squid.Core.Settings.Machines;
 using Microsoft.Extensions.Configuration;
 using Squid.Message.Enums.Caching;
@@ -17,11 +18,11 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
 
     public void Dispose() => _container.Dispose();
 
-    private MachineHealthCheckCoordinator Create(Mock<IRedisSafeRunner> redis = null, HealthCheckInProcessLocks locks = null, int parallelism = 4, TimeSpan? probeTimeout = null, TimeSpan? sweepDeadline = null)
+    private MachineHealthCheckCoordinator Create(Mock<IRedisSafeRunner> redis = null, HealthCheckInProcessLocks locks = null, int parallelism = 4, TimeSpan? probeTimeout = null, TimeSpan? sweepDeadline = null, Func<DateTimeOffset> utcNow = null)
     {
         var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = (probeTimeout ?? Fast).TotalSeconds, MaxParallelism = parallelism, SweepDeadlineSeconds = (sweepDeadline ?? TimeSpan.FromSeconds(30)).TotalSeconds };
 
-        return new MachineHealthCheckCoordinator((redis ?? HealthCheckTestHost.PassthroughRedis()).Object, _container, locks ?? new HealthCheckInProcessLocks(), options);
+        return new MachineHealthCheckCoordinator((redis ?? HealthCheckTestHost.PassthroughRedis()).Object, _container, locks ?? new HealthCheckInProcessLocks(), options, utcNow);
     }
 
     // ── appsettings binding: section/key names, defaults, fallback ──
@@ -215,6 +216,100 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         cts.Cancel();
 
         await Should.ThrowAsync<OperationCanceledException>(() => Create().TryRunSweepAsync(token => Task.Delay(Timeout.Infinite, token), cts.Token));
+    }
+
+    // ── probe timeout is the sweep's time left ──
+
+    private static readonly TimeSpan SweepDeadline = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
+
+    private static Task<HealthCheckResult> HangUntilCancelled(CancellationToken ct) => Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => new HealthCheckResult(false, "never"), TaskScheduler.Default);
+
+    [Fact]
+    public async Task Probe_StartedLateInSweep_TimeoutIsSweepTimeLeft_AndIsRecordedAsTimedOut()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        HealthCheckResult result = null;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        await coordinator.TryRunSweepAsync(async token =>
+        {
+            now += SweepDeadline - MachineHealthCheckCoordinator.SweepRecordGrace - TimeSpan.FromMilliseconds(500);
+            result = await coordinator.RunProbeAsync(HangUntilCancelled, token, TimeSpan.FromSeconds(60)).WaitAsync(Guard);
+        }, CancellationToken.None);
+
+        result.Healthy.ShouldBeFalse();
+        result.Detail.ShouldContain("timed out");
+        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "the probe must end on the sweep's time left, not run its full 60s timeout");
+    }
+
+    [Fact]
+    public async Task Probe_EarlyInSweep_KeepsItsOwnShorterTimeout()
+    {
+        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => DateTimeOffset.UnixEpoch);
+        HealthCheckResult result = null;
+
+        await coordinator.TryRunSweepAsync(async token => result = await coordinator.RunProbeAsync(HangUntilCancelled, token, TimeSpan.FromMilliseconds(200)).WaitAsync(Guard), CancellationToken.None);
+
+        result.Detail.ShouldContain("timed out after 0s", Case.Sensitive, "the transport's own 200ms timeout is smaller than the sweep time left, so it stays");
+    }
+
+    [Fact]
+    public async Task Probe_SweepTimeLeftWithinTheRecordGrace_IsNotStarted()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        var started = false;
+        Exception thrown = null;
+
+        await coordinator.TryRunSweepAsync(async token =>
+        {
+            now += SweepDeadline - MachineHealthCheckCoordinator.SweepRecordGrace;
+            thrown = await Record(() => coordinator.RunProbeAsync(_ => { started = true; return HangUntilCancelled(token); }, token, TimeSpan.FromSeconds(60)));
+        }, CancellationToken.None);
+
+        thrown.ShouldBeOfType<SweepBudgetExhaustedException>();
+        started.ShouldBeFalse("a probe the sweep would cancel before it could record must not start");
+    }
+
+    [Fact]
+    public async Task Probe_FanOutByTheSweep_SeesTheSweepDeadline()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        var thrown = new List<Exception>();
+
+        await coordinator.TryRunSweepAsync(async token =>
+        {
+            now += SweepDeadline;
+
+            await coordinator.ForEachInScopeAsync(new[] { 1, 2, 3 }, async (_, _, ct) => { var ex = await Record(() => coordinator.RunProbeAsync(HangUntilCancelled, ct, TimeSpan.FromSeconds(60))); lock (thrown) thrown.Add(ex); }, token);
+        }, CancellationToken.None);
+
+        thrown.Count.ShouldBe(3);
+        thrown.ShouldAllBe(e => e is SweepBudgetExhaustedException, "the deadline must flow into every parallel probe the sweep starts");
+    }
+
+    [Fact]
+    public async Task Probe_OutsideASweep_IsNeverBoundedBySweepTime_EvenAfterASweepRan()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+
+        await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None);
+
+        now += TimeSpan.FromHours(1);
+
+        var result = await coordinator.RunProbeAsync(async _ => { await Task.Delay(50); return new HealthCheckResult(true, "ok"); }, CancellationToken.None, TimeSpan.FromSeconds(5)).WaitAsync(Guard);
+
+        result.Healthy.ShouldBeTrue("a manual check keeps its own timeout and the sweep deadline must not leak out of the sweep");
+    }
+
+    private static async Task<Exception> Record(Func<Task> action)
+    {
+        try { await action(); return null; }
+        catch (Exception ex) { return ex; }
     }
 
     // ── Per-machine lock ──
