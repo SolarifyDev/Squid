@@ -116,7 +116,7 @@ internal static class PackageArchiveExtractor
 
     private static string NormalizeEntryPath(string entryPath)
     {
-        var normalized = entryPath.Replace('\\', '/').TrimStart('/');
+        var normalized = PackageArchiveSafety.StripLeadingCurrentDirectory(entryPath).TrimStart('/');
 
         // Strip leading directory (common in archives: chartname/templates/file.yaml)
         var firstSlash = normalized.IndexOf('/');

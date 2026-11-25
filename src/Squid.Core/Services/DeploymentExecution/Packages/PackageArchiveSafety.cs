@@ -51,8 +51,27 @@ internal static class PackageArchiveSafety
         return header[..read];
     }
 
+    /// <summary>
+    /// Drops the leading <c>./</c> (any number) that <c>tar czf pkg.tgz .</c> puts on every entry; a bare <c>.</c> or <c>./</c> directory entry becomes empty. Both resolve
+    /// inside the extraction root. Nothing else changes: <c>..</c>, absolute paths, drive letters and <c>~/</c> are left for the safety check to refuse.
+    /// </summary>
+    internal static string StripLeadingCurrentDirectory(string entryName)
+    {
+        if (entryName is null)
+            return null;
+
+        var name = entryName.Replace('\\', '/');
+
+        while (name.StartsWith("./", StringComparison.Ordinal))
+            name = name[2..];
+
+        return name == "." ? string.Empty : name;
+    }
+
     internal static bool IsUnsafeArchiveEntry(string entryName)
     {
+        entryName = StripLeadingCurrentDirectory(entryName);
+
         if (string.IsNullOrWhiteSpace(entryName))
             return false;
 

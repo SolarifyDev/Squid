@@ -1,6 +1,7 @@
 using System.Formats.Tar;
 using System.IO.Compression;
 using System.Text;
+using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
@@ -83,15 +84,7 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
 
     private static bool IsRoot(string name) => name.Length > 0 && !name.Contains('/');
 
-    private static string Normalize(string name)
-    {
-        var normalized = name.Replace('\\', '/');
-
-        while (normalized.StartsWith("./", StringComparison.Ordinal))
-            normalized = normalized[2..];
-
-        return normalized;
-    }
+    private static string Normalize(string name) => PackageArchiveSafety.StripLeadingCurrentDirectory(name);
 
     private static string ReadText(Stream stream)
     {
