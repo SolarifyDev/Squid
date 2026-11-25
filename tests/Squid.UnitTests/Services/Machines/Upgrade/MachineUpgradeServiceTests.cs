@@ -127,6 +127,58 @@ public sealed class MachineUpgradeServiceTests
             customMessage: "must surface the escape hatch flag so operator knows how to force a downgrade if really needed");
     }
 
+    private MachineUpgradeService ServiceWithStore(IMachineRuntimeCapabilitiesPersistence persistence)
+        => new(_machineDataProvider.Object, _runtimeCache, _versionRegistry.Object, new[] { _linuxStrategy.Object, _k8sStrategy.Object }, _redisLock.Object, _backgroundJobClient.Object, capabilitiesStore: new Squid.UnitTests.Services.DeploymentExecution.Targets.Tentacle.DirectStoreAccess(persistence));
+
+    private void ArrangeUpgrade(int id, bool versionMayHaveChanged)
+    {
+        ArrangeMachine(id: id, style: nameof(CommunicationStyle.TentaclePolling));
+        _linuxStrategy
+            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = versionMayHaveChanged });
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_TombstoneIsAwaited_ResponseWaitsForThePersistedInvalidation()
+    {
+        ArrangeUpgrade(301, versionMayHaveChanged: true);
+        var gate = new TaskCompletionSource();
+        var persistence = new Mock<IMachineRuntimeCapabilitiesPersistence>();
+        persistence.Setup(p => p.InvalidateAsync(301, It.IsAny<CancellationToken>())).Returns(gate.Task);
+
+        var pending = ServiceWithStore(persistence.Object).UpgradeAsync(new UpgradeMachineCommand { MachineId = 301 }, CancellationToken.None);
+
+        await Task.Delay(200);
+        pending.IsCompleted.ShouldBeFalse("the tombstone is correctness-critical (#591): the upgrade must not report back before it is written");
+
+        gate.SetResult();
+        (await pending.WaitAsync(TimeSpan.FromSeconds(10))).Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+        persistence.Verify(p => p.InvalidateAsync(301, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_TombstoneFails_IsLoggedNotThrown()
+    {
+        ArrangeUpgrade(302, versionMayHaveChanged: true);
+        var persistence = new Mock<IMachineRuntimeCapabilitiesPersistence>();
+        persistence.Setup(p => p.InvalidateAsync(302, It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db down"));
+
+        var resp = await ServiceWithStore(persistence.Object).UpgradeAsync(new UpgradeMachineCommand { MachineId = 302 }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        resp.Status.ShouldBe(MachineUpgradeStatus.Upgraded);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_VersionCannotHaveChanged_DoesNotTombstone()
+    {
+        ArrangeUpgrade(303, versionMayHaveChanged: false);
+        var persistence = new Mock<IMachineRuntimeCapabilitiesPersistence>();
+
+        await ServiceWithStore(persistence.Object).UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
+
+        persistence.Verify(p => p.InvalidateAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task UpgradeAsync_CurrentVersionNewerThanTarget_AllowDowngradeTrue_Dispatches()
     {
@@ -733,7 +785,7 @@ public sealed class MachineUpgradeServiceTests
             new[] { _linuxStrategy.Object, _k8sStrategy.Object },
             _redisLock.Object,
             _backgroundJobClient.Object,
-            runtimePersistence: null,
+            capabilitiesStore: null,
             dispatchMetadata: metadataStore.Object);
 
         var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 62 }, CancellationToken.None);
@@ -788,7 +840,7 @@ public sealed class MachineUpgradeServiceTests
             new[] { _linuxStrategy.Object, _k8sStrategy.Object },
             _redisLock.Object,
             _backgroundJobClient.Object,
-            runtimePersistence: null,
+            capabilitiesStore: null,
             dispatchMetadata: metadataStore.Object);
 
         var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 64 }, CancellationToken.None);
@@ -834,7 +886,7 @@ public sealed class MachineUpgradeServiceTests
             new[] { _linuxStrategy.Object, _k8sStrategy.Object },
             _redisLock.Object,
             _backgroundJobClient.Object,
-            runtimePersistence: null,
+            capabilitiesStore: null,
             dispatchMetadata: metadataStore.Object);
 
         var resp = await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 63 }, CancellationToken.None);

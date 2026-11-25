@@ -326,17 +326,11 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
 
     /// <summary>A V2 call that failed in a way a V1-only agent would also produce: a transport blip, or the service/method being absent.</summary>
     private static bool IsPossibleProtocolMismatch(IScriptAgentSession session, Exception ex)
-        => session.Version == ScriptProtocolVersion.V2 && (TransientFailureClassifier.IsTransient(ex) || TransientFailureClassifier.IsServiceMissing(ex));
+        => ProtocolDowngrade.IsPossibleMismatch(session.Version, ex);
 
     /// <summary>True only when the agent ANSWERED a capabilities call and no longer lists V2; an unanswered call proves nothing.</summary>
-    private async Task<bool> AgentWithdrewV2Async(DispatchContext dispatch, CancellationToken ct)
-    {
-        if (_capabilitiesRefresher == null) return false;
-
-        var capabilities = await _capabilitiesRefresher.RefreshFromAgentAsync(dispatch.Request.Machine.Id, dispatch.Endpoint, ct).ConfigureAwait(false);
-
-        return capabilities != null && !capabilities.SupportsScriptServiceV2;
-    }
+    private Task<bool> AgentWithdrewV2Async(DispatchContext dispatch, CancellationToken ct)
+        => ProtocolDowngrade.AgentWithdrewV2Async(_capabilitiesRefresher, dispatch.Request.Machine.Id, dispatch.Endpoint, ct);
 
     private DispatchContext SwitchToV1(DispatchContext dispatch)
     {

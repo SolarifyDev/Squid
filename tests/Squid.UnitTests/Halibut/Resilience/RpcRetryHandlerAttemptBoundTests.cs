@@ -97,6 +97,27 @@ public sealed class RpcRetryHandlerAttemptBoundTests
     }
 
     [Fact]
+    public async Task OneTickLeftAfterTheBackoff_Bounded_SecondAttemptIsBoundedNotUnbounded()
+    {
+        var budget = TimeSpan.FromSeconds(1);
+        var tick = TimeSpan.FromTicks(1);
+        var now = DateTimeOffset.UnixEpoch;
+        var reads = -1;
+        var calls = 0;
+
+        // After the backoff the first clock read sees one tick of budget left, every later read sees it spent. A loop that reads the
+        // clock separately for its guard and for the attempt bound passes the guard, then runs the attempt unbounded and hangs.
+        DateTimeOffset Clock() => reads < 0 ? now : now + budget + (reads++ == 0 ? -tick : tick);
+
+        var handler = new RpcRetryHandler(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30), budget, Clock, (_, _) => { reads = 0; return Task.CompletedTask; });
+
+        var ex = await Should.ThrowAsync<HalibutClientException>(() => handler.ExecuteAsync(() => ++calls == 1 ? throw new HalibutClientException("reset") : Hang(), "CancelScript", budget, CancellationToken.None, default, boundEachAttempt: true).WaitAsync(Guard));
+
+        calls.ShouldBe(2, "one tick of budget remained, so a bounded second attempt runs");
+        TransientFailureClassifier.IsTransient(ex).ShouldBeTrue("the bounded attempt is abandoned with a transient failure, not left hanging");
+    }
+
+    [Fact]
     public async Task BackoffOvershootsTheBudget_Unbounded_StillRunsTheNextAttempt()
     {
         var now = DateTimeOffset.UnixEpoch;

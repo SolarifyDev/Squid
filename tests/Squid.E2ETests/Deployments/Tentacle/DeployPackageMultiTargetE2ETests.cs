@@ -207,11 +207,11 @@ public class DeployPackageMultiTargetE2ETests
 
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
 
-        // "installed to" is printed only after PreDeploy succeeded (see the all-targets-fail test, which expects 0), so
-        // exactly one means the atomic mkdir lock had exactly one winner. A task that is merely Failed would also be
-        // the outcome if BOTH targets failed (count 0) — which would hide a broken lock or a broken winner path.
-        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(1,
-            "Exactly one target must win the PreDeploy lock and install; the other must fail its PreDeploy. 0 means both failed, 2 means the lock admitted both.");
+        // Count the LOSER, not the winner: once the loser's PreDeploy fails, fail-fast cancels the winner, which may not get to
+        // log "installed to" (0 is a legitimate outcome for it). The loser always reports. Exactly one rejection means the
+        // atomic mkdir lock had exactly one winner: 0 means the lock admitted both, 2 means a stale lock blocked both.
+        CountLogOccurrences("intentional-second-target-predeploy-failure").ShouldBe(1,
+            "Exactly one target must be refused by the PreDeploy lock. 0 means the lock admitted both targets, 2 means both were refused.");
 
         // PreDeploy runs after commit, so both targets may leave package content on the shared
         // host FS. Durable contract: overall task Failed and package content is present.

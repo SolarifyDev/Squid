@@ -38,7 +38,7 @@ public static class SetupHost
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = contentRoot ?? AppContext.BaseDirectory });
 
         builder.Configuration.AddConfiguration(configuration);
-        builder.Host.UseSerilog();
+        builder.Host.UseSerilog(ConfigureSetupLogging, preserveStaticLogger: true);
         customize?.Invoke(builder);
 
         var app = builder.Build();
@@ -51,6 +51,19 @@ public static class SetupHost
     }
 
     /// <summary>
+    /// The operator opens <c>/setup?token=...</c>, and ASP.NET Core's request logging (Information level, category
+    /// <c>Microsoft.AspNetCore.Hosting.Diagnostics</c>) would write that whole URL, token included, to the log. The setup host serves
+    /// no traffic worth an access log, so everything from <c>Microsoft.AspNetCore</c> below Warning is dropped. Events are forwarded to the
+    /// process-wide logger so its sinks and its own level still apply to everything else.
+    /// </summary>
+    private static void ConfigureSetupLogging(Microsoft.Extensions.Hosting.HostBuilderContext context, LoggerConfiguration logger)
+    {
+        logger.MinimumLevel.Verbose()
+            .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+            .WriteTo.Logger(Log.Logger);
+    }
+
+    /// <summary>
     /// The token is deliberately NOT logged (logs are shipped to Seq / read by more people than the data volume): anyone who
     /// could read it could finish the install. It lives in an owner-only file, so the log only says where to read it.
     /// </summary>
@@ -58,7 +71,7 @@ public static class SetupHost
     {
         var baseUrl = ToBrowsableUrl(app.Urls.FirstOrDefault() ?? "http://localhost:8080");
 
-        Log.Warning("Squid is not set up yet. Open {SetupUrl} to finish the setup. The setup token is not logged: read it from {TokenFile} (in Docker: docker exec <container> cat {TokenFile}) and open {SetupUrl}?token=<token>", $"{baseUrl}/setup", token.FilePath);
+        Log.Warning("Squid is not set up yet. Open {SetupUrl:l} to finish the setup. The setup token is not logged: read it from {TokenFile:l} (in Docker: docker exec <container> cat {TokenFile:l}) and open {SetupUrl:l}?token=<token>", $"{baseUrl}/setup", token.FilePath);
     }
 
     /// <summary>Wildcard listen addresses (<c>[::]</c>, <c>0.0.0.0</c>, <c>+</c>, <c>*</c>) become <c>localhost</c>.</summary>

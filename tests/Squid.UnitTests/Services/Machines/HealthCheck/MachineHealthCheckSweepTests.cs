@@ -80,6 +80,50 @@ public class MachineHealthCheckSweepTests : IDisposable
         recorded.Task.Result.HealthDetail.ShouldContain("timed out");
     }
 
+    // ── a probe that starts late in the sweep is recorded, not dropped ──
+
+    // The clock reads the real start of the sweep once, then jumps: the probe starts "behind the first wave", offset into the sweep.
+    private static Func<DateTimeOffset> ClockJumpingAfterSweepStart(TimeSpan offset)
+    {
+        var reads = 0;
+
+        return () => DateTimeOffset.UnixEpoch + (Interlocked.Increment(ref reads) == 1 ? TimeSpan.Zero : offset);
+    }
+
+    [Fact]
+    public async Task Sweep_HungProbeStartedLate_IsRecordedUnavailable_NotDroppedBySweepDeadline()
+    {
+        var machine = DueMachine(1);
+        Seed(machine);
+        ProbeReturns(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return new HealthCheckResult(true, "unreachable"); });
+
+        // Default timeout 75s capped to 18s of a 20s sweep; the probe starts 14.5s in, so only ~0.5s of the sweep remains for it.
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting { SweepDeadlineSeconds = 20 }, utcNow: ClockJumpingAfterSweepStart(TimeSpan.FromSeconds(14.5)));
+        _hosts.Add(host);
+
+        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+        machine.HealthDetail.ShouldContain("timed out");
+    }
+
+    [Fact]
+    public async Task Sweep_ProbeWouldStartWithNoTimeLeftToRecord_IsSkipped_AndStaysDue()
+    {
+        var machine = DueMachine(1);
+        Seed(machine);
+        ProbeReturns((_, _) => Task.FromResult(new HealthCheckResult(true, "ok")));
+
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting { SweepDeadlineSeconds = 20 }, utcNow: ClockJumpingAfterSweepStart(TimeSpan.FromSeconds(16)));
+        _hosts.Add(host);
+
+        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+        _checker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Never);
+        _machines.Verify(p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never, "a skipped machine must not be recorded Unavailable; it is simply probed next sweep");
+        machine.HealthLastChecked.ShouldBeNull();
+    }
+
     // ── lock usage ──
 
     [Fact]

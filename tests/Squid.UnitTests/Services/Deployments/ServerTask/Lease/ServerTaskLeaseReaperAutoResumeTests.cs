@@ -86,6 +86,19 @@ public class ServerTaskLeaseReaperAutoResumeTests
         _taskService.Verify(s => s.AddLogAsync(7, It.IsAny<long>(), ServerTaskLogCategory.Warning, It.Is<string>(m => m.Contains(expected)), ServerTaskLeaseReaperService.LogSource, null, null, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // With the cap at 0 the reaper never resumes: the log must say automatic resume is off, not that the task "was already resumed" (it never was).
+    [Fact]
+    public async Task WhenAutoResumeIsTurnedOff_TheLogSaysSo_AndNeverClaimsAnEarlierResume()
+    {
+        var task = new StaleServerTask(7, TaskState.Executing, "pod-a:1:x");
+        Recover(task, TaskState.Paused, 1, earlierRecoveries: 0);
+
+        (await Service(maxAutoResumes: 0).ReapStaleAsync()).ShouldBe(1);
+
+        _control.Verify(c => c.TryAutoResumeAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        _taskService.Verify(s => s.AddLogAsync(7, It.IsAny<long>(), ServerTaskLogCategory.Warning, It.Is<string>(m => m.Contains("automatic resume is turned off") && !m.Contains("already resumed")), ServerTaskLeaseReaperService.LogSource, null, null, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task AFailingResume_DoesNotHideTheRecovery_OrStopTheSweep()
     {

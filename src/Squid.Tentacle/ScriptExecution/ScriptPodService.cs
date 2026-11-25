@@ -323,8 +323,10 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     /// <summary>
     /// <paramref name="recordFinal"/> (V2) records the final result somewhere durable BEFORE the persisted state is released; it
     /// returns false when that failed, in which case the state file stays so a crash does not turn a finished script into an unknown one.
+    /// <paramref name="deferredToCaller"/> (V2, which holds a shared ticket lock here) means the caller has already stopped the log stream and
+    /// awaited the pod's termination, and will release the isolation mutex (which launches the next queued script) after dropping its lock.
     /// </summary>
-    internal ScriptStatusResponse CompleteScriptCore(CompleteScriptCommand command, Func<ScriptStatusResponse, bool>? recordFinal)
+    internal ScriptStatusResponse CompleteScriptCore(CompleteScriptCommand command, Func<ScriptStatusResponse, bool>? recordFinal, bool deferredToCaller = false)
     {
         try
         {
@@ -344,8 +346,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
             }
 
-            StopLogStream(ctx);
-            _podManager.WaitForPodTermination(ctx.PodName, TimeSpan.FromSeconds(30));
+            if (!deferredToCaller)
+            {
+                StopLogStream(ctx);
+                _podManager.WaitForPodTermination(ctx.PodName, PodTerminationWait);
+            }
 
             var logs = DrainFinalLogs(ctx);
             var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
@@ -373,12 +378,18 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
         finally
         {
-            ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            if (!deferredToCaller) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
     }
 
-    public ScriptStatusResponse CancelScript(CancelScriptCommand command)
+    private static readonly TimeSpan PodTerminationWait = TimeSpan.FromSeconds(30);
+
+    public ScriptStatusResponse CancelScript(CancelScriptCommand command) => CancelScriptCore(command, deferredToCaller: false);
+
+    /// <param name="deferredToCaller">V2 holds a shared ticket lock here: the caller releases the isolation mutex (launching the next queued script) after dropping it.</param>
+    internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller)
     {
         if (_pendingScripts.TryRemove(command.Ticket.TaskId, out var _))
         {
@@ -408,7 +419,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
         finally
         {
-            ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            if (!deferredToCaller) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
     }

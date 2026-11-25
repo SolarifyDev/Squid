@@ -23,19 +23,21 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
     private readonly IMachineDataProvider _machines;
     private readonly IScriptDispatcherSelector _selector;
     private readonly IHalibutScriptObserver _observer;
+    private readonly IMachineCapabilitiesRefresher _capabilitiesRefresher;
     private readonly RpcRetryHandler _retry;
     private readonly TimeSpan _grace;
 
-    public HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, HalibutSetting halibutSetting) : this(store, machines, selector, observer, new RpcRetryHandler(halibutSetting.RpcRetry))
+    public HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, HalibutSetting halibutSetting, IMachineCapabilitiesRefresher capabilitiesRefresher = null) : this(store, machines, selector, observer, new RpcRetryHandler(halibutSetting.RpcRetry), capabilitiesRefresher: capabilitiesRefresher)
     {
     }
 
-    internal HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, RpcRetryHandler retry, TimeSpan? grace = null)
+    internal HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, RpcRetryHandler retry, TimeSpan? grace = null, IMachineCapabilitiesRefresher capabilitiesRefresher = null)
     {
         _store = store;
         _machines = machines;
         _selector = selector;
         _observer = observer;
+        _capabilitiesRefresher = capabilitiesRefresher;
         _retry = retry;
         _grace = grace ?? DefaultCancelGrace;
     }
@@ -95,12 +97,48 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         }
 
         var context = new ScriptSessionContext(_retry, _retry.CancelBudget, CancellationToken.None, _observer);
+
+        // ONE deadline for the whole cancel of this script (V2 attempt + capabilities refresh + V1 retry): the caller may be an HTTP request.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(_retry.CancelBudget + _grace);
+
+        var protocol = await CancelWithDowngradeFallbackAsync(script, endpoint, context, deadline.Token).ConfigureAwait(false);
+
+        Log.Information("[Cancel] Cancelled script {Ticket} (protocol {Protocol}) on machine {MachineId} for task {TaskId}", script.Ticket, protocol, script.Slot.MachineId, serverTaskId);
+    }
+
+    /// <summary>
+    /// Cancels over the version the script was recorded with. A V2 cancel that fails because the agent was downgraded since (a pod rollback keeps its
+    /// script pods) goes through the same withdrawn-V2 check the start and resume paths use, and is retried over V1: both dialects share one agent
+    /// script state, so a V1 cancel of a V2 ticket is valid. Any other failure propagates unchanged. Returns the version that carried the cancel.
+    /// </summary>
+    private async Task<ScriptProtocolVersion> CancelWithDowngradeFallbackAsync(InFlightScript script, ServiceEndPoint endpoint, ScriptSessionContext context, CancellationToken ct)
+    {
         var session = _selector.ForVersion(script.Protocol.Value).Open(endpoint, context);
 
-        await session.CancelAsync(new ScriptTicket(script.Ticket)).WaitAsync(_retry.CancelBudget + _grace, ct).ConfigureAwait(false);
+        try
+        {
+            await CancelBoundedAsync(session, script, ct).ConfigureAwait(false);
 
-        Log.Information("[Cancel] Cancelled script {Ticket} (protocol {Protocol}) on machine {MachineId} for task {TaskId}", script.Ticket, script.Protocol, script.Slot.MachineId, serverTaskId);
+            return session.Version;
+        }
+        catch (Exception ex) when (ProtocolDowngrade.IsPossibleMismatch(session.Version, ex))
+        {
+            if (!await ProtocolDowngrade.AgentWithdrewV2Async(_capabilitiesRefresher, script.Slot.MachineId, endpoint, ct).ConfigureAwait(false)) throw;
+
+            Log.Warning(ex, "[Cancel] Agent of machine {MachineId} no longer advertises script service V2; cancelling V2 ticket {Ticket} over V1", script.Slot.MachineId, script.Ticket);
+
+            var v1 = _selector.ForVersion(ScriptProtocolVersion.V1).Open(endpoint, context);
+
+            await CancelBoundedAsync(v1, script, ct).ConfigureAwait(false);
+
+            return v1.Version;
+        }
     }
+
+    // ct is the shared deadline: it also abandons a call that ignores its own budget.
+    private static Task CancelBoundedAsync(IScriptAgentSession session, InFlightScript script, CancellationToken ct)
+        => session.CancelAsync(new ScriptTicket(script.Ticket)).WaitAsync(ct);
 
     // Every database read happens here, one at a time: the machine provider uses the caller's single scoped DbContext, which EF refuses to use from
     // several concurrent operations. Only the agent RPCs that follow run in parallel. A machine that cannot be read is left out, so only its scripts are skipped.

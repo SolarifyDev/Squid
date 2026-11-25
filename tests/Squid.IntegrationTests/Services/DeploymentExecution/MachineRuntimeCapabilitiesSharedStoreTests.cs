@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
@@ -139,6 +140,57 @@ public class MachineRuntimeCapabilitiesSharedStoreTests : TestBase
 
         again.ShouldBeNull("the adopted entry carries the persisted timestamp, so the shared copy is not newer");
     }
+
+    [Fact]
+    public async Task RecordedCapabilities_CarryTheTimestampOfTheRowThatWasWritten_SoTheSharedCopyIsNotNewerThanTheCache()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        PersistedCapabilitiesSnapshot again = null;
+        DateTimeOffset? rowStamp = null;
+
+        await Run<IMachineCapabilitiesStoreAccess>(async store =>
+        {
+            await new MachineCapabilitiesRecorder(cache, store).RecordAsync(machineId, Agent("IScriptService/v1"), default).ConfigureAwait(false);
+
+            again = await store.RunAsync(p => p.LoadIfNewerAsync(machineId, cache.TryGet(machineId).ObservedAt, default)).ConfigureAwait(false);
+            rowStamp = (await store.RunAsync(p => p.LoadIfNewerAsync(machineId, null, default)).ConfigureAwait(false)).UpdatedAt;
+        }).ConfigureAwait(false);
+
+        cache.TryGet(machineId).ObservedAt.ShouldBe(rowStamp, "the cache must carry the timestamp the DB row was stamped with, not the local clock");
+        again.ShouldBeNull("a cache stamped with the row's own timestamp must not see its own write as newer");
+    }
+
+    [Fact]
+    public async Task SaveAsync_ReturnsExactlyTheStampOfTheRow_NotTheAppClock()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        await StampRowAsync(machineId, "now() + interval '1 hour'").ConfigureAwait(false);
+
+        var returned = await Run<IMachineRuntimeCapabilitiesPersistence, DateTimeOffset>(p => p.SaveAsync(machineId, new MachineRuntimeCapabilities { Os = "Linux" }, default)).ConfigureAwait(false);
+        var row = await Run<IMachineRuntimeCapabilitiesPersistence, PersistedCapabilitiesSnapshot>(p => p.LoadIfNewerAsync(machineId, null, default)).ConfigureAwait(false);
+
+        returned.ShouldBe(row.UpdatedAt, "the recorder must stamp its cache with the value the row actually holds");
+        returned.ShouldBeGreaterThan(DateTimeOffset.UtcNow.AddMinutes(30), "a writer must order itself after a stamp from a pod whose clock runs ahead, which only holds if every writer shares the database's clock");
+    }
+
+    [Fact]
+    public async Task Invalidate_AfterARecordStampedByAFastClockPod_IsStillStrictlyNewer()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        var fastPodStamp = await Run<IMachineRuntimeCapabilitiesPersistence, DateTimeOffset>(p => p.SaveAsync(machineId, new MachineRuntimeCapabilities { Os = "Linux" }, default)).ConfigureAwait(false);
+        await StampRowAsync(machineId, "runtime_capabilities_updated_at + interval '30 seconds'").ConfigureAwait(false);
+        var skewed = (await Run<IMachineRuntimeCapabilitiesPersistence, PersistedCapabilitiesSnapshot>(p => p.LoadIfNewerAsync(machineId, null, default)).ConfigureAwait(false)).UpdatedAt;
+        skewed.ShouldBeGreaterThan(fastPodStamp);
+
+        await Run<IMachineRuntimeCapabilitiesPersistence>(p => p.InvalidateAsync(machineId, default)).ConfigureAwait(false);
+
+        var tombstone = await Run<IMachineRuntimeCapabilitiesPersistence, PersistedCapabilitiesSnapshot>(p => p.LoadIfNewerAsync(machineId, skewed, default)).ConfigureAwait(false);
+        tombstone.ShouldNotBeNull("an upgrade tombstone written within the clock skew of a record must still be seen as newer by the pod that holds the record");
+        tombstone.Capabilities.ShouldBeNull();
+    }
+
+    private Task StampRowAsync(int machineId, string sqlExpression) => Run<IRepository>(r => r.Database.ExecuteSqlRawAsync($"UPDATE machine SET runtime_capabilities_updated_at = {sqlExpression} WHERE id = {machineId}"));
 
     [Fact]
     public async Task ParallelSyncsAndRecords_InOneScope_NeverShareADbContext_EveryOneLands()

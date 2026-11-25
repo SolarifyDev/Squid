@@ -419,6 +419,12 @@ public sealed partial class ExecuteStepsPhase
                 // catch), we still must not swallow it.
                 throw;
             }
+            catch (Exception ex) when (DeploymentSuspension.IsRefusedByCancel(ex))
+            {
+                // The user's cancel landed while a suspend was writing its pause: that is the run's cancel outcome (the runner completes it), not an
+                // action failure, so no retry, no guided-failure interruption for a task that is being cancelled.
+                throw;
+            }
             catch (Exception ex) when (attempt < retryPolicy.MaxAttempts && StepRetryPolicy.IsRetryable(ex, ct))
             {
                 Log.Warning(ex, "[Deploy] Step {StepName} action {ActionName} failed attempt {Attempt}/{MaxAttempts}; retrying",

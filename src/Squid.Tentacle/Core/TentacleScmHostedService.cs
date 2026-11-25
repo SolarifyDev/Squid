@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Serilog;
+using Squid.Tentacle.ServiceHost;
 
 namespace Squid.Tentacle.Core;
 
@@ -49,12 +50,14 @@ public sealed class TentacleScmHostedService : BackgroundService
     private readonly string[] _args;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Action<int>? _reportServiceExitCode;
+    private readonly Func<CancellationToken, Task> _reassertScmRecovery;
 
-    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null)
+    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null, Func<CancellationToken, Task>? reassertScmRecovery = null)
     {
         _args = args ?? throw new ArgumentNullException(nameof(args));
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
         _reportServiceExitCode = reportServiceExitCode;
+        _reassertScmRecovery = reassertScmRecovery ?? ScmRecoveryReassertion.RunForThisHostAsync;
     }
 
     /// <summary>
@@ -73,6 +76,11 @@ public sealed class TentacleScmHostedService : BackgroundService
 
         Log.Information("Squid Tentacle launched under SCM lifetime — args: [{Args}]",
             string.Join(", ", _args));
+
+        // An upgrade killed mid-swap leaves the SCM failure-actions flag suspended; put it back so a fatal agent
+        // error auto-restarts again. Runs OFF the start path (sc.exe can block; the agent must come up regardless) and
+        // keeps watching a live upgrade's marker until that upgrade exits. Best-effort, never throws.
+        _ = ReassertScmRecoveryInBackgroundAsync(stoppingToken);
 
         try
         {
@@ -100,6 +108,21 @@ public sealed class TentacleScmHostedService : BackgroundService
             _lifetime.StopApplication();
         }
     }
+
+    private Task ReassertScmRecoveryInBackgroundAsync(CancellationToken stoppingToken) => Task.Run(async () =>
+    {
+        try
+        {
+            await _reassertScmRecovery(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "SCM recovery re-assert failed (best-effort)");
+        }
+    });
 
     private static string ResolveDiagPath()
     {

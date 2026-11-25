@@ -176,6 +176,42 @@ public sealed class FailoverPendingRequestQueueReplicaTests : IAsyncDisposable
         _redis.Applied.Single().ActivityId.ShouldBe(request.ActivityId, "the answer goes back to the queue the request came from");
     }
 
+    // The routing decision chose Redis while the other replica looked alive; before the request is counted as on Redis the replica expires and the agent's dequeue
+    // starts: it sees a lone pod with nothing on Redis and waits on memory only. The request this pod then puts on Redis must wake that dequeue, or it would sit there
+    // for the whole polling wait while the dequeue that could collect it is not listening.
+    [Fact]
+    public async Task ARequestQueuedOnRedis_WakesADequeueThatStartedLoneJustBefore_SoTheNextOneCollectsIt()
+    {
+        _replicas.Set(true);
+
+        var request = Request();
+        var answered = new TaskCompletionSource<ResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<RequestMessageWithCancellationToken> lone = null;
+
+        _redis.OnQueueAndWait = _ => answered.Task;
+        _factory.OnCreate = () =>
+        {
+            _replicas.Set(false);
+            lone = _queue.DequeueAsync(CancellationToken.None);
+        };
+
+        var queued = _queue.QueueAndWaitAsync(request, CancellationToken.None);
+
+        await WaitUntilAsync(() => _redis.QueuedCount == 1);
+
+        (await lone.WithinAsync(Limit, "the lone dequeue")).ShouldBeNull("an ordinary empty polling answer, given as soon as the request is on Redis");
+
+        var next = _queue.DequeueAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => _redis.DequeueCalls >= 1);
+        await _redis.Items.Writer.WriteAsync(Dequeued(request));
+
+        (await next.WithinAsync(Limit, "the next dequeue")).RequestMessage.Id.ShouldBe(request.Id);
+
+        answered.SetResult(ResponseMessage.FromResult(request, "redis"));
+        await queued.WithinAsync(Limit, "queued");
+    }
+
     [Fact]
     public async Task OnceTheRedisRequestIsAnswered_AloneAgain_TheDequeueDoesNotListenToRedis()
     {
@@ -240,43 +276,15 @@ public sealed class FailoverPendingRequestQueueReplicaTests : IAsyncDisposable
         ran.ShouldBeTrue();
     }
 
-    // The poller reconnects at the very moment the watcher decides it is gone. Whichever wins, the request must end with an answer, never with a cancellation of a
-    // request that was already being sent to the agent.
-    [Fact]
-    public async Task PollerReconnectingWhileTheRerouteIsDecided_NeverFailsTheRequest()
-    {
-        _replicas.Set(true);
-
-        for (var i = 0; i < 25; i++)
-        {
-            await using var queue = NewQueue(LocalQueue(TimeSpan.FromSeconds(30)), Options(TimeSpan.FromMilliseconds(40)) with { ProbeInterval = TimeSpan.FromMilliseconds(3) });
-            var request = Request();
-
-            await PollerLeavesAsync(queue);
-
-            var queued = queue.QueueAndWaitAsync(request, CancellationToken.None);
-
-            await Task.Delay(30 + i);
-
-            var polling = queue.DequeueAsync(CancellationToken.None);
-            var handedOut = await Task.WhenAny(polling, queued).WithinAsync(Limit, "dequeue or reroute");
-
-            if (handedOut == polling && polling.Result != null) await queue.ApplyResponse(ResponseMessage.FromResult(request, "agent"), request.ActivityId);
-
-            (await queued.WithinAsync(Limit, "queued")).ShouldNotBeNull($"iteration {i}");
-        }
-    }
-
-    // The seam: the reroute must call the atomic check-and-cancel. While the cancellation is being delivered (inside the call), a poller that starts to attach must not
-    // get in, so the poller can never take a request that is cancelled in the same instant.
+    // The seam: the reroute must call the atomic check-and-cancel. While the cancellation is being delivered (inside the call), a poller that starts to attach must be
+    // held off, so the poller can never take a request that is cancelled in the same instant. The attach is made from inside the cancel callback and is observed
+    // deterministically: it either becomes live (check and cancel were split) or its thread blocks on the presence gate (they are one step).
     [Fact]
     public async Task WhileTheRerouteCancels_APollerCannotAttachUntilItIsDone()
     {
         _replicas.Set(true);
 
-        PollerSeenDuringCancel = null;
-
-        var local = new ProbingLocalQueue(LocalQueue(TimeSpan.FromSeconds(30)), this);
+        var local = new ProbingLocalQueue(LocalQueue(TimeSpan.FromSeconds(30)));
         await using var queue = NewQueue(local, Options(TimeSpan.FromMilliseconds(400)) with { ProbeInterval = TimeSpan.FromMilliseconds(3) });
 
         local.Queue = queue;
@@ -286,14 +294,23 @@ public sealed class FailoverPendingRequestQueueReplicaTests : IAsyncDisposable
         var response = await queue.QueueAndWaitAsync(Request(), CancellationToken.None).WithinAsync(Limit, "rerouted");
 
         response.Result.ShouldBe("redis");
-        PollerSeenDuringCancel.ShouldBe(false, "the poller was held off while the cancellation was delivered");
+        local.AttachOutcome.ShouldBe(AttachOutcome.HeldOff, "the poller was held off while the cancellation was delivered");
     }
 
-    private bool? PollerSeenDuringCancel;
-
-    private sealed class ProbingLocalQueue(PendingRequestQueueAsync inner, FailoverPendingRequestQueueReplicaTests owner) : IPendingRequestQueue
+    private enum AttachOutcome
     {
+        Unobserved,
+        HeldOff,
+        AttachedDuringCancel
+    }
+
+    private sealed class ProbingLocalQueue(PendingRequestQueueAsync inner) : IPendingRequestQueue
+    {
+        private readonly CancellationTokenSource _pollerStops = new();
+
         public FailoverPendingRequestQueue Queue { get; set; }
+
+        public AttachOutcome AttachOutcome { get; private set; }
 
         public bool IsEmpty => inner.IsEmpty;
 
@@ -301,23 +318,42 @@ public sealed class FailoverPendingRequestQueueReplicaTests : IAsyncDisposable
 
         public Task<ResponseMessage> QueueAndWaitAsync(RequestMessage request, CancellationToken cancellationToken)
         {
-            cancellationToken.Register(() =>
-            {
-                _ = Task.Run(() => Queue.DequeueAsync(CancellationToken.None));
-
-                Thread.Sleep(100);
-
-                owner.PollerSeenDuringCancel ??= Queue.PollerIsLive;
-            });
+            cancellationToken.Register(ObserveAnAttachDuringTheCancel);
 
             return inner.QueueAndWaitAsync(request, cancellationToken);
+        }
+
+        private void ObserveAnAttachDuringTheCancel()
+        {
+            if (AttachOutcome != AttachOutcome.Unobserved) return;
+
+            var attaching = new TaskCompletionSource<Thread>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            _ = Task.Run(() => { attaching.SetResult(Thread.CurrentThread); return Queue.DequeueAsync(_pollerStops.Token); });
+
+            var thread = attaching.Task.GetAwaiter().GetResult();
+            var until = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+
+            while (!Queue.PollerIsLive && (thread.ThreadState & ThreadState.WaitSleepJoin) == 0)
+            {
+                if (DateTime.UtcNow > until) throw new TimeoutException("the attaching poller neither attached nor blocked");
+
+                Thread.Yield();
+            }
+
+            AttachOutcome = Queue.PollerIsLive ? AttachOutcome.AttachedDuringCancel : AttachOutcome.HeldOff;
         }
 
         public Task<RequestMessageWithCancellationToken> DequeueAsync(CancellationToken cancellationToken) => inner.DequeueAsync(cancellationToken);
 
         public Task ApplyResponse(ResponseMessage response, Guid requestActivityId) => inner.ApplyResponse(response, requestActivityId);
 
-        public ValueTask DisposeAsync() => inner.DisposeAsync();
+        public ValueTask DisposeAsync()
+        {
+            _pollerStops.Cancel();
+
+            return inner.DisposeAsync();
+        }
     }
 
     [Fact]

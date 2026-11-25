@@ -334,12 +334,18 @@ public sealed class WindowsServiceHost : IServiceHost
     /// service stops itself with a non-zero exit code (not only when the process crashes).
     /// Without it a fatal-but-graceful agent exit leaves the service stopped forever.
     /// </summary>
-    internal static string[] BuildScFailureFlagArgs(string serviceName)
+    internal static string[] BuildScFailureFlagArgs(string serviceName, bool enabled = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serviceName);
 
-        return new[] { "failureflag", serviceName, "1" };
+        return new[] { "failureflag", serviceName, enabled ? "1" : "0" };
     }
+
+    /// <summary>
+    /// Sets the failure-actions flag. Shared by <see cref="Install"/> (always on) and
+    /// <see cref="ScmRecoveryReassertion"/>, which puts back the value an interrupted upgrade had suspended.
+    /// </summary>
+    internal static int SetFailureFlag(string serviceName, bool enabled) => Sc(BuildScFailureFlagArgs(serviceName, enabled));
 
     internal static string[] BuildScDeleteArgs(string serviceName)
         => new[] { "delete", serviceName };
@@ -383,19 +389,50 @@ public sealed class WindowsServiceHost : IServiceHost
                 return 1;
             }
 
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit(TimeSpan.FromSeconds(30));
-
-            if (!string.IsNullOrWhiteSpace(stdout)) Console.Write(stdout);
-            if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.Write(stderr);
-
-            return process.ExitCode;
+            return WaitBounded(process, ScTimeout);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Failed to run sc.exe {string.Join(' ', args)}: {ex.Message}");
             return 1;
+        }
+    }
+
+    internal static readonly TimeSpan ScTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Waits for an already-started process with redirected output under a hard bound. Output is drained concurrently
+    /// (a full pipe would stall the child) and the wait never depends on the child closing its streams: on timeout the
+    /// process tree is killed and 1 is returned.
+    /// </summary>
+    internal static int WaitBounded(Process process, TimeSpan timeout)
+    {
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+
+        if (!process.WaitForExit(timeout))
+        {
+            TryKill(process);
+            Console.Error.WriteLine($"{ScExeFileName} did not exit within {timeout.TotalSeconds:0.#}s; killed it.");
+            return 1;
+        }
+
+        Task.WaitAll(new Task[] { stdoutTask, stderrTask }, TimeSpan.FromSeconds(5));
+
+        if (stdoutTask.IsCompletedSuccessfully && !string.IsNullOrWhiteSpace(stdoutTask.Result)) Console.Write(stdoutTask.Result);
+        if (stderrTask.IsCompletedSuccessfully && !string.IsNullOrWhiteSpace(stderrTask.Result)) Console.Error.Write(stderrTask.Result);
+
+        return process.ExitCode;
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
         }
     }
 }

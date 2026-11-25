@@ -243,6 +243,27 @@ public class GuidedFailureTests
         serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Executing, TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ========== Guided Failure: cancel landed while a suspend was writing its pause ==========
+
+    // The pause write of a manual-intervention action is refused because the user's cancel already moved the row to Cancelling. That is the cancel
+    // outcome, not an action failure: no guided-failure interruption may be raised for a task that is being cancelled, and the exception must reach
+    // the runner (which completes the cancel).
+    [Fact]
+    public async Task ActionWhosePauseWriteIsRefusedByACancel_RaisesNoInterruption_AndPropagates()
+    {
+        var interruptionService = new Mock<IDeploymentInterruptionService>();
+        var strategy = new TestExecutionStrategy(_ => throw new Squid.Core.Services.Deployments.ServerTask.Exceptions.ServerTaskStateTransitionException(TaskState.Cancelling, TaskState.Paused));
+        var (lifecycle, _) = CreateLifecycle();
+        var phase = new ExecuteStepsPhase(CreateRegistry(), lifecycle, interruptionService.Object, new Mock<IDeploymentCheckpointService>().Object, new Mock<IServerTaskService>().Object, new Mock<ITransportRegistry>().Object, new Mock<Squid.Core.Services.Deployments.ExternalFeeds.IExternalFeedDataProvider>().Object, new Mock<Squid.Core.Services.DeploymentExecution.Packages.IPackageAcquisitionService>().Object, new Squid.Core.Services.DeploymentExecution.Script.ServiceMessages.ServiceMessageParser(), Squid.UnitTests.Services.Deployments.Execution.Rendering.TestIntentRendererRegistry.Create(), new Mock<Squid.Core.Services.Security.IVariableEncryptionService>().Object);
+        var ctx = CreateBaseContext(useGuidedFailure: true, strategy: strategy);
+        lifecycle.Initialize(ctx);
+
+        var thrown = await Should.ThrowAsync<Squid.Core.Services.Deployments.ServerTask.Exceptions.ServerTaskStateTransitionException>(() => phase.ExecuteAsync(ctx, CancellationToken.None));
+
+        thrown.FromState.ShouldBe(TaskState.Cancelling);
+        interruptionService.Verify(s => s.CreateInterruptionAsync(It.IsAny<CreateInterruptionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ========== Helpers ==========
 
     private static (IDeploymentLifecycle, List<DeploymentLifecycleEvent>) CreateLifecycle()
