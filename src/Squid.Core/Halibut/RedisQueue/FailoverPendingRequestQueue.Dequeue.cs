@@ -16,7 +16,7 @@ public sealed partial class FailoverPendingRequestQueue
 
         var appeared = _replicas.OtherReplicaAppeared;
 
-        if (!_replicas.OtherReplicaIsLive) return HandOut(await DequeueUntilAReplicaAppearsAsync(appeared, cancellationToken).ConfigureAwait(false), _local);
+        if (!_replicas.OtherReplicaIsLive && !HasRequestsOnRedis) return HandOut(await DequeueUntilAReplicaAppearsAsync(appeared, cancellationToken).ConfigureAwait(false), _local);
 
         if (!RedisMayDeliver()) return HandOut(await DequeueLocalOnlyAsync(cancellationToken).ConfigureAwait(false), _local);
 

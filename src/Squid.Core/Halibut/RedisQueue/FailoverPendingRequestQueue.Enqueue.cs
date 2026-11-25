@@ -24,7 +24,7 @@ public sealed partial class FailoverPendingRequestQueue
     {
         try
         {
-            return await redis.QueueAndWaitAsync(request, ct).ConfigureAwait(false);
+            return await QueueOnRedisAsync(redis, request, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (CanFallBackToLocal(ex))
         {
@@ -43,6 +43,26 @@ public sealed partial class FailoverPendingRequestQueue
             throw;
         }
     }
+
+    /// <summary>
+    /// Counts the request as this pod's own on Redis for as long as it waits there: the replica that made it go through Redis can disappear (killed, no clean leave)
+    /// before the agent is collected, and the agent then reconnects HERE, where nothing else would ever read the request back (see <see cref="HasRequestsOnRedis"/>).
+    /// </summary>
+    private async Task<ResponseMessage> QueueOnRedisAsync(IPendingRequestQueue redis, RequestMessage request, CancellationToken ct)
+    {
+        Interlocked.Increment(ref _onRedis);
+
+        try
+        {
+            return await redis.QueueAndWaitAsync(request, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _onRedis);
+        }
+    }
+
+    private bool HasRequestsOnRedis => Volatile.Read(ref _onRedis) > 0;
 
     /// <summary>
     /// Waits in the local queue. If the request was queued here only because a poller of the agent was attached, and that poller is then gone (the agent reconnected
@@ -88,9 +108,7 @@ public sealed partial class FailoverPendingRequestQueue
             {
                 await Task.Delay(_options.ProbeInterval, _clock, stop).ConfigureAwait(false);
 
-                if (!CanRerouteToRedis()) continue;
-
-                await reroute.CancelAsync().ConfigureAwait(false);
+                if (!CanRerouteToRedis(reroute)) continue;
 
                 return;
             }
@@ -100,7 +118,11 @@ public sealed partial class FailoverPendingRequestQueue
         }
     }
 
-    private bool CanRerouteToRedis() => !_presence.IsLive && _replicas.OtherReplicaIsLive && _health.IsAvailable;
+    /// <summary>
+    /// The decision and the cancellation are one step with respect to a poller attaching: a poller that connects after "no poller" was seen would otherwise take the
+    /// request in the same instant, and the cancel would then hit a request that is already being sent to the agent (which may be executing it), failing it.
+    /// </summary>
+    private bool CanRerouteToRedis(CancellationTokenSource reroute) => _replicas.OtherReplicaIsLive && _health.IsAvailable && _presence.RunIfNotLive(reroute.Cancel);
 
     private bool TryUseRedis(out IPendingRequestQueue redis)
     {
