@@ -45,5 +45,5 @@ public static partial class DataVolumeInspector
     }
 
     [GeneratedRegex(@"/volumes/([0-9a-f]{64})/_data$")]
-    private static partial Regex AnonymousVolumeRoot();
+    internal static partial Regex AnonymousVolumeRoot();
 }
