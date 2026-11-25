@@ -20,5 +20,8 @@ public interface IPackageStoreService : IScopedDependency
     /// <summary>Runs the provider's check against the saved settings and records the outcome on the store.</summary>
     Task<PackageBlobStoreTestResult> TestAsync(int id, CancellationToken ct);
 
+    /// <summary>Validates and tests settings that are not saved, writing nothing. Stored secrets of <c>command.StoreId</c> fill in the secrets the command leaves empty.</summary>
+    Task<PackageBlobStoreTestResult> TestSettingsAsync(TestPackageStoreSettingsCommand command, CancellationToken ct);
+
     List<PackageStoreProviderDescriptor> DescribeProviders();
 }
