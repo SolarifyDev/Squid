@@ -62,6 +62,8 @@ public partial class LocalScriptService
         // process or its output pipe while holding it would stall unrelated tickets.
         if (_scripts.TryGetValue(ticket.TaskId, out var live) && ShouldIssueCancelV2(live)) IssueCancelV2(ticket, live);
 
+        DrainOutputOutsideTicketLock(ticket);
+
         lock (_ticketLocks.For(ticket.TaskId))
         {
             if (_scripts.TryGetValue(ticket.TaskId, out var running)) return CancelRunningV2(ticket, command.LastLogSequence, running);
@@ -81,6 +83,8 @@ public partial class LocalScriptService
             // Flag first for the same reason as GetStatus: a Start finishing between the _scripts and _startsInFlight reads must not look absent.
             var startInFlight = _startsInFlight.ContainsKey(ticket.TaskId);
 
+            CompleteStateLookupHookForTests?.Invoke();
+
             if (_scripts.TryRemove(ticket.TaskId, out var running)) return CompleteRunningV2(ticket, command.LastLogSequence, running);
 
             if (startInFlight) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
@@ -91,9 +95,11 @@ public partial class LocalScriptService
 
     private bool TryClaimStartOrReadKnown(ScriptTicket ticket, out ScriptStatusResponseV2? known)
     {
+        DrainOutputOutsideTicketLock(ticket);
+
         lock (_ticketLocks.For(ticket.TaskId))
         {
-            if (TryBuildStatusV2(ticket, 0, out known)) return true;
+            if (TryBuildStatusV2(ticket, 0, out known, drain: false)) return true;
 
             if (TryReadTombstoneStatusV2(ticket, out known)) return true;
 
@@ -114,23 +120,37 @@ public partial class LocalScriptService
         return status != null;
     }
 
-    private bool TryBuildStatusV2(ScriptTicket ticket, long lastLogSequence, out ScriptStatusResponseV2? status)
+    // The ONE place the bounded output drain is done for a ticket that is about to be handled under its lock: the lock is one
+    // of 64 shared stripes, so the drain (up to the drain budget while a background child holds stdout) must come first.
+    // Under the lock BuildStatusV2 runs with drain:false, so a script that exits after this call is reported as still
+    // running until the next poll instead of stalling every ticket in the stripe.
+    private void DrainOutputOutsideTicketLock(ScriptTicket ticket)
+    {
+        if (_scripts.TryGetValue(ticket.TaskId, out var running)) AwaitOutputDrained(running);
+
+        AfterPreLockDrainHookForTests?.Invoke();
+    }
+
+    private bool TryBuildStatusV2(ScriptTicket ticket, long lastLogSequence, out ScriptStatusResponseV2? status, bool drain = true)
     {
         if (_scripts.TryGetValue(ticket.TaskId, out var running))
         {
-            status = BuildStatusV2(ticket, running, lastLogSequence);
+            status = BuildStatusV2(ticket, running, lastLogSequence, drain);
             return true;
         }
 
         return TryBuildPersistedStatusV2(ticket, lastLogSequence, out status);
     }
 
-    private ScriptStatusResponseV2 BuildStatusV2(ScriptTicket ticket, RunningScript running, long lastLogSequence)
+    private ScriptStatusResponseV2 BuildStatusV2(ScriptTicket ticket, RunningScript running, long lastLogSequence, bool drain = true)
     {
         // Read before draining: see BuildStatus.
         var exited = running.Process.HasExited;
 
-        AwaitOutputDrained(running);
+        if (drain) AwaitOutputDrained(running);
+
+        // Without a drain, "exited" is only trustworthy once the output is complete; otherwise the final lines could be missing from a Complete.
+        if (!drain && !running.OutputDrained) exited = false;
 
         var (logs, next) = ReadLogsAndCursor(running, lastLogSequence - 1);
 
@@ -238,7 +258,7 @@ public partial class LocalScriptService
             FinalizeState(running, ScriptExitCodes.Canceled);
         }
 
-        return BuildStatusV2(ticket, running, lastLogSequence);
+        return BuildStatusV2(ticket, running, lastLogSequence, drain: false);
     }
 
     // Outside the ticket lock: lets a finishing script exit and its output drain (both bounded) before the lock is taken.

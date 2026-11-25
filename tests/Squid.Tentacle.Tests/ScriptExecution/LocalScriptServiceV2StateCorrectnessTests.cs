@@ -80,6 +80,37 @@ public class LocalScriptServiceV2StateCorrectnessTests : IDisposable
     }
 
     [Fact]
+    public void Complete_StartLeavesInFlightBetweenTheFlagReadAndTheScriptsLookup_ReportsNotYetComplete_NotNotKnown()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var service = NewService();
+        var holder = NewCommand("sleep 30", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(1));
+        var waiter = NewCommand("echo never", ScriptIsolationLevel.FullIsolation, TimeSpan.FromMinutes(1));
+        service.StartScript(holder);
+
+        var baseline = service.CancellationRegistryCountForTests;
+        var blockedStart = Task.Run(() => service.StartScript(waiter));
+        WaitUntilWaiterIsBlockedOnMutex(service, baseline);
+
+        // Forces the interleaving: while Complete is inside its state lookup, the Start finishes and leaves _startsInFlight.
+        var fired = false;
+        service.CompleteStateLookupHookForTests = () =>
+        {
+            fired = true;
+            service.CancelScript(new CancelScriptCommandV2(waiter.ScriptTicket, 0));
+            Should.Throw<AggregateException>(() => blockedStart.Wait(WaitLimit), "the cancelled waiter's Start unwinds and leaves the in-flight set");
+        };
+
+        var response = service.CompleteScript(new CompleteScriptCommandV2(waiter.ScriptTicket, 0));
+
+        fired.ShouldBeTrue("the interleaving hook must run inside CompleteScript's state lookup");
+        response.Outcome.ShouldBe(CompleteScriptOutcomeV2.NotYetComplete, "the in-flight flag must be read before the script lookup; reading it after lets a finishing Start look unknown");
+
+        service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0));
+    }
+
+    [Fact]
     public void Start_AfterCompleteReleasedTheTicket_ReportsTheRecordedResult_AndNeverRunsTheScriptAgain()
     {
         if (OperatingSystem.IsWindows()) return;
