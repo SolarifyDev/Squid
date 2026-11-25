@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Contracts.Tentacle.V2;
@@ -37,17 +38,20 @@ public partial class ScriptPodService : IScriptServiceV2
             if (TryPeekStatusV2(ticket, out var known)) return known!;
 
             _startsInFlight[ticket.TaskId] = 0;
+        }
 
-            try
-            {
-                var v1 = StartScript(ScriptV2Mapping.ToV1(command));
+        // The launch (disk check, pod creation) runs OUTSIDE the ticket lock: the lock is one of 64 shared stripes, so a slow
+        // Kubernetes API or workspace would stall every unrelated ticket in the stripe. The in-flight flag, set under the lock, is what
+        // makes a concurrent duplicate Start answer Pending instead of launching a second pod.
+        try
+        {
+            var v1 = StartScript(ScriptV2Mapping.ToV1(command));
 
-                return TryPeekStatusV2(ticket, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
-            }
-            finally
-            {
-                _startsInFlight.TryRemove(ticket.TaskId, out _);
-            }
+            return TryPeekStatusV2(ticket, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
+        }
+        finally
+        {
+            _startsInFlight.TryRemove(ticket.TaskId, out _);
         }
     }
 
@@ -69,36 +73,101 @@ public partial class ScriptPodService : IScriptServiceV2
     public ScriptStatusResponseV2 CancelScript(CancelScriptCommandV2 command)
     {
         var ticket = command.Ticket;
+        var cancelled = false;
 
-        lock (_ticketLocks.For(ticket.TaskId))
+        // A Cancel that lands while the pod is being launched waits for the launch (bounded) instead of being dropped.
+        AwaitLaunchSettledV2(ticket.TaskId);
+
+        // Stopping the log stream can take seconds; the cancel under the lock then finds it already stopped.
+        if (_scripts.TryGetValue(ticket.TaskId, out var live)) StopLogStream(live);
+
+        try
         {
-            var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+            lock (_ticketLocks.For(ticket.TaskId))
+            {
+                var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
 
-            if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
+                if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
 
-            if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId)) return CancelLiveV2(command);
+                if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId))
+                {
+                    cancelled = true;
 
-            if (launching) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
+                    return CancelLiveV2(command);
+                }
 
-            return ReadFinalStatusV2(ticket, command.LastLogSequence);
+                if (launching) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
+
+                return ReadFinalStatusV2(ticket, command.LastLogSequence);
+            }
+        }
+        finally
+        {
+            // Freeing the isolation mutex launches the next queued script (pod creation): never under the shared ticket lock.
+            if (cancelled) ReleaseMutexAndProcessPending(ticket.TaskId);
         }
     }
 
     public CompleteScriptResponseV2 CompleteScript(CompleteScriptCommandV2 command)
     {
         var ticket = command.Ticket;
+        var completed = false;
 
-        lock (_ticketLocks.For(ticket.TaskId))
+        // Waiting for the pod to terminate can take 30s: done before taking the ticket lock, which is shared with unrelated tickets.
+        var awaited = AwaitPodTerminationV2(ticket.TaskId);
+
+        try
         {
-            var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+            lock (_ticketLocks.For(ticket.TaskId))
+            {
+                var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
 
-            if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId)) return CompleteLiveV2(command);
+                if (IsUnawaitedPodV2(ticket.TaskId, awaited)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
-            if (launching || _pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
+                if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId))
+                {
+                    completed = true;
 
-            return CompleteNotLiveV2(ticket);
+                    return CompleteLiveV2(command);
+                }
+
+                if (launching || _pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
+
+                return CompleteNotLiveV2(ticket);
+            }
+        }
+        finally
+        {
+            if (completed) ReleaseMutexAndProcessPending(ticket.TaskId);
         }
     }
+
+    private const int LaunchSettlePollMilliseconds = 20;
+
+    private static readonly TimeSpan LaunchSettleTimeout = TimeSpan.FromSeconds(30);
+
+    private void AwaitLaunchSettledV2(string ticketId)
+    {
+        var waited = Stopwatch.StartNew();
+
+        while (_startsInFlight.ContainsKey(ticketId) && waited.Elapsed < LaunchSettleTimeout)
+            Thread.Sleep(LaunchSettlePollMilliseconds);
+    }
+
+    // Stops the log stream and waits (bounded) for the tracked pod to terminate. Must run without the ticket lock.
+    private ScriptPodContext? AwaitPodTerminationV2(string ticketId)
+    {
+        if (!_scripts.TryGetValue(ticketId, out var ctx)) return null;
+
+        StopLogStream(ctx);
+        _podManager.WaitForPodTermination(ctx.PodName, PodTerminationWait);
+
+        return ctx;
+    }
+
+    // A pod that became tracked after the wait above looked is not finalised unawaited: the caller retries and the next Complete waits for it.
+    private bool IsUnawaitedPodV2(string ticketId, ScriptPodContext? awaited)
+        => !_terminalResults.ContainsKey(ticketId) && _scripts.TryGetValue(ticketId, out var current) && !ReferenceEquals(current, awaited);
 
     /// <summary>
     /// A ticket launches by moving pending queue -> in-flight set -> tracked pod, adding to each next set before leaving the previous
@@ -213,7 +282,7 @@ public partial class ScriptPodService : IScriptServiceV2
     private ScriptStatusResponseV2 CancelLiveV2(CancelScriptCommandV2 command)
     {
         var ticket = command.Ticket;
-        var v1 = CancelScript(new CancelScriptCommand(ticket, command.LastLogSequence));
+        var v1 = CancelScriptCore(new CancelScriptCommand(ticket, command.LastLogSequence), deferredToCaller: true);
 
         // V1 releases the pod and workspace on cancel; keep the outcome so a later Cancel/Complete of this ticket still has an answer.
         InjectTerminalResult(ticket.TaskId, ScriptExitCodes.Canceled, v1.Logs);
@@ -232,7 +301,7 @@ public partial class ScriptPodService : IScriptServiceV2
             recorded = true;
 
             return Tombstones.TryWrite(ScriptV2Mapping.ToTombstone(MapFinalV2(response, lost), DateTimeOffset.UtcNow));
-        });
+        }, deferredToCaller: true);
 
         var final = MapFinalV2(v1, lost);
 
