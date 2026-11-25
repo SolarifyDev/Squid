@@ -11,22 +11,26 @@ namespace Squid.Api.Setup;
 /// </summary>
 public static class SetupHost
 {
-    public static async Task RunAsync(string[] args, IConfiguration configuration, EmbeddedServiceHost embedded)
+    public static Task RunAsync(string[] args, IConfiguration configuration, EmbeddedServiceHost embedded)
     {
         var token = SetupToken.LoadOrCreate(new DataDirectorySetting(configuration));
-        var session = new SetupSession(configuration, embedded, token);
 
-        await using var app = Build(args, configuration, session);
+        return RunAsync(args, configuration, new SetupSession(configuration, embedded, token));
+    }
+
+    public static async Task RunAsync(string[] args, IConfiguration configuration, SetupSession session, Action<WebApplicationBuilder> customize = null)
+    {
+        await using var app = Build(args, configuration, session, customize: customize);
 
         await app.StartAsync().ConfigureAwait(false);
 
-        AnnounceSetupUrl(app, token);
+        AnnounceSetupUrl(app, session.Token);
 
         await app.WaitForShutdownAsync().ConfigureAwait(false);
 
         EnsureCompleted(session);
 
-        token.Delete();
+        session.Token.Delete();
     }
 
     public static WebApplication Build(string[] args, IConfiguration configuration, SetupSession session, string contentRoot = null, Action<WebApplicationBuilder> customize = null)
@@ -46,11 +50,15 @@ public static class SetupHost
         return app;
     }
 
+    /// <summary>
+    /// The token is deliberately NOT logged (logs are shipped to Seq / read by more people than the data volume): anyone who
+    /// could read it could finish the install. It lives in an owner-only file, so the log only says where to read it.
+    /// </summary>
     private static void AnnounceSetupUrl(WebApplication app, SetupToken token)
     {
         var baseUrl = ToBrowsableUrl(app.Urls.FirstOrDefault() ?? "http://localhost:8080");
 
-        Log.Warning("Squid is not set up yet. Open {SetupUrl} to finish the setup (the token is also in {TokenFile})", $"{baseUrl}/setup?token={token.Value}", token.FilePath);
+        Log.Warning("Squid is not set up yet. Open {SetupUrl} to finish the setup. The setup token is not logged: read it from {TokenFile} (in Docker: docker exec <container> cat {TokenFile}) and open {SetupUrl}?token=<token>", $"{baseUrl}/setup", token.FilePath);
     }
 
     /// <summary>Wildcard listen addresses (<c>[::]</c>, <c>0.0.0.0</c>, <c>+</c>, <c>*</c>) become <c>localhost</c>.</summary>

@@ -8,7 +8,7 @@ public static class SetupEndpoints
 {
     public const string RoutePrefix = "/api/setup";
 
-    private const string InvalidTokenMessage = "Invalid or missing setup token. It is printed in the server log and stored in the data directory's setup-token file.";
+    private const string InvalidTokenMessage = "Invalid or missing setup token. It is stored in the data directory's setup-token file (in Docker: docker exec <container> cat /data/setup-token).";
 
     private static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(2);
 
