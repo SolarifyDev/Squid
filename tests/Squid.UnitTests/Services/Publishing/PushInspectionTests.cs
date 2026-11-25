@@ -25,7 +25,6 @@ public class PushInspectionTests
         stored.Get(PackageFactKeys.ArchiveRoot).ShouldBe("site");
         stored.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
         stored.Get(PackageFactKeys.FilesCount).ShouldBe("2");
-        stored.Files.ShouldBeEmpty("the file list is not persisted");
         _h.Packages.Rows.Single().Facts.ShouldNotContain("index.html");
         result.Package.Facts.Is(PackageFactKeys.MarkerIndexHtml).ShouldBeTrue();
     }
@@ -83,11 +82,10 @@ public class PushInspectionTests
     [Fact]
     public void Facts_RoundTripThroughJson_AndAnAbsentColumnReadsAsNotInspected()
     {
-        var facts = new PackageFacts { Files = ["a/b.txt"], Values = { ["k"] = "v" } };
+        var facts = new PackageFacts { Values = { ["k"] = "v" } };
 
         var back = PackageFactsJson.Deserialize(PackageFactsJson.Serialize(facts));
 
-        back.Files.ShouldBeEmpty();
         back.Values["k"].ShouldBe("v");
         PackageFactsJson.Deserialize(null).ShouldBeNull();
         PackageFactsJson.Serialize(null).ShouldBeNull();
@@ -109,7 +107,6 @@ public class PushInspectionTests
         var old = PackageFactsJson.Deserialize("""{"Files":["a/b.txt","c.txt"],"Values":{"marker.dockerfile":"true"}}""");
 
         old.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
-        old.Files.ShouldBeEmpty();
     }
 
     [Fact]

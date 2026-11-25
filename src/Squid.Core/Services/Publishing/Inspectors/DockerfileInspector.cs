@@ -10,6 +10,8 @@ public sealed class DockerfileInspector : IPackageInspector
     private static readonly Regex ExposeLine = new(@"^\s*EXPOSE\s+(?<ports>.+?)\s*$", RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
     private static readonly Regex TcpPort = new(@"^(?<port>\d{1,5})(-\d{1,5})?(/tcp)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    public IReadOnlyCollection<string> FilesToRead => ["Dockerfile"];
+
     public async Task InspectAsync(PackageInspectionContext context, CancellationToken ct)
     {
         var text = await context.TryReadTextAsync("Dockerfile", ct).ConfigureAwait(false);

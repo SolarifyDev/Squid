@@ -93,4 +93,23 @@ public class DeployRecipeRegistryTests
     {
         Registry(new StubRecipe("b", 1), new StubRecipe("a", 0)).Select(Facts()).ValidKinds.ShouldBe(["a", "b"]);
     }
+
+    [Fact]
+    public void Select_ForcedRecipeThatAlsoScoresAboveZero_AppearsOnce()
+    {
+        var selection = Registry(new StubRecipe("static", 90, "has index.html"), new StubRecipe("docker", 40)).Select(Facts("static"));
+
+        selection.Candidates.Select(c => c.Kind).ShouldBe(["static", "docker"]);
+        selection.Candidates[0].Reasons.ShouldBe([DeployRecipeRegistry.ForcedReason, "has index.html"]);
+    }
+
+    [Fact]
+    public void Construction_WithTwoRecipesOfOneKind_ThrowsNamingThem_IgnoringCase()
+    {
+        var ex = Should.Throw<InvalidOperationException>(() => Registry(new StubRecipe("Static", 1), new StubRecipe("docker", 1), new StubRecipe("static", 2)));
+
+        ex.Message.ShouldContain("'Static'");
+        ex.Message.ShouldContain(nameof(StubRecipe));
+        ex.Message.ShouldNotContain("docker");
+    }
 }

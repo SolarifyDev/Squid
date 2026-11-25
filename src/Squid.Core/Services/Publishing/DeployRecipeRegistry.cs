@@ -2,18 +2,31 @@ using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Publishing;
 
-public sealed class DeployRecipeRegistry(IEnumerable<IDeployRecipe> recipes) : IDeployRecipeRegistry
+public sealed class DeployRecipeRegistry : IDeployRecipeRegistry
 {
     public const string ForcedReason = "Chosen by recipe: in squid.yaml";
+
+    private readonly List<IDeployRecipe> _recipes;
+
+    /// <summary>Throws when two recipes share a kind (ignoring case): a name that picks two recipes would make "recipe:" in squid.yaml ambiguous.</summary>
+    public DeployRecipeRegistry(IEnumerable<IDeployRecipe> recipes)
+    {
+        _recipes = recipes.ToList();
+
+        var duplicated = _recipes.GroupBy(r => r.Kind, StringComparer.OrdinalIgnoreCase).Where(g => g.Count() > 1).Select(g => $"'{g.Key}' ({string.Join(", ", g.Select(r => r.GetType().Name))})").ToList();
+
+        if (duplicated.Count > 0)
+            throw new InvalidOperationException($"Deploy recipe kinds must be unique, but these are registered more than once: {string.Join("; ", duplicated)}");
+    }
 
     public RecipeSelection Select(PackageFacts facts)
     {
         var requested = facts.Get(PackageFactKeys.SquidRecipe);
-        var selection = new RecipeSelection { RequestedKind = requested, ValidKinds = recipes.Select(r => r.Kind).OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList() };
+        var selection = new RecipeSelection { RequestedKind = requested, ValidKinds = _recipes.Select(r => r.Kind).OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList() };
 
         if (string.IsNullOrWhiteSpace(requested)) return WithScored(selection, facts, forced: null);
 
-        var forced = recipes.FirstOrDefault(r => string.Equals(r.Kind, requested.Trim(), StringComparison.OrdinalIgnoreCase));
+        var forced = _recipes.FirstOrDefault(r => string.Equals(r.Kind, requested.Trim(), StringComparison.OrdinalIgnoreCase));
 
         if (forced == null)
         {
@@ -24,11 +37,11 @@ public sealed class DeployRecipeRegistry(IEnumerable<IDeployRecipe> recipes) : I
         return WithScored(selection, facts, forced);
     }
 
-    public IDeployRecipe Find(string kind) => recipes.FirstOrDefault(r => string.Equals(r.Kind, kind?.Trim(), StringComparison.OrdinalIgnoreCase));
+    public IDeployRecipe Find(string kind) => _recipes.FirstOrDefault(r => string.Equals(r.Kind, kind?.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private RecipeSelection WithScored(RecipeSelection selection, PackageFacts facts, IDeployRecipe forced)
     {
-        var scored = recipes.Select(r => (Recipe: r, Match: r.Match(facts))).ToList();
+        var scored = _recipes.Select(r => (Recipe: r, Match: r.Match(facts))).ToList();
 
         var others = scored.Where(s => s.Recipe != forced && s.Match.Score > 0).OrderByDescending(s => s.Match.Score).ThenBy(s => s.Recipe.Kind, StringComparer.OrdinalIgnoreCase);
         var first = scored.Where(s => s.Recipe == forced).Select(s => ToCandidate(s.Recipe, s.Match, ForcedReason));

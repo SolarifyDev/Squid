@@ -541,7 +541,6 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
 
         dto.Facts.Get(PackageFactKeys.FilesCount).ShouldBe("3");
-        dto.Facts.Files.ShouldBeEmpty();
         (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM builtin_package WHERE facts::text LIKE '%index.html%'")).ShouldBe(0, "no file list in the stored jsonb");
         dto.Facts.Is(PackageFactKeys.NodeBuildScript).ShouldBeTrue();
         dto.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Static");
@@ -581,6 +580,39 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         recommendations.Inspected.ShouldBeFalse();
         recommendations.Facts.ShouldBeNull();
         (await Run<IBuiltInPackageQueryService, ListBuiltInPackageVersionsResponseData>(q => q.ListVersionsAsync(new ListBuiltInPackageVersionsRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web" }, CancellationToken.None))).Versions.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Push_OfAnArchiveWhoseMarkersComeAfterThousandsOfFiles_StillStoresTheMarkers()
+    {
+        var setup = await SetUpAsync();
+        var bytes = ZipOf(Enumerable.Range(0, 5100).Select(i => ($"node_modules/m{i}/index.js", "x")).Concat([("Dockerfile", "FROM x"), ("squid.yaml", "recipe: Docker")]));
+
+        await PushAsync(setup.SpaceId, bytes, packageId: "Acme.Web", version: "1.0.0");
+
+        var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+
+        dto.Facts.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
+        dto.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Docker");
+        dto.Facts.Get(PackageFactKeys.FilesCount).ShouldBe("5102");
+        (await ScalarAsync("SELECT LENGTH(facts::text) AS \"Value\" FROM builtin_package")).ShouldBeLessThan(2048);
+    }
+
+    private static byte[] ZipOf(IEnumerable<(string Name, string Content)> entries)
+    {
+        using var buffer = new MemoryStream();
+
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (name, content) in entries)
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false));
+
+                writer.Write(content);
+            }
+        }
+
+        return buffer.ToArray();
     }
 
     [Fact]

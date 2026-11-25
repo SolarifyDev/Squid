@@ -12,6 +12,8 @@ public sealed class FileMarkerInspector : IPackageInspector
 
     public const string RootFolder = ".";
 
+    public IReadOnlyCollection<string> FilesToProbe { get; } = ["Dockerfile", "squid.yaml", .. ComposeFileNames, .. IndexHtmlFolders.Select(IndexHtmlPath)];
+
     public Task InspectAsync(PackageInspectionContext context, CancellationToken ct)
     {
         if (context.HasFile("Dockerfile")) context.SetTrue(PackageFactKeys.MarkerDockerfile);
@@ -25,9 +27,11 @@ public sealed class FileMarkerInspector : IPackageInspector
         return Task.CompletedTask;
     }
 
+    private static string IndexHtmlPath(string folder) => folder.Length == 0 ? "index.html" : folder + "/index.html";
+
     private static void RecordIndexHtml(PackageInspectionContext context)
     {
-        var folder = IndexHtmlFolders.FirstOrDefault(f => context.HasFile(f.Length == 0 ? "index.html" : f + "/index.html"));
+        var folder = IndexHtmlFolders.FirstOrDefault(f => context.HasFile(IndexHtmlPath(f)));
 
         if (folder == null) return;
 

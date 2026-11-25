@@ -112,6 +112,18 @@ public class BuiltInContainerWiringTests
     }
 
     [Fact]
+    public void TheContainersRecipes_HaveUniqueKinds_SoTheRegistryCanBeBuilt()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        var kinds = scope.Resolve<IEnumerable<IDeployRecipe>>().Select(r => r.Kind).ToList();
+
+        kinds.Select(k => k.ToLowerInvariant()).Distinct().Count().ShouldBe(kinds.Count, "two recipes of one kind would make squid.yaml's recipe: ambiguous");
+        Should.NotThrow(() => scope.Resolve<IDeployRecipeRegistry>());
+    }
+
+    [Fact]
     public void Recipes_AreRegistered_AndTheRegistryFindsThemByKind()
     {
         using var container = Build();

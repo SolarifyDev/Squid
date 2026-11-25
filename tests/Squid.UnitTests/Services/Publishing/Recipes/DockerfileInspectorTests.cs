@@ -1,3 +1,4 @@
+using Squid.Core.Services.Publishing;
 using Squid.Message.Models.Publishing;
 
 namespace Squid.UnitTests.Services.Publishing.Recipes;
