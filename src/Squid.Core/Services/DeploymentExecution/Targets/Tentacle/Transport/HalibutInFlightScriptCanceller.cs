@@ -48,7 +48,9 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
 
         Log.Information("[Cancel] Task {TaskId} has {Count} in-flight agent script(s); cancelling them before its checkpoint is released", serverTaskId, scripts.Count);
 
-        await Task.WhenAll(scripts.Select(script => CancelOneAsync(serverTaskId, script, ct))).ConfigureAwait(false);
+        var endpoints = await ResolveEndpointsAsync(scripts, ct).ConfigureAwait(false);
+
+        await Task.WhenAll(scripts.Select(script => CancelOneAsync(serverTaskId, script, endpoints, ct))).ConfigureAwait(false);
     }
 
     private async Task<IReadOnlyList<InFlightScript>> ListScriptsAsync(int serverTaskId, CancellationToken ct)
@@ -66,11 +68,11 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
     }
 
     // One agent failing must not stop the others, nor the cancel itself.
-    private async Task CancelOneAsync(int serverTaskId, InFlightScript script, CancellationToken ct)
+    private async Task CancelOneAsync(int serverTaskId, InFlightScript script, IReadOnlyDictionary<int, ServiceEndPoint> endpoints, CancellationToken ct)
     {
         try
         {
-            await CancelOnAgentAsync(serverTaskId, script, ct).ConfigureAwait(false);
+            await CancelOnAgentAsync(serverTaskId, script, endpoints, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -78,7 +80,7 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         }
     }
 
-    private async Task CancelOnAgentAsync(int serverTaskId, InFlightScript script, CancellationToken ct)
+    private async Task CancelOnAgentAsync(int serverTaskId, InFlightScript script, IReadOnlyDictionary<int, ServiceEndPoint> endpoints, CancellationToken ct)
     {
         if (script.Protocol == null)
         {
@@ -86,9 +88,11 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
             return;
         }
 
-        var endpoint = await ResolveEndpointAsync(script, ct).ConfigureAwait(false);
-
-        if (endpoint == null) return;
+        if (!endpoints.TryGetValue(script.Slot.MachineId, out var endpoint))
+        {
+            Log.Warning("[Cancel] Machine {MachineId} is unavailable; script {Ticket} cannot be cancelled", script.Slot.MachineId, script.Ticket);
+            return;
+        }
 
         var context = new ScriptSessionContext(_retry, _retry.CancelBudget, CancellationToken.None, _observer);
         var session = _selector.ForVersion(script.Protocol.Value).Open(endpoint, context);
@@ -98,16 +102,40 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         Log.Information("[Cancel] Cancelled script {Ticket} (protocol {Protocol}) on machine {MachineId} for task {TaskId}", script.Ticket, script.Protocol, script.Slot.MachineId, serverTaskId);
     }
 
-    private async Task<ServiceEndPoint> ResolveEndpointAsync(InFlightScript script, CancellationToken ct)
+    // Every database read happens here, one at a time: the machine provider uses the caller's single scoped DbContext, which EF refuses to use from
+    // several concurrent operations. Only the agent RPCs that follow run in parallel. A machine that cannot be read is left out, so only its scripts are skipped.
+    private async Task<IReadOnlyDictionary<int, ServiceEndPoint>> ResolveEndpointsAsync(IReadOnlyList<InFlightScript> scripts, CancellationToken ct)
     {
-        var machine = await _machines.GetMachinesByIdAsync(script.Slot.MachineId, ct).ConfigureAwait(false);
+        var endpoints = new Dictionary<int, ServiceEndPoint>();
 
-        if (machine == null)
+        foreach (var machineId in scripts.Select(s => s.Slot.MachineId).Distinct())
         {
-            Log.Warning("[Cancel] Machine {MachineId} no longer exists; script {Ticket} cannot be cancelled", script.Slot.MachineId, script.Ticket);
-            return null;
+            var endpoint = await ResolveEndpointAsync(machineId, ct).ConfigureAwait(false);
+
+            if (endpoint != null) endpoints[machineId] = endpoint;
         }
 
-        return HalibutMachineExecutionStrategy.ParseMachineEndpoint(machine);
+        return endpoints;
+    }
+
+    private async Task<ServiceEndPoint> ResolveEndpointAsync(int machineId, CancellationToken ct)
+    {
+        try
+        {
+            var machine = await _machines.GetMachinesByIdAsync(machineId, ct).ConfigureAwait(false);
+
+            if (machine == null)
+            {
+                Log.Warning("[Cancel] Machine {MachineId} no longer exists; its in-flight scripts cannot be cancelled", machineId);
+                return null;
+            }
+
+            return HalibutMachineExecutionStrategy.ParseMachineEndpoint(machine);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Log.Warning(ex, "[Cancel] Could not resolve machine {MachineId}; its in-flight scripts may keep running on the agent", machineId);
+            return null;
+        }
     }
 }

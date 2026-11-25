@@ -68,6 +68,43 @@ public class HalibutInFlightScriptCancellerTests
         _events.ShouldBe(["V1.Cancel:a", "V1.Cancel:b"], ignoreOrder: true);
     }
 
+    // The machine provider shares the caller's one scoped DbContext, which allows a single operation at a time.
+    [Fact]
+    public async Task MachineLookups_NeverOverlap_AndEveryScriptIsStillCancelled()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "a", ScriptProtocolVersion.V1), new InFlightScript(new DispatchSlot(2, 10, 100), "b", ScriptProtocolVersion.V1), new InFlightScript(new DispatchSlot(3, 10, 100), "c", ScriptProtocolVersion.V1));
+        var inFlight = 0;
+        var overlapped = false;
+
+        foreach (var id in new[] { 1, 2, 3 })
+            _machines.Setup(m => m.GetMachinesByIdAsync(id, It.IsAny<CancellationToken>())).Returns(async () =>
+            {
+                if (Interlocked.Increment(ref inFlight) > 1) overlapped = true;
+
+                await Task.Delay(50);
+                Interlocked.Decrement(ref inFlight);
+
+                return new Machine { Id = id, Name = $"agent-{id}", Endpoint = """{"CommunicationStyle":"KubernetesAgent","SubscriptionId":"sub-cancel","Thumbprint":"AABBCCDD"}""" };
+            });
+
+        await Canceller(new FakeV1Agent(_events), new FakeV2Agent(_events)).CancelAllAsync(TaskId);
+
+        overlapped.ShouldBeFalse("two lookups on one DbContext at once make EF throw, which would silently skip the cancel");
+        _events.ShouldBe(["V1.Cancel:a", "V1.Cancel:b", "V1.Cancel:c"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public async Task AMachineLookupThatThrows_SkipsOnlyThatMachinesScripts()
+    {
+        Recorded(new InFlightScript(new DispatchSlot(1, 10, 100), "broken", ScriptProtocolVersion.V1), new InFlightScript(new DispatchSlot(2, 10, 100), "fine", ScriptProtocolVersion.V1));
+        _machines.Setup(m => m.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db blip"));
+        Machines(2);
+
+        await Should.NotThrowAsync(() => Canceller(new FakeV1Agent(_events), new FakeV2Agent(_events)).CancelAllAsync(TaskId));
+
+        _events.ShouldBe(["V1.Cancel:fine"]);
+    }
+
     [Fact]
     public async Task NothingInFlight_TouchesNoAgent()
     {

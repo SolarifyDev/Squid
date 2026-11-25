@@ -45,6 +45,21 @@ public class IntegrationCancelPausedTaskCancelsAgentScript : DeploymentFixtureBa
         (await CheckpointAsync(seeded).ConfigureAwait(false)).ShouldBeNull("the checkpoint is released after the cancel");
     }
 
+    // Several preserved scripts are cancelled in parallel; their machine lookups share the caller's one scoped DbContext, which EF refuses to use concurrently.
+    [Fact]
+    public async Task UserCancelOfAPausedTask_WithScriptsOnTwoMachines_CancelsBothAgentScripts()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true, machineCount: 2).ConfigureAwait(false);
+        var agents = new Agents();
+        await PauseAsync(seeded, agents).ConfigureAwait(false);
+        agents.V1.StartedTickets.Count.ShouldBe(2, "both targets dispatched before the pause");
+
+        await Run<IServerTaskControlService>(s => s.CancelTaskAsync(seeded.TaskId), agents.Register).ConfigureAwait(false);
+
+        agents.V1.CancelledTickets.OrderBy(t => t).ShouldBe(agents.V1.StartedTickets.OrderBy(t => t), "every script the pause left running must be cancelled, not just the first lookup to win the DbContext");
+        (await CheckpointAsync(seeded).ConfigureAwait(false)).ShouldBeNull();
+    }
+
     [Fact]
     public async Task UserCancelOfAPausedTask_CancelsAV2Script_OverV2Only()
     {
