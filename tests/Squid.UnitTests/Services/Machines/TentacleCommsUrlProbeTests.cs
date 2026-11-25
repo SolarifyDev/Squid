@@ -68,6 +68,19 @@ public sealed class TentacleCommsUrlProbeTests : IDisposable
         result.Detail.ShouldContain("health check");
     }
 
+    [Theory]
+    [InlineData("https://comms.invalid/", "comms.invalid:443")]        // no port → 443, the port Halibut (Tentacle) dials, e.g. SNI passthrough on the ingress
+    [InlineData("http://comms.invalid/", "comms.invalid:80")]
+    [InlineData("https://comms.invalid:10943/", "comms.invalid:10943")]
+    public async Task Probe_ProbesThePortTheTentacleDials(string commsUrl, string expectedEndpoint)
+    {
+        // .invalid never resolves (RFC 2606), so the failure detail names the endpoint the probe tried.
+        var result = await _probe.ProbeAsync(commsUrl, expectedServerThumbprint: "AABB", CancellationToken.None);
+
+        result.Reachable.ShouldBeFalse();
+        result.Detail.ShouldContain(expectedEndpoint);
+    }
+
     [Fact]
     public async Task Probe_ReachableTlsEndpointWithMatchingThumbprint_ReportsMatch()
     {
