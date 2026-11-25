@@ -281,6 +281,8 @@ internal sealed class FakeCapabilitiesRefresher : Squid.Core.Services.Deployment
     /// <summary>How long an agent capabilities call takes; like the real refresher it stops early when the caller's token is cancelled.</summary>
     public TimeSpan RefreshDelay { get; set; }
 
+    public TimeSpan RefreshTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
     public List<int> SyncedMachines { get; } = new();
 
     public Task SyncFromStoreAsync(int machineId, CancellationToken ct)

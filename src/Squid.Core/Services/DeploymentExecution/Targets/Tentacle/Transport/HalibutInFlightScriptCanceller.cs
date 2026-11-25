@@ -26,12 +26,13 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
     private readonly IMachineCapabilitiesRefresher _capabilitiesRefresher;
     private readonly RpcRetryHandler _retry;
     private readonly TimeSpan _grace;
+    private readonly TimeProvider _time;
 
     public HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, HalibutSetting halibutSetting, IMachineCapabilitiesRefresher capabilitiesRefresher = null) : this(store, machines, selector, observer, new RpcRetryHandler(halibutSetting.RpcRetry), capabilitiesRefresher: capabilitiesRefresher)
     {
     }
 
-    internal HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, RpcRetryHandler retry, TimeSpan? grace = null, IMachineCapabilitiesRefresher capabilitiesRefresher = null)
+    internal HalibutInFlightScriptCanceller(IInFlightScriptStore store, IMachineDataProvider machines, IScriptDispatcherSelector selector, IHalibutScriptObserver observer, RpcRetryHandler retry, TimeSpan? grace = null, IMachineCapabilitiesRefresher capabilitiesRefresher = null, TimeProvider time = null)
     {
         _store = store;
         _machines = machines;
@@ -40,6 +41,7 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         _capabilitiesRefresher = capabilitiesRefresher;
         _retry = retry;
         _grace = grace ?? DefaultCancelGrace;
+        _time = time;
     }
 
     public async Task CancelAllAsync(int serverTaskId, CancellationToken ct = default)
@@ -96,7 +98,7 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
             return;
         }
 
-        var context = new ScriptSessionContext(_retry, _retry.CancelBudget, CancellationToken.None, _observer, new CancelDowngradeFallback(_selector, _capabilitiesRefresher, _grace));
+        var context = new ScriptSessionContext(_retry, _retry.CancelBudget, CancellationToken.None, _observer, new CancelDowngradeFallback(_selector, _capabilitiesRefresher, _grace, _time));
         var session = _selector.ForVersion(script.Protocol.Value).Open(endpoint, context);
         var outcome = await ProtocolDowngrade.CancelAsync(session, context, new CancelTarget(script.Slot.MachineId, endpoint, new ScriptTicket(script.Ticket)), ct).ConfigureAwait(false);
 

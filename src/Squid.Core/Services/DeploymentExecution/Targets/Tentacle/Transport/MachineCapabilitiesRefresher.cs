@@ -26,6 +26,9 @@ public interface IMachineCapabilitiesRefresher : IScopedDependency
     /// which case nothing about its protocol can be concluded.
     /// </summary>
     Task<MachineRuntimeCapabilities> RefreshFromAgentAsync(int machineId, ServiceEndPoint endpoint, CancellationToken ct);
+
+    /// <summary>The longest <see cref="RefreshFromAgentAsync"/> waits for the agent: what a caller sharing a deadline with it must leave room for.</summary>
+    TimeSpan RefreshTimeout { get; }
 }
 
 public sealed class MachineCapabilitiesRefresher : IMachineCapabilitiesRefresher
@@ -44,6 +47,8 @@ public sealed class MachineCapabilitiesRefresher : IMachineCapabilitiesRefresher
         _recorder = recorder;
         _settings = halibutSetting.Capabilities ?? new CapabilitiesSettings();
     }
+
+    public TimeSpan RefreshTimeout => _settings.RefreshTimeout;
 
     public async Task SyncFromStoreAsync(int machineId, CancellationToken ct)
     {
