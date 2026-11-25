@@ -153,8 +153,7 @@ public class KubernetesPodMonitor
                 continue;
             }
 
-            // Atomic remove — if another thread already completed this ticket, TryRemove returns false and we skip
-            if (!activeTickets.TryRemove(ticketId, out var ctx)) continue;
+            if (!activeTickets.TryGetValue(ticketId, out var ctx)) continue;
 
             Log.Warning("Pod {PodName} stuck in Pending for {AgeMinutes:F0}m, marking as failed (ticket {TicketId})",
                 podName, age.TotalMinutes, ticketId);
@@ -169,7 +168,9 @@ public class KubernetesPodMonitor
 
             var errorLog = new ProcessOutput(ProcessOutputSource.StdErr, errorMessage);
 
-            _scriptPodService.InjectTerminalResult(ticketId, exitCode, new List<ProcessOutput> { errorLog });
+            // The terminal result is published BEFORE the ticket stops being tracked (and the arbiter: false = someone finished it first),
+            // so a status read in between never sees it as neither running nor finished.
+            if (!_scriptPodService.TryFailTracked(ticketId, ctx, exitCode, new List<ProcessOutput> { errorLog })) continue;
 
             _scriptPodService.ReleaseMutexForTicket(ticketId);
         }

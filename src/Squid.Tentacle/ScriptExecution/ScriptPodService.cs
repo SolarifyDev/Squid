@@ -204,8 +204,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         Log.Information("Cancel requested while ticket {TicketId} was launching, cancelling its pod", ticketId);
 
-        var v1 = CancelScriptCore(new CancelScriptCommand(new ScriptTicket(ticketId), 0), deferredToCaller: true);
-        InjectTerminalResult(ticketId, ScriptExitCodes.Canceled, v1.Logs);
+        CancelScriptCore(new CancelScriptCommand(new ScriptTicket(ticketId), 0), deferredToCaller: true);
 
         if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
             lockHandle.Dispose();
@@ -291,51 +290,101 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
-        if (_terminalResults.TryGetValue(request.Ticket.TaskId, out var terminal))
+        var ticketId = request.Ticket.TaskId;
+
+        // Read in the direction a ticket moves (pending -> tracked -> terminal): a transition publishes the next set before it leaves the
+        // previous one, so a read in this order cannot miss a ticket that moves while we look. Terminal then wins over the stale entry.
+        _pendingScripts.TryGetValue(ticketId, out var pending);
+        var tracked = _scripts.TryGetValue(ticketId, out var ctx);
+
+        StatusSnapshotHookForTests?.Invoke();
+
+        if (_terminalResults.TryGetValue(ticketId, out var terminal))
             return terminal.Response;
 
-        if (_pendingScripts.TryGetValue(request.Ticket.TaskId, out var pending))
-        {
-            var age = DateTimeOffset.UtcNow - pending.EnqueuedAt;
+        if (pending != null) return BuildPendingStatus(request, pending);
 
-            if (age > _mutexTimeout)
-            {
-                if (_pendingScripts.TryRemove(request.Ticket.TaskId, out _))
-                {
-                    Interlocked.Decrement(ref _pendingCount);
-
-                    Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex",
-                        request.Ticket.TaskId, age.TotalMinutes);
-
-                    InjectTerminalResult(request.Ticket.TaskId, ScriptExitCodes.Timeout,
-                        new List<ProcessOutput> { new(ProcessOutputSource.StdErr,
-                            $"Script timed out waiting for isolation mutex after {age.TotalMinutes:F0} minutes") });
-
-                    return _terminalResults[request.Ticket.TaskId].Response;
-                }
-            }
-
-            var pendingLogs = request.LastLogSequence == 0
-                ? new List<ProcessOutput> { new(ProcessOutputSource.StdOut, "Waiting for isolation mutex...") }
-                : new List<ProcessOutput>();
-
-            var nextSequence = request.LastLogSequence == 0 ? 1 : request.LastLogSequence;
-
-            return new ScriptStatusResponse(request.Ticket, ProcessState.Running, 0, pendingLogs, nextSequence);
-        }
-
-        if (!_scripts.TryGetValue(request.Ticket.TaskId, out var ctx))
+        if (!tracked)
             return CompletedResponse(request.Ticket, ScriptExitCodes.UnknownResult);
 
-        var status = BuildActiveStatus(request, ctx);
+        var status = BuildActiveStatus(request, ctx!);
 
         // Isolation protects the running pod only: once the pod is done the lock is free even if CompleteScript never
         // arrives. Idempotent (TryRemove), so the later Complete/Cancel release is a no-op.
         if (status.State == ProcessState.Complete)
-            ReleaseMutexForTicket(request.Ticket.TaskId);
+            ReleaseMutexForTicket(ticketId);
 
         return status;
     }
+
+    private ScriptStatusResponse BuildPendingStatus(ScriptStatusRequest request, PendingScript pending)
+    {
+        var age = DateTimeOffset.UtcNow - pending.EnqueuedAt;
+
+        if (age > _mutexTimeout && TryExpirePending(request.Ticket.TaskId, pending, age))
+            return _terminalResults[request.Ticket.TaskId].Response;
+
+        var pendingLogs = request.LastLogSequence == 0
+            ? new List<ProcessOutput> { new(ProcessOutputSource.StdOut, "Waiting for isolation mutex...") }
+            : new List<ProcessOutput>();
+
+        var nextSequence = request.LastLogSequence == 0 ? 1 : request.LastLogSequence;
+
+        return new ScriptStatusResponse(request.Ticket, ProcessState.Running, 0, pendingLogs, nextSequence);
+    }
+
+    /// <summary>Test-only: runs in V1 GetStatus after the pending and tracked reads and before the terminal read.</summary>
+    internal Action? StatusSnapshotHookForTests { get; set; }
+
+    // A queued script that waited past the isolation-mutex timeout gets its Timeout result published before it leaves the queue.
+    private bool TryExpirePending(string ticketId, PendingScript pending, TimeSpan age)
+    {
+        var message = $"Script timed out waiting for isolation mutex after {age.TotalMinutes:F0} minutes";
+        var response = BuildTerminalResponse(ticketId, ScriptExitCodes.Timeout, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, message) });
+
+        if (!PublishTerminalThenForget(_pendingScripts, ticketId, pending, response)) return false;
+
+        Interlocked.Decrement(ref _pendingCount);
+
+        Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex", ticketId, age.TotalMinutes);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Moves a ticket from <paramref name="source"/> to the terminal results WITHOUT a moment where it is in neither: the terminal result is published first and the
+    /// source entry removed second, so a lock-free reader always finds the ticket somewhere (a miss reads as lost/unknown and the server fails or re-dispatches the step).
+    /// Serialized with V2 Start/Complete/Cancel through the ticket lock; false (and nothing published) when the entry is no longer the one passed in.
+    /// </summary>
+    private bool PublishTerminalThenForget<TEntry>(ConcurrentDictionary<string, TEntry> source, string ticketId, TEntry entry, ScriptStatusResponse response)
+    {
+        lock (_ticketLocks.For(ticketId))
+        {
+            var published = (response, DateTimeOffset.UtcNow);
+
+            if (!source.TryGetValue(ticketId, out var current) || !EqualityComparer<TEntry>.Default.Equals(current, entry)) return false;
+
+            if (!_terminalResults.TryAdd(ticketId, published)) return false;
+
+            BetweenPublishAndForgetHookForTests?.Invoke();
+
+            if (source.TryRemove(new KeyValuePair<string, TEntry>(ticketId, entry))) return true;
+
+            _terminalResults.TryRemove(new KeyValuePair<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)>(ticketId, published));
+
+            return false;
+        }
+    }
+
+    /// <summary>Test-only: runs after a terminal result is published and before the ticket leaves its previous set.</summary>
+    internal Action? BetweenPublishAndForgetHookForTests { get; set; }
+
+    /// <summary>Publishes the terminal result of a pod the monitor gave up on (stuck in Pending), then stops tracking it. False when the ticket was finished by someone else first.</summary>
+    internal bool TryFailTracked(string ticketId, ScriptPodContext ctx, int exitCode, List<ProcessOutput> logs)
+        => PublishTerminalThenForget(_scripts, ticketId, ctx, BuildTerminalResponse(ticketId, exitCode, logs));
+
+    private static ScriptStatusResponse BuildTerminalResponse(string ticketId, int exitCode, List<ProcessOutput> logs)
+        => new(new ScriptTicket(ticketId), ProcessState.Complete, exitCode, logs, 0);
 
     private ScriptStatusResponse BuildActiveStatus(ScriptStatusRequest request, ScriptPodContext ctx)
     {
@@ -473,7 +522,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         BeforeCancelCoreHookForTests?.Invoke();
 
-        if (_pendingScripts.TryRemove(command.Ticket.TaskId, out var _))
+        if (TryTakePendingForCancel(command.Ticket, deferredToCaller))
         {
             Interlocked.Decrement(ref _pendingCount);
             RemovePendingSecret(command.Ticket.TaskId);
@@ -484,7 +533,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         try
         {
-            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx) && !TakeTrackedPodAfterHandOff(command.Ticket.TaskId, out ctx, out handedToLauncher))
+            if (!TryTakeTrackedForCancel(command.Ticket, deferredToCaller, out var ctx) && !TakeTrackedPodAfterHandOff(command.Ticket, deferredToCaller, out ctx, out handedToLauncher))
             {
                 if (!handedToLauncher)
                     DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
@@ -510,12 +559,28 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     }
 
     // Not tracked yet: either the launcher takes the cancel over, or it published the pod while the request was being recorded and we cancel that pod.
-    private bool TakeTrackedPodAfterHandOff(string ticketId, out ScriptPodContext? ctx, out bool handedToLauncher)
+    private bool TakeTrackedPodAfterHandOff(ScriptTicket ticket, bool publishCanceled, out ScriptPodContext? ctx, out bool handedToLauncher)
     {
-        handedToLauncher = TryHandCancelToLauncher(ticketId);
+        handedToLauncher = TryHandCancelToLauncher(ticket.TaskId);
         ctx = null;
 
-        return !handedToLauncher && _scripts.TryRemove(ticketId, out ctx);
+        return !handedToLauncher && TryTakeTrackedForCancel(ticket, publishCanceled, out ctx);
+    }
+
+    // publishCanceled (V2 and the launcher): the Canceled result is the ticket's terminal result and is published BEFORE the ticket stops being
+    // tracked, so a lock-free status read never sees it in neither place. V1 reports the cancel in the response only and keeps no terminal result.
+    private bool TryTakePendingForCancel(ScriptTicket ticket, bool publishCanceled)
+    {
+        if (!publishCanceled) return _pendingScripts.TryRemove(ticket.TaskId, out _);
+
+        return _pendingScripts.TryGetValue(ticket.TaskId, out var pending) && PublishTerminalThenForget(_pendingScripts, ticket.TaskId, pending, CompletedResponse(ticket, ScriptExitCodes.Canceled));
+    }
+
+    private bool TryTakeTrackedForCancel(ScriptTicket ticket, bool publishCanceled, out ScriptPodContext? ctx)
+    {
+        if (!publishCanceled) return _scripts.TryRemove(ticket.TaskId, out ctx);
+
+        return _scripts.TryGetValue(ticket.TaskId, out ctx) && PublishTerminalThenForget(_scripts, ticket.TaskId, ctx, CompletedResponse(ticket, ScriptExitCodes.Canceled));
     }
 
     public string WorkspaceBasePath => _tentacleSettings.WorkspacePath;
@@ -540,9 +605,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     public void InjectTerminalResult(string ticketId, int exitCode, List<ProcessOutput> logs)
     {
-        var response = new ScriptStatusResponse(new ScriptTicket(ticketId), ProcessState.Complete, exitCode, logs, 0);
-
-        _terminalResults[ticketId] = (response, DateTimeOffset.UtcNow);
+        _terminalResults[ticketId] = (BuildTerminalResponse(ticketId, exitCode, logs), DateTimeOffset.UtcNow);
     }
 
     /// <summary>
@@ -622,16 +685,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             if (age > _mutexTimeout)
             {
-                if (_pendingScripts.TryRemove(kvp.Key, out _))
-                {
-                    Interlocked.Decrement(ref _pendingCount);
-
-                    Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex",
-                        kvp.Key, age.TotalMinutes);
-                    InjectTerminalResult(kvp.Key, ScriptExitCodes.Timeout,
-                        new List<ProcessOutput> { new(ProcessOutputSource.StdErr,
-                            $"Script timed out waiting for isolation mutex after {age.TotalMinutes:F0} minutes") });
-                }
+                TryExpirePending(kvp.Key, kvp.Value, age);
 
                 continue;
             }
