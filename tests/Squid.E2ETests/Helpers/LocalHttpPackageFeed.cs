@@ -7,7 +7,7 @@ namespace Squid.E2ETests.Helpers;
 /// <summary>
 /// Minimal in-process HTTP feed used by Deploy a Package e2e.
 /// Serves a single package archive at <c>{base}/api/v2/package/{id}/{version}</c>
-/// so <see cref="Squid.Core.Services.DeploymentExecution.Packages.HttpPackageContentFetcher"/>
+/// so <see cref="Squid.Core.Services.DeploymentExecution.Packages.RoutingPackageContentFetcher"/>
 /// can download it without nuget.org.
 /// </summary>
 public sealed class LocalHttpPackageFeed : IAsyncDisposable
