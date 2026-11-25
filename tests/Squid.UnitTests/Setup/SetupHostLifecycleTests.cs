@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -87,12 +88,57 @@ public sealed class SetupHostLifecycleTests : IDisposable
         return (session, (configuration, FreePort()));
     }
 
-    private static Task RunUntilStartedThenStop(SetupSession session, (Microsoft.Extensions.Configuration.IConfiguration Configuration, int Port) host, bool markCompleted)
+    [Theory]
+    [InlineData("/setup?token={0}")]
+    [InlineData("/api/setup/status?token={0}")]
+    [InlineData("/setup?foo=bar&token={0}&x=1")]
+    public async Task WhenTheOperatorOpensTheTokenLink_NoRequestLogLineContainsTheToken(string pathTemplate)
+    {
+        var (session, host) = NewSession();
+        var path = string.Format(pathTemplate, session.Token.Value);
+
+        await RunUntilStartedThenStop(session, host, markCompleted: true, requestPath: path);
+
+        _events.Any(e => e.RenderMessage().Contains("/setup", StringComparison.Ordinal)).ShouldBeTrue("the announcement is still logged");
+
+        foreach (var e in _events)
+        {
+            e.RenderMessage().ShouldNotContain(session.Token.Value, Case.Sensitive, "ASP.NET request logging would put 'Request starting ... ?token=...' into the log, which is shipped to Seq");
+            e.Properties.Values.Select(v => v.ToString()).ShouldAllBe(v => !v.Contains(session.Token.Value, StringComparison.Ordinal), "no structured property may carry the token either");
+        }
+    }
+
+    [Fact]
+    public async Task ApplicationLogging_ThroughTheHostLoggerFactory_StillReachesTheProcessLogger()
+    {
+        var (session, host) = NewSession();
+
+        await RunUntilStartedThenStop(session, host, markCompleted: true);
+
+        _events.Any(e => e.RenderMessage().Contains(ApplicationLogMarker, StringComparison.Ordinal)).ShouldBeTrue("quieting ASP.NET request logging must not cut the host's logging off from the process sinks");
+    }
+
+    private const string ApplicationLogMarker = "setup-host-application-log-marker";
+
+    [Fact]
+    public async Task TheAnnouncedSetupUrl_IsCopyable_WithoutQuotesInsideTheUrl()
+    {
+        var (session, host) = NewSession();
+
+        await RunUntilStartedThenStop(session, host, markCompleted: true);
+
+        var announcement = _events.Select(e => e.RenderMessage()).Single(m => m.Contains("not set up yet", StringComparison.Ordinal));
+
+        announcement.ShouldNotContain("\"http", Case.Sensitive, "a quoted URL cannot be copy-pasted");
+        System.Text.RegularExpressions.Regex.IsMatch(announcement, @"Open http://127\.0\.0\.1:\d+/setup to finish").ShouldBeTrue(announcement);
+    }
+
+    private static Task RunUntilStartedThenStop(SetupSession session, (Microsoft.Extensions.Configuration.IConfiguration Configuration, int Port) host, bool markCompleted, string requestPath = null)
     {
         void Customize(WebApplicationBuilder b)
         {
             b.WebHost.UseUrls($"http://127.0.0.1:{host.Port}");
-            b.Services.AddSingleton<IHostedService>(sp => new StopOnceStarted(sp.GetRequiredService<IHostApplicationLifetime>(), session, markCompleted));
+            b.Services.AddSingleton<IHostedService>(sp => new StopOnceStarted(sp.GetRequiredService<IHostApplicationLifetime>(), session, markCompleted, requestPath is null ? null : $"http://127.0.0.1:{host.Port}{requestPath}", sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<StopOnceStarted>>()));
         }
 
         return SetupHost.RunAsync(Array.Empty<string>(), host.Configuration, session, Customize).WaitAsync(TimeSpan.FromSeconds(30));
@@ -111,18 +157,38 @@ public sealed class SetupHostLifecycleTests : IDisposable
         return port;
     }
 
-    private sealed class StopOnceStarted(IHostApplicationLifetime lifetime, SetupSession session, bool markCompleted) : IHostedService
+    private sealed class StopOnceStarted(IHostApplicationLifetime lifetime, SetupSession session, bool markCompleted, string requestUrl = null, Microsoft.Extensions.Logging.ILogger<StopOnceStarted> logger = null) : IHostedService
     {
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            lifetime.ApplicationStarted.Register(() =>
+            Microsoft.Extensions.Logging.LoggerExtensions.LogInformation(logger, "{Marker}", ApplicationLogMarker);
+
+            lifetime.ApplicationStarted.Register(() => _ = Task.Run(FinishAsync));
+
+            return Task.CompletedTask;
+        }
+
+        private async Task FinishAsync()
+        {
+            try
+            {
+                if (requestUrl != null) await SendRequestAsync().ConfigureAwait(false);
+            }
+            finally
             {
                 if (markCompleted) session.MarkCompleted();
 
                 lifetime.StopApplication();
-            });
+            }
+        }
 
-            return Task.CompletedTask;
+        private async Task SendRequestAsync()
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+
+            using var response = await http.GetAsync(requestUrl).ConfigureAwait(false);
+
+            await response.Content.ReadAsStringAsync().ConfigureAwait(false);
         }
 
         public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
