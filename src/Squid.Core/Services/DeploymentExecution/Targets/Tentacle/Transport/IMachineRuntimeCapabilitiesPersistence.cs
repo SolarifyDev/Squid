@@ -110,7 +110,8 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
             InstalledRoles = capabilities.InstalledRoles
         }, SerializerOptions);
 
-        var now = DateTimeOffset.UtcNow;
+        // Postgres timestamptz keeps microseconds; returning the un-truncated clock would hand the caller a value the row does not hold.
+        var now = TruncateToMicroseconds(DateTimeOffset.UtcNow);
 
         await _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
             m => m.Id == machineId,
@@ -120,6 +121,8 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
 
         return now;
     }
+
+    private static DateTimeOffset TruncateToMicroseconds(DateTimeOffset value) => value.AddTicks(-(value.Ticks % 10));
 
     public async Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct)
     {
