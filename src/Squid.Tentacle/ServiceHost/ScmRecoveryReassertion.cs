@@ -36,6 +36,9 @@ public sealed class FailureFlagMarker
 
     public long OwnerStartUtcTicks { get; set; }
 
+    /// <summary>Same upgrade process (PID + start time) as <paramref name="other"/>: a marker re-read mid-restore is only "ours" while this holds.</summary>
+    public bool HasSameOwnerAs(FailureFlagMarker other) => OwnerPid == other.OwnerPid && OwnerStartUtcTicks == other.OwnerStartUtcTicks;
+
     public static bool TryParse(string json, out FailureFlagMarker marker)
     {
         marker = null;
@@ -82,6 +85,9 @@ public sealed class FailureFlagMarker
     public bool IsOwnerAlive(Func<int, DateTime?> startTimeUtcOf) => GetOwnerLiveness(startTimeUtcOf) != OwnerLiveness.Dead;
 }
 
+/// <summary>The probes a re-assert pass runs against: the owner-start lookup, the <c>sc failureflag</c> call and the wait between watcher polls.</summary>
+public sealed record ScmReassertionOps(Func<int, DateTime?> StartTimeUtcOf, Func<string, bool, int> SetFailureFlag, Func<TimeSpan, CancellationToken, Task> Delay);
+
 public enum OwnerLiveness
 {
     Dead,
@@ -116,22 +122,33 @@ public static class ScmRecoveryReassertion
     public static int Run(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag) => RunPass(directory, startTimeUtcOf, setFailureFlag).Restored;
 
     /// <summary>One pass, then waits for every live owner to exit and re-checks its marker. Returns the total flags restored; ends when no marker is pending, or throws <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled.</summary>
-    public static async Task<int> RunAndWatchAsync(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
+    public static Task<int> RunAndWatchAsync(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
+        => RunAndWatchAsync(directory, new ScmReassertionOps(startTimeUtcOf, setFailureFlag, delay), () => { }, ct);
+
+    /// <summary>As above, and invokes <paramref name="firstPassDone"/> once the first synchronous pass has settled every orphaned marker (before it starts watching live owners).</summary>
+    public static async Task<int> RunAndWatchAsync(string directory, ScmReassertionOps ops, Action firstPassDone, CancellationToken ct)
     {
-        var pass = RunPass(directory, startTimeUtcOf, setFailureFlag);
-        var watched = await Task.WhenAll(pass.Pending.Select(path => WatchOwnerAsync(path, startTimeUtcOf, setFailureFlag, delay, ct))).ConfigureAwait(false);
+        var pass = RunPass(directory, ops.StartTimeUtcOf, ops.SetFailureFlag);
+
+        firstPassDone();
+
+        var watched = await Task.WhenAll(pass.Pending.Select(path => WatchOwnerAsync(path, ops.StartTimeUtcOf, ops.SetFailureFlag, ops.Delay, ct))).ConfigureAwait(false);
 
         return pass.Restored + watched.Sum();
     }
 
     /// <summary>Production wiring: the upgrade state directory, real process lookup, real <c>sc failureflag</c>.</summary>
-    public static Task<int> RunForThisHostAsync(CancellationToken ct)
+    public static Task<int> RunForThisHostAsync(Action firstPassDone, CancellationToken ct)
     {
-        if (!OperatingSystem.IsWindows()) return Task.FromResult(0);
+        if (!OperatingSystem.IsWindows())
+        {
+            firstPassDone();
+            return Task.FromResult(0);
+        }
 
         var directory = Path.Combine(PlatformPaths.GetSystemConfigDir(), FailureFlagMarker.UpgradeSubDirectory);
 
-        return RunAndWatchAsync(directory, StartTimeUtcOfProcess, WindowsServiceHost.SetFailureFlag, Task.Delay, ct);
+        return RunAndWatchAsync(directory, new ScmReassertionOps(StartTimeUtcOfProcess, WindowsServiceHost.SetFailureFlag, Task.Delay), firstPassDone, ct);
     }
 
     private static Pass RunPass(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
@@ -192,6 +209,9 @@ public static class ScmRecoveryReassertion
         if (!TryReadMarker(path, out var marker)) return MarkerOutcome.Settled;
         if (marker.IsOwnerAlive(startTimeUtcOf)) return MarkerOutcome.OwnerRunning;
 
+        // A newer upgrade may have replaced the marker while the owner lookup ran; its swap window is not ours to undo.
+        if (!StillHolds(path, marker, out var current)) return current == null ? MarkerOutcome.Settled : MarkerOutcome.OwnerRunning;
+
         var exit = setFailureFlag(marker.Service, marker.OriginalFlag == 1);
 
         if (exit != 0)
@@ -201,9 +221,38 @@ public static class ScmRecoveryReassertion
         }
 
         Log.Information("Restored SCM failure-actions flag for {Service} to {Flag} after an interrupted upgrade", marker.Service, marker.OriginalFlag);
-        TryDeleteMarker(path);
 
-        return MarkerOutcome.Restored;
+        return SettleAfterRestore(path, marker, startTimeUtcOf, setFailureFlag);
+    }
+
+    /// <summary>
+    /// Deletes the marker only while it still names the owner this restore was for. If a newer upgrade replaced it during the
+    /// restore, that upgrade's marker is kept and its suspension re-asserted (the restore may have landed after its
+    /// <c>failureflag 0</c>), and the marker is watched like any live owner's.
+    /// </summary>
+    private static MarkerOutcome SettleAfterRestore(string path, FailureFlagMarker restoredFor, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    {
+        if (StillHolds(path, restoredFor, out var current))
+        {
+            TryDeleteMarker(path);
+            return MarkerOutcome.Restored;
+        }
+
+        if (current == null) return MarkerOutcome.Restored;
+
+        Log.Information("A newer upgrade took over the SCM failure-actions marker for {Service} during the restore; keeping its marker and its suspension", current.Service);
+
+        if (current.IsOwnerAlive(startTimeUtcOf)) setFailureFlag(current.Service, false);
+
+        return MarkerOutcome.OwnerRunning;
+    }
+
+    /// <summary>True while the file still holds <paramref name="expected"/>'s owner; <paramref name="current"/> is what is there now (null when gone or unreadable).</summary>
+    private static bool StillHolds(string path, FailureFlagMarker expected, out FailureFlagMarker current)
+    {
+        if (!TryReadMarker(path, out current)) return false;
+
+        return current.HasSameOwnerAs(expected);
     }
 
     private static void TryDeleteMarker(string path)
@@ -233,7 +282,7 @@ public static class ScmRecoveryReassertion
     }
 
     /// <summary>null = no such process (gone). Access Denied (<see cref="Win32Exception"/>) is deliberately NOT caught: the marker reads it as "unreadable", i.e. possibly alive.</summary>
-    private static DateTime? StartTimeUtcOfProcess(int pid)
+    internal static DateTime? StartTimeUtcOfProcess(int pid)
     {
         try
         {

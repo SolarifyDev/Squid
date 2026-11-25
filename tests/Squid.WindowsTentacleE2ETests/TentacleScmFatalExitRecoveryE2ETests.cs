@@ -111,7 +111,9 @@ public sealed class TentacleScmFatalExitRecoveryE2ETests
     // `finally`. The agent must put the flag back at startup when the marker's owner is gone, restore the RECORDED value
     // (an operator's deliberate 0 survives) and leave a live upgrade's marker alone.
     // Tier High: real binary launched by real SCM, real sc failureflag, real marker file in the production upgrade dir.
-    // The fatal-flavour service is deliberate: the re-assert runs before the pipeline, so it must work even when the agent dies at startup.
+    // The fatal-flavour service is deliberate: the re-assert runs in the background alongside the pipeline, and a fatal exit waits
+    // (bounded, TentacleScmHostedService.DefaultFirstReassertPassWait) for its first pass before reporting the exit code, so it
+    // must work even when the agent dies at startup.
 
     [Theory]
     [InlineData(false, 1, true, true)]    // orphaned marker, original on  -> flag back ON, marker removed

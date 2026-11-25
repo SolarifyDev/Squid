@@ -215,6 +215,170 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
         calls.ShouldBe(new[] { "svc-dead" });
     }
 
+    // ── Owner-checked restore: a NEWER upgrade's marker is never deleted or undermined ──
+
+    [Fact]
+    public async Task NewerUpgradeWritesItsMarkerBeforeTheRestore_NothingIsRestoredOrDeleted_AndItIsWatched()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        using var cts = new CancellationTokenSource();
+
+        var pass = ScmRecoveryReassertion.RunAndWatchAsync(_dir, pid =>
+        {
+            if (pid == 4242) File.WriteAllText(path, MarkerJson("squid-tentacle", 1, ownerPid: 5555));
+
+            return pid == 5555 ? OwnerStart : null;
+        }, (svc, enabled) => { calls.Add((svc, enabled)); return 0; }, (_, ct) => { cts.Cancel(); return Task.Delay(Timeout.Infinite, ct); }, cts.Token);
+
+        await Should.ThrowAsync<OperationCanceledException>(() => pass.WaitAsync(TimeSpan.FromSeconds(10)));
+
+        calls.ShouldBeEmpty("the marker now belongs to a live newer upgrade; restoring the flag would undermine its swap window");
+        File.ReadAllText(path).ShouldContain("5555", customMessage: "the newer upgrade marker must survive");
+    }
+
+    [Fact]
+    public void NewerUpgradeWritesItsMarkerDuringTheRestore_ItsMarkerIsKept_AndItsSuspensionReasserted()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+
+        var restored = ScmRecoveryReassertion.Run(_dir, pid => pid == 5555 ? OwnerStart : null, (svc, enabled) =>
+        {
+            calls.Add((svc, enabled));
+
+            if (calls.Count == 1) File.WriteAllText(path, MarkerJson("squid-tentacle", 1, ownerPid: 5555));
+
+            return 0;
+        });
+
+        restored.ShouldBe(0, "the marker was replaced by a live owner, so it is not ours to settle");
+        File.Exists(path).ShouldBeTrue("deleting here would leave flag 0 with no marker; a killed newer upgrade would never be healed");
+        File.ReadAllText(path).ShouldContain("5555");
+        calls.ShouldBe(new[] { ("squid-tentacle", true), ("squid-tentacle", false) });
+    }
+
+    [Fact]
+    public async Task NewerUpgradeThatLaterDies_IsRestoredByTheWatcher()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var newerAlive = true;
+        var polls = 0;
+        var calls = new List<(string, bool)>();
+
+        var restored = await ScmRecoveryReassertion.RunAndWatchAsync(_dir, pid => pid == 5555 && newerAlive ? OwnerStart : null, (svc, enabled) =>
+        {
+            calls.Add((svc, enabled));
+
+            if (calls.Count == 1) File.WriteAllText(path, MarkerJson("squid-tentacle", 0, ownerPid: 5555));
+
+            return 0;
+        }, (_, _) => { if (++polls == 2) newerAlive = false; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        restored.ShouldBe(1);
+        calls.Last().ShouldBe(("squid-tentacle", false), "the newer upgrade recorded the operator's deliberate 0");
+        File.Exists(path).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task FirstPassDone_IsSignalledAfterTheOrphanIsRestored_AndBeforeTheWatcherWaits()
+    {
+        WriteMarker("svc-live", 1, ownerPid: 11);
+        WriteMarker("svc-dead", 1, ownerPid: 12);
+        var events = new List<string>();
+        var livePath = Path.Combine(_dir, FailureFlagMarker.FilePrefix + "svc-live" + FailureFlagMarker.FileExtension);
+        var ops = new ScmReassertionOps(pid => pid == 11 ? OwnerStart : null, (svc, _) => { events.Add("flag:" + svc); return 0; }, (_, _) => { events.Add("poll"); File.Delete(livePath); return Task.CompletedTask; });
+
+        await ScmRecoveryReassertion.RunAndWatchAsync(_dir, ops, () => events.Add("firstPassDone"), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        events.ShouldBe(new[] { "flag:svc-dead", "firstPassDone", "poll" });
+    }
+
+    [Fact]
+    public async Task RunForThisHost_OffWindows_SignalsTheFirstPass_SoAFatalExitNeverWaitsForNothing()
+    {
+        if (OperatingSystem.IsWindows()) return;
+
+        var signalled = false;
+
+        await ScmRecoveryReassertion.RunForThisHostAsync(() => signalled = true, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+
+        signalled.ShouldBeTrue();
+    }
+
+    // ── Hosted service: a fatal exit waits (bounded) for the first re-assert pass ──
+
+    [Fact]
+    public async Task HostedService_FatalExit_WaitsForTheFirstReassertPass_BeforeReportingTheExitCode()
+    {
+        var order = new List<string>();
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), _ => order.Add("report"), async (firstPassDone, _) =>
+        {
+            await Task.Delay(300);
+            order.Add("pass");
+            firstPassDone();
+            await Task.Delay(Timeout.Infinite);
+        }, TimeSpan.FromSeconds(30));
+
+        await InvokeExecuteAsync(service, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+
+        order.ShouldBe(new[] { "pass", "report" });
+    }
+
+    [Fact]
+    public async Task HostedService_FatalExit_StopsWaitingAfterTheBound_WhenThePassHangs()
+    {
+        var reported = new List<int>();
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, (_, _) => new TaskCompletionSource().Task, TimeSpan.FromMilliseconds(300));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        await InvokeExecuteAsync(service, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+
+        reported.ShouldBe(new[] { 1 });
+        sw.Elapsed.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromMilliseconds(250), "the wait is real, just bounded");
+    }
+
+    [Fact]
+    public async Task HostedService_OperatorStop_DoesNotWaitForTheReassertPass()
+    {
+        var reported = new List<int>();
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, (_, _) => new TaskCompletionSource().Task, TimeSpan.FromSeconds(60));
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await InvokeExecuteAsync(service, cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+
+        reported.ShouldBe(new[] { 0 });
+    }
+
+    // ── Production owner lookup ──────────────────────────────────────────────
+
+    [Fact]
+    public void ProductionStartTimeLookup_ForAProcessItCannotRead_IsUnreadable_NeverDead()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+
+        // PID 4 is the NT "System" process: reading its StartTime is Access Denied even for an administrator.
+        FailureFlagMarker.TryParse(MarkerJson("svc", 1, ownerPid: 4), out var marker).ShouldBeTrue();
+
+        marker.GetOwnerLiveness(ScmRecoveryReassertion.StartTimeUtcOfProcess).ShouldNotBe(OwnerLiveness.Dead, "Access Denied turned into 'owner dead' would re-enable the flag mid-upgrade");
+    }
+
+    [Fact]
+    public void ProductionStartTimeLookup_ForAMissingProcess_IsNull_SoTheOwnerReadsAsDead()
+    {
+        ScmRecoveryReassertion.StartTimeUtcOfProcess(int.MaxValue - 1).ShouldBeNull();
+    }
+
+    [Fact]
+    public void ProductionStartTimeLookup_ForThisProcess_IsItsRealStartTime()
+    {
+        var start = ScmRecoveryReassertion.StartTimeUtcOfProcess(Environment.ProcessId);
+
+        start.ShouldNotBeNull();
+        Math.Abs((start.Value - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime()).TotalSeconds).ShouldBeLessThan(1);
+    }
+
     // ── Isolation: one marker never stops the others ────────────────────────
 
     [Fact]
@@ -271,7 +435,7 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
         var started = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var neverFinishes = new TaskCompletionSource();
         var reported = new List<int>();
-        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, ct => { started.TrySetResult(ct); return neverFinishes.Task; });
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, (_, ct) => { started.TrySetResult(ct); return neverFinishes.Task; }, TimeSpan.FromMilliseconds(200));
         using var cts = new CancellationTokenSource();
 
         await InvokeExecuteAsync(service, cts.Token).WaitAsync(TimeSpan.FromSeconds(30));
@@ -288,7 +452,7 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
         var service = new TentacleScmHostedService(Array.Empty<string>(), Mock.Of<IHostApplicationLifetime>());
         var field = typeof(TentacleScmHostedService).GetField("_reassertScmRecovery", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
-        var wired = (Func<CancellationToken, Task>)field.GetValue(service)!;
+        var wired = (Func<Action, CancellationToken, Task>)field.GetValue(service)!;
 
         wired.Method.ShouldBe(typeof(ScmRecoveryReassertion).GetMethod(nameof(ScmRecoveryReassertion.RunForThisHostAsync))!);
     }
@@ -297,9 +461,9 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
     public async Task HostedService_ReassertionThatThrows_DoesNotFailTheAgent()
     {
         var reported = new List<int>();
-        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, _ => throw new InvalidOperationException("boom"));
+        var service = new TentacleScmHostedService(new[] { "no-such-command-scm-e2e" }, Mock.Of<IHostApplicationLifetime>(), reported.Add, (_, _) => throw new InvalidOperationException("boom"), TimeSpan.FromSeconds(60));
 
-        await InvokeExecuteAsync(service, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+        await InvokeExecuteAsync(service, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
 
         reported.Count.ShouldBe(1);
     }

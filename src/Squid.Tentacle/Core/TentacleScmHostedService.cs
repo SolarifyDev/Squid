@@ -50,14 +50,20 @@ public sealed class TentacleScmHostedService : BackgroundService
     private readonly string[] _args;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Action<int>? _reportServiceExitCode;
-    private readonly Func<CancellationToken, Task> _reassertScmRecovery;
+    private readonly Func<Action, CancellationToken, Task> _reassertScmRecovery;
+    private readonly TimeSpan _firstReassertPassWait;
+    private readonly TaskCompletionSource _firstReassertPass = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null, Func<CancellationToken, Task>? reassertScmRecovery = null)
+    /// <summary>How long a fatal exit waits for the first re-assert pass before reporting anyway (one <c>sc.exe</c> call per marker, itself bounded).</summary>
+    public static readonly TimeSpan DefaultFirstReassertPassWait = TimeSpan.FromSeconds(10);
+
+    public TentacleScmHostedService(string[] args, IHostApplicationLifetime lifetime, Action<int>? reportServiceExitCode = null, Func<Action, CancellationToken, Task>? reassertScmRecovery = null, TimeSpan? firstReassertPassWait = null)
     {
         _args = args ?? throw new ArgumentNullException(nameof(args));
         _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
         _reportServiceExitCode = reportServiceExitCode;
         _reassertScmRecovery = reassertScmRecovery ?? ScmRecoveryReassertion.RunForThisHostAsync;
+        _firstReassertPassWait = firstReassertPassWait ?? DefaultFirstReassertPassWait;
     }
 
     /// <summary>
@@ -98,7 +104,13 @@ public sealed class TentacleScmHostedService : BackgroundService
             // Tell SCM WHY we are stopping BEFORE the host stops: the final SERVICE_STOPPED
             // status carries this code, and only a non-zero code lets the `sc failure`
             // restart actions fire. An operator stop (token cancelled) stays 0.
-            _reportServiceExitCode?.Invoke(ScmExitCode.Resolve(LastExitCode, stoppingToken.IsCancellationRequested));
+            var serviceExitCode = ScmExitCode.Resolve(LastExitCode, stoppingToken.IsCancellationRequested);
+
+            // The process can be torn down right after the exit code is reported, and the re-assert now runs off the
+            // start path, so a fatal exit gives its first pass a bounded chance to put the SCM flag back first.
+            if (serviceExitCode != 0) await WaitForFirstReassertPassAsync().ConfigureAwait(false);
+
+            _reportServiceExitCode?.Invoke(serviceExitCode);
 
             // Trigger host shutdown so SCM transitions out of RUNNING
             // even if the command pipeline finished early (e.g. `run`
@@ -113,7 +125,7 @@ public sealed class TentacleScmHostedService : BackgroundService
     {
         try
         {
-            await _reassertScmRecovery(stoppingToken).ConfigureAwait(false);
+            await _reassertScmRecovery(() => _firstReassertPass.TrySetResult(), stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -122,7 +134,19 @@ public sealed class TentacleScmHostedService : BackgroundService
         {
             Log.Warning(ex, "SCM recovery re-assert failed (best-effort)");
         }
+        finally
+        {
+            _firstReassertPass.TrySetResult();
+        }
     });
+
+    private async Task WaitForFirstReassertPassAsync()
+    {
+        var finished = await Task.WhenAny(_firstReassertPass.Task, Task.Delay(_firstReassertPassWait)).ConfigureAwait(false);
+
+        if (finished != _firstReassertPass.Task)
+            Log.Warning("SCM recovery re-assert did not finish within {Seconds}s; reporting the fatal exit anyway", _firstReassertPassWait.TotalSeconds);
+    }
 
     private static string ResolveDiagPath()
     {
