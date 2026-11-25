@@ -20,7 +20,7 @@ public sealed class PackageStoreServiceTests
 
     public PackageStoreServiceTests()
     {
-        _service = new PackageStoreService(_table, [_fake, new FileSystemPackageBlobStoreProvider(new DataDirectorySetting(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()))]);
+        _service = new PackageStoreService(_table, [_fake, new FileSystemPackageBlobStoreProvider(new DataDirectorySetting(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()))], []);
     }
 
     private static CreatePackageStoreCommand NewFake(string name = "Remote", string token = PlaintextToken)

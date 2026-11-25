@@ -15,20 +15,40 @@ internal static class PackageArchiveSafety
         if (archiveBytes is null || archiveBytes.Length == 0)
             return;
 
-        if (IsZip(archiveBytes))
-        {
-            EnsureZipEntriesAreSafe(archiveBytes, packageId, version);
-            return;
-        }
+        using var stream = new MemoryStream(archiveBytes, writable: false);
 
-        if (IsTarGz(archiveBytes))
-        {
-            EnsureTarGzEntriesAreSafe(archiveBytes, packageId, version);
-            return;
-        }
+        EnsureArchiveEntriesAreSafe(stream, packageId, version);
+    }
 
-        // Plain tar has no reliable magic header; only validate when entries can be read.
-        EnsurePlainTarEntriesAreSafeIfPossible(archiveBytes, packageId, version);
+    /// <summary>The same checks over a seekable stream, so a large upload is checked from its file instead of being loaded into memory. The stream is left open and rewound.</summary>
+    public static void EnsureArchiveEntriesAreSafe(Stream archive, string packageId, string version)
+    {
+        var header = ReadHeader(archive);
+
+        if (header.Length == 0)
+            return;
+
+        if (IsZip(header))
+            EnsureZipEntriesAreSafe(archive, packageId, version);
+        else if (IsTarGz(header))
+            EnsureTarGzEntriesAreSafe(archive, packageId, version);
+        else
+            // Plain tar has no reliable magic header; only validate when entries can be read.
+            EnsurePlainTarEntriesAreSafeIfPossible(archive, packageId, version);
+
+        archive.Position = 0;
+    }
+
+    private static byte[] ReadHeader(Stream archive)
+    {
+        archive.Position = 0;
+
+        var header = new byte[4];
+        var read = archive.Read(header, 0, header.Length);
+
+        archive.Position = 0;
+
+        return header[..read];
     }
 
     internal static bool IsUnsafeArchiveEntry(string entryName)
@@ -55,12 +75,11 @@ internal static class PackageArchiveSafety
         return false;
     }
 
-    private static void EnsureZipEntriesAreSafe(byte[] archiveBytes, string packageId, string version)
+    private static void EnsureZipEntriesAreSafe(Stream stream, string packageId, string version)
     {
         try
         {
-            using var stream = new MemoryStream(archiveBytes, writable: false);
-            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             foreach (var entry in archive.Entries)
             {
                 RejectIfUnsafe(entry.FullName, packageId, version);
@@ -73,15 +92,17 @@ internal static class PackageArchiveSafety
         }
     }
 
-    private static void EnsureTarGzEntriesAreSafe(byte[] archiveBytes, string packageId, string version)
+    private static void EnsureTarGzEntriesAreSafe(Stream stream, string packageId, string version)
     {
         try
         {
-            using var stream = new MemoryStream(archiveBytes, writable: false);
-            using var gzip = new GZipStream(stream, CompressionMode.Decompress);
+            using var gzip = new GZipStream(stream, CompressionMode.Decompress, leaveOpen: true);
             using var reader = new TarReader(gzip);
             while (reader.GetNextEntry(copyData: false) is { } entry)
+            {
                 RejectIfUnsafe(entry.Name, packageId, version);
+                SkipData(entry);
+            }
         }
         catch (InvalidDataException ex)
         {
@@ -95,17 +116,17 @@ internal static class PackageArchiveSafety
         }
     }
 
-    private static void EnsurePlainTarEntriesAreSafeIfPossible(byte[] archiveBytes, string packageId, string version)
+    private static void EnsurePlainTarEntriesAreSafeIfPossible(Stream stream, string packageId, string version)
     {
         try
         {
-            using var stream = new MemoryStream(archiveBytes, writable: false);
-            using var reader = new TarReader(stream);
+            using var reader = new TarReader(stream, leaveOpen: true);
             var sawEntry = false;
             while (reader.GetNextEntry(copyData: false) is { } entry)
             {
                 sawEntry = true;
                 RejectIfUnsafe(entry.Name, packageId, version);
+                SkipData(entry);
             }
 
             // If TarReader accepted zero entries, treat as non-tar and leave validation to extractors.
@@ -118,6 +139,10 @@ internal static class PackageArchiveSafety
         }
     }
 
+    // Over a stream that cannot seek (the gzip stream of a tar.gz) the reader does not skip an entry's data by itself: without reading it, the next entry is read from the
+    // middle of this one's padding and comes out as garbage, so a perfectly good archive with more than one entry would be rejected.
+    private static void SkipData(TarEntry entry) => entry.DataStream?.CopyTo(Stream.Null);
+
     private static void RejectIfUnsafe(string entryName, string packageId, string version)
     {
         if (!IsUnsafeArchiveEntry(entryName))
@@ -127,9 +152,9 @@ internal static class PackageArchiveSafety
             $"Package {packageId} v{version} entry '{entryName}' would escape the destination directory (zip-slip). Aborted.");
     }
 
-    private static bool IsZip(byte[] bytes) =>
+    internal static bool IsZip(byte[] bytes) =>
         bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04;
 
-    private static bool IsTarGz(byte[] bytes) =>
+    internal static bool IsTarGz(byte[] bytes) =>
         bytes.Length >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B;
 }

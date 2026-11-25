@@ -447,7 +447,7 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         refused.Message.ShouldStartWith("Preview blocked");
         refused.Message.ShouldContain($"{OctopusImportFeedMappingDiagnosticCodes.UnsupportedFeedType}:Feeds-9");
         (await CountAsync<Project>()).ShouldBe(0);
-        (await CountAsync<ExternalFeed>()).ShouldBe(0);
+        (await Run<SquidDbContext, int>(db => db.Set<ExternalFeed>().CountAsync(f => f.FeedType != "BuiltIn"))).ShouldBe(0, "the space's own built-in feed is not an imported one");
     }
 
     // The API never serves Octopus's built-in repository, so a step that pulls from it is refused by name.

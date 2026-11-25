@@ -26,6 +26,16 @@ public partial class PackageStoreService
             throw new PackageStoreNameConflictException(name);
     }
 
+    // A store that still holds files is not deleted: the records pointing at them would stay and every read of them would fail.
+    private async Task EnsureNothingHoldsFilesAsync(int id, CancellationToken ct)
+    {
+        foreach (var usage in usages)
+        {
+            if (await usage.HoldsFilesAsync(id, ct).ConfigureAwait(false))
+                throw new PackageStoreInUseException(id);
+        }
+    }
+
     private static string SerializeProperties(IReadOnlyDictionary<string, string> properties)
     {
         return PackageStoreConfigurationMapper.SerializeSettings(properties ?? new Dictionary<string, string>()) ?? "{}";

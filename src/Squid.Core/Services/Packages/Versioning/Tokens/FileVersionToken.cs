@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Message.Models.PackageVersioning;
 
@@ -8,11 +7,9 @@ namespace Squid.Core.Services.Packages.Versioning.Tokens;
 /// <c>{file.version}</c>: the version in the uploaded file's name, in Octopus' <c>PackageId.Version.ext</c> form (<c>Acme.Web.1.2.3-beta.1.zip</c> gives <c>1.2.3-beta.1</c>).
 /// The extension is cut off first, so the two-part <c>.tar.gz</c> cannot be mistaken for part of a pre-release tag.
 /// </summary>
-public sealed partial class FileVersionToken : IVersionTokenSource
+public sealed class FileVersionToken : IVersionTokenSource
 {
     public const string TokenName = "file.version";
-
-    private static readonly string[] Extensions = [".tar.gz", ".tgz", ".nupkg", ".zip", ".tar"];
 
     public string Token => TokenName;
 
@@ -23,12 +20,11 @@ public sealed partial class FileVersionToken : IVersionTokenSource
 
         var fileName = ReadFileName(context);
         var withoutExtension = StripExtension(fileName);
-        var match = NameAndVersion().Match(withoutExtension);
 
-        if (!match.Success)
+        if (!PackageFileName.TryParse(withoutExtension, out _, out var version))
             throw new VersionTokenValueMissingException(TokenName, $"the file name '{fileName}' has no version; expected PackageId.Version.ext, for example Acme.Web.1.2.3.zip");
 
-        return Task.FromResult(match.Groups["version"].Value);
+        return Task.FromResult(version);
     }
 
     private static string ReadFileName(VersionTokenContext context)
@@ -43,15 +39,6 @@ public sealed partial class FileVersionToken : IVersionTokenSource
 
     private static string StripExtension(string fileName)
     {
-        var extension = Extensions.FirstOrDefault(e => fileName.EndsWith(e, StringComparison.OrdinalIgnoreCase));
-
-        if (extension == null)
-            throw new VersionTokenValueMissingException(TokenName, $"the file name '{fileName}' does not end in a supported extension ({string.Join(", ", Extensions)})");
-
-        return fileName[..^extension.Length];
+        return PackageFileName.StripExtension(fileName) ?? throw new VersionTokenValueMissingException(TokenName, $"the file name '{fileName}' does not end in a supported extension ({string.Join(", ", PackageFileName.Extensions)})");
     }
-
-    // Octopus' package id and version patterns (PackageName.TryParseUnsafeFileName).
-    [GeneratedRegex(@"^(?<packageId>\w+([_.-]\w+)*?)\.(?<version>\d+(\.\d+){0,3}(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$", RegexOptions.IgnoreCase)]
-    private static partial Regex NameAndVersion();
 }

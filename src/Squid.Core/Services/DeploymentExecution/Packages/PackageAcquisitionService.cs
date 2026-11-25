@@ -44,7 +44,7 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
             hash);
         Directory.CreateDirectory(storageDir);
 
-        var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
+        var extension = fetchResult.FileExtension ?? ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
         var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
         var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
         var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");

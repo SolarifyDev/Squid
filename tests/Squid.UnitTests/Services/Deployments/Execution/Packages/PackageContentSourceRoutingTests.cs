@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Squid.Core;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.BuiltIn;
 using Squid.Core.Services.DeploymentExecution.Packages.Sources.Generic;
 using Squid.Core.Services.DeploymentExecution.Packages.Sources.GitHub;
 using Squid.Core.Services.DeploymentExecution.Packages.Sources.Helm;
@@ -40,7 +41,7 @@ public class PackageContentSourceRoutingTests
     [Theory]
     [InlineData("Generic")]
     [InlineData("Docker")]
-    [InlineData("BuiltIn")]
+    [InlineData("Artifactory")]
     [InlineData("")]
     [InlineData(null)]
     public void NoSource_ClaimsUnknownFeedTypes(string feedType)
@@ -77,7 +78,7 @@ public class PackageContentSourceRoutingTests
             .Throws(new InvalidOperationException("fallback reached"));
         var sut = PackageFetcherWiring.Create(factory.Object);
 
-        var result = await sut.FetchAsync(new ExternalFeed { Id = 1, FeedType = "BuiltIn", FeedUri = "https://x" }, "p", "1", CancellationToken.None);
+        var result = await sut.FetchAsync(new ExternalFeed { Id = 1, FeedType = "Artifactory", FeedUri = "https://x" }, "p", "1", CancellationToken.None);
 
         result.Warnings.ShouldBe(new List<string> { "Package fetch failed: fallback reached" });
     }
@@ -103,12 +104,18 @@ public class PackageContentSourceRoutingTests
         var module = new SquidModule(Serilog.Core.Logger.None, new ConfigurationBuilder().Build());
         typeof(SquidModule).GetMethod("RegisterDependency", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(module, new object[] { builder });
 
+        // The built-in source reads its index through the database edges, which a container without a database cannot build.
+        builder.RegisterInstance<IConfiguration>(new ConfigurationBuilder().Build());
+        builder.RegisterInstance(new Squid.Core.Settings.Setup.DataDirectorySetting(new ConfigurationBuilder().Build()));
+        builder.RegisterInstance(new Mock<Squid.Core.Persistence.Db.IRepository>().Object).As<Squid.Core.Persistence.Db.IRepository>();
+        builder.RegisterInstance(new Mock<Squid.Core.Persistence.Db.IUnitOfWork>().Object).As<Squid.Core.Persistence.Db.IUnitOfWork>();
+
         using var container = builder.Build();
         using var scope = container.BeginLifetimeScope();
 
         scope.Resolve<IEnumerable<IPackageContentFetcher>>().Single().ShouldBeOfType<RoutingPackageContentFetcher>();
         scope.Resolve<IEnumerable<IFeedPackageSource>>().Select(s => s.GetType()).OrderBy(t => t.Name).ToArray().ShouldBe(
-            new[] { typeof(GitHubFeedPackageSource), typeof(HelmFeedPackageSource), typeof(NuGetFeedPackageSource) });
+            new[] { typeof(BuiltInFeedPackageSource), typeof(GitHubFeedPackageSource), typeof(HelmFeedPackageSource), typeof(NuGetFeedPackageSource) });
         scope.Resolve<GenericFeedPackageSource>().ShouldNotBeNull();
     }
 }

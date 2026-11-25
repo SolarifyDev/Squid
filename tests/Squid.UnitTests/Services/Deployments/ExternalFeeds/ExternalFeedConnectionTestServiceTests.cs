@@ -42,6 +42,20 @@ public class ExternalFeedConnectionTestServiceTests
     }
 
     [Fact]
+    public async Task TestAsync_BuiltInFeed_SucceedsWithoutAUriOrAnyConnection()
+    {
+        _dataProvider.Setup(x => x.GetFeedByIdAsync(5, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ExternalFeed { Id = 5, FeedType = "BuiltIn", FeedUri = string.Empty });
+
+        var result = await CreateSut().TestAsync(5, CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        _httpClientFactory.Verify(
+            x => x.CreateClient(It.IsAny<TimeSpan?>(), It.IsAny<bool>(), It.IsAny<Dictionary<string, string>>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task TestAsync_ReturnsValidationError_WhenFeedUriMissing()
     {
         _dataProvider.Setup(x => x.GetFeedByIdAsync(1, It.IsAny<CancellationToken>()))

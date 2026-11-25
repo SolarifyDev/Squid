@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Spaces;
 using Squid.Message.Models.Spaces;
@@ -19,7 +20,7 @@ public interface ISpaceService : IScopedDependency
     Task<SpaceManagersDto> GetManagersAsync(int spaceId, CancellationToken ct = default);
 }
 
-public class SpaceService(IMapper mapper, ISpaceDataProvider spaceDataProvider, IRepository repository, ITeamDataProvider teamDataProvider, IScopedUserRoleDataProvider scopedUserRoleDataProvider, IUserRoleDataProvider userRoleDataProvider) : ISpaceService
+public class SpaceService(IMapper mapper, ISpaceDataProvider spaceDataProvider, IRepository repository, ITeamDataProvider teamDataProvider, IScopedUserRoleDataProvider scopedUserRoleDataProvider, IUserRoleDataProvider userRoleDataProvider, IBuiltInFeedProvisioner builtInFeeds) : ISpaceService
 {
     private const string SpaceOwnerRoleName = "Space Owner";
 
@@ -30,6 +31,7 @@ public class SpaceService(IMapper mapper, ISpaceDataProvider spaceDataProvider, 
         await spaceDataProvider.AddAsync(space, ct: ct).ConfigureAwait(false);
         await AssignOwnerTeamsAsync(space.Id, command.OwnerTeamIds, ct).ConfigureAwait(false);
         await SyncOwnerUsersAsync(space, command.OwnerUserIds, ct).ConfigureAwait(false);
+        await builtInFeeds.EnsureAsync(space.Id, ct).ConfigureAwait(false);
 
         return mapper.Map<SpaceDto>(space);
     }

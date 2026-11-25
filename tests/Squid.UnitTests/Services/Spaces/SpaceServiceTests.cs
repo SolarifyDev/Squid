@@ -6,6 +6,7 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Account;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Authorization;
+using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Spaces;
 using Squid.Core.Services.Teams;
 using Squid.Message.Commands.Spaces;
@@ -21,13 +22,14 @@ public class SpaceServiceTests
     private readonly Mock<ITeamDataProvider> _teamDataProvider = new();
     private readonly Mock<IScopedUserRoleDataProvider> _scopedUserRoleDataProvider = new();
     private readonly Mock<IUserRoleDataProvider> _userRoleDataProvider = new();
+    private readonly Mock<IBuiltInFeedProvisioner> _builtInFeeds = new();
     private readonly SpaceService _sut;
 
     private readonly UserRole _spaceOwnerRole = new() { Id = 10, Name = "Space Owner", IsBuiltIn = true };
 
     public SpaceServiceTests()
     {
-        _sut = new SpaceService(_mapper.Object, _spaceDataProvider.Object, _repository.Object, _teamDataProvider.Object, _scopedUserRoleDataProvider.Object, _userRoleDataProvider.Object);
+        _sut = new SpaceService(_mapper.Object, _spaceDataProvider.Object, _repository.Object, _teamDataProvider.Object, _scopedUserRoleDataProvider.Object, _userRoleDataProvider.Object, _builtInFeeds.Object);
         _userRoleDataProvider.Setup(p => p.GetByNameAsync("Space Owner", It.IsAny<CancellationToken>())).ReturnsAsync(_spaceOwnerRole);
     }
 
@@ -45,6 +47,20 @@ public class SpaceServiceTests
 
         result.ShouldBe(dto);
         _spaceDataProvider.Verify(p => p.AddAsync(space, true, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Create_GivesTheNewSpaceItsBuiltInFeed()
+    {
+        var command = new CreateSpaceCommand { Name = "Dev", Slug = "dev" };
+        var space = new Space { Id = 7, Name = "Dev" };
+
+        _mapper.Setup(m => m.Map<Space>(command)).Returns(space);
+        _mapper.Setup(m => m.Map<SpaceDto>(space)).Returns(new SpaceDto { Id = 7 });
+
+        await _sut.CreateAsync(command);
+
+        _builtInFeeds.Verify(f => f.EnsureAsync(7, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
