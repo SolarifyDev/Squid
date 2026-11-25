@@ -27,6 +27,7 @@ namespace Squid.E2ETests.Deployments.Publishing;
 /// script, the mount and the swap are still exercised but caddy itself is not. Every test is skipped (returns) when there is no Docker daemon, no bash, or the OS is Windows.
 /// </summary>
 [Trait("Category", "PublishRecipeDockerE2E")]
+[Collection(PublishCollections.Pipeline)]
 public class PublishRecipeDockerE2ETests
 {
     private const string BuiltImage = "busybox";
