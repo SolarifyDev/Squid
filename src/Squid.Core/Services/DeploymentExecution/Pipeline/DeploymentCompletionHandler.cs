@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Checkpoints;
@@ -6,6 +7,7 @@ using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Core.Settings.ServerTask;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
@@ -16,8 +18,11 @@ public sealed class DeploymentCompletionHandler(
     IDeploymentCompletionDataProvider deploymentCompletionDataProvider,
     IAutoDeployService autoDeployService,
     IDeploymentCheckpointService checkpointService,
-    IInFlightScriptCanceller inFlightScriptCanceller = null) : IDeploymentCompletionHandler
+    IInFlightScriptCanceller inFlightScriptCanceller = null,
+    ServerTaskSetting serverTaskSetting = null) : IDeploymentCompletionHandler
 {
+    private readonly ServerTaskTerminalWriteOptions _terminalWrite = ServerTaskTerminalWriteOptions.From(serverTaskSetting);
+
     public async Task OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, true, ct).ConfigureAwait(false)) return;
@@ -181,7 +186,35 @@ public sealed class DeploymentCompletionHandler(
     // is not ours to pause, finish or cancel, and nothing after it (the checkpoint cleanup, auto-deploys) may run on that run's behalf either.
     // A terminal outcome (recordSuccess != null) writes its DeploymentCompletion in the SAME transaction as the state: lifecycle progression and auto-deploy
     // read that row, so a task must never be terminal without it. A run that lost the lease throws before the record is added, so it writes neither.
+    // A transient database failure (a dropped connection, a serialization failure) rolls the whole transaction back, so the move is simply tried again, a bounded
+    // number of times: otherwise a finished deployment would reach the runner's failure path and be recorded Failed. Each attempt is self-contained (the rolled-back
+    // insert is detached, the state write is conditional on the lease), a refused lease is answered inside the attempt and never retried, and once the attempts are
+    // used up the failure surfaces exactly as it always did.
     private async Task<bool> TransitionOwnedAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await TransitionOwnedOnceAsync(ctx, fromState, toState, recordSuccess, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (attempt < _terminalWrite.MaxAttempts && !ct.IsCancellationRequested && PostgresTransientFailureClassifier.IsTransient(ex))
+            {
+                await WaitBeforeTerminalRetryAsync(ctx, toState, ex, attempt, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task WaitBeforeTerminalRetryAsync(DeploymentTaskContext ctx, string toState, Exception failure, int attempt, CancellationToken ct)
+    {
+        var delay = TimeSpan.FromMilliseconds(_terminalWrite.InitialDelay.TotalMilliseconds * Math.Pow(3, attempt - 1));
+
+        Log.Warning(failure, "[Deploy] Task {TaskId} hit a transient database failure (SQLSTATE {SqlState}) writing its {State} outcome, attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs} ms", ctx.ServerTaskId, PostgresTransientFailureClassifier.SqlStateOf(failure), toState, attempt, _terminalWrite.MaxAttempts, (long)delay.TotalMilliseconds);
+
+        await Task.Delay(delay, ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool> TransitionOwnedOnceAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
     {
         DeploymentCompletion pending = null;
 
