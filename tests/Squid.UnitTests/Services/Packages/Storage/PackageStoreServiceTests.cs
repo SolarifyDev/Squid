@@ -223,4 +223,84 @@ public sealed class PackageStoreServiceTests
     {
         _service.DescribeProviders().Select(d => d.Kind).ShouldBe([FakeSecretBlobStoreProvider.FakeKind, FileSystemPackageBlobStore.StoreKind]);
     }
+
+    private static TestPackageStoreSettingsCommand Unsaved(Dictionary<string, string> secrets = null, int? storeId = null, Dictionary<string, string> properties = null)
+    {
+        return new TestPackageStoreSettingsCommand
+        {
+            Kind = FakeSecretBlobStoreProvider.FakeKind, StoreId = storeId,
+            Properties = properties ?? new Dictionary<string, string> { ["Endpoint"] = "https://unsaved" },
+            Secrets = secrets ?? new Dictionary<string, string> { ["Token"] = "typed-token" }
+        };
+    }
+
+    [Fact]
+    public async Task TestSettings_RunsTheProviderTestOnTheUnsavedSettings_AndWritesNothing()
+    {
+        var result = await _service.TestSettingsAsync(Unsaved(), CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        _fake.LastConfiguration.Property("Endpoint").ShouldBe("https://unsaved");
+        _fake.LastConfiguration.Secret("Token").ShouldBe("typed-token");
+        _table.Rows.ShouldBeEmpty("testing unsaved settings must not create a store");
+    }
+
+    [Fact]
+    public async Task TestSettings_ReturnsTheValidationProblems_InsteadOfTesting()
+    {
+        var command = Unsaved(secrets: new Dictionary<string, string>(), properties: new Dictionary<string, string> { ["Surprise"] = "x" });
+
+        var ex = await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.TestSettingsAsync(command, CancellationToken.None));
+
+        ex.Problems.Count.ShouldBe(3, "unknown property, missing Endpoint, missing Token");
+        _fake.LastConfiguration.ShouldBeNull("the provider must not be called for invalid settings");
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAStoreId_FillsEmptySecretsFromTheStoredOnes_AndLetsTypedOnesWin()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        var emptySecrets = new Dictionary<string, string> { ["Token"] = "" };
+
+        await _service.TestSettingsAsync(Unsaved(emptySecrets, saved.Id), CancellationToken.None);
+
+        _fake.LastConfiguration.Secret("Token").ShouldBe(PlaintextToken);
+        _fake.LastConfiguration.Property("Endpoint").ShouldBe("https://unsaved", "the unsaved non-secret value is what is tested");
+
+        await _service.TestSettingsAsync(Unsaved(storeId: saved.Id), CancellationToken.None);
+
+        _fake.LastConfiguration.Secret("Token").ShouldBe("typed-token");
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAStoreId_DoesNotChangeTheSavedStore()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        var before = _table.Rows.Single();
+        var snapshot = (before.Name, before.Properties, before.Secret, before.LastModifiedDate, before.LastTestedDate, before.LastTestSucceeded, before.LastTestMessage);
+
+        await _service.TestSettingsAsync(Unsaved(new Dictionary<string, string>(), saved.Id), CancellationToken.None);
+
+        var after = _table.Rows.Single();
+
+        (after.Name, after.Properties, after.Secret, after.LastModifiedDate, after.LastTestedDate, after.LastTestSucceeded, after.LastTestMessage).ShouldBe(snapshot);
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAStoreOfAnotherKind_OrAMissingStore_IsRejected()
+    {
+        var disk = _table.Seed("Local disk", FileSystemPackageBlobStore.StoreKind, isDefault: true);
+
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.TestSettingsAsync(Unsaved(storeId: disk.Id), CancellationToken.None));
+        await Should.ThrowAsync<PackageStoreNotFoundException>(() => _service.TestSettingsAsync(Unsaved(storeId: 999), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAnUnknownKind_ThrowsProviderNotFound()
+    {
+        var command = Unsaved();
+        command.Kind = "Quantum";
+
+        await Should.ThrowAsync<PackageStoreProviderNotFoundException>(() => _service.TestSettingsAsync(command, CancellationToken.None));
+    }
 }

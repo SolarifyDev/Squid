@@ -73,7 +73,7 @@ public class AuditDocumentRegistryTests
         AuditDocumentRegistry.RegisteredDocumentTypes.ShouldBe(new[]
         {
             "Project", "Release", "Environment", "Machine", "DeploymentAccount",
-            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate"
+            "Channel", "VariableSet", "ProjectGroup", "ExternalFeed", "Certificate", "PackageStore"
         }, ignoreOrder: true);
     }
 }

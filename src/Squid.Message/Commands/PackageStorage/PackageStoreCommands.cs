@@ -72,3 +72,23 @@ public class TestPackageStoreCommand : ICommand
 public class TestPackageStoreResponse : SquidResponse<PackageBlobStoreTestResult>
 {
 }
+
+/// <summary>
+/// Tests settings that are not saved (yet): nothing is written, no store is created or updated. <see cref="StoreId"/> optionally names a saved store of
+/// the same kind whose stored secrets fill in any secret left out or empty, so an edit can be tested without retyping them.
+/// </summary>
+[RequiresPermission(Permission.AdministerSystem)]
+public class TestPackageStoreSettingsCommand : ICommand
+{
+    public string Kind { get; set; }
+
+    public Dictionary<string, string> Properties { get; set; } = new();
+
+    public Dictionary<string, string> Secrets { get; set; } = new();
+
+    public int? StoreId { get; set; }
+}
+
+public class TestPackageStoreSettingsResponse : SquidResponse<PackageBlobStoreTestResult>
+{
+}

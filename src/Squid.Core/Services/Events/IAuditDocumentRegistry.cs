@@ -1,4 +1,5 @@
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Persistence.Entities.PackageStorage;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 
 namespace Squid.Core.Services.Events;
@@ -39,7 +40,9 @@ public sealed class AuditDocumentRegistry : IAuditDocumentRegistry
         [typeof(VariableSet)] = new("VariableSet", e => { var v = (VariableSet)e; return new AuditDocumentKeys { SpaceId = v.SpaceId, Name = v.Name }; }),
         [typeof(ProjectGroup)] = new("ProjectGroup", e => { var g = (ProjectGroup)e; return new AuditDocumentKeys { SpaceId = g.SpaceId, Name = g.Name }; }),
         [typeof(ExternalFeed)] = new("ExternalFeed", e => { var f = (ExternalFeed)e; return new AuditDocumentKeys { SpaceId = f.SpaceId, Name = f.Name }; }),
-        [typeof(Certificate)] = new("Certificate", e => { var c = (Certificate)e; return new AuditDocumentKeys { SpaceId = c.SpaceId, Name = c.Name }; })
+        [typeof(Certificate)] = new("Certificate", e => { var c = (Certificate)e; return new AuditDocumentKeys { SpaceId = c.SpaceId, Name = c.Name }; }),
+        // System-wide (no space), so its events live under space 0. Only the type and name are recorded: the entity's settings and secret never reach an event.
+        [typeof(PackageStore)] = new("PackageStore", e => new AuditDocumentKeys { SpaceId = 0, Name = ((PackageStore)e).Name })
     };
 
     public bool TryDescribe(object entity, out string documentType, out AuditDocumentKeys keys)

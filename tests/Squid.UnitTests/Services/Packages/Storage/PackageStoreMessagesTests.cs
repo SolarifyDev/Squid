@@ -22,7 +22,7 @@ public sealed class PackageStoreMessagesTests
             .Where(t => typeof(ICommand).IsAssignableFrom(t) || typeof(IRequest).IsAssignableFrom(t))
             .ToList();
 
-        messages.Count.ShouldBe(8, "5 commands + 3 requests; update this when a message is added so the new one is covered");
+        messages.Count.ShouldBe(9, "6 commands + 3 requests; update this when a message is added so the new one is covered");
 
         foreach (var message in messages)
         {
