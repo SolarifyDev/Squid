@@ -344,6 +344,7 @@ public class PackageInspectionTests
     {
         PackageFactKeys.ArchiveWrapped.ShouldBe("archive.wrapped");
         PackageFactKeys.ArchiveRoot.ShouldBe("archive.root");
+        PackageFactKeys.FilesCount.ShouldBe("files.count");
         PackageFactKeys.FilesTruncated.ShouldBe("files.truncated");
         PackageFactKeys.FilesOversized.ShouldBe("files.oversized");
         PackageFactKeys.MarkerDockerfile.ShouldBe("marker.dockerfile");

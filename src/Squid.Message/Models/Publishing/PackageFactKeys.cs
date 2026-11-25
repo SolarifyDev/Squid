@@ -8,6 +8,7 @@ public static class PackageFactKeys
     // Archive shape
     public const string ArchiveWrapped = "archive.wrapped";
     public const string ArchiveRoot = "archive.root";
+    public const string FilesCount = "files.count";
     public const string FilesTruncated = "files.truncated";
     public const string FilesOversized = "files.oversized";
 

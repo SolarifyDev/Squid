@@ -1,12 +1,16 @@
+using System.Text.Json.Serialization;
+
 namespace Squid.Message.Models.Publishing;
 
 /// <summary>
-/// What inspectors learned about a pushed package: every file path (normalised: <c>/</c> separated, no leading <c>./</c>) and a dictionary of typed facts
-/// (<see cref="PackageFactKeys"/>). Paths are as stored in the archive; when the whole archive sits in one top-level folder, the <c>HasFile</c> and
-/// <c>RelativeFiles</c> members read paths relative to that folder, the effective root.
+/// What inspectors learned about a pushed package: a dictionary of typed facts (<see cref="PackageFactKeys"/>), which is all that is stored and served, and, while
+/// the push runs, the archive's file paths (normalised: <c>/</c> separated, no leading <c>./</c>). The paths are in memory only: they are not serialised, so
+/// facts read back from storage have none, and a recipe matches on <see cref="Values"/>. When the whole archive sits in one top-level folder, <c>HasFile</c> and
+/// <c>RelativeFiles</c> read paths relative to that folder, the effective root.
 /// </summary>
 public class PackageFacts
 {
+    [JsonIgnore]
     public List<string> Files { get; set; } = new();
 
     public Dictionary<string, string> Values { get; set; } = new();

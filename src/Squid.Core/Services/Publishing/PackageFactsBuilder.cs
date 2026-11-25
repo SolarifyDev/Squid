@@ -18,6 +18,8 @@ public static class PackageFactsBuilder
         facts.Values[PackageFactKeys.ArchiveWrapped] = root.Length > 0 ? PackageFactKeys.True : "false";
         facts.Values[PackageFactKeys.ArchiveRoot] = root;
 
+        facts.Values[PackageFactKeys.FilesCount] = files.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
         if (listing.Truncated) facts.Values[PackageFactKeys.FilesTruncated] = PackageFactKeys.True;
 
         return facts;

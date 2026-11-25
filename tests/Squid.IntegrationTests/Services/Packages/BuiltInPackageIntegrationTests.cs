@@ -540,7 +540,9 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
 
         var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
 
-        dto.Facts.Files.OrderBy(f => f, StringComparer.Ordinal).ShouldBe(["my-site/index.html", "my-site/package.json", "my-site/squid.yaml"]);
+        dto.Facts.Get(PackageFactKeys.FilesCount).ShouldBe("3");
+        dto.Facts.Files.ShouldBeEmpty();
+        (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM builtin_package WHERE facts::text LIKE '%index.html%'")).ShouldBe(0, "no file list in the stored jsonb");
         dto.Facts.Is(PackageFactKeys.NodeBuildScript).ShouldBeTrue();
         dto.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Static");
 

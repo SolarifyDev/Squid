@@ -24,7 +24,9 @@ public class PushInspectionTests
 
         stored.Get(PackageFactKeys.ArchiveRoot).ShouldBe("site");
         stored.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
-        stored.Files.OrderBy(f => f).ShouldBe(["site/Dockerfile", "site/index.html"]);
+        stored.Get(PackageFactKeys.FilesCount).ShouldBe("2");
+        stored.Files.ShouldBeEmpty("the file list is not persisted");
+        _h.Packages.Rows.Single().Facts.ShouldNotContain("index.html");
         result.Package.Facts.Is(PackageFactKeys.MarkerIndexHtml).ShouldBeTrue();
     }
 
@@ -85,7 +87,7 @@ public class PushInspectionTests
 
         var back = PackageFactsJson.Deserialize(PackageFactsJson.Serialize(facts));
 
-        back.Files.ShouldBe(["a/b.txt"]);
+        back.Files.ShouldBeEmpty();
         back.Values["k"].ShouldBe("v");
         PackageFactsJson.Deserialize(null).ShouldBeNull();
         PackageFactsJson.Serialize(null).ShouldBeNull();
@@ -95,10 +97,48 @@ public class PushInspectionTests
     [Fact]
     public void ListDtos_LeaveTheFactsOut()
     {
-        var row = new Squid.Core.Persistence.Entities.Deployments.BuiltInPackage { Facts = PackageFactsJson.Serialize(new PackageFacts { Files = ["x"] }) };
+        var row = new Squid.Core.Persistence.Entities.Deployments.BuiltInPackage { Facts = PackageFactsJson.Serialize(new PackageFacts { Values = { ["k"] = "v" } }) };
 
         BuiltInPackageMapper.ToDto(row).Facts.ShouldBeNull();
-        BuiltInPackageMapper.ToDto(row, withFacts: true).Facts.Files.ShouldBe(["x"]);
+        BuiltInPackageMapper.ToDto(row, withFacts: true).Facts.Values["k"].ShouldBe("v");
+    }
+
+    [Fact]
+    public void Facts_StoredWithAFileList_StillRead_AndTheListIsDropped()
+    {
+        var old = PackageFactsJson.Deserialize("""{"Files":["a/b.txt","c.txt"],"Values":{"marker.dockerfile":"true"}}""");
+
+        old.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
+        old.Files.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Push_OfA5000FileArchive_StoresSmallFacts()
+    {
+        var entries = Enumerable.Range(0, 5000).Select(i => ($"assets/some/deep/folder/file-number-{i}.txt", "x")).ToArray();
+
+        await _h.Service().PushAsync(PushHarness.Push(TestArchives.Zip(entries)), CancellationToken.None);
+
+        var json = _h.Packages.Rows.Single().Facts;
+
+        json.Length.ShouldBeLessThan(1024);
+        PackageFactsJson.Deserialize(json).Get(PackageFactKeys.FilesCount).ShouldBe("5000");
+    }
+
+    [Fact]
+    public void Recommendations_FromAStoredRow_RankFromValuesAlone()
+    {
+        var facts = PackageFactsJson.Deserialize(PackageFactsJson.Serialize(new PackageFacts { Values = { [PackageFactKeys.MarkerDockerfile] = "true" } }));
+        var registry = new DeployRecipeRegistry([new ValueRecipe("docker", PackageFactKeys.MarkerDockerfile), new ValueRecipe("static", PackageFactKeys.MarkerIndexHtml)]);
+
+        registry.Select(facts).Candidates.Select(c => c.Kind).ShouldBe(["docker"]);
+    }
+
+    private sealed class ValueRecipe(string kind, string key) : IDeployRecipe
+    {
+        public string Kind { get; } = kind;
+
+        public RecipeMatch Match(PackageFacts facts) => new() { Score = facts.Is(key) ? 80 : 0, Reasons = [key] };
     }
 
     private sealed class CountingInspector : IPackageInspector
