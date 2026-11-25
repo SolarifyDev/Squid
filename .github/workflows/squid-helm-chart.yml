@@ -1,0 +1,62 @@
+name: Squid Server Helm Chart
+
+# Render tests for every documented value combination, then the chart installed on Kind with real
+# polling agents (ingress SNI passthrough on 443, and a plain TCP Service), against the published
+# server image.
+on:
+  pull_request:
+    paths:
+      - 'deploy/helm/squid-server/**'
+      - '.github/workflows/squid-helm-chart.yml'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Server image to install'
+        required: false
+        default: 'squidcd/squid:latest'
+
+permissions:
+  contents: read
+
+jobs:
+  template:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.1
+
+      - name: Render tests
+        run: deploy/helm/squid-server/tests/template-test.sh
+
+      # README.md is generated from values.yaml; a stale one fails here.
+      - name: README matches values.yaml
+        run: |
+          docker run --rm -v "$PWD/deploy/helm/squid-server:/helm-docs" -u "$(id -u)" jnorwood/helm-docs:v1.14.2
+          git diff --exit-code -- deploy/helm/squid-server/README.md || { echo "::error::README.md is out of date: run helm-docs in deploy/helm/squid-server and commit the result"; exit 1; }
+
+  kind-e2e:
+    runs-on: ubuntu-latest
+    needs: template
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.1
+
+      - name: Install Kind
+        uses: helm/kind-action@v1.10.0
+        with:
+          install_only: true
+
+      - name: Chart E2E on Kind
+        env:
+          IMAGE: ${{ inputs.image || 'squidcd/squid:latest' }}
+        run: deploy/helm/squid-server/tests/kind-e2e.sh

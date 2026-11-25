@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "squid-server.fullname" . }}
+  labels:
+    {{- include "squid-server.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "squid-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+    # In-cluster Halibut endpoint; the ingressPassthrough route points here.
+    - name: halibut
+      port: {{ .Values.polling.port }}
+      targetPort: halibut

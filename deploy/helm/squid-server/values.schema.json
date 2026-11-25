@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "stringMap": { "type": "object", "additionalProperties": { "type": "string" } },
+    "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+  },
+  "properties": {
+    "global": { "type": "object" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+    },
+    "admin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "username": { "type": "string", "minLength": 1 },
+        "password": { "type": "string" }
+      }
+    },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "connectionString": { "type": "string" } }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "connectionString": { "type": "string" } }
+    },
+    "existingSecret": { "type": "string" },
+    "externalUrl": { "type": "string", "pattern": "^(https?://.+)?$" },
+    "pollingUrl": { "type": "string", "pattern": "^(https?://.+)?$" },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "size": { "type": "string" },
+        "storageClass": { "type": "string" },
+        "existingClaim": { "type": "string" }
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "$ref": "#/definitions/port" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "host": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "secretName": { "type": "string" } }
+        }
+      }
+    },
+    "polling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["loadBalancer", "ingressPassthrough", "nodePort", "none"] },
+        "port": { "$ref": "#/definitions/port" },
+        "host": { "type": "string" },
+        "loadBalancer": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "annotations": { "$ref": "#/definitions/stringMap" },
+            "loadBalancerIP": { "type": "string" }
+          }
+        },
+        "ingressPassthrough": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "className": { "type": "string" },
+            "annotations": { "$ref": "#/definitions/stringMap" }
+          }
+        },
+        "nodePort": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": { "anyOf": [{ "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 30000, "maximum": 32767 }] }
+          }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "$ref": "#/definitions/stringMap" },
+        "automount": { "type": "boolean" }
+      }
+    },
+    "podAnnotations": { "$ref": "#/definitions/stringMap" },
+    "podLabels": { "$ref": "#/definitions/stringMap" },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "extraEnv": {
+      "type": "array",
+      "items": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } }
+    },
+    "resources": { "type": "object" },
+    "nodeSelector": { "$ref": "#/definitions/stringMap" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" }
+  }
+}

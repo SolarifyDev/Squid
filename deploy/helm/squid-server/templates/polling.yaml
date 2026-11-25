@@ -1,0 +1,56 @@
+{{- $p := .Values.polling }}
+{{- if has $p.mode (list "loadBalancer" "nodePort") }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "squid-server.fullname" . }}-polling
+  labels:
+    {{- include "squid-server.labels" . | nindent 4 }}
+  {{- with (and (eq $p.mode "loadBalancer") $p.loadBalancer.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ ternary "LoadBalancer" "NodePort" (eq $p.mode "loadBalancer") }}
+  {{- if and (eq $p.mode "loadBalancer") $p.loadBalancer.loadBalancerIP }}
+  loadBalancerIP: {{ $p.loadBalancer.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "squid-server.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: halibut
+      port: {{ $p.port }}
+      targetPort: halibut
+      protocol: TCP
+      {{- if and (eq $p.mode "nodePort") $p.nodePort.port }}
+      nodePort: {{ $p.nodePort.port }}
+      {{- end }}
+{{- else if eq $p.mode "ingressPassthrough" }}
+# TLS passes through untouched (routed by SNI): Halibut's mutual TLS ends at the server.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "squid-server.fullname" . }}-polling
+  labels:
+    {{- include "squid-server.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    {{- with $p.ingressPassthrough.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with $p.ingressPassthrough.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ $p.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "squid-server.fullname" . }}
+                port:
+                  name: halibut
+{{- end }}
