@@ -127,7 +127,12 @@ scenario_quickstart() {
     assert_spa_served "$name"
     [[ "$(status_of "$name")" == *'"dataVolumeWarning":"'* ]] || fail "quickstart: no anonymous-volume warning in setup status: $(status_of "$name")"
     grep -q 'anonymous Docker volume' <<< "$(docker logs "$name" 2>&1)" || fail "quickstart: no anonymous-volume warning in the log"
-    grep -q '/setup?token=' <<< "$(docker logs "$name" 2>&1)" || fail "quickstart: the setup link was not logged"
+    local logs token
+    logs="$(docker logs "$name" 2>&1)"
+    token="$(docker exec "$name" cat /data/setup-token)"
+    grep -q '/setup' <<< "$logs" || fail "quickstart: the setup page was not announced in the log"
+    grep -q 'setup-token' <<< "$logs" || fail "quickstart: the log does not say where to read the setup token"
+    [[ "$logs" != *"$token"* ]] || fail "quickstart: the setup token value was written to the log"
     wait_healthy "$name"
     log "quickstart: OK"
 }
