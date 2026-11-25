@@ -167,7 +167,9 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
         // scenario no longer depends on sub-second timing; the journal assertion below proves it was reached.
         var (exitCode, output) = ctx.RunUpgradeScript(ctx.RenderProductionScriptForVersion(targetVersion: V2, healthcheckRetries: 60));
 
-        ctx.Fixture.ReadUnitJournal().ShouldContain("start-limit-hit", customMessage: Tail("the crash-looping v2 must have hit systemd's start limit BEFORE the rollback start, otherwise this test does not exercise reset-failed", exitCode, output));
+        var journal = ctx.Fixture.ReadUnitJournal();
+
+        journal.ShouldContain("start-limit-hit", Case.Insensitive, customMessage: Tail($"the crash-looping v2 must have hit systemd's start limit BEFORE the rollback start, otherwise this test does not exercise reset-failed. Unit journal (tail):\n{TailOf(journal, 4000)}", exitCode, output));
         exitCode.ShouldBe(4, customMessage: Tail("crash-on-start rollback MUST exit 4 (ROLLED_BACK) even after start-limit-hit; exit 9 or a script killed mid-rollback means the start was refused and not reset", exitCode, output));
 
         var status = ctx.ReadLastUpgradeStatus();
@@ -352,4 +354,6 @@ public sealed class TentacleLinuxVersionedUpgradeE2ETests
 
     private static string Tail(string prefix, int exitCode, string output) =>
         $"{prefix}. Got exit {exitCode}.\noutput tail (last 2k chars):\n{(output.Length > 2000 ? "..." + output.Substring(output.Length - 2000) : output)}";
+
+    private static string TailOf(string text, int max) => text.Length <= max ? text : text[^max..];
 }

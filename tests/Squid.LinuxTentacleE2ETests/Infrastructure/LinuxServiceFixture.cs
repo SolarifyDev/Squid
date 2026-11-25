@@ -351,7 +351,7 @@ public sealed class LinuxServiceFixture : IDisposable
     /// The unit's journal (`journalctl -u`). Survives `reset-failed`, so it can prove after the fact that
     /// systemd reached start-limit-hit. Empty string when journald is unavailable.
     /// </summary>
-    public string ReadUnitJournal() => RunSudoCapture($"journalctl -u {Quote(_serviceName)} --no-pager -o cat") ?? string.Empty;
+    public string ReadUnitJournal() => RunSudoCapture($"journalctl -u {Quote(_serviceName)} --no-pager -o short-precise") ?? string.Empty;
 
     public void Dispose()
     {
