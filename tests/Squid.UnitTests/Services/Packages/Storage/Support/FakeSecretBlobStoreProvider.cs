@@ -28,11 +28,15 @@ internal sealed class FakeSecretBlobStoreProvider : IPackageBlobStoreProvider
             [
                 new PackageStoreFieldDescriptor { Key = "Endpoint", Label = "Endpoint", Kind = PackageStoreFieldKind.Text, Required = true },
                 new PackageStoreFieldDescriptor { Key = "Mode", Label = "Mode", Kind = PackageStoreFieldKind.Select, Options = ["fast", "safe"] },
-                new PackageStoreFieldDescriptor { Key = "Token", Label = "Token", Kind = PackageStoreFieldKind.Secret, Required = true },
+                new PackageStoreFieldDescriptor { Key = "Token", Label = "Token", Kind = PackageStoreFieldKind.Secret, Required = true, BoundTo = ["Endpoint", "Mode"] },
                 new PackageStoreFieldDescriptor { Key = "Proxy", Label = "Proxy password", Kind = PackageStoreFieldKind.Secret }
             ]
         };
     }
+
+    public List<string> Problems { get; } = new();
+
+    public IReadOnlyList<string> ValidateConfiguration(PackageBlobStoreConfiguration configuration) => Problems;
 
     public IPackageBlobStore Create(PackageBlobStoreConfiguration configuration)
     {

@@ -55,12 +55,11 @@ public sealed class PackageStoreServiceTests
     {
         var created = await _service.CreateAsync(NewFake(), CancellationToken.None);
 
-        await _service.UpdateAsync(new UpdatePackageStoreCommand { Id = created.Id, Name = "Renamed", Properties = new Dictionary<string, string> { ["Endpoint"] = "https://y" } }, CancellationToken.None);
+        await _service.UpdateAsync(new UpdatePackageStoreCommand { Id = created.Id, Name = "Renamed", Properties = new Dictionary<string, string> { ["Endpoint"] = "https://x" } }, CancellationToken.None);
 
         var row = _table.Rows.Single();
 
         row.Name.ShouldBe("Renamed");
-        JsonSerializer.Deserialize<Dictionary<string, string>>(row.Properties)["Endpoint"].ShouldBe("https://y");
         JsonSerializer.Deserialize<Dictionary<string, string>>(row.Secret)["Token"].ShouldBe(PlaintextToken);
     }
 
@@ -261,13 +260,14 @@ public sealed class PackageStoreServiceTests
     {
         var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
         var emptySecrets = new Dictionary<string, string> { ["Token"] = "" };
+        var sameEndpoint = new Dictionary<string, string> { ["Endpoint"] = "https://x" };
 
-        await _service.TestSettingsAsync(Unsaved(emptySecrets, saved.Id), CancellationToken.None);
+        await _service.TestSettingsAsync(Unsaved(emptySecrets, saved.Id, sameEndpoint), CancellationToken.None);
 
         _fake.LastConfiguration.Secret("Token").ShouldBe(PlaintextToken);
-        _fake.LastConfiguration.Property("Endpoint").ShouldBe("https://unsaved", "the unsaved non-secret value is what is tested");
+        _fake.LastConfiguration.Property("Endpoint").ShouldBe("https://x");
 
-        await _service.TestSettingsAsync(Unsaved(storeId: saved.Id), CancellationToken.None);
+        await _service.TestSettingsAsync(Unsaved(storeId: saved.Id, properties: sameEndpoint), CancellationToken.None);
 
         _fake.LastConfiguration.Secret("Token").ShouldBe("typed-token");
     }
@@ -279,7 +279,7 @@ public sealed class PackageStoreServiceTests
         var before = _table.Rows.Single();
         var snapshot = (before.Name, before.Properties, before.Secret, before.LastModifiedDate, before.LastTestedDate, before.LastTestSucceeded, before.LastTestMessage);
 
-        await _service.TestSettingsAsync(Unsaved(new Dictionary<string, string>(), saved.Id), CancellationToken.None);
+        await _service.TestSettingsAsync(Unsaved(new Dictionary<string, string>(), saved.Id, new Dictionary<string, string> { ["Endpoint"] = "https://x" }), CancellationToken.None);
 
         var after = _table.Rows.Single();
 
@@ -302,5 +302,189 @@ public sealed class PackageStoreServiceTests
         command.Kind = "Quantum";
 
         await Should.ThrowAsync<PackageStoreProviderNotFoundException>(() => _service.TestSettingsAsync(command, CancellationToken.None));
+    }
+
+    private static UpdatePackageStoreCommand Edit(int id, string endpoint, string token = null, string name = "Remote")
+    {
+        return new UpdatePackageStoreCommand
+        {
+            Id = id, Name = name, Properties = new Dictionary<string, string> { ["Endpoint"] = endpoint },
+            Secrets = token == null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["Token"] = token }
+        };
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAChangedBoundField_DoesNotSendTheStoredSecretToTheNewDestination()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        var redirected = Unsaved(new Dictionary<string, string>(), saved.Id, new Dictionary<string, string> { ["Endpoint"] = "https://attacker.example" });
+
+        var ex = await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.TestSettingsAsync(redirected, CancellationToken.None));
+
+        ex.Problems.ShouldBe(["\"Token\" must be entered again because \"Endpoint\" was changed"]);
+        _fake.LastConfiguration.ShouldBeNull("the provider must never see the stored token together with the new endpoint");
+    }
+
+    [Fact]
+    public async Task TestSettings_WithAChangedBoundField_AndARetypedSecret_TestsWithTheTypedSecretOnly()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+
+        await _service.TestSettingsAsync(Unsaved(new Dictionary<string, string> { ["Token"] = "retyped" }, saved.Id, new Dictionary<string, string> { ["Endpoint"] = "https://other" }), CancellationToken.None);
+
+        _fake.LastConfiguration.Secret("Token").ShouldBe("retyped");
+    }
+
+    [Fact]
+    public async Task Update_WithAChangedBoundField_AndNoNewSecret_IsRejected_AndTheRowIsUntouched()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        var before = _table.Rows.Single().Secret;
+
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.UpdateAsync(Edit(saved.Id, "https://attacker"), CancellationToken.None));
+
+        _table.Rows.Single().Secret.ShouldBe(before);
+        JsonSerializer.Deserialize<Dictionary<string, string>>(_table.Rows.Single().Properties)["Endpoint"].ShouldBe("https://x");
+    }
+
+    [Fact]
+    public async Task Update_WithAChangedBoundField_AndANewSecret_StoresTheNewSecret_AndKeepsTheUnboundOne()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        await _service.UpdateAsync(new UpdatePackageStoreCommand { Id = saved.Id, Name = "Remote", Properties = new Dictionary<string, string> { ["Endpoint"] = "https://x" }, Secrets = new Dictionary<string, string> { ["Proxy"] = "old-proxy" } }, CancellationToken.None);
+
+        await _service.UpdateAsync(Edit(saved.Id, "https://moved", "new-token"), CancellationToken.None);
+
+        JsonSerializer.Deserialize<Dictionary<string, string>>(_table.Rows.Single().Secret).ShouldBe(new Dictionary<string, string> { ["Token"] = "new-token", ["Proxy"] = "old-proxy" }.OrderBy(p => p.Key).ToDictionary(p => p.Key, p => p.Value), "Proxy is not bound to the endpoint, so it stays");
+    }
+
+    [Fact]
+    public async Task Update_ClearsTheLastTestResult_WhenSettingsChange_ButNotForARename()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        await _service.TestAsync(saved.Id, CancellationToken.None);
+
+        await _service.UpdateAsync(Edit(saved.Id, "https://x", name: "Renamed"), CancellationToken.None);
+
+        _table.Rows.Single().LastTestSucceeded.ShouldBe(true, "a rename does not invalidate what the test showed");
+
+        await _service.UpdateAsync(Edit(saved.Id, "https://x", token: "rotated", name: "Renamed"), CancellationToken.None);
+
+        var row = _table.Rows.Single();
+
+        row.LastTestSucceeded.ShouldBeNull();
+        row.LastTestMessage.ShouldBeNull();
+        row.LastTestedDate.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Update_WhenTheStoreWasDeletedMeanwhile_ThrowsNotFound()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+        _table.Seed("Other", FileSystemPackageBlobStore.StoreKind, isDefault: true);
+
+        await _service.DeleteAsync(saved.Id, CancellationToken.None);
+
+        await Should.ThrowAsync<PackageStoreNotFoundException>(() => _service.UpdateAsync(Edit(saved.Id, "https://x"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ProviderValidation_RunsBeforeSaving_ForCreate_Update_AndTestSettings_AndNothingIsWritten()
+    {
+        var saved = await _service.CreateAsync(NewFake(), CancellationToken.None);
+
+        _fake.Problems.Add("\"Endpoint\" looks wrong");
+
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.CreateAsync(NewFake("Second"), CancellationToken.None));
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.UpdateAsync(Edit(saved.Id, "https://x", name: "Renamed"), CancellationToken.None));
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.TestSettingsAsync(Unsaved(), CancellationToken.None));
+
+        _table.Rows.Select(r => r.Name).ShouldBe(["Remote"]);
+    }
+
+    [Fact]
+    public async Task Names_AreUniqueIgnoringCase()
+    {
+        await _service.CreateAsync(NewFake("Remote"), CancellationToken.None);
+
+        await Should.ThrowAsync<PackageStoreNameConflictException>(() => _service.CreateAsync(NewFake("REMOTE"), CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("[1,2]")]
+    public async Task ARowWhoseSettingsCannotBeRead_StillRendersInTheList_WithAWarning(string brokenProperties)
+    {
+        _table.Seed("Healthy", FileSystemPackageBlobStore.StoreKind, isDefault: true);
+        _table.Seed("Broken", FileSystemPackageBlobStore.StoreKind, brokenProperties);
+
+        var list = await _service.ListAsync(CancellationToken.None);
+
+        list.Count.ShouldBe(2);
+        list.Single(d => d.Name == "Broken").Warnings.ShouldContain(w => w.Contains("settings are invalid"));
+        list.Single(d => d.Name == "Healthy").Warnings.ShouldNotContain(w => w.Contains("settings are invalid"));
+    }
+
+    [Fact]
+    public async Task ARowWhoseRootCannotBeResolved_StillRendersInTheList_WithAWarning()
+    {
+        _table.Seed("NulRoot", FileSystemPackageBlobStore.StoreKind, "{\"Root\":\"/srv/\\u0000bad\"}");
+        _table.Seed("SystemRoot", FileSystemPackageBlobStore.StoreKind, "{\"Root\":\"/etc\"}");
+
+        var list = await _service.ListAsync(CancellationToken.None);
+
+        list.Select(d => d.Name).ShouldBe(["NulRoot", "SystemRoot"], ignoreOrder: true);
+        list.ShouldAllBe(d => d.Warnings.Any(w => w.Contains("settings are invalid")));
+    }
+
+    [Fact]
+    public async Task Create_OfAFileSystemStoreWithABadRoot_IsRejected_BeforeAnythingIsSaved()
+    {
+        foreach (var root in new[] { "/srv/\0bad", "/", "/etc", "relative/path" })
+        {
+            var command = new CreatePackageStoreCommand { Name = "Bad", Kind = FileSystemPackageBlobStore.StoreKind, Properties = new Dictionary<string, string> { ["Root"] = root } };
+
+            await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => _service.CreateAsync(command, CancellationToken.None), $"root {root}");
+        }
+
+        _table.Rows.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Test_OfASavedStoreWhoseRootIsInvalid_ReportsFailure_InsteadOfThrowing()
+    {
+        var broken = _table.Seed("Broken", FileSystemPackageBlobStore.StoreKind, "{\"Root\":\"/etc\"}");
+
+        var result = await _service.TestAsync(broken.Id, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        _table.Rows.Single().LastTestSucceeded.ShouldBe(false);
+    }
+
+    [Fact]
+    public async Task TheStoreDto_ShowsTheResolvedLocation_EvenForAnEmptyRoot_AndNullForABrokenOne()
+    {
+        var empty = _table.Seed("Local disk", FileSystemPackageBlobStore.StoreKind, "{}", isDefault: true);
+        var explicitRoot = _table.Seed("Explicit", FileSystemPackageBlobStore.StoreKind, "{\"Root\":\"/srv/pk\"}");
+        var broken = _table.Seed("Broken", FileSystemPackageBlobStore.StoreKind, "{\"Root\":\"/etc\"}");
+
+        (await _service.GetAsync(empty.Id, CancellationToken.None)).Location.ShouldEndWith("packages");
+        (await _service.GetAsync(explicitRoot.Id, CancellationToken.None)).Location.ShouldBe("/srv/pk");
+        (await _service.GetAsync(broken.Id, CancellationToken.None)).Location.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task BothTests_CarryTheProvidersWarnings()
+    {
+        var inside = Path.Combine(AppContext.BaseDirectory, "packages-warning-test");
+        var saved = _table.Seed("Inside", FileSystemPackageBlobStore.StoreKind, "{\"Root\":" + System.Text.Json.JsonSerializer.Serialize(inside) + "}");
+
+        var rowTest = await _service.TestAsync(saved.Id, CancellationToken.None);
+        var settingsTest = await _service.TestSettingsAsync(new TestPackageStoreSettingsCommand { Kind = FileSystemPackageBlobStore.StoreKind, Properties = new Dictionary<string, string> { ["Root"] = inside } }, CancellationToken.None);
+
+        rowTest.Warnings.ShouldContain(w => w.Contains("inside the application folder"));
+        settingsTest.Warnings.ShouldContain(w => w.Contains("inside the application folder"));
+
+        if (Directory.Exists(inside)) Directory.Delete(inside, recursive: true);
     }
 }

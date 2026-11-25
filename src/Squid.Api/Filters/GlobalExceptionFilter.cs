@@ -70,6 +70,9 @@ public class GlobalExceptionFilter : IExceptionFilter
             BuiltInFeedDeletionException => HttpStatusCode.Conflict,
             BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
             BuiltInFeedCreationException => HttpStatusCode.Conflict,
+            PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
+            InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
+            PackageBlobNotFoundException => HttpStatusCode.NotFound,
             _ => HttpStatusCode.InternalServerError
         };
 

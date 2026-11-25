@@ -107,4 +107,22 @@ public sealed class PackageBlobStoreRegistryTests : IDisposable
 
         await Should.ThrowAsync<NoDefaultPackageStoreException>(() => _registry.ResolveDefaultAsync(CancellationToken.None));
     }
+
+    [Fact]
+    public async Task ADeletedStore_IsDroppedFromTheCache_SoARestoredRowIsBuiltAgain()
+    {
+        var saved = _table.Seed("Remote", FakeSecretBlobStoreProvider.FakeKind);
+
+        await _registry.ResolveAsync(saved.Id, CancellationToken.None);
+
+        var row = _table.Remove(saved.Id);
+
+        await Should.ThrowAsync<PackageStoreNotFoundException>(() => _registry.ResolveAsync(saved.Id, CancellationToken.None));
+
+        _table.Restore(row);   // same id and the same LastModifiedDate: only a dropped cache entry forces a rebuild
+
+        await _registry.ResolveAsync(saved.Id, CancellationToken.None);
+
+        _provider.Created.ShouldBe(2);
+    }
 }

@@ -110,4 +110,16 @@ public sealed class FileSystemRootPersistenceInspectorTests
     {
         FileSystemRootPersistenceInspector.FindWarning("", MountInfo(OverlayRoot)).ShouldBeNull();
     }
+
+    [Theory]
+    [InlineData("/my\\040data", "/my data/packages")]
+    [InlineData("/my\\011tab", "/my\ttab/packages")]
+    [InlineData("/back\\134slash", "/back\\slash/packages")]
+    [InlineData("/new\\012line", "/new\nline/packages")]
+    public void EveryOctalEscapeInAMountPoint_IsDecoded(string escapedMountPoint, string root)
+    {
+        var mount = $"1020 1010 254:1 /docker/volumes/47391b86f3f14de6988e273f5766920129bd488a2065e45b95845d966c3ef4ad/_data {escapedMountPoint} rw - ext4 /dev/vda1 rw";
+
+        FileSystemRootPersistenceInspector.FindWarning(root, MountInfo(OverlayRoot, mount)).ShouldContain("anonymous");
+    }
 }

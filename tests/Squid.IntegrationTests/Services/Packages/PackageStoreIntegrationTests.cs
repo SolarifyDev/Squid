@@ -91,7 +91,7 @@ public class PackageStoreIntegrationTests : TestBase
         var dto = await CreateAsync(NewSecretStore());
         var before = (await RawRowAsync(dto.Id)).Secret;
 
-        await Run<IPackageStoreService>(service => service.UpdateAsync(new UpdatePackageStoreCommand { Id = dto.Id, Name = "Renamed", Properties = new Dictionary<string, string> { ["Endpoint"] = "https://other" } }, CancellationToken.None));
+        await Run<IPackageStoreService>(service => service.UpdateAsync(new UpdatePackageStoreCommand { Id = dto.Id, Name = "Renamed", Properties = new Dictionary<string, string> { ["Endpoint"] = "https://example" } }, CancellationToken.None));
 
         var after = await RawRowAsync(dto.Id);
 
@@ -157,9 +157,7 @@ public class PackageStoreIntegrationTests : TestBase
         await InsertDefaultAsync("A", isDefault: false);
         await InsertDefaultAsync("B", isDefault: false);
 
-        var ex = await Should.ThrowAsync<DbUpdateException>(() => InsertDefaultAsync("A", isDefault: false));
-
-        ((PostgresException)ex.InnerException!).ConstraintName.ShouldBe("ux_package_store_name");
+        await Should.ThrowAsync<PackageStoreNameConflictException>(() => InsertDefaultAsync("a", isDefault: false));
     }
 
     [Fact]
@@ -231,6 +229,8 @@ public class PackageStoreIntegrationTests : TestBase
 
         try
         {
+            Directory.CreateDirectory(root);
+
             var dto = await CreateAsync(new CreatePackageStoreCommand { Name = "Disk", Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = root } });
             var modifiedBefore = (await RawRowAsync(dto.Id)).LastModifiedDate;
 
@@ -315,7 +315,7 @@ public class PackageStoreIntegrationTests : TestBase
         var result = await Run<IPackageStoreService, PackageBlobStoreTestResult>(service => service.TestSettingsAsync(new TestPackageStoreSettingsCommand
         {
             Kind = SecretKind, StoreId = dto.Id,
-            Properties = new Dictionary<string, string> { ["Endpoint"] = "https://edited-but-unsaved" },
+            Properties = new Dictionary<string, string> { ["Endpoint"] = "https://example" },
             Secrets = new Dictionary<string, string> { ["Token"] = "" }
         }, CancellationToken.None));
 
@@ -338,6 +338,8 @@ public class PackageStoreIntegrationTests : TestBase
 
         try
         {
+            Directory.CreateDirectory(root);
+
             var result = await Run<IMediator, TestPackageStoreSettingsResponse>(mediator => mediator.SendAsync<TestPackageStoreSettingsCommand, TestPackageStoreSettingsResponse>(
                 new TestPackageStoreSettingsCommand { Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = root } }));
 
@@ -400,10 +402,12 @@ public class PackageStoreIntegrationTests : TestBase
             Fields =
             [
                 new PackageStoreFieldDescriptor { Key = "Endpoint", Label = "Endpoint", Kind = PackageStoreFieldKind.Text, Required = true },
-                new PackageStoreFieldDescriptor { Key = "Token", Label = "Token", Kind = PackageStoreFieldKind.Secret, Required = true },
+                new PackageStoreFieldDescriptor { Key = "Token", Label = "Token", Kind = PackageStoreFieldKind.Secret, Required = true, BoundTo = ["Endpoint"] },
                 new PackageStoreFieldDescriptor { Key = "Proxy", Label = "Proxy", Kind = PackageStoreFieldKind.Secret }
             ]
         };
+
+        public IReadOnlyList<string> ValidateConfiguration(PackageBlobStoreConfiguration configuration) => [];
 
         public IPackageBlobStore Create(PackageBlobStoreConfiguration configuration) => new ProbeStore(configuration);
 
