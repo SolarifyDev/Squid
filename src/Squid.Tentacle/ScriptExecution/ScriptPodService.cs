@@ -124,10 +124,6 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
                 return _terminalResults[ticketId].Response;
             }
-            finally
-            {
-                _cancelRequests.TryRemove(ticketId, out _);
-            }
 
             return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
         }
@@ -186,7 +182,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
 
-            return !HonourCancelRequestedDuringLaunch(ticketId);
+            var cancelled = HonourCancelRequestedDuringLaunch(ticketId);
+
+            AfterHonourCheckHookForTests?.Invoke();
+
+            return !cancelled;
         }
         catch
         {
@@ -213,6 +213,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         return true;
     }
 
+    /// <summary>Test-only: runs in the launcher after it checked for a cancel request, with the pod tracked, before the launch is reported finished.</summary>
+    internal Action? AfterHonourCheckHookForTests { get; set; }
+
+    /// <summary>Test-only: runs after a Cancel recorded its request and before it arbitrates ownership of it.</summary>
+    internal Action? AfterCancelRequestRecordedHookForTests { get; set; }
+
+    // Called once the ticket is no longer in-flight. A request is only ever discarded when no pod was launched (a failed launch): with a pod
+    // tracked, the request is either already consumed by the launcher's check or belongs to the Cancel that recorded it, which cancels the pod itself.
+    internal void DropUnhonouredCancelRequest(string ticketId)
+    {
+        if (!_scripts.ContainsKey(ticketId)) _cancelRequests.TryRemove(ticketId, out _);
+    }
+
     /// <summary>
     /// A ticket mid-launch has no pod to cancel yet: record the request for the launcher. Returns true when the launcher took it over; false when the
     /// pod is already tracked (the caller cancels it) or the launch already ended (nothing left to cancel).
@@ -224,6 +237,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         BeforeCancelRequestRecordedHookForTests?.Invoke();
 
         _cancelRequests[ticketId] = 0;
+
+        AfterCancelRequestRecordedHookForTests?.Invoke();
 
         if (_scripts.ContainsKey(ticketId)) return !_cancelRequests.TryRemove(ticketId, out _);
 
@@ -653,7 +668,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             finally
             {
                 _startsInFlight.TryRemove(kvp.Key, out _);
-                _cancelRequests.TryRemove(kvp.Key, out _);
+                DropUnhonouredCancelRequest(kvp.Key);
             }
 
             if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)

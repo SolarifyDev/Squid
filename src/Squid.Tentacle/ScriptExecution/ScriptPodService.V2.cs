@@ -58,6 +58,7 @@ public partial class ScriptPodService : IScriptServiceV2
         finally
         {
             _startsInFlight.TryRemove(ticket.TaskId, out _);
+            DropUnhonouredCancelRequest(ticket.TaskId);
         }
     }
 

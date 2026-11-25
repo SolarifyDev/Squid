@@ -228,6 +228,39 @@ public class ScriptPodServiceCancelDuringLaunchTests : IDisposable
     }
 
     [Fact]
+    public async Task Cancel_RecordsItsRequestAfterTheLauncherCheckedButBeforeTheLauncherFinished_CancelsThePodItself()
+    {
+        var service = NewService();
+        service.LaunchSettleTimeoutForTests = TimeSpan.FromMilliseconds(50);
+        var command = NewCommand();
+        var parked = ParkPodCreate(PodOf(command));
+        var starting = Task.Run(() => service.StartScript(command));
+        parked.Entered.Wait(WaitLimit).ShouldBeTrue();
+        using var launcherChecked = new ManualResetEventSlim();
+        using var releaseLauncher = new ManualResetEventSlim();
+
+        // The launcher has tracked the pod and found no cancel request, then waits; the Cancel records its request only now, and the launcher
+        // finishes (everything it does after its check) before the Cancel arbitrates ownership of that request.
+        service.AfterHonourCheckHookForTests = () => { service.AfterHonourCheckHookForTests = null; launcherChecked.Set(); releaseLauncher.Wait(WaitLimit); };
+        service.BeforeCancelRequestRecordedHookForTests = () =>
+        {
+            service.BeforeCancelRequestRecordedHookForTests = null;
+            parked.Release.Set();
+            launcherChecked.Wait(WaitLimit).ShouldBeTrue("the launcher must reach its cancel check");
+        };
+        service.AfterCancelRequestRecordedHookForTests = () =>
+        {
+            service.AfterCancelRequestRecordedHookForTests = null;
+            releaseLauncher.Set();
+            starting.Wait(WaitLimit).ShouldBeTrue("the launch must finish between the Cancel's record and its arbitration");
+        };
+
+        var cancel = service.CancelScript(new CancelScriptCommandV2(command.ScriptTicket, 0));
+
+        AssertCancelledAndFullyReleased(service, command, cancel);
+    }
+
+    [Fact]
     public async Task Cancel_DequeuedLaunchThatFails_LeavesNoStaleCancelRequest()
     {
         var service = NewService();
