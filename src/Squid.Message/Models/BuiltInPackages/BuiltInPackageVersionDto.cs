@@ -1,3 +1,5 @@
+using Squid.Message.Models.Publishing;
+
 namespace Squid.Message.Models.BuiltInPackages;
 
 /// <summary>One stored version of a built-in feed package.</summary>
@@ -23,4 +25,7 @@ public class BuiltInPackageVersionDto
     public int PublishedBy { get; set; }
 
     public string Source { get; set; }
+
+    /// <summary>What inspection found in the package. Null when the version was pushed before inspection existed, and left out of version lists.</summary>
+    public PackageFacts Facts { get; set; }
 }

@@ -1,6 +1,7 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Message.Commands.BuiltInPackages;
+using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
@@ -16,6 +17,9 @@ public sealed partial class BuiltInPackagePushService
         // Upload
         public StagedUpload Staged { get; set; }
         public BuiltInPackageFormat Format { get; set; }
+
+        // Inspection
+        public PackageFacts Facts { get; set; }
 
         // Version
         public string Version { get; set; }

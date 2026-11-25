@@ -12,6 +12,8 @@ using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Core.Services.Packages.Versioning;
+using Squid.Core.Services.Publishing;
+using Squid.Core.Services.Publishing.Inspectors;
 using Squid.Message.Constants;
 using Squid.Message.Models.BuiltInPackages;
 using Squid.Message.Models.PackageVersioning;
@@ -148,6 +150,7 @@ internal sealed class FakeBuiltInPackageDataProvider : IBuiltInPackageDataProvid
         row.StoreId = content.StoreId;
         row.BlobKey = content.BlobKey;
         row.Source = content.Source;
+        row.Facts = content.Facts;
 
         return Task.CompletedTask;
     }
@@ -279,6 +282,9 @@ internal sealed class PushHarness
 
     public SpyAssigner Assigner { get; }
 
+    /// <summary>The inspectors a push runs: the real ones, unless a test swaps them.</summary>
+    public List<IPackageInspector> Inspectors { get; set; } = [new FileMarkerInspector(), new NodeInspector(), new SquidYamlInspector()];
+
     public PushHarness()
     {
         Registry = new FakeBlobStoreRegistry(Blobs);
@@ -289,7 +295,7 @@ internal sealed class PushHarness
 
     public BuiltInPackagePushService Service(Squid.Core.Services.Identity.ICurrentUser user = null)
     {
-        return new BuiltInPackagePushService(new FakeFeedLocator(Feed), Packages, Usage, Assigner, Rules, Stores, Registry, user, TimeProvider.System);
+        return new BuiltInPackagePushService(new FakeFeedLocator(Feed), Packages, Usage, Assigner, Rules, Stores, Registry, new PackageInspectionService(Inspectors), user, TimeProvider.System);
     }
 
     public static Squid.Message.Commands.BuiltInPackages.PushBuiltInPackageCommand Push(byte[] bytes, string fileName = "Acme.Web.1.0.0.zip", string packageId = null, string version = null, bool replace = false)

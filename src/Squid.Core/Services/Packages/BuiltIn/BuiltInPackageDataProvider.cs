@@ -61,7 +61,8 @@ public class BuiltInPackageDataProvider(IRepository repository, IUnitOfWork unit
     {
         return repository.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE builtin_package SET file_extension = {content.FileExtension}, size_bytes = {content.SizeBytes}, sha256 = {content.Sha256}, store_id = {content.StoreId}, blob_key = {content.BlobKey},
-                published_date = {content.PublishedDate}, published_by = {content.PublishedBy}, source = {content.Source}
+                published_date = {content.PublishedDate}, published_by = {content.PublishedBy}, source = {content.Source},
+                facts = {content.Facts}::jsonb
             WHERE id = {id}
             """, ct);
     }

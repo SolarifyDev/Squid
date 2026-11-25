@@ -2,6 +2,7 @@ using Squid.Core.Services.Identity;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Packages.Versioning;
+using Squid.Core.Services.Publishing;
 using Squid.Message.Commands.BuiltInPackages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
@@ -17,7 +18,7 @@ public interface IBuiltInPackagePushService : IScopedDependency
 
 // Flat pipeline: each step enriches _ctx or throws its own exception; a push whose bytes the latest version already holds leaves through
 // PackageContentUnchangedException, which is caught here and answered as a success.
-public sealed partial class BuiltInPackagePushService(IBuiltInFeedLocator feeds, IBuiltInPackageDataProvider packages, IBuiltInPackageUsage usage, IPackageVersionAssigner assigner, IPackageVersionRuleService rules, IPackageStoreDataProvider stores, IPackageBlobStoreRegistry registry, ICurrentUser currentUser, TimeProvider time = null) : IBuiltInPackagePushService
+public sealed partial class BuiltInPackagePushService(IBuiltInFeedLocator feeds, IBuiltInPackageDataProvider packages, IBuiltInPackageUsage usage, IPackageVersionAssigner assigner, IPackageVersionRuleService rules, IPackageStoreDataProvider stores, IPackageBlobStoreRegistry registry, IPackageInspectionService inspection, ICurrentUser currentUser, TimeProvider time = null) : IBuiltInPackagePushService
 {
     private PushContext _ctx;
 
@@ -36,6 +37,7 @@ public sealed partial class BuiltInPackagePushService(IBuiltInFeedLocator feeds,
             await EnsureLatestDiffersAsync(ct);
             await ResolveVersionAsync(ct);
             await EnsureVersionWritableAsync(ct);
+            await InspectPackageAsync(ct);
             await ResolveStoreAsync(ct);
             await WriteBlobAsync(ct);
             await RecordVersionAsync(ct);

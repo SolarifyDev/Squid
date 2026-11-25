@@ -15,6 +15,8 @@ using Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.Storage;
+using Squid.Core.Services.Publishing;
+using Squid.Core.Services.Publishing.Inspectors;
 
 namespace Squid.UnitTests.Services.Packages.BuiltIn;
 
@@ -95,5 +97,40 @@ public class BuiltInContainerWiringTests
 
         seeders.ShouldContain(typeof(BuiltInFeedSeeder));
         new BuiltInFeedSeeder().Order.ShouldBeGreaterThan(new DefaultSpaceSeeder().Order, "a space has to exist before it can get its feed");
+    }
+
+    [Fact]
+    public void Inspectors_AreAllRegistered_AndTheInspectionServiceAndRegistryAreReachable()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        scope.Resolve<IEnumerable<IPackageInspector>>().Select(i => i.GetType()).ShouldBe([typeof(FileMarkerInspector), typeof(NodeInspector), typeof(SquidYamlInspector)], ignoreOrder: true);
+        scope.Resolve<IPackageInspectionService>().ShouldBeOfType<PackageInspectionService>();
+        scope.Resolve<IDeployRecipeRegistry>().ShouldBeOfType<DeployRecipeRegistry>();
+        scope.Resolve<IRecipeRecommendationService>().ShouldBeOfType<RecipeRecommendationService>();
+    }
+
+    [Fact]
+    public async Task ThePushPipeline_RunsTheContainersInspectors()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        var inspection = scope.Resolve<IPackageInspectionService>();
+        var path = System.IO.Path.GetTempFileName();
+
+        await System.IO.File.WriteAllBytesAsync(path, TestArchives.Zip(("Dockerfile", "FROM x")));
+
+        try
+        {
+            var facts = await inspection.InspectAsync(path, BuiltInPackageFormat.Zip, CancellationToken.None);
+
+            facts.Is(Squid.Message.Models.Publishing.PackageFactKeys.MarkerDockerfile).ShouldBeTrue("an inspector the container does not hand to the service would leave the facts empty");
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
     }
 }

@@ -43,6 +43,6 @@ public sealed class BuiltInPackageQueryService(IBuiltInFeedLocator feeds, IBuilt
         var feed = await feeds.GetAsync(request.SpaceId.GetValueOrDefault(), ct).ConfigureAwait(false);
         var package = await packages.GetAsync(feed.Id, request.PackageId ?? string.Empty, request.Version ?? string.Empty, ct).ConfigureAwait(false);
 
-        return package == null ? throw new BuiltInPackageNotFoundException(feed.Id, request.PackageId, request.Version) : BuiltInPackageMapper.ToDto(package);
+        return package == null ? throw new BuiltInPackageNotFoundException(feed.Id, request.PackageId, request.Version) : BuiltInPackageMapper.ToDto(package, withFacts: true);
     }
 }

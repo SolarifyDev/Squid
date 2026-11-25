@@ -2,6 +2,7 @@ using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Deployments.ExternalFeeds;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage.Exceptions;
+using Squid.Core.Services.Publishing;
 using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Constants;
 
@@ -9,6 +10,12 @@ namespace Squid.Core.Services.Packages.BuiltIn;
 
 public sealed partial class BuiltInPackagePushService
 {
+    // Facts are advisory: inspection never throws, so a package nobody can read facts from is still pushed, with the failure recorded as a fact.
+    private async Task InspectPackageAsync(CancellationToken ct)
+    {
+        _ctx.Facts = await inspection.InspectAsync(_ctx.Staged.Path, _ctx.Format, ct).ConfigureAwait(false);
+    }
+
     // The feed's StoreId property picks the store; without one the default store is used, and its id is recorded either way so the package stays findable
     // after the default moves.
     private async Task ResolveStoreAsync(CancellationToken ct)
@@ -69,13 +76,14 @@ public sealed partial class BuiltInPackagePushService
             BlobKey = _ctx.BlobKey,
             PublishedDate = (time ?? TimeProvider.System).GetUtcNow(),
             PublishedBy = currentUser?.Id ?? CurrentUsers.InternalUser.Id,
-            Source = _ctx.Command.Source.ToString().ToLowerInvariant()
+            Source = _ctx.Command.Source.ToString().ToLowerInvariant(),
+            Facts = PackageFactsJson.Serialize(_ctx.Facts)
         };
     }
 
     private PushBuiltInPackageResponseData BuildResponse(BuiltInPackage row, bool deduplicated)
     {
-        return new PushBuiltInPackageResponseData { Package = BuiltInPackageMapper.ToDto(row), Deduplicated = deduplicated, Replaced = !deduplicated && _ctx.Replacing != null };
+        return new PushBuiltInPackageResponseData { Package = BuiltInPackageMapper.ToDto(row, withFacts: true), Deduplicated = deduplicated, Replaced = !deduplicated && _ctx.Replacing != null };
     }
 
     private void DeleteStagedFile()
