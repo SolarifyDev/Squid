@@ -188,8 +188,19 @@ public partial class ScriptPodService : IScriptServiceV2
         return queued || _startsInFlight.ContainsKey(ticketId);
     }
 
+    // In the direction a ticket moves (pending -> tracked -> terminal), see PublishTerminalThenForget: a lock-free read cannot miss a ticket in transit.
     private bool IsKnownInMemoryV2(string ticketId)
-        => _terminalResults.ContainsKey(ticketId) || _pendingScripts.ContainsKey(ticketId) || _scripts.ContainsKey(ticketId);
+    {
+        var queued = _pendingScripts.ContainsKey(ticketId);
+        var tracked = _scripts.ContainsKey(ticketId);
+
+        KnownInMemoryReadHookForTests?.Invoke();
+
+        return queued || tracked || _terminalResults.ContainsKey(ticketId);
+    }
+
+    /// <summary>Test-only: runs between the pending/tracked reads and the terminal read of <see cref="IsKnownInMemoryV2"/>.</summary>
+    internal Action? KnownInMemoryReadHookForTests { get; set; }
 
     private bool TryPeekStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
     {
@@ -293,8 +304,8 @@ public partial class ScriptPodService : IScriptServiceV2
 
         if (handedToLauncher) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
-        // V1 releases the pod and workspace on cancel; keep the outcome so a later Cancel/Complete of this ticket still has an answer.
-        InjectTerminalResult(ticket.TaskId, ScriptExitCodes.Canceled, v1.Logs);
+        // The core published the Canceled result before it stopped tracking the ticket, so a later Cancel/Complete of it still has an answer.
+        _terminalResults.TryAdd(ticket.TaskId, (BuildTerminalResponse(ticket.TaskId, ScriptExitCodes.Canceled, v1.Logs), DateTimeOffset.UtcNow));
 
         return ScriptV2Mapping.FromV1Terminal(v1);
     }
