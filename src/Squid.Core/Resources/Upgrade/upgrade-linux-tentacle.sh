@@ -865,9 +865,11 @@ restored_service_healthy() {
   service_stays_active
 }
 
+# Same HEALTHCHECK_RETRIES budget as the forward window: a restored binary that needs longer than a
+# hard-coded 30s must not be reported ROLLBACK_CRITICAL_FAILED when the operator granted a longer window.
 wait_for_restored_service() {
   local i
-  for i in $(seq 1 30); do
+  for i in $(seq 1 "$HEALTHCHECK_RETRIES"); do
     if restored_service_healthy; then return 0; fi
     sleep 1
   done
@@ -884,6 +886,29 @@ rollback_start_unit() {
   timeout "$2" sudo systemctl "$1" "$SERVICE_NAME" 2>/dev/null || true
 }
 
+# Forward check: /healthz must answer within HEALTHCHECK_RETRIES AND the unit must then survive the settle
+# window (same PID, no restarts). A new binary that answers /healthz and crashes seconds later would otherwise
+# be recorded SUCCESS while systemd restarts it until the start limit. Worst case: HEALTHCHECK_RETRIES
+# iterations of (is-active + curl --max-time 5 + 1s sleep) plus SETTLE_WINDOW_SECS.
+wait_for_upgraded_service() {
+  local i
+  for i in $(seq 1 "$HEALTHCHECK_RETRIES"); do
+    if service_healthy; then
+      if service_stays_active; then
+        emit_event B healthz-pass "Service active and healthz responded OK after $i second(s), stable for ${SETTLE_WINDOW_SECS}s"
+        return 0
+      fi
+
+      emit_event B healthz-fail "Service answered healthz but did not stay active for ${SETTLE_WINDOW_SECS}s (crashed or restarted) - taking rollback path"
+      return 1
+    fi
+    sleep 1
+  done
+
+  emit_event B healthz-fail "Service did not become healthy within ${HEALTHCHECK_RETRIES}s"
+  return 1
+}
+
 # ── Restart service (safe: we are in our own scope cgroup) ────────────────────
 echo "Restarting service $SERVICE_NAME ..."
 emit_event B restart-start "Running systemctl restart $SERVICE_NAME"
@@ -897,17 +922,7 @@ timeout "$RESTART_TIMEOUT_SECS" sudo systemctl restart "$SERVICE_NAME" || {
 
 # ── Health check loop ────────────────────────────────────────────────────────
 if [ "$START_OK" = "1" ]; then
-  for i in $(seq 1 "$HEALTHCHECK_RETRIES"); do
-    if service_healthy; then
-      HEALTH_OK=1
-      emit_event B healthz-pass "Service active and healthz responded OK after $i second(s)"
-      break
-    fi
-    sleep 1
-  done
-  if [ "$HEALTH_OK" != "1" ]; then
-    emit_event B healthz-fail "Service did not become healthy within ${HEALTHCHECK_RETRIES}s"
-  fi
+  if wait_for_upgraded_service; then HEALTH_OK=1; fi
 fi
 
 # ── Post-restart version sanity ──────────────────────────────────────────────
