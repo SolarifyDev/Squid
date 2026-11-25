@@ -110,19 +110,21 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
             InstalledRoles = capabilities.InstalledRoles
         }, SerializerOptions);
 
-        // Postgres timestamptz keeps microseconds; returning the un-truncated clock would hand the caller a value the row does not hold.
-        var now = TruncateToMicroseconds(DateTimeOffset.UtcNow);
-
-        await _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
-            m => m.Id == machineId,
-            s => s.SetProperty(m => m.RuntimeCapabilitiesJson, json)
-                  .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)now),
-            ct), ct).ConfigureAwait(false);
-
-        return now;
+        return await _dbGate.RunAsync(() => StampAsync(machineId, json, ct), ct).ConfigureAwait(false);
     }
 
-    private static DateTimeOffset TruncateToMicroseconds(DateTimeOffset value) => value.AddTicks(-(value.Ticks % 10));
+    // Every writer stamps the row with the DATABASE clock (never a pod's), and never at or before the stamp the row already holds,
+    // so a pod whose clock runs ahead cannot hide a later write from the pod that compares timestamps. RETURNING hands back
+    // exactly the stored value, so the recorder's cache carries the row's own stamp.
+    private const string StampSql = "UPDATE machine SET runtime_capabilities_json = {0}::jsonb, runtime_capabilities_updated_at = GREATEST(now(), COALESCE(runtime_capabilities_updated_at, now()) + interval '1 microsecond') WHERE id = {1} RETURNING runtime_capabilities_updated_at AS \"Value\"";
+
+    private async Task<DateTimeOffset> StampAsync(int machineId, string json, CancellationToken ct)
+    {
+        var stamps = await _repository.Database.SqlQueryRaw<DateTimeOffset>(StampSql, json, machineId).ToListAsync(ct).ConfigureAwait(false);
+
+        // No such machine: nothing was written, so there is no row stamp to carry (same no-op the previous update had).
+        return stamps.Count == 0 ? DateTimeOffset.UtcNow : stamps[0];
+    }
 
     public async Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct)
     {
@@ -165,11 +167,7 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         // Drop the JSON but stamp the time: the NEXT health check becomes the source of truth, and a
         // pod holding an older entry sees a newer timestamp with no JSON and evicts it too. Rows that
         // were NULL/NULL before this change keep meaning "never probed".
-        return _dbGate.RunAsync(() => _repository.ExecuteUpdateAsync<Machine>(
-            m => m.Id == machineId,
-            s => s.SetProperty(m => m.RuntimeCapabilitiesJson, (string)null)
-                  .SetProperty(m => m.RuntimeCapabilitiesUpdatedAt, (DateTimeOffset?)DateTimeOffset.UtcNow),
-            ct), ct);
+        return _dbGate.RunAsync(() => StampAsync(machineId, null, ct), ct);
     }
 
     public async Task<PersistedCapabilitiesSnapshot> LoadIfNewerAsync(int machineId, DateTimeOffset? than, CancellationToken ct)
