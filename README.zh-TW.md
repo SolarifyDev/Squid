@@ -54,6 +54,12 @@
 docker run -d --name squid -p 8080:8080 -p 10943:10943 -v squid-data:/data squidcd/squid
 ```
 
+Kubernetes（[chart 參數](deploy/helm/squid-server/README.md)）：
+
+```bash
+helm install squid oci://registry-1.docker.io/squidcd/squid-server
+```
+
 <img src="branding/readme/setup-wizard.png" alt="Squid 首次啟動引導頁：選擇內建或自己的 PostgreSQL、建立管理員、確認伺服器網址，然後安裝" width="100%">
 
 ## 🔄 從 Octopus 遷移
