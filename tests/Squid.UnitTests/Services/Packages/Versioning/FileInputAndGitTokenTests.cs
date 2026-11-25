@@ -35,6 +35,50 @@ public class FileInputAndGitTokenTests
         ex.Message.ShouldBe(message);
     }
 
+    [Theory]
+    [InlineData("a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_a_!.zip")]
+    [InlineData("a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-!.1.2.zip")]
+    [InlineData("a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.1x.zip")]
+    [InlineData("1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.1.zip")]
+    public async Task FileVersion_AHostileFileName_IsAnsweredFastNotMatchedForever(string fileName)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None);
+        }
+        catch (VersionTokenValueMissingException)
+        {
+        }
+
+        watch.ElapsedMilliseconds.ShouldBeLessThan(100);
+    }
+
+    [Fact]
+    public async Task FileVersion_AFileNameLongerThanTheLimit_IsRejectedUpFront()
+    {
+        var fileName = new string('a', FileVersionToken.MaxFileNameLength) + ".1.0.0.zip";
+
+        var ex = await Should.ThrowAsync<VersionTokenValueMissingException>(() => new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None));
+
+        ex.Message.ShouldBe($"Version token '{{file.version}}' has no value: the file name is {fileName.Length} characters long, the limit is 200");
+    }
+
+    [Fact]
+    public async Task FileVersion_AFileNameAtTheLimit_StillWorks()
+    {
+        var fileName = new string('a', FileVersionToken.MaxFileNameLength - ".1.0.0.zip".Length) + ".1.0.0.zip";
+
+        (await new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(fileName), null, CancellationToken.None)).ShouldBe("1.0.0");
+    }
+
+    [Fact]
+    public async Task FileVersion_OnlyAnExtension_HasNoVersion()
+    {
+        await Should.ThrowAsync<VersionTokenValueMissingException>(() => new FileVersionToken().ResolveAsync(VersioningTestContexts.Context(".zip"), null, CancellationToken.None));
+    }
+
     [Fact]
     public async Task FileVersion_TakesNoArgument()
     {

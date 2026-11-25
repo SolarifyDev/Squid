@@ -72,7 +72,7 @@ public class IntegrationPackageVersioning : TestBase
 
     [Theory]
     [InlineData("1.0.{counter}", "1.0.1")]
-    [InlineData("{date:yyyy.MM.dd}.{counter:daily}", "2026.11.25.1")]
+    [InlineData("{date:yyyy.MM.dd}.{counter}", "2026.11.25.1")]
     [InlineData("{file.version}", "1.2.3")]
     [InlineData("{source.version}", "1.2.3")]
     [InlineData("1.0.0-{git.sha}", "1.0.0-0123456")]
@@ -110,10 +110,28 @@ public class IntegrationPackageVersioning : TestBase
         (await AssignAsync(feedB, "1.0.{counter}")).ShouldBe("1.0.1");
         (await AssignAsync(feedA, "1.0.{counter}")).ShouldBe("1.0.2");
 
-        (await AssignAsync(feedA, "{date}.{counter:daily}", registration: ClockAt("2026-11-25T23:59:00Z"))).ShouldBe("2026.11.25.1");
-        (await AssignAsync(feedA, "{date}.{counter:daily}", registration: ClockAt("2026-11-25T23:59:30Z"))).ShouldBe("2026.11.25.2");
-        (await AssignAsync(feedA, "{date}.{counter:daily}", registration: ClockAt("2026-11-26T00:00:01Z"))).ShouldBe("2026.11.26.1");
-        (await AssignAsync(feedA, "1.0.{counter:daily}", registration: ClockAt("2026-11-26T00:00:01Z"))).ShouldBe("1.0.1");
+        (await AssignAsync(feedA, "{date}.{counter}", registration: ClockAt("2026-11-25T23:59:00Z"))).ShouldBe("2026.11.25.1");
+        (await AssignAsync(feedA, "{date}.{counter}", registration: ClockAt("2026-11-25T23:59:30Z"))).ShouldBe("2026.11.25.2");
+        (await AssignAsync(feedA, "{date}.{counter}", registration: ClockAt("2026-11-26T00:00:01Z"))).ShouldBe("2026.11.26.1");
+    }
+
+    [Fact]
+    public async Task Counter_ATemplateWithoutADate_NeverRepeatsAVersionAcrossDays()
+    {
+        var feedId = await SeedFeedAsync();
+
+        (await AssignAsync(feedId, "1.0.{counter}", registration: ClockAt("2026-11-25T10:00:00Z"))).ShouldBe("1.0.1");
+        (await AssignAsync(feedId, "1.0.{counter}", registration: ClockAt("2026-11-26T10:00:00Z"))).ShouldBe("1.0.2");
+        (await AssignAsync(feedId, "1.0.{counter}", registration: ClockAt("2026-11-27T10:00:00Z"))).ShouldBe("1.0.3");
+    }
+
+    [Fact]
+    public async Task Counter_ThePackageIdIsTrimmed()
+    {
+        var feedId = await SeedFeedAsync();
+
+        (await AssignAsync(feedId, "1.0.{counter}", "Acme.Web")).ShouldBe("1.0.1");
+        (await AssignAsync(feedId, "1.0.{counter}", "  Acme.Web  ")).ShouldBe("1.0.2");
     }
 
     [Fact]
@@ -206,15 +224,44 @@ public class IntegrationPackageVersioning : TestBase
     {
         var feedId = await SeedFeedAsync();
 
-        await SetAsync(feedId, Package, "{date}.{counter:daily}");
+        await SetAsync(feedId, Package, "{date}.{counter}");
 
-        (await GetAsync(feedId, Package)).ShouldBeEquivalentTo(new PackageVersionRuleDto { FeedId = feedId, PackageId = Package, VersionTemplate = "{date}.{counter:daily}", IsDefault = false });
+        (await GetAsync(feedId, Package)).ShouldBeEquivalentTo(new PackageVersionRuleDto { FeedId = feedId, PackageId = Package, VersionTemplate = "{date}.{counter}", IsDefault = false });
 
         await SetAsync(feedId, Package, "  {source.version}  ");
 
         (await GetAsync(feedId, Package)).VersionTemplate.ShouldBe("{source.version}");
         (await RowCountAsync("SELECT COUNT(*) FROM package_version_rule")).ShouldBe(1);
         (await GetAsync(feedId, "Another.Package")).IsDefault.ShouldBeTrue();
+    }
+
+    [Theory]
+    [InlineData("acme.web")]
+    [InlineData("ACME.WEB")]
+    [InlineData("  Acme.Web ")]
+    public async Task Rule_LookupAndSet_IgnoreCaseAndSurroundingSpaces(string spelling)
+    {
+        var feedId = await SeedFeedAsync();
+
+        await SetAsync(feedId, Package, "1.0.{counter}");
+
+        (await GetAsync(feedId, spelling)).ShouldBeEquivalentTo(new PackageVersionRuleDto { FeedId = feedId, PackageId = Package, VersionTemplate = "1.0.{counter}", IsDefault = false });
+
+        await SetAsync(feedId, spelling, "2.0.{counter}");
+
+        (await RowCountAsync("SELECT COUNT(*) FROM package_version_rule")).ShouldBe(1, "another spelling of the same package is the same rule");
+        (await GetAsync(feedId, Package)).VersionTemplate.ShouldBe("2.0.{counter}");
+        (await GetAsync(feedId, Package)).PackageId.ShouldBe(Package, "the spelling first stored is kept");
+    }
+
+    [Fact]
+    public async Task Rule_TheDatabaseItselfRefusesTwoSpellingsOfOnePackage()
+    {
+        var feedId = await SeedFeedAsync();
+
+        await SetAsync(feedId, Package, "1.0.{counter}");
+
+        await Should.ThrowAsync<Exception>(() => Run<IRepository>(r => r.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO package_version_rule (feed_id, package_id, version_template) VALUES ({feedId}, 'acme.WEB', '9.0.{{counter}}')")));
     }
 
     [Fact]
@@ -240,6 +287,7 @@ public class IntegrationPackageVersioning : TestBase
     [InlineData("1.0.{counter")]
     [InlineData("1.0.{nope}")]
     [InlineData("{counter}")]
+    [InlineData("1.0.{counter:daily}")]
     [InlineData("1.0.{counter:weekly}")]
     [InlineData("{source.version:setup.py}")]
     [InlineData("")]

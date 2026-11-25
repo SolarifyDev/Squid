@@ -6,13 +6,23 @@ namespace Squid.Core.Services.Packages.Versioning.Tokens;
 
 /// <summary>
 /// <c>{file.version}</c>: the version in the uploaded file's name, in Octopus' <c>PackageId.Version.ext</c> form (<c>Acme.Web.1.2.3-beta.1.zip</c> gives <c>1.2.3-beta.1</c>).
-/// The extension is cut off first, so the two-part <c>.tar.gz</c> cannot be mistaken for part of a pre-release tag.
+/// The extension is cut off first, so the two-part <c>.tar.gz</c> cannot be mistaken for part of a pre-release tag. The package id and the version are matched by two
+/// separate linear-time patterns at each dot, earliest split first, so a hostile file name cannot make the match explode.
 /// </summary>
-public sealed partial class FileVersionToken : IVersionTokenSource
+public sealed class FileVersionToken : IVersionTokenSource
 {
     public const string TokenName = "file.version";
 
+    public const int MaxFileNameLength = 200;
+
     private static readonly string[] Extensions = [".tar.gz", ".tgz", ".nupkg", ".zip", ".tar"];
+
+    private static readonly TimeSpan MatchTimeout = TimeSpan.FromMilliseconds(250);
+
+    // Separators are not word characters, so each package id has exactly one way to match.
+    private static readonly Regex PackageIdPattern = new(@"^\w+([.\-]\w+)*$", RegexOptions.NonBacktracking | RegexOptions.CultureInvariant, MatchTimeout);
+
+    private static readonly Regex VersionPattern = new(@"^\d+(\.\d+){0,3}(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$", RegexOptions.NonBacktracking | RegexOptions.CultureInvariant, MatchTimeout);
 
     public string Token => TokenName;
 
@@ -22,13 +32,9 @@ public sealed partial class FileVersionToken : IVersionTokenSource
             throw new InvalidVersionTokenArgumentException(TokenName, argument, "this token takes no argument");
 
         var fileName = ReadFileName(context);
-        var withoutExtension = StripExtension(fileName);
-        var match = NameAndVersion().Match(withoutExtension);
+        var version = FindVersion(StripExtension(fileName));
 
-        if (!match.Success)
-            throw new VersionTokenValueMissingException(TokenName, $"the file name '{fileName}' has no version; expected PackageId.Version.ext, for example Acme.Web.1.2.3.zip");
-
-        return Task.FromResult(match.Groups["version"].Value);
+        return Task.FromResult(version ?? throw new VersionTokenValueMissingException(TokenName, $"the file name '{fileName}' has no version; expected PackageId.Version.ext, for example Acme.Web.1.2.3.zip"));
     }
 
     private static string ReadFileName(VersionTokenContext context)
@@ -37,6 +43,9 @@ public sealed partial class FileVersionToken : IVersionTokenSource
 
         if (string.IsNullOrWhiteSpace(fileName))
             throw new VersionTokenValueMissingException(TokenName, "the upload has no file name to read a version from");
+
+        if (fileName.Length > MaxFileNameLength)
+            throw new VersionTokenValueMissingException(TokenName, $"the file name is {fileName.Length} characters long, the limit is {MaxFileNameLength}");
 
         return fileName;
     }
@@ -51,7 +60,17 @@ public sealed partial class FileVersionToken : IVersionTokenSource
         return fileName[..^extension.Length];
     }
 
-    // Octopus' package id and version patterns (PackageName.TryParseUnsafeFileName).
-    [GeneratedRegex(@"^(?<packageId>\w+([_.-]\w+)*?)\.(?<version>\d+(\.\d+){0,3}(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)$", RegexOptions.IgnoreCase)]
-    private static partial Regex NameAndVersion();
+    // The earliest dot that has a valid package id before it and a valid version after it, as the lazy package id of Octopus' PackageName.TryParseUnsafeFileName would pick.
+    private static string FindVersion(string name)
+    {
+        if (name.Length < 2) return null;
+
+        for (var dot = name.IndexOf('.', 1); dot > 0; dot = name.IndexOf('.', dot + 1))
+        {
+            if (PackageIdPattern.IsMatch(name.AsSpan(0, dot)) && VersionPattern.IsMatch(name.AsSpan(dot + 1)))
+                return name[(dot + 1)..];
+        }
+
+        return null;
+    }
 }

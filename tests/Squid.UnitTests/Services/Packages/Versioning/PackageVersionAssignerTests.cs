@@ -1,3 +1,4 @@
+using System.Linq;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Packages.Versioning;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
@@ -31,18 +32,62 @@ public class PackageVersionAssignerTests
     }
 
     [Fact]
-    public async Task DateAndDailyCounter_GiveFourPartVersionsThatRestartEachDay_AndSortAsVersions()
+    public async Task DateThenCounter_GivesFourPartVersionsThatRestartEachDay_AndSortAsVersions()
     {
         var context = VersioningTestContexts.Context();
-        var first = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter:daily}", context, CancellationToken.None);
-        var second = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter:daily}", context, CancellationToken.None);
+        var first = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter}", context, CancellationToken.None);
+        var second = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter}", context, CancellationToken.None);
 
         _clock.UtcNow = _clock.UtcNow.AddDays(1);
 
-        var nextDay = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter:daily}", context, CancellationToken.None);
+        var nextDay = await Sut.AssignAsync("{date:yyyy.MM.dd}.{counter}", context, CancellationToken.None);
 
         new[] { first, second, nextDay }.ShouldBe(["2026.11.25.1", "2026.11.25.2", "2026.11.26.1"]);
         PackageVersionFilter.SortByVersionDescending([first, nextDay, second]).ShouldBe([nextDay, second, first]);
+    }
+
+    [Fact]
+    public async Task ACounterWithoutADateBefore_NeverRestarts_SoItNeverRepeatsAVersion()
+    {
+        var context = VersioningTestContexts.Context();
+
+        (await Sut.AssignAsync("1.0.{counter}", context, CancellationToken.None)).ShouldBe("1.0.1");
+
+        _clock.UtcNow = _clock.UtcNow.AddDays(1);
+
+        (await Sut.AssignAsync("1.0.{counter}", context, CancellationToken.None)).ShouldBe("1.0.2");
+    }
+
+    [Fact]
+    public async Task TheDailyArgumentIsGone_AndSaysWhatToDoInstead()
+    {
+        var ex = await Should.ThrowAsync<InvalidVersionTokenArgumentException>(() => Sut.AssignAsync("1.0.{counter:daily}", VersioningTestContexts.Context(), CancellationToken.None));
+
+        ex.Message.ShouldContain("put a date before it");
+        _store.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task OneClockReadingPerAssignment_SoTheCheckAndTheRealRunRenderTheSameDate()
+    {
+        // The clock jumps a day on every reading. Two readings (one for the check, one for the run) would give 2026.11.25 and then 2026.11.26 with a counter scoped to the 25th.
+        var clock = new AdvancingTimeProvider(new DateTimeOffset(2026, 11, 25, 23, 59, 59, TimeSpan.Zero), TimeSpan.FromDays(1));
+        var sut = VersioningTestContexts.AssignerWith(_store, clock);
+
+        var version = await sut.AssignAsync("{date}.{counter}", VersioningTestContexts.Context(), CancellationToken.None);
+
+        version.ShouldBe("2026.11.25.1");
+        _store.Calls.Single().Scope.ShouldBe("2026.11.25.");
+        clock.Readings.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task OneClockReadingPerPreview()
+    {
+        var clock = new AdvancingTimeProvider(new DateTimeOffset(2026, 11, 25, 23, 59, 59, TimeSpan.Zero), TimeSpan.FromDays(1));
+
+        (await VersioningTestContexts.AssignerWith(_store, clock).PreviewAsync("{date}.{counter}", VersioningTestContexts.Context(), CancellationToken.None)).ShouldBe("2026.11.25.1");
+        clock.Readings.ShouldBe(1);
     }
 
     [Fact]
@@ -120,6 +165,26 @@ public class PackageVersionAssignerTests
         _store.Calls.ShouldBeEmpty();
     }
 
+    [Fact]
+    public async Task ARenderedVersionLongerThanTheLimit_IsRejectedBeforeACounterIsConsumed()
+    {
+        var input = "1.0.0-" + new string('a', PackageVersionAssigner.MaxVersionLength);
+        var context = VersioningTestContexts.Context(input: input);
+
+        var ex = await Should.ThrowAsync<NonSortablePackageVersionException>(() => Sut.AssignAsync("{input}.{counter}", context, CancellationToken.None));
+
+        ex.Message.ShouldEndWith($"it is {input.Length + 2} characters long, the limit is {PackageVersionAssigner.MaxVersionLength}");
+        _store.Calls.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AVersionExactlyAtTheLimit_IsAccepted()
+    {
+        var input = "1.0.0-" + new string('a', PackageVersionAssigner.MaxVersionLength - 6);
+
+        (await Sut.AssignAsync("{input}", VersioningTestContexts.Context(input: input), CancellationToken.None)).ShouldBe(input);
+    }
+
     [Theory]
     [InlineData("latest")]
     [InlineData("1")]
@@ -148,7 +213,7 @@ public class PackageVersionAssignerTests
         var context = VersioningTestContexts.Context();
 
         (await Sut.PreviewAsync("1.0.{counter}", context, CancellationToken.None)).ShouldBe("1.0.1");
-        (await Sut.PreviewAsync("{date}.{counter:daily}", context, CancellationToken.None)).ShouldBe("2026.11.25.1");
+        (await Sut.PreviewAsync("{date}.{counter}", context, CancellationToken.None)).ShouldBe("2026.11.25.1");
 
         _store.Calls.ShouldBeEmpty();
         (await Sut.AssignAsync("1.0.{counter}", context, CancellationToken.None)).ShouldBe("1.0.1");
