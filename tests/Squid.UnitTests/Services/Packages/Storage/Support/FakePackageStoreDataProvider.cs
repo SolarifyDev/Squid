@@ -40,7 +40,7 @@ internal sealed class FakePackageStoreDataProvider : IPackageStoreDataProvider
         return Task.FromResult(Clone(_rows.FirstOrDefault(r => r.IsDefault)));
     }
 
-    public Task<bool> NameExistsAsync(string name, int? exceptId, CancellationToken ct) => Task.FromResult(_rows.Any(r => r.Name == name && r.Id != exceptId));
+    public Task<bool> NameExistsAsync(string name, int? exceptId, CancellationToken ct) => Task.FromResult(_rows.Any(r => string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase) && r.Id != exceptId));
 
     public Task AddAsync(PackageStore store, CancellationToken ct)
     {
@@ -51,9 +51,22 @@ internal sealed class FakePackageStoreDataProvider : IPackageStoreDataProvider
         return Task.CompletedTask;
     }
 
-    public Task UpdateAsync(PackageStore store, CancellationToken ct)
+    /// <summary>Like the real provider: only name, properties and secret are written; the default flag and the test result stay as the table holds them.</summary>
+    public Task UpdateAsync(PackageStore store, bool resetTestResult, CancellationToken ct)
     {
-        _rows[_rows.FindIndex(r => r.Id == store.Id)] = Clone(store);
+        var row = _rows.FirstOrDefault(r => r.Id == store.Id) ?? throw new Squid.Core.Services.Packages.Storage.Exceptions.PackageStoreNotFoundException(store.Id);
+
+        row.Name = store.Name;
+        row.Properties = store.Properties;
+        row.Secret = store.Secret;
+        row.LastModifiedDate = row.LastModifiedDate.AddSeconds(1);
+
+        if (resetTestResult)
+        {
+            row.LastTestedDate = null;
+            row.LastTestSucceeded = null;
+            row.LastTestMessage = null;
+        }
 
         return Task.CompletedTask;
     }
@@ -79,6 +92,17 @@ internal sealed class FakePackageStoreDataProvider : IPackageStoreDataProvider
 
         return Task.CompletedTask;
     }
+
+    public PackageStore Remove(int id)
+    {
+        var row = _rows.Single(r => r.Id == id);
+
+        _rows.Remove(row);
+
+        return Clone(row);
+    }
+
+    public void Restore(PackageStore row) => _rows.Add(Clone(row));
 
     /// <summary>Simulates another replica editing the record: a newer LastModifiedDate.</summary>
     public void Touch(int id) => _rows.Single(r => r.Id == id).LastModifiedDate = _rows.Single(r => r.Id == id).LastModifiedDate.AddSeconds(1);
