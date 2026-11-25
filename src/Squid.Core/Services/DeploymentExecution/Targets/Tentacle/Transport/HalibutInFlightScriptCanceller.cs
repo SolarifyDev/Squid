@@ -97,7 +97,12 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         }
 
         var context = new ScriptSessionContext(_retry, _retry.CancelBudget, CancellationToken.None, _observer);
-        var protocol = await CancelWithDowngradeFallbackAsync(script, endpoint, context, ct).ConfigureAwait(false);
+
+        // ONE deadline for the whole cancel of this script (V2 attempt + capabilities refresh + V1 retry): the caller may be an HTTP request.
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(_retry.CancelBudget + _grace);
+
+        var protocol = await CancelWithDowngradeFallbackAsync(script, endpoint, context, deadline.Token).ConfigureAwait(false);
 
         Log.Information("[Cancel] Cancelled script {Ticket} (protocol {Protocol}) on machine {MachineId} for task {TaskId}", script.Ticket, protocol, script.Slot.MachineId, serverTaskId);
     }
@@ -131,8 +136,9 @@ public sealed class HalibutInFlightScriptCanceller : IInFlightScriptCanceller
         }
     }
 
-    private Task CancelBoundedAsync(IScriptAgentSession session, InFlightScript script, CancellationToken ct)
-        => session.CancelAsync(new ScriptTicket(script.Ticket)).WaitAsync(_retry.CancelBudget + _grace, ct);
+    // ct is the shared deadline: it also abandons a call that ignores its own budget.
+    private static Task CancelBoundedAsync(IScriptAgentSession session, InFlightScript script, CancellationToken ct)
+        => session.CancelAsync(new ScriptTicket(script.Ticket)).WaitAsync(ct);
 
     // Every database read happens here, one at a time: the machine provider uses the caller's single scoped DbContext, which EF refuses to use from
     // several concurrent operations. Only the agent RPCs that follow run in parallel. A machine that cannot be read is left out, so only its scripts are skipped.

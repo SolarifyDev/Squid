@@ -277,6 +277,10 @@ internal sealed class FakeCapabilitiesRefresher : Squid.Core.Services.Deployment
 
     public Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities AgentAnswer { get; set; }
     public int RefreshCalls { get; private set; }
+
+    /// <summary>How long an agent capabilities call takes; like the real refresher it stops early when the caller's token is cancelled.</summary>
+    public TimeSpan RefreshDelay { get; set; }
+
     public List<int> SyncedMachines { get; } = new();
 
     public Task SyncFromStoreAsync(int machineId, CancellationToken ct)
@@ -287,12 +291,14 @@ internal sealed class FakeCapabilitiesRefresher : Squid.Core.Services.Deployment
         return Task.CompletedTask;
     }
 
-    public Task<Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities> RefreshFromAgentAsync(int machineId, ServiceEndPoint endpoint, CancellationToken ct)
+    public async Task<Squid.Core.Services.DeploymentExecution.Tentacle.MachineRuntimeCapabilities> RefreshFromAgentAsync(int machineId, ServiceEndPoint endpoint, CancellationToken ct)
     {
         RefreshCalls++;
         _events.Add($"Caps.Refresh:{machineId}");
 
-        return Task.FromResult(AgentAnswer);
+        if (RefreshDelay != TimeSpan.Zero) await Task.Delay(RefreshDelay, ct);
+
+        return AgentAnswer;
     }
 }
 
