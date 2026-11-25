@@ -10,6 +10,7 @@ public static class PackageFactKeys
     public const string ArchiveRoot = "archive.root";
     public const string FilesCount = "files.count";
     public const string FilesTruncated = "files.truncated";
+    public const string FactsTruncated = "facts.truncated";
     public const string FilesOversized = "files.oversized";
 
     // File markers (relative to the effective root)

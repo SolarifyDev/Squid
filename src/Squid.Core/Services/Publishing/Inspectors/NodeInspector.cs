@@ -6,6 +6,8 @@ namespace Squid.Core.Services.Publishing.Inspectors;
 /// <summary>What <c>package.json</c> says: whether it builds or starts, and the Node version it asks for. A file that is not valid JSON is a fact, not a failure.</summary>
 public sealed class NodeInspector : IPackageInspector
 {
+    public IReadOnlyCollection<string> FilesToRead { get; } = ["package.json"];
+
     public async Task InspectAsync(PackageInspectionContext context, CancellationToken ct)
     {
         if (!context.HasFile("package.json")) return;
@@ -26,7 +28,8 @@ public sealed class NodeInspector : IPackageInspector
             RecordScripts(context, document.RootElement);
             RecordEngines(context, document.RootElement);
         }
-        catch (JsonException ex)
+        // An invalid UTF-16 surrogate in a string makes reading it throw InvalidOperationException rather than JsonException.
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             context.Set(PackageFactKeys.NodeError, ex.Message);
         }

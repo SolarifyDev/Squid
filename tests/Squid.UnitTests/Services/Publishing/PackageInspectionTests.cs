@@ -1,5 +1,6 @@
 using System.Linq;
 using Squid.Core.Services.Packages.BuiltIn;
+using Squid.Core.Services.Publishing;
 using Squid.Message.Models.Publishing;
 using Squid.UnitTests.Services.Packages.BuiltIn;
 
@@ -21,8 +22,7 @@ public class PackageInspectionTests
         facts.Get(PackageFactKeys.ArchiveRoot).ShouldBe("my-site");
         facts.Is(PackageFactKeys.MarkerIndexHtml).ShouldBeTrue();
         facts.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
-        facts.RelativeFiles().OrderBy(f => f, StringComparer.Ordinal).ShouldBe(["Dockerfile", "css/app.css", "index.html"]);
-        facts.Files.ShouldContain("my-site/index.html");
+        facts.Get(PackageFactKeys.FilesCount).ShouldBe("3");
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public class PackageInspectionTests
     {
         var facts = await Inspect.TarGzAsync(("./index.html", Html), ("./app/run.sh", "echo"));
 
-        facts.Files.OrderBy(f => f).ShouldBe(["app/run.sh", "index.html"]);
+        facts.Get(PackageFactKeys.FilesCount).ShouldBe("2");
         facts.Is(PackageFactKeys.ArchiveWrapped).ShouldBeFalse();
         facts.Get(PackageFactKeys.ArchiveRoot).ShouldBe(string.Empty);
         facts.Is(PackageFactKeys.MarkerIndexHtml).ShouldBeTrue();
@@ -51,7 +51,7 @@ public class PackageInspectionTests
         var facts = await Inspect.ZipAsync(("index.html", Html), ("a/b.js", "1"));
 
         facts.Is(PackageFactKeys.ArchiveWrapped).ShouldBeFalse();
-        facts.RootPrefix().ShouldBe(string.Empty);
+        facts.Get(PackageFactKeys.ArchiveRoot).ShouldBe(string.Empty);
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public class PackageInspectionTests
         var facts = await Inspect.ZipAsync(("site/index.html", Html), ("__MACOSX/site/._index.html", "x"));
 
         facts.Get(PackageFactKeys.ArchiveRoot).ShouldBe("site");
-        facts.Files.ShouldBe(["site/index.html"]);
+        facts.Get(PackageFactKeys.FilesCount).ShouldBe("1", "the resource-fork copy is not counted");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class PackageInspectionTests
     {
         var facts = await Inspect.ZipAsync();
 
-        facts.Files.ShouldBeEmpty();
+        facts.Get(PackageFactKeys.FilesCount).ShouldBe("0");
         facts.Values.Keys.Any(k => k.StartsWith(PackageFactKeys.InspectorFailedPrefix)).ShouldBeFalse();
     }
 
@@ -296,23 +296,21 @@ public class PackageInspectionTests
     }
 
     [Fact]
-    public async Task FileListing_IsCapped_AndSaysSo()
+    public async Task FileCount_IsTheRealTotal_EvenPastTheRetainedNames()
     {
-        var entries = Enumerable.Range(0, PackageArchiveTextReader.MaxListedFiles + 5).Select(i => ($"f{i}.txt", "x")).ToArray();
+        var entries = Enumerable.Range(0, PackageArchiveScanner.MaxRetainedNames + 5).Select(i => ($"f{i}.txt", "x")).ToArray();
 
-        var zip = await Inspect.ZipAsync(entries);
-        var tar = await Inspect.TarGzAsync(entries);
-
-        zip.Files.Count.ShouldBe(PackageArchiveTextReader.MaxListedFiles);
-        tar.Files.Count.ShouldBe(PackageArchiveTextReader.MaxListedFiles);
-        zip.Is(PackageFactKeys.FilesTruncated).ShouldBeTrue();
-        tar.Is(PackageFactKeys.FilesTruncated).ShouldBeTrue();
+        foreach (var facts in new[] { await Inspect.ZipAsync(entries), await Inspect.TarGzAsync(entries) })
+        {
+            facts.Get(PackageFactKeys.FilesCount).ShouldBe((PackageArchiveScanner.MaxRetainedNames + 5).ToString());
+            facts.Is(PackageFactKeys.FilesTruncated).ShouldBeTrue();
+        }
     }
 
     [Fact]
-    public async Task FileListing_AtTheCap_IsNotTruncated()
+    public async Task FileCount_AtTheRetainedCap_IsNotTruncated()
     {
-        var entries = Enumerable.Range(0, PackageArchiveTextReader.MaxListedFiles).Select(i => ($"f{i}.txt", "x")).ToArray();
+        var entries = Enumerable.Range(0, PackageArchiveScanner.MaxRetainedNames).Select(i => ($"f{i}.txt", "x")).ToArray();
 
         (await Inspect.ZipAsync(entries)).Values.ContainsKey(PackageFactKeys.FilesTruncated).ShouldBeFalse();
     }
@@ -333,8 +331,7 @@ public class PackageInspectionTests
     {
         var facts = await Inspect.RunAsync([1, 2, 3, 4, 5], BuiltInPackageFormat.Zip);
 
-        facts.Files.ShouldBeEmpty();
-        facts.Values.Keys.ShouldContain(PackageFactKeys.InspectorFailedPrefix + "Listing");
+        facts.Values.Keys.ShouldContain(PackageFactKeys.InspectorFailedPrefix + "Scan");
     }
 
     // === pinned keys ===

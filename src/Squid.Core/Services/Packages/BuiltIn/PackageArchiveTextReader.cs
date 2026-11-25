@@ -5,26 +5,20 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
-/// <summary>One file of an archive: its normalised path and its declared uncompressed size.</summary>
-public sealed record PackageArchiveEntry(string Path, long Length);
+/// <summary>Called once per file of an archive, in archive order: its normalised path, its declared size, and a way to read it as text (null when it is bigger than the cap).</summary>
+public delegate void PackageArchiveFileVisitor(string path, long declaredLength, Func<string> readText);
 
-/// <summary>The files of an archive, at most <see cref="PackageArchiveTextReader.MaxListedFiles"/> of them; <c>Truncated</c> says there were more.</summary>
-public sealed record PackageArchiveListing(IReadOnlyList<PackageArchiveEntry> Entries, bool Truncated);
-
-/// <summary>Reads manifests (small text files) out of a pushed archive on disk, for the version tokens that read a version from the package itself, and lists its files for inspection.</summary>
+/// <summary>Reads manifests (small text files) out of a pushed archive on disk, for the version tokens that read a version from the package itself, and walks its files for inspection.</summary>
 public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat format)
 {
     /// <summary>A manifest bigger than this is treated as missing: manifests are small, and nothing here should inflate a bomb into memory.</summary>
     public const int MaxTextBytes = 1024 * 1024;
 
-    /// <summary>A listing stops here, so an archive of millions of tiny files cannot fill memory with names.</summary>
-    public const int MaxListedFiles = 5000;
-
     public Task<string> TryReadTextFileAsync(string relativePath, CancellationToken ct)
     {
         var wanted = Normalize(relativePath);
 
-        return Task.FromResult(format == BuiltInPackageFormat.Zip ? ReadFromZip(wanted) : ReadFromTar(wanted));
+        return Task.FromResult(format == BuiltInPackageFormat.Zip ? ReadFromZip(wanted, ct) : ReadFromTar(wanted, ct));
     }
 
     public Task<IReadOnlyList<string>> ListRootFileNamesAsync(CancellationToken ct)
@@ -34,37 +28,89 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
         return Task.FromResult(names);
     }
 
-    public Task<PackageArchiveListing> ListFilesAsync(CancellationToken ct)
+    /// <summary>
+    /// One pass over every file in the archive, calling <paramref name="visit"/> for each. A file's text is only read when the visitor asks for it, and never more than
+    /// <see cref="MaxTextBytes"/> of it. Stops at once when <paramref name="ct"/> is cancelled.
+    /// </summary>
+    public Task WalkFilesAsync(PackageArchiveFileVisitor visit, CancellationToken ct)
     {
-        return Task.FromResult(format == BuiltInPackageFormat.Zip ? ListZipFiles() : ListTarFiles());
+        if (format == BuiltInPackageFormat.Zip) WalkZip(visit, ct);
+        else WalkTar(visit, ct);
+
+        return Task.CompletedTask;
     }
 
-    private string ReadFromZip(string wanted)
+    private void WalkZip(PackageArchiveFileVisitor visit, CancellationToken ct)
     {
         using var zip = ZipFile.OpenRead(path);
 
-        var entry = zip.Entries.FirstOrDefault(e => e.Name.Length > 0 && Normalize(e.FullName) == wanted);
+        foreach (var entry in zip.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
 
-        return entry == null || entry.Length > MaxTextBytes ? null : ReadText(entry.Open());
+            var name = Normalize(entry.FullName);
+
+            if (entry.Name.Length > 0 && name.Length > 0) visit(name, entry.Length, () => ReadZipEntry(entry));
+        }
     }
 
-    private string ReadFromTar(string wanted)
+    private void WalkTar(PackageArchiveFileVisitor visit, CancellationToken ct)
     {
         using var reader = OpenTar();
 
         while (reader.GetNextEntry(copyData: false) is { } entry)
         {
+            ct.ThrowIfCancellationRequested();
+
+            var name = Normalize(entry.Name);
+
+            if (IsFile(entry) && name.Length > 0) visit(name, entry.Length, () => ReadTarEntry(entry));
+
+            SkipData(entry);
+        }
+    }
+
+    private string ReadFromZip(string wanted, CancellationToken ct)
+    {
+        using var zip = ZipFile.OpenRead(path);
+
+        var entry = zip.Entries.FirstOrDefault(e => e.Name.Length > 0 && Normalize(e.FullName) == wanted);
+
+        ct.ThrowIfCancellationRequested();
+
+        return entry == null ? null : ReadZipEntry(entry);
+    }
+
+    private string ReadFromTar(string wanted, CancellationToken ct)
+    {
+        using var reader = OpenTar();
+
+        while (reader.GetNextEntry(copyData: false) is { } entry)
+        {
+            ct.ThrowIfCancellationRequested();
+
             if (!IsFile(entry) || Normalize(entry.Name) != wanted)
             {
                 SkipData(entry);
                 continue;
             }
 
-            return entry.Length > MaxTextBytes || entry.DataStream == null ? null : ReadText(entry.DataStream);
+            return ReadTarEntry(entry);
         }
 
         return null;
     }
+
+    private static string ReadZipEntry(ZipArchiveEntry entry)
+    {
+        if (entry.Length > MaxTextBytes) return null;
+
+        using var stream = entry.Open();
+
+        return ReadBoundedText(stream);
+    }
+
+    private static string ReadTarEntry(TarEntry entry) => entry.Length > MaxTextBytes || entry.DataStream == null ? null : ReadBoundedText(entry.DataStream);
 
     private List<string> ListZipRoot()
     {
@@ -89,33 +135,6 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
         return names;
     }
 
-    private PackageArchiveListing ListZipFiles()
-    {
-        using var zip = ZipFile.OpenRead(path);
-
-        var entries = zip.Entries.Where(e => e.Name.Length > 0).Select(e => new PackageArchiveEntry(Normalize(e.FullName), e.Length)).Where(e => e.Path.Length > 0).Take(MaxListedFiles + 1).ToList();
-
-        return Capped(entries);
-    }
-
-    private PackageArchiveListing ListTarFiles()
-    {
-        using var reader = OpenTar();
-
-        var entries = new List<PackageArchiveEntry>();
-
-        while (entries.Count <= MaxListedFiles && reader.GetNextEntry(copyData: false) is { } entry)
-        {
-            if (IsFile(entry) && Normalize(entry.Name).Length > 0) entries.Add(new PackageArchiveEntry(Normalize(entry.Name), entry.Length));
-
-            SkipData(entry);
-        }
-
-        return Capped(entries);
-    }
-
-    private static PackageArchiveListing Capped(List<PackageArchiveEntry> entries) => new(entries.Take(MaxListedFiles).ToList(), entries.Count > MaxListedFiles);
-
     private TarReader OpenTar() => new(new GZipStream(File.OpenRead(path), CompressionMode.Decompress), leaveOpen: false);
 
     // The gzip stream cannot seek, so an entry's data must be read past before the next entry: the reader does not skip it, and would hand back garbage.
@@ -128,9 +147,9 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
     private static string Normalize(string name) => PackageArchiveSafety.StripLeadingCurrentDirectory(name);
 
     // Reads at most MaxTextBytes, whatever the entry header declared: a header that understates its size must not let a bomb into memory. Null when it is bigger.
-    private static string ReadText(Stream stream)
+    // Does not dispose the stream: a tar entry's data stream is still needed to skip past the entry.
+    public static string ReadBoundedText(Stream input)
     {
-        using var input = stream;
         using var buffer = new MemoryStream();
 
         var chunk = new byte[8192];
