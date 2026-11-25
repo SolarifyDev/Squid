@@ -103,8 +103,8 @@ public class DeploymentPipelineRunnerTests
         // OnSuccessAsync transitions from a hardcoded Executing, so a task cancelled mid-pipeline
         // makes it throw. Unlike every other completion callback it is invoked directly rather than
         // through SafeCompleteAsync, so the exception is NOT swallowed — it reaches the general
-        // catch, which routes to OnFailureAsync, and that resolves the current state and performs
-        // the legal Cancelling -> Failed. That is why a Cancelling row does NOT wedge on the
+        // catch, which routes to OnFailureAsync, and that resolves the current state (completing
+        // the user's cancel for a Cancelling row, the legal -> Failed otherwise). That is why a Cancelling row does NOT wedge on the
         // success path, which PauseIfStillExecutingAsync's doc-comment states; pinned here so the
         // claim cannot quietly become false if the runner's call shape changes.
         var lifecycle = new Mock<IDeploymentLifecycle>();
