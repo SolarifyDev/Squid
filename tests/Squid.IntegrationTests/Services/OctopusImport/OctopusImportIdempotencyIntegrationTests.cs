@@ -606,7 +606,7 @@ public partial class OctopusImportIdempotencyIntegrationTests : TestBase, IAsync
         => Run<SquidDbContext, List<T>>(db => db.Set<T>().AsNoTracking().ToListAsync());
 
     private Task<T> SingleAsync<T>() where T : class
-        => Run<SquidDbContext, T>(db => db.Set<T>().AsNoTracking().SingleAsync());
+        => Run<SquidDbContext, T>(db => (typeof(T) == typeof(ExternalFeed) ? (IQueryable<T>)(object)db.Set<ExternalFeed>().Where(f => f.FeedType != "BuiltIn") : db.Set<T>()).AsNoTracking().SingleAsync()); // a space's own built-in feed is never an imported one
 
     private Task<int> CountAsync<T>() where T : class
         => Run<SquidDbContext, int>(db => db.Set<T>().CountAsync());

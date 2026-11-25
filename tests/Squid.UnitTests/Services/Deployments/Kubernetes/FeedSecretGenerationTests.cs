@@ -406,6 +406,33 @@ public class FeedSecretGenerationTests
         pullSecretsProp.PropertyValue.ShouldContain("myregistry-registry-secret");
     }
 
+    // Every space now holds a built-in feed (it can be the space's first feed, id 1). Feeds are chosen only by the id a container names, so a registry feed that is not
+    // first still gets its image-pull secret, and the built-in feed is never looked at.
+    [Fact]
+    public async Task DescribeIntentAsync_ASpaceWithABuiltInFeed_StillSecretsTheFeedTheContainerNames()
+    {
+        var containerJson = JsonSerializer.Serialize(new[]
+        {
+            new Dictionary<string, object> { ["Name"] = "web", ["Image"] = "myapp", ["PackageId"] = "myapp", ["FeedId"] = 2, ["CreateFeedSecrets"] = "True" }
+        });
+
+        var action = CreateActionWithContainers(containerJson);
+        var ctx = CreateContext(action, packageVersion: "1.0.0");
+
+        var feedProvider = new Mock<IExternalFeedDataProvider>();
+        feedProvider.Setup(f => f.GetFeedByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ExternalFeed { Id = 1, FeedType = "BuiltIn", Name = "Built-in feed", FeedUri = string.Empty });
+        feedProvider.Setup(f => f.GetFeedByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(new ExternalFeed { Id = 2, FeedType = "Docker", Name = "MyRegistry", FeedUri = "https://registry.example.com/v2", Username = "user", Password = "secret" });
+
+        IActionHandler handler = new KubernetesYamlActionHandler(new[] { CreateMockGenerator(canHandle: true).Object }, feedProvider.Object);
+
+        var intent = await handler.DescribeIntentAsync(ctx, CancellationToken.None);
+
+        var secret = intent.Assets.Single(f => f.RelativePath == "feedsecrets.yaml");
+
+        Encoding.UTF8.GetString(secret.Content).ShouldContain("myregistry-registry-secret");
+        feedProvider.Verify(f => f.GetFeedByIdAsync(1, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task DescribeIntentAsync_CreateFeedSecretsFalse_NoFeedSecretsYaml()
     {

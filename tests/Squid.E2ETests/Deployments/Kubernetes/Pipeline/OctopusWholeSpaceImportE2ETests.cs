@@ -142,7 +142,7 @@ public class OctopusWholeSpaceImportE2ETests : IClassFixture<OctopusWholeSpaceIm
 
     private Task<SpaceRows> SpaceRowsAsync()
         => _fixture.Run<SquidDbContext, SpaceRows>(async db => new SpaceRows(
-            await db.Set<ExternalFeed>().Where(f => f.SpaceId == 1).Select(f => f.Name).ToListAsync(),
+            await db.Set<ExternalFeed>().Where(f => f.SpaceId == 1 && f.FeedType != "BuiltIn").Select(f => f.Name).ToListAsync(),
             await db.Set<DeploymentAccount>().CountAsync(a => a.Name == "Unused Azure"),
             await db.Set<LibraryVariableSet>().CountAsync(),
             await (from deployment in db.Set<Deployment>() join release in db.Set<Release>() on deployment.ReleaseId equals release.Id join task in db.Set<ServerTaskEntity>() on deployment.TaskId equals task.Id where release.Version == ImportedVersion select task.State).ToListAsync(),

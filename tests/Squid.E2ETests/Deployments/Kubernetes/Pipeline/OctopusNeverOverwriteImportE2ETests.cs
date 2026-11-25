@@ -122,9 +122,9 @@ public class OctopusNeverOverwriteImportE2ETests : IClassFixture<OctopusNeverOve
     {
         var project = await _fixture.Run<SquidDbContext, Project>(db => db.Set<Project>().AsNoTracking().SingleAsync());
         var notes = await _fixture.Run<SquidDbContext, string>(db => db.Set<Release>().AsNoTracking().Select(r => r.ReleaseNote).SingleAsync());
-        var feed = await _fixture.Run<SquidDbContext, ExternalFeed>(db => db.Set<ExternalFeed>().AsNoTracking().SingleAsync());
+        var feed = await _fixture.Run<SquidDbContext, ExternalFeed>(db => db.Set<ExternalFeed>().AsNoTracking().Where(f => f.FeedType != "BuiltIn").SingleAsync()); // the space's own built-in feed is not an imported one
         var feedPassword = await _fixture.Run<IAtRestSecretProtector, string>(p => p.UnprotectAsync(feed.Password, 0));
-        var counts = await _fixture.Run<SquidDbContext, string>(async db => $"{await db.Set<Project>().CountAsync()}/{await db.Set<Variable>().CountAsync()}/{await db.Set<Release>().CountAsync()}/{await db.Set<Deployment>().CountAsync()}/{await db.Set<ExternalFeed>().CountAsync()}");
+        var counts = await _fixture.Run<SquidDbContext, string>(async db => $"{await db.Set<Project>().CountAsync()}/{await db.Set<Variable>().CountAsync()}/{await db.Set<Release>().CountAsync()}/{await db.Set<Deployment>().CountAsync()}/{await db.Set<ExternalFeed>().CountAsync(f => f.FeedType != "BuiltIn")}");
 
         return $"{project.Name}|{notes}|{await DecryptedAsync("Db.Password")}|{feed.Username}|{feedPassword}|{counts}";
     }
