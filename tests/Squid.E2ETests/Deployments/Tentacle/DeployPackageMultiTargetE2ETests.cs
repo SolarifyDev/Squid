@@ -206,6 +206,13 @@ public class DeployPackageMultiTargetE2ETests
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
 
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
+
+        // "installed to" is printed only after PreDeploy succeeded (see the all-targets-fail test, which expects 0), so
+        // exactly one means the atomic mkdir lock had exactly one winner. A task that is merely Failed would also be
+        // the outcome if BOTH targets failed (count 0) — which would hide a broken lock or a broken winner path.
+        CountLogOccurrences($"DeployPackage: installed to '{installDir}'").ShouldBe(1,
+            "Exactly one target must win the PreDeploy lock and install; the other must fail its PreDeploy. 0 means both failed, 2 means the lock admitted both.");
+
         // PreDeploy runs after commit, so both targets may leave package content on the shared
         // host FS. Durable contract: overall task Failed and package content is present.
         File.Exists(Path.Combine(installDir, "deploy-package-multi-marker.txt"))
