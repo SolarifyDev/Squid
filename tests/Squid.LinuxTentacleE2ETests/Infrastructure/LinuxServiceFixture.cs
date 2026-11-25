@@ -113,6 +113,18 @@ public sealed class LinuxServiceFixture : IDisposable
     public string VersionedMarkerPath(string version) => Path.Combine(VersionDir(version), "service-running.marker");
 
     /// <summary>
+    /// When true, the unit carries the production restart policy (SystemdServiceHost: Restart=on-failure,
+    /// RestartSec=10, StartLimitBurst=3 / StartLimitIntervalSec=120) instead of Restart=no. Required to
+    /// reproduce a crash-on-start upgrade: systemd restarts the crashing binary until the start limit
+    /// refuses further starts, exactly as on a real host. Set before InstallAndStart / InstallVersionedAndStart.
+    /// </summary>
+    public bool UseProductionRestartPolicy { get; set; }
+
+    private string StartLimitLines => UseProductionRestartPolicy ? "StartLimitBurst=3\nStartLimitIntervalSec=120\n" : "";
+
+    private string RestartPolicyLine => UseProductionRestartPolicy ? "Restart=on-failure\nRestartSec=10" : "Restart=no";
+
+    /// <summary>
     /// Construct against a UNIQUE service name + UNIQUE install dir.
     /// Caller responsible for uniqueness (recommended: GUID-suffix).
     /// </summary>
@@ -162,6 +174,7 @@ public sealed class LinuxServiceFixture : IDisposable
         var unitBuilder = new StringBuilder()
             .AppendLine("[Unit]")
             .AppendLine($"Description=Squid Linux Tentacle E2E Test Service — {_serviceName}")
+            .Append(StartLimitLines)
             .AppendLine()
             .AppendLine("[Service]")
             .AppendLine("Type=simple")
@@ -176,7 +189,7 @@ public sealed class LinuxServiceFixture : IDisposable
         var unitContent = unitBuilder
             .AppendLine($"ExecStart=/usr/bin/env bash {ServiceScriptPath}")
             .AppendLine("KillMode=mixed")
-            .AppendLine("Restart=no")
+            .AppendLine(RestartPolicyLine)
             .AppendLine()
             .AppendLine("[Install]")
             .AppendLine("WantedBy=multi-user.target")
@@ -252,6 +265,7 @@ public sealed class LinuxServiceFixture : IDisposable
         var unitBuilder = new StringBuilder()
             .AppendLine("[Unit]")
             .AppendLine($"Description=Squid Linux Tentacle E2E Versioned Test Service — {_serviceName}")
+            .Append(StartLimitLines)
             .AppendLine()
             .AppendLine("[Service]")
             .AppendLine("Type=simple");
@@ -266,7 +280,7 @@ public sealed class LinuxServiceFixture : IDisposable
             .AppendLine($"ExecStart=/usr/bin/env bash {execTarget}")
             .AppendLine("KillMode=mixed")
             .AppendLine(timeoutStop.HasValue ? $"TimeoutStopSec={(int)timeoutStop.Value.TotalSeconds}" : "# TimeoutStopSec: systemd default")
-            .AppendLine("Restart=no")
+            .AppendLine(RestartPolicyLine)
             .AppendLine()
             .AppendLine("[Install]")
             .AppendLine("WantedBy=multi-user.target")

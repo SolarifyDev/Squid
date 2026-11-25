@@ -310,7 +310,7 @@ public sealed class UpgradeLinuxTentacleScriptTests
         // are wrapped. Rollback paths also wrap systemctl calls.
         RenderedScript.ShouldContain("timeout \"$RESTART_TIMEOUT_SECS\" sudo systemctl restart",
             customMessage: "main service restart (in scope) must be capped");
-        RenderedScript.ShouldContain("timeout 30 sudo systemctl start",
+        RenderedScript.ShouldContain("rollback_start_unit start 30",
             customMessage: "rollback start must be capped");
     }
 
