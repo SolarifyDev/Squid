@@ -10,6 +10,7 @@ using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Core.Services.Jobs;
+using Squid.Core.Settings.ServerTask;
 using Squid.IntegrationTests.Base;
 using Squid.Message.Contracts.Tentacle;
 using static Squid.IntegrationTests.Deployments.Pipeline.IntegrationPausePreservesRemoteScript;
@@ -101,6 +102,25 @@ public class IntegrationLeaseFenceRedelivery : DeploymentFixtureBase
 
             await MarkPausedTaskExecutingAsync(seeded.TaskId).ConfigureAwait(false);
         }
+    }
+
+    // An operator who sets MaxAutoResumes to 0 opts out: the reaper still pauses the stopped task, but nothing resumes it.
+    [Fact]
+    public async Task WithAutoResumeDisabled_AReaperPausedTask_StaysPaused()
+    {
+        var seeded = await SeedScriptDeploymentAsync(isRequired: true).ConfigureAwait(false);
+        await CrashedOwnerAsync(seeded.TaskId, leaseAge: TimeSpan.FromMinutes(10)).ConfigureAwait(false);
+        var queued = 0;
+
+        await Run<IServerTaskLeaseReaperService, ISquidBackgroundJobClient>(async (reaper, jobs) =>
+        {
+            await reaper.ReapStaleAsync().ConfigureAwait(false);
+
+            queued = ((MockSquidBackgroundJobClient)jobs).EnqueuedJobs.OfType<Expression<Func<IDeploymentTaskExecutor, Task>>>().Count();
+        }, extraRegistration: b => b.RegisterInstance(new ServerTaskSetting { Lease = new ServerTaskLeaseSettings { MaxAutoResumes = 0 } }).AsSelf().SingleInstance()).ConfigureAwait(false);
+
+        (await LoadAsync(seeded.TaskId).ConfigureAwait(false)).State.ShouldBe(TaskState.Paused);
+        queued.ShouldBe(0, "0 means never resume automatically");
     }
 
     private static DeploymentPipelineRunner BuildRunner(ILifetimeScope scope)
