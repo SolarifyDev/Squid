@@ -47,10 +47,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Image into the node from the host, so the node never pulls from a registry itself.
+# Preloads an image into the node from the host (for hosts whose node cannot reach the registry).
+# Best effort: `kind load` cannot import multi-platform images from Docker's containerd image store
+# (GitHub runners), and then the node pulls the image itself.
 load_image() {
   docker image inspect "$1" >/dev/null 2>&1 || docker pull -q "$1" >/dev/null
-  kind load docker-image "$1" --name "$CLUSTER" >/dev/null
+  kind load docker-image "$1" --name "$CLUSTER" >/dev/null 2>&1 || log "could not preload $1; the node pulls it"
 }
 
 create_cluster() {
