@@ -77,7 +77,7 @@ internal sealed partial record FeedVersion(long Major, long Minor, long Patch, l
         if (leftNumeric && rightNumeric) return CompareNumbers(left, right);
         if (leftNumeric != rightNumeric) return leftNumeric ? -1 : 1;
 
-        return Math.Sign(string.CompareOrdinal(left, right));
+        return Math.Sign(string.Compare(left, right, StringComparison.OrdinalIgnoreCase));
     }
 
     // Digit strings of any length: after dropping leading zeros the longer one is larger, equal lengths compare as text.
