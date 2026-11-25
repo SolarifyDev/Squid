@@ -41,10 +41,9 @@ public sealed class TentacleCommsUrlProbe : ITentacleCommsUrlProbe
         if (!Uri.TryCreate(commsUrl, UriKind.Absolute, out var uri))
             return Unreachable($"ServerCommsUrl \"{commsUrl}\" is not a valid absolute URL");
 
-        var host = uri.Host;
-        var port = uri.IsDefaultPort ? 10943 : uri.Port;
-
-        return await ProbeHostAsync(host, port, expectedServerThumbprint, ct).ConfigureAwait(false);
+        // Probe exactly what the Tentacle dials: Halibut connects to Uri.Port, so a URL without a
+        // port means the scheme default (443 for https), not the polling listener's 10943.
+        return await ProbeHostAsync(uri.Host, uri.Port, expectedServerThumbprint, ct).ConfigureAwait(false);
     }
 
     private static async Task<TentacleCommsProbeResult> ProbeHostAsync(
