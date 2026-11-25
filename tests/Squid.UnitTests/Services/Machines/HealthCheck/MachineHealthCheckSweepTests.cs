@@ -56,6 +56,30 @@ public class MachineHealthCheckSweepTests : IDisposable
     private void ProbeReturns(Func<Machine, CancellationToken, Task<HealthCheckResult>> probe)
         => _checker.Setup(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>())).Returns<Machine, MachineConnectivityPolicyDto, CancellationToken, MachineHealthCheckPolicyDto>((m, _, ct, _) => probe(m, ct));
 
+    // ── a probe never outlives the sweep that runs it ──
+
+    [Theory]
+    [InlineData(CommunicationStyle.TentaclePolling)]
+    [InlineData(CommunicationStyle.KubernetesApi)]
+    public async Task Sweep_HungProbeUnderDefaultTimeout_IsRecordedUnavailable_BeforeTheSweepDeadline(CommunicationStyle style)
+    {
+        var machine = new Machine { Id = 1, Name = "hung", IsDisabled = false, HealthLastChecked = null, Endpoint = "{\"communicationStyle\":\"" + style + "\"}" };
+        var recorded = new TaskCompletionSource<Machine>();
+        Seed(machine);
+        _transport.Setup(t => t.CommunicationStyle).Returns(style);
+        _machines.Setup(p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Callback<Machine, bool, CancellationToken>((m, _, _) => recorded.TrySetResult(m)).Returns(Task.CompletedTask);
+        ProbeReturns(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return new HealthCheckResult(true, "unreachable"); });
+
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting { SweepDeadlineSeconds = 6 });
+        _hosts.Add(host);
+
+        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(TimeSpan.FromSeconds(20));
+
+        recorded.Task.IsCompleted.ShouldBeTrue("the probe still running at the sweep deadline must have been recorded, not silently dropped");
+        recorded.Task.Result.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
+        recorded.Task.Result.HealthDetail.ShouldContain("timed out");
+    }
+
     // ── lock usage ──
 
     [Fact]

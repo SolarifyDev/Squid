@@ -1,3 +1,4 @@
+using System.Linq;
 using Autofac;
 using Halibut.Diagnostics;
 using Microsoft.Extensions.Configuration;
@@ -22,9 +23,9 @@ public class ProbeTimeoutPolicyTests
     };
 
     [Theory]
-    [InlineData(CommunicationStyle.TentaclePolling, 150)]
-    [InlineData(CommunicationStyle.KubernetesAgent, 150)]
-    [InlineData(CommunicationStyle.TentacleListening, 95)]
+    [InlineData(CommunicationStyle.TentaclePolling, 130)]
+    [InlineData(CommunicationStyle.KubernetesAgent, 130)]
+    [InlineData(CommunicationStyle.TentacleListening, 75)]
     [InlineData(CommunicationStyle.KubernetesApi, 75)]
     [InlineData(CommunicationStyle.Ssh, 75)]
     [InlineData(CommunicationStyle.OpenClaw, 75)]
@@ -33,19 +34,56 @@ public class ProbeTimeoutPolicyTests
         ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), style, null, Defaults).ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
     }
 
+    public static IEnumerable<object[]> EveryStyle() => Enum.GetValues<CommunicationStyle>().Select(s => new object[] { s });
+
+    [Theory]
+    [MemberData(nameof(EveryStyle))]
+    public void Unconfigured_NoProbeOutlivesTheSweepDeadline_ForEveryTransport(CommunicationStyle style)
+    {
+        var setting = new MachineHealthCheckSetting();
+        var slow = HalibutTimeoutsAndLimits.RecommendedValues();
+        slow.PollingRequestQueueTimeout = TimeSpan.FromMinutes(30);
+
+        foreach (var limits in new[] { Defaults, slow })
+            ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), limits).ShouldBeLessThan(setting.SweepDeadline);
+
+        ProbeTimeoutPolicy.Longest(setting, slow).ShouldBeLessThan(setting.SweepDeadline);
+        ProbeTimeoutPolicy.ManualWait(setting, slow).ShouldBeLessThan(setting.SweepDeadline);
+    }
+
+    [Theory]
+    [InlineData(300, CommunicationStyle.Ssh, 270)]
+    [InlineData(60, CommunicationStyle.TentaclePolling, 54)]
+    [InlineData(60, CommunicationStyle.KubernetesApi, 54)]
+    [InlineData(1000, CommunicationStyle.Ssh, 325)]
+    public void Unconfigured_IsCappedAtNinetyPercentOfTheSweepDeadline(int deadlineSeconds, CommunicationStyle style, int expectedSeconds)
+    {
+        var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = deadlineSeconds };
+
+        ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), Defaults).ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
+    }
+
+    [Fact]
+    public void Configured_WinsOverTheSweepCap()
+    {
+        var setting = new MachineHealthCheckSetting { ProbeTimeoutSeconds = 600, SweepDeadlineSeconds = 300 };
+
+        ProbeTimeoutPolicy.For(setting, CommunicationStyle.Ssh, SshScriptPolicy(), Defaults).ShouldBe(TimeSpan.FromSeconds(600));
+    }
+
     [Fact]
     public void Unconfigured_PollingDefault_FollowsTheEffectivePollingQueueTimeout()
     {
         var limits = HalibutTimeoutsAndLimits.RecommendedValues();
         limits.PollingRequestQueueTimeout = TimeSpan.FromSeconds(300);
 
-        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.TentaclePolling, null, limits).ShouldBe(TimeSpan.FromSeconds(330));
+        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.TentaclePolling, null, limits).ShouldBe(TimeSpan.FromSeconds(270));
     }
 
     [Fact]
     public void Unconfigured_SshWithCustomScript_CoversTheScriptTimeout_ButPlainSshDoesNot()
     {
-        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.Ssh, SshScriptPolicy(), Defaults).ShouldBeGreaterThan(TimeSpan.FromMinutes(5));
+        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.Ssh, SshScriptPolicy(), Defaults).ShouldBeGreaterThan(TimeSpan.FromSeconds(75));
         ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.Ssh, new MachineHealthCheckPolicyDto { HealthCheckType = PolicyHealthCheckType.RunScript }, Defaults).ShouldBe(TimeSpan.FromSeconds(75));
     }
 
@@ -68,7 +106,7 @@ public class ProbeTimeoutPolicyTests
         var setting = new MachineHealthCheckSetting();
 
         ProbeTimeoutPolicy.Longest(setting, Defaults).ShouldBeGreaterThanOrEqualTo(ProbeTimeoutPolicy.For(setting, CommunicationStyle.Ssh, SshScriptPolicy(), Defaults));
-        ProbeTimeoutPolicy.ManualWait(setting, Defaults).ShouldBe(TimeSpan.FromSeconds(150));
+        ProbeTimeoutPolicy.ManualWait(setting, Defaults).ShouldBe(TimeSpan.FromSeconds(130));
     }
 
     [Theory]
@@ -137,6 +175,6 @@ public class ProbeTimeoutPolicyTests
 
         await host.Service.ManualHealthCheckAsync(1);
 
-        spy.ShouldBe(new[] { TimeSpan.FromSeconds(150) });
+        spy.ShouldBe(new[] { TimeSpan.FromSeconds(130) });
     }
 }
