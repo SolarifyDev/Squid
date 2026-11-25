@@ -5,45 +5,39 @@ using Squid.Message.Models.PackageVersioning;
 namespace Squid.Core.Services.Packages.Versioning.Tokens;
 
 /// <summary>
-/// <c>{counter}</c>: 1, 2, 3 ... per (feed, package, text rendered before the token). <c>{counter:daily}</c> starts again at 1 each UTC day. A template that renders a date
-/// before the counter is therefore already per-day. While a template is only checked it yields 1 and takes nothing from the store.
+/// <c>{counter}</c>: 1, 2, 3 ... per (feed, package, text rendered before the token). It takes no argument. To count per day put a date before it, e.g.
+/// <c>{date:yyyy.MM.dd}.{counter}</c>: the rendered date is part of the scope, so the count starts again each day and the version never repeats.
+/// While a template is only checked it yields 1 and takes nothing from the store.
 /// </summary>
-public sealed class CounterToken(IPackageVersionCounterStore store, TimeProvider time = null) : IVersionTokenSource
+public sealed class CounterToken(IPackageVersionCounterStore store) : IVersionTokenSource
 {
     public const string TokenName = "counter";
-
-    public const string DailyArgument = "daily";
-
-    private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     public string Token => TokenName;
 
     public async Task<string> ResolveAsync(VersionTokenContext context, string argument, CancellationToken ct)
     {
-        var scope = BuildScope(context.PrecedingText, argument);
+        EnsureNoArgument(argument);
 
         if (context.DryRun) return "1";
 
-        EnsurePackageKnown(context);
-
-        var next = await store.NextAsync(context.FeedId, context.PackageId, scope, ct).ConfigureAwait(false);
+        var packageId = RequirePackageId(context);
+        var next = await store.NextAsync(context.FeedId, packageId, context.PrecedingText, ct).ConfigureAwait(false);
 
         return next.ToString(CultureInfo.InvariantCulture);
     }
 
-    private string BuildScope(string preceding, string argument)
+    private static void EnsureNoArgument(string argument)
     {
-        if (argument == null) return preceding;
-
-        if (!string.Equals(argument, DailyArgument, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidVersionTokenArgumentException(TokenName, argument, $"the only argument is '{DailyArgument}'");
-
-        return $"{preceding}|{DailyArgument}:{_time.GetUtcNow():yyyy-MM-dd}";
+        if (argument != null)
+            throw new InvalidVersionTokenArgumentException(TokenName, argument, "this token takes no argument; to count per day put a date before it, for example {date:yyyy.MM.dd}.{counter}");
     }
 
-    private static void EnsurePackageKnown(VersionTokenContext context)
+    private static string RequirePackageId(VersionTokenContext context)
     {
         if (string.IsNullOrWhiteSpace(context.PackageId))
             throw new VersionTokenValueMissingException(TokenName, "the package id is not known, so there is no counter to take a number from");
+
+        return context.PackageId.Trim();
     }
 }

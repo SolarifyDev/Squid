@@ -327,11 +327,35 @@ public class PackageInspectionTests
     }
 
     [Fact]
-    public async Task CorruptArchive_YieldsAFailureFact_NotAnException()
+    public async Task CorruptArchive_IsRefusedByTheSafetyWalk_BeforeAnyInspectorRuns()
     {
-        var facts = await Inspect.RunAsync([1, 2, 3, 4, 5], BuiltInPackageFormat.Zip);
+        var spy = new RanSpyInspector();
 
-        facts.Values.Keys.ShouldContain(PackageFactKeys.InspectorFailedPrefix + "Scan");
+        await Should.ThrowAsync<Squid.Core.Services.Packages.BuiltIn.Exceptions.PackageArchiveRejectedException>(() => Inspect.RunAsync([1, 2, 3, 4, 5], BuiltInPackageFormat.Zip, spy));
+
+        spy.Ran.ShouldBeFalse("an archive that has not passed the limits must not reach the inspectors");
+    }
+
+    [Fact]
+    public async Task UnsafeEntryNames_AreRefused_BeforeAnyInspectorRuns()
+    {
+        var spy = new RanSpyInspector();
+
+        await Should.ThrowAsync<Squid.Core.Services.Packages.BuiltIn.Exceptions.PackageArchiveRejectedException>(() => Inspect.RunAsync(TestArchives.Zip(("../evil.txt", "x")), BuiltInPackageFormat.Zip, spy));
+
+        spy.Ran.ShouldBeFalse();
+    }
+
+    private sealed class RanSpyInspector : Squid.Core.Services.Publishing.IPackageInspector
+    {
+        public bool Ran { get; private set; }
+
+        public Task InspectAsync(Squid.Core.Services.Publishing.PackageInspectionContext context, CancellationToken ct)
+        {
+            Ran = true;
+
+            return Task.CompletedTask;
+        }
     }
 
     // === pinned keys ===

@@ -21,6 +21,9 @@ public sealed record VersionTokenContext
     /// <summary>Names of the files at the package root. Null when the package content is not available.</summary>
     public Func<CancellationToken, Task<IReadOnlyList<string>>> ListRootFileNamesAsync { get; init; }
 
+    /// <summary>The single clock reading (UTC) of this assignment; every time-based token uses it, so a dry run and the real run render the same. Set by the assigner.</summary>
+    public DateTimeOffset Now { get; init; }
+
     /// <summary>True while a template is only being checked: tokens must not consume anything.</summary>
     public bool DryRun { get; init; }
 

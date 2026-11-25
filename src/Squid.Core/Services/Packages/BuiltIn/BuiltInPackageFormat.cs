@@ -3,14 +3,14 @@ using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
-public enum BuiltInPackageFormat
+internal enum BuiltInPackageFormat
 {
     Zip,
     TarGz
 }
 
 /// <summary>The two formats the built-in feed accepts, told apart by the file's first bytes: a file's name says nothing about what it holds.</summary>
-public static class BuiltInPackageFormats
+internal static class BuiltInPackageFormats
 {
     public static BuiltInPackageFormat Detect(string path)
     {

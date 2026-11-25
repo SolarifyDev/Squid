@@ -19,9 +19,9 @@ public class VersionTemplateParserTests
     [Fact]
     public void Parse_TokensWithArgumentsAndLiteralBetween()
     {
-        var parts = VersionTemplateParser.Parse("{date:yyyy.MM.dd}.{counter:daily}");
+        var parts = VersionTemplateParser.Parse("{date:yyyy.MM.dd}.{git.sha:7}");
 
-        parts.ShouldBe([VersionTemplatePart.OfToken("date", "yyyy.MM.dd"), VersionTemplatePart.OfLiteral("."), VersionTemplatePart.OfToken("counter", "daily")]);
+        parts.ShouldBe([VersionTemplatePart.OfToken("date", "yyyy.MM.dd"), VersionTemplatePart.OfLiteral("."), VersionTemplatePart.OfToken("git.sha", "7")]);
     }
 
     [Fact]

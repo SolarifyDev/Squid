@@ -308,18 +308,6 @@ public class BuiltInPackagePushServiceTests
     }
 
     [Fact]
-    public async Task Push_ReplaceWithTheLatestsOwnBytes_IsADeduplicationNotAWrite()
-    {
-        await _h.Service().PushAsync(PushHarness.Push(WebV1, version: "1.0.0"), CancellationToken.None);
-
-        var result = await _h.Service().PushAsync(PushHarness.Push(WebV1, version: "1.0.0", replace: true), CancellationToken.None);
-
-        result.Deduplicated.ShouldBeTrue();
-        result.Replaced.ShouldBeFalse();
-        _h.Packages.Replaces.ShouldBe(0);
-    }
-
-    [Fact]
     public async Task Push_NoStoreIdOnTheFeed_UsesAndRecordsTheDefaultStore()
     {
         var result = await _h.Service().PushAsync(PushHarness.Push(WebV1), CancellationToken.None);

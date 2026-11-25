@@ -64,9 +64,15 @@ public class GlobalExceptionFilter : IExceptionFilter
             PackageVersionInUseException => HttpStatusCode.Conflict,
             BuiltInFeedStoreInvalidException => HttpStatusCode.BadRequest,
             BuiltInPackageTooLargeToDeployException => HttpStatusCode.Conflict,
+            BuiltInPackageIntegrityException => HttpStatusCode.InternalServerError,
+            PackageArchiveLimitExceededException => HttpStatusCode.RequestEntityTooLarge,
+            BuiltInFeedConflictException => HttpStatusCode.Conflict,
             BuiltInFeedDeletionException => HttpStatusCode.Conflict,
             BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
             BuiltInFeedCreationException => HttpStatusCode.Conflict,
+            PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
+            InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
+            PackageBlobNotFoundException => HttpStatusCode.NotFound,
             _ => HttpStatusCode.InternalServerError
         };
 

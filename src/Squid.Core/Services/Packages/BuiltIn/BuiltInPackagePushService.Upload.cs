@@ -1,11 +1,10 @@
-using Squid.Core.Services.DeploymentExecution.Packages;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Message.Constants;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
-public sealed partial class BuiltInPackagePushService
+internal sealed partial class BuiltInPackagePushService
 {
     private async Task LoadFeedAsync(CancellationToken ct)
     {
@@ -27,18 +26,14 @@ public sealed partial class BuiltInPackagePushService
         _ctx.Format = BuiltInPackageFormats.Detect(_ctx.Staged.Path);
     }
 
-    private void EnsureArchiveSafe()
+    // One walk: unsafe names, the decompression limits, the content fingerprint, the root manifests and the inspection scan, so the archive is not unpacked again for
+    // each of them. The facts are read off that scan afterwards, in memory, and never fail the push.
+    private async Task VerifyArchiveAsync(CancellationToken ct)
     {
-        try
-        {
-            using var file = File.OpenRead(_ctx.Staged.Path);
+        var verified = await verifier.VerifyAsync(_ctx.Staged.Path, _ctx.Format, _ctx.PackageId, ct).ConfigureAwait(false);
 
-            PackageArchiveSafety.EnsureArchiveEntriesAreSafe(file, _ctx.PackageId, "being pushed");
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException)
-        {
-            throw new PackageArchiveRejectedException(ex.Message, ex);
-        }
+        _ctx.Inspection = verified.Inspection;
+        _ctx.Facts = verified.Facts;
     }
 
     // After the checks above, so a push that is refused never fixes a package's casing. From here on the package id is the feed's canonical one.
@@ -47,14 +42,29 @@ public sealed partial class BuiltInPackagePushService
         _ctx.PackageId = await packages.ResolveCanonicalIdAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
     }
 
-    // Before any version is assigned: re-pushing identical bytes must not use up a version number.
-    private async Task EnsureLatestDiffersAsync(CancellationToken ct)
+    // Before any version is assigned: re-pushing the same content must not use up a version number. It never swallows a request for a version of its own: a version
+    // the caller named is deduplicated only when it is the latest one, and a replace is a request to write, not to look.
+    private async Task EnsureNotDuplicateOfLatestAsync(CancellationToken ct)
     {
-        var versions = await packages.ListVersionsAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
-        var latest = PackageVersionFilter.SortByVersionDescending(versions.Select(v => v.Version)).FirstOrDefault();
-        var latestRow = versions.FirstOrDefault(v => v.Version == latest);
+        if (_ctx.Command.Replace) return;
 
-        if (latestRow != null && latestRow.Sha256 == _ctx.Staged.Sha256)
-            throw new PackageContentUnchangedException(latestRow);
+        var existing = await packages.ListVersionsAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
+        var latestVersion = PackageVersionFilter.SortByVersionDescending(existing.Select(v => v.Version)).FirstOrDefault();
+        var latest = existing.FirstOrDefault(v => v.Version == latestVersion);
+
+        if (!HoldsTheSameContent(latest) || NamesAnotherVersion(latest)) return;
+
+        throw new PackageContentUnchangedException(latest);
+    }
+
+    // A row pushed before fingerprints existed has none and never matches.
+    private bool HoldsTheSameContent(Persistence.Entities.Deployments.BuiltInPackage latest)
+    {
+        return latest?.ContentFingerprint != null && latest.ContentFingerprint == _ctx.Inspection.ContentFingerprint;
+    }
+
+    private bool NamesAnotherVersion(Persistence.Entities.Deployments.BuiltInPackage latest)
+    {
+        return !string.IsNullOrWhiteSpace(_ctx.Command.Version) && _ctx.Command.Version.Trim() != latest.Version;
     }
 }

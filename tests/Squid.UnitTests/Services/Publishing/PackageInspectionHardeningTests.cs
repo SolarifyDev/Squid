@@ -226,7 +226,7 @@ public class PackageInspectionHardeningTests
 
     // === what the scan retains, and when it stops ===
 
-    private static async Task<PackageArchiveScan> ScanAsync(byte[] archive, BuiltInPackageFormat format, IReadOnlySet<string> reads, CancellationToken ct = default)
+    private static async Task<PackageArchiveScan> ScanAsync(byte[] archive, BuiltInPackageFormat format, IReadOnlySet<string> reads)
     {
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"squid-scan-{Guid.NewGuid():N}");
 
@@ -234,7 +234,7 @@ public class PackageInspectionHardeningTests
 
         try
         {
-            return await PackageArchiveScanner.ScanAsync(new PackageArchiveTextReader(path, format), reads, reads, ct);
+            return PackageArchiveInspector.Inspect(path, format, "p", ArchiveLimits.Default, new PackageArchiveScanner(reads, reads)).Scan;
         }
         finally
         {
@@ -257,22 +257,24 @@ public class PackageInspectionHardeningTests
         }
     }
 
-    [Fact]
-    public async Task Scan_StopsWalkingWhenCancelled()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Walk_StopsAtTheNextEntry_WhenCancelled(bool zip)
     {
         var entries = Enumerable.Range(0, 3000).Select(i => ($"f{i}.txt", "x")).ToArray();
         var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"squid-scan-{Guid.NewGuid():N}");
 
-        await System.IO.File.WriteAllBytesAsync(path, TestArchives.Zip(entries));
+        await System.IO.File.WriteAllBytesAsync(path, zip ? TestArchives.Zip(entries) : TestArchives.TarGz(entries));
 
         try
         {
             using var cts = new CancellationTokenSource();
-            var visited = 0;
+            var probes = new CancelAfterSet(10, cts);
 
-            await Should.ThrowAsync<OperationCanceledException>(() => new PackageArchiveTextReader(path, BuiltInPackageFormat.Zip).WalkFilesAsync((_, _, _) => { if (++visited == 10) cts.Cancel(); }, cts.Token));
+            Should.Throw<OperationCanceledException>(() => PackageArchiveInspector.Inspect(path, zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz, "p", ArchiveLimits.Default, new PackageArchiveScanner(probes, new HashSet<string>()), cts.Token));
 
-            visited.ShouldBe(10, "the walk must stop at the next entry, not finish the archive");
+            probes.Asked.ShouldBeLessThanOrEqualTo(12, "the walk must stop at the next entry, not finish the archive");
         }
         finally
         {
@@ -286,17 +288,54 @@ public class PackageInspectionHardeningTests
     public async Task Inspection_WithACancelledToken_StopsAndThrows(bool zip)
     {
         var entries = Enumerable.Range(0, PackageArchiveScanner.MaxRetainedNames + 10).Select(i => ($"f{i}.txt", "x")).ToArray();
-        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"squid-scan-{Guid.NewGuid():N}");
+        using var cts = new CancellationTokenSource();
 
-        await System.IO.File.WriteAllBytesAsync(path, zip ? TestArchives.Zip(entries) : TestArchives.TarGz(entries));
+        cts.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => Inspect.RunAsync(zip ? TestArchives.Zip(entries) : TestArchives.TarGz(entries), zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz, cts.Token));
+    }
+
+    // === one pass ===
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Inspectors_RunOnWhatTheSafetyWalkCollected_WithoutOpeningTheArchiveAgain(bool zip)
+    {
+        var format = zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz;
+        var archive = zip ? TestArchives.Zip(("site/package.json", """{"scripts":{"build":"x"}}"""), ("site/Dockerfile", "FROM x")) : TestArchives.TarGz(("site/package.json", """{"scripts":{"build":"x"}}"""), ("site/Dockerfile", "FROM x"));
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"squid-onepass-{Guid.NewGuid():N}");
+
+        await System.IO.File.WriteAllBytesAsync(path, archive);
 
         try
         {
-            using var cts = new CancellationTokenSource();
+            var verifier = new BuiltInArchiveVerifier(new PackageInspectionService([new ArchiveDeletingInspector(path), new NodeInspector(), new FileMarkerInspector()]));
 
-            cts.Cancel();
+            var facts = (await verifier.VerifyAsync(path, format, "pkg", CancellationToken.None)).Facts;
 
-            await Should.ThrowAsync<OperationCanceledException>(() => new PackageInspectionService(Inspect.AllInspectors()).InspectAsync(path, zip ? BuiltInPackageFormat.Zip : BuiltInPackageFormat.TarGz, cts.Token));
+            System.IO.File.Exists(path).ShouldBeFalse("the inspector deleted the archive before the others ran");
+            facts.Is(PackageFactKeys.NodeBuildScript).ShouldBeTrue("read from the safety walk, not from the file");
+            facts.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task TheSafetyWalk_StillEnforcesItsLimits_BeforeInspectorsRun()
+    {
+        var spy = new ArchiveDeletingInspector("/nonexistent");
+        var limits = new ArchiveLimits(3, 1_000_000, 100, 1_000_000);
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"squid-limits-{Guid.NewGuid():N}");
+
+        await System.IO.File.WriteAllBytesAsync(path, TestArchives.Zip(("a", "1"), ("b", "2"), ("c", "3"), ("d", "4")));
+
+        try
+        {
+            Should.Throw<Squid.Core.Services.Packages.BuiltIn.Exceptions.PackageArchiveLimitExceededException>(() => PackageArchiveInspector.Inspect(path, BuiltInPackageFormat.Zip, "p", limits, new PackageInspectionService([spy]).CreateScanner()));
         }
         finally
         {
@@ -382,6 +421,32 @@ public class PackageInspectionHardeningTests
         typeof(PackageFacts).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly).Where(m => !m.IsSpecialName).ShouldBeEmpty("recipes receive data, with no helper that works only at push time");
     }
 
+    // A set of probes that cancels the walk after being asked about a number of files (the scanner asks once per file).
+    private sealed class CancelAfterSet(int after, CancellationTokenSource cts) : IReadOnlySet<string>
+    {
+        public int Asked { get; private set; }
+
+        public int Count
+        {
+            get
+            {
+                if (++Asked == after) cts.Cancel();
+
+                return 1;
+            }
+        }
+
+        public bool Contains(string item) => false;
+        public bool IsProperSubsetOf(IEnumerable<string> other) => false;
+        public bool IsProperSupersetOf(IEnumerable<string> other) => false;
+        public bool IsSubsetOf(IEnumerable<string> other) => false;
+        public bool IsSupersetOf(IEnumerable<string> other) => false;
+        public bool Overlaps(IEnumerable<string> other) => false;
+        public bool SetEquals(IEnumerable<string> other) => false;
+        public IEnumerator<string> GetEnumerator() => Enumerable.Empty<string>().GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     private sealed class CountingStream(long length) : System.IO.Stream
     {
         public long BytesRead { get; private set; }
@@ -405,6 +470,20 @@ public class PackageInspectionHardeningTests
         public override long Seek(long offset, System.IO.SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class ArchiveDeletingInspector(string path) : IPackageInspector
+    {
+        public IReadOnlyCollection<string> FilesToRead { get; } = ["package.json"];
+
+        public IReadOnlyCollection<string> FilesToProbe { get; } = ["Dockerfile"];
+
+        public Task InspectAsync(PackageInspectionContext context, CancellationToken ct)
+        {
+            System.IO.File.Delete(path);
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class LongMessageInspector : IPackageInspector

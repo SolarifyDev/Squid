@@ -162,7 +162,7 @@ internal static class PackageArchiveSafety
     // middle of this one's padding and comes out as garbage, so a perfectly good archive with more than one entry would be rejected.
     private static void SkipData(TarEntry entry) => entry.DataStream?.CopyTo(Stream.Null);
 
-    private static void RejectIfUnsafe(string entryName, string packageId, string version)
+    internal static void RejectIfUnsafe(string entryName, string packageId, string version)
     {
         if (!IsUnsafeArchiveEntry(entryName))
             return;

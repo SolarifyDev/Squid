@@ -26,16 +26,36 @@ public class BuiltInConstantsTests
 
     [Theory]
     [InlineData("BuiltIn", true)]
-    [InlineData("builtin", true)]
-    [InlineData("BUILTIN", true)]
+    [InlineData("builtin", false)]
+    [InlineData("BUILTIN", false)]
     [InlineData("NuGet", false)]
     [InlineData("MyBuiltIn", false)]
     [InlineData("BuiltIn Feed", false)]
     [InlineData("", false)]
     [InlineData(null, false)]
-    public void IsBuiltIn_IsAnExactMatch_NotASubstring(string feedType, bool expected)
+    public void IsBuiltIn_IsAnExactOrdinalMatch_NotASubstringNorAnotherCasing(string feedType, bool expected)
     {
         BuiltInFeed.IsBuiltIn(feedType).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("BuiltIn", true)]
+    [InlineData("builtin", true)]
+    [InlineData("BUILTIN", true)]
+    [InlineData("MyBuiltIn", false)]
+    [InlineData(null, false)]
+    public void IsReservedType_IgnoresCase_SoNoCasingCanBeCreatedOrGivenToAFeed(string feedType, bool expected)
+    {
+        BuiltInFeed.IsReservedType(feedType).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void ArchiveLimits_ArePinned()
+    {
+        BuiltInFeed.MaxArchiveEntries.ShouldBe(100_000);
+        BuiltInFeed.MaxUncompressedBytes.ShouldBe(17179869184L);
+        BuiltInFeed.MaxCompressionRatio.ShouldBe(250);
+        BuiltInFeed.CompressionRatioFloorBytes.ShouldBe(268435456L);
     }
 
     [Fact]

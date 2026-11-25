@@ -124,19 +124,19 @@ public class BuiltInContainerWiringTests
     }
 
     [Fact]
-    public async Task ThePushPipeline_RunsTheContainersInspectors()
+    public async Task ThePushPipeline_RunsTheContainersInspectors_OnTheSafetyWalk()
     {
         using var container = Build();
         using var scope = container.BeginLifetimeScope();
 
-        var inspection = scope.Resolve<IPackageInspectionService>();
+        var verifier = scope.Resolve<IBuiltInArchiveVerifier>();
         var path = System.IO.Path.GetTempFileName();
 
         await System.IO.File.WriteAllBytesAsync(path, TestArchives.Zip(("Dockerfile", "FROM x")));
 
         try
         {
-            var facts = await inspection.InspectAsync(path, BuiltInPackageFormat.Zip, CancellationToken.None);
+            var facts = (await verifier.VerifyAsync(path, BuiltInPackageFormat.Zip, "p", CancellationToken.None)).Facts;
 
             facts.Is(Squid.Message.Models.Publishing.PackageFactKeys.MarkerDockerfile).ShouldBeTrue("an inspector the container does not hand to the service would leave the facts empty");
         }

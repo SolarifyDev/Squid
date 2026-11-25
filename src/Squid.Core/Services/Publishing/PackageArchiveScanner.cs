@@ -1,5 +1,3 @@
-using Squid.Core.Services.Packages.BuiltIn;
-
 namespace Squid.Core.Services.Publishing;
 
 /// <summary>
@@ -29,78 +27,67 @@ public sealed class PackageArchiveScan
 }
 
 /// <summary>
-/// Walks every file of an archive once (the push already read it all to check it is safe, and names are cheap), keeping only what is bounded: a capped list of names,
-/// the paths of the probed files, and the text of the small files to read. A probed or read path is matched at the archive's top level and inside its first
-/// top-level folder, which is the only folder that can turn out to be the effective root.
+/// Collects what package inspection needs from the files of an archive as another walk goes over them (the push's safety walk, which reads every file anyway): a
+/// capped list of names, the paths of the probed files, and the text of the small files to read. A probed or read path is matched at the archive's top level and inside
+/// its first top-level folder, which is the only folder that can turn out to be the effective root. The walk calls <see cref="Observe"/> for each file before it
+/// reads it, and <see cref="Captured"/> with the text when <see cref="Observe"/> asked for it.
 /// </summary>
-public static class PackageArchiveScanner
+public sealed class PackageArchiveScanner(IReadOnlySet<string> probes, IReadOnlySet<string> reads)
 {
     public const int MaxRetainedNames = 5000;
 
     // macOS's zip puts a resource-fork copy of every file under this folder, next to the real one; it is not content and must not count or hide a wrapper folder.
     private const string MacResourceForkFolder = "__MACOSX/";
 
-    public static async Task<PackageArchiveScan> ScanAsync(PackageArchiveTextReader reader, IReadOnlySet<string> probes, IReadOnlySet<string> reads, CancellationToken ct)
+    private readonly PackageArchiveScan _scan = new() { Reads = reads };
+    private bool _hasTopLevelFile;
+    private bool _hasSecondFolder;
+    private string _firstFolder;
+
+    /// <summary>Takes note of one file. True when its text is wanted: the caller then passes it to <see cref="Captured"/>.</summary>
+    public bool Observe(string path)
     {
-        var scan = new PackageArchiveScan { Reads = reads };
-        var state = new RootState();
+        if (path.StartsWith(MacResourceForkFolder, StringComparison.Ordinal)) return false;
 
-        await reader.WalkFilesAsync((path, _, readText) => Visit(scan, state, probes, reads, path, readText), ct).ConfigureAwait(false);
+        _scan.Count++;
 
-        scan.Root = state.Root();
+        if (_scan.Names.Count < MaxRetainedNames) _scan.Names.Add(path);
 
-        return scan;
+        TrackRoot(path);
+
+        if (Matches(probes, path) || Matches(reads, path)) _scan.Present.Add(path);
+
+        return Matches(reads, path) && !_scan.Texts.ContainsKey(path) && !_scan.Oversized.Contains(path);
     }
 
-    private static void Visit(PackageArchiveScan scan, RootState state, IReadOnlySet<string> probes, IReadOnlySet<string> reads, string path, Func<string> readText)
+    /// <summary>The text of a file <see cref="Observe"/> asked for, or null when it was too big to keep.</summary>
+    public void Captured(string path, string text)
     {
-        if (path.StartsWith(MacResourceForkFolder, StringComparison.Ordinal)) return;
-
-        scan.Count++;
-
-        if (scan.Names.Count < MaxRetainedNames) scan.Names.Add(path);
-
-        state.Observe(path);
-
-        if (Matches(state, probes, path)) scan.Present.Add(path);
-
-        if (Matches(state, reads, path)) Read(scan, path, readText);
+        if (text == null) _scan.Oversized.Add(path);
+        else _scan.Texts[path] = text;
     }
 
-    private static bool Matches(RootState state, IReadOnlySet<string> wanted, string path)
+    public PackageArchiveScan Finish()
     {
-        if (wanted.Count == 0) return false;
+        _scan.Root = _firstFolder != null && !_hasTopLevelFile && !_hasSecondFolder ? _firstFolder : string.Empty;
 
-        return wanted.Contains(path) || (state.FirstFolder != null && path.StartsWith(state.FirstFolder + "/", StringComparison.Ordinal) && wanted.Contains(path[(state.FirstFolder.Length + 1)..]));
-    }
-
-    private static void Read(PackageArchiveScan scan, string path, Func<string> readText)
-    {
-        if (scan.Texts.ContainsKey(path) || scan.Oversized.Contains(path)) return;
-
-        var text = readText();
-
-        if (text == null) scan.Oversized.Add(path);
-        else scan.Texts[path] = text;
+        return _scan;
     }
 
     // Tracks, as files go by, whether they all sit under one folder: a file at the top, or a second folder, means they do not.
-    private sealed class RootState
+    private void TrackRoot(string path)
     {
-        private bool _hasTopLevelFile;
-        private bool _hasSecondFolder;
+        var slash = path.IndexOf('/');
 
-        public string FirstFolder { get; private set; }
+        if (slash < 0) _hasTopLevelFile = true;
+        else if (_firstFolder == null) _firstFolder = path[..slash];
+        else if (!path.StartsWith(_firstFolder + "/", StringComparison.Ordinal)) _hasSecondFolder = true;
+    }
 
-        public void Observe(string path)
-        {
-            var slash = path.IndexOf('/');
+    private bool Matches(IReadOnlySet<string> wanted, string path)
+    {
+        if (wanted.Count == 0) return false;
 
-            if (slash < 0) _hasTopLevelFile = true;
-            else if (FirstFolder == null) FirstFolder = path[..slash];
-            else if (!path.StartsWith(FirstFolder + "/", StringComparison.Ordinal)) _hasSecondFolder = true;
-        }
-
-        public string Root() => FirstFolder != null && !_hasTopLevelFile && !_hasSecondFolder ? FirstFolder : string.Empty;
+        return wanted.Contains(path) || (_firstFolder != null && path.StartsWith(_firstFolder + "/", StringComparison.Ordinal) && wanted.Contains(path[(_firstFolder.Length + 1)..]));
     }
 }

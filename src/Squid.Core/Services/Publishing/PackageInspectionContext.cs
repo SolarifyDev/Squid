@@ -1,4 +1,3 @@
-using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Publishing;
@@ -16,13 +15,14 @@ public sealed class PackageInspectionContext
 
     public const string TruncationMarker = "...[truncated]";
 
-    private readonly PackageArchiveTextReader _reader;
+    private readonly Func<string, CancellationToken, Task<string>> _readFile;
     private readonly PackageArchiveScan _scan;
     private readonly SortedSet<string> _oversized = new(StringComparer.Ordinal);
 
-    public PackageInspectionContext(PackageArchiveTextReader reader, PackageArchiveScan scan)
+    /// <param name="readFile">Reads a file that was not declared to the scan, by full path, with a pass over the archive of its own.</param>
+    public PackageInspectionContext(PackageArchiveScan scan, Func<string, CancellationToken, Task<string>> readFile)
     {
-        _reader = reader;
+        _readFile = readFile;
         _scan = scan;
 
         Facts = new PackageFacts();
@@ -66,7 +66,7 @@ public sealed class PackageInspectionContext
 
         if (_scan.Reads.Contains(relativePath)) return null;
 
-        return await _reader.TryReadTextFileAsync(path, ct).ConfigureAwait(false);
+        return await _readFile(path, ct).ConfigureAwait(false);
     }
 
     internal static string Cap(string value)

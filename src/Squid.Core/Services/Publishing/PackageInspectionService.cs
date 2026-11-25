@@ -4,21 +4,20 @@ using Squid.Message.Models.Publishing;
 
 namespace Squid.Core.Services.Publishing;
 
-public sealed class PackageInspectionService(IEnumerable<IPackageInspector> inspectors) : IPackageInspectionService
+internal sealed class PackageInspectionService(IEnumerable<IPackageInspector> inspectors) : IPackageInspectionService
 {
     /// <summary>The most the stored facts may take as JSON. Values are capped one by one; this is the backstop for an inspector that records a great many.</summary>
     public const int MaxFactsJsonLength = 32 * 1024;
 
-    private const string ScanStep = "Scan";
+    private const string ContextStep = "Context";
 
-    public async Task<PackageFacts> InspectAsync(string path, BuiltInPackageFormat format, CancellationToken ct)
+    public PackageArchiveScanner CreateScanner() => new(Paths(i => i.FilesToProbe.Concat(i.FilesToRead)), Paths(i => i.FilesToRead));
+
+    public async Task<PackageFacts> InspectAsync(string path, BuiltInPackageFormat format, PackageArchiveScan scan, CancellationToken ct)
     {
-        var reader = new PackageArchiveTextReader(path, format);
-
         try
         {
-            var scan = await PackageArchiveScanner.ScanAsync(reader, Paths(i => i.FilesToProbe.Concat(i.FilesToRead)), Paths(i => i.FilesToRead), ct).ConfigureAwait(false);
-            var context = new PackageInspectionContext(reader, scan);
+            var context = new PackageInspectionContext(scan, (file, token) => new PackageArchiveTextReader(path, format).TryReadTextFileAsync(file, token));
 
             foreach (var inspector in inspectors) await RunAsync(inspector, context, ct).ConfigureAwait(false);
 
@@ -26,7 +25,7 @@ public sealed class PackageInspectionService(IEnumerable<IPackageInspector> insp
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return FailureOnly(ScanStep, ex);
+            return FailureOnly(ContextStep, ex);
         }
     }
 

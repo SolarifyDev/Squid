@@ -5,11 +5,8 @@ using Squid.Core.Services.DeploymentExecution.Packages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
-/// <summary>Called once per file of an archive, in archive order: its normalised path, its declared size, and a way to read it as text (null when it is bigger than the cap).</summary>
-public delegate void PackageArchiveFileVisitor(string path, long declaredLength, Func<string> readText);
-
-/// <summary>Reads manifests (small text files) out of a pushed archive on disk, for the version tokens that read a version from the package itself, and walks its files for inspection.</summary>
-public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat format)
+/// <summary>Reads manifests (small text files) out of a pushed archive on disk, for the version tokens that read a version from the package itself.</summary>
+internal sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat format, PackageArchiveInspection inspection = null)
 {
     /// <summary>A manifest bigger than this is treated as missing: manifests are small, and nothing here should inflate a bomb into memory.</summary>
     public const int MaxTextBytes = 1024 * 1024;
@@ -18,99 +15,50 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
     {
         var wanted = Normalize(relativePath);
 
-        return Task.FromResult(format == BuiltInPackageFormat.Zip ? ReadFromZip(wanted, ct) : ReadFromTar(wanted, ct));
+        ct.ThrowIfCancellationRequested();
+
+        // The push walk has already seen every root manifest (or found there is none), so asking again would unpack the archive again for nothing.
+        if (inspection != null && PackageArchiveInspector.IsRootManifest(wanted))
+            return Task.FromResult(inspection.RootManifests.GetValueOrDefault(wanted));
+
+        return Task.FromResult(format == BuiltInPackageFormat.Zip ? ReadFromZip(wanted) : ReadFromTar(wanted));
     }
 
     public Task<IReadOnlyList<string>> ListRootFileNamesAsync(CancellationToken ct)
     {
+        if (inspection != null) return Task.FromResult(inspection.RootFileNames);
+
         IReadOnlyList<string> names = format == BuiltInPackageFormat.Zip ? ListZipRoot() : ListTarRoot();
 
         return Task.FromResult(names);
     }
 
-    /// <summary>
-    /// One pass over every file in the archive, calling <paramref name="visit"/> for each. A file's text is only read when the visitor asks for it, and never more than
-    /// <see cref="MaxTextBytes"/> of it. Stops at once when <paramref name="ct"/> is cancelled.
-    /// </summary>
-    public Task WalkFilesAsync(PackageArchiveFileVisitor visit, CancellationToken ct)
-    {
-        if (format == BuiltInPackageFormat.Zip) WalkZip(visit, ct);
-        else WalkTar(visit, ct);
-
-        return Task.CompletedTask;
-    }
-
-    private void WalkZip(PackageArchiveFileVisitor visit, CancellationToken ct)
-    {
-        using var zip = ZipFile.OpenRead(path);
-
-        foreach (var entry in zip.Entries)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var name = Normalize(entry.FullName);
-
-            if (entry.Name.Length > 0 && name.Length > 0) visit(name, entry.Length, () => ReadZipEntry(entry));
-        }
-    }
-
-    private void WalkTar(PackageArchiveFileVisitor visit, CancellationToken ct)
-    {
-        using var reader = OpenTar();
-
-        while (reader.GetNextEntry(copyData: false) is { } entry)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            var name = Normalize(entry.Name);
-
-            if (IsFile(entry) && name.Length > 0) visit(name, entry.Length, () => ReadTarEntry(entry));
-
-            SkipData(entry);
-        }
-    }
-
-    private string ReadFromZip(string wanted, CancellationToken ct)
+    private string ReadFromZip(string wanted)
     {
         using var zip = ZipFile.OpenRead(path);
 
         var entry = zip.Entries.FirstOrDefault(e => e.Name.Length > 0 && Normalize(e.FullName) == wanted);
 
-        ct.ThrowIfCancellationRequested();
-
-        return entry == null ? null : ReadZipEntry(entry);
+        return entry == null || entry.Length > MaxTextBytes ? null : ReadZipEntry(entry);
     }
 
-    private string ReadFromTar(string wanted, CancellationToken ct)
+    private string ReadFromTar(string wanted)
     {
         using var reader = OpenTar();
 
         while (reader.GetNextEntry(copyData: false) is { } entry)
         {
-            ct.ThrowIfCancellationRequested();
-
             if (!IsFile(entry) || Normalize(entry.Name) != wanted)
             {
                 SkipData(entry);
                 continue;
             }
 
-            return ReadTarEntry(entry);
+            return entry.Length > MaxTextBytes || entry.DataStream == null ? null : ReadBoundedText(entry.DataStream);
         }
 
         return null;
     }
-
-    private static string ReadZipEntry(ZipArchiveEntry entry)
-    {
-        if (entry.Length > MaxTextBytes) return null;
-
-        using var stream = entry.Open();
-
-        return ReadBoundedText(stream);
-    }
-
-    private static string ReadTarEntry(TarEntry entry) => entry.Length > MaxTextBytes || entry.DataStream == null ? null : ReadBoundedText(entry.DataStream);
 
     private List<string> ListZipRoot()
     {
@@ -146,8 +94,17 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
 
     private static string Normalize(string name) => PackageArchiveSafety.StripLeadingCurrentDirectory(name);
 
-    // Reads at most MaxTextBytes, whatever the entry header declared: a header that understates its size must not let a bomb into memory. Null when it is bigger.
-    // Does not dispose the stream: a tar entry's data stream is still needed to skip past the entry.
+    private static string ReadZipEntry(ZipArchiveEntry entry)
+    {
+        using var stream = entry.Open();
+
+        return ReadBoundedText(stream);
+    }
+
+    /// <summary>
+    /// Reads at most <see cref="MaxTextBytes"/>, whatever the entry header declared. Null when there is more. Does not dispose the stream: a tar entry's data stream is
+    /// still needed to skip past the entry.
+    /// </summary>
     public static string ReadBoundedText(Stream input)
     {
         using var buffer = new MemoryStream();
@@ -162,9 +119,13 @@ public sealed class PackageArchiveTextReader(string path, BuiltInPackageFormat f
             if (buffer.Length > MaxTextBytes) return null;
         }
 
-        buffer.Position = 0;
+        return DecodeText(buffer.ToArray());
+    }
 
-        using var reader = new StreamReader(buffer, Encoding.UTF8);
+    /// <summary>UTF-8 text with a leading byte order mark dropped.</summary>
+    public static string DecodeText(byte[] bytes)
+    {
+        using var reader = new StreamReader(new MemoryStream(bytes), Encoding.UTF8);
 
         return reader.ReadToEnd();
     }

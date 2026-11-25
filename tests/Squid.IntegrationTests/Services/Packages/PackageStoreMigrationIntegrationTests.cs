@@ -109,7 +109,7 @@ public sealed class PackageStoreMigrationIntegrationTests : IDisposable
 
         var duplicate = await Should.ThrowAsync<PostgresException>(() => ExecuteAsync("INSERT INTO package_store (name, kind) VALUES ('Local disk', 'FileSystem')"));
 
-        duplicate.ConstraintName.ShouldBe("ux_package_store_name");
+        duplicate.ConstraintName.ShouldBe("ux_package_store_name_lower");
 
         await Should.NotThrowAsync(() => ExecuteAsync("INSERT INTO package_store (name, kind) VALUES ('Third', 'FileSystem'), ('Fourth', 'FileSystem')"));
     }
@@ -139,5 +139,31 @@ public sealed class PackageStoreMigrationIntegrationTests : IDisposable
             rows.Add(Enumerable.Range(0, reader.FieldCount).ToDictionary(reader.GetName, i => reader.IsDBNull(i) ? null : reader.GetValue(i)));
 
         return rows;
+    }
+
+    [Fact]
+    public async Task Names_AreUniqueIgnoringCase_AfterTheSecondMigration()
+    {
+        var clash = await Should.ThrowAsync<PostgresException>(() => ExecuteAsync("INSERT INTO package_store (name, kind) VALUES ('LOCAL DISK', 'FileSystem')"));
+
+        clash.ConstraintName.ShouldBe("ux_package_store_name_lower");
+    }
+
+    [Fact]
+    public async Task TheCaseInsensitiveMigration_RenamesLaterDuplicates_SoItCanAlwaysBeApplied()
+    {
+        await ExecuteAsync("DROP INDEX ux_package_store_name_lower");
+        await ExecuteAsync("INSERT INTO package_store (name, kind) VALUES ('local disk', 'FileSystem'), ('LOCAL DISK', 'FileSystem'), ('Other', 'FileSystem')");
+
+        await ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, DbUpRunner.ScriptFolder, "20261127_package_store_name_case_insensitive.sql")));
+
+        var names = (await QueryAsync("SELECT id, name FROM package_store ORDER BY id")).Select(r => (string)r["name"]).ToList();
+
+        names.Count.ShouldBe(4);
+        names[0].ShouldBe("Local disk", "the oldest keeps its name");
+        names.Select(n => n.ToLowerInvariant()).Distinct().Count().ShouldBe(4);
+        names[1].ShouldStartWith("local disk (");
+        names[2].ShouldStartWith("LOCAL DISK (");
+        names[3].ShouldBe("Other");
     }
 }
