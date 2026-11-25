@@ -26,7 +26,7 @@ public partial class ScriptPodService : IScriptServiceV2
         set => _tombstones = value;
     }
 
-    /// <summary>Test-only: runs between the two reads of <see cref="IsQueuedOrLaunchingV2"/>, i.e. after the pending-queue read and before the in-flight read.</summary>
+    /// <summary>Test-only: runs between the two reads of <see cref="IsQueuedOrLaunching"/>, i.e. after the pending-queue read and before the in-flight read.</summary>
     internal Action? LaunchStateReadHookForTests { get; set; }
 
     /// <summary>Test-only: runs in V2 Cancel after the launch settle wait and before the ticket lock is taken.</summary>
@@ -35,39 +35,29 @@ public partial class ScriptPodService : IScriptServiceV2
     /// <summary>Test-only: how long V2 Cancel waits for an in-flight launch to settle before it hands the cancel to the launcher.</summary>
     internal TimeSpan LaunchSettleTimeoutForTests { get; set; } = LaunchSettleTimeout;
 
+    // The launch (disk check, pod creation) runs OUTSIDE the ticket lock, see StartOnce: the lock is one of 64 shared stripes, so a slow Kubernetes
+    // API or workspace would stall every unrelated ticket in the stripe. The in-flight flag, set under the lock, makes a duplicate Start answer Pending.
     public ScriptStatusResponseV2 StartScript(StartScriptCommandV2 command)
     {
         var ticket = command.ScriptTicket;
 
-        lock (_ticketLocks.For(ticket.TaskId))
-        {
-            if (TryPeekStatusV2(ticket, out var known)) return known!;
+        ScriptStatusResponseV2? Known() => TryPeekStatusV2(ticket, out var known) ? known : null;
 
-            _startsInFlight[ticket.TaskId] = 0;
-        }
+        ScriptStatusResponseV2 Started(ScriptStatusResponse v1) => TryPeekStatusV2(ticket, out var started) ? started! : MapStartAnswerV2(v1);
 
-        // The launch (disk check, pod creation) runs OUTSIDE the ticket lock: the lock is one of 64 shared stripes, so a slow
-        // Kubernetes API or workspace would stall every unrelated ticket in the stripe. The in-flight flag, set under the lock, is what
-        // makes a concurrent duplicate Start answer Pending instead of launching a second pod.
-        try
-        {
-            var v1 = StartScript(ScriptV2Mapping.ToV1(command));
-
-            return TryPeekStatusV2(ticket, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
-        }
-        finally
-        {
-            _startsInFlight.TryRemove(ticket.TaskId, out _);
-            DropUnhonouredCancelRequest(ticket.TaskId);
-        }
+        return StartOnce(ScriptV2Mapping.ToV1(command), Known, Started);
     }
+
+    // The ticket left memory right after the start (a V1 Cancel or Complete raced it): answer what the start did, never a queued script as Completed(0).
+    private ScriptStatusResponseV2 MapStartAnswerV2(ScriptStatusResponse v1)
+        => v1.State == ProcessState.Pending ? ScriptV2Mapping.Pending(v1.Ticket, 0) : MapLiveV1Status(v1);
 
     public ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request)
     {
         var ticket = request.Ticket;
 
-        // Launch state FIRST, see IsQueuedOrLaunchingV2: a ticket read as "not launching" has either not started or already been tracked.
-        var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+        // Launch state FIRST, see IsQueuedOrLaunching: a ticket read as "not launching" has either not started or already been tracked.
+        var launching = IsQueuedOrLaunching(ticket.TaskId);
 
         if (IsKnownInMemoryV2(ticket.TaskId) && TryReadLiveStatusV2(request, out var live)) return live!;
 
@@ -94,7 +84,7 @@ public partial class ScriptPodService : IScriptServiceV2
         {
             lock (_ticketLocks.For(ticket.TaskId))
             {
-                var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+                var launching = IsQueuedOrLaunching(ticket.TaskId);
 
                 if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
 
@@ -124,7 +114,7 @@ public partial class ScriptPodService : IScriptServiceV2
         {
             lock (_ticketLocks.For(ticket.TaskId))
             {
-                var launching = IsQueuedOrLaunchingV2(ticket.TaskId);
+                var launching = IsQueuedOrLaunching(ticket.TaskId);
 
                 if (IsUnawaitedPodV2(ticket.TaskId, awaited)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
@@ -179,7 +169,7 @@ public partial class ScriptPodService : IScriptServiceV2
     /// then the tracked/persisted state the caller reads afterwards) cannot miss a ticket that moves between them, whereas any other order
     /// can, and a miss reads as lost or unknown (the server re-dispatches). Callers take this snapshot before any other lookup.
     /// </summary>
-    private bool IsQueuedOrLaunchingV2(string ticketId)
+    private bool IsQueuedOrLaunching(string ticketId)
     {
         var queued = _pendingScripts.ContainsKey(ticketId);
 
@@ -205,7 +195,7 @@ public partial class ScriptPodService : IScriptServiceV2
     private bool TryPeekStatusV2(ScriptTicket ticket, out ScriptStatusResponseV2? status)
     {
         var ticketId = ticket.TaskId;
-        var launching = IsQueuedOrLaunchingV2(ticketId);
+        var launching = IsQueuedOrLaunching(ticketId);
 
         status = true switch
         {
