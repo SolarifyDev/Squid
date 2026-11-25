@@ -62,6 +62,8 @@ public sealed class FileSystemProviderContractTests : IDisposable
     [Fact]
     public async Task Test_OnAWritableFolder_Succeeds_AndLeavesNoProbeFileBehind()
     {
+        Directory.CreateDirectory(_temp);
+
         var result = await Provider().TestAsync(Config(_temp), CancellationToken.None);
 
         result.Success.ShouldBeTrue(result.Message);
@@ -106,8 +108,8 @@ public sealed class FileSystemProviderContractTests : IDisposable
         var result = await service.TestSettingsAsync(new Squid.Message.Commands.PackageStorage.TestPackageStoreSettingsCommand { Kind = "FileSystem", Properties = new Dictionary<string, string> { ["Root"] = _temp } }, CancellationToken.None);
 
         result.Success.ShouldBeTrue(result.Message);
-        Directory.Exists(_temp).ShouldBeTrue("the probe wrote into the unsaved folder");
-        Directory.EnumerateFiles(_temp, "*", SearchOption.AllDirectories).ShouldBeEmpty();
+        result.Message.ShouldContain("does not exist yet");
+        Directory.Exists(_temp).ShouldBeFalse("the folder did not exist before the test, so the test removes what it created");
         table.Rows.ShouldBeEmpty();
     }
 

@@ -1,6 +1,10 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
+using Squid.Core.Persistence;
+using Squid.Core.Persistence.Db;
+using Squid.Core.Persistence.Entities.PackageStorage;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Packages.Storage.Providers.FileSystem;
 using Squid.Core.Services.Security;
@@ -16,12 +20,13 @@ namespace Squid.IntegrationTests.Setup;
 
 /// <summary>
 /// The installer's package storage step against a real PostgreSQL that the installer itself migrated, so the row it updates is the one the
-/// migration seeded.
+/// migration seeded. A shared <see cref="SetupSchemaOrigin"/> stands for retries within one setup session.
 /// </summary>
 public sealed class SetupPackageStorageIntegrationTests : IDisposable
 {
     private const string SecretKind = "SecretProbe";
     private const string Token = "setup-token-PLAINTEXT-VALUE";
+    private const string SeededProperties = "{}";
 
     private static readonly string RedisConnectionString = Environment.GetEnvironmentVariable("SQUID_TEST_REDIS_CONN_STRING") ?? "127.0.0.1:6379,abortConnect=False";
 
@@ -48,15 +53,15 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         var rows = await ReadRowsAsync();
 
         rows.Count.ShouldBe(1);
-        rows[0].ShouldBe(new StoreRow("Local disk", "FileSystem", "{}", null, true));
+        rows[0].ShouldBe(new StoreRow("Local disk", "FileSystem", SeededProperties, null, true));
     }
 
     [Fact]
-    public async Task EmptyLocalDiskChoice_IsTheDefault_SoNothingIsWritten()
+    public async Task EmptyLocalDiskChoice_IsTheDefault_SoTheSeededValuesStay()
     {
         await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "" } });
 
-        (await ReadRowsAsync()).Single().ShouldBe(new StoreRow("Local disk", "FileSystem", "{}", null, true));
+        (await ReadRowsAsync()).Single().ShouldBe(new StoreRow("Local disk", "FileSystem", SeededProperties, null, true));
     }
 
     [Fact]
@@ -76,7 +81,7 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task SecretBearingKind_IsStoredAsCiphertext_AndDecryptsWithTheServersKey()
+    public async Task SecretBearingKind_IsStoredAsCiphertext_AndTheServersOwnDataProviderReadsItBack()
     {
         await InstallAsync(new SetupPackageStorageChoice { Kind = SecretKind, Properties = new() { ["Endpoint"] = "https://store.example" }, Secrets = new() { ["Token"] = Token } });
 
@@ -88,10 +93,95 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         row.Secret.ShouldNotContain(Token);
         row.Properties.ShouldNotContain(Token);
 
-        var protector = new AtRestSecretProtector(new VariableEncryptionService(new SecuritySetting(_configuration)));
-        var decrypted = PackageStoreConfigurationMapper.ParseSettings(await protector.UnprotectAsync(row.Secret, PackageStoreDataProvider.SecretKdfScope));
+        var store = await ReadDefaultThroughServerDataProviderAsync();
 
-        decrypted["Token"].ShouldBe(Token);
+        PackageStoreConfigurationMapper.ParseSettings(store.Secret)["Token"].ShouldBe(Token);
+        PackageStoreConfigurationMapper.ParseSettings(store.Properties)["Endpoint"].ShouldBe("https://store.example");
+    }
+
+    [Fact]
+    public async Task RetryWithTheDefaultChoice_ResetsWhatAnEarlierAttemptWrote()
+    {
+        var origin = new SetupSchemaOrigin();
+
+        await InstallAsync(new SetupPackageStorageChoice { Kind = SecretKind, Properties = new() { ["Endpoint"] = "e" }, Secrets = new() { ["Token"] = Token } }, origin);
+        (await ReadRowsAsync()).Single().Kind.ShouldBe(SecretKind);
+
+        await InstallAsync(null, origin);
+
+        (await ReadRowsAsync()).Single().ShouldBe(new StoreRow("Local disk", "FileSystem", SeededProperties, null, true));
+    }
+
+    [Fact]
+    public async Task RetryWithAnotherRoot_ReplacesTheEarlierRoot()
+    {
+        var origin = new SetupSchemaOrigin();
+
+        await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/first" } }, origin);
+        await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/second" } }, origin);
+
+        var rows = await ReadRowsAsync();
+
+        rows.Count.ShouldBe(1);
+        rows[0].Properties.ShouldContain("/tmp/second");
+        rows[0].Properties.ShouldNotContain("/tmp/first");
+    }
+
+    [Fact]
+    public async Task DatabaseThatAlreadyHasASquidSchema_KeepsItsPackageStorage_AndSaysSo()
+    {
+        new DbUpRunner(_server.ConnectionString).Run();
+        await ExecuteAsync("UPDATE package_store SET name = 'Ops store', properties = '{\"Root\":\"/srv/pk\"}'");
+
+        var tracker = await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/new" } });
+
+        (await ReadRowsAsync()).Single().ShouldBe(new StoreRow("Ops store", "FileSystem", "{\"Root\":\"/srv/pk\"}", null, true));
+        tracker.Snapshot().Steps.Single(step => step.Key == SetupInstaller.StepKeys.PackageStorage).Message.ShouldBe(SetupInstaller.ExistingPackageStorageKeptMessage);
+    }
+
+    [Fact]
+    public async Task OnlyTheDefaultRowIsChanged_NotOtherStores()
+    {
+        var origin = new SetupSchemaOrigin();
+
+        await InstallAsync(null, origin);
+        await ExecuteAsync("INSERT INTO package_store (name, kind, properties, is_default) VALUES ('Other', 'FileSystem', '{\"Root\":\"/other\"}', false)");
+
+        await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/chosen" } }, origin);
+
+        var rows = await ReadRowsAsync();
+
+        rows.Count.ShouldBe(2);
+        rows.Single(r => r.Name == "Other").ShouldBe(new StoreRow("Other", "FileSystem", "{\"Root\":\"/other\"}", null, false));
+        rows.Single(r => r.IsDefault).Properties.ShouldContain("/tmp/chosen");
+    }
+
+    [Fact]
+    public async Task NoDefaultRow_FailsWithAClearMessage_AndChangesNothing()
+    {
+        var origin = new SetupSchemaOrigin();
+
+        await InstallAsync(null, origin);
+        await ExecuteAsync("UPDATE package_store SET is_default = false");
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/x" } }, origin));
+
+        ex.Message.ShouldContain("no default package store");
+        (await ReadRowsAsync()).Single().Properties.ShouldBe(SeededProperties);
+    }
+
+    [Fact]
+    public async Task AnotherStoreWithTheProvidersName_FailsWithAClearMessage_NotARawPostgresError()
+    {
+        var origin = new SetupSchemaOrigin();
+
+        await InstallAsync(null, origin);
+        await ExecuteAsync("INSERT INTO package_store (name, kind, properties, is_default) VALUES ('Secret probe', 'FileSystem', '{}', false)");
+
+        var ex = await Should.ThrowAsync<InvalidOperationException>(() => InstallAsync(new SetupPackageStorageChoice { Kind = SecretKind, Properties = new() { ["Endpoint"] = "e" }, Secrets = new() { ["Token"] = Token } }, origin));
+
+        ex.ShouldNotBeOfType<PostgresException>();
+        ex.Message.ShouldContain("already named \"Secret probe\"");
     }
 
     [Fact]
@@ -115,7 +205,7 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         try { Directory.Delete(_dataDirectory, true); } catch (IOException) { }
     }
 
-    private Task InstallAsync(SetupPackageStorageChoice storage)
+    private async Task<SetupProgressTracker> InstallAsync(SetupPackageStorageChoice storage, SetupSchemaOrigin origin = null)
     {
         var request = new SetupInstallRequest
         {
@@ -126,8 +216,36 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
             PackageStorage = storage
         };
         var providers = new IPackageBlobStoreProvider[] { new FileSystemPackageBlobStoreProvider(new DataDirectorySetting(_configuration)), new SecretProbeProvider() };
+        var tracker = new SetupProgressTracker();
 
-        return new SetupInstaller(new EmbeddedServiceHost(new ProcessRunner(), _dataDirectory), _configuration, new SetupProgressTracker(), providers).InstallAsync(request, CancellationToken.None);
+        tracker.TryBegin(SetupInstaller.Steps);
+
+        await new SetupInstaller(new EmbeddedServiceHost(new ProcessRunner(), _dataDirectory), _configuration, tracker, providers, origin).InstallAsync(request, CancellationToken.None);
+
+        return tracker;
+    }
+
+    private async Task ExecuteAsync(string sql)
+    {
+        await using var connection = new NpgsqlConnection(_server.ConnectionString);
+
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    // The server's own data provider (decrypting protector included), over a context on the installed database.
+    private async Task<PackageStore> ReadDefaultThroughServerDataProviderAsync()
+    {
+        var options = new DbContextOptionsBuilder<SquidDbContext>().UseNpgsql(_server.ConnectionString).UseSnakeCaseNamingConvention().Options;
+
+        await using var context = new SquidDbContext(options);
+
+        var protector = new AtRestSecretProtector(new VariableEncryptionService(new SecuritySetting(_configuration)));
+
+        return await new PackageStoreDataProvider(context, new EfRepository(context), protector).GetDefaultAsync(CancellationToken.None);
     }
 
     private async Task<List<StoreRow>> ReadRowsAsync()

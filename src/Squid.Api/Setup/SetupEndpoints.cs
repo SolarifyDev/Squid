@@ -84,7 +84,7 @@ public static class SetupEndpoints
     {
         try
         {
-            await new SetupInstaller(session.Embedded, session.Configuration, session.Tracker, session.PackageStoreProviders).InstallAsync(request, CancellationToken.None).ConfigureAwait(false);
+            await new SetupInstaller(session.Embedded, session.Configuration, session.Tracker, session.PackageStoreProviders, session.SchemaOrigin).InstallAsync(request, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception)
         {

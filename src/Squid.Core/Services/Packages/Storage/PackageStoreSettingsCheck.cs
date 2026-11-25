@@ -22,12 +22,16 @@ public static class PackageStoreSettingsCheck
             throw new PackageStoreConfigurationInvalidException(provider.Kind, problems);
     }
 
-    public static Task<PackageBlobStoreTestResult> TestAsync(IPackageBlobStoreProvider provider, IReadOnlyDictionary<string, string> properties, IReadOnlyDictionary<string, string> secrets, IReadOnlyDictionary<string, string> storedSecrets, CancellationToken ct)
+    /// <summary>Runs the provider's test and adds the provider's warnings about these settings to the result.</summary>
+    public static async Task<PackageBlobStoreTestResult> TestAsync(IPackageBlobStoreProvider provider, IReadOnlyDictionary<string, string> properties, IReadOnlyDictionary<string, string> secrets, IReadOnlyDictionary<string, string> storedSecrets, CancellationToken ct)
     {
         EnsureValid(provider, properties, secrets, storedSecrets);
 
         var configuration = new PackageBlobStoreConfiguration { Properties = properties ?? new Dictionary<string, string>(), Secrets = PackageStoreSettings.MergeSecrets(storedSecrets, secrets ?? new Dictionary<string, string>()) };
+        var result = await provider.TestAsync(configuration, ct).ConfigureAwait(false);
 
-        return provider.TestAsync(configuration, ct);
+        if (provider is IPackageBlobStoreWarnings source) result.Warnings = (result.Warnings ?? new List<string>()).Concat(source.GetWarnings(configuration)).Distinct().ToList();
+
+        return result;
     }
 }

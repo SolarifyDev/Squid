@@ -26,11 +26,13 @@ public sealed partial class SetupInstaller
     private readonly IConfiguration _configuration;
     private readonly SetupProgressTracker _tracker;
     private readonly IReadOnlyList<IPackageBlobStoreProvider> _packageStoreProviders;
+    private readonly SetupSchemaOrigin _schemaOrigin;
 
     private SetupInstallContext _ctx;
 
-    public SetupInstaller(EmbeddedServiceHost embedded, IConfiguration configuration, SetupProgressTracker tracker, IReadOnlyList<IPackageBlobStoreProvider> packageStoreProviders = null)
+    public SetupInstaller(EmbeddedServiceHost embedded, IConfiguration configuration, SetupProgressTracker tracker, IReadOnlyList<IPackageBlobStoreProvider> packageStoreProviders = null, SetupSchemaOrigin schemaOrigin = null)
     {
+        _schemaOrigin = schemaOrigin ?? new SetupSchemaOrigin();
         _embedded = embedded;
         _configuration = configuration;
         _tracker = tracker;

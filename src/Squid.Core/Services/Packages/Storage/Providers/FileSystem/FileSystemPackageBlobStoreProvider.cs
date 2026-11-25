@@ -38,11 +38,22 @@ public sealed class FileSystemPackageBlobStoreProvider(DataDirectorySetting data
     public async Task<PackageBlobStoreTestResult> TestAsync(PackageBlobStoreConfiguration configuration, CancellationToken ct)
     {
         var root = ResolveRoot(configuration);
+        var cleanup = FileSystemProbeCleanup.Begin(root);
         var result = await PackageBlobStoreProbe.RunAsync(new FileSystemPackageBlobStore(root), ct).ConfigureAwait(false);
 
-        result.Message = $"{result.Message} Folder: {root}";
+        cleanup.Finish();
+
+        result.Message = DescribeOutcome(result, cleanup.RootExisted, root);
 
         return result;
+    }
+
+    // A root that did not exist is no failure (it is created with the first package), but "Storage OK" would hide that a mistyped path looks the same.
+    private static string DescribeOutcome(PackageBlobStoreTestResult result, bool rootExisted, string root)
+    {
+        if (rootExisted || !result.Success) return $"{result.Message} Folder: {root}";
+
+        return $"Folder does not exist yet; it will be created when the first package is stored. A probe file could be written and removed there. Folder: {root}";
     }
 
     public IReadOnlyList<string> GetWarnings(PackageBlobStoreConfiguration configuration)

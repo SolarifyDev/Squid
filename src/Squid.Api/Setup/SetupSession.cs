@@ -29,6 +29,9 @@ public sealed class SetupSession
     public SetupCapabilities Capabilities { get; }
     public SetupProgressTracker Tracker { get; } = new();
 
+    /// <summary>Shared by every install attempt of this session, so a retry still knows the database was fresh when the setup first looked.</summary>
+    public SetupSchemaOrigin SchemaOrigin { get; } = new();
+
     /// <summary>Built from the same configuration (so the same data directory) the installed server reads, with no container or database.</summary>
     public IReadOnlyList<IPackageBlobStoreProvider> PackageStoreProviders { get; }
 

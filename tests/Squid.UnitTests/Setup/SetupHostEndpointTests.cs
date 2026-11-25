@@ -140,14 +140,47 @@ public sealed class SetupHostEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task PackageStorageTest_ExplicitRoot_WritesAndRemovesItsProbe()
+    public async Task PackageStorageTest_ExistingRoot_WritesAndRemovesItsProbe_LeavingTheFolderEmpty()
     {
         var root = Path.Combine(_dir.Path, "chosen");
+
+        Directory.CreateDirectory(root);
 
         var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = root } });
 
         result.GetProperty("success").GetBoolean().ShouldBeTrue();
         result.GetProperty("message").GetString().ShouldContain(root);
+        result.GetProperty("message").GetString().ShouldNotContain("does not exist yet");
+        Directory.Exists(Path.Combine(root, ".squid-probe")).ShouldBeFalse();
+        Directory.Exists(Path.Combine(root, ".squid-tmp")).ShouldBeFalse();
+        Directory.EnumerateFileSystemEntries(root).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PackageStorageTest_MissingRoot_SaysItDoesNotExistYet_AndCreatesNothing()
+    {
+        var existingParent = Path.Combine(_dir.Path, "mnt");
+        var root = Path.Combine(existingParent, "typo", "packages");
+
+        Directory.CreateDirectory(existingParent);
+
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = root } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeTrue();
+        result.GetProperty("message").GetString().ShouldContain("does not exist yet");
+        Directory.EnumerateFileSystemEntries(existingParent).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PackageStorageTest_RootInsideTheApplicationFolder_ReturnsTheProvidersWarning()
+    {
+        var root = Path.Combine(AppContext.BaseDirectory, $"setup-warning-{Guid.NewGuid():N}");
+
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = root } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeTrue();
+        result.GetProperty("warnings").EnumerateArray().Select(w => w.GetString()).ShouldContain(w => w.Contains("inside the application folder"));
+        Directory.Exists(root).ShouldBeFalse();
     }
 
     [Theory]

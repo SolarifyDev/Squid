@@ -18,4 +18,7 @@ public class PackageBlobStoreTestResult : IBaseModel
 
     /// <summary>Readable by the operator: what was checked, or what went wrong.</summary>
     public string Message { get; set; }
+
+    /// <summary>Things worth telling the operator about the tested settings (for example a folder that will not survive an upgrade), whether or not the test passed.</summary>
+    public List<string> Warnings { get; set; } = new();
 }
