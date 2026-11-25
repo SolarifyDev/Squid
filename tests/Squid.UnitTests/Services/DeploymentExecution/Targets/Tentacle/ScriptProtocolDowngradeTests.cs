@@ -280,6 +280,118 @@ public class ScriptProtocolDowngradeTests
         _refresher.RefreshCalls.ShouldBe(0);
     }
 
+    // ── Cancel sent by the observer during a live run ────────────────────────
+
+    // A K8s agent helm-rolled back to V1 mid-run: the observer's cancel over V2 fails, the script (kept by its pod) must still be stopped over V1.
+    [Theory]
+    [InlineData(typeof(ServiceNotFoundHalibutClientException))]
+    [InlineData(typeof(MethodNotFoundHalibutClientException))]
+    [InlineData(typeof(HalibutClientException))]
+    public async Task LiveRunCancel_OverV2_FailsBecauseTheAgentWasDowngraded_IsRetriedOverV1(Type failure)
+    {
+        _refresher.AgentAnswer = V1OnlyAgent();
+        _v2.CancelFailure = (Exception)Activator.CreateInstance(failure, "no such service");
+
+        await RunUntilCancelledAsync();
+
+        var ticket = _v2.StartCommands.ShouldHaveSingleItem().ScriptTicket.TaskId;
+        _events.Where(e => e.Contains("Cancel") || e.StartsWith("Caps.Refresh")).Distinct().ShouldBe(new[] { $"V2.Cancel:{ticket}", $"Caps.Refresh:{MachineId}", $"V1.Cancel:{ticket}" });
+    }
+
+    [Fact]
+    public async Task LiveRunCancel_OverV2_Fails_WhileTheAgentStillAdvertisesV2_DoesNotFallBack()
+    {
+        _refresher.AgentAnswer = V2Agent();
+        _v2.CancelFailure = new HalibutClientException("connection reset");
+
+        await RunUntilCancelledAsync();
+
+        _refresher.RefreshCalls.ShouldBe(1);
+        _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
+    }
+
+    [Fact]
+    public async Task LiveRunCancel_OverV2_Fails_AndTheAgentDoesNotAnswerCapabilities_DoesNotFallBack()
+    {
+        _refresher.AgentAnswer = null;
+        _v2.CancelFailure = new HalibutClientException("unreachable");
+
+        await RunUntilCancelledAsync();
+
+        _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
+    }
+
+    [Fact]
+    public async Task LiveRunCancel_OverV2_FailsWithANonProtocolError_NeverAsksTheAgent()
+    {
+        _refresher.AgentAnswer = V1OnlyAgent();
+        _v2.CancelFailure = new InvalidOperationException("boom");
+
+        await RunUntilCancelledAsync();
+
+        _refresher.RefreshCalls.ShouldBe(0);
+        _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
+    }
+
+    [Fact]
+    public async Task LiveRunCancel_OverV2_Succeeding_NeverAsksTheAgentForCapabilities()
+    {
+        _refresher.AgentAnswer = V1OnlyAgent();
+
+        await RunUntilCancelledAsync();
+
+        _refresher.RefreshCalls.ShouldBe(0);
+        _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
+    }
+
+    // The fall-back shares the canceller's one deadline: a hung capabilities refresh cannot hold the observer past it.
+    [Fact]
+    public async Task LiveRunCancel_WhoseFallbackHangs_IsAbandonedWithinTheBound_AndNeverThrowsIntoTheDeployment()
+    {
+        _refresher.AgentAnswer = V1OnlyAgent();
+        _refresher.RefreshDelay = Timeout.InfiniteTimeSpan;
+        _v2.CancelFailure = new HalibutClientException("unreachable");
+
+        await RunUntilCancelledAsync(HalibutInFlightScriptCanceller.DefaultCancelGrace + TimeSpan.FromSeconds(10));
+
+        _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
+    }
+
+    // The observer binds stop-retrying (and its liveness handling) only on a client that is IStopRetryingAware: the cancel wrapper must stay transparent to that.
+    [Fact]
+    public void TheCancelFallbackWrapper_ForwardsTheStopRetryingBindingToTheClientItWraps()
+    {
+        var inner = new BindingRecordingClient();
+        using var stop = new CancellationTokenSource();
+        var wrapper = new V1FallbackCancelClient(inner, _ => Task.FromResult<CancelOutcome>(null));
+
+        wrapper.ShouldBeAssignableTo<IStopRetryingAware>();
+        ((IStopRetryingAware)wrapper).BindStopRetrying(stop.Token);
+
+        inner.Bound.ShouldBe(stop.Token);
+    }
+
+    private sealed class BindingRecordingClient : IScriptAgentClient, IStopRetryingAware
+    {
+        public CancellationToken Bound { get; private set; }
+
+        public void BindStopRetrying(CancellationToken stopRetrying) => Bound = stopRetrying;
+
+        public Task<AgentScriptStatus> GetStatusAsync(ScriptTicket ticket, long lastLogSequence) => throw new NotSupportedException();
+
+        public Task<AgentScriptStatus> CancelAsync(ScriptTicket ticket, long lastLogSequence) => throw new NotSupportedException();
+
+        public Task<AgentScriptCompletion> CompleteAsync(ScriptTicket ticket, long lastLogSequence) => throw new NotSupportedException();
+    }
+
+    private async Task RunUntilCancelledAsync(TimeSpan? bound = null)
+    {
+        using var cts = new CancellationTokenSource();
+        _v2.OnGetStatus = () => cts.Cancel();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => Strategy().ExecuteScriptAsync(Request(), cts.Token)).WaitAsync(bound ?? TimeSpan.FromSeconds(10));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private void FailEveryV2Start(Exception failure)

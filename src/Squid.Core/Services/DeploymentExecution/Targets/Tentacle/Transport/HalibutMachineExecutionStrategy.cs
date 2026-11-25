@@ -213,7 +213,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         var dispatcher = _dispatcherSelector.ForMachine(request.Machine.Id);
-        var context = new ScriptSessionContext(_rpcRetry, spec.Timeout, ct, _observer);
+        var context = new ScriptSessionContext(_rpcRetry, spec.Timeout, ct, _observer, new CancelDowngradeFallback(_dispatcherSelector, _capabilitiesRefresher, HalibutInFlightScriptCanceller.DefaultCancelGrace));
         var session = dispatcher.Open(endpoint, context);
         var start = session.PrepareStart(spec);
 
