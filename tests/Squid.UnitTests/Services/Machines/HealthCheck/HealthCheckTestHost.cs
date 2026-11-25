@@ -20,7 +20,7 @@ internal sealed class HealthCheckTestHost : IDisposable
     public MachineHealthCheckService Service { get; }
     public MachineHealthCheckCoordinator Coordinator { get; }
 
-    public HealthCheckTestHost(IMachineDataProvider machines, IMachinePolicyDataProvider policies, ITransportRegistry transports, IRedisSafeRunner redis, MachineHealthCheckSetting options = null, HealthCheckInProcessLocks locks = null, List<TimeSpan> probeTimeouts = null)
+    public HealthCheckTestHost(IMachineDataProvider machines, IMachinePolicyDataProvider policies, ITransportRegistry transports, IRedisSafeRunner redis, MachineHealthCheckSetting options = null, HealthCheckInProcessLocks locks = null, List<TimeSpan> probeTimeouts = null, Func<DateTimeOffset> utcNow = null)
     {
         options ??= new MachineHealthCheckSetting();
         locks ??= new HealthCheckInProcessLocks();
@@ -29,7 +29,7 @@ internal sealed class HealthCheckTestHost : IDisposable
         builder.RegisterInstance(machines).As<IMachineDataProvider>();
         builder.RegisterInstance(policies).As<IMachinePolicyDataProvider>();
         builder.RegisterInstance(transports).As<ITransportRegistry>();
-        builder.Register(c => WrapCoordinator(new MachineHealthCheckCoordinator(redis, c.Resolve<ILifetimeScope>(), locks, options), probeTimeouts)).As<IMachineHealthCheckCoordinator>().InstancePerLifetimeScope();
+        builder.Register(c => WrapCoordinator(new MachineHealthCheckCoordinator(redis, c.Resolve<ILifetimeScope>(), locks, options, utcNow), probeTimeouts)).As<IMachineHealthCheckCoordinator>().InstancePerLifetimeScope();
         builder.RegisterType<MachineHealthCheckService>().AsSelf().InstancePerLifetimeScope();
 
         Container = builder.Build();

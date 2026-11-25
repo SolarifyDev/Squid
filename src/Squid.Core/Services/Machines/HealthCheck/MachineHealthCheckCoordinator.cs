@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
+using Squid.Core.Services.Machines.HealthCheck.Exceptions;
 using Squid.Core.Halibut;
 using Squid.Core.Settings.Machines;
 using Squid.Message.Enums;
@@ -19,7 +20,11 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
     /// <summary>Runs one probe with the configured per-probe timeout. A timeout yields an unhealthy result with a clear reason; cancellation of <paramref name="ct"/> propagates.</summary>
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct);
 
-    /// <summary>Same as the two-argument overload with an explicit timeout (see <see cref="ProbeTimeoutFor"/>). A probe that reports a failure only after the timeout keeps its own error text in the result.</summary>
+    /// <summary>
+    /// Same as the two-argument overload with an explicit timeout (see <see cref="ProbeTimeoutFor"/>). A probe that reports a failure only after the timeout keeps its own error text in the result.
+    /// Inside a sweep the timeout is also capped to the sweep's remaining time (less a grace to record the result), so a late probe is recorded as timed out, never cut off by the sweep;
+    /// throws <see cref="SweepBudgetExhaustedException"/> when too little sweep time is left to run one.
+    /// </summary>
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout);
 
     /// <summary>The probe timeout for a machine of this communication style: the operator's configured value, or the transport-aware default.</summary>
@@ -43,17 +48,27 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
     private static readonly object Ran = new();
 
+    // Time the sweep must still have after a bounded probe ends: the 1s wait for the probe's own error text plus recording the result.
+    internal static readonly TimeSpan SweepRecordGrace = TimeSpan.FromSeconds(5);
+
+    // The deadline of the sweep this async flow belongs to; flows into every probe the sweep fans out, null for a manual check.
+    private static readonly AsyncLocal<DateTimeOffset?> CurrentSweepDeadline = new();
+
     private readonly IRedisSafeRunner _redis;
     private readonly ILifetimeScope _scope;
     private readonly HealthCheckInProcessLocks _locks;
     private readonly MachineHealthCheckSetting _options;
+    private readonly Func<DateTimeOffset> _utcNow;
 
-    public MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options)
+    public MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options) : this(redis, scope, locks, options, null) { }
+
+    internal MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options, Func<DateTimeOffset> utcNow)
     {
         _redis = redis;
         _scope = scope;
         _locks = locks;
         _options = options;
+        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
     }
 
     public TimeSpan ManualBusyWait => ProbeTimeoutPolicy.ManualWait(_options, HalibutModule.BuildTimeoutsAndLimits()) + ManualWaitMargin;
@@ -101,6 +116,8 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
     public async Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout)
     {
+        timeout = BoundBySweep(timeout);
+
         using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         probeCts.CancelAfter(timeout);
 
@@ -116,6 +133,23 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         {
             return await BuildTimeoutResultAsync(running, timeout).ConfigureAwait(false);
         }
+    }
+
+    // In a sweep the timeout is the smaller of the transport's and what the sweep has left, so the probe ends on its own bound and is recorded
+    // instead of being cut by the sweep deadline. Outside a sweep (manual check) the timeout is unchanged.
+    private TimeSpan BoundBySweep(TimeSpan timeout)
+    {
+        var deadline = CurrentSweepDeadline.Value;
+
+        if (deadline == null) return timeout;
+
+        var remaining = deadline.Value - _utcNow();
+        var bound = remaining - SweepRecordGrace;
+
+        if (bound <= TimeSpan.Zero)
+            throw new SweepBudgetExhaustedException(remaining);
+
+        return timeout < bound ? timeout : bound;
     }
 
     // The probe's token is already cancelled, so a well-behaved probe finishes within the grace and reports why it was failing
@@ -163,6 +197,7 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     {
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadlineCts.CancelAfter(_options.SweepDeadline);
+        CurrentSweepDeadline.Value = _utcNow() + _options.SweepDeadline;
 
         try
         {
@@ -171,6 +206,10 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             Log.Warning("Health check sweep hit its {DeadlineSeconds}s deadline; machines not yet probed stay due for the next sweep", _options.SweepDeadline.TotalSeconds);
+        }
+        finally
+        {
+            CurrentSweepDeadline.Value = null;
         }
     }
 
