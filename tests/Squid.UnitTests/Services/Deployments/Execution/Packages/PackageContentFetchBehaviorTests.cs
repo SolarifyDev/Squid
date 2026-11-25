@@ -21,7 +21,7 @@ public class PackageContentFetchBehaviorTests
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan IndexTimeout = TimeSpan.FromSeconds(30);
 
-    private static IPackageContentFetcher CreateSut(ISquidHttpClientFactory factory) => new HttpPackageContentFetcher(factory);
+    private static IPackageContentFetcher CreateSut(ISquidHttpClientFactory factory) => PackageFetcherWiring.Create(factory);
 
     private sealed record Call(string Url, Dictionary<string, string> Headers, TimeSpan? Timeout);
 
