@@ -16,7 +16,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     public bool IsRunningScript(string ticketId)
     {
         if (string.IsNullOrEmpty(ticketId)) return false;
-        return _scripts.ContainsKey(ticketId) || _pendingScripts.ContainsKey(ticketId);
+
+        // In the direction a ticket moves (pending -> in flight -> tracked): a script whose pod is still being created is running too.
+        return IsQueuedOrLaunching(ticketId) || _scripts.ContainsKey(ticketId);
     }
 
 
@@ -30,7 +32,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     // Tickets whose injected terminal result means "the agent lost track of this script" (V2 reports ResultLost, not a real exit code).
     private readonly ConcurrentDictionary<string, byte> _lostResults = new();
 
-    // Tickets being launched right now (V2 Start, or a queued script leaving the pending queue): no in-memory entry exists yet.
+    // Tickets being launched right now (a V1/V2 Start, or a queued script leaving the pending queue), from the claim until the launch ends.
     private readonly ConcurrentDictionary<string, byte> _startsInFlight = new();
     // Cancels that met a ticket mid-launch: the launcher honours them once its pod is tracked, so a Cancel is never lost.
     private readonly ConcurrentDictionary<string, byte> _cancelRequests = new();
@@ -43,6 +45,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     /// <summary>Test-only: runs after a Cancel saw the ticket launching and before it records its cancel request.</summary>
     internal Action? BeforeCancelRequestRecordedHookForTests { get; set; }
+
+    /// <summary>Test-only: runs in Start once the ticket is known to be new, before it is launched or queued.</summary>
+    internal Action? StartAdmissionHookForTests { get; set; }
+
+    /// <summary>Test-only: runs in Start after the ticket lock is released, once the start was rejected, queued or claimed for launch.</summary>
+    internal Action? AfterStartDecisionHookForTests { get; set; }
 
     internal bool HasCancelRequestForTests(string ticketId) => _cancelRequests.ContainsKey(ticketId);
 
@@ -66,85 +74,185 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         if (command.ScriptTicket == null)
             throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
 
-        var scriptTicket = command.ScriptTicket;
-        var ticketId = scriptTicket.TaskId;
+        return StartOnce(command, () => TryPeekStatusV1(command.ScriptTicket), started => started);
+    }
 
-        if (_terminalResults.TryGetValue(ticketId, out var terminal))
-            return terminal.Response;
+    private enum StartAdmission { Launch, Queued, Rejected }
+
+    /// <summary>
+    /// The one start path for V1 and V2. Under the ticket lock a new ticket is either rejected, queued, or claimed for launch (in flight, owning its
+    /// isolation mutex) — so a Cancel of it, which claims under the same lock, finds it queued or launching, never in between. The launch itself
+    /// (pod creation) runs outside the lock, see <see cref="LaunchClaimed"/>.
+    /// </summary>
+    private T StartOnce<T>(StartScriptCommand command, Func<T?> peekKnown, Func<ScriptStatusResponse, T> map) where T : class
+    {
+        StartAdmission admission;
+        ScriptStatusResponse? rejection;
+
+        lock (_ticketLocks.For(command.ScriptTicket.TaskId))
+        {
+            var known = peekKnown();
+
+            if (known != null) return known;
+
+            StartAdmissionHookForTests?.Invoke();
+
+            admission = Admit(command, out rejection);
+        }
+
+        AfterStartDecisionHookForTests?.Invoke();
+
+        return map(admission switch
+        {
+            StartAdmission.Launch => LaunchFromStart(command),
+            StartAdmission.Queued => AnnounceQueued(command),
+            _ => rejection!
+        });
+    }
+
+    // Under the ticket lock. In memory (terminal, tracked, queued or launching) answers from memory; otherwise a pod a previous agent run
+    // launched and persisted (Starting excluded) answers from disk instead of being launched again.
+    private ScriptStatusResponse? TryPeekStatusV1(ScriptTicket ticket)
+    {
+        var ticketId = ticket.TaskId;
+
+        if (_terminalResults.TryGetValue(ticketId, out var terminal)) return terminal.Response;
 
         if (_scripts.TryGetValue(ticketId, out var existing))
         {
             Log.Information("Reusing in-memory script context for ticket {TicketId}", ticketId);
-            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), existing.LogSequence);
+            return new ScriptStatusResponse(ticket, ProcessState.Running, 0, new List<ProcessOutput>(), existing.LogSequence);
         }
 
-        if (_pendingScripts.ContainsKey(ticketId))
-            return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+        if (IsQueuedOrLaunching(ticketId)) return new ScriptStatusResponse(ticket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
 
-        // Crash-safe redelivery: if a prior agent-pod run got as far as writing
-        // ScriptStateStore (Starting/Running/Complete) but crashed before the
-        // in-memory _scripts entry survived, honour the persisted state rather
-        // than re-launching the pod. ScriptRecoveryService populates _scripts
-        // for pods that still exist; this catches the case where the workspace
-        // PVC retains state but the pod was garbage-collected.
-        var persistedWorkDir = Path.Combine(_tentacleSettings.WorkspacePath, ticketId);
-        var persisted = TryBuildStatusFromPersistedState(scriptTicket, persistedWorkDir);
-        if (persisted != null)
-        {
-            Log.Information("Redelivered StartScript for ticket {TicketId} — returning persisted state", ticketId);
-            return persisted;
-        }
+        var persisted = TryBuildStatusFromPersistedState(ticket, Path.Combine(_tentacleSettings.WorkspacePath, ticketId));
+
+        if (persisted != null) Log.Information("Redelivered StartScript for ticket {TicketId} — returning persisted state", ticketId);
+
+        return persisted;
+    }
+
+    // Under the ticket lock: no I/O beyond the in-memory queue and mutex.
+    private StartAdmission Admit(StartScriptCommand command, out ScriptStatusResponse? rejection)
+    {
+        var ticketId = command.ScriptTicket.TaskId;
+
+        rejection = null;
 
         if (_draining)
         {
-            InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, "Script rejected: Tentacle is shutting down") });
-            return _terminalResults[ticketId].Response;
+            rejection = Reject(ticketId, "Script rejected: Tentacle is shutting down");
+            return StartAdmission.Rejected;
         }
 
         if (_isolationMutex.TryAcquire(command, out var mutexLock))
         {
-            _mutexLocks[ticketId] = mutexLock!;
-
-            try
-            {
-                if (!LaunchScript(ticketId, command))
-                {
-                    ProcessPendingScripts();
-
-                    return _terminalResults[ticketId].Response;
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Failed to launch script for ticket {TicketId}", ticketId);
-                InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, ex.Message) });
-
-                if (_mutexLocks.TryRemove(ticketId, out var failedLock))
-                    failedLock.Dispose();
-
-                return _terminalResults[ticketId].Response;
-            }
-
-            return new ScriptStatusResponse(scriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
+            ClaimForLaunch(ticketId, mutexLock!);
+            return StartAdmission.Launch;
         }
 
-        var count = Interlocked.Increment(ref _pendingCount);
+        if (TryEnqueue(command)) return StartAdmission.Queued;
 
-        if (count > _kubernetesSettings.MaxPendingScripts)
+        rejection = Reject(ticketId, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)");
+        TentacleMetrics.ScriptRejected();
+
+        return StartAdmission.Rejected;
+    }
+
+    private bool TryEnqueue(StartScriptCommand command)
+    {
+        if (Interlocked.Increment(ref _pendingCount) > _kubernetesSettings.MaxPendingScripts)
         {
             Interlocked.Decrement(ref _pendingCount);
-            Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, ticketId);
-            InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, $"Script rejected: pending queue full ({_kubernetesSettings.MaxPendingScripts} scripts waiting)") });
-            TentacleMetrics.ScriptRejected();
-            return _terminalResults[ticketId].Response;
+            Log.Warning("Pending script queue full ({Max}), rejecting ticket {TicketId}", _kubernetesSettings.MaxPendingScripts, command.ScriptTicket.TaskId);
+            return false;
         }
 
-        _pendingScripts[ticketId] = new PendingScript(command, DateTimeOffset.UtcNow);
-        PersistPendingSecret(ticketId, command);
-        TentacleMetrics.ScriptQueued();
-        Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", ticketId);
+        _pendingScripts[command.ScriptTicket.TaskId] = new PendingScript(command, DateTimeOffset.UtcNow);
 
-        return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+        return true;
+    }
+
+    private ScriptStatusResponse Reject(string ticketId, string message)
+    {
+        InjectTerminalResult(ticketId, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, message) });
+
+        return _terminalResults[ticketId].Response;
+    }
+
+    private ScriptStatusResponse AnnounceQueued(StartScriptCommand command)
+    {
+        PersistPendingSecret(command.ScriptTicket.TaskId, command);
+        TentacleMetrics.ScriptQueued();
+        Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", command.ScriptTicket.TaskId);
+
+        return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+    }
+
+    // The ticket is in flight and owns the isolation mutex from here until LaunchClaimed ends the launch.
+    private void ClaimForLaunch(string ticketId, IDisposable mutexLock)
+    {
+        _mutexLocks[ticketId] = mutexLock;
+        _startsInFlight[ticketId] = 0;
+    }
+
+    // A launch that did not leave a running pod (failed, or cancelled as it launched) freed the mutex: a queued script may now start.
+    private ScriptStatusResponse LaunchFromStart(StartScriptCommand command)
+    {
+        var launched = LaunchClaimed(command);
+
+        if (launched.State != ProcessState.Running) ProcessPendingScripts();
+
+        return launched;
+    }
+
+    /// <summary>
+    /// The one launch path (V1 Start, V2 Start, a script leaving the pending queue). On entry the ticket is in flight and owns its isolation mutex;
+    /// on exit it is no longer in flight and is either running, cancelled (a Cancel that met the launch, its mutex released) or failed (Fatal result,
+    /// its mutex released). Only this launcher releases the mutex while the ticket is in flight: a Cancel meeting it hands the cancel over instead.
+    /// </summary>
+    private ScriptStatusResponse LaunchClaimed(StartScriptCommand command)
+    {
+        var ticketId = command.ScriptTicket.TaskId;
+
+        try
+        {
+            if (!LaunchScript(ticketId, command)) return CancelledLaunchResult(command.ScriptTicket);
+
+            return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Running, 0, new List<ProcessOutput>(), 0);
+        }
+        catch (Exception ex)
+        {
+            return FailLaunch(ticketId, ex);
+        }
+        finally
+        {
+            _startsInFlight.TryRemove(ticketId, out _);
+            DropUnhonouredCancelRequest(ticketId);
+        }
+    }
+
+    // The launcher published the Canceled result when it cancelled its pod; a Complete may have consumed it since.
+    private ScriptStatusResponse CancelledLaunchResult(ScriptTicket ticket)
+        => _terminalResults.TryGetValue(ticket.TaskId, out var cancelled) ? cancelled.Response : CompletedResponse(ticket, ScriptExitCodes.Canceled);
+
+    // The Fatal result is published while the ticket is still in flight, so a lock-free reader never finds it in neither place.
+    private ScriptStatusResponse FailLaunch(string ticketId, Exception ex)
+    {
+        Log.Error(ex, "Failed to launch script for ticket {TicketId}", ticketId);
+
+        var failed = Reject(ticketId, ex.Message);
+
+        ReleaseLaunchMutex(ticketId);
+
+        return failed;
+    }
+
+    private void ReleaseLaunchMutex(string ticketId)
+    {
+        if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
+            lockHandle.Dispose();
     }
 
     /// <summary>Returns false when a Cancel that met the launch was honoured: the pod is gone, the Canceled result is injected and the isolation mutex released.</summary>
@@ -206,8 +314,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         CancelScriptCore(new CancelScriptCommand(new ScriptTicket(ticketId), 0), deferredToCaller: true);
 
-        if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
-            lockHandle.Dispose();
+        ReleaseLaunchMutex(ticketId);
 
         return true;
     }
@@ -220,7 +327,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     // Called once the ticket is no longer in-flight. A request is only ever discarded when no pod was launched (a failed launch): with a pod
     // tracked, the request is either already consumed by the launcher's check or belongs to the Cancel that recorded it, which cancels the pod itself.
-    internal void DropUnhonouredCancelRequest(string ticketId)
+    private void DropUnhonouredCancelRequest(string ticketId)
     {
         if (!_scripts.ContainsKey(ticketId)) _cancelRequests.TryRemove(ticketId, out _);
     }
@@ -354,7 +461,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     /// <summary>
     /// Moves a ticket from <paramref name="source"/> to the terminal results WITHOUT a moment where it is in neither: the terminal result is published first and the
     /// source entry removed second, so a lock-free reader always finds the ticket somewhere (a miss reads as lost/unknown and the server fails or re-dispatches the step).
-    /// Serialized with V2 Start/Complete/Cancel through the ticket lock; false (and nothing published) when the entry is no longer the one passed in.
+    /// Serialized through the ticket lock with every other step that takes the ticket out of pending or tracked (Start, the dequeue, Cancel, Complete);
+    /// false (and nothing published) when the entry is no longer the one passed in.
     /// </summary>
     private bool PublishTerminalThenForget<TEntry>(ConcurrentDictionary<string, TEntry> source, string ticketId, TEntry entry, ScriptStatusResponse response)
     {
@@ -368,11 +476,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             BetweenPublishAndForgetHookForTests?.Invoke();
 
-            if (source.TryRemove(new KeyValuePair<string, TEntry>(ticketId, entry))) return true;
+            // Every step that takes a ticket out of pending or tracked holds this lock, so the entry checked above is still there: a published
+            // result is never retracted (a reader may already have answered with it).
+            source.TryRemove(ticketId, out _);
 
-            _terminalResults.TryRemove(new KeyValuePair<string, (ScriptStatusResponse Response, DateTimeOffset CreatedAt)>(ticketId, published));
-
-            return false;
+            return true;
         }
     }
 
@@ -451,17 +559,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     {
         try
         {
-            if (_terminalResults.TryRemove(command.Ticket.TaskId, out var terminal))
+            var ctx = TakeForComplete(command.Ticket.TaskId, out var terminal);
+
+            if (terminal != null)
             {
                 _lostResults.TryRemove(command.Ticket.TaskId, out _);
 
-                if (recordFinal?.Invoke(terminal.Response) ?? true)
+                if (recordFinal?.Invoke(terminal) ?? true)
                     DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
 
-                return terminal.Response;
+                return terminal;
             }
 
-            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            if (ctx == null)
             {
                 DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
                 return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
@@ -507,6 +617,22 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     private static readonly TimeSpan PodTerminationWait = TimeSpan.FromSeconds(30);
 
+    /// <summary>Test-only: runs in Complete after it looked for a terminal result and before it takes the tracked pod.</summary>
+    internal Action? CompleteTakeHookForTests { get; set; }
+
+    // Under the ticket lock, like every other step that takes a ticket out of tracked or terminal: the terminal result if any, else the tracked pod.
+    private ScriptPodContext? TakeForComplete(string ticketId, out ScriptStatusResponse? terminal)
+    {
+        lock (_ticketLocks.For(ticketId))
+        {
+            terminal = _terminalResults.TryRemove(ticketId, out var published) ? published.Response : null;
+
+            CompleteTakeHookForTests?.Invoke();
+
+            return terminal == null && _scripts.TryRemove(ticketId, out var ctx) ? ctx : null;
+        }
+    }
+
     public ScriptStatusResponse CancelScript(CancelScriptCommand command) => CancelScriptCore(command, deferredToCaller: false);
 
     /// <param name="deferredToCaller">V2 holds a shared ticket lock here: the caller releases the isolation mutex (launching the next queued script) after dropping it.</param>
@@ -518,53 +644,81 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller, out bool handedToLauncher)
     {
-        handedToLauncher = false;
-
         BeforeCancelCoreHookForTests?.Invoke();
 
-        if (TryTakePendingForCancel(command.Ticket, deferredToCaller))
-        {
-            Interlocked.Decrement(ref _pendingCount);
-            RemovePendingSecret(command.Ticket.TaskId);
-            DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
-            TentacleMetrics.ScriptCanceled();
-            return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
-        }
+        var claim = ClaimForCancel(command.Ticket, deferredToCaller, out var ctx);
+
+        handedToLauncher = claim == CancelClaim.HandedToLauncher;
 
         try
         {
-            if (!TryTakeTrackedForCancel(command.Ticket, deferredToCaller, out var ctx) && !TakeTrackedPodAfterHandOff(command.Ticket, deferredToCaller, out ctx, out handedToLauncher))
+            return claim switch
             {
-                if (!handedToLauncher)
-                    DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
-
-                return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
-            }
-
-            StopLogStream(ctx);
-            PersistCompleteState(command.Ticket.TaskId, ctx.WorkDir, ScriptExitCodes.Canceled, ctx.LogSequence);
-            _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
-            CleanupWorkspace(ctx.WorkDir);
-
-            TentacleMetrics.ScriptCanceled();
-
-            return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), ctx.LogSequence);
+                CancelClaim.Queued => CancelQueued(command.Ticket),
+                CancelClaim.Tracked => CancelTrackedPod(command.Ticket, ctx!),
+                CancelClaim.HandedToLauncher => CompletedResponse(command.Ticket, ScriptExitCodes.Canceled),
+                _ => CancelUnknown(command.Ticket)
+            };
         }
         finally
         {
-            if (!deferredToCaller && !handedToLauncher) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            // A queued script holds no mutex, and a launching one's mutex belongs to its launcher.
+            if (!deferredToCaller && claim is CancelClaim.Tracked or CancelClaim.None) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
 
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
     }
 
-    // Not tracked yet: either the launcher takes the cancel over, or it published the pod while the request was being recorded and we cancel that pod.
-    private bool TakeTrackedPodAfterHandOff(ScriptTicket ticket, bool publishCanceled, out ScriptPodContext? ctx, out bool handedToLauncher)
+    private enum CancelClaim { Queued, HandedToLauncher, Tracked, None }
+
+    /// <summary>
+    /// Under the ticket lock, serialized with Start's launch-or-queue decision, the dequeue and every publish-then-forget step of this ticket: a queued
+    /// script is taken from the queue, a launching one is handed to its launcher (or, once its pod is tracked, cancelled here), a tracked one is taken.
+    /// </summary>
+    private CancelClaim ClaimForCancel(ScriptTicket ticket, bool publishCanceled, out ScriptPodContext? ctx)
     {
-        handedToLauncher = TryHandCancelToLauncher(ticket.TaskId);
         ctx = null;
 
-        return !handedToLauncher && TryTakeTrackedForCancel(ticket, publishCanceled, out ctx);
+        lock (_ticketLocks.For(ticket.TaskId))
+        {
+            if (TryTakePendingForCancel(ticket, publishCanceled)) return CancelClaim.Queued;
+
+            if (TryTakeTrackedForCancel(ticket, publishCanceled, out ctx)) return CancelClaim.Tracked;
+
+            // Not tracked yet: either the launcher takes the cancel over, or it tracked the pod while the request was being recorded and we take that pod.
+            if (TryHandCancelToLauncher(ticket.TaskId)) return CancelClaim.HandedToLauncher;
+
+            return TryTakeTrackedForCancel(ticket, publishCanceled, out ctx) ? CancelClaim.Tracked : CancelClaim.None;
+        }
+    }
+
+    private ScriptStatusResponse CancelQueued(ScriptTicket ticket)
+    {
+        Interlocked.Decrement(ref _pendingCount);
+        RemovePendingSecret(ticket.TaskId);
+        DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, ticket.TaskId));
+        TentacleMetrics.ScriptCanceled();
+
+        return CompletedResponse(ticket, ScriptExitCodes.Canceled);
+    }
+
+    private ScriptStatusResponse CancelTrackedPod(ScriptTicket ticket, ScriptPodContext ctx)
+    {
+        StopLogStream(ctx);
+        PersistCompleteState(ticket.TaskId, ctx.WorkDir, ScriptExitCodes.Canceled, ctx.LogSequence);
+        _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
+        CleanupWorkspace(ctx.WorkDir);
+
+        TentacleMetrics.ScriptCanceled();
+
+        return new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.Canceled, new List<ProcessOutput>(), ctx.LogSequence);
+    }
+
+    private ScriptStatusResponse CancelUnknown(ScriptTicket ticket)
+    {
+        DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, ticket.TaskId));
+
+        return CompletedResponse(ticket, ScriptExitCodes.Canceled);
     }
 
     // publishCanceled (V2 and the launcher): the Canceled result is the ticket's terminal result and is published BEFORE the ticket stops being
@@ -693,49 +847,43 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             if (!_isolationMutex.TryAcquire(kvp.Value.Command, out var handle))
                 continue;
 
-            // Visible as "starting" from before the script leaves the pending queue until its pod is tracked.
-            _startsInFlight[kvp.Key] = 0;
-
-            BetweenStartMarkAndDequeueHookForTests?.Invoke();
-
-            if (!_pendingScripts.TryRemove(kvp.Key, out var pending))
+            if (!TryClaimPendingForLaunch(kvp.Key, kvp.Value, handle!))
             {
-                _startsInFlight.TryRemove(kvp.Key, out _);
                 handle!.Dispose();
                 retryNeeded = true;
                 continue;
             }
 
-            Interlocked.Decrement(ref _pendingCount);
+            if (LaunchClaimed(kvp.Value.Command).State != ProcessState.Running) continue;
 
-            _mutexLocks[kvp.Key] = handle!;
-
-            try
-            {
-                if (!LaunchScript(kvp.Key, pending.Command)) continue;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "Failed to launch pending script {TicketId}", kvp.Key);
-                InjectTerminalResult(kvp.Key, ScriptExitCodes.Fatal, new List<ProcessOutput> { new(ProcessOutputSource.StdErr, ex.Message) });
-
-                if (_mutexLocks.TryRemove(kvp.Key, out var failedLock))
-                    failedLock.Dispose();
-
-                continue;
-            }
-            finally
-            {
-                _startsInFlight.TryRemove(kvp.Key, out _);
-                DropUnhonouredCancelRequest(kvp.Key);
-            }
-
-            if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)
+            if (kvp.Value.Command.Isolation == ScriptIsolationLevel.FullIsolation)
                 launchedWriter = true;
         }
 
         if (retryNeeded && !launchedWriter)
             ProcessPendingScripts(depth + 1);
+    }
+
+    /// <summary>
+    /// Under the ticket lock, so a Cancel or a timeout of this queued script either took it from the queue first (false) or finds it launching.
+    /// Marked in flight BEFORE it leaves the queue: a lock-free reader scanning pending, then in flight, never finds it in neither.
+    /// </summary>
+    private bool TryClaimPendingForLaunch(string ticketId, PendingScript pending, IDisposable mutexLock)
+    {
+        lock (_ticketLocks.For(ticketId))
+        {
+            if (!_pendingScripts.TryGetValue(ticketId, out var current) || !ReferenceEquals(current, pending)) return false;
+
+            ClaimForLaunch(ticketId, mutexLock);
+
+            BetweenStartMarkAndDequeueHookForTests?.Invoke();
+
+            _pendingScripts.TryRemove(ticketId, out _);
+        }
+
+        Interlocked.Decrement(ref _pendingCount);
+
+        return true;
     }
 
     private static ScriptStatusResponse CompletedResponse(ScriptTicket ticket, int exitCode)
