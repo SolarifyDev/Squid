@@ -12,6 +12,9 @@ public interface IDeploymentCompletionDataProvider : IScopedDependency
 {
     Task AddDeploymentCompletionAsync(DeploymentCompletion completion, bool forceSave = true, CancellationToken cancellationToken = default);
 
+    /// <summary>Stops tracking a completion whose insert was rolled back, so a later SaveChanges on the same scoped context cannot replay it.</summary>
+    void Detach(DeploymentCompletion completion);
+
     Task<List<DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default);
 
     Task<List<DeploymentCompletion>> GetLatestSuccessfulCompletionsAsync(int? projectId = null, CancellationToken cancellationToken = default);
@@ -37,6 +40,8 @@ public class DeploymentCompletionDataProvider(IRepository repository, IUnitOfWor
 
         if (forceSave) await unitOfWork.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    public void Detach(DeploymentCompletion completion) => repository.Detach(completion);
 
     public async Task<List<DeploymentCompletion>> GetDeploymentCompletionsByDeploymentIdAsync(int deploymentId, CancellationToken cancellationToken = default)
     {

@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Common;
 using Squid.Core.Services.Deployments.Checkpoints;
 using Squid.Core.Services.Deployments.DeploymentCompletions;
@@ -19,9 +20,8 @@ public sealed class DeploymentCompletionHandler(
 {
     public async Task OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, ct).ConfigureAwait(false)) return;
+        if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, true, ct).ConfigureAwait(false)) return;
 
-        await RecordCompletionAsync(ctx, true, "Deployment completed successfully").ConfigureAwait(false);
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
         await TriggerAutoDeploymentsAsync(ctx, ct).ConfigureAwait(false);
 
@@ -34,10 +34,7 @@ public sealed class DeploymentCompletionHandler(
 
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
-        if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, ct).ConfigureAwait(false)) return;
-
-        if (ctx.Deployment != null)
-            await RecordCompletionAsync(ctx, false, ex.Message).ConfigureAwait(false);
+        if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, false, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -50,10 +47,7 @@ public sealed class DeploymentCompletionHandler(
         // Safe even from a run that lost the lease: the task is Cancelling, and whichever run owns it cancels the same scripts.
         await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
 
-        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, ct).ConfigureAwait(false)) return;
-
-        if (ctx.Deployment != null)
-            await RecordCompletionAsync(ctx, false, "Deployment was cancelled").ConfigureAwait(false);
+        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, false, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
     }
@@ -180,28 +174,68 @@ public sealed class DeploymentCompletionHandler(
             return;
         }
 
-        await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Paused, ct).ConfigureAwait(false);
+        await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Paused, null, ct).ConfigureAwait(false);
     }
 
     // Every write this run makes out of a running state is conditional on the run still holding the task's lease: a task another run recovered or resumed
     // is not ours to pause, finish or cancel, and nothing after it (the checkpoint cleanup, auto-deploys) may run on that run's behalf either.
-    private async Task<bool> TransitionOwnedAsync(DeploymentTaskContext ctx, string fromState, string toState, CancellationToken ct)
+    // A terminal outcome (recordSuccess != null) writes its DeploymentCompletion in the SAME transaction as the state: lifecycle progression and auto-deploy
+    // read that row, so a task must never be terminal without it. A run that lost the lease throws before the record is added, so it writes neither.
+    private async Task<bool> TransitionOwnedAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
     {
+        DeploymentCompletion pending = null;
+
         try
         {
             await genericDataProvider.ExecuteInTransactionAsync(async cancellationToken =>
             {
                 await serverTaskService.TransitionStateAsync(ctx.ServerTaskId, fromState, toState, ctx.LeaseOwner, cancellationToken).ConfigureAwait(false);
+
+                pending = await AddCompletionIfRequiredAsync(ctx, recordSuccess, cancellationToken).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
 
             return true;
         }
         catch (ServerTaskLeaseNotHeldException ex)
         {
+            DetachCompletion(pending);
+
             Log.Warning("[Deploy] Task {TaskId} is now leased to another run ({Owner}); this run's move {From} -> {To} was refused and nothing else is recorded", ctx.ServerTaskId, ex.CurrentOwner, fromState, toState);
 
             return false;
         }
+        catch
+        {
+            DetachCompletion(pending);
+
+            throw;
+        }
+    }
+
+    // The rolled-back insert must not stay tracked: the scoped DbContext is reused by the failure path and the checkpoint cleanup, and their SaveChanges would replay it.
+    private void DetachCompletion(DeploymentCompletion completion)
+    {
+        if (completion != null) deploymentCompletionDataProvider.Detach(completion);
+    }
+
+    private async Task<DeploymentCompletion> AddCompletionIfRequiredAsync(DeploymentTaskContext ctx, bool? recordSuccess, CancellationToken ct)
+    {
+        if (recordSuccess == null || ctx.Deployment == null) return null;
+
+        var deployment = await deploymentDataProvider.GetDeploymentByIdAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
+
+        var completion = new DeploymentCompletion
+        {
+            DeploymentId = ctx.Deployment.Id,
+            CompletedTime = DateTimeOffset.UtcNow,
+            State = recordSuccess.Value ? TaskState.Success : TaskState.Failed,
+            SpaceId = deployment?.SpaceId ?? 1,
+            SequenceNumber = 0
+        };
+
+        await deploymentCompletionDataProvider.AddDeploymentCompletionAsync(completion, false, ct).ConfigureAwait(false);
+
+        return completion;
     }
 
     /// <summary>
@@ -234,36 +268,6 @@ public sealed class DeploymentCompletionHandler(
         var task = await serverTaskService.GetTaskAsync(serverTaskId, ct).ConfigureAwait(false);
 
         return task?.State ?? TaskState.Executing;
-    }
-
-    // The record follows the owned state write, so a failure here must not undo or contradict an outcome the task already has (a throw would route a
-    // finished task into the failure path, whose Success -> Failed move is illegal): it is logged and the outcome stands.
-    private async Task RecordCompletionAsync(DeploymentTaskContext ctx, bool success, string message)
-    {
-        try
-        {
-            await AddCompletionAsync(ctx, success).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "[Deploy] Failed to record the completion of task {TaskId}: {Message}", ctx.ServerTaskId, message);
-        }
-    }
-
-    private async Task AddCompletionAsync(DeploymentTaskContext ctx, bool success)
-    {
-        var deployment = await deploymentDataProvider.GetDeploymentByIdAsync(ctx.Deployment.Id).ConfigureAwait(false);
-
-        var completion = new Persistence.Entities.Deployments.DeploymentCompletion
-        {
-            DeploymentId = ctx.Deployment.Id,
-            CompletedTime = DateTimeOffset.UtcNow,
-            State = success ? TaskState.Success : TaskState.Failed,
-            SpaceId = deployment?.SpaceId ?? 1,
-            SequenceNumber = 0
-        };
-
-        await deploymentCompletionDataProvider.AddDeploymentCompletionAsync(completion).ConfigureAwait(false);
     }
 
     private async Task CleanupCheckpointAsync(DeploymentTaskContext ctx, CancellationToken ct)
