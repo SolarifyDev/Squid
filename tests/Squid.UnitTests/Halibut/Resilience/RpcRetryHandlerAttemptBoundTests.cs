@@ -82,4 +82,30 @@ public sealed class RpcRetryHandlerAttemptBoundTests
 
         result.ShouldBe(9);
     }
+
+    [Fact]
+    public async Task BackoffOvershootsTheBudget_Bounded_RethrowsLastFailure_WithoutAnUnboundedAttempt()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var calls = 0;
+        var handler = new RpcRetryHandler(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1), () => now, (delay, _) => { now += delay + TimeSpan.FromMilliseconds(2); return Task.CompletedTask; });
+
+        var ex = await Should.ThrowAsync<HalibutClientException>(() => handler.ExecuteAsync(() => { calls++; if (calls > 1) return Hang(); now += TimeSpan.FromMilliseconds(499); throw new HalibutClientException("reset"); }, "CancelScript", TimeSpan.FromSeconds(1), CancellationToken.None, default, boundEachAttempt: true).WaitAsync(Guard));
+
+        calls.ShouldBe(1, "the wait overshot the budget, so a further attempt would run unbounded");
+        ex.Message.ShouldBe("reset");
+    }
+
+    [Fact]
+    public async Task BackoffOvershootsTheBudget_Unbounded_StillRunsTheNextAttempt()
+    {
+        var now = DateTimeOffset.UnixEpoch;
+        var calls = 0;
+        var handler = new RpcRetryHandler(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1), () => now, (delay, _) => { now += delay + TimeSpan.FromMilliseconds(2); return Task.CompletedTask; });
+
+        var result = await handler.ExecuteAsync(() => { if (++calls == 1) { now += TimeSpan.FromMilliseconds(499); throw new HalibutClientException("reset"); } return Task.FromResult(5); }, "GetStatus", TimeSpan.FromSeconds(1), CancellationToken.None).WaitAsync(Guard);
+
+        result.ShouldBe(5);
+        calls.ShouldBe(2);
+    }
 }

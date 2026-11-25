@@ -84,6 +84,9 @@ public sealed class RpcRetryHandler
                 Log.Warning(ex, "[Deploy] Agent RPC {Rpc} failed transiently (attempt {Attempt}); retrying in {DelayMs}ms", rpcName, attempt, (int)delay.Value.TotalMilliseconds);
 
                 if (!await WaitAsync(delay.Value, cancellation, stopRetrying).ConfigureAwait(false)) throw;
+
+                // The wait can overshoot the budget; a bounded call must not start another attempt it could no longer bound.
+                if (boundEachAttempt && budget - (_utcNow() - started) <= TimeSpan.Zero) throw;
             }
         }
     }
