@@ -29,6 +29,12 @@ public partial class ScriptPodService : IScriptServiceV2
     /// <summary>Test-only: runs between the two reads of <see cref="IsQueuedOrLaunchingV2"/>, i.e. after the pending-queue read and before the in-flight read.</summary>
     internal Action? LaunchStateReadHookForTests { get; set; }
 
+    /// <summary>Test-only: runs in V2 Cancel after the launch settle wait and before the ticket lock is taken.</summary>
+    internal Action? BeforeCancelLockHookForTests { get; set; }
+
+    /// <summary>Test-only: how long V2 Cancel waits for an in-flight launch to settle before it hands the cancel to the launcher.</summary>
+    internal TimeSpan LaunchSettleTimeoutForTests { get; set; } = LaunchSettleTimeout;
+
     public ScriptStatusResponseV2 StartScript(StartScriptCommandV2 command)
     {
         var ticket = command.ScriptTicket;
@@ -52,6 +58,7 @@ public partial class ScriptPodService : IScriptServiceV2
         finally
         {
             _startsInFlight.TryRemove(ticket.TaskId, out _);
+            DropUnhonouredCancelRequest(ticket.TaskId);
         }
     }
 
@@ -78,6 +85,8 @@ public partial class ScriptPodService : IScriptServiceV2
         // A Cancel that lands while the pod is being launched waits for the launch (bounded) instead of being dropped.
         AwaitLaunchSettledV2(ticket.TaskId);
 
+        BeforeCancelLockHookForTests?.Invoke();
+
         // Stopping the log stream can take seconds; the cancel under the lock then finds it already stopped.
         if (_scripts.TryGetValue(ticket.TaskId, out var live)) StopLogStream(live);
 
@@ -89,14 +98,9 @@ public partial class ScriptPodService : IScriptServiceV2
 
                 if (_terminalResults.TryGetValue(ticket.TaskId, out var terminal)) return MapTerminalV2(terminal.Response);
 
-                if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId))
-                {
-                    cancelled = true;
-
-                    return CancelLiveV2(command);
-                }
-
-                if (launching) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
+                // A launching ticket has no pod yet: the cancel is recorded for its launcher (see CancelScriptCore), so it is never dropped.
+                if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId) || launching)
+                    return CancelLiveV2(command, out cancelled);
 
                 return ReadFinalStatusV2(ticket, command.LastLogSequence);
             }
@@ -150,7 +154,7 @@ public partial class ScriptPodService : IScriptServiceV2
     {
         var waited = Stopwatch.StartNew();
 
-        while (_startsInFlight.ContainsKey(ticketId) && waited.Elapsed < LaunchSettleTimeout)
+        while (_startsInFlight.ContainsKey(ticketId) && waited.Elapsed < LaunchSettleTimeoutForTests)
             Thread.Sleep(LaunchSettlePollMilliseconds);
     }
 
@@ -279,10 +283,15 @@ public partial class ScriptPodService : IScriptServiceV2
         }
     }
 
-    private ScriptStatusResponseV2 CancelLiveV2(CancelScriptCommandV2 command)
+    // cancelled = this call tore the ticket down (the caller then releases its isolation mutex); false when the launcher took the cancel over.
+    private ScriptStatusResponseV2 CancelLiveV2(CancelScriptCommandV2 command, out bool cancelled)
     {
         var ticket = command.Ticket;
-        var v1 = CancelScriptCore(new CancelScriptCommand(ticket, command.LastLogSequence), deferredToCaller: true);
+        var v1 = CancelScriptCore(new CancelScriptCommand(ticket, command.LastLogSequence), deferredToCaller: true, out var handedToLauncher);
+
+        cancelled = !handedToLauncher;
+
+        if (handedToLauncher) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
         // V1 releases the pod and workspace on cancel; keep the outcome so a later Cancel/Complete of this ticket still has an answer.
         InjectTerminalResult(ticket.TaskId, ScriptExitCodes.Canceled, v1.Logs);

@@ -32,12 +32,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     // Tickets being launched right now (V2 Start, or a queued script leaving the pending queue): no in-memory entry exists yet.
     private readonly ConcurrentDictionary<string, byte> _startsInFlight = new();
+    // Cancels that met a ticket mid-launch: the launcher honours them once its pod is tracked, so a Cancel is never lost.
+    private readonly ConcurrentDictionary<string, byte> _cancelRequests = new();
     private readonly ConcurrentDictionary<string, IDisposable> _mutexLocks = new();
     private readonly ConcurrentDictionary<string, PendingScript> _pendingScripts = new();
     private readonly ScriptIsolationMutex _isolationMutex = new();
     private readonly TimeSpan _mutexTimeout;
     private int _pendingCount;
     private volatile bool _draining;
+
+    /// <summary>Test-only: runs after a Cancel saw the ticket launching and before it records its cancel request.</summary>
+    internal Action? BeforeCancelRequestRecordedHookForTests { get; set; }
+
+    internal bool HasCancelRequestForTests(string ticketId) => _cancelRequests.ContainsKey(ticketId);
 
     public record PendingScript(StartScriptCommand Command, DateTimeOffset EnqueuedAt);
 
@@ -100,7 +107,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             try
             {
-                LaunchScript(ticketId, command);
+                if (!LaunchScript(ticketId, command))
+                {
+                    ProcessPendingScripts();
+
+                    return _terminalResults[ticketId].Response;
+                }
             }
             catch (Exception ex)
             {
@@ -135,7 +147,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         return new ScriptStatusResponse(scriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
     }
 
-    private void LaunchScript(string ticketId, StartScriptCommand command)
+    /// <summary>Returns false when a Cancel that met the launch was honoured: the pod is gone, the Canceled result is injected and the isolation mutex released.</summary>
+    private bool LaunchScript(string ticketId, StartScriptCommand command)
     {
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(_tentacleSettings.WorkspacePath);
 
@@ -168,6 +181,12 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             PersistRunningState(ticketId, workDir);
 
             Log.Information("Started script pod {PodName} for ticket {TicketId}", podName, ticketId);
+
+            var cancelled = HonourCancelRequestedDuringLaunch(ticketId);
+
+            AfterHonourCheckHookForTests?.Invoke();
+
+            return !cancelled;
         }
         catch
         {
@@ -175,6 +194,59 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             CleanupWorkspace(workDir);
             throw;
         }
+    }
+
+    // Checked AFTER the pod is tracked: a Cancel records its request before it re-reads the tracked set, so either it sees the pod
+    // and cancels it itself, or this check sees the request. Whoever removes the request owns the cancellation.
+    private bool HonourCancelRequestedDuringLaunch(string ticketId)
+    {
+        if (!_cancelRequests.TryRemove(ticketId, out _)) return false;
+
+        Log.Information("Cancel requested while ticket {TicketId} was launching, cancelling its pod", ticketId);
+
+        var v1 = CancelScriptCore(new CancelScriptCommand(new ScriptTicket(ticketId), 0), deferredToCaller: true);
+        InjectTerminalResult(ticketId, ScriptExitCodes.Canceled, v1.Logs);
+
+        if (_mutexLocks.TryRemove(ticketId, out var lockHandle))
+            lockHandle.Dispose();
+
+        return true;
+    }
+
+    /// <summary>Test-only: runs in the launcher after it checked for a cancel request, with the pod tracked, before the launch is reported finished.</summary>
+    internal Action? AfterHonourCheckHookForTests { get; set; }
+
+    /// <summary>Test-only: runs after a Cancel recorded its request and before it arbitrates ownership of it.</summary>
+    internal Action? AfterCancelRequestRecordedHookForTests { get; set; }
+
+    // Called once the ticket is no longer in-flight. A request is only ever discarded when no pod was launched (a failed launch): with a pod
+    // tracked, the request is either already consumed by the launcher's check or belongs to the Cancel that recorded it, which cancels the pod itself.
+    internal void DropUnhonouredCancelRequest(string ticketId)
+    {
+        if (!_scripts.ContainsKey(ticketId)) _cancelRequests.TryRemove(ticketId, out _);
+    }
+
+    /// <summary>
+    /// A ticket mid-launch has no pod to cancel yet: record the request for the launcher. Returns true when the launcher took it over; false when the
+    /// pod is already tracked (the caller cancels it) or the launch already ended (nothing left to cancel).
+    /// </summary>
+    private bool TryHandCancelToLauncher(string ticketId)
+    {
+        if (!_startsInFlight.ContainsKey(ticketId)) return false;
+
+        BeforeCancelRequestRecordedHookForTests?.Invoke();
+
+        _cancelRequests[ticketId] = 0;
+
+        AfterCancelRequestRecordedHookForTests?.Invoke();
+
+        if (_scripts.ContainsKey(ticketId)) return !_cancelRequests.TryRemove(ticketId, out _);
+
+        if (_startsInFlight.ContainsKey(ticketId)) return true;
+
+        _cancelRequests.TryRemove(ticketId, out _);
+
+        return false;
     }
 
     private static void WriteStateFile(string workDir, string ticketId, string podName, string eosMarkerToken, StartScriptCommand command)
@@ -390,7 +462,17 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     /// <param name="deferredToCaller">V2 holds a shared ticket lock here: the caller releases the isolation mutex (launching the next queued script) after dropping it.</param>
     internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller)
+        => CancelScriptCore(command, deferredToCaller, out _);
+
+    /// <summary>Test-only: runs at the start of <see cref="CancelScriptCore(CancelScriptCommand, bool, out bool)"/>, before the pending queue is touched.</summary>
+    internal Action? BeforeCancelCoreHookForTests { get; set; }
+
+    internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller, out bool handedToLauncher)
     {
+        handedToLauncher = false;
+
+        BeforeCancelCoreHookForTests?.Invoke();
+
         if (_pendingScripts.TryRemove(command.Ticket.TaskId, out var _))
         {
             Interlocked.Decrement(ref _pendingCount);
@@ -402,9 +484,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         try
         {
-            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx))
+            if (!_scripts.TryRemove(command.Ticket.TaskId, out var ctx) && !TakeTrackedPodAfterHandOff(command.Ticket.TaskId, out ctx, out handedToLauncher))
             {
-                DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
+                if (!handedToLauncher)
+                    DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
+
                 return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
             }
 
@@ -419,10 +503,19 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
         finally
         {
-            if (!deferredToCaller) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            if (!deferredToCaller && !handedToLauncher) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
 
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
+    }
+
+    // Not tracked yet: either the launcher takes the cancel over, or it published the pod while the request was being recorded and we cancel that pod.
+    private bool TakeTrackedPodAfterHandOff(string ticketId, out ScriptPodContext? ctx, out bool handedToLauncher)
+    {
+        handedToLauncher = TryHandCancelToLauncher(ticketId);
+        ctx = null;
+
+        return !handedToLauncher && _scripts.TryRemove(ticketId, out ctx);
     }
 
     public string WorkspaceBasePath => _tentacleSettings.WorkspacePath;
@@ -560,7 +653,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             try
             {
-                LaunchScript(kvp.Key, pending.Command);
+                if (!LaunchScript(kvp.Key, pending.Command)) continue;
             }
             catch (Exception ex)
             {
@@ -575,6 +668,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             finally
             {
                 _startsInFlight.TryRemove(kvp.Key, out _);
+                DropUnhonouredCancelRequest(kvp.Key);
             }
 
             if (pending.Command.Isolation == ScriptIsolationLevel.FullIsolation)
