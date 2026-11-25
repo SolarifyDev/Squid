@@ -34,7 +34,7 @@ public sealed partial class SetupInstaller
 
         var provider = PackageStoreSettingsCheck.ResolveProvider(_packageStoreProviders, choice.Kind);
 
-        PackageStoreSettingsCheck.EnsureValid(provider, choice.Properties, choice.Secrets, new Dictionary<string, string>());
+        PackageStoreSettingsCheck.PrepareConfiguration(provider, choice.Properties, choice.Secrets, StoredSecrets.None);
 
         await WriteDefaultPackageStoreAsync(BuildValues(provider.Describe().DisplayName, choice), ct).ConfigureAwait(false);
 

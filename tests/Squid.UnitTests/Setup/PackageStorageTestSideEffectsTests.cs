@@ -65,7 +65,7 @@ public sealed class PackageStorageTestSideEffectsTests : IDisposable
     {
         var root = Path.Combine(AppContext.BaseDirectory, $"warn-{Guid.NewGuid():N}");
 
-        var result = await PackageStoreSettingsCheck.TestAsync(Provider(), new Dictionary<string, string> { ["Root"] = root }, new Dictionary<string, string>(), new Dictionary<string, string>(), CancellationToken.None);
+        var result = await PackageStoreSettingsCheck.TestAsync(Provider(), new Dictionary<string, string> { ["Root"] = root }, new Dictionary<string, string>(), StoredSecrets.None, CancellationToken.None);
 
         result.Warnings.ShouldContain(w => w.Contains("inside the application folder"));
     }

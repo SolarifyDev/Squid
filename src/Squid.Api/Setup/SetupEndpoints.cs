@@ -54,7 +54,7 @@ public static class SetupEndpoints
         {
             var provider = PackageStoreSettingsCheck.ResolveProvider(session.PackageStoreProviders, request.Kind);
 
-            return await PackageStoreSettingsCheck.TestAsync(provider, request.Properties, request.Secrets, new Dictionary<string, string>(), ct).ConfigureAwait(false);
+            return await PackageStoreSettingsCheck.TestAsync(provider, request.Properties, request.Secrets, StoredSecrets.None, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is PackageStoreProviderNotFoundException or PackageStoreConfigurationInvalidException)
         {

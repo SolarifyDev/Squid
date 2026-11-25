@@ -1,6 +1,6 @@
 using Squid.Core.Services.Packages.Storage.Exceptions;
-
 using Squid.Message.Commands.PackageStorage;
+using Squid.Message.Models.PackageStorage;
 
 namespace Squid.Core.Services.Packages.Storage;
 
@@ -22,18 +22,23 @@ public partial class PackageStoreService
 
     private static string SerializeProperties(IReadOnlyDictionary<string, string> properties)
     {
-        return PackageStoreConfigurationMapper.SerializeSettings(properties ?? new Dictionary<string, string>()) ?? "{}";
+        return PackageStoreConfigurationMapper.SerializeSettings(properties) ?? "{}";
     }
 
-    private async Task<Dictionary<string, string>> LoadStoredSecretsAsync(TestPackageStoreSettingsCommand command, CancellationToken ct)
+    private static StoredSecrets SelectReusable(IPackageBlobStoreProvider provider, IReadOnlyDictionary<string, string> newProperties, Persistence.Entities.PackageStorage.PackageStore stored)
     {
-        if (command.StoreId == null) return new Dictionary<string, string>();
+        return PackageStoreSettings.SelectReusable(provider.Describe(), newProperties ?? new Dictionary<string, string>(), PackageStoreConfigurationMapper.ParseSettingsLeniently(stored.Properties), PackageStoreConfigurationMapper.ParseSettingsLeniently(stored.Secret));
+    }
+
+    private async Task<StoredSecrets> LoadStoredSecretsAsync(IPackageBlobStoreProvider provider, TestPackageStoreSettingsCommand command, CancellationToken ct)
+    {
+        if (command.StoreId == null) return StoredSecrets.None;
 
         var store = await LoadAsync(command.StoreId.Value, ct).ConfigureAwait(false);
 
         if (store.Kind != command.Kind)
             throw new PackageStoreConfigurationInvalidException(command.Kind, [$"Package store {store.Id} is a {store.Kind} store, not a {command.Kind} store"]);
 
-        return PackageStoreConfigurationMapper.ParseSettings(store.Secret);
+        return SelectReusable(provider, command.Properties, store);
     }
 }

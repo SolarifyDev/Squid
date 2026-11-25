@@ -172,6 +172,45 @@ public sealed class SetupHostEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PackageStorageTest_RelativeRoot_FailsThroughValidateConfiguration_AndCreatesNoDirectory()
+    {
+        var relative = $"setup-relative-{Guid.NewGuid():N}";
+
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = relative } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeFalse();
+        result.GetProperty("message").GetString().ShouldContain("absolute path");
+        Directory.Exists(Path.GetFullPath(relative)).ShouldBeFalse();
+        Directory.Exists(Path.Combine(AppContext.BaseDirectory, relative)).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("/etc", "system folder")]
+    [InlineData("<app>", "contains the application folder")]
+    public async Task PackageStorageTest_SystemOrApplicationFolderRoot_IsRejectedLikeSettingsDoes(string root, string expected)
+    {
+        var chosen = root == "<app>" ? AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar) : root;
+
+        var result = await PostForResultAsync("/api/setup/package-storage/test", new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = chosen } });
+
+        result.GetProperty("success").GetBoolean().ShouldBeFalse();
+        result.GetProperty("message").GetString().ShouldContain(expected);
+    }
+
+    [Fact]
+    public async Task Install_RelativePackageRoot_Returns400_AndStartsNothing()
+    {
+        var request = new { database = new { mode = "External", connectionString = "Host=127.0.0.1;Port=1;Database=squid;Username=u;Password=p;Timeout=2" }, redis = new { mode = "External", connectionString = "127.0.0.1:1" }, admin = new { userName = "admin", password = "longenough" }, server = new { externalUrl = "http://localhost:8080" }, packageStorage = new { kind = "FileSystem", properties = new Dictionary<string, string> { ["Root"] = "relative/dir" } } };
+
+        var response = await PostAsync("/api/setup/install", request);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        body.GetProperty("errors").GetProperty("packageStorage").GetString().ShouldContain("absolute path");
+        _session.Tracker.Snapshot().State.ShouldBe(SetupInstallState.Idle);
+    }
+
+    [Fact]
     public async Task PackageStorageTest_RootInsideTheApplicationFolder_ReturnsTheProvidersWarning()
     {
         var root = Path.Combine(AppContext.BaseDirectory, $"setup-warning-{Guid.NewGuid():N}");

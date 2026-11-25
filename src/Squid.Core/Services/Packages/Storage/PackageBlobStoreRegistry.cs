@@ -18,7 +18,11 @@ public sealed class PackageBlobStoreRegistry(ILifetimeScope scope, IEnumerable<I
         var record = await ReadAsync(provider => provider.GetByIdAsync(storeId, ct)).ConfigureAwait(false);
 
         if (record == null)
+        {
+            _stores.TryRemove(storeId, out _);
+
             throw new PackageStoreNotFoundException(storeId);
+        }
 
         return GetOrCreate(record);
     }
@@ -57,7 +61,14 @@ public sealed class PackageBlobStoreRegistry(ILifetimeScope scope, IEnumerable<I
     {
         var provider = providers.FirstOrDefault(p => p.Kind == record.Kind) ?? throw new PackageStoreProviderNotFoundException(record.Kind);
 
-        return provider.Create(PackageStoreConfigurationMapper.ToConfiguration(record));
+        try
+        {
+            return provider.Create(PackageStoreConfigurationMapper.ToConfiguration(record));
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            throw new PackageStoreConfigurationInvalidException(record.Kind, [$"the saved settings of package store {record.Id} are not valid JSON: {ex.Message}"]);
+        }
     }
 
     private sealed record CachedStore(DateTimeOffset LastModifiedDate, IPackageBlobStore Store);

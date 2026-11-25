@@ -46,6 +46,9 @@ public class GlobalExceptionFilter : IExceptionFilter
             DefaultPackageStoreDeletionException => HttpStatusCode.Conflict,
             PackageStoreConfigurationInvalidException => HttpStatusCode.BadRequest,
             PackageStoreProviderNotFoundException => HttpStatusCode.BadRequest,
+            PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
+            InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
+            PackageBlobNotFoundException => HttpStatusCode.NotFound,
             _ => HttpStatusCode.InternalServerError
         };
 

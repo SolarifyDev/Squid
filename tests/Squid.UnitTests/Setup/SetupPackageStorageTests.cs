@@ -91,7 +91,7 @@ public sealed class SetupPackageStorageTests
     {
         var provider = new FakeSecretBlobStoreProvider();
 
-        var result = await PackageStoreSettingsCheck.TestAsync(provider, new Dictionary<string, string> { ["Endpoint"] = "e" }, new Dictionary<string, string> { ["Token"] = "t" }, new Dictionary<string, string>(), CancellationToken.None);
+        var result = await PackageStoreSettingsCheck.TestAsync(provider, new Dictionary<string, string> { ["Endpoint"] = "e" }, new Dictionary<string, string> { ["Token"] = "t" }, StoredSecrets.None, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
         provider.LastConfiguration.Secret("Token").ShouldBe("t");
@@ -102,7 +102,7 @@ public sealed class SetupPackageStorageTests
     {
         var provider = new FakeSecretBlobStoreProvider();
 
-        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => PackageStoreSettingsCheck.TestAsync(provider, new Dictionary<string, string>(), new Dictionary<string, string>(), new Dictionary<string, string>(), CancellationToken.None));
+        await Should.ThrowAsync<PackageStoreConfigurationInvalidException>(() => PackageStoreSettingsCheck.TestAsync(provider, new Dictionary<string, string>(), new Dictionary<string, string>(), StoredSecrets.None, CancellationToken.None));
 
         provider.LastConfiguration.ShouldBeNull();
     }

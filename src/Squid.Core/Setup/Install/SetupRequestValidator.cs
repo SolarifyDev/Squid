@@ -55,7 +55,7 @@ public static class SetupRequestValidator
         {
             var provider = PackageStoreSettingsCheck.ResolveProvider(providers, choice.Kind);
 
-            PackageStoreSettingsCheck.EnsureValid(provider, choice.Properties, choice.Secrets, new Dictionary<string, string>());
+            PackageStoreSettingsCheck.PrepareConfiguration(provider, choice.Properties, choice.Secrets, StoredSecrets.None);
         }
         catch (PackageStoreProviderNotFoundException ex)
         {

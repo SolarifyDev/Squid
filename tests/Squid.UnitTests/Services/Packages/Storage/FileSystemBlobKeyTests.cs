@@ -24,6 +24,24 @@ public sealed class FileSystemBlobKeyTests
     [InlineData("a/b/")]
     [InlineData("a\0b.zip")]
     [InlineData(".squid-tmp/x")]
+    [InlineData(".SQUID-TMP/x")]
+    [InlineData(".Squid-Tmp/deep/x")]
+    [InlineData("a:b")]
+    [InlineData("acme/b:c.zip")]
+    [InlineData("C:/x")]
+    [InlineData("con")]
+    [InlineData("CON.txt")]
+    [InlineData("a/nul")]
+    [InlineData("a/Nul.tar.gz")]
+    [InlineData("lpt1.log")]
+    [InlineData("acme/COM9/x.zip")]
+    [InlineData("aux/x")]
+    [InlineData("prn")]
+    [InlineData("a./b")]
+    [InlineData("trailingdot.")]
+    [InlineData("a /b")]
+    [InlineData("dir/file ")]
+    [InlineData("a\tb")]
     public void UnsafeKeys_AreRejected(string key)
     {
         Should.Throw<InvalidPackageBlobKeyException>(() => FileSystemBlobKey.ToFullPath(Root, key));
@@ -36,6 +54,12 @@ public sealed class FileSystemBlobKeyTests
     [InlineData("name with spaces/1.0.zip")]
     [InlineData(".squid-probe/abc")]
     [InlineData(".squid-tmpx/abc")]
+    [InlineData("console/x.zip")]
+    [InlineData("a/com0/x")]
+    [InlineData("a/lpt10")]
+    [InlineData("conx")]
+    [InlineData("a/.b")]
+    [InlineData("a/..b")]
     public void SafeKeys_ResolveInsideTheRoot(string key)
     {
         var path = FileSystemBlobKey.ToFullPath(Root, key);
@@ -70,5 +94,52 @@ public sealed class FileSystemBlobKeyTests
 
         ex.Key.ShouldBe("a/../b");
         ex.Reason.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Theory]
+    [InlineData("/r", "/r/a", true)]
+    [InlineData("/r", "/r/a/b/c.zip", true)]
+    [InlineData("/r/", "/r/a", true)]
+    [InlineData("/r", "/r", false)]
+    [InlineData("/r", "/r2/a", false)]
+    [InlineData("/r", "/rx", false)]
+    [InlineData("/r/sub", "/r/other", false)]
+    [InlineData("/r", "/x/r/a", false)]
+    [InlineData("/r", "/", false)]
+    public void IsUnder_IsStrictlyInside_AndNotFooledByANamePrefix(string root, string fullPath, bool expected)
+    {
+        if (Path.DirectorySeparatorChar != '/') return;
+
+        FileSystemBlobKey.IsUnder(root, fullPath).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData(".squid-tmp/x", true)]
+    [InlineData(".SQUID-TMP/x", true)]
+    [InlineData(".squid-probe/x", true)]
+    [InlineData(".Squid-Probe/x", true)]
+    [InlineData(".squid-probex/x", false)]
+    [InlineData("a/.squid-probe/x", false)]
+    [InlineData("acme/web.zip", false)]
+    public void IsHiddenFromListing_CoversTheStoresOwnFolders_InAnyCase(string key, bool hidden)
+    {
+        FileSystemBlobKey.IsHiddenFromListing(key).ShouldBe(hidden);
+    }
+
+    [Theory]
+    [InlineData("acme/co")]
+    [InlineData("acme/con")]
+    [InlineData("acme/b:")]
+    public void PrefixesMayStopMidName_SoTheirLastSegmentIsNotHeldToTheFullNameRules(string prefix)
+    {
+        if (prefix.Contains(':')) return;
+
+        Should.NotThrow(() => FileSystemBlobKey.EnsurePrefixSafe(prefix));
+    }
+
+    [Fact]
+    public void APrefixStillRejectsAReservedStagingFolder_InAnyCase()
+    {
+        Should.Throw<InvalidPackageBlobKeyException>(() => FileSystemBlobKey.EnsurePrefixSafe(".SQUID-TMP/"));
     }
 }
