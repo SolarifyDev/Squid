@@ -15,6 +15,8 @@ using Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.Storage;
+using Squid.Core.Services.Publishing;
+using Squid.Core.Services.Publishing.Inspectors;
 
 namespace Squid.UnitTests.Services.Packages.BuiltIn;
 
@@ -72,6 +74,8 @@ public class BuiltInContainerWiringTests
 
         scope.Resolve<IBuiltInPackagePushService>().ShouldBeOfType<BuiltInPackagePushService>();
         scope.Resolve<IBuiltInPackageQueryService>().ShouldBeOfType<BuiltInPackageQueryService>();
+        scope.Resolve<IBuiltInUploadAcceptor>().ShouldBeOfType<BuiltInUploadAcceptor>();
+        scope.Resolve<IBuiltInPackageCatalog>().ShouldBeOfType<BuiltInPackageCatalog>();
         scope.Resolve<IBuiltInPackageUsage>().ShouldBeOfType<BuiltInPackageUsage>();
         scope.Resolve<IBuiltInFeedLocator>().ShouldBeOfType<BuiltInFeedService>();
         scope.Resolve<IBuiltInFeedProvisioner>().ShouldBeOfType<BuiltInFeedService>();
@@ -95,5 +99,52 @@ public class BuiltInContainerWiringTests
 
         seeders.ShouldContain(typeof(BuiltInFeedSeeder));
         new BuiltInFeedSeeder().Order.ShouldBeGreaterThan(new DefaultSpaceSeeder().Order, "a space has to exist before it can get its feed");
+    }
+
+    [Fact]
+    public void Inspectors_AreAllRegistered_AndTheInspectionServiceAndRegistryAreReachable()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        scope.Resolve<IEnumerable<IPackageInspector>>().Select(i => i.GetType()).ShouldBe([typeof(FileMarkerInspector), typeof(NodeInspector), typeof(SquidYamlInspector)], ignoreOrder: true);
+        scope.Resolve<IPackageInspectionService>().ShouldBeOfType<PackageInspectionService>();
+        scope.Resolve<IDeployRecipeRegistry>().ShouldBeOfType<DeployRecipeRegistry>();
+        scope.Resolve<IRecipeRecommendationService>().ShouldBeOfType<RecipeRecommendationService>();
+    }
+
+    [Fact]
+    public void TheContainersRecipes_HaveUniqueKinds_SoTheRegistryCanBeBuilt()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        var kinds = scope.Resolve<IEnumerable<IDeployRecipe>>().Select(r => r.Kind).ToList();
+
+        kinds.Select(k => k.ToLowerInvariant()).Distinct().Count().ShouldBe(kinds.Count, "two recipes of one kind would make squid.yaml's recipe: ambiguous");
+        Should.NotThrow(() => scope.Resolve<IDeployRecipeRegistry>());
+    }
+
+    [Fact]
+    public async Task ThePushPipeline_RunsTheContainersInspectors_OnTheSafetyWalk()
+    {
+        using var container = Build();
+        using var scope = container.BeginLifetimeScope();
+
+        var verifier = scope.Resolve<IBuiltInArchiveVerifier>();
+        var path = System.IO.Path.GetTempFileName();
+
+        await System.IO.File.WriteAllBytesAsync(path, TestArchives.Zip(("Dockerfile", "FROM x")));
+
+        try
+        {
+            var facts = (await verifier.VerifyAsync(path, BuiltInPackageFormat.Zip, "p", CancellationToken.None)).Facts;
+
+            facts.Is(Squid.Message.Models.Publishing.PackageFactKeys.MarkerDockerfile).ShouldBeTrue("an inspector the container does not hand to the service would leave the facts empty");
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
     }
 }

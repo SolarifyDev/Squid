@@ -13,6 +13,9 @@ using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Packages.Storage.Exceptions;
+using Squid.Core.Services.Publishing;
+using Squid.Message.Models.Publishing;
+using Squid.Message.Requests.Publishing;
 using Squid.Core.Services.OctopusImport;
 using Squid.Core.Services.Spaces;
 using Squid.Message.Commands.BuiltInPackages;
@@ -508,6 +511,25 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         (await Run<IPackageContentFetcher, PackageFetchResult>(f => f.FetchAsync(feed, "Acme.Web", "1.0.1", CancellationToken.None))).RawBytes.ShouldBe(one);
     }
 
+    // === inspection facts ===
+
+    private static byte[] SiteZip()
+    {
+        using var buffer = new MemoryStream();
+
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (name, content) in new[] { ("my-site/index.html", "<html/>"), ("my-site/package.json", "{\"scripts\":{\"build\":\"x\"}}"), ("my-site/squid.yaml", "recipe: Static") })
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false));
+
+                writer.Write(content);
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
     // === hardening ===
 
     [Fact]
@@ -533,6 +555,127 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
             tar.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, name) { DataStream = new MemoryStream(Encoding.UTF8.GetBytes(content)) });
 
         return buffer.ToArray();
+    }
+
+    private sealed class ThrowingInspector : IPackageInspector
+    {
+        public Task InspectAsync(PackageInspectionContext context, CancellationToken ct) => throw new InvalidOperationException("boom");
+    }
+
+    [Fact]
+    public async Task Push_StoresFactsAsJsonb_AndTheVersionEndpointReturnsThem()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, SiteZip(), packageId: "Acme.Web", version: "1.0.0");
+
+        (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM builtin_package WHERE facts #>> '{{Values,archive.root}}' = 'my-site'")).ShouldBe(1, "the column is real jsonb, queryable");
+
+        var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+
+        dto.Facts.Get(PackageFactKeys.FilesCount).ShouldBe("3");
+        (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM builtin_package WHERE facts::text LIKE '%index.html%'")).ShouldBe(0, "no file list in the stored jsonb");
+        dto.Facts.Is(PackageFactKeys.NodeBuildScript).ShouldBeTrue();
+        dto.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Static");
+
+        var listed = await Run<IBuiltInPackageQueryService, ListBuiltInPackageVersionsResponseData>(q => q.ListVersionsAsync(new ListBuiltInPackageVersionsRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web" }, CancellationToken.None));
+
+        listed.Versions.Single().Facts.ShouldBeNull("lists stay light");
+    }
+
+    [Fact]
+    public async Task Push_WithAnInspectorThatThrows_StillStoresThePackage_AndRecordsTheFailure()
+    {
+        var setup = await SetUpAsync();
+        var bytes = SiteZip();
+        var command = new PushBuiltInPackageCommand { SpaceId = setup.SpaceId, FileName = "Acme.Web.1.0.0.zip", PackageId = "Acme.Web", Version = "1.0.0", Content = new MemoryStream(bytes), DeclaredSizeBytes = bytes.Length };
+
+        var result = await Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None), b => b.RegisterType<ThrowingInspector>().As<IPackageInspector>());
+
+        (await RowsAsync()).Count.ShouldBe(1);
+        BlobFiles().Length.ShouldBe(1);
+        result.Package.Facts.Get(PackageFactKeys.InspectorFailedPrefix + nameof(ThrowingInspector)).ShouldBe("boom");
+        result.Package.Facts.Is(PackageFactKeys.MarkerSquidYaml).ShouldBeTrue("the other inspectors still ran");
+    }
+
+    [Fact]
+    public async Task Rows_WithNullFacts_ReadFine_AndAreReportedAsNotInspected()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("old"), packageId: "Acme.Web", version: "1.0.0");
+        await Run<IRepository>(r => r.Database.ExecuteSqlRawAsync("UPDATE builtin_package SET facts = NULL"));
+
+        var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+        var recommendations = await Run<IRecipeRecommendationService, RecipeRecommendationsDto>(s => s.GetAsync(new GetRecipeRecommendationsRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+
+        dto.Facts.ShouldBeNull();
+        recommendations.Inspected.ShouldBeFalse();
+        recommendations.Facts.ShouldBeNull();
+        (await Run<IBuiltInPackageQueryService, ListBuiltInPackageVersionsResponseData>(q => q.ListVersionsAsync(new ListBuiltInPackageVersionsRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web" }, CancellationToken.None))).Versions.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Push_OfAnArchiveWhoseMarkersComeAfterThousandsOfFiles_StillStoresTheMarkers()
+    {
+        var setup = await SetUpAsync();
+        var bytes = ZipOf(Enumerable.Range(0, 5100).Select(i => ($"node_modules/m{i}/index.js", "x")).Concat([("Dockerfile", "FROM x"), ("squid.yaml", "recipe: Docker")]));
+
+        await PushAsync(setup.SpaceId, bytes, packageId: "Acme.Web", version: "1.0.0");
+
+        var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+
+        dto.Facts.Is(PackageFactKeys.MarkerDockerfile).ShouldBeTrue();
+        dto.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Docker");
+        dto.Facts.Get(PackageFactKeys.FilesCount).ShouldBe("5102");
+        (await ScalarAsync("SELECT LENGTH(facts::text) AS \"Value\" FROM builtin_package")).ShouldBeLessThan(2048);
+    }
+
+    private static byte[] ZipOf(IEnumerable<(string Name, string Content)> entries)
+    {
+        using var buffer = new MemoryStream();
+
+        using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var (name, content) in entries)
+            {
+                using var writer = new StreamWriter(zip.CreateEntry(name).Open(), new UTF8Encoding(false));
+
+                writer.Write(content);
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
+    [Fact]
+    public async Task Push_Replacing_RewritesTheFactsInTheRow()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("v1"), packageId: "Acme.Web", version: "1.0.0");
+        await PushAsync(setup.SpaceId, SiteZip(), packageId: "Acme.Web", version: "1.0.0", replace: true);
+
+        var dto = await Run<IBuiltInPackageQueryService, Squid.Message.Models.BuiltInPackages.BuiltInPackageVersionDto>(q => q.GetVersionAsync(new GetBuiltInPackageVersionRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "1.0.0" }, CancellationToken.None));
+
+        dto.Facts.Get(PackageFactKeys.ArchiveRoot).ShouldBe("my-site");
+    }
+
+    [Fact]
+    public async Task Recommendations_ForAnInspectedVersion_CarryTheFacts_AndNoRecipesYet()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, SiteZip(), packageId: "Acme.Web", version: "1.0.0");
+
+        var result = await Run<IRecipeRecommendationService, RecipeRecommendationsDto>(s => s.GetAsync(new GetRecipeRecommendationsRequest { SpaceId = setup.SpaceId, PackageId = "acme.web", Version = "1.0.0" }, CancellationToken.None));
+
+        result.Inspected.ShouldBeTrue();
+        result.Facts.Get(PackageFactKeys.SquidRecipe).ShouldBe("Static");
+        result.Selection.UnknownRecipe.ShouldBe("Static", "no recipe is registered in this build, so the name squid.yaml gives matches none");
+        result.Selection.Candidates.ShouldBeEmpty();
+
+        await Should.ThrowAsync<BuiltInPackageNotFoundException>(() => Run<IRecipeRecommendationService, RecipeRecommendationsDto>(s => s.GetAsync(new GetRecipeRecommendationsRequest { SpaceId = setup.SpaceId, PackageId = "Acme.Web", Version = "9.9.9" }, CancellationToken.None)));
     }
 
     [Fact]

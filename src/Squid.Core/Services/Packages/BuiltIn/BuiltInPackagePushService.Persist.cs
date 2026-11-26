@@ -12,14 +12,14 @@ internal sealed partial class BuiltInPackagePushService
 
     private async Task RecordVersionAsync(CancellationToken ct)
     {
-        var recording = new PackageRecording(_ctx.Feed, _ctx.PackageId, _ctx.Version, _ctx.Staged, _ctx.Format, _ctx.Inspection.ContentFingerprint, _ctx.Blob, _ctx.Command.Source, _ctx.Replacing);
+        var recording = new PackageRecording(_ctx.Feed, _ctx.PackageId, _ctx.Version, _ctx.Staged, _ctx.Format, _ctx.Inspection.ContentFingerprint, _ctx.Blob, _ctx.Command.Source, _ctx.Replacing, _ctx.Facts);
 
         _ctx.Recorded = await recorder.RecordAsync(recording, ct).ConfigureAwait(false);
     }
 
     private PushBuiltInPackageResponseData BuildResponse(BuiltInPackage row, bool deduplicated)
     {
-        return new PushBuiltInPackageResponseData { Package = BuiltInPackageMapper.ToDto(row), Deduplicated = deduplicated, Replaced = !deduplicated && _ctx.Replacing != null };
+        return new PushBuiltInPackageResponseData { Package = BuiltInPackageMapper.ToDto(row, withFacts: true), Deduplicated = deduplicated, Replaced = !deduplicated && _ctx.Replacing != null };
     }
 
     // Runs in finally: a file that cannot be removed is logged, never allowed to replace the push's own outcome (or its exception) with an IO error.

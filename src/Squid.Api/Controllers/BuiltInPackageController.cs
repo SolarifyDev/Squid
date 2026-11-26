@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Requests.BuiltInPackages;
+using Squid.Message.Requests.Publishing;
 
 namespace Squid.Api.Controllers;
 
@@ -54,6 +55,16 @@ public class BuiltInPackageController(IMediator mediator) : ControllerBase
     public async Task<IActionResult> GetBuiltInPackageVersionAsync([FromQuery] GetBuiltInPackageVersionRequest request, CancellationToken ct)
     {
         var response = await mediator.RequestAsync<GetBuiltInPackageVersionRequest, GetBuiltInPackageVersionResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    /// <summary>The recipes that fit a stored version, best first with their reasons, and the facts inspection found in it.</summary>
+    [HttpGet("packages/version/recipes")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetRecipeRecommendationsResponse))]
+    public async Task<IActionResult> GetRecipeRecommendationsAsync([FromQuery] GetRecipeRecommendationsRequest request, CancellationToken ct)
+    {
+        var response = await mediator.RequestAsync<GetRecipeRecommendationsRequest, GetRecipeRecommendationsResponse>(request, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

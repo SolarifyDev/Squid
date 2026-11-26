@@ -64,7 +64,8 @@ public class BuiltInPackageDataProvider(IRepository repository, IUnitOfWork unit
     {
         var updated = await repository.Database.ExecuteSqlInterpolatedAsync($"""
             UPDATE builtin_package SET file_extension = {content.FileExtension}, size_bytes = {content.SizeBytes}, sha256 = {content.Sha256}, content_fingerprint = {content.ContentFingerprint},
-                store_id = {content.StoreId}, blob_key = {content.BlobKey}, published_date = {content.PublishedDate}, published_by = {content.PublishedBy}, source = {content.Source}
+                store_id = {content.StoreId}, blob_key = {content.BlobKey}, published_date = {content.PublishedDate}, published_by = {content.PublishedBy}, source = {content.Source},
+                facts = {content.Facts}::jsonb
             WHERE id = {id} AND NOT EXISTS (
                 SELECT 1 FROM release_selected_package r
                 WHERE r.feed_id = builtin_package.feed_id AND r.version = builtin_package.version AND lower(r.package_reference_name) = lower(builtin_package.package_id))

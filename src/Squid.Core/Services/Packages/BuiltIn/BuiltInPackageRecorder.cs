@@ -1,13 +1,15 @@
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Identity;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
+using Squid.Core.Services.Publishing;
+using Squid.Message.Models.Publishing;
 using Squid.Message.Constants;
 using Squid.Message.Enums.BuiltInPackages;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
 /// <summary>Everything the index row of a push is made of.</summary>
-internal sealed record PackageRecording(ExternalFeed Feed, string PackageId, string Version, StagedUpload Staged, BuiltInPackageFormat Format, string ContentFingerprint, StoredBlob Blob, BuiltInPackageSource Source, BuiltInPackage Replacing);
+internal sealed record PackageRecording(ExternalFeed Feed, string PackageId, string Version, StagedUpload Staged, BuiltInPackageFormat Format, string ContentFingerprint, StoredBlob Blob, BuiltInPackageSource Source, BuiltInPackage Replacing, PackageFacts Facts);
 
 /// <summary>Decides whether a push may write its version, and writes the index row.</summary>
 internal interface IBuiltInPackageRecorder : IScopedDependency
@@ -74,7 +76,8 @@ internal sealed class BuiltInPackageRecorder(IBuiltInPackageDataProvider package
             BlobKey = r.Blob.Key,
             PublishedDate = (time ?? TimeProvider.System).GetUtcNow(),
             PublishedBy = currentUser?.Id ?? CurrentUsers.InternalUser.Id,
-            Source = r.Source.ToString().ToLowerInvariant()
+            Source = r.Source.ToString().ToLowerInvariant(),
+            Facts = PackageFactsJson.Serialize(r.Facts)
         };
     }
 }

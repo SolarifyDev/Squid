@@ -1,6 +1,4 @@
-using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
-using Squid.Message.Constants;
 
 namespace Squid.Core.Services.Packages.BuiltIn;
 
@@ -8,7 +6,7 @@ internal sealed partial class BuiltInPackagePushService
 {
     private async Task LoadFeedAsync(CancellationToken ct)
     {
-        _ctx.Feed = await feeds.GetAsync(_ctx.Command.SpaceId, ct).ConfigureAwait(false);
+        _ctx.Feed = await catalog.GetFeedAsync(_ctx.Command.SpaceId, ct).ConfigureAwait(false);
     }
 
     private void ResolvePackageId()
@@ -16,26 +14,22 @@ internal sealed partial class BuiltInPackagePushService
         _ctx.PackageId = BuiltInPackageIds.Resolve(_ctx.Command.PackageId, _ctx.Command.FileName);
     }
 
-    private async Task StageUploadAsync(CancellationToken ct)
+    // Stage, recognise and verify the file in one pass (unsafe names, the decompression limits, the content fingerprint, the root manifests and the inspection scan).
+    // The facts are read off that pass afterwards, in memory, and never fail the push.
+    private async Task AcceptUploadAsync(CancellationToken ct)
     {
-        _ctx.Staged = await UploadStager.StageAsync(_ctx.Command.Content, BuiltInFeed.MaxPackageSizeBytes, _ctx.Command.DeclaredSizeBytes, ct).ConfigureAwait(false);
-    }
+        var accepted = await acceptor.AcceptAsync(_ctx.Command, _ctx.PackageId, ct).ConfigureAwait(false);
 
-    private void DetectArchiveFormat()
-    {
-        _ctx.Format = BuiltInPackageFormats.Detect(_ctx.Staged.Path);
-    }
-
-    // One walk: unsafe names, the decompression limits, the content fingerprint and the root manifests, so the archive is not unpacked again for each of them.
-    private void InspectArchive()
-    {
-        _ctx.Inspection = PackageArchiveInspector.Inspect(_ctx.Staged.Path, _ctx.Format, _ctx.PackageId, ArchiveLimits.Default);
+        _ctx.Staged = accepted.Staged;
+        _ctx.Format = accepted.Format;
+        _ctx.Inspection = accepted.Inspection;
+        _ctx.Facts = accepted.Facts;
     }
 
     // After the checks above, so a push that is refused never fixes a package's casing. From here on the package id is the feed's canonical one.
     private async Task UseCanonicalPackageIdAsync(CancellationToken ct)
     {
-        _ctx.PackageId = await packages.ResolveCanonicalIdAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
+        _ctx.PackageId = await catalog.ResolveCanonicalIdAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
     }
 
     // Before any version is assigned: re-pushing the same content must not use up a version number. It never swallows a request for a version of its own: a version
@@ -44,9 +38,7 @@ internal sealed partial class BuiltInPackagePushService
     {
         if (_ctx.Command.Replace) return;
 
-        var existing = await packages.ListVersionsAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
-        var latestVersion = PackageVersionFilter.SortByVersionDescending(existing.Select(v => v.Version)).FirstOrDefault();
-        var latest = existing.FirstOrDefault(v => v.Version == latestVersion);
+        var latest = await catalog.GetLatestAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
 
         if (!HoldsTheSameContent(latest) || NamesAnotherVersion(latest)) return;
 

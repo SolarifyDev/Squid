@@ -32,4 +32,7 @@ public class BuiltInPackage : IEntity<int>
     public int PublishedBy { get; set; }
 
     public string Source { get; set; }
+
+    /// <summary>The inspection result as JSON (jsonb). Null for a version pushed before inspection existed.</summary>
+    public string Facts { get; set; }
 }
