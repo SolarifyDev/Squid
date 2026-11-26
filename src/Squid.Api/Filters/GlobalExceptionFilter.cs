@@ -80,7 +80,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             PublishNoRecipeFitsException => HttpStatusCode.BadRequest,
             PublishDefaultsMissingException => HttpStatusCode.BadRequest,
             PublishProjectNameConflictException => HttpStatusCode.Conflict,
-            PublishReleaseVersionExistsException => HttpStatusCode.Conflict,
+            PublishTargetRolesConflictException => HttpStatusCode.Conflict,
             PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
             InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
             PackageBlobNotFoundException => HttpStatusCode.NotFound,

@@ -182,6 +182,34 @@ public class ScriptVariableSafetyTests : IDisposable
     }
 
     [Fact]
+    public async Task AValueThatIsNotBase64_StopsTheScript_WithAMessageNamingIt()
+    {
+        if (!HasBash) return;
+
+        var script = await ScriptAsync(new StaticSiteRecipe(), StaticFacts(), Variables());
+        var tampered = System.Text.RegularExpressions.Regex.Replace(script, "(read_squid_var HOST_PORT \"the host port\" ).*", "$1'80 !not-base64'");
+
+        tampered.ShouldNotBe(script, "the line to tamper with must exist");
+
+        var run = RunWithoutDocker(tampered);
+
+        run.ExitCode.ShouldNotBe(0);
+        run.Output.ShouldContain("The deployment did not give this script the host port.");
+        File.Exists(Marker).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TheHealthProbe_TurnsOffUrlGlobbing_SoBracketsInTheHealthPathAreLiteral(bool dockerfile)
+    {
+        var recipe = dockerfile ? (IDeployRecipe)new DockerfileRecipe() : new StaticSiteRecipe();
+        var script = ScriptOf(await recipe.RenderAsync(Context(dockerfile ? DockerFacts() : StaticFacts()), CancellationToken.None));
+
+        script.ShouldMatch(@"(?m)^\s*curl -g -fsS .*""\$1""", "curl treats [..] and {..} in a URL as ranges unless -g is given, so a health path containing them would never be probed as written");
+    }
+
+    [Fact]
     public async Task AVariableTheDeploymentDidNotDefine_StopsTheScript_WithAMessageNamingIt()
     {
         if (!HasBash) return;

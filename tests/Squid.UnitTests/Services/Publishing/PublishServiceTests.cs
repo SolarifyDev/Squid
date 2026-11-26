@@ -327,14 +327,13 @@ public class PublishServiceTests
     }
 
     [Fact]
-    public async Task Publish_AVersionPublishedTwice_IsRefused_WhenTheProcessChangedSinceItsRelease()
+    public async Task Publish_TellsTheApplierWhichVersionIsPublished_SoAPromotionCanLeaveTheProcessAlone()
     {
         StoredPackage(StaticOnly());
-        _applied.ProcessUpdated = true;
-        _releaseData.Setup(r => r.GetReleaseByVersionAsync(7, 70, "1.2.3", It.IsAny<CancellationToken>())).ReturnsAsync(new ReleaseEntity { Id = 555 });
 
-        await Should.ThrowAsync<PublishReleaseVersionExistsException>(() => Service().PublishAsync(Command(), CancellationToken.None));
-        _deployments.Verify(d => d.CreateDeploymentAsync(It.IsAny<CreateDeploymentCommand>(), It.IsAny<CancellationToken>()), Times.Never);
+        await Service().PublishAsync(Command(), CancellationToken.None);
+
+        _applications.Single().PackageVersion.ShouldBe("1.2.3");
     }
 
     [Fact]

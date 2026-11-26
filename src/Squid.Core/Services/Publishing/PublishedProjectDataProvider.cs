@@ -1,5 +1,6 @@
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Services.Deployments.Variables;
 using Squid.Message.Enums;
 
 namespace Squid.Core.Services.Publishing;
@@ -32,11 +33,14 @@ public interface IPublishedProjectDataProvider : IScopedDependency
     /// </summary>
     Task<int?> FirstLifecycleIdAsync(int spaceId, int environmentId, CancellationToken ct);
 
-    /// <summary>Sets a project variable that applies only to one environment, adding it or changing its value. Returns whether anything changed.</summary>
+    /// <summary>
+    /// Sets a project variable that applies only to one environment, adding it or changing its value. Returns whether anything changed. Written like every other writer of a variable set:
+    /// under the set's row locks, and moving the set's version when it changes, so a Variables page save that read the set before is refused instead of deleting the variable.
+    /// </summary>
     Task<bool> UpsertEnvironmentVariableAsync(int variableSetId, string name, int environmentId, string value, CancellationToken ct);
 }
 
-public sealed class PublishedProjectDataProvider(IRepository repository, IUnitOfWork unitOfWork) : IPublishedProjectDataProvider
+public sealed class PublishedProjectDataProvider(IRepository repository, IUnitOfWork unitOfWork, IVariableDataProvider variables) : IPublishedProjectDataProvider
 {
     // The first argument of the two-key advisory lock: publishing's own, so it can never meet another feature's lock on the same hash.
     private const int AdvisoryLockNamespace = 0x50425348;
@@ -110,26 +114,44 @@ public sealed class PublishedProjectDataProvider(IRepository repository, IUnitOf
 
     public async Task<bool> UpsertEnvironmentVariableAsync(int variableSetId, string name, int environmentId, string value, CancellationToken ct)
     {
+        return await variables.ExecuteWithVariableSetLockedAsync(variableSetId, token => UpsertLockedAsync(variableSetId, name, environmentId, value, token), ct).ConfigureAwait(false);
+    }
+
+    private async Task<bool> UpsertLockedAsync(int variableSetId, string name, int environmentId, string value, CancellationToken ct)
+    {
         var scopeValue = environmentId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         var existing = await (from variable in repository.Query<Variable>(v => v.VariableSetId == variableSetId && v.Name == name)
                               join scope in repository.QueryNoTracking<VariableScope>(s => s.ScopeType == VariableScopeType.Environment && s.ScopeValue == scopeValue) on variable.Id equals scope.VariableId
                               select variable).FirstOrDefaultAsync(ct).ConfigureAwait(false);
 
+        if (existing != null && existing.Value == value) return false;
+
         if (existing == null)
-        {
             await AddEnvironmentVariableAsync(variableSetId, name, scopeValue, value, ct).ConfigureAwait(false);
-            return true;
-        }
+        else
+            await ChangeValueAsync(existing, value, ct).ConfigureAwait(false);
 
-        if (existing.Value == value) return false;
+        await BumpVersionAsync(variableSetId, ct).ConfigureAwait(false);
 
+        return true;
+    }
+
+    private async Task ChangeValueAsync(Variable existing, string value, CancellationToken ct)
+    {
         existing.Value = value;
 
         await repository.UpdateAsync(existing, ct).ConfigureAwait(false);
         await unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);
+    }
 
-        return true;
+    private async Task BumpVersionAsync(int variableSetId, CancellationToken ct)
+    {
+        var variableSet = await variables.GetVariableSetByIdAsync(variableSetId, ct).ConfigureAwait(false);
+
+        variableSet.Version++;
+
+        await variables.UpdateVariableSetAsync(variableSet, cancellationToken: ct).ConfigureAwait(false);
     }
 
     private async Task AddEnvironmentVariableAsync(int variableSetId, string name, string scopeValue, string value, CancellationToken ct)
