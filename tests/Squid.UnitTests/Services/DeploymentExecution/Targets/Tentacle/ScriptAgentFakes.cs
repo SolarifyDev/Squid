@@ -45,6 +45,10 @@ internal sealed class FakeV2Agent : IAsyncScriptServiceV2
     public Queue<Exception> StartFailuresAfterRunning { get; } = new();
     public Exception GetStatusFailure { get; set; }
     public Exception CancelFailure { get; set; }
+
+    /// <summary>When set, a cancel is answered only when this completes (an agent slow to answer, or one that never does).</summary>
+    public Task<ScriptStatusResponseV2> CancelAnswer { get; set; }
+
     public Action OnGetStatus { get; set; }
     public int StartCalls { get; private set; }
 
@@ -97,6 +101,8 @@ internal sealed class FakeV2Agent : IAsyncScriptServiceV2
         _events.Add($"V2.Cancel:{id}");
 
         if (CancelFailure != null) throw CancelFailure;
+
+        if (CancelAnswer != null) return CancelAnswer;
 
         if (Scripts.TryGetValue(id, out var script))
         {

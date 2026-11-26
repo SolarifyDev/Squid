@@ -48,6 +48,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
     private readonly RpcRetryHandler _rpcRetry;
     private readonly IScriptDispatcherSelector _dispatcherSelector;
     private readonly IMachineCapabilitiesRefresher _capabilitiesRefresher;
+    private readonly TimeProvider _time;
     private readonly TimeSpan _defaultScriptTimeout;
 
     public HalibutMachineExecutionStrategy(
@@ -60,13 +61,15 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         IInFlightScriptStore inFlightStore = null,
         RpcRetryHandler rpcRetry = null,
         IScriptDispatcherSelector dispatcherSelector = null,
-        IMachineCapabilitiesRefresher capabilitiesRefresher = null)
+        IMachineCapabilitiesRefresher capabilitiesRefresher = null,
+        TimeProvider time = null)
     {
         _payloadBuilder = payloadBuilder;
         _observer = observer;
         _breakerRegistry = breakerRegistry;
         _inFlightStore = inFlightStore;
         _capabilitiesRefresher = capabilitiesRefresher;
+        _time = time;
         _rpcRetry = rpcRetry ?? new RpcRetryHandler(halibutSetting.RpcRetry);
 
         // Composed without a selector (tests, V1-only wiring): V1 is the only dispatcher, which is also what
@@ -213,7 +216,7 @@ public class HalibutMachineExecutionStrategy : IExecutionStrategy
         };
 
         var dispatcher = _dispatcherSelector.ForMachine(request.Machine.Id);
-        var context = new ScriptSessionContext(_rpcRetry, spec.Timeout, ct, _observer, new CancelDowngradeFallback(_dispatcherSelector, _capabilitiesRefresher, HalibutInFlightScriptCanceller.DefaultCancelGrace));
+        var context = new ScriptSessionContext(_rpcRetry, spec.Timeout, ct, _observer, new CancelDowngradeFallback(_dispatcherSelector, _capabilitiesRefresher, HalibutInFlightScriptCanceller.DefaultCancelGrace, _time));
         var session = dispatcher.Open(endpoint, context);
         var start = session.PrepareStart(spec);
 
