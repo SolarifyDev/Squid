@@ -89,8 +89,6 @@ jobs:
           echo ""
           echo "Step 2: Copy the PUBLIC key below, save it in the repo at"
           echo "        deploy/packaging/public.key and commit (via PR)."
-          echo "        Also commit the fingerprint to docs/phase-2-apt-rpm-setup.md"
-          echo "        so users can verify out-of-band."
           echo ""
           echo "----- BEGIN public.key -----"
           gpg --export --armor "${FINGERPRINT}"

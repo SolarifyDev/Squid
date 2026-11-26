@@ -14,8 +14,7 @@ namespace Squid.Message.Commands.Machine;
 /// <c>MachineEndpointUpdateNotApplicableException</c> (HTTP 400) rather
 /// than silently corrupting the endpoint JSON — a bug that persisted
 /// through 5 rounds of audit on the upgrade module because the update
-/// path had not been systematically scanned. See
-/// <c>docs/tentacle-self-upgrade-design.md</c> §6 R6 audit.</para>
+/// path had not been systematically scanned.</para>
 ///
 /// <para>Common fields apply to every style: Name, IsDisabled, Roles,
 /// EnvironmentIds, MachinePolicyId. Style-specific fields only apply

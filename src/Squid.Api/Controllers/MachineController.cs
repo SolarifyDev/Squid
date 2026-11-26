@@ -170,7 +170,7 @@ public class MachineController : ControllerBase
     /// <summary>
     /// Read-only "can this machine be upgraded right now?" probe powering
     /// the FE's per-row upgrade-available badge. No side effects — no lock,
-    /// no dispatch. See <c>docs/tentacle-self-upgrade-frontend.md</c> §9.2.
+    /// no dispatch.
     /// </summary>
     [HttpGet("{machineId:int}/upgrade-info")]
     [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(GetUpgradeInfoResponse))]

@@ -5,9 +5,6 @@ endpoints** with different networking stacks. Getting either one wrong
 produces silent failures that are expensive to diagnose. This document is the
 authoritative checklist for cluster operators.
 
-> Counterpart developer-facing doc:
-> [`CLAUDE.md → Kubernetes Deployment — Exposing Halibut Polling`](../CLAUDE.md)
-
 ## Endpoints at a glance
 
 | Endpoint | Protocol | K8s abstraction | TLS owner | Public port |

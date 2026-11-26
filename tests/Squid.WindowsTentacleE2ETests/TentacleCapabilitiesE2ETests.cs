@@ -28,7 +28,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// path that hit the cache-key bug. This file exercises the real
 /// runtime + asserts the bug is gone via a working round-trip.</para>
 ///
-/// <para><b>Scenarios covered</b> (per <c>docs/e2e-scenario-matrix.md</c>):</para>
+/// <para><b>Scenarios covered</b>:</para>
 /// <list type="bullet">
 ///   <item>F1.h Listening probe returns agent's reported version</item>
 ///   <item>F1.h2 Polling probe returns agent's reported version</item>

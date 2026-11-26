@@ -38,8 +38,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// exercises the PowerShell path. No skip-on-OS guards — every OS
 /// covers an OS-specific script-runtime path.</para>
 ///
-/// <para><b>Scenario coverage</b> (per <c>docs/e2e-scenario-matrix.md</c>
-/// Section D — Phase 12.J.D.1 first cut):</para>
+/// <para><b>Scenario coverage</b>:</para>
 /// <list type="bullet">
 ///   <item>D1.h Listening + PowerShell echo (Windows-only branch)</item>
 ///   <item>D1.h2 Listening + Bash echo (Linux/macOS branch)</item>

@@ -52,7 +52,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// is written with FAILED status — the operator-visible outcome, not just
 /// the exit code.</para>
 ///
-/// <para><b>Scenarios covered</b> (per <c>docs/e2e-scenario-matrix.md</c>):</para>
+/// <para><b>Scenarios covered</b>:</para>
 /// <list type="bullet">
 ///   <item>E1.h: Win zip method full lifecycle → SUCCESS in last-upgrade.json</item>
 ///   <item>E1.u1 / E5.u1: Download URL 404 → exit 2 + FAILED status with download detail</item>

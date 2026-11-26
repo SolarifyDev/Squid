@@ -14,8 +14,6 @@ namespace Squid.Message.Requests.Machines;
 /// can call this per-row on the machine list page without fan-out throttling
 /// concerns (the underlying registry caches Docker Hub queries for 10
 /// minutes with in-flight dedupe, so 50 rows collapse to 1 HTTP round-trip).</para>
-///
-/// <para>FE Phase-2 §9.2 (see <c>docs/tentacle-self-upgrade-frontend.md</c>).</para>
 /// </summary>
 [RequiresPermission(Permission.MachineView)]
 public class GetUpgradeInfoRequest : IRequest, ISpaceScoped
