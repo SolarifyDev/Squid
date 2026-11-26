@@ -8,6 +8,8 @@ using Squid.Core.Services.Deployments.DeploymentCompletions;
 using Squid.Core.Services.Deployments.Deployments;
 using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
+using Squid.Core.Services.Deployments.ServerTask.Exceptions;
+using Squid.Message.Enums.Deployments;
 using Squid.Message.Models.Deployments.ServerTask;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
@@ -157,15 +159,14 @@ public class DeploymentCompletionHandlerTests
     }
 
     [Theory]
-    [InlineData(TaskState.Cancelling)]
     [InlineData(TaskState.Pending)]
     [InlineData(TaskState.Failed)]
     [InlineData(TaskState.Success)]
     public async Task OnPaused_NotExecuting_LeavesTheStateAlone(string currentState)
     {
-        // Executing is the only legal source of a -> Paused edge. A racing
-        // cancel (Cancelling) must win rather than be overwritten by a pause, and a terminal task
-        // has already recorded its outcome. Transitioning blindly would throw.
+        // Executing is the only legal source of a -> Paused edge, and a terminal task
+        // has already recorded its outcome. Transitioning blindly would throw. (A Cancelling row is
+        // not left alone: the cancel is completed — see AnyPauseOutcome_RacedByACancel_CompletesTheCancel.)
         var ctx = CreateContext();
         _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
@@ -180,7 +181,7 @@ public class DeploymentCompletionHandlerTests
     /// <summary>Which pause outcome is being driven; all three share PauseIfStillExecutingAsync.</summary>
     public enum PauseOutcome { Suspended, TimedOut, Transient }
 
-    private Task InvokePauseAsync(PauseOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    private Task<DeploymentOutcome> InvokePauseAsync(PauseOutcome outcome, DeploymentTaskContext ctx) => outcome switch
     {
         PauseOutcome.Suspended => _sut.OnPausedAsync(ctx, CancellationToken.None),
         PauseOutcome.TimedOut => _sut.OnTimedOutAsync(ctx, new Exception("timeout"), CancellationToken.None),
@@ -192,23 +193,137 @@ public class DeploymentCompletionHandlerTests
     [InlineData(PauseOutcome.Suspended)]
     [InlineData(PauseOutcome.TimedOut)]
     [InlineData(PauseOutcome.Transient)]
-    public async Task AnyPauseOutcome_RacedByACancel_LeavesTheCancelToWin(PauseOutcome outcome)
+    public async Task AnyPauseOutcome_RacedByACancel_CompletesTheCancel(PauseOutcome outcome)
     {
-        // What this pins: the pause does not overwrite a cancel that landed mid-unwind, and it
-        // stops reaching for an illegal edge to discover that. Cancelling -> Paused is not legal,
-        // so a blind transition threw and the runner's SafeCompleteAsync swallowed it.
-        //
-        // It does NOT pin that the task recovers. The row stays Cancelling either way — this
-        // handler cannot free it, and nothing else does today (see PauseIfStillExecutingAsync).
-        // The Times.Never below is the whole claim: no illegal transition is attempted.
+        // The row is already Cancelling when the pause reads it: the user's cancel wins, and is completed here rather than skipped. Skipping left the row
+        // Cancelling — holding its environment's concurrency slot with agent scripts running — until the stale-task reaper freed it.
         var ctx = CreateContext();
         _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Cancelling });
 
-        await Should.NotThrowAsync(() => InvokePauseAsync(outcome, ctx),
-            customMessage: $"{outcome} must not attempt the illegal Cancelling -> Paused transition.");
+        (await InvokePauseAsync(outcome, ctx)).ShouldBe(DeploymentOutcome.Cancelled);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Cancelling, TaskState.Cancelled, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), It.IsAny<string>(), TaskState.Paused, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _checkpointService.Verify(c => c.DeleteAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── A cancel that lands between the read and the write ───────────────
+
+    public enum AnyOutcome { Success, Failure, Suspended, TimedOut, Transient }
+
+    private static Task<DeploymentOutcome> Invoke(DeploymentCompletionHandler sut, AnyOutcome outcome, DeploymentTaskContext ctx) => outcome switch
+    {
+        AnyOutcome.Success => sut.OnSuccessAsync(ctx, CancellationToken.None),
+        AnyOutcome.Failure => sut.OnFailureAsync(ctx, new Exception("boom"), CancellationToken.None),
+        AnyOutcome.Suspended => sut.OnPausedAsync(ctx, CancellationToken.None),
+        AnyOutcome.TimedOut => sut.OnTimedOutAsync(ctx, new Exception("timeout"), CancellationToken.None),
+        _ => sut.OnTransientPauseAsync(ctx, new Exception("blip"), CancellationToken.None)
+    };
+
+    private static string TargetOf(AnyOutcome outcome) => outcome switch
+    {
+        AnyOutcome.Success => TaskState.Success,
+        AnyOutcome.Failure => TaskState.Failed,
+        _ => TaskState.Paused
+    };
+
+    // The row reads Executing, then the user's cancel lands: the conditional write matches no row and the data provider reports the row's real state.
+    private void CancelLandsBeforeTheWrite(string target)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Executing, target, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Cancelling, target));
+    }
+
+    [Theory]
+    [InlineData(AnyOutcome.Success)]
+    [InlineData(AnyOutcome.Failure)]
+    [InlineData(AnyOutcome.Suspended)]
+    [InlineData(AnyOutcome.TimedOut)]
+    [InlineData(AnyOutcome.Transient)]
+    public async Task AnyOutcome_WriteRefusedBecauseTheRowIsNowCancelling_CompletesTheCancel_ScriptsFirst(AnyOutcome outcome)
+    {
+        var order = new List<string>();
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        canceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        CancelLandsBeforeTheWrite(TargetOf(outcome));
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Cancelling, TaskState.Cancelled, It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback(() => order.Add("Cancelling->Cancelled")).Returns(Task.CompletedTask);
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        (await Invoke(sut, outcome, CreateContext())).ShouldBe(DeploymentOutcome.Cancelled);
+
+        order.ShouldBe(["cancel-scripts", "Cancelling->Cancelled"]);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.IsAny<DeploymentCompletion>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once, "exactly one completion record: the cancel's");
+        _autoDeployService.Verify(a => a.TriggerAutoDeploymentsAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // Only a refusal because of a user's cancel is answered: a write refused for any other reason still surfaces, exactly as before.
+    [Theory]
+    [InlineData(AnyOutcome.Success)]
+    [InlineData(AnyOutcome.Failure)]
+    [InlineData(AnyOutcome.TimedOut)]
+    public async Task AnyOutcome_WriteRefusedForAnotherReason_StillThrows(AnyOutcome outcome)
+    {
+        var target = TargetOf(outcome);
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, TaskState.Executing, target, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Cancelled, target));
+
+        await Should.ThrowAsync<ServerTaskStateTransitionException>(() => Invoke(_sut, outcome, CreateContext()));
+
+        _serverTaskService.Verify(s => s.TransitionStateAsync(It.IsAny<int>(), TaskState.Cancelling, TaskState.Cancelled, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── The outcome each callback reports is the one it left the task in ──
+
+    [Theory]
+    [InlineData(AnyOutcome.Success, DeploymentOutcome.Succeeded)]
+    [InlineData(AnyOutcome.Failure, DeploymentOutcome.Failed)]
+    [InlineData(AnyOutcome.Suspended, DeploymentOutcome.Paused)]
+    [InlineData(AnyOutcome.TimedOut, DeploymentOutcome.Paused)]
+    [InlineData(AnyOutcome.Transient, DeploymentOutcome.Paused)]
+    public async Task AnyOutcome_WrittenAsIntended_ReportsIt(AnyOutcome outcome, DeploymentOutcome expected)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Executing });
+
+        (await Invoke(_sut, outcome, CreateContext())).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task OnCancelled_WrittenAsIntended_ReportsCancelled()
+        => (await _sut.OnCancelledAsync(CreateContext(), CancellationToken.None)).ShouldBe(DeploymentOutcome.Cancelled);
+
+    [Theory]
+    [InlineData(AnyOutcome.Success)]
+    [InlineData(AnyOutcome.Failure)]
+    [InlineData(AnyOutcome.TimedOut)]
+    public async Task AnyOutcome_WhenAnotherRunHoldsTheLease_ReportsNotRecorded(AnyOutcome outcome)
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Executing);
+
+        (await Invoke(_sut, outcome, CreateContext())).ShouldBe(DeploymentOutcome.NotRecorded);
+    }
+
+    [Fact]
+    public async Task OnCancelled_WhenAnotherRunHoldsTheLease_ReportsNotRecorded()
+    {
+        TaskIsNowLeasedToAnotherRun(TaskState.Cancelling);
+
+        (await _sut.OnCancelledAsync(CreateContext(), CancellationToken.None)).ShouldBe(DeploymentOutcome.NotRecorded);
+    }
+
+    // A suspend site that paused the task itself leaves it Paused: it is paused all the same. A task someone else already resolved is not this run's to announce.
+    [Theory]
+    [InlineData(TaskState.Paused, DeploymentOutcome.Paused)]
+    [InlineData(TaskState.Success, DeploymentOutcome.NotRecorded)]
+    [InlineData(TaskState.Cancelled, DeploymentOutcome.NotRecorded)]
+    [InlineData(TaskState.Pending, DeploymentOutcome.NotRecorded)]
+    public async Task ASkippedPause_ReportsTheStateTheTaskIsIn(string currentState, DeploymentOutcome expected)
+    {
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = currentState });
+
+        (await _sut.OnPausedAsync(CreateContext(), CancellationToken.None)).ShouldBe(expected);
     }
 
     [Theory]

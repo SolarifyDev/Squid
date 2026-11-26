@@ -3,6 +3,7 @@ using Halibut;
 using Microsoft.EntityFrameworkCore;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
+using Squid.Core.Persistence.Entities.Events;
 using Squid.Core.Services.DeploymentExecution;
 using Squid.Core.Services.DeploymentExecution.Lifecycle;
 using Squid.Core.Services.DeploymentExecution.Pipeline;
@@ -12,6 +13,7 @@ using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Jobs;
 using Squid.Core.Settings.ServerTask;
 using Squid.Message.Contracts.Tentacle;
+using Squid.Message.Enums.Events;
 
 namespace Squid.IntegrationTests.Deployments.Pipeline;
 
@@ -46,6 +48,10 @@ public class IntegrationFailurePathHonoursCancel : DeploymentFixtureBase
 
         (await LoadStateAsync(seeded.TaskId).ConfigureAwait(false)).ShouldBe(TaskState.Cancelled);
         (await CompletionCountAsync(seeded.TaskId).ConfigureAwait(false)).ShouldBe(1);
+
+        // What is announced (audit history; the task log follows the same event) is the outcome that was written, not the one the run set out to write.
+        (await AuditCountAsync(seeded.TaskId, EventCategory.DeploymentCanceled).ConfigureAwait(false)).ShouldBe(1);
+        (await AuditCountAsync(seeded.TaskId, EventCategory.DeploymentFailed).ConfigureAwait(false)).ShouldBe(0);
     }
 
     // Control: the same error without a cancel is still a failure.
@@ -67,6 +73,8 @@ public class IntegrationFailurePathHonoursCancel : DeploymentFixtureBase
         }, extraRegistration: b => Register(b, agent)).ConfigureAwait(false);
 
         (await LoadStateAsync(seeded.TaskId).ConfigureAwait(false)).ShouldBe(TaskState.Failed);
+        (await AuditCountAsync(seeded.TaskId, EventCategory.DeploymentFailed).ConfigureAwait(false)).ShouldBe(1);
+        (await AuditCountAsync(seeded.TaskId, EventCategory.DeploymentCanceled).ConfigureAwait(false)).ShouldBe(0);
     }
 
     private static void Register(ContainerBuilder builder, FailingAgent agent)
@@ -98,6 +106,9 @@ public class IntegrationFailurePathHonoursCancel : DeploymentFixtureBase
 
             return await repository.QueryNoTracking<DeploymentCompletion>(c => deploymentIds.Contains(c.DeploymentId)).CountAsync().ConfigureAwait(false);
         });
+
+    private Task<int> AuditCountAsync(int taskId, EventCategory category)
+        => Run<SquidDbContext, int>(db => db.Set<Event>().AsNoTracking().CountAsync(e => e.ServerTaskId == taskId && e.Category == category));
 
     private Task<string> LoadStateAsync(int taskId) => Run<IServerTaskDataProvider, string>(async p => (await p.GetServerTaskByIdNoTrackingAsync(taskId, CancellationToken.None).ConfigureAwait(false)).State);
 

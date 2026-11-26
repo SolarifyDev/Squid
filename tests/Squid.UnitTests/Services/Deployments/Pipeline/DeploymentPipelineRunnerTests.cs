@@ -8,6 +8,7 @@ using Squid.Core.Services.DeploymentExecution.Script;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Jobs;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.UnitTests.Services.Deployments.Pipeline;
 
@@ -24,7 +25,7 @@ public class DeploymentPipelineRunnerTests
         var completion = new Mock<IDeploymentCompletionHandler>();
         completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
             .Callback<DeploymentTaskContext, CancellationToken>((_, token) => capturedToken = token)
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(DeploymentOutcome.Succeeded);
 
         var registry = new TaskCancellationRegistry();
         var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
@@ -40,7 +41,7 @@ public class DeploymentPipelineRunnerTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         var completion = new Mock<IDeploymentCompletionHandler>();
         completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
-            .Returns<DeploymentTaskContext, CancellationToken>(async (_, token) => await Task.Delay(TimeSpan.FromSeconds(60), token));
+            .Returns<DeploymentTaskContext, CancellationToken>(async (_, token) => { await Task.Delay(TimeSpan.FromSeconds(60), token); return DeploymentOutcome.Succeeded; });
 
         var registry = new TaskCancellationRegistry();
         var runner = new DeploymentPipelineRunner(Enumerable.Empty<IDeploymentPipelinePhase>(), lifecycle.Object, completion.Object, registry, _taskDataProvider.Object, Mock.Of<ISquidBackgroundJobClient>());
@@ -58,7 +59,7 @@ public class DeploymentPipelineRunnerTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         var completion = new Mock<IDeploymentCompletionHandler>();
         completion.Setup(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(DeploymentOutcome.Failed);
 
         var failurePhase = new Mock<IDeploymentPipelinePhase>();
         failurePhase.Setup(p => p.Order).Returns(1);
@@ -81,7 +82,7 @@ public class DeploymentPipelineRunnerTests
         var lifecycle = new Mock<IDeploymentLifecycle>();
         var completion = new Mock<IDeploymentCompletionHandler>();
         completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(DeploymentOutcome.Succeeded);
 
         var okPhase = new Mock<IDeploymentPipelinePhase>();
         okPhase.Setup(p => p.Order).Returns(1);
@@ -100,19 +101,16 @@ public class DeploymentPipelineRunnerTests
     [Fact]
     public async Task OnSuccessThrowingAnIllegalTransition_FallsThroughToOnFailure()
     {
-        // OnSuccessAsync transitions from a hardcoded Executing, so a task cancelled mid-pipeline
-        // makes it throw. Unlike every other completion callback it is invoked directly rather than
-        // through SafeCompleteAsync, so the exception is NOT swallowed — it reaches the general
-        // catch, which routes to OnFailureAsync, and that resolves the current state (completing
-        // the user's cancel for a Cancelling row, the legal -> Failed otherwise). That is why a Cancelling row does NOT wedge on the
-        // success path, which PauseIfStillExecutingAsync's doc-comment states; pinned here so the
-        // claim cannot quietly become false if the runner's call shape changes.
+        // The handler completes a racing cancel itself, so this throw is only the fallback for a write that fails some other way. Unlike every other
+        // completion callback the success write is invoked directly rather than through SafeCompleteAsync, so the exception is NOT swallowed — it reaches
+        // the general catch, which routes to OnFailureAsync, and that resolves the current state. Pinned so the fallback cannot quietly disappear if the
+        // runner's call shape changes.
         var lifecycle = new Mock<IDeploymentLifecycle>();
         var completion = new Mock<IDeploymentCompletionHandler>();
         completion.Setup(c => c.OnSuccessAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new ServerTaskStateTransitionException(TaskState.Cancelling, TaskState.Success));
         completion.Setup(c => c.OnFailureAsync(It.IsAny<DeploymentTaskContext>(), It.IsAny<Exception>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(DeploymentOutcome.Failed);
 
         var okPhase = new Mock<IDeploymentPipelinePhase>();
         okPhase.Setup(p => p.Order).Returns(1);
