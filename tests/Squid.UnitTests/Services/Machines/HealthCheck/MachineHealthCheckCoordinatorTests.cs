@@ -18,11 +18,11 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
 
     public void Dispose() => _container.Dispose();
 
-    private MachineHealthCheckCoordinator Create(Mock<IRedisSafeRunner> redis = null, HealthCheckInProcessLocks locks = null, int parallelism = 4, TimeSpan? probeTimeout = null, TimeSpan? sweepDeadline = null, Func<DateTimeOffset> utcNow = null)
+    private MachineHealthCheckCoordinator Create(Mock<IRedisSafeRunner> redis = null, HealthCheckInProcessLocks locks = null, int parallelism = 4, TimeSpan? probeTimeout = null, TimeSpan? sweepDeadline = null, TimeProvider time = null)
     {
         var options = new MachineHealthCheckSetting { ProbeTimeoutSeconds = (probeTimeout ?? Fast).TotalSeconds, MaxParallelism = parallelism, SweepDeadlineSeconds = (sweepDeadline ?? TimeSpan.FromSeconds(30)).TotalSeconds };
 
-        return new MachineHealthCheckCoordinator((redis ?? HealthCheckTestHost.PassthroughRedis()).Object, _container, locks ?? new HealthCheckInProcessLocks(), options, utcNow);
+        return new MachineHealthCheckCoordinator((redis ?? HealthCheckTestHost.PassthroughRedis()).Object, _container, locks ?? new HealthCheckInProcessLocks(), options, time);
     }
 
     // ── appsettings binding: section/key names, defaults, fallback ──
@@ -218,92 +218,136 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         await Should.ThrowAsync<OperationCanceledException>(() => Create().TryRunSweepAsync(token => Task.Delay(Timeout.Infinite, token), cts.Token));
     }
 
-    // ── probe timeout is the sweep's time left ──
+    // ── a sweep never shortens a probe: it either runs with its full timeout or is deferred ──
 
-    private static readonly TimeSpan SweepDeadline = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan SweepDeadline = TimeSpan.FromSeconds(300);
+    private static readonly TimeSpan FullTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
 
     private static Task<HealthCheckResult> HangUntilCancelled(CancellationToken ct) => Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => new HealthCheckResult(false, "never"), TaskScheduler.Default);
 
-    [Fact]
-    public async Task Probe_StartedLateInSweep_TimeoutIsSweepTimeLeft_AndIsRecordedAsTimedOut()
+    // Runs one probe inside a sweep whose clock has moved so that exactly `left` of the sweep remains when the probe asks to start,
+    // then (if it started) moves time by the probe's timeout.
+    private async Task<(Exception Thrown, bool Started, SweepClock Clock)> ProbeWithSweepTimeLeftAsync(TimeSpan left, TimeSpan timeout, TimeSpan? probeTimeoutSetting = null)
     {
-        var now = DateTimeOffset.UnixEpoch;
-        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
-        HealthCheckResult result = null;
-        var watch = System.Diagnostics.Stopwatch.StartNew();
-
-        await coordinator.TryRunSweepAsync(async token =>
-        {
-            now += SweepDeadline - MachineHealthCheckCoordinator.SweepRecordGrace - TimeSpan.FromMilliseconds(500);
-            result = await coordinator.RunProbeAsync(HangUntilCancelled, token, TimeSpan.FromSeconds(60)).WaitAsync(Guard);
-        }, CancellationToken.None);
-
-        result.Healthy.ShouldBeFalse();
-        result.Detail.ShouldContain("timed out");
-        watch.Elapsed.ShouldBeLessThan(TimeSpan.FromSeconds(5), "the probe must end on the sweep's time left, not run its full 60s timeout");
-    }
-
-    [Fact]
-    public async Task Probe_EarlyInSweep_KeepsItsOwnShorterTimeout()
-    {
-        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => DateTimeOffset.UnixEpoch);
-        HealthCheckResult result = null;
-
-        await coordinator.TryRunSweepAsync(async token => result = await coordinator.RunProbeAsync(HangUntilCancelled, token, TimeSpan.FromMilliseconds(200)).WaitAsync(Guard), CancellationToken.None);
-
-        result.Detail.ShouldContain("timed out after 0s", Case.Sensitive, "the transport's own 200ms timeout is smaller than the sweep time left, so it stays");
-    }
-
-    [Fact]
-    public async Task Probe_SweepTimeLeftWithinTheRecordGrace_IsNotStarted()
-    {
-        var now = DateTimeOffset.UnixEpoch;
-        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        var clock = new SweepClock();
+        var coordinator = Create(sweepDeadline: SweepDeadline, probeTimeout: probeTimeoutSetting, time: clock);
         var started = false;
         Exception thrown = null;
 
         await coordinator.TryRunSweepAsync(async token =>
         {
-            now += SweepDeadline - MachineHealthCheckCoordinator.SweepRecordGrace;
-            thrown = await Record(() => coordinator.RunProbeAsync(_ => { started = true; return HangUntilCancelled(token); }, token, TimeSpan.FromSeconds(60)));
-        }, CancellationToken.None);
+            clock.Advance(SweepDeadline - left);
+
+            var probe = Record(() => coordinator.RunProbeAsync(ct => { started = true; return HangUntilCancelled(ct); }, token, timeout));
+
+            if (started)
+            {
+                await clock.WaitForTimersAsync(2);
+                clock.Advance(timeout);
+            }
+
+            thrown = await probe.WaitAsync(Guard);
+        }, CancellationToken.None).WaitAsync(Guard);
+
+        return (thrown, started, clock);
+    }
+
+    [Theory]
+    [InlineData(64.999)]   // one millisecond short of the full 60s timeout + 5s grace
+    [InlineData(30)]       // #627 ran it with a 25s timeout
+    [InlineData(6)]        // #627 ran it with a 1s timeout and recorded a healthy machine Unavailable
+    [InlineData(0)]
+    public async Task Probe_LessThanItsFullTimeoutPlusGraceLeftInTheSweep_IsDeferred_NeverStarted(double leftSeconds)
+    {
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout);
 
         thrown.ShouldBeOfType<SweepBudgetExhaustedException>();
-        started.ShouldBeFalse("a probe the sweep would cancel before it could record must not start");
+        started.ShouldBeFalse("a probe that cannot run its full timeout before the sweep ends must not start at all");
+        clock.Armed.ShouldBe(new[] { SweepDeadline }, "only the sweep deadline is armed: no shortened probe timer");
+    }
+
+    [Theory]
+    [InlineData(65)]       // exactly the full timeout + grace
+    [InlineData(120)]
+    [InlineData(300)]      // the very start of the sweep
+    public async Task Probe_FullTimeoutPlusGraceLeftInTheSweep_RunsWithItsExactFullTimeout(double leftSeconds)
+    {
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout);
+
+        thrown.ShouldBeNull();
+        started.ShouldBeTrue();
+        clock.Armed[1].ShouldBe(FullTimeout, "the probe timer must be the transport's full timeout, never what the sweep has left");
     }
 
     [Fact]
-    public async Task Probe_FanOutByTheSweep_SeesTheSweepDeadline()
+    public async Task Probe_WhoseTimeoutCanNeverFitInASweep_StillRuns_WithItsFullTimeout_AsBefore()
     {
-        var now = DateTimeOffset.UnixEpoch;
-        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        // An operator-configured timeout longer than the whole sweep can never be guaranteed to finish inside it. It runs as it always did
+        // (never shortened); if the sweep ends first the probe is cut and reports nothing.
+        var tooLong = TimeSpan.FromSeconds(600);
+
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(100), tooLong, probeTimeoutSetting: tooLong);
+
+        started.ShouldBeTrue("deferring it would mean the sweep never checks this machine at all");
+        clock.Armed[1].ShouldBe(tooLong);
+        thrown.ShouldBeAssignableTo<OperationCanceledException>("the sweep deadline cut the probe, so it must report nothing rather than a result");
+    }
+
+    [Fact]
+    public async Task Probe_FanOutByTheSweep_EachSeesTheSweepDeadline()
+    {
+        var clock = new SweepClock();
+        var coordinator = Create(sweepDeadline: SweepDeadline, time: clock);
         var thrown = new List<Exception>();
 
         await coordinator.TryRunSweepAsync(async token =>
         {
-            now += SweepDeadline;
+            clock.Advance(SweepDeadline - TimeSpan.FromSeconds(10));
 
-            await coordinator.ForEachInScopeAsync(new[] { 1, 2, 3 }, async (_, _, ct) => { var ex = await Record(() => coordinator.RunProbeAsync(HangUntilCancelled, ct, TimeSpan.FromSeconds(60))); lock (thrown) thrown.Add(ex); }, token);
-        }, CancellationToken.None);
+            await coordinator.ForEachInScopeAsync(new[] { 1, 2, 3 }, async (_, _, ct) => { var ex = await Record(() => coordinator.RunProbeAsync(HangUntilCancelled, ct, FullTimeout)); lock (thrown) thrown.Add(ex); }, token);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         thrown.Count.ShouldBe(3);
         thrown.ShouldAllBe(e => e is SweepBudgetExhaustedException, "the deadline must flow into every parallel probe the sweep starts");
     }
 
     [Fact]
-    public async Task Probe_OutsideASweep_IsNeverBoundedBySweepTime_EvenAfterASweepRan()
+    public async Task Probe_OutsideASweep_KeepsItsFullTimeout_EvenAfterASweepRan()
     {
-        var now = DateTimeOffset.UnixEpoch;
-        var coordinator = Create(sweepDeadline: SweepDeadline, utcNow: () => now);
+        var clock = new SweepClock();
+        var coordinator = Create(sweepDeadline: SweepDeadline, time: clock);
 
         await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None);
 
-        now += TimeSpan.FromHours(1);
+        clock.Advance(TimeSpan.FromHours(1));
 
-        var result = await coordinator.RunProbeAsync(async _ => { await Task.Delay(50); return new HealthCheckResult(true, "ok"); }, CancellationToken.None, TimeSpan.FromSeconds(5)).WaitAsync(Guard);
+        var result = await coordinator.RunProbeAsync(_ => Task.FromResult(new HealthCheckResult(true, "ok")), CancellationToken.None, FullTimeout).WaitAsync(Guard);
 
-        result.Healthy.ShouldBeTrue("a manual check keeps its own timeout and the sweep deadline must not leak out of the sweep");
+        result.Healthy.ShouldBeTrue("a manual check is never deferred and the sweep deadline must not leak out of the sweep");
+        clock.Armed.ShouldBe(new[] { SweepDeadline, FullTimeout });
+    }
+
+    [Fact]
+    public async Task Probe_CallerCancelledWhileWaitingForTheTimedOutProbesOwnError_ReportsNothing()
+    {
+        // The probe timed out, and while the coordinator waits its short grace for the probe's own error text the caller (the sweep deadline) is
+        // cancelled. An Unavailable verdict produced after the caller gave up must not be reported, or the sweep would record it.
+        var clock = new SweepClock();
+        var coordinator = Create(time: clock);
+        var hung = new TaskCompletionSource<HealthCheckResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var caller = new CancellationTokenSource();
+
+        var probe = coordinator.RunProbeAsync(_ => hung.Task, caller.Token, FullTimeout);
+
+        await clock.WaitForTimersAsync(1);
+        clock.Advance(FullTimeout);
+        await clock.WaitForTimersAsync(2);
+
+        caller.Cancel();
+        hung.SetResult(new HealthCheckResult(false, "connection refused"));
+
+        await Should.ThrowAsync<OperationCanceledException>(() => probe.WaitAsync(Guard));
     }
 
     private static async Task<Exception> Record(Func<Task> action)

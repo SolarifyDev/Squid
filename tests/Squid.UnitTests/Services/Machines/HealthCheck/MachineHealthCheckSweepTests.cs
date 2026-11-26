@@ -45,7 +45,7 @@ public class MachineHealthCheckSweepTests : IDisposable
 
     private void Seed(params Machine[] machines)
     {
-        _machines.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>())).ReturnsAsync((machines.Length, machines.ToList()));
+        _machines.Setup(p => p.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(It.IsAny<CancellationToken>())).ReturnsAsync(machines.ToList());
 
         foreach (var machine in machines)
             _machines.Setup(p => p.GetMachinesByIdAsync(machine.Id, It.IsAny<CancellationToken>())).ReturnsAsync(machine);
@@ -80,48 +80,156 @@ public class MachineHealthCheckSweepTests : IDisposable
         recorded.Task.Result.HealthDetail.ShouldContain("timed out");
     }
 
-    // ── a probe that starts late in the sweep is recorded, not dropped ──
+    // ── a machine's recorded health is only ever what it did within its full probe timeout ──
 
-    // The clock reads the real start of the sweep once, then jumps: the probe starts "behind the first wave", offset into the sweep.
-    private static Func<DateTimeOffset> ClockJumpingAfterSweepStart(TimeSpan offset)
+    private static readonly TimeSpan Guard = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SweepLength = TimeSpan.FromSeconds(300);
+    private static readonly TimeSpan KubernetesApiTimeout = TimeSpan.FromSeconds(75);
+
+    private static Machine PreviouslyHealthyDueMachine(int id) => new() { Id = id, Name = $"m{id}", IsDisabled = false, HealthStatus = MachineHealthStatus.Healthy, HealthLastChecked = DateTimeOffset.UtcNow.AddHours(-2), HealthDetail = "ok earlier", Endpoint = """{"communicationStyle":"KubernetesApi"}""" };
+
+    private HealthCheckTestHost CreateClockedHost(SweepClock clock, MachineHealthCheckSetting setting = null)
     {
-        var reads = 0;
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, setting ?? new MachineHealthCheckSetting { SweepDeadlineSeconds = SweepLength.TotalSeconds }, time: clock);
+        _hosts.Add(host);
 
-        return () => DateTimeOffset.UnixEpoch + (Interlocked.Increment(ref reads) == 1 ? TimeSpan.Zero : offset);
+        return host;
+    }
+
+    // The sweep reloads the machine just before probing it: move the clock there so the probe asks to start with `left` of the sweep remaining.
+    private void ProbeStartsWithSweepTimeLeft(Machine machine, SweepClock clock, TimeSpan left)
+    {
+        var moved = 0;
+
+        _machines.Setup(p => p.GetMachinesByIdAsync(machine.Id, It.IsAny<CancellationToken>())).Callback(() => { if (Interlocked.Exchange(ref moved, 1) == 0) clock.Advance(SweepLength - left); }).ReturnsAsync(machine);
+    }
+
+    // A healthy machine that answers after `delay` (on the fake clock), honouring cancellation like every real strategy.
+    private TaskCompletionSource SlowHealthyProbe(SweepClock clock, TimeSpan delay)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        ProbeReturns(async (_, ct) => { started.TrySetResult(); await Task.Delay(delay, clock, ct); return new HealthCheckResult(true, "ok"); });
+
+        return started;
+    }
+
+    private void VerifyNeverRecorded() => _machines.Verify(p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+
+    [Theory]
+    [InlineData(6)]        // #627 probed it with a 1s timeout and recorded it Unavailable for a whole interval
+    [InlineData(79.999)]   // one millisecond short of 75s + 5s grace
+    public async Task Sweep_HealthyButSlowMachineNearTheEndOfTheSweep_IsDeferred_NeverRecordedUnavailable(double leftSeconds)
+    {
+        var clock = new SweepClock();
+        var machine = PreviouslyHealthyDueMachine(1);
+        var lastChecked = machine.HealthLastChecked;
+        Seed(machine);
+        ProbeStartsWithSweepTimeLeft(machine, clock, TimeSpan.FromSeconds(leftSeconds));
+        var started = SlowHealthyProbe(clock, TimeSpan.FromSeconds(3));
+
+        var sweep = CreateClockedHost(clock).Service.AutoHealthCheckForAllAsync();
+
+        await Task.WhenAny(sweep, started.Task).WaitAsync(Guard);
+
+        if (started.Task.IsCompleted)
+        {
+            await clock.WaitForTimersAsync(3);
+            clock.Advance(TimeSpan.FromSeconds(3));
+        }
+
+        await sweep.WaitAsync(Guard);
+
+        started.Task.IsCompleted.ShouldBeFalse("a probe without its full timeout left in the sweep must not start");
+        VerifyNeverRecorded();
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+        machine.HealthLastChecked.ShouldBe(lastChecked);
+        machine.HealthDetail.ShouldBe("ok earlier");
+        machine.UnavailableSince.ShouldBeNull();
+        MachineHealthCheckService.ShouldRunHealthCheck(machine, null).ShouldBeTrue("a deferred machine stays due for the next sweep");
     }
 
     [Fact]
-    public async Task Sweep_HungProbeStartedLate_IsRecordedUnavailable_NotDroppedBySweepDeadline()
+    public async Task Sweep_FullTimeoutPlusGraceLeft_SlowHealthyMachine_RunsWithItsFullTimeout_AndIsRecordedHealthy()
     {
-        var machine = DueMachine(1);
+        var clock = new SweepClock();
+        var machine = PreviouslyHealthyDueMachine(1);
         Seed(machine);
-        ProbeReturns(async (_, ct) => { await Task.Delay(Timeout.Infinite, ct); return new HealthCheckResult(true, "unreachable"); });
+        ProbeStartsWithSweepTimeLeft(machine, clock, KubernetesApiTimeout + TimeSpan.FromSeconds(5));
+        var started = SlowHealthyProbe(clock, TimeSpan.FromSeconds(70));
 
-        // Default timeout 75s capped to 18s of a 20s sweep; the probe starts 14.5s in, so only ~0.5s of the sweep remains for it.
-        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting { SweepDeadlineSeconds = 20 }, utcNow: ClockJumpingAfterSweepStart(TimeSpan.FromSeconds(14.5)));
-        _hosts.Add(host);
+        var sweep = CreateClockedHost(clock).Service.AutoHealthCheckForAllAsync();
 
-        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await started.Task.WaitAsync(Guard);
+        await clock.WaitForTimersAsync(3);
+        clock.Advance(TimeSpan.FromSeconds(70));
+        await sweep.WaitAsync(Guard);
 
+        clock.Armed[1].ShouldBe(KubernetesApiTimeout, "the probe runs with the transport's full timeout");
+        machine.HealthStatus.ShouldBe(MachineHealthStatus.Healthy);
+        machine.HealthDetail.ShouldBe("ok");
+    }
+
+    [Fact]
+    public async Task Sweep_ProbeCutByTheSweepDeadline_RecordsNothing_UnavailableSinceUntouched()
+    {
+        // Only reachable when the probe's timeout cannot fit in any sweep (operator-configured 600s > 300s sweep): the deadline cancels the
+        // probe mid-flight. Nothing is recorded, so a previously Unavailable machine keeps its UnavailableSince (cleanup grace) exactly.
+        var clock = new SweepClock();
+        var unavailableSince = DateTimeOffset.UtcNow.AddDays(-1);
+        var machine = PreviouslyHealthyDueMachine(1);
+        machine.HealthStatus = MachineHealthStatus.Unavailable;
+        machine.UnavailableSince = unavailableSince;
+        Seed(machine);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ProbeReturns(async (_, ct) => { started.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); return new HealthCheckResult(true, "never"); });
+
+        var sweep = CreateClockedHost(clock, new MachineHealthCheckSetting { SweepDeadlineSeconds = SweepLength.TotalSeconds, ProbeTimeoutSeconds = 600 }).Service.AutoHealthCheckForAllAsync();
+
+        await started.Task.WaitAsync(Guard);
+        await clock.WaitForTimersAsync(2);
+        clock.Advance(SweepLength);
+        await sweep.WaitAsync(Guard);
+
+        VerifyNeverRecorded();
         machine.HealthStatus.ShouldBe(MachineHealthStatus.Unavailable);
-        machine.HealthDetail.ShouldContain("timed out");
+        machine.UnavailableSince.ShouldBe(unavailableSince);
     }
 
     [Fact]
-    public async Task Sweep_ProbeWouldStartWithNoTimeLeftToRecord_IsSkipped_AndStaysDue()
+    public async Task Sweep_ProbesMachinesInTheOrderTheLeastRecentlyCheckedQueryReturns()
     {
-        var machine = DueMachine(1);
+        var order = new List<int>();
+        Seed(DueMachine(3), DueMachine(1), DueMachine(2));
+        ProbeReturns((m, _) => { lock (order) order.Add(m.Id); return Task.FromResult(new HealthCheckResult(true, "ok")); });
+
+        await CreateHost(parallelism: 1).Service.AutoHealthCheckForAllAsync().WaitAsync(Guard);
+
+        order.ShouldBe(new List<int> { 3, 1, 2 }, customMessage: "a deferred machine is first in the next sweep only if the sweep keeps the query's oldest-first order");
+    }
+
+    [Theory]
+    [InlineData(CommunicationStyle.TentaclePolling)]
+    [InlineData(CommunicationStyle.TentacleListening)]
+    [InlineData(CommunicationStyle.KubernetesAgent)]
+    [InlineData(CommunicationStyle.KubernetesApi)]
+    [InlineData(CommunicationStyle.Ssh)]
+    public async Task ManualCheck_LateAfterASweep_IsNeverDeferred_AndArmsTheSameFullTimeoutAsTheSweep(CommunicationStyle style)
+    {
+        var clock = new SweepClock();
+        var machine = new Machine { Id = 1, Name = "m1", IsDisabled = false, HealthLastChecked = null, Endpoint = "{\"communicationStyle\":\"" + style + "\"}" };
         Seed(machine);
+        _transport.Setup(t => t.CommunicationStyle).Returns(style);
         ProbeReturns((_, _) => Task.FromResult(new HealthCheckResult(true, "ok")));
+        var host = CreateClockedHost(clock);
 
-        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting { SweepDeadlineSeconds = 20 }, utcNow: ClockJumpingAfterSweepStart(TimeSpan.FromSeconds(16)));
-        _hosts.Add(host);
+        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(Guard);
+        clock.Advance(SweepLength - TimeSpan.FromSeconds(1));
+        var manual = await host.Service.ManualHealthCheckAsync(1).WaitAsync(Guard);
 
-        await host.Service.AutoHealthCheckForAllAsync().WaitAsync(TimeSpan.FromSeconds(10));
-
-        _checker.Verify(h => h.CheckHealthAsync(It.IsAny<Machine>(), It.IsAny<MachineConnectivityPolicyDto>(), It.IsAny<CancellationToken>(), It.IsAny<MachineHealthCheckPolicyDto>()), Times.Never);
-        _machines.Verify(p => p.UpdateMachineAsync(It.IsAny<Machine>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never, "a skipped machine must not be recorded Unavailable; it is simply probed next sweep");
-        machine.HealthLastChecked.ShouldBeNull();
+        manual.Successful.ShouldBeTrue();
+        var expected = host.Coordinator.ProbeTimeoutFor(style, null);
+        clock.Armed.ShouldBe(new[] { SweepLength, expected, expected }, "sweep deadline, then the sweep probe and the manual probe, both with the full transport timeout");
     }
 
     // ── lock usage ──
@@ -244,7 +352,7 @@ public class MachineHealthCheckSweepTests : IDisposable
         var sweepProbing = new TaskCompletionSource();
         var sweepMachine = DueMachine(1);
         var manualMachine = DueMachine(2);
-        _machines.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>())).ReturnsAsync((1, new List<Machine> { sweepMachine }));
+        _machines.Setup(p => p.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<Machine> { sweepMachine });
         _machines.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(sweepMachine);
         _machines.Setup(p => p.GetMachinesByIdAsync(2, It.IsAny<CancellationToken>())).ReturnsAsync(manualMachine);
         ProbeReturns(async (m, _) =>
@@ -301,7 +409,7 @@ public class MachineHealthCheckSweepTests : IDisposable
         var listed = DueMachine(1);
         var refreshed = DueMachine(1);
         refreshed.HealthLastChecked = DateTimeOffset.UtcNow;
-        _machines.Setup(p => p.GetMachinesAllSpacesPagingAsync(It.IsAny<int?>(), It.IsAny<int?>(), It.IsAny<CancellationToken>())).ReturnsAsync((1, new List<Machine> { listed }));
+        _machines.Setup(p => p.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<Machine> { listed });
         _machines.Setup(p => p.GetMachinesByIdAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(refreshed);
 
         await CreateHost().Service.AutoHealthCheckForAllAsync();

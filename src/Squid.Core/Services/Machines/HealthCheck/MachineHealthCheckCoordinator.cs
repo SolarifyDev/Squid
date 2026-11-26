@@ -22,8 +22,8 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
 
     /// <summary>
     /// Same as the two-argument overload with an explicit timeout (see <see cref="ProbeTimeoutFor"/>). A probe that reports a failure only after the timeout keeps its own error text in the result.
-    /// Inside a sweep the timeout is also capped to the sweep's remaining time (less a grace to record the result), so a late probe is recorded as timed out, never cut off by the sweep;
-    /// throws <see cref="SweepBudgetExhaustedException"/> when too little sweep time is left to run one.
+    /// The timeout is never shortened. Inside a sweep the probe starts only if its full timeout plus a grace to record the result fits in the sweep time left;
+    /// otherwise it is not started and <see cref="SweepBudgetExhaustedException"/> is thrown (the machine stays due). If <paramref name="ct"/> is cancelled, no unhealthy result is returned.
     /// </summary>
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout);
 
@@ -48,27 +48,28 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
     private static readonly object Ran = new();
 
-    // Time the sweep must still have after a bounded probe ends: the 1s wait for the probe's own error text plus recording the result.
+    // Time the sweep must still have after a probe's full timeout: the 1s wait for the probe's own error text plus recording the result.
     internal static readonly TimeSpan SweepRecordGrace = TimeSpan.FromSeconds(5);
 
     // The deadline of the sweep this async flow belongs to; flows into every probe the sweep fans out, null for a manual check.
+    // Set inside the async RunBoundedSweepAsync, so the runtime restores the caller's (null) value when it returns: it never outlives the sweep.
     private static readonly AsyncLocal<DateTimeOffset?> CurrentSweepDeadline = new();
 
     private readonly IRedisSafeRunner _redis;
     private readonly ILifetimeScope _scope;
     private readonly HealthCheckInProcessLocks _locks;
     private readonly MachineHealthCheckSetting _options;
-    private readonly Func<DateTimeOffset> _utcNow;
+    private readonly TimeProvider _time;
 
     public MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options) : this(redis, scope, locks, options, null) { }
 
-    internal MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options, Func<DateTimeOffset> utcNow)
+    internal MachineHealthCheckCoordinator(IRedisSafeRunner redis, ILifetimeScope scope, HealthCheckInProcessLocks locks, MachineHealthCheckSetting options, TimeProvider time)
     {
         _redis = redis;
         _scope = scope;
         _locks = locks;
         _options = options;
-        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+        _time = time ?? TimeProvider.System;
     }
 
     public TimeSpan ManualBusyWait => ProbeTimeoutPolicy.ManualWait(_options, HalibutModule.BuildTimeoutsAndLimits()) + ManualWaitMargin;
@@ -116,10 +117,10 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
     public async Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout)
     {
-        timeout = BoundBySweep(timeout);
+        EnsureProbeFitsInSweep(timeout);
 
-        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(timeout);
+        using var timeoutCts = new CancellationTokenSource(timeout, _time);
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
         var running = probe(probeCts.Token);
 
@@ -131,34 +132,45 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return await BuildTimeoutResultAsync(running, timeout).ConfigureAwait(false);
+            var timedOut = await BuildTimeoutResultAsync(running, timeout).ConfigureAwait(false);
+
+            // The caller (e.g. the sweep deadline) gave up while we waited for the probe's own error text: report nothing rather than a verdict.
+            ct.ThrowIfCancellationRequested();
+
+            return timedOut;
         }
     }
 
-    // In a sweep the timeout is the smaller of the transport's and what the sweep has left, so the probe ends on its own bound and is recorded
-    // instead of being cut by the sweep deadline. Outside a sweep (manual check) the timeout is unchanged.
-    private TimeSpan BoundBySweep(TimeSpan timeout)
+    // Inside a sweep a probe starts only if its FULL timeout plus the recording grace fits in the sweep time left, so it always ends on its own
+    // timeout before the deadline and every result the sweep records is genuine. One that does not fit is deferred: not started, nothing
+    // recorded, the machine stays due (and is first in the next sweep). A timeout that cannot fit in any sweep runs as before; if the deadline
+    // cuts it, it records nothing. Outside a sweep (manual check) nothing applies.
+    private void EnsureProbeFitsInSweep(TimeSpan timeout)
     {
         var deadline = CurrentSweepDeadline.Value;
+        var needed = timeout + SweepRecordGrace;
 
-        if (deadline == null) return timeout;
+        if (deadline == null) return;
 
-        var remaining = deadline.Value - _utcNow();
-        var bound = remaining - SweepRecordGrace;
+        if (needed > _options.SweepDeadline)
+        {
+            Log.Warning("Health check probe timeout {TimeoutSeconds}s plus {GraceSeconds}s to record exceeds the {DeadlineSeconds}s sweep deadline; a probe still running when the sweep ends records nothing", timeout.TotalSeconds, SweepRecordGrace.TotalSeconds, _options.SweepDeadline.TotalSeconds);
+            return;
+        }
 
-        if (bound <= TimeSpan.Zero)
-            throw new SweepBudgetExhaustedException(remaining);
+        var remaining = deadline.Value - _time.GetUtcNow();
 
-        return timeout < bound ? timeout : bound;
+        if (needed > remaining)
+            throw new SweepBudgetExhaustedException(timeout, remaining);
     }
 
     // The probe's token is already cancelled, so a well-behaved probe finishes within the grace and reports why it was failing
     // (connection refused, auth error, ...); one that is truly hung yields the plain timeout message.
-    private static async Task<HealthCheckResult> BuildTimeoutResultAsync(Task<HealthCheckResult> running, TimeSpan timeout)
+    private async Task<HealthCheckResult> BuildTimeoutResultAsync(Task<HealthCheckResult> running, TimeSpan timeout)
     {
         try
         {
-            var result = await running.WaitAsync(TimeoutGrace).ConfigureAwait(false);
+            var result = await running.WaitAsync(TimeoutGrace, _time).ConfigureAwait(false);
 
             return BuildTimeoutResult(timeout, result.Detail);
         }
@@ -195,9 +207,10 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
     private async Task RunBoundedSweepAsync(Func<CancellationToken, Task> sweep, CancellationToken ct)
     {
-        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadlineCts.CancelAfter(_options.SweepDeadline);
-        CurrentSweepDeadline.Value = _utcNow() + _options.SweepDeadline;
+        CurrentSweepDeadline.Value = _time.GetUtcNow() + _options.SweepDeadline;
+
+        using var deadlineTimerCts = new CancellationTokenSource(_options.SweepDeadline, _time);
+        using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct, deadlineTimerCts.Token);
 
         try
         {
@@ -206,10 +219,6 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             Log.Warning("Health check sweep hit its {DeadlineSeconds}s deadline; machines not yet probed stay due for the next sweep", _options.SweepDeadline.TotalSeconds);
-        }
-        finally
-        {
-            CurrentSweepDeadline.Value = null;
         }
     }
 

@@ -18,7 +18,7 @@ public class MachineHealthCheckSetting : IConfigurationSetting
 
     /// <summary>
     /// Per-probe timeout; a probe that exceeds it records the machine Unavailable. When set it applies to every transport exactly as given.
-    /// When left unset the base value is 75 s and each transport raises it to what that transport can legitimately take, never beyond 90% of <see cref="SweepDeadlineSeconds"/> (see <see cref="Services.Machines.HealthCheck.ProbeTimeoutPolicy"/>). A value set here is not capped by the policy, but inside a sweep every probe is also bounded by the sweep time left (less a short grace), so a late or over-long probe is recorded as timed out rather than cut off by the sweep.
+    /// When left unset the base value is 75 s and each transport raises it to what that transport can legitimately take, never beyond 90% of <see cref="SweepDeadlineSeconds"/> (see <see cref="Services.Machines.HealthCheck.ProbeTimeoutPolicy"/>). A value set here is not capped. A probe's timeout is never shortened by a sweep: a sweep starts a probe only while its full timeout plus a short grace still fits before the sweep deadline, and defers the machine to the next sweep otherwise. A value longer than the sweep deadline can never fit, so such a probe runs as before and, if the sweep ends first, records nothing.
     /// Values &lt;= 0 are ignored.
     /// </summary>
     public double ProbeTimeoutSeconds
