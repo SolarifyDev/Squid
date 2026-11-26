@@ -60,7 +60,7 @@ Kubernetes ([chart options](deploy/helm/squid-server/README.md)):
 helm install squid oci://registry-1.docker.io/squidcd/squid-server
 ```
 
-<img src="branding/readme/setup-wizard.png" alt="Squid first-run setup page: choose the built-in or your own PostgreSQL, create the administrator, confirm the server URLs, then install" width="100%">
+<img src="branding/readme/setup-wizard.png" alt="Squid first-run setup page: choose the built-in or your own PostgreSQL, create the administrator, confirm the server URLs, choose where packages are stored, then install" width="100%">
 
 ## 🔄 Migrating from Octopus
 
