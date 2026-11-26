@@ -93,6 +93,7 @@ public sealed partial class SetupInstaller
 
     private async Task<string> MigrateDatabaseAsync(CancellationToken ct)
     {
+        await _schemaOrigin.RecordAsync(_ctx.DatabaseConnectionString, ct).ConfigureAwait(false);
         await Task.Run(() => new DbUpRunner(_ctx.DatabaseConnectionString).Run(), ct).ConfigureAwait(false);
 
         return "Database schema is up to date";

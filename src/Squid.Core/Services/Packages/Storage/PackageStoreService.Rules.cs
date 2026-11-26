@@ -14,27 +14,6 @@ public partial class PackageStoreService
         return name.Trim();
     }
 
-    /// <summary>
-    /// The one place settings are checked and combined, for create, update and testing unsaved settings: the descriptor's rules, then the provider's own,
-    /// and the secrets after merging the reusable stored ones. Returns the configuration to save or test, or throws with every problem found.
-    /// </summary>
-    private static PackageBlobStoreConfiguration PrepareConfiguration(IPackageBlobStoreProvider provider, IReadOnlyDictionary<string, string> properties, IReadOnlyDictionary<string, string> secrets, StoredSecrets stored)
-    {
-        properties ??= new Dictionary<string, string>();
-        secrets ??= new Dictionary<string, string>();
-
-        var problems = PackageStoreSettings.Validate(provider.Describe(), properties, secrets, stored);
-        var configuration = new PackageBlobStoreConfiguration { Properties = properties, Secrets = PackageStoreSettings.MergeSecrets(stored, secrets) };
-
-        if (problems.Count == 0)
-            problems.AddRange(provider.ValidateConfiguration(configuration));
-
-        if (problems.Count > 0)
-            throw new PackageStoreConfigurationInvalidException(provider.Kind, problems);
-
-        return configuration;
-    }
-
     private async Task EnsureNameFreeAsync(string name, int? exceptId, CancellationToken ct)
     {
         if (await dataProvider.NameExistsAsync(name, exceptId, ct).ConfigureAwait(false))
