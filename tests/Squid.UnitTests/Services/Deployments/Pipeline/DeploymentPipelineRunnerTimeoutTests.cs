@@ -12,7 +12,7 @@ namespace Squid.UnitTests.Services.Deployments.Pipeline;
 public class DeploymentPipelineRunnerTimeoutTests
 {
     private readonly Mock<IDeploymentLifecycle> _lifecycle = new();
-    private readonly Mock<IDeploymentCompletionHandler> _completion = new();
+    private readonly Mock<IDeploymentCompletionHandler> _completion = CompletionHandlerMocks.ReportingIntendedOutcomes();
     private readonly TaskCancellationRegistry _registry = new();
     private readonly Mock<IServerTaskDataProvider> _taskDataProvider = new();
 

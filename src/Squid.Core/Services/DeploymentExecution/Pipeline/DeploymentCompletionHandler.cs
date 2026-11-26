@@ -8,6 +8,7 @@ using Squid.Core.Services.Deployments.LifeCycle;
 using Squid.Core.Services.Deployments.ServerTask;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Settings.ServerTask;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
@@ -23,17 +24,21 @@ public sealed class DeploymentCompletionHandler(
 {
     private readonly ServerTaskTerminalWriteOptions _terminalWrite = ServerTaskTerminalWriteOptions.From(serverTaskSetting);
 
-    public async Task OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    public async Task<DeploymentOutcome> OnSuccessAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
-        if (!await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Success, true, ct).ConfigureAwait(false)) return;
+        var outcome = await TransitionOrYieldToCancelAsync(ctx, TaskState.Executing, TaskState.Success, true, ct).ConfigureAwait(false);
+
+        if (outcome != DeploymentOutcome.Succeeded) return outcome;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
         await TriggerAutoDeploymentsAsync(ctx, ct).ConfigureAwait(false);
 
         Log.Information("[Deploy] Task {TaskId} completed successfully", ctx.ServerTaskId);
+
+        return outcome;
     }
 
-    public async Task OnFailureAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
+    public async Task<DeploymentOutcome> OnFailureAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
         Log.Error(ex, "[Deploy] Task {TaskId} failed", ctx.ServerTaskId);
 
@@ -41,18 +46,18 @@ public sealed class DeploymentCompletionHandler(
 
         // The user's cancel wins over a failure that raced it (a failed batch or a non-resumable timeout reached before the cancel reached this run's token):
         // writing Cancelling -> Failed would end the cancel Failed and leave the agent scripts running. Complete the cancel the way a cancelled run does.
-        if (string.Equals(fromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
-        {
-            await OnCancelledAsync(ctx, ct).ConfigureAwait(false);
-            return;
-        }
+        if (IsCancelling(fromState)) return await CompleteRacingCancelAsync(ctx, TaskState.Failed, ct).ConfigureAwait(false);
 
-        if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, false, ct).ConfigureAwait(false)) return;
+        var outcome = await TransitionOrYieldToCancelAsync(ctx, fromState, TaskState.Failed, false, ct).ConfigureAwait(false);
+
+        if (outcome != DeploymentOutcome.Failed) return outcome;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
+
+        return outcome;
     }
 
-    public async Task OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    public async Task<DeploymentOutcome> OnCancelledAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         Log.Information("[Deploy] Task {TaskId} cancelled", ctx.ServerTaskId);
 
@@ -60,10 +65,45 @@ public sealed class DeploymentCompletionHandler(
         // Safe even from a run that lost the lease: the task is Cancelling, and whichever run owns it cancels the same scripts.
         await CancelInFlightScriptsAsync(ctx, ct).ConfigureAwait(false);
 
-        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, false, ct).ConfigureAwait(false)) return;
+        if (!await TransitionOwnedAsync(ctx, TaskState.Cancelling, TaskState.Cancelled, false, ct).ConfigureAwait(false)) return DeploymentOutcome.NotRecorded;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
+
+        return DeploymentOutcome.Cancelled;
     }
+
+    // The one mechanism every non-cancel outcome writes through. The write is conditional on the row still being in the state the run read; when it is
+    // refused because the user's cancel landed in between (the row is now Cancelling), the cancel wins and is completed here. Swallowing the refusal instead
+    // would leave the row Cancelling — holding its environment's concurrency slot with agent scripts running — until the stale-task reaper frees it.
+    private async Task<DeploymentOutcome> TransitionOrYieldToCancelAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
+    {
+        try
+        {
+            return await TransitionOwnedAsync(ctx, fromState, toState, recordSuccess, ct).ConfigureAwait(false) ? OutcomeOf(toState) : DeploymentOutcome.NotRecorded;
+        }
+        catch (ServerTaskStateTransitionException refused) when (IsCancelling(refused.FromState))
+        {
+            return await CompleteRacingCancelAsync(ctx, toState, ct).ConfigureAwait(false);
+        }
+    }
+
+    private Task<DeploymentOutcome> CompleteRacingCancelAsync(DeploymentTaskContext ctx, string intendedState, CancellationToken ct)
+    {
+        Log.Information("[Deploy] Task {TaskId} was cancelled by the user before its {State} outcome was written; completing the cancel instead", ctx.ServerTaskId, intendedState);
+
+        return OnCancelledAsync(ctx, ct);
+    }
+
+    private static bool IsCancelling(string state) => string.Equals(state, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase);
+
+    private static DeploymentOutcome OutcomeOf(string state) => state switch
+    {
+        TaskState.Success => DeploymentOutcome.Succeeded,
+        TaskState.Failed => DeploymentOutcome.Failed,
+        TaskState.Cancelled => DeploymentOutcome.Cancelled,
+        TaskState.Paused => DeploymentOutcome.Paused,
+        _ => DeploymentOutcome.NotRecorded
+    };
 
     // The one place that guarantees "a task that reaches Cancelled has no agent script left running": whichever path led here, and whatever the
     // observer decided when its token fired (it may have chosen "pausing" and left the script alone), every ticket still recorded in flight is
@@ -91,11 +131,11 @@ public sealed class DeploymentCompletionHandler(
     /// <para>See <see cref="PauseIfStillExecutingAsync"/> for which states are written and why
     /// the rest are deliberately left alone.</para>
     /// </summary>
-    public async Task OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    public Task<DeploymentOutcome> OnPausedAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         Log.Information("[Deploy] Task {TaskId} paused, checkpoint preserved for resume", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
+        return PauseIfStillExecutingAsync(ctx, ct);
     }
 
     /// <summary>
@@ -111,11 +151,11 @@ public sealed class DeploymentCompletionHandler(
     /// available via the <c>SQUID_DEPLOYMENT_TIMEOUT_RESUMABLE</c> escape hatch,
     /// which routes timeouts back through <see cref="OnFailureAsync"/>.
     /// </summary>
-    public async Task OnTimedOutAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
+    public Task<DeploymentOutcome> OnTimedOutAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} timed out; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
+        return PauseIfStillExecutingAsync(ctx, ct);
     }
 
     /// <summary>
@@ -132,11 +172,11 @@ public sealed class DeploymentCompletionHandler(
     /// already-completed progress and risk a duplicate run. That is separate from WHICH states
     /// the pause is written from — see <see cref="PauseIfStillExecutingAsync"/>.
     /// </summary>
-    public async Task OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
+    public Task<DeploymentOutcome> OnTransientPauseAsync(DeploymentTaskContext ctx, Exception ex, CancellationToken ct)
     {
         Log.Warning(ex, "[Deploy] Task {TaskId} hit a transient infrastructure failure; pausing for resume, checkpoint preserved", ctx.ServerTaskId);
 
-        await PauseIfStillExecutingAsync(ctx, ct).ConfigureAwait(false);
+        return PauseIfStillExecutingAsync(ctx, ct);
     }
 
     /// <summary>
@@ -144,50 +184,37 @@ public sealed class DeploymentCompletionHandler(
     /// <see cref="TaskState.Executing"/> — the sole legal source of that edge.
     ///
     /// <para>Shared by all three pause outcomes (suspend, timeout, transient) because the
-    /// decision is identical for each. Skipping is the RIGHT semantic, not merely the safe one:
-    /// a cancel that lands mid-pause should win, and a task that already reached a terminal
-    /// state has recorded its outcome. <c>Paused</c> is skipped because the suspend sites that
-    /// self-transition are the common case and <c>Paused → Paused</c> is not legal either.</para>
+    /// decision is identical for each. A task that already reached a terminal state has recorded
+    /// its outcome, and <c>Paused</c> is skipped because the suspend sites that self-transition are
+    /// the common case (<c>Paused → Paused</c> is not legal either) — the task is paused all the same,
+    /// so that is the outcome reported.</para>
     ///
-    /// <para><b>What this does NOT do.</b> It does not rescue a task that is already
-    /// <c>Cancelling</c>. A blind transition threw
-    /// <see cref="ServerTaskStateTransitionException"/> from
-    /// <c>TaskState.EnsureValidTransition</c> — the first statement of
-    /// <c>TransitionStateAsync</c>, before any SQL — and the runner's <c>SafeCompleteAsync</c>
-    /// swallowed it, so the row stayed <c>Cancelling</c> with an empty transaction rolled back.
-    /// The guarded skip leaves it <c>Cancelling</c> too. The database outcome is byte-identical;
-    /// what changes is that an expected race is no longer signalled by an exception.</para>
-    ///
-    /// <para>That row is stuck until something else frees it: <c>Cancelling</c> counts as an active
-    /// state so it keeps holding the environment's concurrency slot, its only edges out
-    /// (<c>Cancelled</c>, <c>Failed</c>) need a live pipeline, and re-cancel no-ops and resume
-    /// rejects it. Its lease stops renewing once this pipeline ends, so the stale-task reaper
-    /// completes it as <c>Cancelled</c> after the lease staleness threshold (default 5 minutes);
-    /// an operator can also force-cancel it. The skip is still logged at Warning: until one of
-    /// those happens the environment has lost a concurrency slot. Cross-pod cancel propagation
-    /// exists (the cancel watcher carries a Cancelling row to the pod that runs the task), but it
-    /// only completes a cancel for a run that is still executing: this run is already unwinding
-    /// into a pause, so it is the reaper or an operator that frees the row.</para>
-    ///
-    /// <para><b>The success path does not share this.</b> <see cref="OnSuccessAsync"/> also
-    /// transitions from a hardcoded <c>Executing</c>, but it is the one completion callback the
-    /// runner invokes directly rather than through <c>SafeCompleteAsync</c>, so its
-    /// <see cref="ServerTaskStateTransitionException"/> is not swallowed: it reaches the runner's
-    /// general catch, which routes to <see cref="OnFailureAsync"/> (or, for a Cancelling row, completes
-    /// the cancel there). The row ends terminal and the slot is freed — Cancelled for a user cancel,
-    /// otherwise at the cost of a deployment that succeeded being recorded as failed.</para>
+    /// <para><b>A user's cancel wins, and is completed here.</b> When the row is <c>Cancelling</c> —
+    /// read so up front, or because the cancel landed between that read and the conditional write,
+    /// which is then refused — the run completes the cancel (scripts cancelled, <c>Cancelled</c>,
+    /// checkpoint removed) instead of skipping. Skipping left the row <c>Cancelling</c>: an active
+    /// state that keeps holding the environment's concurrency slot, whose only exits need a live
+    /// pipeline, so it stayed wedged with its agent scripts running until the stale-task reaper
+    /// (default 5 minutes) or an operator freed it.</para>
     /// </summary>
-    private async Task PauseIfStillExecutingAsync(DeploymentTaskContext ctx, CancellationToken ct)
+    private async Task<DeploymentOutcome> PauseIfStillExecutingAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
-        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase))
-        {
-            LogSkippedPause(ctx.ServerTaskId, fromState);
-            return;
-        }
+        if (IsCancelling(fromState)) return await CompleteRacingCancelAsync(ctx, TaskState.Paused, ct).ConfigureAwait(false);
 
-        await TransitionOwnedAsync(ctx, TaskState.Executing, TaskState.Paused, null, ct).ConfigureAwait(false);
+        if (!string.Equals(fromState, TaskState.Executing, StringComparison.OrdinalIgnoreCase)) return SkipPause(ctx.ServerTaskId, fromState);
+
+        return await TransitionOrYieldToCancelAsync(ctx, TaskState.Executing, TaskState.Paused, null, ct).ConfigureAwait(false);
+    }
+
+    // A task that is already Paused (a suspend site paused it itself) is reported Paused; one that already reached a terminal state was resolved by
+    // someone else, so this run has nothing to announce.
+    private static DeploymentOutcome SkipPause(int serverTaskId, string fromState)
+    {
+        Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is rather than forcing a pause", serverTaskId, fromState);
+
+        return string.Equals(fromState, TaskState.Paused, StringComparison.OrdinalIgnoreCase) ? DeploymentOutcome.Paused : DeploymentOutcome.NotRecorded;
     }
 
     // Every write this run makes out of a running state is conditional on the run still holding the task's lease: a task another run recovered or resumed
@@ -277,31 +304,6 @@ public sealed class DeploymentCompletionHandler(
         await deploymentCompletionDataProvider.AddDeploymentCompletionAsync(completion, false, ct).ConfigureAwait(false);
 
         return completion;
-    }
-
-    /// <summary>
-    /// A skipped pause is routine for <c>Paused</c> and for a terminal task, but for
-    /// <c>Cancelling</c> it means the task is wedged: it holds the environment's concurrency
-    /// slot and nothing will free it. Warning is the level for that one case, Information for
-    /// the rest, so the routine <c>Paused</c> case cannot bury it.
-    ///
-    /// <para>The two outcomes arrive here from different places, and Warning is right for both
-    /// for different reasons. Timeout and transient pauses previously transitioned blind, so a
-    /// <c>Cancelling</c> row raised an illegal-transition exception that the runner's
-    /// <c>SafeCompleteAsync</c> logged at Error — Warning is what stops the guard silently
-    /// deleting that alert. The suspend outcome already had this guard and already logged at
-    /// Information, so for it Warning is a deliberate uplift, not a preservation: the same
-    /// wedged state deserves the same level whichever outcome walked into it.</para>
-    /// </summary>
-    private static void LogSkippedPause(int serverTaskId, string fromState)
-    {
-        if (string.Equals(fromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
-        {
-            Log.Warning("[Deploy] Task {TaskId} is Cancelling, not Executing — skipping the pause so the cancel wins. The task stays Cancelling and keeps holding its environment's concurrency slot until the stale-task reaper completes it (its lease stops renewing) or an operator force-cancels it", serverTaskId);
-            return;
-        }
-
-        Log.Information("[Deploy] Task {TaskId} is {State}, not Executing — leaving the state as-is rather than forcing a pause", serverTaskId, fromState);
     }
 
     private async Task<string> ResolveCurrentActiveStateAsync(int serverTaskId, CancellationToken ct)

@@ -18,7 +18,7 @@ public class DeploymentPipelineRunnerCancelWinsTests
 {
     private readonly Mock<IServerTaskDataProvider> _taskDataProvider = new();
     private readonly Mock<IDeploymentLifecycle> _lifecycle = new();
-    private readonly Mock<IDeploymentCompletionHandler> _completion = new();
+    private readonly Mock<IDeploymentCompletionHandler> _completion = CompletionHandlerMocks.ReportingIntendedOutcomes();
 
     [Theory]
     [MemberData(nameof(Errors))]

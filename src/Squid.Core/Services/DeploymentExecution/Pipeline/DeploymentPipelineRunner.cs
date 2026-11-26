@@ -7,6 +7,7 @@ using Squid.Core.Services.Deployments.ServerTask.Cancel;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Lease;
 using Squid.Core.Services.Jobs;
+using Squid.Message.Enums.Deployments;
 
 namespace Squid.Core.Services.DeploymentExecution.Pipeline;
 
@@ -123,21 +124,21 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // registry cancel wins here: the external token is the job host shutting down, and once every
             // phase has completed there is nothing left to resume, so the real outcome (Failed/Success) is
             // recorded with the completion writes' own timeout token and the job returns normally.
+            //
+            // Each branch writes first and announces what was written (see CompleteAsync): a write that yields to a cancel that landed in the row is
+            // announced as that cancel, never as the outcome the branch set out to write.
             if (registryCts.Token.IsCancellationRequested)
             {
-                await lifecycle.EmitAsync(new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
-                await completion.OnCancelledAsync(ctx, timeout.Token);
+                await CompleteAsync(() => completion.OnCancelledAsync(ctx, timeout.Token), DeploymentOutcome.Cancelled, new DeploymentCancelledEvent(new DeploymentEventContext()), timeout.Token);
             }
             else if (ctx.FailureEncountered)
             {
                 var ex = new InvalidOperationException("One or more steps failed during deployment");
-                await lifecycle.EmitAsync(new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);
-                await completion.OnFailureAsync(ctx, ex, timeout.Token);
+                await CompleteAsync(() => completion.OnFailureAsync(ctx, ex, timeout.Token), DeploymentOutcome.Failed, new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }), timeout.Token);
             }
             else
             {
-                await lifecycle.EmitAsync(new DeploymentSucceededEvent(new DeploymentEventContext()), timeout.Token);
-                await completion.OnSuccessAsync(ctx, timeout.Token);
+                await CompleteAsync(() => completion.OnSuccessAsync(ctx, timeout.Token), DeploymentOutcome.Succeeded, new DeploymentSucceededEvent(new DeploymentEventContext()), timeout.Token);
             }
         }
         catch (DeploymentSuspendedException suspended)
@@ -149,6 +150,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             await SafeCompleteAsync(
                 ctx,
                 () => completion.OnPausedAsync(ctx, CancellationToken.None),
+                DeploymentOutcome.Paused,
                 new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = suspended.OperatorReason }));
         }
         catch (OperationCanceledException) when (HasLostLease(ctx))
@@ -173,7 +175,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             {
                 Log.Information("[Deploy] Task {TaskId} was aborted by its job token but the user had cancelled it; completing the cancel", serverTaskId);
 
-                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), DeploymentOutcome.Cancelled, new DeploymentCancelledEvent(new DeploymentEventContext()));
 
                 return;
             }
@@ -183,6 +185,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             await SafeCompleteAsync(
                 ctx,
                 () => completion.OnPausedAsync(ctx, CancellationToken.None),
+                DeploymentOutcome.Paused,
                 new DeploymentPausedEvent(new DeploymentEventContext { PauseReason = HostShutdownPauseReason }));
 
             throw;
@@ -191,15 +194,17 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         {
             var ex = new DeploymentTimeoutException(serverTaskId, DeploymentTimeout);
 
-            Func<Task> onTimeout = TimeoutResumable
+            Func<Task<DeploymentOutcome>> onTimeout = TimeoutResumable
                 ? () => completion.OnTimedOutAsync(ctx, ex, CancellationToken.None)
                 : () => completion.OnFailureAsync(ctx, ex, CancellationToken.None);
 
-            await SafeCompleteAsync(ctx, onTimeout, new DeploymentTimedOutEvent(new DeploymentEventContext { Exception = ex }));
+            var expected = TimeoutResumable ? DeploymentOutcome.Paused : DeploymentOutcome.Failed;
+
+            await SafeCompleteAsync(ctx, onTimeout, expected, new DeploymentTimedOutEvent(new DeploymentEventContext { Exception = ex }));
         }
         catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
-            await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+            await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), DeploymentOutcome.Cancelled, new DeploymentCancelledEvent(new DeploymentEventContext()));
         }
         catch (ServerTaskOwnedByLiveProcessException ex)
         {
@@ -237,7 +242,7 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             // that races a transient RPC drop must NOT be reclassified as a
             // transient pause — cancel/timeout win, so the exception falls through
             // to their handlers (or the generic failure path).
-            await SafeCompleteAsync(ctx, () => completion.OnTransientPauseAsync(ctx, ex, CancellationToken.None), new DeploymentPausedEvent(new DeploymentEventContext()));
+            await SafeCompleteAsync(ctx, () => completion.OnTransientPauseAsync(ctx, ex, CancellationToken.None), DeploymentOutcome.Paused, new DeploymentPausedEvent(new DeploymentEventContext()));
         }
         catch (Exception ex)
         {
@@ -247,12 +252,12 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
             {
                 Log.Information(ex, "[Deploy] Task {TaskId} ended with an error but the user had cancelled it; completing the cancel", serverTaskId);
 
-                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), new DeploymentCancelledEvent(new DeploymentEventContext()));
+                await SafeCompleteAsync(ctx, () => completion.OnCancelledAsync(ctx, CancellationToken.None), DeploymentOutcome.Cancelled, new DeploymentCancelledEvent(new DeploymentEventContext()));
 
                 return;
             }
 
-            await SafeCompleteAsync(ctx, () => completion.OnFailureAsync(ctx, ex, CancellationToken.None), new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }));
+            await SafeCompleteAsync(ctx, () => completion.OnFailureAsync(ctx, ex, CancellationToken.None), DeploymentOutcome.Failed, new DeploymentFailedEvent(new DeploymentEventContext { Exception = ex }));
             throw;
         }
         finally
@@ -360,7 +365,30 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
         return true;
     }
 
-    private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task> completionAction, DeploymentLifecycleEvent lifecycleEvent)
+    // Writes the outcome, then announces what was written. The announcement (lifecycle event → audit history, task log, activity node) is the intended one
+    // only when the write landed as intended; otherwise it is the outcome that was actually written (a racing user cancel ends Cancelled and is announced
+    // Cancelled), and nothing at all when this run recorded nothing (the task belongs to another run, which announces its own outcome).
+    private async Task CompleteAsync(Func<Task<DeploymentOutcome>> write, DeploymentOutcome intended, DeploymentLifecycleEvent announcement, CancellationToken ct)
+    {
+        var outcome = await write().ConfigureAwait(false);
+
+        var actual = outcome == intended ? announcement : AnnouncementOf(outcome);
+
+        if (actual != null) await lifecycle.EmitAsync(actual, ct).ConfigureAwait(false);
+    }
+
+    private static DeploymentLifecycleEvent AnnouncementOf(DeploymentOutcome outcome) => outcome switch
+    {
+        DeploymentOutcome.Succeeded => new DeploymentSucceededEvent(new DeploymentEventContext()),
+        DeploymentOutcome.Failed => new DeploymentFailedEvent(new DeploymentEventContext()),
+        DeploymentOutcome.Cancelled => new DeploymentCancelledEvent(new DeploymentEventContext()),
+        DeploymentOutcome.Paused => new DeploymentPausedEvent(new DeploymentEventContext()),
+        _ => null
+    };
+
+    // The catch paths' form of CompleteAsync: a failed write or announcement is logged, never thrown, so it cannot replace the outcome the catch decided on.
+    // A failed write announces nothing — there is no persisted outcome to announce.
+    private async Task SafeCompleteAsync(DeploymentTaskContext ctx, Func<Task<DeploymentOutcome>> write, DeploymentOutcome intended, DeploymentLifecycleEvent announcement)
     {
         if (IsLeaseLost(ctx)) return;
 
@@ -368,20 +396,11 @@ public sealed class DeploymentPipelineRunner(IEnumerable<IDeploymentPipelinePhas
 
         try
         {
-            await lifecycle.EmitAsync(lifecycleEvent, timeout.Token);
+            await CompleteAsync(write, intended, announcement, timeout.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "[Deploy] Failed to emit lifecycle event for task {TaskId}", ctx.ServerTaskId);
-        }
-
-        try
-        {
-            await completionAction();
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "[Deploy] Failed to complete task {TaskId} state transition", ctx.ServerTaskId);
+            Log.Error(ex, "[Deploy] Failed to complete task {TaskId} state transition or announce it", ctx.ServerTaskId);
         }
     }
 
