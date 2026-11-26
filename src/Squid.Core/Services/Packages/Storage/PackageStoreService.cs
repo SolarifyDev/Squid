@@ -44,6 +44,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var configuration = PackageStoreSettingsCheck.PrepareConfiguration(provider, command.Properties, command.Secrets, SelectReusable(provider, command.Properties, store));
 
         await EnsureNameFreeAsync(name, store.Id, ct).ConfigureAwait(false);
+        await EnsureLocationUnchangedWhileHoldingFilesAsync(store, provider, configuration.Properties, ct).ConfigureAwait(false);
 
         var settingsChanged = !SameSettings(configuration.Properties, PackageStoreConfigurationMapper.ParseSettingsLeniently(store.Properties)) || !SameSettings(configuration.Secrets, PackageStoreConfigurationMapper.ParseSettingsLeniently(store.Secret));
 

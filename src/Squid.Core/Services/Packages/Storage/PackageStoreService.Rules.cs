@@ -1,3 +1,4 @@
+using Squid.Core.Persistence.Entities.PackageStorage;
 using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Message.Commands.PackageStorage;
 using Squid.Message.Models.PackageStorage;
@@ -23,11 +24,40 @@ public partial class PackageStoreService
     // A store that still holds files is not deleted: the records pointing at them would stay and every read of them would fail.
     private async Task EnsureNothingHoldsFilesAsync(int id, CancellationToken ct)
     {
+        if (await HoldsFilesAsync(id, ct).ConfigureAwait(false))
+            throw new PackageStoreInUseException(id);
+    }
+
+    // Packages pin (store, blob key) and no blob is moved, so a store that holds files keeps the settings that say where they live.
+    private async Task EnsureLocationUnchangedWhileHoldingFilesAsync(PackageStore store, IPackageBlobStoreProvider provider, IReadOnlyDictionary<string, string> newProperties, CancellationToken ct)
+    {
+        var moved = ChangedLocationKeys(provider.Describe(), newProperties, PackageStoreConfigurationMapper.ParseSettingsLeniently(store.Properties));
+
+        if (moved.Count == 0) return;
+
+        if (await HoldsFilesAsync(store.Id, ct).ConfigureAwait(false))
+            throw new PackageStoreLocationChangeException(store.Id, moved);
+    }
+
+    private async Task<bool> HoldsFilesAsync(int id, CancellationToken ct)
+    {
         foreach (var usage in usages)
         {
-            if (await usage.HoldsFilesAsync(id, ct).ConfigureAwait(false))
-                throw new PackageStoreInUseException(id);
+            if (await usage.HoldsFilesAsync(id, ct).ConfigureAwait(false)) return true;
         }
+
+        return false;
+    }
+
+    /// <summary>The keys of the fields the descriptor marks as the location whose value differs; an absent value counts as empty.</summary>
+    public static IReadOnlyList<string> ChangedLocationKeys(PackageStoreProviderDescriptor descriptor, IReadOnlyDictionary<string, string> newProperties, IReadOnlyDictionary<string, string> storedProperties)
+    {
+        return descriptor.Fields.Where(f => f.IsLocation && ValueOf(newProperties, f.Key) != ValueOf(storedProperties, f.Key)).Select(f => f.Key).ToList();
+    }
+
+    private static string ValueOf(IReadOnlyDictionary<string, string> properties, string key)
+    {
+        return properties != null && properties.TryGetValue(key, out var value) ? value ?? string.Empty : string.Empty;
     }
 
     private static string SerializeProperties(IReadOnlyDictionary<string, string> properties)

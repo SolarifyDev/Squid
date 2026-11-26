@@ -33,6 +33,7 @@ public class BuiltInExceptionStatusTests
         yield return [new BuiltInFeedStoreInvalidException(1, "x"), HttpStatusCode.BadRequest];
         yield return [new BuiltInPackageTooLargeToDeployException("p", "1", 1), HttpStatusCode.Conflict];
         yield return [new PackageStoreInUseException(1), HttpStatusCode.Conflict];
+        yield return [new PackageStoreLocationChangeException(1, ["Root"]), HttpStatusCode.Conflict];
         yield return [new BuiltInPackageIntegrityException("p", "1", "a", "b"), HttpStatusCode.InternalServerError];
         yield return [new PackageArchiveLimitExceededException("has more than 3 entries"), HttpStatusCode.RequestEntityTooLarge];
         yield return [new BuiltInFeedConflictException(1, 2, "https://x"), HttpStatusCode.Conflict];
