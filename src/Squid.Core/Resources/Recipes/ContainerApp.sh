@@ -31,7 +31,7 @@ require_http_client() {
 
 http_ok() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS -o /dev/null --max-time 3 "$1" >/dev/null 2>&1
+    curl -g -fsS -o /dev/null --max-time 3 "$1" >/dev/null 2>&1
   else
     wget -q -O /dev/null -T 3 "$1" >/dev/null 2>&1
   fi
