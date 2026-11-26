@@ -86,7 +86,17 @@ public sealed class FailureFlagMarker
 }
 
 /// <summary>The probes a re-assert pass runs against: the owner-start lookup, the <c>sc failureflag</c> call and the wait between watcher polls.</summary>
-public sealed record ScmReassertionOps(Func<int, DateTime?> StartTimeUtcOf, Func<string, bool, int> SetFailureFlag, Func<TimeSpan, CancellationToken, Task> Delay);
+public sealed record ScmReassertionOps(Func<int, DateTime?> StartTimeUtcOf, Func<string, bool, int> SetFailureFlag, Func<TimeSpan, CancellationToken, Task> Delay)
+{
+    /// <summary>The marker file operations; the real file system unless a test interleaves another writer between them.</summary>
+    public MarkerFileOps Files { get; init; } = MarkerFileOps.Real;
+}
+
+/// <summary>The file operations a restore performs on a marker. <see cref="Move"/> never overwrites: it fails when the destination exists.</summary>
+public sealed record MarkerFileOps(Func<string, string> ReadAllText, Action<string, string> Move, Action<string> Delete)
+{
+    public static MarkerFileOps Real { get; } = new(File.ReadAllText, (source, destination) => File.Move(source, destination, overwrite: false), File.Delete);
+}
 
 public enum OwnerLiveness
 {
@@ -119,7 +129,10 @@ public static class ScmRecoveryReassertion
     private sealed record Pass(int Restored, List<string> Pending);
 
     /// <summary>One synchronous pass: restores every orphaned marker in <paramref name="directory"/>; returns how many flags were restored. Never throws.</summary>
-    public static int Run(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag) => RunPass(directory, startTimeUtcOf, setFailureFlag).Restored;
+    public static int Run(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag) => Run(directory, new ScmReassertionOps(startTimeUtcOf, setFailureFlag, (_, _) => Task.CompletedTask));
+
+    /// <summary>One synchronous pass against <paramref name="ops"/> (its <see cref="ScmReassertionOps.Delay"/> is unused). Never throws.</summary>
+    public static int Run(string directory, ScmReassertionOps ops) => RunPass(directory, ops).Restored;
 
     /// <summary>One pass, then waits for every live owner to exit and re-checks its marker. Returns the total flags restored; ends when no marker is pending, or throws <see cref="OperationCanceledException"/> when <paramref name="ct"/> is cancelled.</summary>
     public static Task<int> RunAndWatchAsync(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
@@ -128,11 +141,11 @@ public static class ScmRecoveryReassertion
     /// <summary>As above, and invokes <paramref name="firstPassDone"/> once the first synchronous pass has settled every orphaned marker (before it starts watching live owners).</summary>
     public static async Task<int> RunAndWatchAsync(string directory, ScmReassertionOps ops, Action firstPassDone, CancellationToken ct)
     {
-        var pass = RunPass(directory, ops.StartTimeUtcOf, ops.SetFailureFlag);
+        var pass = RunPass(directory, ops);
 
         firstPassDone();
 
-        var watched = await Task.WhenAll(pass.Pending.Select(path => WatchOwnerAsync(path, ops.StartTimeUtcOf, ops.SetFailureFlag, ops.Delay, ct))).ConfigureAwait(false);
+        var watched = await Task.WhenAll(pass.Pending.Select(path => WatchOwnerAsync(path, ops, ct))).ConfigureAwait(false);
 
         return pass.Restored + watched.Sum();
     }
@@ -151,7 +164,7 @@ public static class ScmRecoveryReassertion
         return RunAndWatchAsync(directory, new ScmReassertionOps(StartTimeUtcOfProcess, WindowsServiceHost.SetFailureFlag, Task.Delay), firstPassDone, ct);
     }
 
-    private static Pass RunPass(string directory, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    private static Pass RunPass(string directory, ScmReassertionOps ops)
     {
         var pending = new List<string>();
         var restored = 0;
@@ -162,7 +175,7 @@ public static class ScmRecoveryReassertion
 
             foreach (var path in Directory.GetFiles(directory, FailureFlagMarker.FilePrefix + "*" + FailureFlagMarker.FileExtension))
             {
-                var outcome = EvaluateMarker(path, startTimeUtcOf, setFailureFlag);
+                var outcome = EvaluateMarker(path, ops);
 
                 if (outcome == MarkerOutcome.Restored) restored++;
                 if (outcome == MarkerOutcome.OwnerRunning) pending.Add(path);
@@ -176,26 +189,26 @@ public static class ScmRecoveryReassertion
         return new Pass(restored, pending);
     }
 
-    private static async Task<int> WatchOwnerAsync(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag, Func<TimeSpan, CancellationToken, Task> delay, CancellationToken ct)
+    private static async Task<int> WatchOwnerAsync(string path, ScmReassertionOps ops, CancellationToken ct)
     {
         Log.Information("An upgrade is holding the SCM failure-actions flag off; watching it so the flag is restored if it dies ({Marker})", path);
 
         while (true)
         {
-            await delay(OwnerPollInterval, ct).ConfigureAwait(false);
+            await ops.Delay(OwnerPollInterval, ct).ConfigureAwait(false);
 
-            var outcome = EvaluateMarker(path, startTimeUtcOf, setFailureFlag);
+            var outcome = EvaluateMarker(path, ops);
 
             if (outcome != MarkerOutcome.OwnerRunning) return outcome == MarkerOutcome.Restored ? 1 : 0;
         }
     }
 
     /// <summary>Isolated per marker: nothing a single marker does may stop the others from being evaluated.</summary>
-    private static MarkerOutcome EvaluateMarker(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    private static MarkerOutcome EvaluateMarker(string path, ScmReassertionOps ops)
     {
         try
         {
-            return RestoreIfOrphaned(path, startTimeUtcOf, setFailureFlag);
+            return RestoreIfOrphaned(path, ops);
         }
         catch (Exception ex)
         {
@@ -204,15 +217,15 @@ public static class ScmRecoveryReassertion
         }
     }
 
-    private static MarkerOutcome RestoreIfOrphaned(string path, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    private static MarkerOutcome RestoreIfOrphaned(string path, ScmReassertionOps ops)
     {
-        if (!TryReadMarker(path, out var marker)) return MarkerOutcome.Settled;
-        if (marker.IsOwnerAlive(startTimeUtcOf)) return MarkerOutcome.OwnerRunning;
+        if (!TryReadMarker(ops.Files, path, out var marker)) return MarkerOutcome.Settled;
+        if (marker.IsOwnerAlive(ops.StartTimeUtcOf)) return MarkerOutcome.OwnerRunning;
 
         // A newer upgrade may have replaced the marker while the owner lookup ran; its swap window is not ours to undo.
-        if (!StillHolds(path, marker, out var current)) return current == null ? MarkerOutcome.Settled : MarkerOutcome.OwnerRunning;
+        if (!StillHolds(ops.Files, path, marker, out var current)) return current == null ? MarkerOutcome.Settled : MarkerOutcome.OwnerRunning;
 
-        var exit = setFailureFlag(marker.Service, marker.OriginalFlag == 1);
+        var exit = ops.SetFailureFlag(marker.Service, marker.OriginalFlag == 1);
 
         if (exit != 0)
         {
@@ -222,58 +235,142 @@ public static class ScmRecoveryReassertion
 
         Log.Information("Restored SCM failure-actions flag for {Service} to {Flag} after an interrupted upgrade", marker.Service, marker.OriginalFlag);
 
-        return SettleAfterRestore(path, marker, startTimeUtcOf, setFailureFlag);
+        return SettleAfterRestore(path, marker, ops);
     }
 
     /// <summary>
-    /// Deletes the marker only while it still names the owner this restore was for. If a newer upgrade replaced it during the
-    /// restore, that upgrade's marker is kept and its suspension re-asserted (the restore may have landed after its
-    /// <c>failureflag 0</c>), and the marker is watched like any live owner's.
+    /// Removes the marker only if it is still the one this restore was for. The marker is first CLAIMED by renaming it to a
+    /// private tombstone (an atomic step a newer upgrade's <c>Move-Item</c> cannot interleave with) and only the claimed
+    /// file is checked and deleted, so a newer upgrade's marker is never deleted. If the claimed file turns out to be a
+    /// newer upgrade's, it is put back, that upgrade's suspension is re-asserted (the restore may have landed after its
+    /// <c>failureflag 0</c>) and its marker is watched like any live owner's.
     /// </summary>
-    private static MarkerOutcome SettleAfterRestore(string path, FailureFlagMarker restoredFor, Func<int, DateTime?> startTimeUtcOf, Func<string, bool, int> setFailureFlag)
+    private static MarkerOutcome SettleAfterRestore(string path, FailureFlagMarker restoredFor, ScmReassertionOps ops)
     {
-        if (StillHolds(path, restoredFor, out var current))
+        var tombstone = TombstonePathFor(path);
+
+        if (!TryMove(ops.Files, path, tombstone)) return SettleUnclaimed(path, restoredFor, ops);
+
+        if (StillHolds(ops.Files, tombstone, restoredFor, out _))
         {
-            TryDeleteMarker(path);
+            TryDeleteMarker(ops.Files, tombstone);
             return MarkerOutcome.Restored;
         }
 
-        if (current == null) return MarkerOutcome.Restored;
+        PutBackClaimed(ops.Files, tombstone, path);
+
+        return KeepNewerOwner(path, ops);
+    }
+
+    /// <summary>The claim failed: the marker is gone, replaced, or cannot be moved (held open / read-only directory).</summary>
+    private static MarkerOutcome SettleUnclaimed(string path, FailureFlagMarker restoredFor, ScmReassertionOps ops)
+    {
+        if (!StillHolds(ops.Files, path, restoredFor, out _)) return KeepNewerOwner(path, ops);
+
+        Log.Warning("Restored the SCM flag but could not remove marker {Marker}; the next start re-applies the same value", path);
+
+        return MarkerOutcome.Restored;
+    }
+
+    /// <summary>Moves a claimed newer marker back. If an even newer one has landed meanwhile, that one is kept and the claimed (not ours) file is left aside, never deleted.</summary>
+    private static void PutBackClaimed(MarkerFileOps files, string tombstone, string path)
+    {
+        if (TryMove(files, tombstone, path)) return;
+
+        Log.Warning("An even newer SCM failure-actions marker replaced {Marker} while an older one was set aside; keeping the newer one, the older one stays at {Tombstone}", path, tombstone);
+    }
+
+    /// <summary>The marker belongs to a newer upgrade: keep it, re-assert its suspension while it runs, and watch it.</summary>
+    private static MarkerOutcome KeepNewerOwner(string path, ScmReassertionOps ops)
+    {
+        if (!TryReadMarker(ops.Files, path, out var current)) return MarkerOutcome.Restored;
 
         Log.Information("A newer upgrade took over the SCM failure-actions marker for {Service} during the restore; keeping its marker and its suspension", current.Service);
 
-        if (current.IsOwnerAlive(startTimeUtcOf)) setFailureFlag(current.Service, false);
+        if (!current.IsOwnerAlive(ops.StartTimeUtcOf)) return MarkerOutcome.OwnerRunning;
 
-        return MarkerOutcome.OwnerRunning;
+        ops.SetFailureFlag(current.Service, false);
+
+        return UndoSuspensionIfOwnerFinished(path, current, ops);
+    }
+
+    /// <summary>
+    /// The re-suspend can land after the newer upgrade's <c>finally</c> already restored its flag and removed its marker, which
+    /// would leave the flag at 0 with nothing left to heal it. So once the marker is provably gone, the value that upgrade
+    /// recorded is put back.
+    /// </summary>
+    private static MarkerOutcome UndoSuspensionIfOwnerFinished(string path, FailureFlagMarker suspendedFor, ScmReassertionOps ops)
+    {
+        if (!IsGone(ops.Files, path)) return MarkerOutcome.OwnerRunning;
+
+        Log.Information("The newer upgrade for {Service} finished while its suspension was re-asserted; restoring its recorded flag {Flag}", suspendedFor.Service, suspendedFor.OriginalFlag);
+
+        ops.SetFailureFlag(suspendedFor.Service, suspendedFor.OriginalFlag == 1);
+
+        return MarkerOutcome.Restored;
+    }
+
+    /// <summary>A unique name outside the marker file pattern, so a set-aside marker is never picked up as a live one.</summary>
+    private static string TombstonePathFor(string path) => $"{path}.settling-{Guid.NewGuid():N}";
+
+    private static bool TryMove(MarkerFileOps files, string source, string destination)
+    {
+        try
+        {
+            files.Move(source, destination);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Only a missing file counts as gone; a marker that exists but cannot be read right now is still there.</summary>
+    private static bool IsGone(MarkerFileOps files, string path)
+    {
+        try
+        {
+            files.ReadAllText(path);
+            return false;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     /// <summary>True while the file still holds <paramref name="expected"/>'s owner; <paramref name="current"/> is what is there now (null when gone or unreadable).</summary>
-    private static bool StillHolds(string path, FailureFlagMarker expected, out FailureFlagMarker current)
+    private static bool StillHolds(MarkerFileOps files, string path, FailureFlagMarker expected, out FailureFlagMarker current)
     {
-        if (!TryReadMarker(path, out current)) return false;
+        if (!TryReadMarker(files, path, out current)) return false;
 
         return current.HasSameOwnerAs(expected);
     }
 
-    private static void TryDeleteMarker(string path)
+    private static void TryDeleteMarker(MarkerFileOps files, string path)
     {
         try
         {
-            File.Delete(path);
+            files.Delete(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Log.Warning(ex, "Restored the SCM flag but could not remove marker {Marker}; the next start re-applies the same value", path);
+            Log.Warning(ex, "Restored the SCM flag but could not remove the claimed marker {Marker}", path);
         }
     }
 
-    private static bool TryReadMarker(string path, out FailureFlagMarker marker)
+    private static bool TryReadMarker(MarkerFileOps files, string path, out FailureFlagMarker marker)
     {
         marker = null;
 
         try
         {
-            return FailureFlagMarker.TryParse(File.ReadAllText(path), out marker);
+            return FailureFlagMarker.TryParse(files.ReadAllText(path), out marker);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
