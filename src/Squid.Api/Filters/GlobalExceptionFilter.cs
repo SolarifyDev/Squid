@@ -54,6 +54,7 @@ public class GlobalExceptionFilter : IExceptionFilter
             PackageStoreConfigurationInvalidException => HttpStatusCode.BadRequest,
             PackageStoreProviderNotFoundException => HttpStatusCode.BadRequest,
             PackageStoreInUseException => HttpStatusCode.Conflict,
+            PackageStoreLocationChangeException => HttpStatusCode.Conflict,
             BuiltInFeedNotFoundException => HttpStatusCode.NotFound,
             BuiltInPackageNotFoundException => HttpStatusCode.NotFound,
             PackageTooLargeException => HttpStatusCode.RequestEntityTooLarge,

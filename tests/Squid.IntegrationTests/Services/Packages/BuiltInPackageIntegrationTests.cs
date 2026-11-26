@@ -405,6 +405,29 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
     }
 
     [Fact]
+    public async Task AStoreHoldingPackages_CannotMoveItsRoot_ButCanBeRenamed_AndTheirPackagesStayReadable()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("one"));
+
+        var moved = new UpdatePackageStoreCommand { Id = setup.StoreId, Name = "Disk", Properties = new Dictionary<string, string> { ["Root"] = Path.Combine(_root, "elsewhere") } };
+
+        await Should.ThrowAsync<PackageStoreLocationChangeException>(() => Run<IPackageStoreService>(s => s.UpdateAsync(moved, CancellationToken.None)));
+
+        var renamed = new UpdatePackageStoreCommand { Id = setup.StoreId, Name = "Renamed", Properties = new Dictionary<string, string> { ["Root"] = _root } };
+        var dto = await Run<IPackageStoreService, Squid.Message.Models.PackageStorage.PackageStoreDto>(s => s.UpdateAsync(renamed, CancellationToken.None));
+
+        dto.Name.ShouldBe("Renamed");
+        dto.Properties["Root"].ShouldBe(_root);
+
+        var spare = await CreateStoreAsync("Spare", Path.Combine(_root, "spare"), makeDefault: false);
+        var spareMoved = new UpdatePackageStoreCommand { Id = spare, Name = "Spare", Properties = new Dictionary<string, string> { ["Root"] = Path.Combine(_root, "spare2") } };
+
+        (await Run<IPackageStoreService, Squid.Message.Models.PackageStorage.PackageStoreDto>(s => s.UpdateAsync(spareMoved, CancellationToken.None))).Properties["Root"].ShouldEndWith("spare2");
+    }
+
+    [Fact]
     public async Task TheDatabase_RefusesToDeleteAStoreAPackagePointsAt_EvenWithoutTheServiceCheck()
     {
         var setup = await SetUpAsync();
