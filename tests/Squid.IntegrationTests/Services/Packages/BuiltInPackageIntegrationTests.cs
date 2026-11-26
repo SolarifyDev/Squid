@@ -122,8 +122,16 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         return id;
     }
 
-    private Task<PushBuiltInPackageResponseData> PushAsync(int spaceId, byte[] bytes, string fileName = "Acme.Web.1.0.0.zip", string packageId = null, string version = null, bool replace = false)
+    // Without a file name the upload is "package.zip" of Acme.Web: a name carrying a version would be read as the version of the package, and most tests here are about
+    // the version rule's counter.
+    private Task<PushBuiltInPackageResponseData> PushAsync(int spaceId, byte[] bytes, string fileName = null, string packageId = null, string version = null, bool replace = false)
     {
+        if (fileName == null)
+        {
+            fileName = "package.zip";
+            packageId ??= "Acme.Web";
+        }
+
         var command = new PushBuiltInPackageCommand { SpaceId = spaceId, FileName = fileName, PackageId = packageId, Version = version, Replace = replace, Content = new MemoryStream(bytes), DeclaredSizeBytes = bytes.Length };
 
         return Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None));
@@ -281,7 +289,7 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         var third = await PushAsync(setup.SpaceId, Zip("three"), fileName: "acme.web.9.9.9.zip");
 
         new[] { first, second, third }.Select(r => r.Package.PackageId).Distinct().ShouldBe(["Acme.Web"]);
-        new[] { first, second, third }.Select(r => r.Package.Version).ShouldBe(["1.0.1", "1.0.2", "1.0.3"]);
+        new[] { first, second, third }.Select(r => r.Package.Version).ShouldBe(["1.0.1", "1.0.2", "9.9.9"], "the third upload's file name carries a version and the package has no rule of its own");
         (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM builtin_package_name")).ShouldBe(1);
         (await ScalarAsync("SELECT COUNT(*) AS \"Value\" FROM package_version_counter")).ShouldBe(1, "one counter, because every push used the one canonical id string");
     }
@@ -309,6 +317,101 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         results.Select(r => r.Package.Version).OrderBy(v => v).ShouldBe(Enumerable.Range(1, 10).Select(i => $"1.0.{i}").OrderBy(v => v));
         (await RowsAsync()).Count.ShouldBe(10);
         BlobFiles().Length.ShouldBe(10);
+    }
+
+    [Fact]
+    public async Task Push_ConcurrentPushesAfterAnExplicitVersionTheCounterWouldHandOut_AllSucceedWithDistinctVersions()
+    {
+        var setup = await SetUpAsync();
+        var handPushed = Zip("hand pushed");
+
+        await PushAsync(setup.SpaceId, handPushed, version: "1.0.1");
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => PushAsync(setup.SpaceId, Zip($"build {i}"), replace: i % 2 == 0)));
+
+        var versions = results.Select(r => r.Package.Version).ToList();
+
+        versions.Distinct().Count().ShouldBe(8);
+        versions.ShouldNotContain("1.0.1");
+        results.ShouldAllBe(r => !r.Replaced);
+        (await RowsAsync()).Count.ShouldBe(9);
+        (await RowsAsync()).Single(r => r.Version == "1.0.1").Sha256.ShouldBe(Sha(handPushed));
+    }
+
+    [Fact]
+    public async Task Push_ReplaceOfAVersionAReleaseSelectsUnderAnEmptyReferenceName_IsRefused()
+    {
+        var setup = await SetUpAsync();
+        var original = Zip("original");
+
+        await PushAsync(setup.SpaceId, original, version: "1.0.0");
+        await InsertSelectionAsync(setup.FeedId, "", "1.0.0");
+
+        await Should.ThrowAsync<PackageVersionInUseException>(() => PushAsync(setup.SpaceId, Zip("replacement"), version: "1.0.0", replace: true));
+
+        (await RowsAsync()).Single().Sha256.ShouldBe(Sha(original));
+    }
+
+    [Fact]
+    public async Task Push_ReplaceOfAVersionAReleaseSelectsUnderAVariableReferenceName_IsRefused()
+    {
+        var setup = await SetUpAsync();
+        var original = Zip("original");
+
+        await PushAsync(setup.SpaceId, original, version: "1.0.0");
+        await InsertSelectionAsync(setup.FeedId, "#{AppPackage}", "1.0.0");
+
+        await Should.ThrowAsync<PackageVersionInUseException>(() => PushAsync(setup.SpaceId, Zip("replacement"), version: "1.0.0", replace: true));
+
+        (await RowsAsync()).Single().Sha256.ShouldBe(Sha(original));
+    }
+
+    [Fact]
+    public async Task Replace_WhenAReleaseSelectsTheVersionUnderAVariableNameAfterTheEarlyCheck_IsRefusedByTheAtomicUpdate()
+    {
+        var setup = await SetUpAsync();
+        var original = Zip("original");
+
+        await PushAsync(setup.SpaceId, original, version: "1.0.0");
+
+        var command = new PushBuiltInPackageCommand { SpaceId = setup.SpaceId, FileName = "Acme.Web.1.0.0.zip", Version = "1.0.0", Replace = true, Content = new MemoryStream(Zip("replacement")) };
+
+        await Should.ThrowAsync<PackageVersionInUseException>(() => Run<IBuiltInPackagePushService, PushBuiltInPackageResponseData>(push => push.PushAsync(command, CancellationToken.None), builder =>
+            builder.Register(c => new ReleaseAppearsBeforeReplace(new BuiltInPackageDataProvider(c.Resolve<IRepository>(), c.Resolve<IUnitOfWork>()), c.Resolve<IRepository>(), c.Resolve<IUnitOfWork>(), setup.FeedId, "#{AppPackage}")).As<IBuiltInPackageDataProvider>().InstancePerLifetimeScope()));
+
+        (await RowsAsync()).Single().Sha256.ShouldBe(Sha(original));
+    }
+
+    [Fact]
+    public async Task Push_ReplaceWhenTheReleasesReferenceNameIsAnotherBuiltInPackage_ChecksThatPackageNotThisOne()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("web"), packageId: "Acme.Web", version: "1.0.0");
+        await PushAsync(setup.SpaceId, Zip("api"), packageId: "Acme.Api", version: "1.0.0");
+        await InsertSelectionAsync(setup.FeedId, "Acme.Api", "1.0.0");
+
+        var web = await PushAsync(setup.SpaceId, Zip("web 2"), packageId: "Acme.Web", version: "1.0.0", replace: true);
+
+        web.Replaced.ShouldBeTrue();
+        await Should.ThrowAsync<PackageVersionInUseException>(() => PushAsync(setup.SpaceId, Zip("api 2"), packageId: "Acme.Api", version: "1.0.0", replace: true));
+    }
+
+    [Fact]
+    public async Task UsedByARelease_IsDecidedByTheFeedAndVersion_WhenTheReferenceNameNamesNoBuiltInPackage()
+    {
+        var setup = await SetUpAsync();
+
+        await PushAsync(setup.SpaceId, Zip("web"), packageId: "Acme.Web", version: "1.0.0");
+        await InsertSelectionAsync(setup.FeedId, "", "1.0.0");
+        await InsertSelectionAsync(setup.FeedId, "Some.Container.Image", "2.0.0");
+
+        Task<bool> Used(int feed, string package, string version) => Run<IBuiltInPackageUsage, bool>(u => u.IsVersionSelectedByReleaseAsync(feed, package, version, CancellationToken.None));
+
+        (await Used(setup.FeedId, "Acme.Web", "1.0.0")).ShouldBeTrue("an empty reference name could be any package");
+        (await Used(setup.FeedId, "Acme.Web", "2.0.0")).ShouldBeTrue("a reference name that is no built-in package could be this one");
+        (await Used(setup.FeedId, "Acme.Web", "3.0.0")).ShouldBeFalse("no release selects that version");
+        (await Used(setup.FeedId + 1, "Acme.Web", "1.0.0")).ShouldBeFalse("another feed");
     }
 
     [Fact]
@@ -352,6 +455,9 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
     {
         var setup = await SetUpAsync();
 
+        // Both are real packages of the feed: a reference name that names no package would count for every package (see the test of that below).
+        await PushAsync(setup.SpaceId, Zip("web"), packageId: "Acme.Web", version: "1.0.0");
+        await PushAsync(setup.SpaceId, Zip("api"), packageId: "Acme.Api", version: "1.0.0");
         await InsertSelectionAsync(setup.FeedId, "ACME.web", "1.0.0");
 
         Task<bool> Used(int feed, string package, string version) => Run<IBuiltInPackageUsage, bool>(u => u.IsVersionSelectedByReleaseAsync(feed, package, version, CancellationToken.None));
@@ -709,7 +815,7 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
         (await RowsAsync()).Single().Sha256.ShouldBe(Sha(original));
     }
 
-    private sealed class ReleaseAppearsBeforeReplace(BuiltInPackageDataProvider inner, IRepository repository, IUnitOfWork unitOfWork, int feedId) : IBuiltInPackageDataProvider
+    private sealed class ReleaseAppearsBeforeReplace(BuiltInPackageDataProvider inner, IRepository repository, IUnitOfWork unitOfWork, int feedId, string referenceName = "ACME.WEB") : IBuiltInPackageDataProvider
     {
         public Task<string> ResolveCanonicalIdAsync(int f, string p, CancellationToken ct) => inner.ResolveCanonicalIdAsync(f, p, ct);
         public Task<BuiltInPackage> GetAsync(int f, string p, string v, CancellationToken ct) => inner.GetAsync(f, p, v, ct);
@@ -719,7 +825,7 @@ public class BuiltInPackageIntegrationTests : TestBase, IDisposable
 
         public async Task ReplaceContentAsync(int id, BuiltInPackage content, CancellationToken ct)
         {
-            await repository.InsertAsync(new ReleaseSelectedPackage { ReleaseId = 1, FeedId = feedId, ActionName = "Deploy", PackageReferenceName = "ACME.WEB", Version = "1.0.0" }, ct);
+            await repository.InsertAsync(new ReleaseSelectedPackage { ReleaseId = 1, FeedId = feedId, ActionName = "Deploy", PackageReferenceName = referenceName, Version = "1.0.0" }, ct);
             await unitOfWork.SaveChangesAsync(ct);
 
             await inner.ReplaceContentAsync(id, content, ct);
