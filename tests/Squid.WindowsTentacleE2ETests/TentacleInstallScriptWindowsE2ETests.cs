@@ -23,8 +23,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// or post-extract verification. Every install-tentacle.ps1 release
 /// hereafter MUST keep these tests green.</para>
 ///
-/// <para><b>Scenario coverage</b> (per <c>docs/e2e-scenario-matrix.md</c>
-/// Section A — Phase 12.K first cut):</para>
+/// <para><b>Scenario coverage</b>:</para>
 /// <list type="bullet">
 ///   <item>A1.h — happy path with custom install dir + DOWNLOAD_BASE override</item>
 ///   <item>A1.u1 — bogus version → mirror returns 404 → script exits non-zero</item>

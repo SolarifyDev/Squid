@@ -36,8 +36,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// (no skip-on-OS guard). Register flow is OS-agnostic except the Linux
 /// ownership-handover step (covered separately in the future Linux phase).</para>
 ///
-/// <para><b>Scenario coverage</b> (per <c>docs/e2e-scenario-matrix.md</c>
-/// Section C):</para>
+/// <para><b>Scenario coverage</b>:</para>
 /// <list type="bullet">
 ///   <item>C1.h — Listening register happy path</item>
 ///   <item>C1.u1 — server returns 401</item>

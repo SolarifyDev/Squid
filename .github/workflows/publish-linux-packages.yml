@@ -15,7 +15,7 @@ name: Build & publish Linux packages (deb / rpm + APT/RPM repo)
 #   • Clean concerns — the binary build already does its own provenance
 #     checks; this workflow's job is the packaging + repo.
 #
-# Prerequisites (one-time, see docs/phase-2-apt-rpm-setup.md):
+# Prerequisites (one-time):
 #   • SQUID_GPG_PRIVATE_KEY secret set (use bootstrap-gpg-key.yml to mint)
 #   • gh-pages branch exists with APT/RPM layout bootstrapped (apt/, rpm/)
 #   • Custom domain squid.solarifyai.com pointed at gh-pages via Pages
@@ -212,7 +212,7 @@ jobs:
           GPG_KEY: ${{ secrets.SQUID_GPG_PRIVATE_KEY }}
         run: |
           if [ -z "$GPG_KEY" ]; then
-            echo "::error::SQUID_GPG_PRIVATE_KEY secret is not set. Run the bootstrap-gpg-key workflow first; see docs/phase-2-apt-rpm-setup.md."
+            echo "::error::SQUID_GPG_PRIVATE_KEY secret is not set. Run the bootstrap-gpg-key workflow first."
             exit 1
           fi
           echo "$GPG_KEY" | gpg --batch --import

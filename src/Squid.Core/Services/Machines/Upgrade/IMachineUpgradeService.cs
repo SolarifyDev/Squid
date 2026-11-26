@@ -24,8 +24,6 @@ public interface IMachineUpgradeService : IScopedDependency
     /// not invalidate the runtime cache. Pure comparison of cached
     /// current version vs registry latest version, with operator-readable
     /// reason for the decision.
-    ///
-    /// <para>FE Phase-2 §9.2 (see <c>docs/tentacle-self-upgrade-frontend.md</c>).</para>
     /// </summary>
     Task<GetUpgradeInfoResponseData> GetUpgradeInfoAsync(GetUpgradeInfoRequest request, CancellationToken ct);
 }

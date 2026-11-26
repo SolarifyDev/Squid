@@ -32,8 +32,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// real UAC prompt (would block the runner forever), Windows Defender
 /// SmartScreen blocking unsigned binaries (Defender is disabled on
 /// windows-latest runners), corporate GPO ExecutionPolicy locks (no GPO
-/// infrastructure on runners). Those are documented in
-/// <c>docs/windows-tentacle-install.md</c> as known operator workflows.</para>
+/// infrastructure on runners); they remain known operator workflows.</para>
 /// </summary>
 [Trait("Category", WindowsUpgradeE2ECategories.TentacleInstallScript)]
 public sealed class TentacleInstallScriptResilienceE2ETests : IDisposable

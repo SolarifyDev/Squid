@@ -24,8 +24,7 @@ namespace Squid.WindowsTentacleE2ETests;
 /// other). A regression in service-naming, install-dir handling, or
 /// SCM record isolation surfaces here.</para>
 ///
-/// <para><b>Scenario coverage</b> (per <c>docs/e2e-scenario-matrix.md</c>
-/// Section G — Phase 12.L first cut):</para>
+/// <para><b>Scenario coverage</b>:</para>
 /// <list type="bullet">
 ///   <item>G1.h — Two instances coexist; both reach RUNNING independently</item>
 ///   <item>G2.h — Uninstalling one instance leaves the other untouched</item>
