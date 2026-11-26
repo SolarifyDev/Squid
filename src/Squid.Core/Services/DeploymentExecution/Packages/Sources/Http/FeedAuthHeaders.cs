@@ -8,7 +8,9 @@ internal static class FeedAuthHeaders
     public static Dictionary<string, string> Build(ExternalFeed feed)
     {
         var headers = new Dictionary<string, string>();
-        var isGitHub = PackageFeedKinds.Mentions(feed.FeedType, "GitHub");
+        // Deliberately the raw substring check, not the classified kind: a name such as "GitHub Helm" classifies
+        // as Helm (index lookup) but has always sent GitHub headers and token auth, and must keep doing so.
+        var isGitHub =PackageFeedKinds.Mentions(feed.FeedType, "GitHub");
 
         if (isGitHub)
         {
