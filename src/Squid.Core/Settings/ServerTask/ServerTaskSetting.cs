@@ -27,6 +27,12 @@ public class ServerTaskTerminalWriteSettings
 
     /// <summary>The wait before the first retry; each further retry waits three times as long. Negative values fall back to 200.</summary>
     public int RetryDelayMilliseconds { get; set; } = 200;
+
+    /// <summary>The longest any single retry waits, however many attempts are allowed. Non-positive values fall back to 5000.</summary>
+    public int MaxRetryDelayMilliseconds { get; set; } = 5000;
+
+    /// <summary>The most all retries of one write wait in total; once it is used up the failure is surfaced even if attempts remain. Non-positive values fall back to 15000.</summary>
+    public int MaxTotalRetryDelayMilliseconds { get; set; } = 15000;
 }
 
 public class ServerTaskLeaseSettings

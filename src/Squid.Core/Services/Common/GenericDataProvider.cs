@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Storage;
 using Squid.Core.Persistence.Db;
 
 namespace Squid.Core.Services.Common;
@@ -32,7 +33,7 @@ public class GenericDataProvider : IGenericDataProvider
         }
         catch
         {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await RollbackQuietlyAsync(transaction, cancellationToken).ConfigureAwait(false);
             throw;
         }
     }
@@ -48,8 +49,22 @@ public class GenericDataProvider : IGenericDataProvider
         }
         catch
         {
-            await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            await RollbackQuietlyAsync(transaction, cancellationToken).ConfigureAwait(false);
             throw;
+        }
+    }
+
+    // The rollback is best effort: when the commit itself failed (a connection dropped mid-commit, so the outcome on the server is unknown) the rollback
+    // usually fails too, and its error must not replace the original one — callers classify that original failure (a transient one is retried).
+    private static async Task RollbackQuietlyAsync(IDbContextTransaction transaction, CancellationToken ct)
+    {
+        try
+        {
+            await transaction.RollbackAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Rolling back a failed transaction failed too; surfacing the original failure");
         }
     }
 }
