@@ -20,9 +20,10 @@ RUN KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt) && \
     curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${KARCH}/kubectl" && \
     chmod +x kubectl && mv kubectl /usr/local/bin/kubectl
 
-# Download latest helm matching target architecture
-RUN HELM_VERSION=$(curl -fsSL https://api.github.com/repos/helm/helm/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/') && \
-    if [ "$TARGETARCH" = "amd64" ]; then HARCH="amd64"; else HARCH="$TARGETARCH"; fi && \
+# Download helm matching target architecture. The version is pinned: asking the GitHub API for "latest" is unauthenticated, so a rate-limited
+# runner got 403, an empty version and a failed build. Raise it here (or with --build-arg HELM_VERSION=...) when upgrading.
+ARG HELM_VERSION=v4.3.2
+RUN if [ "$TARGETARCH" = "amd64" ]; then HARCH="amd64"; else HARCH="$TARGETARCH"; fi && \
     curl -fsSL https://get.helm.sh/helm-${HELM_VERSION}-linux-${HARCH}.tar.gz | tar xz && \
     mv linux-${HARCH}/helm /usr/local/bin/helm && \
     chmod +x /usr/local/bin/helm && \
