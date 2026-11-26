@@ -348,6 +348,83 @@ public class PackageContentFetchBehaviorTests
     }
 
     [Fact]
+    public async Task Helm_IndexRequestTimesOut_FallsBackToConventionUrl()
+    {
+        // The 30s index client timeout surfaces as TaskCanceledException (an OperationCanceledException).
+        var http = new FakeHttp
+        {
+            Respond = url => url.EndsWith("index.yaml")
+                ? throw new TaskCanceledException("timeout")
+                : url == "https://charts.example.com/c-1.0.0.tgz" ? Ok(SampleArchive) : new HttpResponseMessage(HttpStatusCode.NotFound)
+        };
+
+        var result = await Fetch(http, Feed("Helm", "https://charts.example.com"), "c", "1.0.0");
+
+        http.Calls.Select(c => c.Url).ShouldBe(new[] { "https://charts.example.com/index.yaml", "https://charts.example.com/c-1.0.0.tgz" });
+        result.Files.ShouldContainKey("a.yaml");
+        result.Warnings.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AlreadyCancelledToken_ReturnsWarningAndEmptyContent_DoesNotThrow()
+    {
+        // Pins EXISTING behaviour: cancellation is swallowed like any other failure. Changing it to
+        // propagate OperationCanceledException is a separate decision, not part of the source split.
+        var http = ServeArchiveAt("https://packages.example.com/my-package/1.0.0");
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var result = await http.CreateFetcher().FetchAsync(Feed("Generic"), "my-package", "1.0.0", cts.Token);
+
+        result.Warnings.Count.ShouldBe(1);
+        result.Warnings[0].ShouldStartWith("Package fetch failed:");
+        result.Files.ShouldBeEmpty();
+        result.RawBytes.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task PlainTar_ExtractsRegularAndV7Entries_WithoutExtensionFilter()
+    {
+        using var ms = new MemoryStream();
+
+        using (var tar = new TarWriter(ms, leaveOpen: true))
+        {
+            tar.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "pkg/a.yaml") { DataStream = new MemoryStream(Encoding.UTF8.GetBytes("kind: A")) });
+            tar.WriteEntry(new V7TarEntry(TarEntryType.V7RegularFile, "pkg/b.txt") { DataStream = new MemoryStream(Encoding.UTF8.GetBytes("v7")) });
+        }
+
+        var bytes = ms.ToArray();
+        var http = new FakeHttp { Respond = _ => Ok(bytes) };
+
+        var result = await Fetch(http, Feed("Generic"));
+
+        result.Files.Keys.OrderBy(k => k).ShouldBe(new[] { "a.yaml", "b.txt" });
+        Encoding.UTF8.GetString(result.Files["b.txt"]).ShouldBe("v7");
+        result.RawBytes.ShouldBe(bytes);
+    }
+
+    [Fact]
+    public async Task NuGetAndGitHubInName_SendsGitHubHeaders()
+    {
+        var http = new FakeHttp();
+
+        await Fetch(http, Feed("NuGet GitHub", "https://api.github.com"), "o/r", "1");
+
+        http.Calls.Single().Headers["Accept"].ShouldBe("application/vnd.github+json");
+    }
+
+    [Fact]
+    public async Task GitHubHelm_PasswordOnly_SendsTokenAuthOnIndexAndDownload()
+    {
+        var http = new FakeHttp();
+
+        await Fetch(http, Feed("GitHub Helm", "https://x.example.com", password: "ghp_x"), "c", "1.0.0");
+
+        http.Calls.Count.ShouldBe(2);
+        http.Calls.ShouldAllBe(c => c.Headers["Authorization"] == "token ghp_x");
+    }
+
+    [Fact]
     public async Task TransportException_IsReportedAsWarning_NotThrown()
     {
         var http = new FakeHttp { Respond = _ => throw new HttpRequestException("connection refused") };

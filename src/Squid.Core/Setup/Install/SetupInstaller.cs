@@ -1,3 +1,4 @@
+using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Setup.Embedded;
 using Squid.Core.Settings.Setup;
 using Squid.Message.Models.Setup;
@@ -17,20 +18,25 @@ public sealed partial class SetupInstaller
         (StepKeys.Database, "Prepare PostgreSQL"),
         (StepKeys.Redis, "Prepare Redis"),
         (StepKeys.Migrate, "Create database schema"),
+        (StepKeys.PackageStorage, "Configure package storage"),
         (StepKeys.Persist, "Save configuration")
     };
 
     private readonly EmbeddedServiceHost _embedded;
     private readonly IConfiguration _configuration;
     private readonly SetupProgressTracker _tracker;
+    private readonly IReadOnlyList<IPackageBlobStoreProvider> _packageStoreProviders;
+    private readonly SetupSchemaOrigin _schemaOrigin;
 
     private SetupInstallContext _ctx;
 
-    public SetupInstaller(EmbeddedServiceHost embedded, IConfiguration configuration, SetupProgressTracker tracker)
+    public SetupInstaller(EmbeddedServiceHost embedded, IConfiguration configuration, SetupProgressTracker tracker, IReadOnlyList<IPackageBlobStoreProvider> packageStoreProviders = null, SetupSchemaOrigin schemaOrigin = null)
     {
+        _schemaOrigin = schemaOrigin ?? new SetupSchemaOrigin();
         _embedded = embedded;
         _configuration = configuration;
         _tracker = tracker;
+        _packageStoreProviders = packageStoreProviders ?? PackageStoreProviderCatalog.Create(configuration);
     }
 
     public async Task InstallAsync(SetupInstallRequest request, CancellationToken ct)
@@ -42,6 +48,7 @@ public sealed partial class SetupInstaller
             await RunStepAsync(StepKeys.Database, PrepareDatabaseAsync, ct);
             await RunStepAsync(StepKeys.Redis, PrepareRedisAsync, ct);
             await RunStepAsync(StepKeys.Migrate, MigrateDatabaseAsync, ct);
+            await RunStepAsync(StepKeys.PackageStorage, ApplyPackageStorageAsync, ct);
             await RunStepAsync(StepKeys.Persist, PersistConfigurationAsync, ct);
 
             _tracker.Complete();
@@ -76,6 +83,7 @@ public sealed partial class SetupInstaller
         public const string Database = "database";
         public const string Redis = "redis";
         public const string Migrate = "migrate";
+        public const string PackageStorage = "packageStorage";
         public const string Persist = "persist";
     }
 }

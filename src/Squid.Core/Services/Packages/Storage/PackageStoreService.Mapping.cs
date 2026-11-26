@@ -13,7 +13,7 @@ public partial class PackageStoreService
         var warnings = new List<string>();
         var configuration = ReadConfiguration(store, warnings);
 
-        warnings.AddRange(BuildWarnings(provider, configuration));
+        warnings.AddRange(PackageStoreSettingsCheck.BuildWarnings(provider, configuration));
 
         return new PackageStoreDto
         {
@@ -70,18 +70,6 @@ public partial class PackageStoreService
         catch (Exception)
         {
             return null;
-        }
-    }
-
-    private static List<string> BuildWarnings(IPackageBlobStoreProvider provider, PackageBlobStoreConfiguration configuration)
-    {
-        try
-        {
-            return provider is IPackageBlobStoreWarnings source ? source.GetWarnings(configuration).ToList() : new List<string>();
-        }
-        catch (Exception ex)
-        {
-            return [$"The saved settings are invalid: {ex.Message}"];
         }
     }
 }
