@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using k8s.Models;
+using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
 using Squid.Message.Contracts.Tentacle.V2;
 using Squid.Tentacle.Configuration;
@@ -134,6 +135,70 @@ public class ScriptPodServiceTicketLockScopeTests : IDisposable
         served.ShouldBeTrue($"{operation} of a ticket in the completing ticket's lock slot waited for the next queued script's pod launch");
     }
 
+    // ── every Kubernetes call of a V2 Cancel or Complete leaves the other tickets in its lock stripe served ──
+
+    [Theory]
+    [InlineData("Start")]
+    [InlineData("Complete")]
+    [InlineData("Cancel")]
+    public void CancelOfATrackedPod_ItsPodDeletion_DoesNotBlockAnotherTicketInTheSameLockSlot(string operation)
+    {
+        var service = NewService();
+        var slow = NewCommand();
+        var probe = NewNeighbourProbe(service, operation, slow);
+        service.StartScript(slow).State.ShouldBe(ScriptStateV2.Running);
+        _ops.Setup(o => o.DeletePod(PodOf(slow), It.IsAny<string>(), It.IsAny<int?>())).Callback(probe.Check);
+
+        var cancel = service.CancelScript(new CancelScriptCommandV2(slow.ScriptTicket, 0));
+
+        probe.AssertServedDuringEveryCall("the cancelled pod's deletion");
+        cancel.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+        service.GetStatus(new ScriptStatusRequestV2(slow.ScriptTicket, 0)).ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+    }
+
+    [Theory]
+    [InlineData("Start")]
+    [InlineData("Complete")]
+    [InlineData("Cancel")]
+    public void CancelOfAQueuedScript_ItsSecretDeletion_DoesNotBlockAnotherTicketInTheSameLockSlot(string operation)
+    {
+        var service = NewService(withPendingSecrets: true);
+        var holder = NewCommand(ScriptIsolationLevel.FullIsolation, "lockscope-mx");
+        var slow = NewCommand(ScriptIsolationLevel.FullIsolation, "lockscope-mx");
+        var probe = NewNeighbourProbe(service, operation, slow);
+        service.StartScript(holder).State.ShouldBe(ScriptStateV2.Running);
+        service.StartScript(slow).State.ShouldBe(ScriptStateV2.Pending);
+        var secret = $"squid-pending-{slow.ScriptTicket.TaskId[..12]}";
+        _ops.Setup(o => o.DeleteSecret(secret, It.IsAny<string>())).Callback(probe.Check);
+
+        var cancel = service.CancelScript(new CancelScriptCommandV2(slow.ScriptTicket, 0));
+
+        probe.AssertServedDuringEveryCall("the queued script's Secret deletion");
+        cancel.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+        service.PendingScripts.ContainsKey(slow.ScriptTicket.TaskId).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("Start")]
+    [InlineData("Complete")]
+    [InlineData("Cancel")]
+    public void CompleteOfATrackedPod_ItsPodReadsAndDeletion_DoNotBlockAnotherTicketInTheSameLockSlot(string operation)
+    {
+        var service = NewService();
+        var slow = NewCommand();
+        var probe = NewNeighbourProbe(service, operation, slow);
+        service.StartScript(slow).State.ShouldBe(ScriptStateV2.Running);
+        _ops.Setup(o => o.ReadPodStatus(PodOf(slow), It.IsAny<string>())).Returns(() => { probe.Check(); return SucceededPod(exitCode: 7); });
+        _ops.Setup(o => o.DeletePod(PodOf(slow), It.IsAny<string>(), It.IsAny<int?>())).Callback(probe.Check);
+
+        var complete = service.CompleteScript(new CompleteScriptCommandV2(slow.ScriptTicket, 0));
+
+        probe.AssertServedDuringEveryCall("the completed pod's termination and exit code reads and its deletion");
+        complete.Outcome.ShouldBe(CompleteScriptOutcomeV2.Completed);
+        complete.FinalStatus!.ExitCode.ShouldBe(7);
+        _ops.Verify(o => o.DeletePod(PodOf(slow), "test-ns", It.IsAny<int?>()), Times.Once);
+    }
+
     // ── what the narrower lock must still guarantee ──────────────────────────
 
     [Fact]
@@ -257,7 +322,33 @@ public class ScriptPodServiceTicketLockScopeTests : IDisposable
 
     private sealed record Park(ManualResetEventSlim Entered, ManualResetEventSlim Release);
 
-    private ScriptPodService NewService() => new(_tentacleSettings, _kubernetesSettings, new KubernetesPodManager(_ops.Object, _kubernetesSettings));
+    private ScriptPodService NewService(bool withPendingSecrets = false) => new(_tentacleSettings, _kubernetesSettings, new KubernetesPodManager(_ops.Object, _kubernetesSettings), withPendingSecrets ? _ops.Object : null);
+
+    private NeighbourProbe NewNeighbourProbe(ScriptPodService service, string operation, StartScriptCommandV2 slow)
+    {
+        var other = NewCommandInSameLockSlotAs(slow);
+
+        if (operation != "Start") service.StartScript(other).State.ShouldBe(ScriptStateV2.Running);
+
+        return new NeighbourProbe(() => Run(service, operation, operation == "Start" ? NewCommandInSameLockSlotAs(slow) : other));
+    }
+
+    /// <summary>Run from inside a mocked Kubernetes call of the slow ticket: whether a ticket in the same lock stripe is served while that call is in progress.</summary>
+    private sealed class NeighbourProbe(Func<object> neighbour)
+    {
+        private readonly List<bool> _served = new();
+
+        public void Check() => _served.Add(Task.Run(neighbour).Wait(ServedWithin));
+
+        public void AssertServedDuringEveryCall(string call)
+        {
+            _served.ShouldNotBeEmpty($"{call} must have run");
+            _served.ShouldAllBe(served => served, $"an unrelated ticket in the same lock slot waited for {call}");
+        }
+    }
+
+    private static V1Pod SucceededPod(int exitCode)
+        => new() { Status = new V1PodStatus { Phase = "Succeeded", ContainerStatuses = new List<V1ContainerStatus> { new() { Name = "script", State = new V1ContainerState { Terminated = new V1ContainerStateTerminated { ExitCode = exitCode } } } } } };
 
     private static string PodOf(StartScriptCommandV2 command) => $"squid-script-{command.ScriptTicket.TaskId[..12]}";
 
