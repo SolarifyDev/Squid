@@ -575,7 +575,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
             if (ctx != null) return CompleteTrackedPod(command.Ticket, ctx, recordFinal, deferredToCaller);
 
             // A queued or launching script has no result yet, and its launch (not this Complete) owns its state and isolation mutex.
-            if (launching) return LaunchingStatus(command.Ticket, command.LastLogSequence);
+            // The answer stays Complete + UnknownResult as before: a V1 server reads any Complete answer's exit code as the result,
+            // so a Running answer here (exit code 0) could be taken for success.
+            if (launching) return CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
 
             DeletePersistedStateIfAny(Path.Combine(_tentacleSettings.WorkspacePath, command.Ticket.TaskId));
 

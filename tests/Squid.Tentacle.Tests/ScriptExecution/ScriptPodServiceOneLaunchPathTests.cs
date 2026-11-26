@@ -309,13 +309,16 @@ public class ScriptPodServiceOneLaunchPathTests : IDisposable
 
         var status = service.GetStatus(new ScriptStatusRequest(launching.ScriptTicket, 0));
         var completed = service.CompleteScript(new CompleteScriptCommand(launching.ScriptTicket, 0));
+        var stateKeptForTheLauncher = File.Exists(Path.Combine(_workspace, launching.ScriptTicket.TaskId, "scriptstate.json"));
         var nextLaunchedBesideIt = WasCreated(next);
         parked.Release.Set();
         await releasing.WaitAsync(WaitLimit);
 
         status.State.ShouldBe(ProcessState.Running, "a script whose pod is being created is running: answering Complete makes the server complete it");
-        completed.State.ShouldNotBe(ProcessState.Complete, "a launch that has not ended has no result to complete");
+        completed.State.ShouldBe(ProcessState.Complete, "the V1 wire answer is unchanged: a V1 server reads any other state's exit code as the result");
+        completed.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult, "never a success code for a script that has not run");
         nextLaunchedBesideIt.ShouldBeFalse("only the launcher may free the isolation mutex it launches under");
+        stateKeptForTheLauncher.ShouldBeTrue("the launch owns its persisted state: a Complete must not delete it mid-launch");
         service.MutexLocks.ContainsKey(launching.ScriptTicket.TaskId).ShouldBeTrue();
         service.GetStatus(new ScriptStatusRequest(launching.ScriptTicket, 0)).State.ShouldBe(ProcessState.Running, "the launched pod stays observable");
         SetupPodPhase("Succeeded");
