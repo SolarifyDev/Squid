@@ -17,20 +17,34 @@ public partial class LocalScriptService
     public ScriptStatusResponseV2 StartScript(StartScriptCommandV2 command)
     {
         var ticket = command.ScriptTicket;
-        var ticketId = ticket.TaskId;
+        var v1 = ScriptV2Mapping.ToV1(command);
 
-        if (TryClaimStartOrReadKnown(ticket, out var known)) return known!;
+        return StartOnce(v1, () => PeekKnownV2(ticket), () => ScriptV2Mapping.Pending(ticket, 0), () => LaunchClaimedV2(v1));
+    }
 
-        try
-        {
-            var v1 = StartScript(ScriptV2Mapping.ToV1(command));
+    // Under the ticket lock, after the pre-lock drain: the tracked or persisted script, else the tombstone of a released ticket.
+    private ScriptStatusResponseV2? PeekKnownV2(ScriptTicket ticket)
+    {
+        if (TryBuildStatusV2(ticket, 0, out var known, drain: false)) return known;
 
-            return TryBuildStatusV2(ticket, 0, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
-        }
-        finally
-        {
-            _startsInFlight.TryRemove(ticketId, out _);
-        }
+        return TryReadTombstoneStatusV2(ticket, out known) ? known : null;
+    }
+
+    // V2 answers a known ticket before it gates a new one: drain and admission are checked once the ticket is claimed.
+    private ScriptStatusResponseV2 LaunchClaimedV2(StartScriptCommand command)
+    {
+        var v1 = RejectClaimedStart(command) ?? LaunchClaimed(command);
+
+        return TryBuildStatusV2(command.ScriptTicket, 0, out var started) ? started! : ScriptV2Mapping.FromV1Terminal(v1);
+    }
+
+    private ScriptStatusResponse? RejectClaimedStart(StartScriptCommand command)
+    {
+        var rejection = _draining ? BuildDrainRejection(command) : TryEvaluateAdmission(command, out var denial) ? denial : null;
+
+        if (rejection != null) EndStartClaim(command.ScriptTicket.TaskId);
+
+        return rejection;
     }
 
     public ScriptStatusResponseV2 GetStatus(ScriptStatusRequestV2 request)
@@ -51,13 +65,14 @@ public partial class LocalScriptService
     {
         var ticket = command.Ticket;
 
-        if (_startsInFlight.ContainsKey(ticket.TaskId))
-        {
-            _cancellationRegistry.Cancel(ticket);
+        // A start in flight carries the cancel out once its script is tracked; until then the cancel is pending.
+        if (TryHandCancelToStarter(ticket, CancelOrigin.V2)) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
-            return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
-        }
+        return CancelOutsideStartV2(ticket, command.LastLogSequence);
+    }
 
+    private ScriptStatusResponseV2 CancelOutsideStartV2(ScriptTicket ticket, long lastLogSequence)
+    {
         // Kill + bounded drain happen OUTSIDE the ticket lock: the lock is one of 64 shared stripes, so waiting on a
         // process or its output pipe while holding it would stall unrelated tickets.
         if (_scripts.TryGetValue(ticket.TaskId, out var live) && ShouldIssueCancelV2(live)) IssueCancelV2(ticket, live);
@@ -66,9 +81,9 @@ public partial class LocalScriptService
 
         lock (_ticketLocks.For(ticket.TaskId))
         {
-            if (_scripts.TryGetValue(ticket.TaskId, out var running)) return CancelRunningV2(ticket, command.LastLogSequence, running);
+            if (_scripts.TryGetValue(ticket.TaskId, out var running)) return CancelRunningV2(ticket, lastLogSequence, running);
 
-            return ReadFinalStatusV2(ticket, command.LastLogSequence);
+            return ReadFinalStatusV2(ticket, lastLogSequence);
         }
     }
 
@@ -90,23 +105,6 @@ public partial class LocalScriptService
             if (startInFlight) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
             return CompleteNotRunningV2(ticket, command.LastLogSequence);
-        }
-    }
-
-    private bool TryClaimStartOrReadKnown(ScriptTicket ticket, out ScriptStatusResponseV2? known)
-    {
-        DrainOutputOutsideTicketLock(ticket);
-
-        lock (_ticketLocks.For(ticket.TaskId))
-        {
-            if (TryBuildStatusV2(ticket, 0, out known, drain: false)) return true;
-
-            if (TryReadTombstoneStatusV2(ticket, out known)) return true;
-
-            if (_startsInFlight.TryAdd(ticket.TaskId, 0)) return false;
-
-            known = ScriptV2Mapping.Pending(ticket, 0);
-            return true;
         }
     }
 
