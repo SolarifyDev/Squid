@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Npgsql;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Settings.System;
+using Squid.IntegrationTests.Helpers;
 
 namespace Squid.IntegrationTests.Services.Packages;
 
@@ -45,13 +46,7 @@ public sealed class PackageStoreMigrationIntegrationTests : IDisposable
 
     public void Dispose()
     {
-        var admin = new NpgsqlConnectionStringBuilder(_connectionString) { Database = "postgres" };
-
-        using var connection = new NpgsqlConnection(admin.ToString());
-        connection.Open();
-
-        using var command = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{_databaseName}\" WITH (FORCE)", connection);
-        command.ExecuteNonQuery();
+        ThrowawayDatabase.Drop(_connectionString, _databaseName);
     }
 
     [Fact]
