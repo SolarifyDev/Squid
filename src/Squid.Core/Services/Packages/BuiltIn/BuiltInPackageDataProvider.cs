@@ -59,17 +59,17 @@ public class BuiltInPackageDataProvider(IRepository repository, IUnitOfWork unit
     }
 
     // The release check is part of the UPDATE itself, so a release that selected this version while the (possibly long) file write was going on still stops the
-    // overwrite, which a check made before the write cannot do. The predicate is the one of IBuiltInPackageUsage, written out in SQL.
+    // overwrite, which a check made before the write cannot do. The predicate is the one of IBuiltInPackageUsage: both take it from ReleaseSelectionSql.
     public async Task ReplaceContentAsync(int id, BuiltInPackage content, CancellationToken ct)
     {
-        var updated = await repository.Database.ExecuteSqlInterpolatedAsync($"""
-            UPDATE builtin_package SET file_extension = {content.FileExtension}, size_bytes = {content.SizeBytes}, sha256 = {content.Sha256}, content_fingerprint = {content.ContentFingerprint},
-                store_id = {content.StoreId}, blob_key = {content.BlobKey}, published_date = {content.PublishedDate}, published_by = {content.PublishedBy}, source = {content.Source},
-                facts = {content.Facts}::jsonb
-            WHERE id = {id} AND NOT EXISTS (
-                SELECT 1 FROM release_selected_package r
-                WHERE r.feed_id = builtin_package.feed_id AND r.version = builtin_package.version AND lower(r.package_reference_name) = lower(builtin_package.package_id))
-            """, ct).ConfigureAwait(false);
+        var notSelected = $"NOT {ReleaseSelectionSql.Selects("builtin_package.feed_id", "builtin_package.package_id", "builtin_package.version")}";
+
+        var updated = await repository.Database.ExecuteSqlRawAsync($$"""
+            UPDATE builtin_package SET file_extension = {0}, size_bytes = {1}, sha256 = {2}, content_fingerprint = {3},
+                store_id = {4}, blob_key = {5}, published_date = {6}, published_by = {7}, source = {8},
+                facts = {9}::jsonb
+            WHERE id = {10} AND {{notSelected}}
+            """, [content.FileExtension, content.SizeBytes, content.Sha256, content.ContentFingerprint, content.StoreId, content.BlobKey, content.PublishedDate, content.PublishedBy, content.Source, content.Facts, id], ct).ConfigureAwait(false);
 
         if (updated == 0)
             throw new PackageVersionInUseException(content.PackageId, content.Version);

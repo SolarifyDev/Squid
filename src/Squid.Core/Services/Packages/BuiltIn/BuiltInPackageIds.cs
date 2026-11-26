@@ -21,12 +21,7 @@ public static class BuiltInPackageIds
 
     private static string ReadFromFileName(string fileName)
     {
-        // A client may send a whole path, with either separator whatever this server's own is.
-        var path = fileName ?? string.Empty;
-        var name = path[(path.LastIndexOfAny(['/', '\\']) + 1)..];
-        var withoutExtension = PackageFileName.StripExtension(name);
-
-        if (withoutExtension == null || !PackageFileName.TryParse(withoutExtension, out var packageId, out _))
+        if (!PackageFileName.TryParseFileName(fileName, out var packageId, out _))
             throw new PackageIdRequiredException(fileName);
 
         return packageId;
