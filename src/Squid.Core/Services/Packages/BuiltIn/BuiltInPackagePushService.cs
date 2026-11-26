@@ -29,10 +29,7 @@ internal sealed partial class BuiltInPackagePushService(IBuiltInPackageCatalog c
             await AcceptUploadAsync(ct);
             await UseCanonicalPackageIdAsync(ct);
             await EnsureNotDuplicateOfLatestAsync(ct);
-            await ResolveVersionAsync(ct);
-            await EnsureVersionWritableAsync(ct);
-            await WriteBlobAsync(ct);
-            await RecordVersionAsync(ct);
+            await WriteUnderAnAvailableVersionAsync(ct);
 
             return BuildResponse(_ctx.Recorded, deduplicated: false);
         }

@@ -30,6 +30,21 @@ public static class PackageFileName
     }
 
     /// <summary>
+    /// Reads a whole upload file name (a client may send a path, with either separator whatever this server's own is) into its package id and version; false when it
+    /// does not end in a package extension or has no id and version in it.
+    /// </summary>
+    public static bool TryParseFileName(string fileName, out string packageId, out string version)
+    {
+        packageId = null;
+        version = null;
+
+        var path = fileName ?? string.Empty;
+        var withoutExtension = StripExtension(path[(path.LastIndexOfAny(['/', '\\']) + 1)..]);
+
+        return withoutExtension != null && TryParse(withoutExtension, out packageId, out version);
+    }
+
+    /// <summary>
     /// Splits a name that has no extension left into its package id and version, at the earliest dot that has a valid package id before it and a valid version after it
     /// (as the lazy package id of Octopus' <c>PackageName.TryParseUnsafeFileName</c> would pick); false when there is none, or the name is over <see cref="MaxFileNameLength"/>.
     /// </summary>

@@ -33,10 +33,11 @@ internal sealed partial class BuiltInPackagePushService
     }
 
     // Before any version is assigned: re-pushing the same content must not use up a version number. It never swallows a request for a version of its own: a version
-    // the caller named is deduplicated only when it is the latest one, and a replace is a request to write, not to look.
+    // the caller named is deduplicated only when it is the latest one, and a replace of a named version is a request to write, not to look. A replace without a
+    // version names nothing to replace, so it is a plain push.
     private async Task EnsureNotDuplicateOfLatestAsync(CancellationToken ct)
     {
-        if (_ctx.Command.Replace) return;
+        if (ReplacesNamedVersion) return;
 
         var latest = await catalog.GetLatestAsync(_ctx.Feed.Id, _ctx.PackageId, ct).ConfigureAwait(false);
 

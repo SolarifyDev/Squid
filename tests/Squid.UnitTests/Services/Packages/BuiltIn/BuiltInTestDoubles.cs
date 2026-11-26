@@ -87,6 +87,9 @@ internal sealed class FakeBuiltInPackageDataProvider : IBuiltInPackageDataProvid
 
     public int Replaces { get; private set; }
 
+    /// <summary>Runs just before an insert, so a test can have another push win the version in between the check and the insert.</summary>
+    public Action<BuiltInPackage> BeforeInsert { get; set; }
+
     /// <summary>Makes the replace fail the way the atomic release check does.</summary>
     public bool BlockReplace { get; set; }
 
@@ -131,6 +134,8 @@ internal sealed class FakeBuiltInPackageDataProvider : IBuiltInPackageDataProvid
     public Task InsertAsync(BuiltInPackage package, CancellationToken ct)
     {
         Inserts++;
+
+        BeforeInsert?.Invoke(package);
 
         if (_rows.Any(r => r.FeedId == package.FeedId && string.Equals(r.PackageId, package.PackageId, StringComparison.OrdinalIgnoreCase) && r.Version == package.Version))
             throw new PackageVersionAlreadyExistsException(package.PackageId, package.Version);
@@ -234,7 +239,7 @@ internal sealed class FakeUsage : IBuiltInPackageUsage
     }
 }
 
-internal sealed class FakeRules(string template = PackageVersioning.DefaultTemplate) : IPackageVersionRuleService
+internal sealed class FakeRules(string template = PackageVersioning.DefaultTemplate, bool isDefault = false) : IPackageVersionRuleService
 {
     public List<string> AskedFor { get; } = new();
 
@@ -242,7 +247,7 @@ internal sealed class FakeRules(string template = PackageVersioning.DefaultTempl
     {
         AskedFor.Add(packageId);
 
-        return Task.FromResult(new PackageVersionRuleDto { FeedId = feedId, PackageId = packageId, VersionTemplate = template });
+        return Task.FromResult(new PackageVersionRuleDto { FeedId = feedId, PackageId = packageId, VersionTemplate = template, IsDefault = isDefault });
     }
 
     public Task<PackageVersionRuleDto> SetRuleAsync(Squid.Message.Commands.PackageVersioning.SetPackageVersionRuleCommand command, CancellationToken ct) => throw new NotSupportedException();
