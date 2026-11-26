@@ -80,7 +80,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var coordinator = Create(HealthCheckTestHost.PassthroughRedis(keys));
         var runs = 0;
 
-        var ran = await coordinator.TryRunSweepAsync(_ => { runs++; return Task.CompletedTask; }, CancellationToken.None);
+        var ran = await coordinator.TryRunSweepAsync(_ => { runs++; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
         ran.ShouldBeTrue();
         runs.ShouldBe(1);
@@ -92,9 +92,9 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     {
         var coordinator = Create();
 
-        await Should.ThrowAsync<InvalidOperationException>(() => coordinator.TryRunSweepAsync(_ => throw new InvalidOperationException("boom"), CancellationToken.None));
+        await Should.ThrowAsync<InvalidOperationException>(() => coordinator.TryRunSweepAsync(_ => throw new InvalidOperationException("boom"), CancellationToken.None).WaitAsync(Guard));
 
-        var ran = await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None);
+        var ran = await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard);
 
         ran.ShouldBeTrue("a sweep that threw must release the in-process lock so the next sweep can run");
     }
@@ -110,15 +110,22 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var secondRan = false;
 
         var firstSweep = first.TryRunSweepAsync(async _ => { started.SetResult(); await gate.Task; }, CancellationToken.None);
-        await started.Task;
 
-        var ran = await second.TryRunSweepAsync(_ => { secondRan = true; return Task.CompletedTask; }, CancellationToken.None);
+        try
+        {
+            await started.Task.WaitAsync(Guard);
 
-        ran.ShouldBeFalse();
-        secondRan.ShouldBeFalse();
+            var ran = await second.TryRunSweepAsync(_ => { secondRan = true; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
-        gate.SetResult();
-        (await firstSweep).ShouldBeTrue();
+            ran.ShouldBeFalse();
+            secondRan.ShouldBeFalse();
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+
+        (await firstSweep.WaitAsync(Guard)).ShouldBeTrue();
     }
 
     [Fact]
@@ -128,7 +135,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>())).ReturnsAsync((object)null);
         var ran = false;
 
-        var result = await Create(redis).TryRunSweepAsync(_ => { ran = true; return Task.CompletedTask; }, CancellationToken.None);
+        var result = await Create(redis).TryRunSweepAsync(_ => { ran = true; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
         result.ShouldBeFalse();
         ran.ShouldBeFalse();
@@ -142,7 +149,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>()))
             .Returns<string, Func<Task<object>>, TimeSpan?, TimeSpan?, TimeSpan?, RedisServer>((_, logic, e, _, _, _) => { expiry = e; return logic(); });
 
-        await Create(redis, sweepDeadline: TimeSpan.FromSeconds(300)).TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None);
+        await Create(redis, sweepDeadline: TimeSpan.FromSeconds(300)).TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard);
 
         expiry.ShouldNotBeNull();
         expiry.Value.ShouldBeGreaterThan(TimeSpan.FromSeconds(300));
@@ -155,7 +162,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>())).ThrowsAsync(new LockAcquireFailedException("k", new Exception("redis down")));
         var runs = 0;
 
-        var ran = await Create(redis).TryRunSweepAsync(_ => { runs++; return Task.CompletedTask; }, CancellationToken.None);
+        var ran = await Create(redis).TryRunSweepAsync(_ => { runs++; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
         ran.ShouldBeTrue();
         runs.ShouldBe(1);
@@ -170,11 +177,11 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>()))
             .Returns<string, Func<Task<object>>, TimeSpan?, TimeSpan?, TimeSpan?, RedisServer>((_, logic, _, w, _, _) => { redisWait = w; return logic(); });
 
-        await locks.TryEnterMachineAsync(7, TimeSpan.Zero, CancellationToken.None);
+        await locks.TryEnterMachineAsync(7, TimeSpan.Zero, CancellationToken.None).WaitAsync(Guard);
         var releaser = Task.Run(async () => { await Task.Delay(700); locks.ExitMachine(7); });
 
-        var ran = await Create(redis, locks).TryRunForMachineAsync(7, TimeSpan.FromSeconds(2), () => Task.CompletedTask, CancellationToken.None);
-        await releaser;
+        var ran = await Create(redis, locks).TryRunForMachineAsync(7, TimeSpan.FromSeconds(2), () => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard);
+        await releaser.WaitAsync(Guard);
 
         ran.ShouldBeTrue();
         redisWait.ShouldNotBeNull();
@@ -188,7 +195,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>())).ThrowsAsync(new LockAcquireFailedException("k", new Exception("redis down")));
         var runs = 0;
 
-        var ran = await Create(redis).TryRunForMachineAsync(7, TimeSpan.FromSeconds(1), () => { runs++; return Task.CompletedTask; }, CancellationToken.None);
+        var ran = await Create(redis).TryRunForMachineAsync(7, TimeSpan.FromSeconds(1), () => { runs++; return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
         ran.ShouldBeTrue();
         runs.ShouldBe(1);
@@ -203,7 +210,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         {
             try { await Task.Delay(Timeout.Infinite, token); }
             catch (OperationCanceledException) { sawCancel = true; throw; }
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         ran.ShouldBeTrue();
         sawCancel.ShouldBeTrue();
@@ -260,7 +267,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     [InlineData(0)]
     public async Task Probe_LessThanItsFullTimeoutPlusGraceLeftInTheSweep_IsDeferred_NeverStarted(double leftSeconds)
     {
-        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout);
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout).WaitAsync(Guard);
 
         thrown.ShouldBeOfType<SweepBudgetExhaustedException>();
         started.ShouldBeFalse("a probe that cannot run its full timeout before the sweep ends must not start at all");
@@ -273,7 +280,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     [InlineData(300)]      // the very start of the sweep
     public async Task Probe_FullTimeoutPlusGraceLeftInTheSweep_RunsWithItsExactFullTimeout(double leftSeconds)
     {
-        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout);
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(leftSeconds), FullTimeout).WaitAsync(Guard);
 
         thrown.ShouldBeNull();
         started.ShouldBeTrue();
@@ -287,7 +294,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         // (never shortened); if the sweep ends first the probe is cut and reports nothing.
         var tooLong = TimeSpan.FromSeconds(600);
 
-        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(100), tooLong, probeTimeoutSetting: tooLong);
+        var (thrown, started, clock) = await ProbeWithSweepTimeLeftAsync(TimeSpan.FromSeconds(100), tooLong, probeTimeoutSetting: tooLong).WaitAsync(Guard);
 
         started.ShouldBeTrue("deferring it would mean the sweep never checks this machine at all");
         clock.Armed[1].ShouldBe(tooLong);
@@ -297,19 +304,88 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     [Fact]
     public async Task Probe_FanOutByTheSweep_EachSeesTheSweepDeadline()
     {
+        // Parallelism 2: items 1 and 2 are the head of the sweep order and do not probe; item 1 spends the sweep down to 10s. Items 3 and 4 could have
+        // fitted the probing time (it began with the whole sweep left) but not what is left, and are not the head: both must be deferred.
         var clock = new SweepClock();
-        var coordinator = Create(sweepDeadline: SweepDeadline, time: clock);
+        var coordinator = Create(sweepDeadline: SweepDeadline, parallelism: 2, time: clock);
+        var spent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thrown = new List<Exception>();
+
+        await coordinator.TryRunSweepAsync(token => coordinator.ForEachInScopeAsync(new[] { 1, 2, 3, 4 }, async (_, item, ct) =>
+        {
+            if (item == 1) { clock.Advance(SweepDeadline - TimeSpan.FromSeconds(10)); spent.SetResult(); return; }
+
+            await spent.Task.WaitAsync(Guard);
+
+            if (item == 2) return;
+
+            var ex = await Record(() => coordinator.RunProbeAsync(HangUntilCancelled, ct, FullTimeout));
+            lock (thrown) thrown.Add(ex);
+        }, token), CancellationToken.None).WaitAsync(Guard);
+
+        thrown.Count.ShouldBe(2);
+        thrown.ShouldAllBe(e => e is SweepBudgetExhaustedException, "the deadline must flow into every parallel probe the sweep starts");
+    }
+
+    [Theory]
+    [InlineData(0, true)]     // the head of the sweep order is always started
+    [InlineData(1, true)]     // MaxParallelism 2: the first two positions are the head
+    [InlineData(2, false)]    // behind the head, a probe that could have fitted this sweep's probing time is deferred
+    public async Task Probe_ShortOfItsFullTimeout_IsStartedOnlyAtTheHeadOfTheSweepOrder(int position, bool started)
+    {
+        var clock = new SweepClock();
+        var coordinator = Create(sweepDeadline: SweepDeadline, parallelism: 2, time: clock);
+        var ran = false;
+        Exception thrown = null;
+
+        await coordinator.TryRunSweepAsync(token => coordinator.ForEachInScopeAsync(new[] { 0, 1, 2 }, async (_, item, ct) =>
+        {
+            if (item != position) return;
+
+            clock.Advance(SweepDeadline - TimeSpan.FromSeconds(30));
+            thrown = await Record(() => coordinator.RunProbeAsync(_ => { ran = true; return Task.FromResult(new HealthCheckResult(true, "ok")); }, ct, FullTimeout));
+        }, token), CancellationToken.None).WaitAsync(Guard);
+
+        ran.ShouldBe(started);
+        (thrown is SweepBudgetExhaustedException).ShouldBe(!started);
+    }
+
+    [Fact]
+    public async Task Probe_ThatCannotFitTheProbingTimeLeftAfterListing_IsStarted_NotDeferredForever()
+    {
+        // 60s + 5s grace fits the 300s sweep, but listing used 250s: no position in this sweep could ever fit it. Deferring it would defer it every sweep.
+        var clock = new SweepClock();
+        var coordinator = Create(sweepDeadline: SweepDeadline, parallelism: 1, time: clock);
+        var ran = new List<int>();
 
         await coordinator.TryRunSweepAsync(async token =>
         {
-            clock.Advance(SweepDeadline - TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromSeconds(250));
 
-            await coordinator.ForEachInScopeAsync(new[] { 1, 2, 3 }, async (_, _, ct) => { var ex = await Record(() => coordinator.RunProbeAsync(HangUntilCancelled, ct, FullTimeout)); lock (thrown) thrown.Add(ex); }, token);
+            await coordinator.ForEachInScopeAsync(new[] { 0, 1, 2 }, async (_, item, ct) => await coordinator.RunProbeAsync(_ => { lock (ran) ran.Add(item); return Task.FromResult(new HealthCheckResult(true, "ok")); }, ct, FullTimeout), token);
         }, CancellationToken.None).WaitAsync(Guard);
 
-        thrown.Count.ShouldBe(3);
-        thrown.ShouldAllBe(e => e is SweepBudgetExhaustedException, "the deadline must flow into every parallel probe the sweep starts");
+        ran.ShouldBe(new[] { 0, 1, 2 });
+        clock.Armed.Skip(1).ShouldAllBe(t => t == FullTimeout, "never shortened");
+    }
+
+    [Fact]
+    public void SweepOrder_IsLeastRecentlyAttemptedFirst_StableAmongEquals()
+    {
+        var coordinator = Create();
+        var now = DateTimeOffset.UtcNow;
+        var neverCheckedButCut = new Squid.Core.Persistence.Entities.Deployments.Machine { Id = 1, HealthLastChecked = null };
+        var neverChecked = new Squid.Core.Persistence.Entities.Deployments.Machine { Id = 2, HealthLastChecked = null };
+        var checkedLongAgoButCutRecently = new Squid.Core.Persistence.Entities.Deployments.Machine { Id = 3, HealthLastChecked = now.AddHours(-5) };
+        var checkedTwoHoursAgo = new Squid.Core.Persistence.Entities.Deployments.Machine { Id = 4, HealthLastChecked = now.AddHours(-2) };
+        var checkedAfterItsLastStart = new Squid.Core.Persistence.Entities.Deployments.Machine { Id = 5, HealthLastChecked = now.AddHours(-3) };
+        coordinator.NoteProbeStarted(1, now.AddHours(-1));
+        coordinator.NoteProbeStarted(3, now.AddMinutes(-1));
+        coordinator.NoteProbeStarted(5, now.AddHours(-4));
+
+        var order = coordinator.InSweepOrder(new[] { neverCheckedButCut, neverChecked, checkedLongAgoButCutRecently, checkedAfterItsLastStart, checkedTwoHoursAgo });
+
+        order.ShouldBe(new[] { 2, 5, 4, 1, 3 });
     }
 
     [Fact]
@@ -318,7 +394,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var clock = new SweepClock();
         var coordinator = Create(sweepDeadline: SweepDeadline, time: clock);
 
-        await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None);
+        await coordinator.TryRunSweepAsync(_ => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard);
 
         clock.Advance(TimeSpan.FromHours(1));
 
@@ -367,13 +443,20 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var started = new TaskCompletionSource();
 
         var first = coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, async () => { started.SetResult(); await gate.Task; }, CancellationToken.None);
-        await started.Task;
 
-        (await coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None)).ShouldBeFalse("same machine must never be probed concurrently");
-        (await coordinator.TryRunForMachineAsync(8, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None)).ShouldBeTrue();
+        try
+        {
+            await started.Task.WaitAsync(Guard);
 
-        gate.SetResult();
-        (await first).ShouldBeTrue();
+            (await coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard)).ShouldBeFalse("same machine must never be probed concurrently");
+            (await coordinator.TryRunForMachineAsync(8, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard)).ShouldBeTrue();
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+
+        (await first.WaitAsync(Guard)).ShouldBeTrue();
         keys.ShouldContain(MachineHealthCheckCoordinator.MachineLockKey(7));
     }
 
@@ -386,14 +469,22 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var order = new List<string>();
 
         var first = coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, async () => { started.SetResult(); await gate.Task; order.Add("first"); }, CancellationToken.None);
-        await started.Task;
+        Task<bool> waiter;
 
-        var waiter = coordinator.TryRunForMachineAsync(7, TimeSpan.FromSeconds(10), () => { order.Add("second"); return Task.CompletedTask; }, CancellationToken.None);
-        await Task.Delay(100);
-        gate.SetResult();
+        try
+        {
+            await started.Task.WaitAsync(Guard);
 
-        (await waiter).ShouldBeTrue();
-        await first;
+            waiter = coordinator.TryRunForMachineAsync(7, TimeSpan.FromSeconds(10), () => { order.Add("second"); return Task.CompletedTask; }, CancellationToken.None);
+            await Task.Delay(100);
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
+
+        (await waiter.WaitAsync(Guard)).ShouldBeTrue();
+        await first.WaitAsync(Guard);
         order.ShouldBe(new[] { "first", "second" });
     }
 
@@ -402,9 +493,9 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     {
         var coordinator = Create();
 
-        await Should.ThrowAsync<InvalidOperationException>(() => coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => throw new InvalidOperationException("boom"), CancellationToken.None));
+        await Should.ThrowAsync<InvalidOperationException>(() => coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => throw new InvalidOperationException("boom"), CancellationToken.None).WaitAsync(Guard));
 
-        (await coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None)).ShouldBeTrue();
+        (await coordinator.TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard)).ShouldBeTrue();
     }
 
     [Fact]
@@ -413,7 +504,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         var redis = new Mock<IRedisSafeRunner>();
         redis.Setup(r => r.ExecuteWithLockAsync<object>(It.IsAny<string>(), It.IsAny<Func<Task<object>>>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<TimeSpan?>(), It.IsAny<RedisServer>())).ReturnsAsync((object)null);
 
-        (await Create(redis).TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None)).ShouldBeFalse();
+        (await Create(redis).TryRunForMachineAsync(7, TimeSpan.Zero, () => Task.CompletedTask, CancellationToken.None).WaitAsync(Guard)).ShouldBeFalse();
     }
 
     // ── Probe timeout + cancellation ──
@@ -428,7 +519,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
             seen = token;
             await Task.Delay(Timeout.Infinite, token);
             return new HealthCheckResult(true, "never");
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("timed out after");
@@ -442,7 +533,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         {
             await Task.Delay(TimeSpan.FromSeconds(30));
             return new HealthCheckResult(true, "never");
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         result.Healthy.ShouldBeFalse();
         result.Detail.ShouldContain("timed out after");
@@ -457,7 +548,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
             catch (OperationCanceledException ex) { return new HealthCheckResult(false, $"connectivity failed: {ex.Message}"); }
 
             return new HealthCheckResult(true, "never");
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         result.Detail.ShouldContain("timed out after");
     }
@@ -465,7 +556,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     [Fact]
     public async Task Probe_GenuineUnhealthyResult_IsReturnedUnchanged()
     {
-        var result = await Create(probeTimeout: TimeSpan.FromSeconds(30)).RunProbeAsync(_ => Task.FromResult(new HealthCheckResult(false, "connection refused")), CancellationToken.None);
+        var result = await Create(probeTimeout: TimeSpan.FromSeconds(30)).RunProbeAsync(_ => Task.FromResult(new HealthCheckResult(false, "connection refused")), CancellationToken.None).WaitAsync(Guard);
 
         result.Detail.ShouldBe("connection refused");
     }
@@ -483,10 +574,10 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
             return new HealthCheckResult(true, "never");
         }, cts.Token);
 
-        await probeStarted.Task;
+        await probeStarted.Task.WaitAsync(Guard);
         cts.Cancel();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => probe);
+        await Should.ThrowAsync<OperationCanceledException>(() => probe.WaitAsync(Guard));
     }
 
     [Fact]
@@ -495,7 +586,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        await Should.ThrowAsync<OperationCanceledException>(() => Create(probeTimeout: TimeSpan.FromSeconds(30)).RunProbeAsync(_ => Task.FromResult(new HealthCheckResult(false, "A task was canceled")), cts.Token));
+        await Should.ThrowAsync<OperationCanceledException>(() => Create(probeTimeout: TimeSpan.FromSeconds(30)).RunProbeAsync(_ => Task.FromResult(new HealthCheckResult(false, "A task was canceled")), cts.Token).WaitAsync(Guard));
     }
 
     // ── Bounded parallelism ──
@@ -514,7 +605,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
             InterlockedMax(ref peak, now);
             await Task.Delay(30);
             Interlocked.Decrement(ref current);
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         peak.ShouldBe(max);
     }
@@ -529,7 +620,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
             if (item == 3) throw new InvalidOperationException("boom");
             lock (done) done.Add(item);
             return Task.CompletedTask;
-        }, CancellationToken.None);
+        }, CancellationToken.None).WaitAsync(Guard);
 
         done.Count.ShouldBe(9);
     }
@@ -539,7 +630,7 @@ public class MachineHealthCheckCoordinatorTests : IDisposable
     {
         var scopes = new List<ILifetimeScope>();
 
-        await Create().ForEachInScopeAsync(new[] { 1, 2, 3 }, (scope, _, _) => { lock (scopes) scopes.Add(scope); return Task.CompletedTask; }, CancellationToken.None);
+        await Create().ForEachInScopeAsync(new[] { 1, 2, 3 }, (scope, _, _) => { lock (scopes) scopes.Add(scope); return Task.CompletedTask; }, CancellationToken.None).WaitAsync(Guard);
 
         scopes.Distinct().Count().ShouldBe(3);
         scopes.ShouldNotContain(_container);
