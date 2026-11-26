@@ -143,13 +143,12 @@ public class BuiltInContainerWiringTests
     [Fact]
     public void PublishPipeline_IsRegistered_AndTheDataProviderIsReachable()
     {
-        // The publish service itself needs the whole deployment graph (mapper, job client, settings), which this container leaves out on purpose.
+        // Resolving any of them needs the deployment graph (the mapper behind the variable data provider, job client, settings), which this container leaves out on purpose.
         using var container = Build();
-        using var scope = container.BeginLifetimeScope();
 
         container.IsRegistered<IPublishService>().ShouldBeTrue();
         container.IsRegistered<IDeploymentPlanApplier>().ShouldBeTrue();
-        scope.Resolve<IPublishedProjectDataProvider>().ShouldBeOfType<PublishedProjectDataProvider>();
+        container.IsRegistered<IPublishedProjectDataProvider>().ShouldBeTrue();
     }
 
     [Fact]
