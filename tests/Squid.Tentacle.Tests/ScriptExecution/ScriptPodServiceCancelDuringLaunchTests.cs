@@ -97,26 +97,26 @@ public class ScriptPodServiceCancelDuringLaunchTests : IDisposable
     }
 
     [Fact]
-    public async Task Cancel_QueuedTicketDequeuedBetweenTheQueueReadAndTheRemove_CancelsThePodOnceItIsCreated()
+    public async Task Cancel_TheHoldersReleaseRacesTheCancelsClaim_TheDequeueWaits_AndTheQueuedScriptIsCancelledBeforeItLaunches()
     {
         var service = NewService();
         var (holder, queued) = StartHolderAndQueued(service);
-        var parked = ParkPodCreate(PodOf(queued));
         Task? releasing = null;
 
+        // Inside the V2 Cancel's claim (under the queued ticket's lock) the holder is released: the dequeue of the queued script must wait for the claim.
         service.BeforeCancelCoreHookForTests = () =>
         {
             service.BeforeCancelCoreHookForTests = null;
-            releasing = Task.Run(() => service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0)));
-            parked.Entered.Wait(WaitLimit).ShouldBeTrue("the holder's release must dequeue the queued script and start creating its pod");
+            releasing = StartAndWaitUntilFinishedOrBlocked(() => service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0)));
         };
 
         var cancel = service.CancelScript(new CancelScriptCommandV2(queued.ScriptTicket, 0));
-        AssertLauncherStillOwnsTheMutex(service, queued);
-        parked.Release.Set();
         await releasing!.WaitAsync(WaitLimit);
 
-        AssertCancelledAndFullyReleased(service, queued, cancel);
+        cancel.State.ShouldBe(ScriptStateV2.Completed);
+        cancel.ExitCode.ShouldBe(ScriptExitCodes.Canceled);
+        service.IsRunningScript(queued.ScriptTicket.TaskId).ShouldBeFalse();
+        _ops.Verify(o => o.CreatePod(It.Is<V1Pod>(p => p.Metadata.Name == PodOf(queued)), It.IsAny<string>()), Times.Never, "the claim took the script from the queue before the dequeue could launch it");
     }
 
     [Fact]
@@ -277,9 +277,9 @@ public class ScriptPodServiceCancelDuringLaunchTests : IDisposable
             throw new InvalidOperationException("boom");
         });
 
-        service.BeforeCancelCoreHookForTests = () =>
+        service.BeforeCancelLockHookForTests = () =>
         {
-            service.BeforeCancelCoreHookForTests = null;
+            service.BeforeCancelLockHookForTests = null;
             releasing = Task.Run(() => service.CancelScript(new CancelScriptCommandV2(holder.ScriptTicket, 0)));
             entered.Wait(WaitLimit).ShouldBeTrue();
         };
@@ -334,6 +334,20 @@ public class ScriptPodServiceCancelDuringLaunchTests : IDisposable
     }
 
     private sealed record Park(ManualResetEventSlim Entered, ManualResetEventSlim Release);
+
+    // Returns once the call has finished or is blocked waiting (on a ticket lock), so a test thread holding that lock never deadlocks on it.
+    private static Task StartAndWaitUntilFinishedOrBlocked(Action call)
+    {
+        var done = new TaskCompletionSource();
+        var thread = new Thread(() => { try { call(); done.SetResult(); } catch (Exception ex) { done.SetException(ex); } }) { IsBackground = true };
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+
+        thread.Start();
+
+        while (thread.IsAlive && (thread.ThreadState & ThreadState.WaitSleepJoin) == 0 && waited.Elapsed < WaitLimit) Thread.Yield();
+
+        return done.Task;
+    }
 
     private ScriptPodService NewService() => new(_tentacleSettings, _kubernetesSettings, new KubernetesPodManager(_ops.Object, _kubernetesSettings));
 

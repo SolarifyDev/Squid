@@ -4,6 +4,11 @@ using System.IO.Compression;
 using System.Text;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Packages;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.Generic;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.GitHub;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.Helm;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.Http;
+using Squid.Core.Services.DeploymentExecution.Packages.Sources.NuGet;
 using Squid.Core.Services.Http;
 
 namespace Squid.UnitTests.Services.Deployments.Execution;
@@ -71,7 +76,7 @@ public class HttpPackageContentFetcherTests
             ["service.yml"] = "apiVersion: v1\nkind: Service"
         });
 
-        var files = HttpPackageContentFetcher.ExtractArchive(archive);
+        var files = PackageArchiveExtractor.Extract(archive);
 
         files.ShouldContainKey("deployment.yaml");
         files.ShouldContainKey("service.yml");
@@ -87,7 +92,7 @@ public class HttpPackageContentFetcherTests
             ["config.json"] = "{ \"key\": \"value\" }"
         });
 
-        var files = HttpPackageContentFetcher.ExtractArchive(archive);
+        var files = PackageArchiveExtractor.Extract(archive);
 
         files.ShouldContainKey("deployment.yaml");
         files.ShouldContainKey("config.json");
@@ -104,7 +109,7 @@ public class HttpPackageContentFetcherTests
             ["install.sh"] = "#!/bin/bash"
         });
 
-        var files = HttpPackageContentFetcher.ExtractArchive(archive);
+        var files = PackageArchiveExtractor.Extract(archive);
 
         files.ShouldContainKey("deployment.yaml");
         files.ShouldNotContainKey("README.md");
@@ -117,7 +122,7 @@ public class HttpPackageContentFetcherTests
     {
         var badBytes = Encoding.UTF8.GetBytes("not an archive");
 
-        Should.Throw<InvalidOperationException>(() => HttpPackageContentFetcher.ExtractArchive(badBytes))
+        Should.Throw<InvalidOperationException>(() => PackageArchiveExtractor.Extract(badBytes))
             .Message.ShouldContain("Unsupported archive format");
     }
 
@@ -130,7 +135,7 @@ public class HttpPackageContentFetcherTests
             ["templates/service.yaml"] = "apiVersion: v1"
         });
 
-        var files = HttpPackageContentFetcher.ExtractArchive(archive);
+        var files = PackageArchiveExtractor.Extract(archive);
 
         // Root dir "package" is stripped, but nested "templates" remains
         files.ShouldContainKey("templates/deployment.yaml");
@@ -144,7 +149,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed("GitHub", "https://api.github.com");
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "org/repo", "v1.0.0");
+        var url = GitHubFeedPackageSource.BuildDownloadUrl(feed, "org/repo", "v1.0.0");
 
         url.ShouldBe("https://api.github.com/repos/org/repo/tarball/v1.0.0");
     }
@@ -154,7 +159,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed("Generic", "https://packages.example.com");
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "my-package", "2.0.0");
+        var url = GenericFeedPackageSource.BuildDownloadUrl(feed, "my-package", "2.0.0");
 
         url.ShouldBe("https://packages.example.com/my-package/2.0.0");
     }
@@ -164,7 +169,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed("Generic", "https://packages.example.com");
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "my-package", "");
+        var url = GenericFeedPackageSource.BuildDownloadUrl(feed, "my-package", "");
 
         url.ShouldBe("https://packages.example.com/my-package");
     }
@@ -174,7 +179,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed("NuGet", "https://nuget.example.com");
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "MyPackage", "1.0.0");
+        var url = NuGetFeedPackageSource.BuildDownloadUrl(feed, "MyPackage", "1.0.0");
 
         url.ShouldBe("https://nuget.example.com/api/v2/package/MyPackage/1.0.0");
     }
@@ -190,7 +195,7 @@ public class HttpPackageContentFetcherTests
         // construct https://api.nuget.org/v3/api/v2/package/... which 404s with empty content.
         var feed = CreateFeed("NuGet Feed", feedUri);
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "Newtonsoft.Json", "13.0.3");
+        var url = NuGetFeedPackageSource.BuildDownloadUrl(feed, "Newtonsoft.Json", "13.0.3");
 
         url.ShouldBe("https://www.nuget.org/api/v2/package/Newtonsoft.Json/13.0.3");
     }
@@ -203,7 +208,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed("NuGet", feedUri);
 
-        var url = HttpPackageContentFetcher.BuildDownloadUrl(feed, "MyPackage", "1.0.0");
+        var url = NuGetFeedPackageSource.BuildDownloadUrl(feed, "MyPackage", "1.0.0");
 
         url.ShouldBe(expected);
     }
@@ -215,7 +220,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed(username: "user", password: "pass");
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers.ShouldContainKey("Authorization");
         headers["Authorization"].ShouldStartWith("Basic ");
@@ -228,7 +233,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed(password: "my-token");
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers.ShouldContainKey("Authorization");
         headers["Authorization"].ShouldBe("Bearer my-token");
@@ -239,7 +244,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed();
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers.ShouldNotContainKey("Authorization");
     }
@@ -249,7 +254,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed(feedType: "GitHub");
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers["Accept"].ShouldBe("application/vnd.github+json");
         headers["X-GitHub-Api-Version"].ShouldBe("2022-11-28");
@@ -260,7 +265,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed(feedType: "GitHub Repository Feed", password: "ghp_abc123");
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers["Authorization"].ShouldBe("token ghp_abc123");
     }
@@ -270,7 +275,7 @@ public class HttpPackageContentFetcherTests
     {
         var feed = CreateFeed(feedType: "GitHub", username: "user", password: "pass");
 
-        var headers = HttpPackageContentFetcher.BuildAuthHeaders(feed);
+        var headers = FeedAuthHeaders.Build(feed);
 
         headers["Authorization"].ShouldStartWith("Basic ");
     }
@@ -288,7 +293,7 @@ entries:
     - https://serhanekicii.github.io/openclaw-helm/openclaw-1.5.7.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "openclaw", "1.5.7", "https://serhanekicii.github.io/openclaw-helm");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "openclaw", "1.5.7", "https://serhanekicii.github.io/openclaw-helm");
 
         url.ShouldBe("https://serhanekicii.github.io/openclaw-helm/openclaw-1.5.7.tgz");
     }
@@ -304,7 +309,7 @@ entries:
     - my-chart-2.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "2.0.0", "https://charts.example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "2.0.0", "https://charts.example.com");
 
         url.ShouldBe("https://charts.example.com/my-chart-2.0.0.tgz");
     }
@@ -320,7 +325,7 @@ entries:
     - my-chart-1.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "2.0.0", "https://charts.example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "2.0.0", "https://charts.example.com");
 
         url.ShouldBeNull();
     }
@@ -336,7 +341,7 @@ entries:
     - other-chart-1.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
 
         url.ShouldBeNull();
     }
@@ -355,7 +360,7 @@ entries:
     - https://example.com/my-chart-1.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "1.0.0", "https://example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "1.0.0", "https://example.com");
 
         url.ShouldBe("https://example.com/my-chart-1.0.0.tgz");
     }
@@ -371,7 +376,7 @@ entries:
     - my-chart-1.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
 
         url.ShouldBe("https://charts.example.com/my-chart-1.0.0.tgz");
     }
@@ -388,7 +393,7 @@ entries:
     - my-chart-1.0.0.tgz
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "my-chart", "1.0.0", "https://charts.example.com");
 
         url.ShouldBe("https://charts.example.com/my-chart-1.0.0.tgz");
     }
@@ -423,7 +428,7 @@ entries:
 generated: ""2026-03-26T07:20:46.255488292Z""
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "openclaw", "1.5.7", "https://serhanekicii.github.io/openclaw-helm");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "openclaw", "1.5.7", "https://serhanekicii.github.io/openclaw-helm");
 
         url.ShouldBe("https://github.com/serhanekicii/openclaw-helm/releases/download/openclaw-1.5.7/openclaw-1.5.7.tgz");
     }
@@ -441,7 +446,7 @@ generated: ""2026-03-26T07:20:46.255488292Z""
     version: 1.5.7
 ";
 
-        var url = HttpPackageContentFetcher.ParseHelmIndexForChartUrl(indexYaml, "openclaw", "1.5.7", "https://example.com");
+        var url = HelmIndexParser.ParseChartUrl(indexYaml, "openclaw", "1.5.7", "https://example.com");
 
         url.ShouldBe("https://example.com/openclaw-1.5.7.tgz");
     }

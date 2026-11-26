@@ -47,8 +47,8 @@ public class PackageVersionFilterTests
         var result = PackageVersionFilter.SortByVersionDescending(versions);
 
         result[0].ShouldBe("1.0.0");
-        result[1].ShouldBe("1.0.0-beta.1");
-        result[2].ShouldBe("1.0.0-rc1");
+        result[1].ShouldBe("1.0.0-rc1");        // rc1 outranks beta.1 (alphanumeric identifiers compare as ASCII text); the old order put beta first
+        result[2].ShouldBe("1.0.0-beta.1");
     }
 
     [Fact]
@@ -107,5 +107,32 @@ public class PackageVersionFilterTests
 
         result.Count.ShouldBe(1);
         result[0].ShouldBe("7.2.4-RC1");
+    }
+
+    [Fact]
+    public void SortByVersionDescending_FourPartVersions_SortByRevisionNotAtTheBottom()
+    {
+        var versions = new List<string> { "2026.11.25.2", "1.0.5", "2026.11.25.10", "2026.11.24.99", "2026.11.25" };
+
+        var result = PackageVersionFilter.SortByVersionDescending(versions);
+
+        result.ShouldBe(new List<string> { "2026.11.25.10", "2026.11.25.2", "2026.11.25", "2026.11.24.99", "1.0.5" });
+    }
+
+    [Theory]
+    [InlineData("1.0.3", true)]
+    [InlineData("2026.11.25.3", true)]
+    [InlineData("1.2.3-beta.1", true)]
+    [InlineData("v1.2", true)]
+    [InlineData("1.2.3.4.5", false)]
+    [InlineData("1", false)]
+    [InlineData("latest", false)]
+    [InlineData("99999999999999999999.1.0", false)]
+    [InlineData("1.0.0.20261125143000", true)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void IsSortable_FollowsTheSortPattern(string version, bool expected)
+    {
+        PackageVersionFilter.IsSortable(version).ShouldBe(expected);
     }
 }

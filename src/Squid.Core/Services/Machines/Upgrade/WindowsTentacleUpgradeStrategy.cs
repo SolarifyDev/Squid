@@ -314,7 +314,7 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
         // process tree that the wrapper has no observation channel to. So
         // result.Success=true ExitCode=0 means "wrapper successfully scheduled the
         // detached task", NOT "upgrade complete". Map to Initiated; the rapid-polling
-        // burst (90s × 3s, scheduled by MachineUpgradeService.ScheduleRapidPolling
+        // burst (120s × 3s, scheduled by MachineUpgradeService.ScheduleRapidPolling
         // BEFORE strategy dispatch) catches the actual outcome via Capabilities RPC
         // reading last-upgrade.json. AgentVersionMayHaveChanged=true so the cache
         // refreshes when the new version reports back.

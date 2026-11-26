@@ -166,6 +166,16 @@ public class DeployPackageMultiTargetE2ETests
             "PreDeploy failure on all matched targets must not emit successful install logs.");
     }
 
+    /// <summary>
+    /// Proves the atomic <c>mkdir</c> PreDeploy lock admits exactly one of two concurrent targets.
+    /// Tier: high fidelity (real server pipeline, real Halibut polling + listening tentacle stubs, real bash PreDeploy).
+    ///
+    /// <para>Each target installs into its OWN directory (a machine-scoped variable), so the two never race in
+    /// <c>PackageInstallationCoordinator.CommitDirectory</c> and both always reach PreDeploy. They share ONE lock path outside both
+    /// install dirs. The refused target writes <c>refused-*</c> before it exits 1, and only a failure cancels a peer (fail-fast), so
+    /// the refused target is never cancelled before it wrote. Exactly one refusal therefore means the lock admitted one and refused
+    /// one: 0 = it admitted both, 2 = it refused both.</para>
+    /// </summary>
     [Fact]
     public async Task DeployPackage_WhenOneTargetSucceedsAndOtherFails_OverallTaskFailsWithSuccessfulTargetContent()
     {
@@ -174,52 +184,61 @@ public class DeployPackageMultiTargetE2ETests
         var pollingName = await GetMachineNameAsync(_fixture.PollingMachineId).ConfigureAwait(false);
         var listeningName = await GetMachineNameAsync(_fixture.ListeningMachineId).ConfigureAwait(false);
 
-        // Both targets share one host FS and the same CustomInstallationDirectory.
-        // PreDeploy lets the first target commit, then fails the second target.
-        // The targets are dispatched concurrently, so the lock must be taken atomically: a test-then-create
-        // file lets both see "no lock" and both succeed. mkdir either creates the lock or fails — one winner.
-        var preDeploy =
-            "#!/usr/bin/env bash\n" +
-            "set -euo pipefail\n" +
-            "LOCK=\"$PWD/../.multi-target-first-success\"\n" +
-            "if ! mkdir \"$LOCK\" 2>/dev/null; then\n" +
-            "  echo intentional-second-target-predeploy-failure\n" +
-            "  exit 1\n" +
-            "fi\n" +
-            "echo pre-ok > pre.txt\n";
+        var lockRoot = Path.Combine(_workRoot, "predeploy-lock-root");
+        Directory.CreateDirectory(lockRoot);
 
         var packageBytes = CreatePackageArchive(
             ("deploy-package-multi-marker.txt", "partial-success"),
-            ("PreDeploy.sh", preDeploy));
+            ("PreDeploy.sh", BuildAtomicLockPreDeploy(lockRoot)));
         await using var feed = LocalHttpPackageFeed.Start(PackageId, "2.0.0", packageBytes);
 
-        var installDir = Path.Combine(_workRoot, "install-partial-success");
-        Directory.CreateDirectory(installDir);
+        var installRoot = Path.Combine(_workRoot, "install-partial-success");
+        Directory.CreateDirectory(installRoot);
 
         var serverTaskId = await SeedMultiTargetDeployPackageAsync(
             feed,
-            installDir,
+            installRoot,
             targetRoles: $"{WebRole},{ApiRole}",
-            packageVersion: "2.0.0").ConfigureAwait(false);
+            packageVersion: "2.0.0",
+            perTargetInstallDirs: true).ConfigureAwait(false);
 
         await ExecutePipelineAsync(serverTaskId).ConfigureAwait(false);
         await AssertTaskStateAsync(serverTaskId, TaskState.Failed).ConfigureAwait(false);
 
         _fixture.LogSink.ContainsMessage("Package acquired:").ShouldBeTrue();
 
-        // No per-target line count: the two targets run concurrently against one shared install directory, and once one fails the
-        // other is cancelled (fail-fast) or itself fails on the shared directory, so either target's line can be missing. Both the
-        // winner's "installed to" line and the loser's rejection line have been seen absent on CI; the durable contract is below.
+        Directory.Exists(Path.Combine(lockRoot, "lock")).ShouldBeTrue("the PreDeploy lock directory must exist: no target reached PreDeploy.");
+        Directory.GetFiles(lockRoot, "refused-*").Length.ShouldBe(1,
+            "exactly one target must be refused by the atomic mkdir lock (0 = the lock admitted both targets, 2 = it refused both).");
 
-        // PreDeploy runs after commit, so both targets may leave package content on the shared
-        // host FS. Durable contract: overall task Failed and package content is present.
-        File.Exists(Path.Combine(installDir, "deploy-package-multi-marker.txt"))
-            .ShouldBeTrue("Partial multi-target failure must still leave installed package content from the successful target.");
-        (await File.ReadAllTextAsync(Path.Combine(installDir, "deploy-package-multi-marker.txt")).ConfigureAwait(false))
-            .ShouldBe("partial-success");
+        // PreDeploy runs after commit, so BOTH targets committed their own directory before the lock decided. This also proves
+        // the machine-scoped install dirs were applied (a shared dir would have raced in CommitDirectory instead).
+        foreach (var targetDir in new[] { PollingInstallDir(installRoot), ListeningInstallDir(installRoot) })
+        {
+            File.Exists(Path.Combine(targetDir, "deploy-package-multi-marker.txt")).ShouldBeTrue($"'{targetDir}' must hold the committed package content.");
+            (await File.ReadAllTextAsync(Path.Combine(targetDir, "deploy-package-multi-marker.txt")).ConfigureAwait(false)).ShouldBe("partial-success");
+        }
+
         (_fixture.LogSink.ContainsMessage(pollingName) || _fixture.LogSink.ContainsMessage(listeningName))
             .ShouldBeTrue("Both targets should still appear in execution logs for partial failure.");
     }
+
+    // The targets run concurrently, so the lock must be taken atomically: a test-then-create file lets both see "no lock" and both
+    // succeed. mkdir either creates the lock or fails (one winner). The loser records itself BEFORE exiting so the test can count it.
+    private static string BuildAtomicLockPreDeploy(string lockRoot) =>
+        "#!/usr/bin/env bash\n" +
+        "set -euo pipefail\n" +
+        $"LOCKROOT='{lockRoot}'\n" +
+        "if ! mkdir \"$LOCKROOT/lock\" 2>/dev/null; then\n" +
+        "  : > \"$LOCKROOT/refused-$$-$RANDOM\"\n" +
+        "  echo intentional-second-target-predeploy-failure\n" +
+        "  exit 1\n" +
+        "fi\n" +
+        "echo pre-ok > pre.txt\n";
+
+    private static string PollingInstallDir(string installRoot) => Path.Combine(installRoot, "polling");
+
+    private static string ListeningInstallDir(string installRoot) => Path.Combine(installRoot, "listening");
 
     // ========================================================================
     // Setup helpers
@@ -261,11 +280,30 @@ public class DeployPackageMultiTargetE2ETests
         }).ConfigureAwait(false);
     }
 
+    private const string TargetInstallDirVariable = "TargetInstallDir";
+
+    // Two variables of the same name, each scoped to one machine: the most specific scope wins per target, so every target
+    // resolves #{TargetInstallDir} to its own directory under <installRoot>.
+    private async Task SeedMachineScopedInstallDirsAsync(IRepository repository, IUnitOfWork unitOfWork, TestDataBuilder builder, int variableSetId, string installRoot)
+    {
+        await SeedMachineScopedVariableAsync(repository, unitOfWork, builder, variableSetId, (_fixture.PollingMachineId, PollingInstallDir(installRoot))).ConfigureAwait(false);
+        await SeedMachineScopedVariableAsync(repository, unitOfWork, builder, variableSetId, (_fixture.ListeningMachineId, ListeningInstallDir(installRoot))).ConfigureAwait(false);
+    }
+
+    private static async Task SeedMachineScopedVariableAsync(IRepository repository, IUnitOfWork unitOfWork, TestDataBuilder builder, int variableSetId, (int MachineId, string Value) target)
+    {
+        var variable = await builder.CreateVariableAsync(variableSetId, TargetInstallDirVariable, target.Value).ConfigureAwait(false);
+
+        await repository.InsertAsync(new VariableScope { VariableId = variable.Id, ScopeType = VariableScopeType.Machine, ScopeValue = target.MachineId.ToString() }).ConfigureAwait(false);
+        await unitOfWork.SaveChangesAsync().ConfigureAwait(false);
+    }
+
     private async Task<int> SeedMultiTargetDeployPackageAsync(
         LocalHttpPackageFeed feed,
         string installDir,
         string targetRoles,
-        string packageVersion = PackageVersion)
+        string packageVersion = PackageVersion,
+        bool perTargetInstallDirs = false)
     {
         var serverTaskId = 0;
 
@@ -276,6 +314,9 @@ public class DeployPackageMultiTargetE2ETests
             var variableSet = await builder.CreateVariableSetAsync().ConfigureAwait(false);
             var project = await builder.CreateProjectAsync(variableSet.Id).ConfigureAwait(false);
             await builder.UpdateVariableSetOwnerAsync(variableSet, project.Id).ConfigureAwait(false);
+
+            if (perTargetInstallDirs)
+                await SeedMachineScopedInstallDirsAsync(repository, unitOfWork, builder, variableSet.Id, installDir).ConfigureAwait(false);
 
             var process = await builder.CreateDeploymentProcessAsync().ConfigureAwait(false);
             await builder.UpdateProjectProcessIdAsync(project, process.Id).ConfigureAwait(false);
@@ -313,7 +354,7 @@ public class DeployPackageMultiTargetE2ETests
                 (SpecialVariables.Action.PackageFeedId, externalFeed.Id.ToString()),
                 (SpecialVariables.Action.PackageId, PackageId),
                 (SpecialVariables.Action.InstallationDirectoryMode, "Custom"),
-                (SpecialVariables.Action.CustomInstallationDirectory, installDir)).ConfigureAwait(false);
+                (SpecialVariables.Action.CustomInstallationDirectory, perTargetInstallDirs ? $"#{{{TargetInstallDirVariable}}}" : installDir)).ConfigureAwait(false);
 
             var channel = await builder.CreateChannelAsync(project.Id, project.LifecycleId).ConfigureAwait(false);
             var created = await releaseService.CreateReleaseAsync(new CreateReleaseCommand

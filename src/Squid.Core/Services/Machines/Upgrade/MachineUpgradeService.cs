@@ -60,10 +60,17 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// reconnect sequence. Empirical timing from local end-to-end tests:
     /// click → Phase A start: ~1s; Phase A download + method-selected:
     /// 30s (apt path); Phase B binary swap: 1s; systemctl restart +
-    /// tentacle reconnect: 30-35s; healthz-pass + success: at ~T+63s.
-    /// Setting the window to 90s (30 × 3s jobs) comfortably covers this
-    /// including the reconnect jitter variance, with 30 × ~200ms ≈ 6s
-    /// of worst-case wasted Capabilities RPCs — negligible.</para>
+    /// tentacle reconnect: 30-35s; /healthz first answers at ~T+63s.</para>
+    ///
+    /// <para>The Linux forward health check then also requires the unit to
+    /// stay active for <c>SETTLE_WINDOW_SECS</c> (15s, upgrade-linux-tentacle.sh)
+    /// before <c>healthz-pass</c> + <c>success</c> are emitted, so the terminal
+    /// events land at ~T+78s. The window is 120s (40 × 3s jobs): T+78s plus the
+    /// same ~40s reconnect-jitter cushion the original 90s carried over T+51s.
+    /// Worst-case waste is 40 × ~200ms ≈ 8s of Capabilities RPCs — negligible.
+    /// A compile-time constant (no config key to keep compatible); pinned by
+    /// <c>PollingWindow_CoversTheAptPathTerminalEvent_…</c>, which reads the
+    /// settle seconds from the rendered script so a longer settle fails it.</para>
     ///
     /// <para>The 45s predecessor was chosen assuming the typical sequence
     /// ended at ~T+40s — that held for tarball install but apt install
@@ -74,7 +81,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// refreshing at T+45s and the subsequent manual health check was
     /// 30s later (FE's post-Initiated setTimeout).</para>
     /// </summary>
-    internal const int UpgradePollingWindowSeconds = 90;
+    internal const int UpgradePollingWindowSeconds = 120;
 
     /// <summary>
     /// Interval between health checks during the upgrade polling window.
@@ -82,9 +89,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     /// UI sees events arrive within one FE poll cycle after they're
     /// emitted on the agent.
     ///
-    /// <para>Job count = window / interval = 90 / 3 = 30 Hangfire jobs
+    /// <para>Job count = window / interval = 120 / 3 = 40 Hangfire jobs
     /// per upgrade. Each is a quick Capabilities RPC (~20ms on local,
-    /// ~200ms over WAN). Upper-bound ~6s of CPU time across all 30
+    /// ~200ms over WAN). Upper-bound ~8s of CPU time across all 40
     /// jobs, negligible.</para>
     /// </summary>
     internal const int UpgradePollingIntervalSeconds = 3;
