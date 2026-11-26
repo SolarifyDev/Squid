@@ -377,15 +377,17 @@ public class DeploymentPlanApplierTests
     }
 
     [Fact]
-    public async Task AProcessBuiltBeforeStepsWereMarked_IsAllPublishings_SoARebuildStillReplacesItWhole()
+    public async Task AProcessWithOnlyUnmarkedSteps_KeepsAllOfThem_AndARePublishAddsTheOwnedOnes()
     {
         CaptureDeletedSteps();
         ProjectExistsWithMarker(DeploymentPlanFingerprint.Of(Plan("echo old")));
-        ProcessHas([Step(1, 1), Step(2, 2)], Roles(1, "web,edge"), Roles(2, "web,edge"));
+        ProcessHas([Step(1, 1), Step(2, 2)], Roles(1, "database"), Roles(2, "database"));
 
         await Applier().ApplyAsync(Application(Plan("echo new")), CancellationToken.None);
 
-        _deleted.Select(s => s.Id).ShouldBe([1, 2]);
+        _stepData.Verify(d => d.DeleteDeploymentStepsAsync(It.IsAny<List<DeploymentStep>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
+        _createdSteps.Select(c => c.Step.Name).ShouldBe(["Deploy package", "Run"]);
+        _createdSteps.ShouldAllBe(c => c.Step.Properties.Any(p => p.PropertyName == PublishedProjectMarker.OwnedStepProperty && p.PropertyValue == "true"));
     }
 
     [Fact]

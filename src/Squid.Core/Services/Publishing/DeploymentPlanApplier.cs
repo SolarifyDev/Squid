@@ -81,7 +81,7 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
         return new CreateOrUpdateProjectModel { Name = name, SpaceId = spaceId, ProjectGroupId = groupId, LifecycleId = lifecycleId, Json = Marker(string.Empty).ToJson() };
     }
 
-    // The steps publishing built carry OwnedStepProperty. A process with none marked was built before the marker existed, so all of its steps are publishing's.
+    // Only the steps carrying OwnedStepProperty are publishing's; every other step is a person's and is never deleted.
     private async Task LoadOwnedStepsAsync(CancellationToken ct)
     {
         var existing = await stepData.GetDeploymentStepsByProcessIdAsync(_ctx.Project.DeploymentProcessId, ct).ConfigureAwait(false) ?? [];
@@ -89,7 +89,7 @@ public sealed class DeploymentPlanApplier(IProjectService projects, IProjectData
         var marked = properties.Where(p => p.PropertyName == PublishedProjectMarker.OwnedStepProperty).Select(p => p.StepId).ToHashSet();
 
         _ctx.StepProperties = properties;
-        _ctx.OwnedSteps = marked.Count == 0 ? existing : existing.Where(s => marked.Contains(s.Id)).ToList();
+        _ctx.OwnedSteps = existing.Where(s => marked.Contains(s.Id)).ToList();
         _ctx.KeptStepCount = existing.Count - _ctx.OwnedSteps.Count;
     }
 
