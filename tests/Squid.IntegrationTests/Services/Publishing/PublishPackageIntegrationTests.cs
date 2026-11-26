@@ -5,13 +5,17 @@ using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Filtering;
+using Squid.Core.Services.Deployments.Variables;
+using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Packages.BuiltIn;
 using Squid.Core.Services.Packages.Storage;
 using Squid.Core.Services.Publishing;
 using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Commands.PackageStorage;
+using Squid.Message.Commands.Deployments.Variable;
 using Squid.Message.Commands.Publishing;
+using Squid.Message.Models.Deployments.Variable;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
 using ReleaseEntity = Squid.Core.Persistence.Entities.Deployments.Release;
 
@@ -502,6 +506,31 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
 
         (await InputVariablesAsync(first.ProjectId)).Select(v => v.Value).OrderBy(v => v).ShouldBe(["8080", "9091"]);
         (await CountAsync<Squid.Core.Persistence.Entities.Deployments.Variable>()).ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task PublishingAnEnvironmentsPort_MovesTheVariableSetsVersion_SoAStaleVariablesPageSaveIsRefused()
+    {
+        var space = await SetUpAsync();
+        var staging = await AddEnvironmentAsync(space, "Staging");
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var first = await PublishAsync(space, "1.0.0", port: 8080);
+        var variableSetId = (await ProjectAsync(first.ProjectId)).VariableSetId;
+
+        // The user opens the Variables page now ...
+        var opened = await Run<IVariableService, VariableSetDto>(s => s.GetVariableSetByIdAsync(variableSetId, CancellationToken.None));
+
+        // ... a publish adds Staging's port meanwhile ...
+        await PublishAsync(staging, "1.0.0", port: 8081);
+
+        // ... and the user saves what they read: the save must be refused, not delete Staging's port.
+        var stale = new UpdateVariableSetCommand { Id = variableSetId, Name = opened.Name, Description = opened.Description, OwnerId = opened.OwnerId, OwnerType = opened.OwnerType, SpaceId = opened.SpaceId, Version = opened.Version, Variables = [] };
+
+        await Should.ThrowAsync<VariableSetVersionConflictException>(() => Run<IVariableService, VariableSetDto>(s => s.UpdateVariableSetAsync(stale, CancellationToken.None)));
+
+        (await InputVariablesAsync(first.ProjectId)).Select(v => v.Value).OrderBy(v => v).ShouldBe(["8080", "8081"]);
     }
 
     [Fact]
