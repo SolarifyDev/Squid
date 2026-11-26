@@ -15,6 +15,7 @@ using Squid.Core.Setup.Install;
 using Squid.Message.Enums.PackageStorage;
 using Squid.Message.Models.PackageStorage;
 using Squid.Message.Models.Setup;
+using Squid.IntegrationTests.Helpers;
 
 namespace Squid.IntegrationTests.Setup;
 
@@ -194,13 +195,7 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
 
     public void Dispose()
     {
-        using (var connection = new NpgsqlConnection(new NpgsqlConnectionStringBuilder(_server.ConnectionString) { Database = "postgres" }.ConnectionString))
-        {
-            connection.Open();
-
-            using var command = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{_databaseName}\" WITH (FORCE)", connection);
-            command.ExecuteNonQuery();
-        }
+        ThrowawayDatabase.Drop(_server.ConnectionString, _databaseName);
 
         try { Directory.Delete(_dataDirectory, true); } catch (IOException) { }
     }
