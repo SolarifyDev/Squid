@@ -31,7 +31,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// <c>/var/lib/squid-tentacle/upgrade-&lt;version&gt;.lock</c>; redelivery
 /// (e.g. server-side retry, polling reconnect) is a no-op.</para>
 /// </summary>
-public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
+public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy, IUpgradeDurationBudget
 {
     /// <summary>
     /// Embedded bash template — single source the script flows from. Lazy-loaded
@@ -136,6 +136,41 @@ public sealed class LinuxTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// Audit H-15.
     /// </summary>
     internal static readonly TimeSpan UpgradeScriptTimeout = TimeSpan.FromMinutes(5);
+
+    // ── Worst-case run time (IUpgradeDurationBudget) ─────────────────────────
+    // Mirrors of upgrade-linux-tentacle.sh literals, each pinned to the rendered script by
+    // LinuxTentacleUpgradeStrategyTests.WorstCaseDuration_* so a script change that lengthens a phase fails a test.
+
+    /// <summary><c>STOP_BUDGET_CEILING_SECS</c>: the longest a drain-delayed unit stop may take.</summary>
+    internal const int ScriptStopBudgetCeilingSeconds = 900;
+
+    /// <summary>The start allowance in <c>RESTART_TIMEOUT_SECS=$((STOP_BUDGET_SECS + 60))</c>.</summary>
+    internal const int ScriptRestartStartAllowanceSeconds = 60;
+
+    /// <summary><c>curl --max-time</c> of one /healthz probe in <c>service_healthy</c>.</summary>
+    internal const int ScriptHealthzProbeTimeoutSeconds = 5;
+
+    /// <summary>The <c>sleep</c> between health polls in <c>wait_for_upgraded_service</c> / <c>wait_for_restored_service</c>.</summary>
+    internal const int ScriptHealthPollSleepSeconds = 1;
+
+    /// <summary><c>SETTLE_WINDOW_SECS</c>: how long a healthy unit must then stay up.</summary>
+    internal const int ScriptSettleWindowSeconds = 15;
+
+    public TimeSpan WorstCaseDuration => WorstCaseFor(ResolveHealthcheckRetries());
+
+    /// <summary>
+    /// Dispatch to terminal status, worst case. Everything before the scope detach is bounded by
+    /// <see cref="UpgradeScriptTimeout"/>; then the restart (drain-delayed stop + start), the forward health window +
+    /// settle, and a full rollback: stop, restart, and the restored-health window where every attempt may run a settle.
+    /// </summary>
+    internal static TimeSpan WorstCaseFor(int healthcheckRetries)
+    {
+        var restart = ScriptStopBudgetCeilingSeconds + ScriptRestartStartAllowanceSeconds;
+        var forwardHealth = healthcheckRetries * (ScriptHealthzProbeTimeoutSeconds + ScriptHealthPollSleepSeconds) + ScriptSettleWindowSeconds;
+        var rollback = ScriptStopBudgetCeilingSeconds + restart + healthcheckRetries * (ScriptHealthzProbeTimeoutSeconds + ScriptSettleWindowSeconds + ScriptHealthPollSleepSeconds);
+
+        return UpgradeScriptTimeout + TimeSpan.FromSeconds(restart + forwardHealth + rollback);
+    }
 
     private static readonly Lazy<string> _scriptTemplate = new(LoadEmbeddedScript);
 

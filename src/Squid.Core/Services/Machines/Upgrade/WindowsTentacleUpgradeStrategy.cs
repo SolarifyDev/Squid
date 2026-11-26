@@ -57,7 +57,7 @@ namespace Squid.Core.Services.Machines.Upgrade;
 /// lock at <c>MachineUpgradeService.LockExpiry</c> already prevents server-side
 /// dual-dispatch.</para>
 /// </summary>
-public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
+public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy, IUpgradeDurationBudget
 {
     /// <summary>
     /// Embedded PowerShell template loaded once per process via <see cref="Lazy{T}"/>.
@@ -193,6 +193,34 @@ public sealed class WindowsTentacleUpgradeStrategy : IMachineUpgradeStrategy
     /// dispatch can't hold the Redis lock past TTL.
     /// </summary>
     internal static readonly TimeSpan UpgradeScriptTimeout = TimeSpan.FromMinutes(5);
+
+    // ── Worst-case run time (IUpgradeDurationBudget) ─────────────────────────
+    // Mirrors of upgrade-windows-tentacle.ps1 literals, each pinned to the rendered script by
+    // WindowsTentacleUpgradeStrategyTests.WorstCaseDuration_* so a script change that lengthens a phase fails a test.
+
+    /// <summary><c>$SCM_RESTART_SETTLE_SECONDS</c>: the wait for a pending SCM restart before every stop (forward and rollback).</summary>
+    internal const int ScriptScmRestartSettleSeconds = 15;
+
+    /// <summary>The <c>Start-Sleep</c> before each healthcheck attempt.</summary>
+    internal const int ScriptHealthPollSleepSeconds = 2;
+
+    /// <summary><c>Invoke-WebRequest -TimeoutSec</c> of one healthcheck attempt.</summary>
+    internal const int ScriptHealthzProbeTimeoutSeconds = 5;
+
+    public TimeSpan WorstCaseDuration => WorstCaseFor(ResolveHealthcheckRetries(), ResolveServiceTimeoutSeconds());
+
+    /// <summary>
+    /// Dispatch to terminal status, worst case. Everything before Phase B detaches is bounded by
+    /// <see cref="UpgradeScriptTimeout"/>; then the settle + stop + start of the swap, the healthcheck window, and a full
+    /// rollback (settle + stop + start again). Every stop/start wait is capped by <c>$SERVICE_TIMEOUT_SECONDS</c>.
+    /// </summary>
+    internal static TimeSpan WorstCaseFor(int healthcheckRetries, int serviceTimeoutSeconds)
+    {
+        var settleStopStart = ScriptScmRestartSettleSeconds + 2 * serviceTimeoutSeconds;
+        var forwardHealth = healthcheckRetries * (ScriptHealthPollSleepSeconds + ScriptHealthzProbeTimeoutSeconds);
+
+        return UpgradeScriptTimeout + TimeSpan.FromSeconds(settleStopStart + forwardHealth + settleStopStart);
+    }
 
     private static readonly Lazy<string> _scriptTemplate = new(LoadEmbeddedScript);
 
