@@ -19,8 +19,9 @@ namespace Squid.Tentacle.ScriptExecution;
 
 public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITentacleScriptBackend, IGracefulShutdownAware, IRunningScriptReporter
 {
+    // In the direction a ticket moves (in flight -> tracked): a script being started is running too, its workspace is being written.
     public bool IsRunningScript(string ticketId)
-        => !string.IsNullOrEmpty(ticketId) && _scripts.ContainsKey(ticketId);
+        => !string.IsNullOrEmpty(ticketId) && (_startsInFlight.ContainsKey(ticketId) || _scripts.ContainsKey(ticketId));
 
 
     private readonly ConcurrentDictionary<string, RunningScript> _scripts = new();
@@ -38,7 +39,13 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
     private readonly ScriptCancellationRegistry _cancellationRegistry = new();
     private readonly ScriptTombstoneStore _tombstones;
     private readonly TicketLockStripes _ticketLocks = new();
+    // Tickets being started right now (V1 or V2 Start), from the claim under the ticket lock until the script is tracked or the launch failed.
     private readonly ConcurrentDictionary<string, byte> _startsInFlight = new();
+    // Cancels that met a ticket being started: its starter carries them out once the script is tracked, so a Cancel is never lost.
+    private readonly ConcurrentDictionary<string, CancelOrigin> _cancelRequests = new();
+
+    // Which protocol's cancel the starter carries out: V1 releases the ticket, V2 keeps its Canceled result for the V2 Complete.
+    private enum CancelOrigin { V1, V2 }
 
     /// <summary>Test-only — observe the per-ticket CTS registry's live entry count.
     /// Used to verify Cleanup is called on every exit path of LocalScriptService.</summary>
@@ -52,6 +59,15 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
     /// <summary>Test-only — runs right after the pre-lock output drain and before the ticket lock is taken (the window in which a still-running script can exit).</summary>
     internal Action? AfterPreLockDrainHookForTests { get; set; }
+
+    /// <summary>Test-only — runs in a start once it holds its isolation mutex, before its workspace is created.</summary>
+    internal Action? StartUnderwayHookForTests { get; set; }
+
+    /// <summary>Test-only — runs in a start after its files are written, before its process is started.</summary>
+    internal Action? AfterFilesWrittenHookForTests { get; set; }
+
+    /// <summary>Test-only — runs in a Cancel that saw the ticket being started, before it records its cancel request.</summary>
+    internal Action? BeforeCancelRequestRecordedHookForTests { get; set; }
 
     private readonly IScriptStateStoreFactory _stateStoreFactory;
     private readonly IAdmissionPolicySource? _admissionPolicySource;
@@ -148,8 +164,6 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         if (command.ScriptTicket == null)
             throw new ArgumentException("StartScriptCommand.ScriptTicket is required for idempotent execution", nameof(command));
 
-        var ticketId = command.ScriptTicket.TaskId;
-
         // Admission policy is the agent-side last-line-of-defence. It runs before
         // any idempotency lookup so even a redelivered StartScript is re-evaluated
         // against the current policy (the rules may have tightened since the
@@ -157,112 +171,213 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         if (TryEvaluateAdmission(command, out var denial))
             return denial!;
 
-        if (TryReturnInMemoryStatus(command.ScriptTicket, out var inMemoryResponse))
-            return inMemoryResponse!;
+        var ticket = command.ScriptTicket;
 
-        var workDir = ResolveWorkDir(ticketId);
+        return StartOnce(command, () => PeekKnownV1(ticket), () => InFlightStatusV1(ticket, 0), () => LaunchClaimed(command));
+    }
 
-        if (TryReturnPersistedStatus(command.ScriptTicket, workDir, out var persistedResponse))
-            return persistedResponse!;
+    /// <summary>
+    /// The one start path for V1 and V2. Under the ticket lock a ticket whose start is in flight answers from that start, a known ticket answers
+    /// from what is known, and a new ticket is claimed (in flight) — so two Starts of one ticket, whichever protocol each used, run it once, and a
+    /// V1 Cancel or Complete, which decide under the same lock, find it in flight or not, never in between. The launch itself (mutex wait, file
+    /// writes, process start) runs outside the lock, see <see cref="LaunchClaimed"/>.
+    /// </summary>
+    private T StartOnce<T>(StartScriptCommand command, Func<T?> peekKnown, Func<T> inFlight, Func<T> launchClaimed) where T : class
+    {
+        var ticketId = command.ScriptTicket.TaskId;
 
+        DrainOutputOutsideTicketLock(command.ScriptTicket);
+
+        lock (_ticketLocks.For(ticketId))
+        {
+            // In flight first: a start ends its claim only after it tracked its script, so a ticket not in flight here is tracked or was never launched.
+            if (_startsInFlight.ContainsKey(ticketId)) return inFlight();
+
+            var known = peekKnown();
+
+            if (known != null) return known;
+
+            _startsInFlight[ticketId] = 0;
+        }
+
+        return launchClaimed();
+    }
+
+    // Under the ticket lock, after the pre-lock drain: the tracked script, else a start a previous agent run persisted.
+    private ScriptStatusResponse? PeekKnownV1(ScriptTicket ticket)
+    {
+        if (_scripts.TryGetValue(ticket.TaskId, out var existing)) return BuildStatus(ticket, existing, drain: false);
+
+        return TryReturnPersistedStatus(ticket, ResolveWorkDir(ticket.TaskId), out var persisted) ? persisted : null;
+    }
+
+    // A start still in flight has no output yet: Running with nothing new, as its persisted Starting state answers. Never Complete + UnknownResult,
+    // which a V1 server reads as "unknown ticket" and answers by dispatching the script again.
+    private static ScriptStatusResponse InFlightStatusV1(ScriptTicket ticket, long lastLogSequence) => new(ticket, ProcessState.Running, 0, new List<ProcessOutput>(), lastLogSequence);
+
+    /// <summary>
+    /// The one launch path (V1 and V2 Start). On entry the ticket is in flight; the claim ends once its script is tracked (or the launch failed),
+    /// and only then does the starter take a cancel handed to it (see <see cref="EndStartClaim"/>) and carry it out on the tracked script.
+    /// </summary>
+    private ScriptStatusResponse LaunchClaimed(StartScriptCommand command)
+    {
+        RunningScript running;
+        CancelOrigin? handedCancel;
+
+        try
+        {
+            running = LaunchTracked(command);
+        }
+        finally
+        {
+            handedCancel = EndStartClaim(command.ScriptTicket.TaskId);
+        }
+
+        if (handedCancel is { } origin) return CancelHandedToStarter(command.ScriptTicket, origin);
+
+        WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
+
+        return BuildStatus(command.ScriptTicket, running);
+    }
+
+    // Claim first, request second: a Cancel records its request before it re-reads the claim, so either it still sees the ticket in flight and
+    // this take finds the request, or it sees the claim gone and takes the request back itself. Whoever removes the request owns the cancel.
+    // A failed launch takes (and drops) the request too: there is nothing to cancel.
+    private CancelOrigin? EndStartClaim(string ticketId)
+    {
+        _startsInFlight.TryRemove(ticketId, out _);
+
+        return _cancelRequests.TryRemove(ticketId, out var origin) ? origin : null;
+    }
+
+    private ScriptStatusResponse CancelHandedToStarter(ScriptTicket ticket, CancelOrigin origin)
+    {
+        Log.Information("Cancel requested while ticket {TicketId} was starting, cancelling its script", ticket.TaskId);
+
+        if (origin == CancelOrigin.V2)
+        {
+            CancelOutsideStartV2(ticket, 0);
+            return CompletedResponse(ticket, ScriptExitCodes.Canceled);
+        }
+
+        // A later Cancel or Complete may have taken the script meanwhile: it is then theirs to finish.
+        return _scripts.TryRemove(ticket.TaskId, out var running) ? CancelRunning(ticket, 0, running) : CompletedResponse(ticket, ScriptExitCodes.Canceled);
+    }
+
+    /// <summary>
+    /// A ticket being started has nothing this Cancel may take yet: record the request for the starter. True when the starter took the cancel
+    /// over; false when no start is in flight (the caller cancels whatever is tracked itself).
+    /// </summary>
+    private bool TryHandCancelToStarter(ScriptTicket ticket, CancelOrigin origin)
+    {
+        var ticketId = ticket.TaskId;
+
+        if (!_startsInFlight.ContainsKey(ticketId)) return false;
+
+        // The starter may be waiting for the isolation mutex or writing files: the soft-cancel token cuts that short.
+        _cancellationRegistry.Cancel(ticket);
+
+        BeforeCancelRequestRecordedHookForTests?.Invoke();
+
+        _cancelRequests[ticketId] = origin;
+
+        if (_startsInFlight.ContainsKey(ticketId)) return true;
+
+        // The claim ended meanwhile, so the script is tracked (or never launched): take the request back unless the starter already took it.
+        _cancelRequests.TryRemove(ticketId, out _);
+
+        return false;
+    }
+
+    // Outside the ticket lock: the mutex wait, the workspace and the process start. Returns the script once it is tracked.
+    private RunningScript LaunchTracked(StartScriptCommand command)
+    {
         DiskSpaceChecker.EnsureDiskHasEnoughFreeSpace(Path.GetTempPath());
         CleanupOrphanedWorkspacesIfDue();
 
-        //  (audit ARCH.9 F1.1) — pure-sync mutex acquire.
-        //  this was AcquireAsync(...).GetAwaiter.GetResult:
-        // sync-over-async pattern that burned a Halibut RPC thread on a
-        // Task.Delay-based async polling loop (allocation churn, threadpool
-        // pressure under contention). The new TryAcquireBlocking uses
-        // synchronous Thread.Sleep / WaitHandle.WaitOne polling — same
-        // observable behaviour, no Task allocation, no async state machine.
-        //
-        // The CancellationToken plumbed in is the per-ticket soft-cancel
-        // token from the registry — a CancelScript RPC arriving mid-acquire
-        // short-circuits the polling loop instead of waiting for the full
-        // configured timeout.
+        //  (audit ARCH.9 F1.1) — pure-sync mutex acquire (no sync-over-async). The token is the
+        // per-ticket soft-cancel token from the registry: a CancelScript RPC arriving mid-acquire
+        // short-circuits the polling loop instead of waiting for the full configured timeout.
         var softCancelToken = _cancellationRegistry.GetOrCreate(command.ScriptTicket);
         var isolationHandle = _isolationMutex.TryAcquireBlocking(command, softCancelToken);
 
         if (isolationHandle == null)
             throw new InvalidOperationException("Failed to acquire script isolation mutex within the configured timeout");
 
-        // P0-T.5 (2026-04-24 audit): ownership of isolationHandle stays with the local
-        // until RunningScript is constructed. Every step between acquire and that
-        // construction can throw (Directory.CreateDirectory, state-store save, file
-        // writes, process start). Pre-fix, any such exception leaked the handle and
-        // the mutex stayed held forever — subsequent FullIsolation scripts with the
-        // same mutex name blocked until their configured timeout fired. The T.7 fix
-        // made this more reachable because WriteAdditionalFiles now rethrows.
-        //
-        // The try / catch transfers disposal responsibility in one place: if we get
-        // past RunningScript construction, ownership is RunningScript's (it disposes
-        // the handle on Complete / Cancel / error). We null out the local so the
-        // catch block doesn't double-dispose.
+        StartUnderwayHookForTests?.Invoke();
+
+        return StartTrackedProcess(command, isolationHandle, softCancelToken);
+    }
+
+    private RunningScript StartTrackedProcess(StartScriptCommand command, IDisposable? isolationHandle, CancellationToken softCancelToken)
+    {
+        var ticketId = command.ScriptTicket.TaskId;
+        var workDir = ResolveWorkDir(ticketId);
+
+        // P0-T.5 (2026-04-24 audit): ownership of isolationHandle stays with the local until RunningScript is constructed — every
+        // step before that can throw, and a leaked handle would hold the mutex forever. Past the construction RunningScript owns
+        // it (disposed on Complete / Cancel / error), so the local is nulled and the catch block doesn't double-dispose.
         try
         {
-            Directory.CreateDirectory(workDir);
-            SetDirectoryPermissions(workDir);
+            var stateStore = PrepareWorkspace(workDir, command, softCancelToken);
 
-            var stateStore = _stateStoreFactory.Create(workDir);
-            stateStore.Save(new ScriptState
-            {
-                TicketId = ticketId,
-                Progress = ScriptProgress.Starting,
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-
-            var syntax = command.ScriptSyntax;
-            WriteScriptFile(workDir, command.ScriptBody, syntax);
-            // : thread the per-ticket soft-cancel token so a
-            // CancelScript RPC arriving mid-write actually aborts.
-            WriteAdditionalFiles(workDir, command.Files, softCancelToken);
+            AfterFilesWrittenHookForTests?.Invoke();
 
             var process = StartProcess(workDir, command);
             var logWriter = new SequencedLogWriter(Path.Combine(workDir, "output.log"));
-            var traceId = ResolveParentTraceId(command);
-            var running = new RunningScript(process, workDir, isolationHandle, stateStore, logWriter, command, traceId) { OutputDrainTimeout = OutputDrainTimeout };
+            var running = new RunningScript(process, workDir, isolationHandle!, stateStore, logWriter, command, ResolveParentTraceId(command)) { OutputDrainTimeout = OutputDrainTimeout };
 
-            // Ownership transferred — RunningScript.Dispose now owns the mutex handle.
             isolationHandle = null;
 
             BeginReadOutput(process, running);
             _scripts[ticketId] = running;
 
-            stateStore.Save(new ScriptState
-            {
-                TicketId = ticketId,
-                Progress = ScriptProgress.Running,
-                ProcessId = process.Id,
-                // OS-reported start time captured alongside the PID so orphan-state
-                // detection (TryBuildStatusFromPersistedLogs) can distinguish
-                // "same process still running" from "PID got recycled to an
-                // unrelated process". Without this, a long-running tentacle
-                // eventually hits PID wrap and reports a recycled PID's live
-                // status as the original script's — reintroducing the
-                // observer-hang bug's latent sequel.
-                ProcessStartedAt = TryGetProcessStartTime(process),
-                CreatedAt = DateTimeOffset.UtcNow,
-                StartedAt = DateTimeOffset.UtcNow
-            });
+            SaveRunningState(stateStore, ticketId, process);
 
             // MUST come after the Running save above: a script that exits immediately would otherwise have
             // its Complete record overwritten by the stale Running snapshot.
             HookNaturalExitPersistence(process, running);
 
-            Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, syntax);
+            Log.Information("Started script {TicketId} in {WorkDir} (syntax: {Syntax})", ticketId, workDir, command.ScriptSyntax);
 
-            WaitForEarlyCompletion(running, command.DurationToWaitForScriptToFinish);
-
-            return BuildStatus(command.ScriptTicket, running);
+            return running;
         }
         catch
         {
-            // Dispose releases the mutex; LockRelease.Dispose is idempotent so re-entry
-            // during exception unwinding is safe. Null after the successful RunningScript
-            // transfer means this is a no-op on the happy path.
             isolationHandle?.Dispose();
             throw;
         }
+    }
+
+    private IScriptStateStore PrepareWorkspace(string workDir, StartScriptCommand command, CancellationToken softCancelToken)
+    {
+        Directory.CreateDirectory(workDir);
+        SetDirectoryPermissions(workDir);
+
+        var stateStore = _stateStoreFactory.Create(workDir);
+        stateStore.Save(new ScriptState { TicketId = command.ScriptTicket.TaskId, Progress = ScriptProgress.Starting, CreatedAt = DateTimeOffset.UtcNow });
+
+        WriteScriptFile(workDir, command.ScriptBody, command.ScriptSyntax);
+
+        // : thread the per-ticket soft-cancel token so a CancelScript RPC arriving mid-write actually aborts.
+        WriteAdditionalFiles(workDir, command.Files, softCancelToken);
+
+        return stateStore;
+    }
+
+    private static void SaveRunningState(IScriptStateStore stateStore, string ticketId, Process process)
+    {
+        stateStore.Save(new ScriptState
+        {
+            TicketId = ticketId,
+            Progress = ScriptProgress.Running,
+            ProcessId = process.Id,
+            // OS-reported start time captured alongside the PID so orphan-state detection (TryBuildStatusFromPersistedLogs)
+            // can tell "same process still running" from "PID got recycled to an unrelated process".
+            ProcessStartedAt = TryGetProcessStartTime(process),
+            CreatedAt = DateTimeOffset.UtcNow,
+            StartedAt = DateTimeOffset.UtcNow
+        });
     }
 
     private static string? ResolveParentTraceId(StartScriptCommand command)
@@ -313,14 +428,6 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
                 new(ProcessOutputSource.StdErr, $"Admission denied by rule '{ruleId}': {reason}")
             },
             0);
-    }
-
-    private bool TryReturnInMemoryStatus(ScriptTicket ticket, out ScriptStatusResponse? response)
-    {
-        response = null;
-        if (!_scripts.TryGetValue(ticket.TaskId, out var existing)) return false;
-        response = BuildStatus(ticket, existing);
-        return true;
     }
 
     private bool TryReturnPersistedStatus(ScriptTicket ticket, string workDir, out ScriptStatusResponse? response)
@@ -399,7 +506,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         catch { /* Best-effort early return — polling will catch final state */ }
     }
 
-    private ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1)
+    private ScriptStatusResponse BuildStatus(ScriptTicket ticket, RunningScript running, long afterSequence = -1, bool drain = true)
     {
         // Exit is read ONCE, before draining. Reading it after the log file let a process that exited in between be
         // reported Complete with logs read while it was still running, i.e. without its final lines.
@@ -421,7 +528,10 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         // at its source so single-poll callers also get the full output.
         //
         // Idempotent and bounded — see AwaitOutputDrained.
-        AwaitOutputDrained(running);
+        if (drain) AwaitOutputDrained(running);
+
+        // Without a drain (under a ticket lock), "exited" is only trustworthy once the output is complete; otherwise the final lines could be missing from a Complete.
+        if (!drain && !running.OutputDrained) exited = false;
 
         // Cursor MUST be derived from the same disk read as `logs` — see
         // ReadLogsAndCursor's XML for the race that the previous two-source
@@ -487,8 +597,13 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
     public ScriptStatusResponse GetStatus(ScriptStatusRequest request)
     {
+        // Flag first: a start ends its claim only after it tracked its script, so reading in this order cannot miss a start that finishes while we look.
+        var startInFlight = _startsInFlight.ContainsKey(request.Ticket.TaskId);
+
         if (_scripts.TryGetValue(request.Ticket.TaskId, out var running))
             return BuildStatus(request.Ticket, running, request.LastLogSequence - 1);
+
+        if (startInFlight) return InFlightStatusV1(request.Ticket, request.LastLogSequence);
 
         var workDir = ResolveWorkDir(request.Ticket.TaskId);
 
@@ -650,26 +765,49 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         if (command.Ticket == null)
             throw new ArgumentException("CompleteScriptCommand.Ticket is required", nameof(command));
 
-        if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
-        {
-            var workDir = ResolveWorkDir(command.Ticket.TaskId);
-            var recovered = RecoverPersistedCompletion(command, workDir);
-            DeletePersistedStateIfAny(workDir);
-            //  audit follow-up (#1): CompleteScript early-return
-            // path was missing _cancellationRegistry.Cleanup. The leak
-            // path: StartScript registers with the registry BEFORE
-            // _scripts.TryAdd; if a failure between those steps leaves
-            // the registry populated but _scripts empty, a subsequent
-            // CompleteScript hits this branch — pre-fix the registry
-            // entry leaked. Now matches the CancelScript pattern
-            // (Cleanup on every exit path). Test verifies the call site
-            // is executed; full leak-path repro requires mid-Start
-            // failure injection that's not in scope for this phase.
-            _cancellationRegistry.Cleanup(command.Ticket);
-            return recovered ?? CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
-        }
+        var running = TakeForCompleteV1(command, out var notRunning);
 
-        return CompleteRunning(command.Ticket, command.LastLogSequence, running);
+        return running == null ? notRunning! : CompleteRunning(command.Ticket, command.LastLogSequence, running);
+    }
+
+    /// <summary>
+    /// Under the ticket lock, serialized with Start's claim: the tracked script is taken; a ticket whose start is in flight keeps its Starting
+    /// state and soft-cancel token (the starter still needs both) and gets the unchanged V1 answer for nothing to release; any other ticket is
+    /// released from disk.
+    /// </summary>
+    private RunningScript? TakeForCompleteV1(CompleteScriptCommand command, out ScriptStatusResponse? notRunning)
+    {
+        notRunning = null;
+
+        lock (_ticketLocks.For(command.Ticket.TaskId))
+        {
+            var startInFlight = _startsInFlight.ContainsKey(command.Ticket.TaskId);
+
+            if (_scripts.TryRemove(command.Ticket.TaskId, out var running)) return running;
+
+            notRunning = startInFlight ? CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult) : ReleaseNotRunningV1(command);
+
+            return null;
+        }
+    }
+
+    private ScriptStatusResponse ReleaseNotRunningV1(CompleteScriptCommand command)
+    {
+        var workDir = ResolveWorkDir(command.Ticket.TaskId);
+        var recovered = RecoverPersistedCompletion(command, workDir);
+        DeletePersistedStateIfAny(workDir);
+        //  audit follow-up (#1): CompleteScript early-return
+        // path was missing _cancellationRegistry.Cleanup. The leak
+        // path: StartScript registers with the registry BEFORE
+        // _scripts.TryAdd; if a failure between those steps leaves
+        // the registry populated but _scripts empty, a subsequent
+        // CompleteScript hits this branch — pre-fix the registry
+        // entry leaked. Now matches the CancelScript pattern
+        // (Cleanup on every exit path). Test verifies the call site
+        // is executed; full leak-path repro requires mid-Start
+        // failure injection that's not in scope for this phase.
+        _cancellationRegistry.Cleanup(command.Ticket);
+        return recovered ?? CompletedResponse(command.Ticket, ScriptExitCodes.UnknownResult);
     }
 
     private ScriptStatusResponse CompleteRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running, int? forcedExitCode = null, Func<int, bool>? onFinalExitCode = null, TimeSpan? exitWait = null)
@@ -770,14 +908,32 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         // GetOrCreate.
         _cancellationRegistry.Cancel(command.Ticket);
 
-        if (!_scripts.TryRemove(command.Ticket.TaskId, out var running))
-        {
-            var workDir = ResolveWorkDir(command.Ticket.TaskId);
-            DeletePersistedStateIfAny(workDir);
-            _cancellationRegistry.Cleanup(command.Ticket);
-            return CompletedResponse(command.Ticket, ScriptExitCodes.Canceled);
-        }
+        var running = ClaimForCancelV1(command.Ticket);
 
+        return running == null ? CompletedResponse(command.Ticket, ScriptExitCodes.Canceled) : CancelRunning(command.Ticket, command.LastLogSequence, running);
+    }
+
+    /// <summary>
+    /// Under the ticket lock, serialized with Start's claim: a start in flight takes the cancel over (null), a tracked script is taken, and only a
+    /// ticket that is neither has its persisted state and soft-cancel token released (null) — never the state a start in flight is about to use.
+    /// </summary>
+    private RunningScript? ClaimForCancelV1(ScriptTicket ticket)
+    {
+        lock (_ticketLocks.For(ticket.TaskId))
+        {
+            if (TryHandCancelToStarter(ticket, CancelOrigin.V1)) return null;
+
+            if (_scripts.TryRemove(ticket.TaskId, out var running)) return running;
+
+            DeletePersistedStateIfAny(ResolveWorkDir(ticket.TaskId));
+            _cancellationRegistry.Cleanup(ticket);
+
+            return null;
+        }
+    }
+
+    private ScriptStatusResponse CancelRunning(ScriptTicket ticket, long lastLogSequence, RunningScript running)
+    {
         // Cancel wins over a racing natural exit: the server asked for it and is told Canceled, so
         // the recorded result must say Canceled too. Flag BEFORE Kill so the exit callback (which
         // would otherwise record the kill signal's exit code) stands down.
@@ -790,7 +946,7 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to kill process for ticket {TicketId}", command.Ticket.TaskId);
+            Log.Warning(ex, "Failed to kill process for ticket {TicketId}", ticket.TaskId);
         }
 
         // Drain the output readers (same rationale as CompleteScript). Kill is best-effort, so first give the
@@ -804,10 +960,10 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
         }
         catch (Exception ex)
         {
-            Log.Debug(ex, "Failed to wait for process exit on cancel for ticket {TicketId}", command.Ticket.TaskId);
+            Log.Debug(ex, "Failed to wait for process exit on cancel for ticket {TicketId}", ticket.TaskId);
         }
 
-        var logs = ReadLogs(running, command.LastLogSequence - 1);
+        var logs = ReadLogs(running, lastLogSequence - 1);
 
         FinalizeState(running, ScriptExitCodes.Canceled);
 
@@ -818,9 +974,9 @@ public partial class LocalScriptService : IScriptService, IScriptServiceV2, ITen
 
         // : dispose the per-ticket CTS now the script has been
         // cancelled. Idempotent — safe even if Cancel was a no-op above.
-        _cancellationRegistry.Cleanup(command.Ticket);
+        _cancellationRegistry.Cleanup(ticket);
 
-        return new ScriptStatusResponse(command.Ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
+        return new ScriptStatusResponse(ticket, ProcessState.Complete, ScriptExitCodes.Canceled, logs, running.LogSequence);
     }
 
     private static void PersistCompleteState(RunningScript running, int exitCode)

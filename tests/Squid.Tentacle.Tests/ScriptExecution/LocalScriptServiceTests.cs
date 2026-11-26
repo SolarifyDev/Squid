@@ -657,9 +657,10 @@ public class LocalScriptServiceTests : IDisposable
         Directory.CreateDirectory(oldDir);
         Directory.SetCreationTimeUtc(oldDir, DateTime.UtcNow.AddHours(-48));
 
-        var cleaned = LocalScriptService.CleanupOrphanedWorkspaces(TimeSpan.FromHours(24));
+        LocalScriptService.CleanupOrphanedWorkspaces(TimeSpan.FromHours(24));
 
-        cleaned.ShouldBeGreaterThanOrEqualTo(1);
+        // The temp directory is shared: every script launch in a parallel test class runs the same sweep, so another one may delete this
+        // directory first and this call then counts 0. What matters is that an old workspace never survives a sweep.
         Directory.Exists(oldDir).ShouldBeFalse();
     }
 
