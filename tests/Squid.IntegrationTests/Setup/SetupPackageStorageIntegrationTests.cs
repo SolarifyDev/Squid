@@ -141,6 +141,55 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task RetryAgainstAnExistingDatabase_AfterAnAttemptOnANewOne_KeepsTheExistingPackageStorage()
+    {
+        var origin = new SetupSchemaOrigin();
+        var existingName = $"squid_setup_pkg_it_{Guid.NewGuid():N}";
+        var existing = new NpgsqlConnectionStringBuilder(_server.ConnectionString) { Database = existingName }.ConnectionString;
+
+        try
+        {
+            await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/first" } }, origin);
+
+            new DbUpRunner(existing).Run();
+            await ExecuteAsync("UPDATE package_store SET name = 'Ops store', properties = '{\"Root\":\"/srv/pk\"}'", existing);
+
+            await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/new" } }, origin, existing);
+
+            (await ReadRowsAsync(existing)).Single().ShouldBe(new StoreRow("Ops store", "FileSystem", "{\"Root\":\"/srv/pk\"}", null, true));
+        }
+        finally
+        {
+            ThrowawayDatabase.Drop(existing, existingName);
+        }
+    }
+
+    [Fact]
+    public async Task SameDatabaseRetried_WithOtherConnectionTuning_StillCountsAsFresh()
+    {
+        var origin = new SetupSchemaOrigin();
+        var tuned = new NpgsqlConnectionStringBuilder(_server.ConnectionString) { Timeout = 25 }.ConnectionString;
+
+        await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/first" } }, origin);
+        await InstallAsync(new SetupPackageStorageChoice { Kind = "FileSystem", Properties = new() { ["Root"] = "/tmp/second" } }, origin, tuned);
+
+        (await ReadRowsAsync()).Single().Properties.ShouldContain("/tmp/second");
+    }
+
+    [Fact]
+    public async Task SchemaFromBeforePackageStorageExisted_IsNotTreatedAsFresh()
+    {
+        await ExecuteAsync($"CREATE DATABASE \"{_databaseName}\"", new NpgsqlConnectionStringBuilder(_server.ConnectionString) { Database = "postgres" }.ConnectionString);
+        await ExecuteAsync("CREATE TABLE schemaversions (schemaversionsid serial PRIMARY KEY, scriptname text NOT NULL, applied timestamp NOT NULL)");
+
+        var origin = new SetupSchemaOrigin();
+
+        await origin.RecordAsync(_server.ConnectionString, CancellationToken.None);
+
+        origin.WasFresh(_server.ConnectionString).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task OnlyTheDefaultRowIsChanged_NotOtherStores()
     {
         var origin = new SetupSchemaOrigin();
@@ -200,11 +249,11 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         try { Directory.Delete(_dataDirectory, true); } catch (IOException) { }
     }
 
-    private async Task<SetupProgressTracker> InstallAsync(SetupPackageStorageChoice storage, SetupSchemaOrigin origin = null)
+    private async Task<SetupProgressTracker> InstallAsync(SetupPackageStorageChoice storage, SetupSchemaOrigin origin = null, string connectionString = null)
     {
         var request = new SetupInstallRequest
         {
-            Database = new SetupDatabaseChoice { Mode = SetupServiceMode.External, ConnectionString = _server.ConnectionString, CreateIfMissing = true },
+            Database = new SetupDatabaseChoice { Mode = SetupServiceMode.External, ConnectionString = connectionString ?? _server.ConnectionString, CreateIfMissing = true },
             Redis = new SetupRedisChoice { Mode = SetupServiceMode.External, ConnectionString = RedisConnectionString },
             Admin = new SetupAdminAccount { UserName = "ops", Password = "longenough" },
             Server = new SetupServerUrls { ExternalUrl = "http://localhost:8080" },
@@ -220,9 +269,9 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         return tracker;
     }
 
-    private async Task ExecuteAsync(string sql)
+    private async Task ExecuteAsync(string sql, string connectionString = null)
     {
-        await using var connection = new NpgsqlConnection(_server.ConnectionString);
+        await using var connection = new NpgsqlConnection(connectionString ?? _server.ConnectionString);
 
         await connection.OpenAsync();
 
@@ -243,9 +292,9 @@ public sealed class SetupPackageStorageIntegrationTests : IDisposable
         return await new PackageStoreDataProvider(context, new EfRepository(context), protector).GetDefaultAsync(CancellationToken.None);
     }
 
-    private async Task<List<StoreRow>> ReadRowsAsync()
+    private async Task<List<StoreRow>> ReadRowsAsync(string connectionString = null)
     {
-        await using var connection = new NpgsqlConnection(_server.ConnectionString);
+        await using var connection = new NpgsqlConnection(connectionString ?? _server.ConnectionString);
 
         await connection.OpenAsync();
 

@@ -21,7 +21,7 @@ public sealed partial class SetupInstaller
     /// </summary>
     private async Task<string> ApplyPackageStorageAsync(CancellationToken ct)
     {
-        if (_schemaOrigin.DatabaseWasFresh != true) return ExistingPackageStorageKeptMessage;
+        if (!_schemaOrigin.WasFresh(_ctx.DatabaseConnectionString)) return ExistingPackageStorageKeptMessage;
 
         var choice = _ctx.Request.PackageStorage;
 
