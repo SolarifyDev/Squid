@@ -349,6 +349,26 @@ public class MachineHealthCheckSweepTests : IDisposable
         clock.Armed.ShouldBe(new[] { SweepLength, expected, expected }, "sweep deadline, then the sweep probe and the manual probe, both with the full transport timeout");
     }
 
+    [Theory]
+    [InlineData(CommunicationStyle.Ssh, "Ssh", 203)]            // 90+10+90+3+10
+    [InlineData(CommunicationStyle.OpenClaw, "OpenClaw", 100)]  // 90+10
+    public async Task ManualCheck_UsesItsMachinePolicysConnectTimeout(CommunicationStyle style, string endpointStyle, double expectedSeconds)
+    {
+        // Seam: the service loads the machine's connectivity policy and hands it to the probe timeout.
+        var machine = new Machine { Id = 1, Name = "policy", IsDisabled = false, MachinePolicyId = 7, Endpoint = $"{{\"communicationStyle\":\"{endpointStyle}\"}}" };
+        var spy = new List<TimeSpan>();
+        Seed(machine);
+        _transport.Setup(t => t.CommunicationStyle).Returns(style);
+        _policies.Setup(p => p.GetByIdAsync(7, It.IsAny<CancellationToken>())).ReturnsAsync(new MachinePolicy { Id = 7, MachineConnectivityPolicy = "{\"connectTimeoutSeconds\":90}" });
+        ProbeReturns((_, _) => Task.FromResult(new HealthCheckResult(true, "ok")));
+        var host = new HealthCheckTestHost(_machines.Object, _policies.Object, _registry.Object, HealthCheckTestHost.PassthroughRedis().Object, new MachineHealthCheckSetting(), null, spy);
+        _hosts.Add(host);
+
+        await host.Service.ManualHealthCheckAsync(1).WaitAsync(Guard);
+
+        spy.ShouldBe(new[] { TimeSpan.FromSeconds(expectedSeconds) });
+    }
+
     // ── lock usage ──
 
     [Fact]

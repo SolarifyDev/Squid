@@ -8,6 +8,21 @@ public static class SshRetryHelper
     internal static readonly TimeSpan DefaultInitialDelay = TimeSpan.FromSeconds(1);
     internal static readonly TimeSpan DefaultMaxDelay = TimeSpan.FromSeconds(15);
 
+    /// <summary>The total time <see cref="ExecuteWithRetry{T}"/> sleeps between <paramref name="maxAttempts"/> attempts that all fail transiently.</summary>
+    internal static TimeSpan TotalBackoff(int maxAttempts)
+    {
+        var total = TimeSpan.Zero;
+        var delay = DefaultInitialDelay;
+
+        for (var attempt = 1; attempt < maxAttempts; attempt++)
+        {
+            total += delay;
+            delay = NextDelay(delay);
+        }
+
+        return total;
+    }
+
     public static T ExecuteWithRetry<T>(Func<T> action, Func<Exception, bool> isTransient, int maxAttempts = DefaultMaxAttempts)
     {
         var delay = DefaultInitialDelay;
