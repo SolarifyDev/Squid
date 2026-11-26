@@ -14,6 +14,7 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
 {
     internal const int DefaultConnectTimeoutSeconds = 15;
     internal static readonly TimeSpan ScriptTimeout = TimeSpan.FromMinutes(5);
+    internal static readonly TimeSpan EchoTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IEndpointContextBuilder _endpointContextBuilder;
     private readonly ISshConnectionFactory _connectionFactory;
@@ -71,7 +72,7 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
         var passphrase = FindVariable(accountVars, SpecialVariables.Account.SshPassphrase);
         var password = FindVariable(accountVars, SpecialVariables.Account.Password);
 
-        var timeout = TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds);
+        var timeout = ConnectTimeoutFor(connectivityPolicy);
 
         // Decrypt the at-rest proxy password before building the probe connection. Read-both: a legacy
         // plaintext passes through; no protector (tests) = passthrough.
@@ -88,7 +89,7 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
 
         // Test 1: SSH connectivity
         var ssh = scope.GetSshClient();
-        var echoResult = SshRemoteShellExecutor.Execute(ssh, "echo ok", TimeSpan.FromSeconds(10));
+        var echoResult = SshRemoteShellExecutor.Execute(ssh, "echo ok", EchoTimeout);
 
         if (echoResult.ExitCode != 0)
             return new HealthCheckResult(false, $"SSH command failed (exit code {echoResult.ExitCode}): {echoResult.Error}");
@@ -110,6 +111,9 @@ public class SshHealthCheckStrategy : IHealthCheckStrategy
 
         return new HealthCheckResult(true, $"SSH health check passed — {connectionInfo.Host}:{connectionInfo.Port}");
     }
+
+    /// <summary>How long each SSH and SFTP connect of the probe may take: the machine policy's connect timeout (the SSH client's own fallback for a non-positive one), else the default.</summary>
+    internal static TimeSpan ConnectTimeoutFor(MachineConnectivityPolicyDto connectivityPolicy) => SshConnectionFactory.EffectiveConnectTimeout(TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds));
 
     internal static string ResolveCustomScript(MachineHealthCheckPolicyDto healthCheckPolicy)
     {

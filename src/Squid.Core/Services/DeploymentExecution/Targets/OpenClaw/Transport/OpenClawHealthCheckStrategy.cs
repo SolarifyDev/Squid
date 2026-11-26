@@ -33,10 +33,13 @@ public class OpenClawHealthCheckStrategy : IHealthCheckStrategy
             return new HealthCheckResult(false, "BaseUrl is empty");
 
         var gatewayToken = await ResolveGatewayTokenAsync(endpoint, ct).ConfigureAwait(false);
-        var timeout = TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds);
+        var timeout = ConnectTimeoutFor(connectivityPolicy);
 
         return await ProbeGatewayAsync(endpoint.BaseUrl, gatewayToken, timeout, ct).ConfigureAwait(false);
     }
+
+    /// <summary>How long the gateway request may take: the machine policy's connect timeout, else the default.</summary>
+    internal static TimeSpan ConnectTimeoutFor(MachineConnectivityPolicyDto connectivityPolicy) => TimeSpan.FromSeconds(connectivityPolicy?.ConnectTimeoutSeconds ?? DefaultConnectTimeoutSeconds);
 
     internal async Task<HealthCheckResult> ProbeGatewayAsync(string baseUrl, string gatewayToken, TimeSpan timeout, CancellationToken ct)
     {

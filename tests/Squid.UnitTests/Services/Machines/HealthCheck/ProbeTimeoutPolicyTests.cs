@@ -56,7 +56,7 @@ public class ProbeTimeoutPolicyTests
     [InlineData(60, CommunicationStyle.TentaclePolling, 49)]
     [InlineData(60, CommunicationStyle.KubernetesApi, 49)]
     [InlineData(55, CommunicationStyle.KubernetesApi, 44.5)]
-    [InlineData(1000, CommunicationStyle.Ssh, 325)]
+    [InlineData(1000, CommunicationStyle.Ssh, 353)]   // 15s connect + 10s echo + 15s SFTP connect + 3s SFTP backoff + 300s script + 10s margin
     public void Unconfigured_IsCappedSoTimeoutPlusRecordGraceIsAtMostNinetyPercentOfTheSweepDeadline(int deadlineSeconds, CommunicationStyle style, double expectedSeconds)
     {
         var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = deadlineSeconds };
@@ -202,5 +202,53 @@ public class ProbeTimeoutPolicyTests
         await host.Service.ManualHealthCheckAsync(1);
 
         spy.ShouldBe(new[] { TimeSpan.FromSeconds(130) });
+    }
+
+    // ── the machine policy's connect timeout sizes the SSH and OpenClaw floors (still capped to the sweep) ──
+
+    private static MachineConnectivityPolicyDto Connect(int seconds) => new() { ConnectTimeoutSeconds = seconds };
+
+    [Theory]
+    [InlineData(CommunicationStyle.Ssh, null, false, 75)]           // 15+10+15+3+10 = 53s: below the 75s base, unchanged
+    [InlineData(CommunicationStyle.Ssh, 60, false, 143)]            // 60+10+60+3+10
+    [InlineData(CommunicationStyle.Ssh, 120, false, 263)]           // 120+10+120+3+10, just under the 265s cap
+    [InlineData(CommunicationStyle.Ssh, 200, false, 265)]           // capped to the sweep: timeout + 5s record grace <= 90% of 300s
+    [InlineData(CommunicationStyle.Ssh, 60, true, 265)]             // 443s with the script, capped
+    [InlineData(CommunicationStyle.OpenClaw, null, false, 75)]      // 15+10 = 25s: below the base
+    [InlineData(CommunicationStyle.OpenClaw, 90, false, 100)]
+    [InlineData(CommunicationStyle.OpenClaw, 400, false, 265)]
+    public void Unconfigured_SshAndOpenClaw_FollowTheMachinePolicysConnectTimeout_CappedToTheSweep(CommunicationStyle style, int? connectSeconds, bool script, double expectedSeconds)
+    {
+        var connectivity = connectSeconds == null ? null : Connect(connectSeconds.Value);
+
+        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), style, script ? SshScriptPolicy() : null, Defaults, connectivity).ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
+    }
+
+    [Fact]
+    public void Unconfigured_SshScript_WithALargerSweep_GetsItsFullScriptLimit()
+    {
+        var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = 600 };
+
+        ProbeTimeoutPolicy.For(setting, CommunicationStyle.Ssh, SshScriptPolicy(), Defaults, Connect(60)).ShouldBe(TimeSpan.FromSeconds(443), "60+10+60+3 for the connects, echo and SFTP backoff, plus the script's own 300s and the 10s margin");
+    }
+
+    [Theory]
+    [InlineData(CommunicationStyle.TentaclePolling)]
+    [InlineData(CommunicationStyle.KubernetesAgent)]
+    [InlineData(CommunicationStyle.TentacleListening)]
+    [InlineData(CommunicationStyle.KubernetesApi)]
+    public void Unconfigured_OtherTransports_IgnoreTheConnectivityPolicy(CommunicationStyle style)
+    {
+        var setting = new MachineHealthCheckSetting();
+
+        ProbeTimeoutPolicy.For(setting, style, null, Defaults, Connect(250)).ShouldBe(ProbeTimeoutPolicy.For(setting, style, null, Defaults));
+    }
+
+    [Fact]
+    public void Configured_ProbeTimeout_StillAppliesExactly_WhateverTheConnectivityPolicy()
+    {
+        var setting = new MachineHealthCheckSetting { ProbeTimeoutSeconds = 20 };
+
+        ProbeTimeoutPolicy.For(setting, CommunicationStyle.Ssh, SshScriptPolicy(), Defaults, Connect(200)).ShouldBe(TimeSpan.FromSeconds(20));
     }
 }

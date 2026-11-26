@@ -27,7 +27,7 @@ public class SshConnectionFactory : ISshConnectionFactory
         if (authMethods.Count == 0)
             throw new InvalidOperationException("No SSH authentication method available — provide either a private key or a password");
 
-        var timeout = info.ConnectTimeout > TimeSpan.Zero ? info.ConnectTimeout : TimeSpan.FromSeconds(30);
+        var timeout = EffectiveConnectTimeout(info.ConnectTimeout);
 
         var proxyType = MapProxyType(info.ProxyType);
 
@@ -44,6 +44,8 @@ public class SshConnectionFactory : ISshConnectionFactory
             Timeout = timeout
         };
     }
+
+    internal static TimeSpan EffectiveConnectTimeout(TimeSpan requested) => requested > TimeSpan.Zero ? requested : TimeSpan.FromSeconds(30);
 
     internal static ProxyTypes MapProxyType(SshProxyType proxyType)
     {

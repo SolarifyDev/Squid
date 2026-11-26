@@ -216,6 +216,80 @@ public class MachineHealthSweepIntegrationTests : TestBase
             (await LoadMachineAsync(id).ConfigureAwait(false)).HealthLastChecked.ShouldBeNull("a probe the deadline cut persists nothing");
     }
 
+    [Theory]
+    [InlineData(CommunicationStyle.Ssh, 60, 143)]        // 2 x 60s connect + 10s echo + 3s SFTP retry backoff + 10s margin
+    [InlineData(CommunicationStyle.OpenClaw, 120, 130)]  // the gateway request may take the policy's 120s + 10s margin
+    public async Task ManualCheck_ProbeTimeout_FollowsTheConnectTimeoutOfTheMachinePolicyStoredInPostgres(CommunicationStyle style, int connectSeconds, int expectedSeconds)
+    {
+        var policyId = await SeedMachinePolicyAsync("{\"connectTimeoutSeconds\":" + connectSeconds + "}").ConfigureAwait(false);
+        var id = await SeedMachineAsync(m => { m.MachinePolicyId = policyId; m.Endpoint = "{\"CommunicationStyle\":\"" + style + "\"}"; }).ConfigureAwait(false);
+        var strategy = new FakeStrategy { Behavior = (_, _) => Task.FromResult(new HealthCheckResult(true, "ok")) };
+        var timeouts = new List<TimeSpan>();
+
+        var result = await RunManualCheckAsync(strategy, style, timeouts, id).ConfigureAwait(false);
+
+        result.Successful.ShouldBeTrue();
+        timeouts.ShouldBe(new[] { TimeSpan.FromSeconds(expectedSeconds) });
+    }
+
+    private async Task<int> SeedMachinePolicyAsync(string connectivityJson)
+    {
+        var policy = new MachinePolicy { SpaceId = 1, Name = $"health-policy-{Guid.NewGuid():N}", Description = "health sweep test", MachineHealthCheckPolicy = "{}", MachineConnectivityPolicy = connectivityJson, MachineCleanupPolicy = "{}", MachineUpdatePolicy = "{}", MachineRpcCallRetryPolicy = "{}", PollingRequestQueueTimeout = "00:10:00", ConnectionRetrySleepInterval = "00:00:01", ConnectionRetryTimeLimit = "00:05:00", ConnectionConnectTimeout = "00:01:00" };
+
+        await Run<IRepository, IUnitOfWork>(async (repo, uow) =>
+        {
+            await repo.InsertAsync(policy, CancellationToken.None).ConfigureAwait(false);
+            await uow.SaveChangesAsync(CancellationToken.None).ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        return policy.Id;
+    }
+
+    // The real service + coordinator with default settings (nothing configured), the transport style under test, and a recorder of every probe timeout.
+    private Task<ManualHealthCheckResult> RunManualCheckAsync(FakeStrategy strategy, CommunicationStyle style, List<TimeSpan> timeouts, int machineId)
+    {
+        var transport = new Mock<IDeploymentTransport>();
+        transport.Setup(t => t.HealthChecker).Returns(strategy);
+        transport.Setup(t => t.CommunicationStyle).Returns(style);
+        var registry = new Mock<ITransportRegistry>();
+        registry.Setup(r => r.Resolve(It.IsAny<CommunicationStyle>())).Returns(transport.Object);
+
+        return Run<IMachineHealthCheckService, ManualHealthCheckResult>(svc => svc.ManualHealthCheckAsync(machineId), builder =>
+        {
+            builder.RegisterInstance(Redis.Value).Keyed<ConnectionMultiplexer>(RedisServer.System).ExternallyOwned();
+            builder.RegisterInstance(Redis.Value).Keyed<ConnectionMultiplexer>(RedisServer.Vector).ExternallyOwned();
+            builder.RegisterInstance(registry.Object).As<ITransportRegistry>();
+            builder.Register(c => new TimeoutRecordingCoordinator(new MachineHealthCheckCoordinator(c.Resolve<IRedisSafeRunner>(), c.Resolve<ILifetimeScope>(), new HealthCheckInProcessLocks(), new MachineHealthCheckSetting()), timeouts)).As<IMachineHealthCheckCoordinator>().InstancePerLifetimeScope();
+        });
+    }
+
+    /// <summary>Forwards to the real coordinator and records the timeout every probe was given.</summary>
+    private sealed class TimeoutRecordingCoordinator(IMachineHealthCheckCoordinator inner, List<TimeSpan> timeouts) : IMachineHealthCheckCoordinator
+    {
+        public TimeSpan ManualBusyWait => inner.ManualBusyWait;
+
+        public Task<bool> TryRunSweepAsync(Func<CancellationToken, Task> sweep, CancellationToken ct) => inner.TryRunSweepAsync(sweep, ct);
+
+        public Task<bool> TryRunForMachineAsync(int machineId, TimeSpan wait, Func<Task> work, CancellationToken ct) => inner.TryRunForMachineAsync(machineId, wait, work, ct);
+
+        public Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct) => inner.RunProbeAsync(probe, ct);
+
+        public Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout)
+        {
+            lock (timeouts) timeouts.Add(timeout);
+
+            return inner.RunProbeAsync(probe, ct, timeout);
+        }
+
+        public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy, MachineConnectivityPolicyDto connectivity = null) => inner.ProbeTimeoutFor(style, policy, connectivity);
+
+        public Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct) => inner.ForEachInScopeAsync(items, work, ct);
+
+        public void NoteProbeStarted(int machineId, DateTimeOffset startedAt) => inner.NoteProbeStarted(machineId, startedAt);
+
+        public IReadOnlyList<int> InSweepOrder(IReadOnlyList<Machine> dueMachines) => inner.InSweepOrder(dueMachines);
+    }
+
     private static void AssertHealthUntouched(Machine after, Machine before)
     {
         after.HealthStatus.ShouldBe(before.HealthStatus);

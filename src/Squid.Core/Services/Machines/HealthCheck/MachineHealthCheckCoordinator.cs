@@ -30,7 +30,7 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout);
 
     /// <summary>The probe timeout for a machine of this communication style: the operator's configured value, or the transport-aware default.</summary>
-    TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy);
+    TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy, MachineConnectivityPolicyDto connectivity = null);
 
     /// <summary>Runs <paramref name="work"/> for each item with bounded parallelism, each in its own DI scope (own DbContext). A failing item never stops the others. Inside a sweep, an item's position in <paramref name="items"/> decides whether it is the head of the sweep order.</summary>
     Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct);
@@ -86,7 +86,7 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
     public TimeSpan ManualBusyWait => ProbeTimeoutPolicy.ManualWait(_options, HalibutModule.BuildTimeoutsAndLimits()) + ManualWaitMargin;
 
-    public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy) => ProbeTimeoutPolicy.For(_options, style, policy, HalibutModule.BuildTimeoutsAndLimits());
+    public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy, MachineConnectivityPolicyDto connectivity = null) => ProbeTimeoutPolicy.For(_options, style, policy, HalibutModule.BuildTimeoutsAndLimits(), connectivity);
 
     internal static string MachineLockKey(int machineId) => $"{MachineLockKeyPrefix}{machineId}";
 

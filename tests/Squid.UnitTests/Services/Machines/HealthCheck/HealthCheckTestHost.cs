@@ -59,7 +59,7 @@ internal sealed class HealthCheckTestHost : IDisposable
             return inner.RunProbeAsync(probe, ct, timeout);
         }
 
-        public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy) => inner.ProbeTimeoutFor(style, policy);
+        public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy, MachineConnectivityPolicyDto connectivity = null) => inner.ProbeTimeoutFor(style, policy, connectivity);
 
         public Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct) => inner.ForEachInScopeAsync(items, work, ct);
 
