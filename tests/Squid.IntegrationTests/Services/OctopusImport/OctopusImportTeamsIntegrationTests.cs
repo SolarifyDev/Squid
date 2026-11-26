@@ -599,7 +599,7 @@ public class OctopusImportTeamsIntegrationTests : TestBase
             (await db.Set<VariableSet>().CountAsync()).ShouldBe(0);
             (await db.Set<Variable>().CountAsync()).ShouldBe(0);
             (await db.Set<LibraryVariableSet>().CountAsync()).ShouldBe(0);
-            (await db.Set<ExternalFeed>().CountAsync()).ShouldBe(0);
+            (await db.Set<ExternalFeed>().CountAsync(f => f.FeedType != "BuiltIn")).ShouldBe(0, "the space's own built-in feed is not an imported one");
             (await db.Set<DeploymentAccount>().CountAsync()).ShouldBe(0);
             (await db.Set<DeploymentProcess>().CountAsync()).ShouldBe(0);
             (await db.Set<DeploymentStep>().CountAsync()).ShouldBe(0);

@@ -5,7 +5,7 @@ using Squid.Message.Models.PackageStorage;
 
 namespace Squid.Core.Services.Packages.Storage;
 
-public partial class PackageStoreService(IPackageStoreDataProvider dataProvider, IEnumerable<IPackageBlobStoreProvider> providers) : IPackageStoreService
+public partial class PackageStoreService(IPackageStoreDataProvider dataProvider, IEnumerable<IPackageBlobStoreProvider> providers, IEnumerable<IPackageStoreUsage> usages) : IPackageStoreService
 {
     public async Task<List<PackageStoreDto>> ListAsync(CancellationToken ct)
     {
@@ -62,6 +62,8 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
 
         if (store.IsDefault)
             throw new DefaultPackageStoreDeletionException(id);
+
+        await EnsureNothingHoldsFilesAsync(id, ct).ConfigureAwait(false);
 
         var deleted = await dataProvider.DeleteIfNotDefaultAsync(id, ct).ConfigureAwait(false);
 

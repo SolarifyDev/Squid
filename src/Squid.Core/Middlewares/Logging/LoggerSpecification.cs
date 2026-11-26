@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Mediator.Net.Pipeline;
 using Squid.Core.Extensions;
 using Squid.Core.Services.OctopusImport;
+using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Commands.OctopusImport;
 
 namespace Squid.Core.Middlewares.Logging;
@@ -49,6 +50,9 @@ public class LoggerSpecification<TContext> : IPipeSpecification<TContext>
                 upload.SizeBytes
             };
         }
+
+        if (message is PushBuiltInPackageCommand push)
+            return new { push.SpaceId, push.PackageId, push.Version, push.Replace, push.FileName, push.Source, push.DeclaredSizeBytes };
 
         if (message is ProbeOctopusServerCommand probe)
             return new { probe.SpaceId, ServerHost = OctopusImportServerSourceService.ServerHostOf(probe.ServerUrl), probe.OctopusSpaceId };

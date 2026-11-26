@@ -28,13 +28,14 @@ public class BuiltInRoleSeederIntegrationTests : TestBase
     {
         var seeders = CurrentScope.Resolve<IEnumerable<IDataSeeder>>().OrderBy(s => s.Order).ToList();
 
-        seeders.Count.ShouldBeGreaterThanOrEqualTo(6);
+        seeders.Count.ShouldBeGreaterThanOrEqualTo(7);
         seeders[0].Order.ShouldBe(100);    // BuiltInRoleSeeder
         seeders[1].Order.ShouldBe(200);    // BuiltInTeamSeeder
         seeders[2].Order.ShouldBe(300);    // AdminUserSeeder
         seeders[3].Order.ShouldBe(350);    // InternalUserSeeder
         seeders[4].Order.ShouldBe(400);    // DefaultSpaceSeeder
-        seeders[5].Order.ShouldBe(500);    // DefaultMachinePolicySeeder
+        seeders[5].Order.ShouldBe(450);    // BuiltInFeedSeeder
+        seeders[6].Order.ShouldBe(500);    // DefaultMachinePolicySeeder
     }
 
     [Fact]

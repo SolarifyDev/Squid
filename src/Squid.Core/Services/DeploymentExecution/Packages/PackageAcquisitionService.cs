@@ -5,7 +5,7 @@ using Squid.Core.Services.Http;
 
 namespace Squid.Core.Services.DeploymentExecution.Packages;
 
-public class PackageAcquisitionService(IPackageContentFetcher packageContentFetcher) : IPackageAcquisitionService
+public class PackageAcquisitionService(IPackageContentFetcher packageContentFetcher, IEnumerable<IPackageFileStreamSource> fileStreamSources = null) : IPackageAcquisitionService
 {
     public async Task<PackageAcquisitionResult> AcquireAsync(ExternalFeed feed, string packageId, string version, int deploymentId, CancellationToken ct)
     {
@@ -22,6 +22,11 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
             throw new InvalidOperationException(
                 $"Feed type '{feed.FeedType}' cannot be installed by Deploy a Package. Use an archive-capable feed (NuGet/GitHub/HTTP).");
         }
+
+        var streaming = fileStreamSources?.FirstOrDefault(s => s.CanHandle(feedType));
+
+        if (streaming != null)
+            return await AcquireStreamedAsync(streaming, feed, packageId, version, deploymentId, ct).ConfigureAwait(false);
 
         var fetchResult = await packageContentFetcher.FetchAsync(feed, packageId, version, ct).ConfigureAwait(false);
 
@@ -44,7 +49,7 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
             hash);
         Directory.CreateDirectory(storageDir);
 
-        var extension = ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
+        var extension = fetchResult.FileExtension ?? ResolveArchiveExtension(feedType, packageId, feed.FeedUri);
         var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
         var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
         var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{extension}");
@@ -53,6 +58,42 @@ public class PackageAcquisitionService(IPackageContentFetcher packageContentFetc
         Log.Information("[Deploy] Package acquired: {PackageId} v{Version} -> {LocalPath} ({SizeBytes} bytes, hash {Hash})", packageId, version, localPath, fetchResult.RawBytes.Length, hash);
 
         return new PackageAcquisitionResult(localPath, packageId, version, fetchResult.RawBytes.Length, hash);
+    }
+
+    // A feed that can stream its file is copied straight to disk. The source verifies what it reads against the hash and size recorded when the package was stored (the read
+    // that reaches the end throws on a mismatch), which is what stands in for the archive checks the byte-array path runs: the package was checked when it was pushed.
+    private static async Task<PackageAcquisitionResult> AcquireStreamedAsync(IPackageFileStreamSource source, ExternalFeed feed, string packageId, string version, int deploymentId, CancellationToken ct)
+    {
+        await using var opened = await source.OpenAsync(feed, packageId, version, ct).ConfigureAwait(false);
+
+        var storageDir = Path.Combine(PackageAcquisitionServiceExtensions.BuildPackageStoragePath(deploymentId), opened.Sha256);
+        var safePackageId = PackageInstallationPath.EncodeExternalIdentitySegment(packageId, "Package");
+        var safeVersion = PackageInstallationPath.EncodeExternalIdentitySegment(version, "Version");
+        var localPath = Path.Combine(storageDir, $"{safePackageId}.{safeVersion}{opened.FileExtension}");
+
+        Directory.CreateDirectory(storageDir);
+
+        await CopyOrDeleteAsync(opened.Content, localPath, ct).ConfigureAwait(false);
+
+        Log.Information("[Deploy] Package acquired: {PackageId} v{Version} -> {LocalPath} ({SizeBytes} bytes, hash {Hash})", packageId, version, localPath, opened.SizeBytes, opened.Sha256);
+
+        return new PackageAcquisitionResult(localPath, packageId, version, opened.SizeBytes, opened.Sha256);
+    }
+
+    private static async Task CopyOrDeleteAsync(Stream content, string localPath, CancellationToken ct)
+    {
+        try
+        {
+            await using var file = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
+
+            await content.CopyToAsync(file, 81920, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            File.Delete(localPath);
+
+            throw;
+        }
     }
 
     internal static bool IsUnsupportedPackageFeed(string feedType)

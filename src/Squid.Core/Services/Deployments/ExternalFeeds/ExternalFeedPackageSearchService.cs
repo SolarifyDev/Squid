@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageSearch;
+using Squid.Message.Constants;
 using Squid.Message.Requests.Deployments.ExternalFeed;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds;
@@ -19,7 +20,8 @@ public class ExternalFeedPackageSearchService(
         if (feed == null)
             return new SearchFeedPackagesResponseData { Packages = [] };
 
-        if (string.IsNullOrWhiteSpace(feed.FeedUri))
+        // The built-in feed lives in Squid itself and has no URI.
+        if (string.IsNullOrWhiteSpace(feed.FeedUri) && !BuiltInFeed.IsBuiltIn(feed.FeedType))
             return new SearchFeedPackagesResponseData { Packages = [] };
 
         var strategy = strategies.FirstOrDefault(s => s.CanHandle(feed.FeedType));

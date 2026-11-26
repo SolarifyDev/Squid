@@ -1,4 +1,5 @@
 using Squid.Core.Services.Deployments.ExternalFeeds.PackageVersion;
+using Squid.Message.Constants;
 using Squid.Message.Requests.Deployments.ExternalFeed;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds;
@@ -16,7 +17,8 @@ public class ExternalFeedPackageVersionService(
     {
         var feed = await dataProvider.GetFeedByIdAsync(feedId, ct).ConfigureAwait(false);
 
-        if (feed == null || string.IsNullOrWhiteSpace(feed.FeedUri))
+        // The built-in feed lives in Squid itself and has no URI.
+        if (feed == null || (string.IsNullOrWhiteSpace(feed.FeedUri) && !BuiltInFeed.IsBuiltIn(feed.FeedType)))
             return new SearchFeedPackageVersionsResponseData { Versions = [] };
 
         var strategy = strategies.FirstOrDefault(s => s.CanHandle(feed.FeedType));

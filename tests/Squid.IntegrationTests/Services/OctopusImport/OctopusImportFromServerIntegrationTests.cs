@@ -447,7 +447,7 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
         refused.Message.ShouldStartWith("Preview blocked");
         refused.Message.ShouldContain($"{OctopusImportFeedMappingDiagnosticCodes.UnsupportedFeedType}:Feeds-9");
         (await CountAsync<Project>()).ShouldBe(0);
-        (await CountAsync<ExternalFeed>()).ShouldBe(0);
+        (await Run<SquidDbContext, int>(db => db.Set<ExternalFeed>().CountAsync(f => f.FeedType != "BuiltIn"))).ShouldBe(0, "the space's own built-in feed is not an imported one");
     }
 
     // The API never serves Octopus's built-in repository, so a step that pulls from it is refused by name.
@@ -756,7 +756,7 @@ public partial class OctopusImportFromServerIntegrationTests : TestBase, IAsyncL
     }
 
     private Task<T> SingleAsync<T>() where T : class
-        => Run<SquidDbContext, T>(db => db.Set<T>().AsNoTracking().SingleAsync());
+        => Run<SquidDbContext, T>(db => (typeof(T) == typeof(ExternalFeed) ? (IQueryable<T>)(object)db.Set<ExternalFeed>().Where(f => f.FeedType != "BuiltIn") : db.Set<T>()).AsNoTracking().SingleAsync()); // a space's own built-in feed is never an imported one
 
     private Task<List<string>> NamesAsync<T>(System.Linq.Expressions.Expression<Func<T, string>> name) where T : class
         => Run<SquidDbContext, List<string>>(db => db.Set<T>().AsNoTracking().Select(name).ToListAsync());

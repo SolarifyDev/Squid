@@ -4,10 +4,12 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
+using Squid.Core.Services.Deployments.ExternalFeeds.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
@@ -49,6 +51,25 @@ public class GlobalExceptionFilter : IExceptionFilter
             DefaultPackageStoreDeletionException => HttpStatusCode.Conflict,
             PackageStoreConfigurationInvalidException => HttpStatusCode.BadRequest,
             PackageStoreProviderNotFoundException => HttpStatusCode.BadRequest,
+            PackageStoreInUseException => HttpStatusCode.Conflict,
+            BuiltInFeedNotFoundException => HttpStatusCode.NotFound,
+            BuiltInPackageNotFoundException => HttpStatusCode.NotFound,
+            PackageTooLargeException => HttpStatusCode.RequestEntityTooLarge,
+            EmptyPackageUploadException => HttpStatusCode.BadRequest,
+            UnsupportedPackageFormatException => HttpStatusCode.BadRequest,
+            PackageArchiveRejectedException => HttpStatusCode.BadRequest,
+            PackageIdRequiredException => HttpStatusCode.BadRequest,
+            InvalidPackageIdException => HttpStatusCode.BadRequest,
+            PackageVersionAlreadyExistsException => HttpStatusCode.Conflict,
+            PackageVersionInUseException => HttpStatusCode.Conflict,
+            BuiltInFeedStoreInvalidException => HttpStatusCode.BadRequest,
+            BuiltInPackageTooLargeToDeployException => HttpStatusCode.Conflict,
+            BuiltInPackageIntegrityException => HttpStatusCode.InternalServerError,
+            PackageArchiveLimitExceededException => HttpStatusCode.RequestEntityTooLarge,
+            BuiltInFeedConflictException => HttpStatusCode.Conflict,
+            BuiltInFeedDeletionException => HttpStatusCode.Conflict,
+            BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
+            BuiltInFeedCreationException => HttpStatusCode.Conflict,
             PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
             InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
             PackageBlobNotFoundException => HttpStatusCode.NotFound,

@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Http;
 using Squid.Message.Commands.Deployments.ExternalFeed;
+using Squid.Message.Constants;
 
 namespace Squid.Core.Services.Deployments.ExternalFeeds;
 
@@ -27,6 +28,9 @@ public class ExternalFeedConnectionTestService(
         var validation = ValidateFeed(feed);
         
         if (validation != null) return validation;
+
+        // Nothing to connect to: the built-in feed is part of this server.
+        if (BuiltInFeed.IsBuiltIn(feed.FeedType)) return Ok("The built-in feed is part of this server.");
 
         if (!ExternalFeedProbeUri.TryNormalize(feed.FeedUri, out var normalizedBaseUri)) return Fail("Feed URL is invalid.");
 
@@ -126,7 +130,7 @@ public class ExternalFeedConnectionTestService(
     {
         if (feed == null) return Fail("Feed not found.");
 
-        return string.IsNullOrWhiteSpace(feed.FeedUri) ? Fail("Feed URL is not configured.") : null;
+        return string.IsNullOrWhiteSpace(feed.FeedUri) && !BuiltInFeed.IsBuiltIn(feed.FeedType) ? Fail("Feed URL is not configured.") : null;
     }
 
     private static Dictionary<string, string> BuildAuthHeaders(string username, string password)

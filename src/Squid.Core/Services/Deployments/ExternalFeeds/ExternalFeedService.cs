@@ -1,4 +1,6 @@
+using Squid.Core.Services.Deployments.ExternalFeeds.Exceptions;
 using Squid.Message.Commands.Deployments.ExternalFeed;
+using Squid.Message.Constants;
 using Squid.Message.Enums;
 using Squid.Message.Events.Deployments.ExternalFeed;
 using Squid.Message.Models.Deployments.ExternalFeed;
@@ -31,6 +33,9 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
 {
     public async Task<ExternalFeedCreatedEvent> CreateExternalFeedAsync(CreateExternalFeedCommand command, CancellationToken cancellationToken)
     {
+        if (BuiltInFeed.IsReservedType(command.FeedType))
+            throw new BuiltInFeedCreationException();
+
         var externalFeed = mapper.Map<Persistence.Entities.Deployments.ExternalFeed>(command);
 
         await externalFeedDataProvider.AddExternalFeedAsync(externalFeed, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -52,12 +57,17 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
             throw new Exception("ExternalFeed not found");
         }
 
+        EnsureBuiltInTypeUnchanged(entity, command.FeedType);
+
         // Keep existing password when update request doesn't provide a new one.
         var existingPassword = entity.Password;
         
         mapper.Map(command, entity);
         
         if (string.IsNullOrWhiteSpace(command.PasswordNewValue)) entity.Password = existingPassword;
+
+        // The built-in feed has no URI and the column cannot be null.
+        if (BuiltInFeed.IsBuiltIn(entity.FeedType)) entity.FeedUri ??= string.Empty;
 
         await externalFeedDataProvider.UpdateExternalFeedAsync(entity, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -70,6 +80,8 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
     public async Task<ExternalFeedDeletedEvent> DeleteExternalFeedsAsync(DeleteExternalFeedsCommand command, CancellationToken cancellationToken)
     {
         var feeds = await externalFeedDataProvider.GetExternalFeedsByIdsAsync(command.Ids, cancellationToken).ConfigureAwait(false);
+
+        EnsureNoBuiltInFeed(feeds);
 
         await externalFeedDataProvider.DeleteExternalFeedsAsync(feeds, cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -112,5 +124,22 @@ public class ExternalFeedService(IMapper mapper, IExternalFeedDataProvider exter
         var written = await externalFeedDataProvider.SetCredentialsIfEmptyAsync(feedId, username, password, cancellationToken).ConfigureAwait(false);
 
         return written == 0 ? SecretSlotState.AlreadySet : SecretSlotState.Filled;
+    }
+
+    private static void EnsureBuiltInTypeUnchanged(Persistence.Entities.Deployments.ExternalFeed entity, string newFeedType)
+    {
+        var keepsBuiltIn = BuiltInFeed.IsBuiltIn(entity.FeedType) && BuiltInFeed.IsBuiltIn(newFeedType);
+
+        // Any casing of the reserved type counts as the built-in type here, so "builtin" cannot slip past as a different one.
+        if (!keepsBuiltIn && (BuiltInFeed.IsReservedType(entity.FeedType) || BuiltInFeed.IsReservedType(newFeedType)))
+            throw new BuiltInFeedTypeChangeException(entity.Id, entity.FeedType, newFeedType);
+    }
+
+    private static void EnsureNoBuiltInFeed(List<Persistence.Entities.Deployments.ExternalFeed> feeds)
+    {
+        var builtIn = feeds.FirstOrDefault(f => BuiltInFeed.IsBuiltIn(f.FeedType));
+
+        if (builtIn != null)
+            throw new BuiltInFeedDeletionException(builtIn.Id);
     }
 }

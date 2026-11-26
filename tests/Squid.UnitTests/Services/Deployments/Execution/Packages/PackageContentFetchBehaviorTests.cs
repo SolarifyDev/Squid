@@ -99,7 +99,7 @@ public class PackageContentFetchBehaviorTests
 
     [Theory]
     [InlineData("Generic")]
-    [InlineData("BuiltIn")]
+    [InlineData("Artifactory")]
     [InlineData("Maven")]
     [InlineData("")]
     [InlineData(null)]
