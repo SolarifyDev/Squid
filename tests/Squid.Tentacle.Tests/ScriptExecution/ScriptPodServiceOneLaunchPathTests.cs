@@ -289,7 +289,116 @@ public class ScriptPodServiceOneLaunchPathTests : IDisposable
         _ops.Verify(o => o.CreatePod(It.Is<V1Pod>(p => p.Metadata.Name == PodOf(queued)), It.IsAny<string>()), Times.Once);
     }
 
+    // ── a V1 reader of a launching ticket: the launch, and only it, owns the ticket's isolation mutex ──
+
+    [Theory]
+    [InlineData("V1")]
+    [InlineData("V2")]
+    public async Task StatusAndCompleteV1_WhileAQueuedScriptsPodIsBeingCreated_SeeItRunning_AndNeitherFreeItsMutexNorForgetIt(string releaseVersion)
+    {
+        var service = NewService();
+        var holder = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        var launching = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        var next = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        service.StartScript(holder).State.ShouldBe(ScriptStateV2.Running);
+        service.StartScript(launching).State.ShouldBe(ScriptStateV2.Pending);
+        service.StartScript(next).State.ShouldBe(ScriptStateV2.Pending);
+        var parked = ParkFirstPodCreate(PodOf(launching));
+        var releasing = Task.Run(() => Cancel(service, releaseVersion, holder));
+        parked.Entered.Wait(WaitLimit).ShouldBeTrue("the holder's release must dequeue the oldest queued script");
+
+        var status = service.GetStatus(new ScriptStatusRequest(launching.ScriptTicket, 0));
+        var completed = service.CompleteScript(new CompleteScriptCommand(launching.ScriptTicket, 0));
+        var stateKeptForTheLauncher = File.Exists(Path.Combine(_workspace, launching.ScriptTicket.TaskId, "scriptstate.json"));
+        var nextLaunchedBesideIt = WasCreated(next);
+        parked.Release.Set();
+        await releasing.WaitAsync(WaitLimit);
+
+        status.State.ShouldBe(ProcessState.Running, "a script whose pod is being created is running: answering Complete makes the server complete it");
+        completed.State.ShouldBe(ProcessState.Complete, "the V1 wire answer is unchanged: a V1 server reads any other state's exit code as the result");
+        completed.ExitCode.ShouldBe(ScriptExitCodes.UnknownResult, "never a success code for a script that has not run");
+        nextLaunchedBesideIt.ShouldBeFalse("only the launcher may free the isolation mutex it launches under");
+        stateKeptForTheLauncher.ShouldBeTrue("the launch owns its persisted state: a Complete must not delete it mid-launch");
+        service.MutexLocks.ContainsKey(launching.ScriptTicket.TaskId).ShouldBeTrue();
+        service.GetStatus(new ScriptStatusRequest(launching.ScriptTicket, 0)).State.ShouldBe(ProcessState.Running, "the launched pod stays observable");
+        SetupPodPhase("Succeeded");
+        service.CompleteScript(new CompleteScriptCommand(launching.ScriptTicket, 0)).State.ShouldBe(ProcessState.Complete);
+        WasCreated(next).ShouldBeTrue("completing the launched script frees the mutex for the next one");
+    }
+
+    [Theory]
+    [InlineData("V1")]
+    [InlineData("V2")]
+    public async Task Complete_WhileTheLauncherIsDeletingTheCancelledPod_LeavesTheMutexToTheLauncher(string completeVersion)
+    {
+        var service = NewService();
+        var launching = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        var next = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        var created = ParkPodCreate(PodOf(launching));
+        var deleting = ParkPodDelete(PodOf(launching));
+        var starting = Task.Run(() => service.StartScript(ScriptV2Mapping.ToV1(launching)));
+        created.Entered.Wait(WaitLimit).ShouldBeTrue();
+        service.StartScript(ScriptV2Mapping.ToV1(next)).State.ShouldBe(ProcessState.Pending);
+        service.CancelScript(new CancelScriptCommand(launching.ScriptTicket, 0));
+        created.Release.Set();
+        deleting.Entered.Wait(WaitLimit).ShouldBeTrue("the launcher honours the Cancel by deleting its pod");
+
+        Complete(service, completeVersion, launching);
+        var nextLaunchedBesideIt = WasCreated(next);
+        deleting.Release.Set();
+        await starting.WaitAsync(WaitLimit);
+
+        nextLaunchedBesideIt.ShouldBeFalse("the next script must not start beside a pod still being deleted: the launcher releases its mutex once it is gone");
+        WasCreated(next).ShouldBeTrue("the launcher frees the mutex once its cancelled pod is gone");
+    }
+
+    [Theory]
+    [InlineData("Cancel")]
+    [InlineData("Complete")]
+    public void CancelOrCompleteV1_OfAnUnknownTicket_ThatAStartLaunchesMeanwhile_LeavesTheNewLaunchItsMutex(string call)
+    {
+        var service = NewService();
+        var command = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+        var next = NewCommand(ScriptIsolationLevel.FullIsolation, "onelaunch-mx");
+
+        // The call found nothing to take; before it ends, the ticket's (delayed) Start launches it.
+        service.AfterTicketClaimedHookForTests = () =>
+        {
+            service.AfterTicketClaimedHookForTests = null;
+            service.StartScript(ScriptV2Mapping.ToV1(command)).State.ShouldBe(ProcessState.Running);
+        };
+
+        if (call == "Cancel") service.CancelScript(new CancelScriptCommand(command.ScriptTicket, 0));
+        else service.CompleteScript(new CompleteScriptCommand(command.ScriptTicket, 0));
+
+        service.MutexLocks.ContainsKey(command.ScriptTicket.TaskId).ShouldBeTrue("a call that took nothing owns no mutex: the running script keeps its isolation");
+        service.StartScript(ScriptV2Mapping.ToV1(next)).State.ShouldBe(ProcessState.Pending);
+        WasCreated(next).ShouldBeFalse();
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private bool WasCreated(StartScriptCommandV2 command)
+        => _ops.Invocations.Any(i => i.Method.Name == nameof(IKubernetesPodOperations.CreatePod) && ((V1Pod)i.Arguments[0]).Metadata.Name == PodOf(command));
+
+    private static void Complete(ScriptPodService service, string version, StartScriptCommandV2 command)
+    {
+        if (version == "V1") service.CompleteScript(new CompleteScriptCommand(command.ScriptTicket, 0));
+        else service.CompleteScript(new CompleteScriptCommandV2(command.ScriptTicket, 0));
+    }
+
+    private Park ParkPodDelete(string podName)
+    {
+        var park = new Park(new ManualResetEventSlim(), new ManualResetEventSlim());
+
+        _ops.Setup(o => o.DeletePod(podName, It.IsAny<string>(), It.IsAny<int?>())).Callback(() =>
+        {
+            park.Entered.Set();
+            park.Release.Wait(WaitLimit);
+        });
+
+        return park;
+    }
 
     /// <summary>A call racing the test thread: it runs on its own thread, and Run returns once it has finished or is blocked waiting (on a lock).</summary>
     private sealed class RacingCall

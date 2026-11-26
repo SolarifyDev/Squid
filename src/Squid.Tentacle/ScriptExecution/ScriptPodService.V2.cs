@@ -70,7 +70,7 @@ public partial class ScriptPodService : IScriptServiceV2
     public ScriptStatusResponseV2 CancelScript(CancelScriptCommandV2 command)
     {
         var ticket = command.Ticket;
-        var cancelled = false;
+        var ownsMutex = false;
 
         // A Cancel that lands while the pod is being launched waits for the launch (bounded) instead of being dropped.
         AwaitLaunchSettledV2(ticket.TaskId);
@@ -90,7 +90,7 @@ public partial class ScriptPodService : IScriptServiceV2
 
                 // A launching ticket has no pod yet: the cancel is recorded for its launcher (see CancelScriptCore), so it is never dropped.
                 if (_scripts.ContainsKey(ticket.TaskId) || _pendingScripts.ContainsKey(ticket.TaskId) || launching)
-                    return CancelLiveV2(command, out cancelled);
+                    return CancelLiveV2(command, out ownsMutex);
 
                 return ReadFinalStatusV2(ticket, command.LastLogSequence);
             }
@@ -98,14 +98,14 @@ public partial class ScriptPodService : IScriptServiceV2
         finally
         {
             // Freeing the isolation mutex launches the next queued script (pod creation): never under the shared ticket lock.
-            if (cancelled) ReleaseMutexAndProcessPending(ticket.TaskId);
+            if (ownsMutex) ReleaseMutexAndProcessPending(ticket.TaskId);
         }
     }
 
     public CompleteScriptResponseV2 CompleteScript(CompleteScriptCommandV2 command)
     {
         var ticket = command.Ticket;
-        var completed = false;
+        var ownsMutex = false;
 
         // Waiting for the pod to terminate can take 30s: done before taking the ticket lock, which is shared with unrelated tickets.
         var awaited = AwaitPodTerminationV2(ticket.TaskId);
@@ -118,12 +118,7 @@ public partial class ScriptPodService : IScriptServiceV2
 
                 if (IsUnawaitedPodV2(ticket.TaskId, awaited)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
-                if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId))
-                {
-                    completed = true;
-
-                    return CompleteLiveV2(command);
-                }
+                if (_terminalResults.ContainsKey(ticket.TaskId) || _scripts.ContainsKey(ticket.TaskId)) return CompleteLiveV2(command, out ownsMutex);
 
                 if (launching || _pendingScripts.ContainsKey(ticket.TaskId)) return ScriptV2Mapping.NotYetComplete(ScriptV2Mapping.Pending(ticket, command.LastLogSequence));
 
@@ -132,7 +127,7 @@ public partial class ScriptPodService : IScriptServiceV2
         }
         finally
         {
-            if (completed) ReleaseMutexAndProcessPending(ticket.TaskId);
+            if (ownsMutex) ReleaseMutexAndProcessPending(ticket.TaskId);
         }
     }
 
@@ -284,15 +279,15 @@ public partial class ScriptPodService : IScriptServiceV2
         }
     }
 
-    // cancelled = this call tore the ticket down (the caller then releases its isolation mutex); false when the launcher took the cancel over.
-    private ScriptStatusResponseV2 CancelLiveV2(CancelScriptCommandV2 command, out bool cancelled)
+    // ownsMutex = this call took the tracked pod, so the caller releases its isolation mutex (see TakeForComplete).
+    private ScriptStatusResponseV2 CancelLiveV2(CancelScriptCommandV2 command, out bool ownsMutex)
     {
         var ticket = command.Ticket;
-        var v1 = CancelScriptCore(new CancelScriptCommand(ticket, command.LastLogSequence), deferredToCaller: true, out var handedToLauncher);
+        var v1 = CancelScriptCore(new CancelScriptCommand(ticket, command.LastLogSequence), deferredToCaller: true, out var claim);
 
-        cancelled = !handedToLauncher;
+        ownsMutex = claim == CancelClaim.Tracked;
 
-        if (handedToLauncher) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
+        if (claim == CancelClaim.HandedToLauncher) return ScriptV2Mapping.Pending(ticket, command.LastLogSequence);
 
         // The core published the Canceled result before it stopped tracking the ticket, so a later Cancel/Complete of it still has an answer.
         _terminalResults.TryAdd(ticket.TaskId, (BuildTerminalResponse(ticket.TaskId, ScriptExitCodes.Canceled, v1.Logs), DateTimeOffset.UtcNow));
@@ -300,7 +295,7 @@ public partial class ScriptPodService : IScriptServiceV2
         return ScriptV2Mapping.FromV1Terminal(v1);
     }
 
-    private CompleteScriptResponseV2 CompleteLiveV2(CompleteScriptCommandV2 command)
+    private CompleteScriptResponseV2 CompleteLiveV2(CompleteScriptCommandV2 command, out bool ownsMutex)
     {
         var ticket = command.Ticket;
         var lost = _lostResults.ContainsKey(ticket.TaskId);
@@ -311,7 +306,7 @@ public partial class ScriptPodService : IScriptServiceV2
             recorded = true;
 
             return Tombstones.TryWrite(ScriptV2Mapping.ToTombstone(MapFinalV2(response, lost), DateTimeOffset.UtcNow));
-        }, deferredToCaller: true);
+        }, deferredToCaller: true, out ownsMutex);
 
         var final = MapFinalV2(v1, lost);
 
