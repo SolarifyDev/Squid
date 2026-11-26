@@ -47,55 +47,6 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private static readonly TimeSpan LockWait = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
 
-    /// <summary>
-    /// Upper bound of the upgrade progress-polling window (1.6.x fix for
-    /// "events endpoint has no real-time data during the upgrade" UX
-    /// gap). During this window, health checks fire at <see cref="UpgradePollingIntervalSeconds"/>
-    /// intervals — each one re-captures the agent's upgrade-events JSONL +
-    /// Phase B log via Capabilities RPC, populating the server-side
-    /// timeline store so the FE's 2-3s polling sees near-real-time
-    /// progress.
-    ///
-    /// <para>Sized to cover the FULL typical Phase A + Phase B + Halibut
-    /// reconnect sequence. Empirical timing from local end-to-end tests:
-    /// click → Phase A start: ~1s; Phase A download + method-selected:
-    /// 30s (apt path); Phase B binary swap: 1s; systemctl restart +
-    /// tentacle reconnect: 30-35s; /healthz first answers at ~T+63s.</para>
-    ///
-    /// <para>The Linux forward health check then also requires the unit to
-    /// stay active for <c>SETTLE_WINDOW_SECS</c> (15s, upgrade-linux-tentacle.sh)
-    /// before <c>healthz-pass</c> + <c>success</c> are emitted, so the terminal
-    /// events land at ~T+78s. The window is 120s (40 × 3s jobs): T+78s plus the
-    /// same ~40s reconnect-jitter cushion the original 90s carried over T+51s.
-    /// Worst-case waste is 40 × ~200ms ≈ 8s of Capabilities RPCs — negligible.
-    /// A compile-time constant (no config key to keep compatible); pinned by
-    /// <c>PollingWindow_CoversTheAptPathTerminalEvent_…</c>, which reads the
-    /// settle seconds from the rendered script so a longer settle fails it.</para>
-    ///
-    /// <para>The 45s predecessor was chosen assuming the typical sequence
-    /// ended at ~T+40s — that held for tarball install but apt install
-    /// has ~20s extra in package-download + dpkg-runtime that pushes
-    /// terminal events to T+60-65s, past the window. Symptom: UI showed
-    /// "stalled" even though agent was healthy — FE never saw the
-    /// terminal `success` event because server's events store stopped
-    /// refreshing at T+45s and the subsequent manual health check was
-    /// 30s later (FE's post-Initiated setTimeout).</para>
-    /// </summary>
-    internal const int UpgradePollingWindowSeconds = 120;
-
-    /// <summary>
-    /// Interval between health checks during the upgrade polling window.
-    /// 3s matches the FE integration guide's recommended poll cadence —
-    /// UI sees events arrive within one FE poll cycle after they're
-    /// emitted on the agent.
-    ///
-    /// <para>Job count = window / interval = 120 / 3 = 40 Hangfire jobs
-    /// per upgrade. Each is a quick Capabilities RPC (~20ms on local,
-    /// ~200ms over WAN). Upper-bound ~8s of CPU time across all 40
-    /// jobs, negligible.</para>
-    /// </summary>
-    internal const int UpgradePollingIntervalSeconds = 3;
-
     private readonly IMachineDataProvider _machineDataProvider;
     private readonly IMachineRuntimeCapabilitiesCache _runtimeCache;
     private readonly IMachineCapabilitiesStoreAccess _capabilitiesStore;
@@ -105,8 +56,9 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     private readonly ISquidBackgroundJobClient _backgroundJobClient;
     private readonly IUpgradeDispatchMetadataStore _dispatchMetadata;
     private readonly IInFlightScriptStore _inFlightScriptStore;
+    private readonly IUpgradeEventTimelineStore _upgradeEventStore;
 
-    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineCapabilitiesStoreAccess capabilitiesStore = null, IUpgradeDispatchMetadataStore dispatchMetadata = null, IInFlightScriptStore inFlightScriptStore = null)
+    public MachineUpgradeService(IMachineDataProvider machineDataProvider, IMachineRuntimeCapabilitiesCache runtimeCache, ITentacleVersionRegistry versionRegistry, IEnumerable<IMachineUpgradeStrategy> strategies, IRedisSafeRunner redisLock, ISquidBackgroundJobClient backgroundJobClient, IMachineCapabilitiesStoreAccess capabilitiesStore = null, IUpgradeDispatchMetadataStore dispatchMetadata = null, IInFlightScriptStore inFlightScriptStore = null, IUpgradeEventTimelineStore upgradeEventStore = null)
     {
         _machineDataProvider = machineDataProvider;
         _runtimeCache = runtimeCache;
@@ -117,6 +69,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         _backgroundJobClient = backgroundJobClient;
         _dispatchMetadata = dispatchMetadata;
         _inFlightScriptStore = inFlightScriptStore;
+        _upgradeEventStore = upgradeEventStore;
     }
 
     public async Task<UpgradeMachineResponseData> UpgradeAsync(UpgradeMachineCommand command, CancellationToken ct)
@@ -670,7 +623,7 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
 
     private async Task<UpgradeMachineResponseData> RunStrategyAsync(Persistence.Entities.Deployments.Machine machine, IMachineUpgradeStrategy strategy, string targetVersion, string currentVersion, CancellationToken ct)
     {
-        // Schedule rapid-polling health checks BEFORE the strategy dispatch so
+        // Start upgrade-progress polling BEFORE the strategy dispatch so
         // the server-side upgrade-events timeline fills up during the observer
         // wait (50–180s for LinuxTentacle — scope detach + systemctl restart +
         // Halibut reconnect). Previously this was called AFTER the dispatch
@@ -678,11 +631,10 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
         // the entire observer-wait window — looked exactly like a broken API
         // even though the agent was actively running the upgrade script.
         //
-        // Fire-and-forget via Hangfire — no observable side effect if the
-        // strategy then fails-fast at validation (e.g. invalid target version).
-        // Worst case is a burst of 15 cheap Capabilities RPCs against a
-        // machine that didn't actually upgrade; trivially tolerable.
-        ScheduleRapidPolling(machine.Id);
+        // Fire-and-forget via Hangfire. If the strategy then fails before the
+        // script runs, the run is never seen in flight and polling stops at
+        // UpgradeProgressPoller.DefaultCeiling, the same budget as before.
+        ScheduleProgressPolling(machine.Id, strategy);
 
         var outcome = await strategy.UpgradeAsync(machine, targetVersion, ct).ConfigureAwait(false);
 
@@ -743,52 +695,13 @@ public sealed class MachineUpgradeService : IMachineUpgradeService
     }
 
     /// <summary>
-    /// Schedules the rapid-polling burst that populates the server-side
-    /// upgrade-events timeline during the observer wait window. Called
-    /// BEFORE strategy dispatch so the FE's /upgrade-events polling sees
-    /// live data (vs. "empty" for 50–180s while observer waits for the
-    /// restart-disconnected script to re-report).
-    ///
-    /// <para>Each scheduled job is a Capabilities RPC that re-reads the
-    /// agent's upgrade-events JSONL + last-upgrade.json + Phase B log.
-    /// Jobs fire every <see cref="UpgradePollingIntervalSeconds"/> seconds
-    /// for <see cref="UpgradePollingWindowSeconds"/> seconds total.</para>
-    ///
-    /// <para>Fire-and-forget: errors here must not bubble back to the
-    /// operator's HTTP request (a failed observability-poll is cosmetic).
-    /// Try/catch guards against Hangfire storage exceptions (Redis down etc).</para>
-    ///
-    /// <para>Early-completion: if the upgrade finishes in 10s, the remaining
-    /// jobs still fire — each is a cheap no-op Capabilities RPC that reads
-    /// the same terminal state. ~200ms × 15 jobs = 3s of wasted work —
-    /// tolerable for the UX win.</para>
+    /// Starts the upgrade-progress polling that keeps the server-side upgrade timeline fresh while the agent upgrades
+    /// (see <see cref="UpgradeProgressPoller"/>). Called BEFORE strategy dispatch so the UI's /upgrade-events polling sees
+    /// live data during the observer wait. Polling runs until the agent reports this run's terminal status, bounded by
+    /// the strategy's worst case. The status the agent reported before this dispatch is the baseline that tells a
+    /// previous run's terminal status apart from this one's. Fire-and-forget: a failed schedule is cosmetic.
     /// </summary>
-    private void ScheduleRapidPolling(int machineId)
-    {
-        try
-        {
-            for (var seconds = UpgradePollingIntervalSeconds; seconds <= UpgradePollingWindowSeconds; seconds += UpgradePollingIntervalSeconds)
-            {
-                _backgroundJobClient.Schedule<IMachineHealthCheckService>(
-                    svc => svc.ManualHealthCheckAsync(machineId, CancellationToken.None),
-                    TimeSpan.FromSeconds(seconds));
-            }
-
-            Log.Information(
-                "[UpgradeAudit] Scheduled {JobCount} rapid health checks for machine {MachineId} at {Interval}s intervals over {Window}s window",
-                UpgradePollingWindowSeconds / UpgradePollingIntervalSeconds,
-                machineId,
-                UpgradePollingIntervalSeconds,
-                UpgradePollingWindowSeconds);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex,
-                "[UpgradeAudit] Failed to schedule upgrade-progress polling for machine {MachineId} — " +
-                "UI will show stale version/events until next scheduled health check fires",
-                machineId);
-        }
-    }
+    private void ScheduleProgressPolling(int machineId, IMachineUpgradeStrategy strategy) => UpgradeProgressPoller.Start(_backgroundJobClient, machineId, UpgradeProgressPoller.CeilingFor(strategy), _upgradeEventStore?.GetStatus(machineId)?.StartedAt);
 
     // ── Response shaping ─────────────────────────────────────────────────────
 

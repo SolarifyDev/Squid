@@ -10,6 +10,7 @@ using Squid.Core.Services.Machines.Upgrade;
 using Squid.Message.Commands.Machine;
 using Squid.Message.Enums;
 using Squid.Message.Enums.Caching;
+using Squid.Message.Models.Machines;
 using Squid.Message.Requests.Machines;
 using StackExchange.Redis;
 
@@ -965,79 +966,91 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
-    public async Task UpgradeAsync_OnVersionChange_SchedulesRapidHealthCheckSeries()
+    public async Task UpgradeAsync_StartsOneProgressPollChain_OneIntervalAfterDispatch_InsteadOfAFixedBurst()
     {
-        // 1.6.x UX fix (real-time progress): after a successful dispatch
-        // that may have changed the agent version, the service schedules
-        // N Hangfire jobs at interval-spaced delays over the upgrade
-        // window. Each job re-captures events + log + version via a
-        // Capabilities RPC, populating server-side stores so FE polling
-        // sees near-real-time progress.
-        //
-        // Without the series, FE polling `/upgrade-events` during the
-        // 30-60s upgrade window would see "empty events" — the very
-        // symptom we're fixing.
-        //
-        // Pin: exactly N = window/interval = 45/3 = 15 Hangfire jobs
-        // are scheduled on successful dispatch.
-        ArrangeMachine(id: 301, style: nameof(CommunicationStyle.TentaclePolling));
-        _linuxStrategy
-            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome
-            {
-                Status = MachineUpgradeStatus.Upgraded,
-                Detail = "upgrade dispatched",
-                AgentVersionMayHaveChanged = true
-            });
+        ArrangeUpgrade(301, versionMayHaveChanged: true);
+        var scheduled = CaptureProgressPolls(_backgroundJobClient);
 
         await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 301 }, CancellationToken.None);
 
-        var expectedJobCount = MachineUpgradeService.UpgradePollingWindowSeconds / MachineUpgradeService.UpgradePollingIntervalSeconds;
-        _backgroundJobClient.Verify(
-            c => c.Schedule<IMachineHealthCheckService>(
-                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<string>()),
-            Times.Exactly(expectedJobCount),
-            $"successful upgrade dispatch must schedule exactly {expectedJobCount} rapid health checks covering the upgrade progress window");
+        var (poll, delay) = scheduled.ShouldHaveSingleItem("one self-continuing chain; each poll schedules the next until the terminal status");
+        delay.ShouldBe(UpgradeProgressPoller.Interval, "no instant fire that races Phase A");
+        poll.MachineId.ShouldBe(301);
+        _backgroundJobClient.Verify(c => c.Schedule<IMachineHealthCheckService>(It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(), It.IsAny<TimeSpan>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
-    public async Task UpgradeAsync_OnVersionChange_FirstCheckScheduledAtIntervalBoundary()
+    public async Task UpgradeAsync_ScriptStrategyWithABudget_PollsUntilItsWorstCasePlusTheReconnectCushion()
     {
-        // Jobs fire at 3s, 6s, ..., 45s (interval = 3s, window = 45s).
-        // Verify the smallest scheduled delay is ≥ 3s — doesn't fire
-        // "immediately" which would race the agent's own Phase A start.
-        ArrangeMachine(id: 303, style: nameof(CommunicationStyle.TentaclePolling));
-        _linuxStrategy
-            .Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new MachineUpgradeOutcome
-            {
-                Status = MachineUpgradeStatus.Upgraded,
-                Detail = "upgrade dispatched",
-                AgentVersionMayHaveChanged = true
-            });
+        var budget = TimeSpan.FromMinutes(37);
+        var strategy = new Mock<IMachineUpgradeStrategy>();
+        strategy.As<IUpgradeDurationBudget>().Setup(b => b.WorstCaseDuration).Returns(budget);
+        strategy.Setup(s => s.CanHandle(It.IsAny<string>(), It.IsAny<MachineRuntimeCapabilities>())).Returns(true);
+        strategy.Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
+        ArrangeMachine(id: 304, style: nameof(CommunicationStyle.TentaclePolling));
+        var scheduled = CaptureProgressPolls(_backgroundJobClient);
+        var service = new MachineUpgradeService(_machineDataProvider.Object, _runtimeCache, _versionRegistry.Object, new[] { strategy.Object }, _redisLock.Object, _backgroundJobClient.Object);
+        var before = DateTimeOffset.UtcNow;
 
-        var capturedDelays = new List<TimeSpan>();
-        _backgroundJobClient
-            .Setup(c => c.Schedule<IMachineHealthCheckService>(
-                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<string>()))
-            .Callback<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>, TimeSpan, string>(
-                (_, delay, _) => capturedDelays.Add(delay))
-            .Returns("mock-job-id");
+        await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 304 }, CancellationToken.None);
 
-        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 303 }, CancellationToken.None);
-
-        capturedDelays.Min().ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(MachineUpgradeService.UpgradePollingIntervalSeconds),
-            customMessage: "first poll must wait at least one interval — no instant-fire that races Phase A");
-        capturedDelays.Max().ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(MachineUpgradeService.UpgradePollingWindowSeconds),
-            customMessage: "last poll must not exceed the window — bounded polling, no indefinite drain");
+        var poll = scheduled.ShouldHaveSingleItem().Poll;
+        poll.Deadline.ShouldBeInRange(before + budget + UpgradeProgressPoller.ReconnectCushion, DateTimeOffset.UtcNow + budget + UpgradeProgressPoller.ReconnectCushion, "slow starts, drain-delayed stops and rollbacks write their final status long after the old 120s window");
+        poll.FirstSignDeadline.ShouldBeInRange(before + UpgradeProgressPoller.DefaultCeiling, DateTimeOffset.UtcNow + UpgradeProgressPoller.DefaultCeiling);
     }
 
     [Fact]
-    public async Task UpgradeAsync_ScheduleRapidPolling_FiresBeforeStrategyDispatch_NotAfter()
+    public async Task UpgradeAsync_StrategyWithoutABudget_KeepsTheHistoricalWindow()
+    {
+        ArrangeMachine(id: 305, style: nameof(CommunicationStyle.KubernetesAgent));
+        _k8sStrategy.Setup(s => s.UpgradeAsync(It.IsAny<Machine>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new MachineUpgradeOutcome { Status = MachineUpgradeStatus.Upgraded, Detail = "ok", AgentVersionMayHaveChanged = true });
+        var scheduled = CaptureProgressPolls(_backgroundJobClient);
+        var before = DateTimeOffset.UtcNow;
+
+        await _service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 305 }, CancellationToken.None);
+
+        scheduled.ShouldHaveSingleItem().Poll.Deadline.ShouldBeInRange(before + UpgradeProgressPoller.DefaultCeiling, DateTimeOffset.UtcNow + UpgradeProgressPoller.DefaultCeiling);
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_RecordsTheStatusReportedBeforeDispatch_AsTheBaselineRun()
+    {
+        var previousRun = new DateTimeOffset(2026, 10, 1, 8, 0, 0, TimeSpan.Zero);
+        var store = new InMemoryUpgradeEventTimelineStore();
+        store.StoreStatus(306, new UpgradeStatusPayload { SchemaVersion = 2, Status = "SUCCESS", StartedAt = previousRun });
+        ArrangeUpgrade(306, versionMayHaveChanged: true);
+        var scheduled = CaptureProgressPolls(_backgroundJobClient);
+        var service = new MachineUpgradeService(_machineDataProvider.Object, _runtimeCache, _versionRegistry.Object, new[] { _linuxStrategy.Object, _k8sStrategy.Object }, _redisLock.Object, _backgroundJobClient.Object, upgradeEventStore: store);
+
+        await service.UpgradeAsync(new UpgradeMachineCommand { MachineId = 306 }, CancellationToken.None);
+
+        scheduled.ShouldHaveSingleItem().Poll.BaselineStartedAt.ShouldBe(previousRun, "without it, the previous run's SUCCESS cannot be told apart from this run's outcome");
+    }
+
+    private static List<(UpgradeProgressPoll Poll, TimeSpan Delay)> CaptureProgressPolls(Mock<ISquidBackgroundJobClient> jobs)
+    {
+        var scheduled = new List<(UpgradeProgressPoll, TimeSpan)>();
+
+        jobs.Setup(c => c.Schedule<IUpgradeProgressPoller>(It.IsAny<System.Linq.Expressions.Expression<Func<IUpgradeProgressPoller, Task>>>(), It.IsAny<TimeSpan>(), It.IsAny<string>()))
+            .Callback<System.Linq.Expressions.Expression<Func<IUpgradeProgressPoller, Task>>, TimeSpan, string>((call, delay, _) => scheduled.Add((PollArgument(call), delay)))
+            .Returns("job");
+
+        return scheduled;
+    }
+
+    private static UpgradeProgressPoll PollArgument(System.Linq.Expressions.Expression<Func<IUpgradeProgressPoller, Task>> call)
+    {
+        var capture = new Mock<IUpgradeProgressPoller>();
+        UpgradeProgressPoll poll = null;
+        capture.Setup(p => p.PollAsync(It.IsAny<UpgradeProgressPoll>(), It.IsAny<CancellationToken>())).Callback<UpgradeProgressPoll, CancellationToken>((p, _) => poll = p).Returns(Task.CompletedTask);
+
+        call.Compile()(capture.Object);
+
+        return poll;
+    }
+
+    [Fact]
+    public async Task UpgradeAsync_ProgressPolling_StartsBeforeStrategyDispatch_NotAfter()
     {
         // Ordering invariant pinned by commit a2f4850:
         //   ScheduleRapidPolling MUST run BEFORE strategy.UpgradeAsync.
@@ -1073,10 +1086,7 @@ public sealed class MachineUpgradeServiceTests
         var callOrder = new List<string>();
 
         _backgroundJobClient
-            .Setup(c => c.Schedule<IMachineHealthCheckService>(
-                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<string>()))
+            .Setup(c => c.Schedule<IUpgradeProgressPoller>(It.IsAny<System.Linq.Expressions.Expression<Func<IUpgradeProgressPoller, Task>>>(), It.IsAny<TimeSpan>(), It.IsAny<string>()))
             .Callback(() => callOrder.Add("schedule"))
             .Returns("mock-job-id");
 
@@ -1103,7 +1113,7 @@ public sealed class MachineUpgradeServiceTests
                 "data for 50-180s while the agent is actively upgrading.");
 
         // Every schedule call must precede the strategy call. The exact layout
-        // should be: [schedule ×30, strategy]. Even one "strategy" before any
+        // should be: [schedule, strategy]. Even one "strategy" before any
         // "schedule" breaks the invariant.
         var strategyIndex = callOrder.IndexOf("strategy");
         strategyIndex.ShouldBeGreaterThan(-1, "strategy.UpgradeAsync must fire at least once");
@@ -1153,115 +1163,8 @@ public sealed class MachineUpgradeServiceTests
         _runtimeCache.TryGet(302).AgentVersion.ShouldBe("1.3.0",
             "AgentVersionMayHaveChanged=false MUST NOT invalidate the runtime cache — preserve the last-known-good version in the UI");
 
-        var expectedJobCount = MachineUpgradeService.UpgradePollingWindowSeconds / MachineUpgradeService.UpgradePollingIntervalSeconds;
-        _backgroundJobClient.Verify(
-            c => c.Schedule<IMachineHealthCheckService>(
-                It.IsAny<System.Linq.Expressions.Expression<Func<IMachineHealthCheckService, Task>>>(),
-                It.IsAny<TimeSpan>(),
-                It.IsAny<string>()),
-            Times.Exactly(expectedJobCount),
+        _backgroundJobClient.Verify(c => c.Schedule<IUpgradeProgressPoller>(It.IsAny<System.Linq.Expressions.Expression<Func<IUpgradeProgressPoller, Task>>>(), It.IsAny<TimeSpan>(), It.IsAny<string>()), Times.Once,
             "rapid polling is ALWAYS scheduled so the FE sees live progress regardless of outcome — decoupled from cache invalidation");
-    }
-
-    [Fact]
-    public void PollingWindowAndInterval_InReasonableRange()
-    {
-        // Bounds invariants:
-        //   • interval ≥ 2s (FE polls at 2-3s; any tighter wastes RPCs)
-        //   • interval ≤ 10s (> 10s and the FE sees "nothing new for 10s" gaps)
-        //   • window ≥ 30s (< 30s and slow tarballs won't finish in the window)
-        //   • window ≤ 2min (> 2min is noisy — waste after upgrade done)
-        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBeGreaterThanOrEqualTo(2,
-            "interval < 2s hammers the agent + Hangfire; matches FE poll cadence at 3s");
-        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBeLessThanOrEqualTo(10,
-            "interval > 10s creates visible refresh-gaps in UI progress");
-
-        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeGreaterThanOrEqualTo(30,
-            "window < 30s risks cutting off before slow tarball finishes");
-        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeLessThanOrEqualTo(120,
-            "window > 2min wastes RPCs after typical upgrade is long done");
-    }
-
-    [Fact]
-    public void PollingWindow_CoversTheAptPathTerminalEvent_IncludingTheForwardHealthCheckSettle_WithTheEstablishedJitterCushion()
-    {
-        // Measured apt-path timeline: healthz first answers at ~T+63s. Since the forward check also requires the unit to
-        // stay active for SETTLE_WINDOW_SECS, `healthz-pass` + `success` are emitted that much later. The window must
-        // still be polling then, with the same ~40s reconnect-jitter cushion the 90s value originally carried over T+51s.
-        const int aptHealthzFirstAnswerSeconds = 63;
-        const int jitterCushionSeconds = 40;
-
-        var settle = int.Parse(System.Text.RegularExpressions.Regex.Match(LinuxTentacleUpgradeStrategy.BuildScript("1.4.2"), @"^SETTLE_WINDOW_SECS=(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline).Groups[1].Value);
-
-        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeGreaterThanOrEqualTo(aptHealthzFirstAnswerSeconds + settle + jitterCushionSeconds,
-            customMessage: $"terminal `success` lands at ~T+{aptHealthzFirstAnswerSeconds + settle}s (healthz + {settle}s settle); a shorter window stops refreshing the events store before the FE can see it");
-    }
-
-    [Fact]
-    public void PollingWindowAndInterval_PinnedToExactEmpiricalValues()
-    {
-        // Exact-value pins baked in by commit 9b7531d (window: 45→90) and
-        // the earlier 1.5.6 series (interval: 3). Changing EITHER requires
-        // also updating THIS test with the new empirical rationale — the
-        // change is then a deliberate-decision signal, not an invisible
-        // refactor.
-        //
-        // Why `PollingWindowAndInterval_InReasonableRange` above is NOT
-        // enough: it accepts any value in [30, 120]. Nothing in that test
-        // prevents a regression back to 45 — which is EXACTLY the value
-        // that caused the "Upgrade event stream stalled" UX bug operators
-        // saw on 1.5.6/1.5.7 when the FE's /upgrade-events poll saw the
-        // server cache freeze at Phase B `restart-start` and never catch
-        // the subsequent `healthz-pass` + `success` events because they
-        // landed past the 45s window. See session transcript 2026-04-23
-        // for the reproducing measurement.
-        //
-        // The 120s window is sized for the MEASURED worst-realistic path (the original 90s covered T+51s; the 15s
-        // forward-health-check settle moved the terminal events to ~T+78s, see PollingWindow_CoversTheAptPath…):
-        //   T+0     click → ScheduleRapidPolling schedules 40 Hangfire jobs
-        //   T+0-30s Phase A (apt-get update + apt install 67 MB download)
-        //   T+30s   scope-exec → systemctl restart squid-tentacle
-        //   T+30-60s Phase B silent-window (old tentacle dies, new starts,
-        //           Halibut polling re-establishes)
-        //   T+51s   healthz-pass + success written to events.jsonl on agent
-        //           (measured on arm64 container running apt path)
-        //   T+63s   /healthz first answers; +15s settle => `success` at ~T+78s
-        //   T+78-120s final rapid-polls observe the terminal events and
-        //           populate IUpgradeEventTimelineStore — FE sees success.
-        //
-        // The 3s interval matches FE's UPGRADE_EVENTS_POLL_INTERVAL_MS in
-        // SquidWeb/src/pages/deploymentTargets/detail.tsx. If server-pull
-        // cadence exceeds FE-pull cadence, half the FE polls return
-        // duplicate data — wasted RPCs. Keep them in sync.
-        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBe(120,
-            customMessage:
-                "window pinned to the empirical apt-path terminal-event timing " +
-                "(T+63s healthz + 15s settle) plus a ~40s reconnect-jitter cushion. Shrinking " +
-                "back to 45 reproduces the 'stream stalled' UX bug fixed in 1.5.8. " +
-                "See commit 9b7531d for the full incident analysis.");
-
-        MachineUpgradeService.UpgradePollingIntervalSeconds.ShouldBe(3,
-            customMessage:
-                "interval pinned to 3s to match FE's UPGRADE_EVENTS_POLL_INTERVAL_MS " +
-                "in SquidWeb. Any other value creates a beat-frequency between server " +
-                "refresh and FE pull — operators see 'nothing new for X seconds' gaps " +
-                "or wasted duplicate-data polls depending on direction.");
-
-        // Sanity: window / interval must divide evenly. An uneven split means the
-        // last scheduled job fires BEFORE the window end, wasting coverage of the
-        // tail where terminal events usually land.
-        var jobCount = MachineUpgradeService.UpgradePollingWindowSeconds
-                     / MachineUpgradeService.UpgradePollingIntervalSeconds;
-        (MachineUpgradeService.UpgradePollingWindowSeconds % MachineUpgradeService.UpgradePollingIntervalSeconds).ShouldBe(0,
-            customMessage:
-                "window % interval must be 0 — otherwise the final scheduled job " +
-                "fires before window-end and terminal events (healthz-pass, success) " +
-                "that land in the unscheduled tail are missed by rapid-polling.");
-        jobCount.ShouldBe(40,
-            customMessage:
-                "40 rapid-polling jobs = 120s / 3s — this is the load-budget pinning. " +
-                "If either constant changes and the quotient drifts, the Hangfire " +
-                "job count changes and downstream backend cost expectations shift.");
     }
 
     [Fact]
