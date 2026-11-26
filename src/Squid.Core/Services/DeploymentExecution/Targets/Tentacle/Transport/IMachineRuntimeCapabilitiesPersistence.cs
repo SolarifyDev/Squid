@@ -34,7 +34,7 @@ public interface IMachineRuntimeCapabilitiesPersistence
     /// tracking, no concurrent-write race with concurrent <c>UpdateMachineAsync</c>
     /// calls.
     /// </summary>
-    /// <returns>The exact <c>runtime_capabilities_updated_at</c> value written, so the caller can stamp its in-memory copy with the timestamp other pods will compare against.</returns>
+    /// <returns>The exact <c>runtime_capabilities_updated_at</c> value written, so the caller can stamp its in-memory copy with the timestamp other pods will compare against; <see cref="MachineRuntimeCapabilitiesPersistence.NotStored"/> when no row was written.</returns>
     Task<DateTimeOffset> SaveAsync(int machineId, MachineRuntimeCapabilities capabilities, CancellationToken ct);
 
     /// <summary>
@@ -69,6 +69,9 @@ public sealed record PersistedCapabilitiesSnapshot(MachineRuntimeCapabilities Ca
 public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapabilitiesPersistence, IScopedDependency
 {
     private readonly IRepository _repository;
+
+    /// <summary>The stamp of capabilities that were not written: older than any stored row, so a copy carrying it never outranks what another pod stored.</summary>
+    public static readonly DateTimeOffset NotStored = DateTimeOffset.MinValue;
 
     /// <summary>
     /// Stable JSON serialisation contract — property names are written
@@ -123,7 +126,7 @@ public sealed class MachineRuntimeCapabilitiesPersistence : IMachineRuntimeCapab
         var stamps = await _repository.Database.SqlQueryRaw<DateTimeOffset>(StampSql, json, machineId).ToListAsync(ct).ConfigureAwait(false);
 
         // No such machine: nothing was written, so there is no row stamp to carry (same no-op the previous update had).
-        return stamps.Count == 0 ? DateTimeOffset.UtcNow : stamps[0];
+        return stamps.Count == 0 ? NotStored : stamps[0];
     }
 
     public async Task<IReadOnlyList<(int MachineId, MachineRuntimeCapabilities Capabilities)>> LoadAllAsync(CancellationToken ct)

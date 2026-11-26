@@ -10,7 +10,11 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 /// </summary>
 public interface IMachineCapabilitiesRecorder : IScopedDependency
 {
-    /// <summary>Stores the response in the cache and persists it. A failed persist is logged and swallowed: this pod's cache is already current and the next probe retries the write.</summary>
+    /// <summary>
+    /// Persists the response and stores it in the cache, stamped with the persisted row's timestamp. A failed persist is logged and swallowed, and a cancelled
+    /// one is rethrown, but either way this pod still caches the agent's answer, stamped with <see cref="MachineRuntimeCapabilitiesPersistence.NotStored"/> so
+    /// any row another pod stores (an invalidation after an upgrade or downgrade) outranks it on the next sync. The next probe retries the write.
+    /// </summary>
     Task<MachineRuntimeCapabilities> RecordAsync(int machineId, CapabilitiesResponse response, CancellationToken ct);
 }
 
@@ -27,15 +31,22 @@ public sealed class MachineCapabilitiesRecorder : IMachineCapabilitiesRecorder
 
     public async Task<MachineRuntimeCapabilities> RecordAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
     {
-        var persistedAt = await PersistAsync(machineId, response, ct).ConfigureAwait(false);
+        var persistedAt = MachineRuntimeCapabilitiesPersistence.NotStored;
 
-        _cache.Store(machineId, response.Metadata ?? new Dictionary<string, string>(), response.AgentVersion, response.SupportedServices, persistedAt);
+        try
+        {
+            persistedAt = await PersistAsync(machineId, response, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _cache.Store(machineId, response.Metadata ?? new Dictionary<string, string>(), response.AgentVersion, response.SupportedServices, persistedAt);
+        }
 
         return _cache.TryGet(machineId);
     }
 
-    /// <summary>The timestamp the row was stamped with (what <c>LoadIfNewerAsync</c> compares against), or null when the write failed and the cache falls back to the local clock.</summary>
-    private async Task<DateTimeOffset?> PersistAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
+    /// <summary>The timestamp the row was stamped with (what <c>LoadIfNewerAsync</c> compares against), or <see cref="MachineRuntimeCapabilitiesPersistence.NotStored"/> when the write failed.</summary>
+    private async Task<DateTimeOffset> PersistAsync(int machineId, CapabilitiesResponse response, CancellationToken ct)
     {
         try
         {
@@ -43,9 +54,9 @@ public sealed class MachineCapabilitiesRecorder : IMachineCapabilitiesRecorder
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            Log.Warning(ex, "Failed to persist runtime capabilities for machine {MachineId}; this pod's cache is current and the next probe retries the write.", machineId);
+            Log.Warning(ex, "Failed to persist runtime capabilities for machine {MachineId}; this pod caches the answer below any stored row and the next probe retries the write.", machineId);
 
-            return null;
+            return MachineRuntimeCapabilitiesPersistence.NotStored;
         }
     }
 

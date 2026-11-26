@@ -125,7 +125,46 @@ public class MachineRuntimeCapabilitiesSharedStoreTests : TestBase
 
         await Run<IMachineCapabilitiesStoreAccess>(async a => await new MachineCapabilitiesRefresherHarness(pod, a).Refresher.SyncFromStoreAsync(machineId, default).ConfigureAwait(false)).ConfigureAwait(false);
 
-        pod.TryGet(machineId).SupportsScriptServiceV2.ShouldBeFalse("this pod's fresher probe (persist failed, say) must not be overwritten by an older shared copy");
+        pod.TryGet(machineId).SupportsScriptServiceV2.ShouldBeFalse("this pod's fresher entry must not be overwritten by an older shared copy");
+    }
+
+    // Pod A's probe still saw V2 but its write failed; pod B then invalidated the row after a downgrade. Pod A's clock runs a minute ahead of the database, so a
+    // local-clock stamp on its entry would outrank the tombstone and keep advertising V2. An unwritten probe is stamped so any stored row wins.
+    [Fact]
+    public async Task APodWhoseWriteFailed_StillAdoptsAnotherPodsLaterInvalidation_EvenWhenItsClockRunsAhead()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        var podA = new InMemoryMachineRuntimeCapabilitiesCache();
+
+        var recorded = await new MachineCapabilitiesRecorder(podA, new UnreachableStore()).RecordAsync(machineId, Agent("IScriptService/v1", ScriptServiceCapabilities.V2), default).ConfigureAwait(false);
+        recorded.SupportsScriptServiceV2.ShouldBeTrue("the probe's answer is cached even though the write failed");
+
+        await Run<IMachineRuntimeCapabilitiesPersistence>(p => p.InvalidateAsync(machineId, default)).ConfigureAwait(false);
+        await StampRowAsync(machineId, "now() - interval '1 minute'").ConfigureAwait(false);
+
+        await Run<IMachineCapabilitiesStoreAccess>(async a => await new MachineCapabilitiesRefresherHarness(podA, a).Refresher.SyncFromStoreAsync(machineId, default).ConfigureAwait(false)).ConfigureAwait(false);
+
+        podA.TryGet(machineId).SupportsScriptServiceV2.ShouldBeFalse("a probe this pod could not store must never outrank a row another pod stored");
+    }
+
+    [Fact]
+    public async Task APodWhoseWriteFailed_KeepsItsAnswer_WhileTheStoreHoldsNothingForTheMachine()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        var pod = new InMemoryMachineRuntimeCapabilitiesCache();
+
+        await new MachineCapabilitiesRecorder(pod, new UnreachableStore()).RecordAsync(machineId, Agent("IScriptService/v1", ScriptServiceCapabilities.V2), default).ConfigureAwait(false);
+        await Run<IMachineCapabilitiesStoreAccess>(async a => await new MachineCapabilitiesRefresherHarness(pod, a).Refresher.SyncFromStoreAsync(machineId, default).ConfigureAwait(false)).ConfigureAwait(false);
+
+        pod.TryGet(machineId).SupportsScriptServiceV2.ShouldBeTrue("with no stored row there is nothing to defer to");
+    }
+
+    [Fact]
+    public async Task SaveAsync_ForAMachineWithNoRow_WritesNothing_AndReturnsAStampEveryStoredRowOutranks()
+    {
+        var returned = await Run<IMachineRuntimeCapabilitiesPersistence, DateTimeOffset>(p => p.SaveAsync(int.MaxValue - 1, new MachineRuntimeCapabilities { Os = "Linux" }, default)).ConfigureAwait(false);
+
+        returned.ShouldBe(DateTimeOffset.MinValue);
     }
 
     [Fact]
@@ -288,6 +327,12 @@ public class MachineRuntimeCapabilitiesSharedStoreTests : TestBase
         }).ConfigureAwait(false);
 
         return machineId;
+    }
+
+    /// <summary>A pod that cannot reach the database: every capabilities read or write fails.</summary>
+    private sealed class UnreachableStore : IMachineCapabilitiesStoreAccess
+    {
+        public Task<T> RunAsync<T>(Func<IMachineRuntimeCapabilitiesPersistence, Task<T>> operation) => throw new InvalidOperationException("database unreachable");
     }
 
     /// <summary>A refresher over another pod's cache and the shared (real) persistence; it never calls an agent.</summary>
