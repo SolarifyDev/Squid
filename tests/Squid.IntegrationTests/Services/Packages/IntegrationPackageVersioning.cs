@@ -337,6 +337,18 @@ public class IntegrationPackageVersioning : TestBase
         (await RowCountAsync("SELECT COUNT(*) FROM package_version_rule")).ShouldBe(1);
     }
 
+    // ON CONFLICT arbitrates on one unique index only. A second unique key on the same columns (the exact-case constraint the first migration created) makes two
+    // racing saves of the same id raise 23505 on that key instead of updating, which the concurrency test above only catches when the timing lines up.
+    [Fact]
+    public async Task Rule_Table_HasOnlyTheCaseInsensitiveUniqueKey()
+    {
+        var uniqueKeys = await RowCountAsync("SELECT COUNT(*) FROM pg_index i JOIN pg_class t ON t.oid = i.indrelid WHERE t.relname = 'package_version_rule' AND i.indisunique AND NOT i.indisprimary");
+        var caseInsensitiveKeys = await RowCountAsync("SELECT COUNT(*) FROM pg_indexes WHERE tablename = 'package_version_rule' AND indexname = 'ux_package_version_rule_feed_lower_package_id'");
+
+        uniqueKeys.ShouldBe(1, "package_version_rule must have exactly one unique key besides its primary key, the one the rule upsert's ON CONFLICT names");
+        caseInsensitiveKeys.ShouldBe(1);
+    }
+
     private Task SetAsync(int feedId, string package, string template)
     {
         return Run<IPackageVersionRuleService>(s => s.SetRuleAsync(new SetPackageVersionRuleCommand { SpaceId = 1, FeedId = feedId, PackageId = package, VersionTemplate = template }, CancellationToken.None));

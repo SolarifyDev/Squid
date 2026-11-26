@@ -25,7 +25,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     {
         var provider = ResolveProvider(command.Kind);
         var name = RequireName(command.Kind, command.Name);
-        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, StoredSecrets.None);
+        var configuration = PackageStoreSettingsCheck.PrepareConfiguration(provider, command.Properties, command.Secrets, StoredSecrets.None);
 
         await EnsureNameFreeAsync(name, null, ct).ConfigureAwait(false);
 
@@ -41,7 +41,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
         var store = await LoadAsync(command.Id, ct).ConfigureAwait(false);
         var provider = ResolveProvider(store.Kind);
         var name = RequireName(store.Kind, command.Name);
-        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, SelectReusable(provider, command.Properties, store));
+        var configuration = PackageStoreSettingsCheck.PrepareConfiguration(provider, command.Properties, command.Secrets, SelectReusable(provider, command.Properties, store));
 
         await EnsureNameFreeAsync(name, store.Id, ct).ConfigureAwait(false);
 
@@ -92,7 +92,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
 
         var result = await TestSavedAsync(provider, store, ct).ConfigureAwait(false);
 
-        result.Warnings = BuildWarnings(provider, ReadConfiguration(store, new List<string>()));
+        result.Warnings = PackageStoreSettingsCheck.BuildWarnings(provider, ReadConfiguration(store, new List<string>()));
 
         await dataProvider.RecordTestResultAsync(id, result.Success, result.Message, ct).ConfigureAwait(false);
 
@@ -103,13 +103,8 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
     {
         var provider = ResolveProvider(command.Kind);
         var stored = await LoadStoredSecretsAsync(provider, command, ct).ConfigureAwait(false);
-        var configuration = PrepareConfiguration(provider, command.Properties, command.Secrets, stored);
 
-        var result = await provider.TestAsync(configuration, ct).ConfigureAwait(false);
-
-        result.Warnings = BuildWarnings(provider, configuration);
-
-        return result;
+        return await PackageStoreSettingsCheck.TestAsync(provider, command.Properties, command.Secrets, stored, ct).ConfigureAwait(false);
     }
 
     public List<PackageStoreProviderDescriptor> DescribeProviders()
@@ -126,7 +121,7 @@ public partial class PackageStoreService(IPackageStoreDataProvider dataProvider,
 
     private IPackageBlobStoreProvider ResolveProvider(string kind)
     {
-        return providers.FirstOrDefault(p => p.Kind == kind) ?? throw new PackageStoreProviderNotFoundException(kind);
+        return PackageStoreSettingsCheck.ResolveProvider(providers, kind);
     }
 
     // A saved row whose settings cannot be read is a failed test, not an error: the operator opens it to fix it.

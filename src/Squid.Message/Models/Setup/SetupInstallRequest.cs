@@ -7,6 +7,17 @@ public sealed record SetupInstallRequest
     public SetupRedisChoice Redis { get; init; } = new();
     public SetupAdminAccount Admin { get; init; } = new();
     public SetupServerUrls Server { get; init; } = new();
+
+    /// <summary>Where uploaded packages are kept. Absent means the default local disk store the schema is seeded with.</summary>
+    public SetupPackageStorageChoice PackageStorage { get; init; }
+}
+
+/// <summary>A package store kind and its settings, keyed by the field keys of that kind's descriptor.</summary>
+public sealed record SetupPackageStorageChoice
+{
+    public string Kind { get; init; } = string.Empty;
+    public Dictionary<string, string> Properties { get; init; } = new();
+    public Dictionary<string, string> Secrets { get; init; } = new();
 }
 
 public sealed record SetupDatabaseChoice
