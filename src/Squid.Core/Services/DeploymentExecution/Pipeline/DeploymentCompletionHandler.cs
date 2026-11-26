@@ -222,31 +222,56 @@ public sealed class DeploymentCompletionHandler(
     // A terminal outcome (recordSuccess != null) writes its DeploymentCompletion in the SAME transaction as the state: lifecycle progression and auto-deploy
     // read that row, so a task must never be terminal without it. A run that lost the lease throws before the record is added, so it writes neither.
     // A transient database failure (a dropped connection, a serialization failure) rolls the whole transaction back, so the move is simply tried again, a bounded
-    // number of times: otherwise a finished deployment would reach the runner's failure path and be recorded Failed. Each attempt is self-contained (the rolled-back
-    // insert is detached, the state write is conditional on the lease), a refused lease is answered inside the attempt and never retried, and once the attempts are
-    // used up the failure surfaces exactly as it always did.
+    // number of times with each wait and their total capped (ServerTaskTerminalWriteOptions.RetryDelay): otherwise a finished deployment would reach the runner's
+    // failure path and be recorded Failed. Each attempt is self-contained (the rolled-back insert is detached, the state write is conditional on the lease), a
+    // refused lease is answered inside the attempt and never retried, and once the attempts or the wait budget are used up the failure surfaces as it always did.
+    // A failed commit may still have landed on the server: a retry refused because the row is already in the target state is that earlier attempt's write.
     private async Task<bool> TransitionOwnedAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
     {
+        var waited = TimeSpan.Zero;
+
         for (var attempt = 1; ; attempt++)
         {
             try
             {
                 return await TransitionOwnedOnceAsync(ctx, fromState, toState, recordSuccess, ct).ConfigureAwait(false);
             }
-            catch (Exception ex) when (attempt < _terminalWrite.MaxAttempts && !ct.IsCancellationRequested && PostgresTransientFailureClassifier.IsTransient(ex))
+            catch (ServerTaskStateTransitionException refused) when (attempt > 1 && string.Equals(refused.FromState, toState, StringComparison.OrdinalIgnoreCase))
             {
-                await WaitBeforeTerminalRetryAsync(ctx, toState, ex, attempt, ct).ConfigureAwait(false);
+                if (!await EarlierAttemptRecordedAsync(ctx, recordSuccess, ct).ConfigureAwait(false)) throw;
+
+                Log.Information("[Deploy] Task {TaskId} is already {State}: the earlier attempt's commit landed although it was reported as failed; accepting it", ctx.ServerTaskId, toState);
+
+                return true;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && PostgresTransientFailureClassifier.IsTransient(ex) && _terminalWrite.RetryDelay(attempt, waited) is { } delay)
+            {
+                LogTerminalRetry(ctx, toState, ex, attempt, delay);
+
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+
+                waited += delay;
             }
         }
     }
 
-    private async Task WaitBeforeTerminalRetryAsync(DeploymentTaskContext ctx, string toState, Exception failure, int attempt, CancellationToken ct)
+    // A retry refused because the row is already in the target state is answering this run's own earlier attempt when that attempt's commit landed but its
+    // acknowledgement was lost (a connection dropped mid-commit). Its completion record, written in the same transaction, proves it; a pause writes none, so
+    // the state alone does. The lease cannot: a terminal or paused row no longer carries one. The retry's own insert never ran (the state write refused it
+    // first), so accepting adds no second record.
+    private async Task<bool> EarlierAttemptRecordedAsync(DeploymentTaskContext ctx, bool? recordSuccess, CancellationToken ct)
     {
-        var delay = TimeSpan.FromMilliseconds(_terminalWrite.InitialDelay.TotalMilliseconds * Math.Pow(3, attempt - 1));
+        if (recordSuccess == null || ctx.Deployment == null) return true;
 
+        var expected = recordSuccess.Value ? TaskState.Success : TaskState.Failed;
+        var completions = await deploymentCompletionDataProvider.GetDeploymentCompletionsByDeploymentIdAsync(ctx.Deployment.Id, ct).ConfigureAwait(false);
+
+        return completions.Any(c => string.Equals(c.State, expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void LogTerminalRetry(DeploymentTaskContext ctx, string toState, Exception failure, int attempt, TimeSpan delay)
+    {
         Log.Warning(failure, "[Deploy] Task {TaskId} hit a transient database failure (SQLSTATE {SqlState}) writing its {State} outcome, attempt {Attempt}/{MaxAttempts}; retrying in {DelayMs} ms", ctx.ServerTaskId, PostgresTransientFailureClassifier.SqlStateOf(failure), toState, attempt, _terminalWrite.MaxAttempts, (long)delay.TotalMilliseconds);
-
-        await Task.Delay(delay, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> TransitionOwnedOnceAsync(DeploymentTaskContext ctx, string fromState, string toState, bool? recordSuccess, CancellationToken ct)
