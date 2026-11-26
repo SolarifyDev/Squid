@@ -528,13 +528,47 @@ public class IntegrationServerTaskLease : TestBase
 
             releasing.Release();
             await Run<IServerTaskService>(s => s.TransitionStateAsync(paused, TaskState.Executing, TaskState.Paused, runA)).ConfigureAwait(false);
-            await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(takenOver, "other-run", TimeSpan.Zero)).ConfigureAwait(false);
-            await Task.Delay(600).ConfigureAwait(false);
+            await TakeOverAsync(takenOver, "other-run").ConfigureAwait(false);
+            var noticed = await NoticedLossWithinAsync(losing, TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+            noticed.ShouldBeTrue("the keeper never reported the lease another run took (watched losing.LostToken for 30s); check that RenewAsync updates no row once LeaseOwner changed");
+            losing.IsLost.ShouldBeTrue("another run took the lease");
+
+            // Give a keeper that wrongly kept renewing after Release a few intervals to find the cleared lease (this wait can only expose a bug, never cause one).
+            await Task.Delay(500).ConfigureAwait(false);
 
             releasing.IsLost.ShouldBeFalse("the run cleared its own lease");
-            losing.IsLost.ShouldBeTrue("another run took the lease");
-            losing.LostToken.IsCancellationRequested.ShouldBeTrue();
         }).ConfigureAwait(false);
+    }
+
+    // The keeper renews the lease every interval, and a renewal that lands while the steal waits for the row lock gives the row a renewal time later than
+    // the steal's own now(): that steal then updates nothing (correctly: a lease just renewed is not stale). Retry until it lands instead of assuming it did.
+    private async Task TakeOverAsync(int id, string owner)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+
+        while (await Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, owner, TimeSpan.Zero)).ConfigureAwait(false) == 0)
+        {
+            if (DateTimeOffset.UtcNow > deadline)
+                throw new TimeoutException($"Could not take over the lease of task {id} within 10s: every attempt met a renewal that had just landed");
+
+            await Task.Delay(20).ConfigureAwait(false);
+        }
+    }
+
+    // A beat that takes longer than the renew interval is abandoned and retried, so on a busy machine the renewal that finds the stolen lease may come
+    // several intervals later: wait for the loss itself (bounded) rather than a fixed time.
+    private static async Task<bool> NoticedLossWithinAsync(IServerTaskLease lease, TimeSpan limit)
+    {
+        try
+        {
+            await Task.Delay(limit, lease.LostToken).ConfigureAwait(false);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            return true;
+        }
     }
 
     private Task<int> Claim(int id, string owner) => Run<IServerTaskLeaseDataProvider, int>(p => p.AcquireAsync(id, owner, StaleAfter));
