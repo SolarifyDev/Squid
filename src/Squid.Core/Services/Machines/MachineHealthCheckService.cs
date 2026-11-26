@@ -173,24 +173,26 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         Log.Information("Auto health check sweep completed for {Count} due machines", dueMachineIds.Count);
     }
 
-    private async Task<List<int>> FindDueMachineIdsAsync(CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<int>> FindDueMachineIdsAsync(CancellationToken cancellationToken)
     {
         // P1-D.8 (Phase-8): the health-check sweep is system-internal (runs
         // under InternalUser / Hangfire) and legitimately scans every space.
         // Use the explicitly-named cross-space method instead of the
         // (now obsolete) nullable-spaceId entry — makes the cross-space
-        // intent visible at the call site. Least recently checked first, so a
-        // machine a previous sweep had to defer is probed first in this one.
+        // intent visible at the call site. Least recently checked first, then
+        // least recently attempted first, so a machine a previous sweep had to
+        // defer is probed first in this one and one whose probe the deadline
+        // cut goes behind the machines not started since.
         var machines = await _machineDataProvider.GetMachinesAllSpacesLeastRecentlyCheckedFirstAsync(cancellationToken).ConfigureAwait(false);
-        var dueIds = new List<int>();
+        var due = new List<Machine>();
 
         foreach (var machine in machines.Where(m => !m.IsDisabled))
         {
             if (await IsDueSafelyAsync(machine, cancellationToken).ConfigureAwait(false))
-                dueIds.Add(machine.Id);
+                due.Add(machine);
         }
 
-        return dueIds;
+        return _coordinator.InSweepOrder(due);
     }
 
     // A policy that cannot be evaluated counts as due so the per-machine probe hits the same
@@ -278,7 +280,7 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         Log.Information("Running health check for machine {MachineName} ({Style})", machine.Name, transport.CommunicationStyle);
 
         var timeout = _coordinator.ProbeTimeoutFor(transport.CommunicationStyle, healthCheckPolicy);
-        var result = await _coordinator.RunProbeAsync(probeToken => transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, probeToken, healthCheckPolicy), cancellationToken, timeout).ConfigureAwait(false);
+        var result = await _coordinator.RunProbeAsync(probeToken => StartProbeAsync(machine, transport, connectivityPolicy, healthCheckPolicy, probeToken), cancellationToken, timeout).ConfigureAwait(false);
         var status = result.Healthy ? MachineHealthStatus.Healthy : MachineHealthStatus.Unavailable;
 
         await RecordHealthStatusAsync(machine, status, result.Detail, cancellationToken).ConfigureAwait(false);
@@ -286,6 +288,15 @@ public class MachineHealthCheckService : IMachineHealthCheckService
         Log.Information("Health check for {MachineName}: {Status}", machine.Name, status);
 
         return result;
+    }
+
+    // Noted the moment the probe actually starts (a deferred probe never gets here), with the clock HealthLastChecked is written with: a probe the sweep
+    // deadline cuts records nothing, and this note is what moves its machine behind the machines not started since.
+    private Task<HealthCheckResult> StartProbeAsync(Machine machine, IDeploymentTransport transport, MachineConnectivityPolicyDto connectivityPolicy, MachineHealthCheckPolicyDto healthCheckPolicy, CancellationToken probeToken)
+    {
+        _coordinator.NoteProbeStarted(machine.Id, DateTimeOffset.UtcNow);
+
+        return transport.HealthChecker.CheckHealthAsync(machine, connectivityPolicy, probeToken, healthCheckPolicy);
     }
 
     // ========================================================================

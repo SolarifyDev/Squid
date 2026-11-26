@@ -181,6 +181,41 @@ public class MachineHealthSweepIntegrationTests : TestBase
         (await LoadStatusesAsync(new List<int> { late, later }).ConfigureAwait(false)).ShouldAllBe(s => s == MachineHealthStatus.Healthy);
     }
 
+    [Fact]
+    public async Task Sweep_MachinesTheDeadlineCut_GoBehindMachinesNotYetStarted_SoTheRestOfTheFleetIsChecked()
+    {
+        // Two machines that never answer, a configured timeout longer than the 3s sweep, MaxParallelism 2: they take both slots, the deadline
+        // cuts them, nothing is persisted, and Postgres keeps listing them first (never checked, lowest ids). Without rotation the three
+        // healthy machines would never be checked; with it, the second sweep of the same process starts them first.
+        var unreachable = await SeedMachinesAsync(2).ConfigureAwait(false);
+        var healthy = await SeedMachinesAsync(3).ConfigureAwait(false);
+        var strategy = new FakeStrategy();
+        var order = new ConcurrentQueue<int>();
+        var locks = new HealthCheckInProcessLocks();
+        strategy.Behavior = async (id, ct) =>
+        {
+            order.Enqueue(id);
+
+            if (unreachable.Contains(id)) await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+
+            return new HealthCheckResult(true, "ok");
+        };
+
+        await RunSweepAsync(strategy, locks, probeTimeoutSeconds: 30, maxParallelism: 2, sweepDeadlineSeconds: 3).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+        order.ShouldBe(unreachable, ignoreOrder: true, "the never-checked unreachable machines are the head of the first sweep and hold both slots until the deadline");
+        order.Clear();
+
+        await RunSweepAsync(strategy, locks, probeTimeoutSeconds: 30, maxParallelism: 2, sweepDeadlineSeconds: 3).WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+        // With two slots the order probes reach the strategy interleaves; the outcome is what matters: every machine never started got its turn.
+        healthy.ShouldAllBe(id => order.Contains(id), "the machines the deadline cut go behind the machines never started");
+        (await LoadStatusesAsync(healthy).ConfigureAwait(false)).ShouldAllBe(s => s == MachineHealthStatus.Healthy);
+
+        foreach (var id in unreachable)
+            (await LoadMachineAsync(id).ConfigureAwait(false)).HealthLastChecked.ShouldBeNull("a probe the deadline cut persists nothing");
+    }
+
     private static void AssertHealthUntouched(Machine after, Machine before)
     {
         after.HealthStatus.ShouldBe(before.HealthStatus);

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.Caching.Redis;
 using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.Core.Services.Machines.HealthCheck.Exceptions;
@@ -22,7 +23,8 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
 
     /// <summary>
     /// Same as the two-argument overload with an explicit timeout (see <see cref="ProbeTimeoutFor"/>). A probe that reports a failure only after the timeout keeps its own error text in the result.
-    /// The timeout is never shortened. Inside a sweep the probe starts only if its full timeout plus a grace to record the result fits in the sweep time left;
+    /// The timeout is never shortened. Inside a sweep the probe starts if its full timeout plus a grace to record the result fits in the sweep time left. It also starts,
+    /// without that guarantee, when it is one of the first <c>MaxParallelism</c> machines of the sweep order or could not have fitted anywhere in this sweep's probing time;
     /// otherwise it is not started and <see cref="SweepBudgetExhaustedException"/> is thrown (the machine stays due). If <paramref name="ct"/> is cancelled, no unhealthy result is returned.
     /// </summary>
     Task<HealthCheckResult> RunProbeAsync(Func<CancellationToken, Task<HealthCheckResult>> probe, CancellationToken ct, TimeSpan timeout);
@@ -30,8 +32,18 @@ public interface IMachineHealthCheckCoordinator : IScopedDependency
     /// <summary>The probe timeout for a machine of this communication style: the operator's configured value, or the transport-aware default.</summary>
     TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy);
 
-    /// <summary>Runs <paramref name="work"/> for each item with bounded parallelism, each in its own DI scope (own DbContext). A failing item never stops the others.</summary>
+    /// <summary>Runs <paramref name="work"/> for each item with bounded parallelism, each in its own DI scope (own DbContext). A failing item never stops the others. Inside a sweep, an item's position in <paramref name="items"/> decides whether it is the head of the sweep order.</summary>
     Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct);
+
+    /// <summary>Records that a probe of the machine started at <paramref name="startedAt"/> (the clock <c>HealthLastChecked</c> is written with). Kept in memory for this process.</summary>
+    void NoteProbeStarted(int machineId, DateTimeOffset startedAt);
+
+    /// <summary>
+    /// The ids of <paramref name="dueMachines"/> least recently ATTEMPTED first: ordered by the later of the machine's last recorded check and the last probe this process
+    /// started for it, keeping the given order among equals. A machine whose probe the sweep deadline cut records nothing and keeps its old check time; this moves it behind
+    /// every machine not started since, so it cannot hold the head of the sweep order forever.
+    /// </summary>
+    IReadOnlyList<int> InSweepOrder(IReadOnlyList<Machine> dueMachines);
 
     /// <summary>How long a manual check waits for a probe already running on the same machine.</summary>
     TimeSpan ManualBusyWait { get; }
@@ -48,12 +60,12 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     private static readonly TimeSpan LockRetry = TimeSpan.FromMilliseconds(500);
     private static readonly object Ran = new();
 
-    // Time the sweep must still have after a probe's full timeout: the 1s wait for the probe's own error text plus recording the result.
-    internal static readonly TimeSpan SweepRecordGrace = TimeSpan.FromSeconds(5);
-
-    // The deadline of the sweep this async flow belongs to; flows into every probe the sweep fans out, null for a manual check.
+    // The sweep this async flow belongs to; flows into every probe the sweep fans out, null for a manual check.
     // Set inside the async RunBoundedSweepAsync, so the runtime restores the caller's (null) value when it returns: it never outlives the sweep.
-    private static readonly AsyncLocal<DateTimeOffset?> CurrentSweepDeadline = new();
+    private static readonly AsyncLocal<SweepState> CurrentSweep = new();
+
+    // The position in the sweep order of the item this flow probes; set inside the async RunItemInScopeAsync, so it is scoped to that item.
+    private static readonly AsyncLocal<int?> CurrentSweepPosition = new();
 
     private readonly IRedisSafeRunner _redis;
     private readonly ILifetimeScope _scope;
@@ -141,28 +153,32 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         }
     }
 
-    // Inside a sweep a probe starts only if its FULL timeout plus the recording grace fits in the sweep time left, so it always ends on its own
-    // timeout before the deadline and every result the sweep records is genuine. One that does not fit is deferred: not started, nothing
-    // recorded, the machine stays due (and is first in the next sweep). A timeout that cannot fit in any sweep runs as before; if the deadline
-    // cuts it, it records nothing. Outside a sweep (manual check) nothing applies.
+    // Inside a sweep a probe whose FULL timeout plus the recording grace fits in the sweep time left starts, ends on its own timeout before the
+    // deadline, and its result is genuine. One that does not fit is deferred (not started, nothing recorded, stays due) only when a later sweep can
+    // do better: it could have fitted this sweep's probing time and it is not at the head of the sweep order. The head is always started, and so is a
+    // probe that cannot fit the probing time at all, else the same machines would be deferred in every sweep; if the deadline cuts such a probe it
+    // records nothing, and the sweep order moves its machine behind the ones not started since. The timeout is never shortened. A manual check is never deferred.
     private void EnsureProbeFitsInSweep(TimeSpan timeout)
     {
-        var deadline = CurrentSweepDeadline.Value;
-        var needed = timeout + SweepRecordGrace;
+        var sweep = CurrentSweep.Value;
 
-        if (deadline == null) return;
+        if (sweep == null) return;
 
-        if (needed > _options.SweepDeadline)
+        var needed = ProbeTimeoutPolicy.SweepNeed(timeout);
+        var remaining = sweep.Deadline - _time.GetUtcNow();
+
+        if (needed <= remaining) return;
+
+        if (IsHeadOfSweep() || needed > sweep.ProbingWindow)
         {
-            Log.Warning("Health check probe timeout {TimeoutSeconds}s plus {GraceSeconds}s to record exceeds the {DeadlineSeconds}s sweep deadline; a probe still running when the sweep ends records nothing", timeout.TotalSeconds, SweepRecordGrace.TotalSeconds, _options.SweepDeadline.TotalSeconds);
+            Log.Warning("Health check probe needs {NeededSeconds}s (timeout plus time to record) but the sweep has {RemainingSeconds}s left; starting it anyway so the machine is not deferred in every sweep, it records nothing if the sweep deadline ends it first", needed.TotalSeconds, remaining.TotalSeconds);
             return;
         }
 
-        var remaining = deadline.Value - _time.GetUtcNow();
-
-        if (needed > remaining)
-            throw new SweepBudgetExhaustedException(timeout, remaining);
+        throw new SweepBudgetExhaustedException(timeout, remaining);
     }
+
+    private bool IsHeadOfSweep() => CurrentSweepPosition.Value < _options.MaxParallelism;
 
     // The probe's token is already cancelled, so a well-behaved probe finishes within the grace and reports why it was failing
     // (connection refused, auth error, ...); one that is truly hung yields the plain timeout message.
@@ -184,11 +200,25 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
     {
         var parallel = new ParallelOptions { MaxDegreeOfParallelism = _options.MaxParallelism, CancellationToken = ct };
 
-        await Parallel.ForEachAsync(items, parallel, (item, token) => new ValueTask(RunItemInScopeAsync(item, work, token))).ConfigureAwait(false);
+        MarkProbingStarted();
+
+        await Parallel.ForEachAsync(items.Select((item, position) => (item, position)), parallel, (entry, token) => new ValueTask(RunItemInScopeAsync(entry.item, entry.position, work, token))).ConfigureAwait(false);
     }
 
-    private async Task RunItemInScopeAsync<T>(T item, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct)
+    // What a probe can fit is measured against the sweep time left once listing the due machines is done, not against the whole sweep deadline.
+    private void MarkProbingStarted()
     {
+        var sweep = CurrentSweep.Value;
+
+        if (sweep == null) return;
+
+        sweep.ProbingWindow = sweep.Deadline - _time.GetUtcNow();
+    }
+
+    private async Task RunItemInScopeAsync<T>(T item, int position, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct)
+    {
+        CurrentSweepPosition.Value = position;
+
         try
         {
             await using var scope = _scope.BeginLifetimeScope();
@@ -205,9 +235,17 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
         }
     }
 
+    public void NoteProbeStarted(int machineId, DateTimeOffset startedAt) => _locks.NoteProbeStarted(machineId, startedAt);
+
+    public IReadOnlyList<int> InSweepOrder(IReadOnlyList<Machine> dueMachines) => dueMachines.OrderBy(LastAttempted).Select(m => m.Id).ToList();
+
+    private DateTimeOffset? LastAttempted(Machine machine) => Later(machine.HealthLastChecked, _locks.LastProbeStarted(machine.Id));
+
+    private static DateTimeOffset? Later(DateTimeOffset? a, DateTimeOffset? b) => a == null || b > a ? b : a;
+
     private async Task RunBoundedSweepAsync(Func<CancellationToken, Task> sweep, CancellationToken ct)
     {
-        CurrentSweepDeadline.Value = _time.GetUtcNow() + _options.SweepDeadline;
+        CurrentSweep.Value = new SweepState(_time.GetUtcNow() + _options.SweepDeadline, _options.SweepDeadline);
 
         using var deadlineTimerCts = new CancellationTokenSource(_options.SweepDeadline, _time);
         using var deadlineCts = CancellationTokenSource.CreateLinkedTokenSource(ct, deadlineTimerCts.Token);
@@ -263,5 +301,13 @@ public sealed class MachineHealthCheckCoordinator : IMachineHealthCheckCoordinat
 
             return true;
         }
+    }
+
+    // ProbingWindow starts as the whole sweep and is narrowed to the time left when the sweep fans its probes out.
+    private sealed class SweepState(DateTimeOffset deadline, TimeSpan probingWindow)
+    {
+        public DateTimeOffset Deadline { get; } = deadline;
+
+        public TimeSpan ProbingWindow { get; set; } = probingWindow;
     }
 }

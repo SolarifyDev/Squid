@@ -62,6 +62,10 @@ internal sealed class HealthCheckTestHost : IDisposable
         public TimeSpan ProbeTimeoutFor(CommunicationStyle style, MachineHealthCheckPolicyDto policy) => inner.ProbeTimeoutFor(style, policy);
 
         public Task ForEachInScopeAsync<T>(IReadOnlyList<T> items, Func<ILifetimeScope, T, CancellationToken, Task> work, CancellationToken ct) => inner.ForEachInScopeAsync(items, work, ct);
+
+        public void NoteProbeStarted(int machineId, DateTimeOffset startedAt) => inner.NoteProbeStarted(machineId, startedAt);
+
+        public IReadOnlyList<int> InSweepOrder(IReadOnlyList<Squid.Core.Persistence.Entities.Deployments.Machine> dueMachines) => inner.InSweepOrder(dueMachines);
     }
 
     /// <summary>A Redis runner whose lock is always acquired; records every key it was asked for.</summary>

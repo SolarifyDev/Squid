@@ -11,8 +11,9 @@ namespace Squid.Core.Services.Machines.HealthCheck;
 /// Otherwise the default is the larger of the base default and what the transport itself can legitimately take, so a slow-but-alive machine is not
 /// declared Unavailable before the transport's own timeout: a polling agent's request may wait the polling-queue timeout for the agent to
 /// connect, a listening Tentacle goes through Halibut's connect retries, and an SSH custom health script has its own 5 minute limit.
-/// No default ever exceeds <see cref="SweepFraction"/> of the sweep deadline: a probe still running when the sweep is cancelled records nothing, so the machine would
-/// stay due, hold a parallel slot for the whole sweep and never be marked Unavailable. The cap is one rule for every transport.
+/// One rule ties every default to the sweep: a default probe's full timeout plus <see cref="RecordGrace"/> (the time the coordinator needs to record its result)
+/// takes at most <see cref="SweepFraction"/> of the sweep deadline, so it fits a fresh sweep with the rest left for listing the due machines. The coordinator
+/// uses the same <see cref="SweepNeed"/> to decide whether a probe still fits the sweep it is in. A probe still running when the sweep ends records nothing.
 /// </summary>
 public static class ProbeTimeoutPolicy
 {
@@ -20,6 +21,15 @@ public static class ProbeTimeoutPolicy
     internal static readonly TimeSpan Margin = TimeSpan.FromSeconds(10);
 
     internal const double SweepFraction = 0.9;
+
+    /// <summary>Time a sweep must still have after a probe's full timeout: the coordinator's 1s wait for the probe's own error text plus recording the result.</summary>
+    internal static readonly TimeSpan RecordGrace = TimeSpan.FromSeconds(5);
+
+    // Only reached by a sweep deadline under ~7s, where no default can fit at all; such probes take the coordinator's cannot-fit path.
+    private static readonly TimeSpan MinimumDefault = TimeSpan.FromSeconds(1);
+
+    /// <summary>The sweep time a probe with <paramref name="timeout"/> needs to finish on its own timeout and have its result recorded.</summary>
+    internal static TimeSpan SweepNeed(TimeSpan timeout) => timeout + RecordGrace;
 
     public static TimeSpan For(MachineHealthCheckSetting setting, CommunicationStyle style, MachineHealthCheckPolicyDto policy, HalibutTimeoutsAndLimits limits)
     {
@@ -60,7 +70,7 @@ public static class ProbeTimeoutPolicy
 
     private static TimeSpan CapToSweep(MachineHealthCheckSetting setting, TimeSpan timeout)
     {
-        var cap = TimeSpan.FromTicks((long)(setting.SweepDeadline.Ticks * SweepFraction));
+        var cap = Max(TimeSpan.FromTicks((long)(setting.SweepDeadline.Ticks * SweepFraction)) - RecordGrace, MinimumDefault);
 
         return timeout < cap ? timeout : cap;
     }

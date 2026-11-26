@@ -45,22 +45,48 @@ public class ProbeTimeoutPolicyTests
         slow.PollingRequestQueueTimeout = TimeSpan.FromMinutes(30);
 
         foreach (var limits in new[] { Defaults, slow })
-            ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), limits).ShouldBeLessThan(setting.SweepDeadline);
+            ProbeTimeoutPolicy.SweepNeed(ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), limits)).ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(270), "a default plus its record grace fits a fresh sweep with 10% left for listing");
 
         ProbeTimeoutPolicy.Longest(setting, slow).ShouldBeLessThan(setting.SweepDeadline);
         ProbeTimeoutPolicy.ManualWait(setting, slow).ShouldBeLessThan(setting.SweepDeadline);
     }
 
     [Theory]
-    [InlineData(300, CommunicationStyle.Ssh, 270)]
-    [InlineData(60, CommunicationStyle.TentaclePolling, 54)]
-    [InlineData(60, CommunicationStyle.KubernetesApi, 54)]
+    [InlineData(300, CommunicationStyle.Ssh, 265)]
+    [InlineData(60, CommunicationStyle.TentaclePolling, 49)]
+    [InlineData(60, CommunicationStyle.KubernetesApi, 49)]
+    [InlineData(55, CommunicationStyle.KubernetesApi, 44.5)]
     [InlineData(1000, CommunicationStyle.Ssh, 325)]
-    public void Unconfigured_IsCappedAtNinetyPercentOfTheSweepDeadline(int deadlineSeconds, CommunicationStyle style, int expectedSeconds)
+    public void Unconfigured_IsCappedSoTimeoutPlusRecordGraceIsAtMostNinetyPercentOfTheSweepDeadline(int deadlineSeconds, CommunicationStyle style, double expectedSeconds)
     {
         var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = deadlineSeconds };
 
         ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), Defaults).ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(30)]
+    [InlineData(55)]
+    [InlineData(300)]
+    [InlineData(3600)]
+    public void Unconfigured_EveryDefault_FitsAFreshSweep_WithTenPercentLeftForListing(int deadlineSeconds)
+    {
+        var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = deadlineSeconds };
+        var budget = TimeSpan.FromSeconds(deadlineSeconds * ProbeTimeoutPolicy.SweepFraction);
+
+        foreach (var style in Enum.GetValues<CommunicationStyle>())
+            ProbeTimeoutPolicy.SweepNeed(ProbeTimeoutPolicy.For(setting, style, SshScriptPolicy(), Defaults)).ShouldBeLessThanOrEqualTo(budget, $"{style}");
+
+        ProbeTimeoutPolicy.SweepNeed(ProbeTimeoutPolicy.Longest(setting, Defaults)).ShouldBeLessThanOrEqualTo(budget);
+    }
+
+    [Fact]
+    public void Unconfigured_TinySweepDeadline_NeverYieldsAZeroOrNegativeTimeout()
+    {
+        var setting = new MachineHealthCheckSetting { SweepDeadlineSeconds = 3 };
+
+        ProbeTimeoutPolicy.For(setting, CommunicationStyle.KubernetesApi, null, Defaults).ShouldBe(TimeSpan.FromSeconds(1));
     }
 
     [Fact]
@@ -77,7 +103,7 @@ public class ProbeTimeoutPolicyTests
         var limits = HalibutTimeoutsAndLimits.RecommendedValues();
         limits.PollingRequestQueueTimeout = TimeSpan.FromSeconds(300);
 
-        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.TentaclePolling, null, limits).ShouldBe(TimeSpan.FromSeconds(270));
+        ProbeTimeoutPolicy.For(new MachineHealthCheckSetting(), CommunicationStyle.TentaclePolling, null, limits).ShouldBe(TimeSpan.FromSeconds(265));
     }
 
     [Fact]
