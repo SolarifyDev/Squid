@@ -43,16 +43,15 @@ public class TentacleHealthCheckCapabilitiesStampTests
     }
 
     [Fact]
-    public async Task HealthCheck_WhenPersistingFails_IsStillHealthy_AndCachesWithTheLocalClock()
+    public async Task HealthCheck_WhenPersistingFails_IsStillHealthy_AndCachesSoAnyStoredRowOutranksIt()
     {
         _persistence.Setup(p => p.SaveAsync(It.IsAny<int>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db down"));
-        var before = DateTimeOffset.UtcNow;
 
         var result = await Strategy().CheckHealthAsync(Machine(), null, CancellationToken.None);
 
         result.Healthy.ShouldBeTrue();
         _cache.TryGet(MachineId).SupportsScriptServiceV2.ShouldBeTrue();
-        _cache.TryGet(MachineId).ObservedAt.Value.ShouldBeGreaterThanOrEqualTo(before);
+        _cache.TryGet(MachineId).ObservedAt.ShouldBe(DateTimeOffset.MinValue, "a pod clock stamp would outrank another pod's newer invalidation whenever this pod's clock runs ahead");
     }
 
     [Fact]
@@ -72,6 +71,9 @@ public class TentacleHealthCheckCapabilitiesStampTests
         _persistence.Setup(p => p.SaveAsync(It.IsAny<int>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>())).Returns(() => { cts.Cancel(); throw new OperationCanceledException(cts.Token); });
 
         await Should.ThrowAsync<OperationCanceledException>(() => Strategy().CheckHealthAsync(Machine(), null, cts.Token));
+
+        _cache.TryGet(MachineId).SupportsScriptServiceV2.ShouldBeTrue("the agent answered before the cancellation; only the write was lost");
+        _cache.TryGet(MachineId).ObservedAt.ShouldBe(DateTimeOffset.MinValue);
     }
 }
 

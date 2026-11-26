@@ -26,16 +26,29 @@ public class MachineCapabilitiesRecorderTests
         _cache.TryGet(MachineId).ObservedAt.ShouldBe(persistedAt);
     }
 
+    // An unwritten probe must never outrank a row another pod stored (an invalidation after a downgrade): a local-clock stamp from a pod whose clock runs ahead would.
     [Fact]
-    public async Task Record_WhenPersistFails_FallsBackToLocalClock_AndStillStoresTheCache()
+    public async Task Record_WhenPersistFails_StillStoresTheCache_StampedSoAnyStoredRowOutranksIt()
     {
         _persistence.Setup(p => p.SaveAsync(It.IsAny<int>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>())).ThrowsAsync(new InvalidOperationException("db down"));
-        var before = DateTimeOffset.UtcNow;
 
         var recorded = await Recorder().RecordAsync(MachineId, Agent(), CancellationToken.None);
 
         recorded.AgentVersion.ShouldBe("2.0.0");
-        recorded.ObservedAt.ShouldNotBeNull();
-        recorded.ObservedAt.Value.ShouldBeGreaterThanOrEqualTo(before);
+        recorded.ObservedAt.ShouldBe(DateTimeOffset.MinValue);
+        _cache.TryGet(MachineId).ObservedAt.ShouldBe(DateTimeOffset.MinValue);
+    }
+
+    // The agent already answered: a cancellation that lands during the write must not throw that answer away, only its persistence.
+    [Fact]
+    public async Task Record_WhenCancelledDuringThePersist_StillCachesTheAnswer_StampedSoAnyStoredRowOutranksIt_AndPropagatesTheCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        _persistence.Setup(p => p.SaveAsync(It.IsAny<int>(), It.IsAny<MachineRuntimeCapabilities>(), It.IsAny<CancellationToken>())).Returns(() => { cts.Cancel(); throw new OperationCanceledException(cts.Token); });
+
+        await Should.ThrowAsync<OperationCanceledException>(() => Recorder().RecordAsync(MachineId, Agent(), cts.Token));
+
+        _cache.TryGet(MachineId).AgentVersion.ShouldBe("2.0.0");
+        _cache.TryGet(MachineId).ObservedAt.ShouldBe(DateTimeOffset.MinValue);
     }
 }
