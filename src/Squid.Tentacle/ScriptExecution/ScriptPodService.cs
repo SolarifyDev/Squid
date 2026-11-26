@@ -184,10 +184,18 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     private ScriptStatusResponse AnnounceQueued(StartScriptCommand command)
     {
         PersistPendingSecret(command.ScriptTicket.TaskId, command);
+        RemovePendingSecretUnlessQueued(command.ScriptTicket.TaskId);
         TentacleMetrics.ScriptQueued();
         Log.Information("Queued script for ticket {TicketId}, waiting for isolation mutex", command.ScriptTicket.TaskId);
 
         return new ScriptStatusResponse(command.ScriptTicket, ProcessState.Pending, 0, new List<ProcessOutput>(), 0);
+    }
+
+    // The Secret is written after the ticket lock is released, so the ticket may have left the queue first and whoever took it out found no
+    // Secret to delete. Every exit from the queue removes the ticket before it deletes the Secret: a ticket still queued here is deleted later.
+    private void RemovePendingSecretUnlessQueued(string ticketId)
+    {
+        if (!_pendingScripts.ContainsKey(ticketId)) RemovePendingSecret(ticketId);
     }
 
     // The ticket is in flight and owns the isolation mutex from here until LaunchClaimed ends the launch.
@@ -298,6 +306,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
         catch
         {
+            RemovePendingSecret(ticketId);
             DeletePersistedStateIfAny(workDir);
             CleanupWorkspace(workDir);
             throw;
@@ -456,6 +465,7 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         if (!PublishTerminalThenForget(_pendingScripts, ticketId, pending, response)) return false;
 
         Interlocked.Decrement(ref _pendingCount);
+        RemovePendingSecret(ticketId);
 
         Log.Warning("Pending script {TicketId} timed out after {Minutes:F0}m waiting for isolation mutex", ticketId, age.TotalMinutes);
 

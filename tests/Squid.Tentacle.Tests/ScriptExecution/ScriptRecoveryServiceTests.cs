@@ -288,6 +288,28 @@ public class ScriptRecoveryServiceTests : IDisposable
     }
 
     [Fact]
+    public void RecoverPending_AStaleSecretOfAScriptWhosePodWasReattached_DoesNotReportTheRunningScriptLost()
+    {
+        var ticketId = "reattached123456extra";
+        SeedStateFile(ticketId, "squid-script-reattached", "NoIsolation");
+        SetupPodPhase("squid-script-reattached", "Running");
+        var secret = new V1Secret
+        {
+            Metadata = new V1ObjectMeta { Name = "squid-pending-reattached12" },
+            StringData = new Dictionary<string, string> { ["ticketId"] = ticketId, ["scriptBody"] = "echo stale", ["isolation"] = "NoIsolation" }
+        };
+        _ops.Setup(o => o.ListSecrets("test-ns", "squid.io/context-type=pending-script")).Returns(new V1SecretList { Items = new List<V1Secret> { secret } });
+        var settings = new KubernetesSettings { TentacleNamespace = "test-ns" };
+
+        // The order the agent recovers in (KubernetesAgentFlavor): running pods first, then pending Secrets.
+        _recovery.RecoverScripts(_tempWorkspace, _service, _podManager, _mutex);
+        _recovery.RecoverPendingScripts(_ops.Object, settings, _service);
+
+        _service.GetStatus(new ScriptStatusRequest(new ScriptTicket(ticketId), 0)).State.ShouldBe(ProcessState.Running, "the script's pod is running and re-attached: its stale Secret must not turn it into a lost result");
+        _ops.Verify(o => o.DeleteSecret("squid-pending-reattached12", "test-ns"), Times.Once, "the stale Secret (and the script body it carries) is still removed");
+    }
+
+    [Fact]
     public void RecoverPending_NoSecrets_NoAction()
     {
         var ops = new Mock<IKubernetesPodOperations>();

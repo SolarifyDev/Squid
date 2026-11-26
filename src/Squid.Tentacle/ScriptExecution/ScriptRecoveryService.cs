@@ -88,12 +88,9 @@ public class ScriptRecoveryService
                         TargetNamespace = string.IsNullOrEmpty(targetNamespace) ? null : targetNamespace
                     };
 
-                    InjectFailure(ticketId, service,
-                        "Pending script could not be recovered: agent restarted while script was queued. Variables and files are no longer available.");
+                    InjectFailureUnlessReattached(ticketId, service);
 
                     podOps.DeleteSecret(secret.Metadata.Name, settings.TentacleNamespace);
-
-                    Log.Information("Injected terminal failure for pending script {TicketId} from Secret", ticketId);
                 }
                 catch (Exception ex)
                 {
@@ -105,6 +102,20 @@ public class ScriptRecoveryService
         {
             Log.Warning(ex, "Failed to list pending script Secrets for recovery");
         }
+    }
+
+    // A Secret can outlive its queued ticket (the agent stopped before deleting it): a ticket whose pod RecoverScripts re-attached is running, not lost.
+    private static void InjectFailureUnlessReattached(string ticketId, ScriptPodService service)
+    {
+        if (service.ActiveScripts.ContainsKey(ticketId))
+        {
+            Log.Information("Pending script Secret for {TicketId} is stale: its pod was re-attached, keeping it running", ticketId);
+            return;
+        }
+
+        InjectFailure(ticketId, service, "Pending script could not be recovered: agent restarted while script was queued. Variables and files are no longer available.");
+
+        Log.Information("Injected terminal failure for pending script {TicketId} from Secret", ticketId);
     }
 
     private static void RecoverScript(ScriptStateFile state, string workDir, ScriptPodService service, KubernetesPodManager podManager, ScriptIsolationMutex mutex)
