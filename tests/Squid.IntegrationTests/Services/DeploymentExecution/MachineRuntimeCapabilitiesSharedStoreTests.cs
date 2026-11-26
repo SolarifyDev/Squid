@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using Moq;
 using System.Text.Json;
 using Squid.Core.Persistence.Db;
 using Squid.Core.Persistence.Entities.Deployments;
 using Squid.Core.Services.DeploymentExecution.Tentacle;
+using Squid.Core.Services.DeploymentExecution.Transport;
 using Squid.IntegrationTests.Base;
 using Squid.Message.Constants;
 using Squid.Message.Contracts.Tentacle;
@@ -188,6 +190,56 @@ public class MachineRuntimeCapabilitiesSharedStoreTests : TestBase
         var tombstone = await Run<IMachineRuntimeCapabilitiesPersistence, PersistedCapabilitiesSnapshot>(p => p.LoadIfNewerAsync(machineId, skewed, default)).ConfigureAwait(false);
         tombstone.ShouldNotBeNull("an upgrade tombstone written within the clock skew of a record must still be seen as newer by the pod that holds the record");
         tombstone.Capabilities.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task TentacleHealthCheck_CachesTheStampOfTheRowItWrote_SoAnInvalidationFromAnotherPodIsSeen()
+    {
+        var machineId = await InsertMachineAsync().ConfigureAwait(false);
+        await StampRowAsync(machineId, "now() + interval '1 hour'").ConfigureAwait(false);
+        var cache = new InMemoryMachineRuntimeCapabilitiesCache();
+        var machine = new Machine { Id = machineId, Name = "m", Endpoint = """{"CommunicationStyle":"TentaclePolling","SubscriptionId":"sub-1","Thumbprint":"CCDD"}""" };
+
+        await Run<IMachineCapabilitiesStoreAccess>(async store =>
+        {
+            var strategy = new TentacleHealthCheckStrategy(CapabilitiesFactory(Agent("IScriptService/v1", ScriptServiceCapabilities.V2)), new MachineCapabilitiesRecorder(cache, store));
+
+            (await strategy.CheckHealthAsync(machine, null, default).ConfigureAwait(false)).Healthy.ShouldBeTrue();
+        }).ConfigureAwait(false);
+
+        var row = await Run<IMachineRuntimeCapabilitiesPersistence, PersistedCapabilitiesSnapshot>(p => p.LoadIfNewerAsync(machineId, null, default)).ConfigureAwait(false);
+        cache.TryGet(machineId).SupportsScriptServiceV2.ShouldBeTrue();
+        cache.TryGet(machineId).ObservedAt.ShouldBe(row.UpdatedAt, "the health check must stamp its cache with the database's stamp for the row, not this pod's clock");
+
+        await Run<IMachineRuntimeCapabilitiesPersistence>(p => p.InvalidateAsync(machineId, default)).ConfigureAwait(false);
+        await Run<IMachineCapabilitiesStoreAccess>(async a => await new MachineCapabilitiesRefresherHarness(cache, a).Refresher.SyncFromStoreAsync(machineId, default).ConfigureAwait(false)).ConfigureAwait(false);
+
+        cache.TryGet(machineId).SupportsScriptServiceV2.ShouldBeFalse("another pod's invalidation must evict the entry the health check cached");
+    }
+
+    [Fact]
+    public async Task DependencyInjection_GivesTheTentacleHealthCheckTheRecorder_NotASilentNull()
+    {
+        // The recorder is an optional ctor param (= null): a registration that stopped resolving would turn the health
+        // check back into a writer that never records, with every unit test still green.
+        await Run<TentacleHealthCheckStrategy>(strategy =>
+        {
+            var recorder = typeof(TentacleHealthCheckStrategy).GetField("_capabilitiesRecorder", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(strategy);
+
+            recorder.ShouldBeOfType<MachineCapabilitiesRecorder>();
+
+            return Task.CompletedTask;
+        }).ConfigureAwait(false);
+    }
+
+    private static IHalibutClientFactory CapabilitiesFactory(CapabilitiesResponse response)
+    {
+        var caps = new Mock<IAsyncCapabilitiesService>();
+        caps.Setup(c => c.GetCapabilitiesAsync(It.IsAny<CapabilitiesRequest>())).ReturnsAsync(response);
+        var factory = new Mock<IHalibutClientFactory>();
+        factory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<Halibut.ServiceEndPoint>())).Returns(caps.Object);
+
+        return factory.Object;
     }
 
     private Task StampRowAsync(int machineId, string sqlExpression) => Run<IRepository>(r => r.Database.ExecuteSqlRawAsync($"UPDATE machine SET runtime_capabilities_updated_at = {sqlExpression} WHERE id = {machineId}"));

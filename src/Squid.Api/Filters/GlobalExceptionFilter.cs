@@ -8,6 +8,7 @@ using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.Variables.Exceptions;
 using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
+using Squid.Core.Services.Packages.Storage.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Message.Response;
@@ -42,6 +43,15 @@ public class GlobalExceptionFilter : IExceptionFilter
             OctopusImportProjectSelectionBeyondReadException => HttpStatusCode.Conflict,
             OctopusImportHistoryStagingLostException => HttpStatusCode.Conflict,
             OctopusImportStorageException => HttpStatusCode.InsufficientStorage,
+            PackageStoreNotFoundException => HttpStatusCode.NotFound,
+            NoDefaultPackageStoreException => HttpStatusCode.NotFound,
+            PackageStoreNameConflictException => HttpStatusCode.Conflict,
+            DefaultPackageStoreDeletionException => HttpStatusCode.Conflict,
+            PackageStoreConfigurationInvalidException => HttpStatusCode.BadRequest,
+            PackageStoreProviderNotFoundException => HttpStatusCode.BadRequest,
+            PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
+            InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
+            PackageBlobNotFoundException => HttpStatusCode.NotFound,
             _ => HttpStatusCode.InternalServerError
         };
 

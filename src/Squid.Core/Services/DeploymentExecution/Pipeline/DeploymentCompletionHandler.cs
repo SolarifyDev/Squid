@@ -39,6 +39,14 @@ public sealed class DeploymentCompletionHandler(
 
         var fromState = await ResolveCurrentActiveStateAsync(ctx.ServerTaskId, ct).ConfigureAwait(false);
 
+        // The user's cancel wins over a failure that raced it (a failed batch or a non-resumable timeout reached before the cancel reached this run's token):
+        // writing Cancelling -> Failed would end the cancel Failed and leave the agent scripts running. Complete the cancel the way a cancelled run does.
+        if (string.Equals(fromState, TaskState.Cancelling, StringComparison.OrdinalIgnoreCase))
+        {
+            await OnCancelledAsync(ctx, ct).ConfigureAwait(false);
+            return;
+        }
+
         if (!await TransitionOwnedAsync(ctx, fromState, TaskState.Failed, false, ct).ConfigureAwait(false)) return;
 
         await CleanupCheckpointAsync(ctx, ct).ConfigureAwait(false);
@@ -165,9 +173,9 @@ public sealed class DeploymentCompletionHandler(
     /// transitions from a hardcoded <c>Executing</c>, but it is the one completion callback the
     /// runner invokes directly rather than through <c>SafeCompleteAsync</c>, so its
     /// <see cref="ServerTaskStateTransitionException"/> is not swallowed: it reaches the runner's
-    /// general catch, which routes to <see cref="OnFailureAsync"/>, and that resolves the current
-    /// state and performs the legal <c>Cancelling → Failed</c>. The row ends terminal and the slot
-    /// is freed — at the cost of a deployment that succeeded being recorded as failed.</para>
+    /// general catch, which routes to <see cref="OnFailureAsync"/> (or, for a Cancelling row, completes
+    /// the cancel there). The row ends terminal and the slot is freed — Cancelled for a user cancel,
+    /// otherwise at the cost of a deployment that succeeded being recorded as failed.</para>
     /// </summary>
     private async Task PauseIfStillExecutingAsync(DeploymentTaskContext ctx, CancellationToken ct)
     {

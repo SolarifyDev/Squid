@@ -5,7 +5,7 @@ namespace Squid.Core.Services.DeploymentExecution.Tentacle;
 /// <summary>
 /// Writes one agent <see cref="CapabilitiesResponse"/> to every place a machine's capabilities live: the
 /// process-local cache this pod dispatches from and the persisted copy other pods (and the next restart)
-/// read. Every on-demand refresh and the Kubernetes agent health check go through here, so a transport can
+/// read. Every on-demand refresh and every agent health check (Tentacle and Kubernetes) go through here, so a transport can
 /// never advertise protocol versions in one place and not the other.
 /// </summary>
 public interface IMachineCapabilitiesRecorder : IScopedDependency
@@ -41,7 +41,7 @@ public sealed class MachineCapabilitiesRecorder : IMachineCapabilitiesRecorder
         {
             return await _store.RunAsync(persistence => persistence.SaveAsync(machineId, Map(response), ct)).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             Log.Warning(ex, "Failed to persist runtime capabilities for machine {MachineId}; this pod's cache is current and the next probe retries the write.", machineId);
 

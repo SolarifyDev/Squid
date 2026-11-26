@@ -1183,6 +1183,21 @@ public sealed class MachineUpgradeServiceTests
     }
 
     [Fact]
+    public void PollingWindow_CoversTheAptPathTerminalEvent_IncludingTheForwardHealthCheckSettle_WithTheEstablishedJitterCushion()
+    {
+        // Measured apt-path timeline: healthz first answers at ~T+63s. Since the forward check also requires the unit to
+        // stay active for SETTLE_WINDOW_SECS, `healthz-pass` + `success` are emitted that much later. The window must
+        // still be polling then, with the same ~40s reconnect-jitter cushion the 90s value originally carried over T+51s.
+        const int aptHealthzFirstAnswerSeconds = 63;
+        const int jitterCushionSeconds = 40;
+
+        var settle = int.Parse(System.Text.RegularExpressions.Regex.Match(LinuxTentacleUpgradeStrategy.BuildScript("1.4.2"), @"^SETTLE_WINDOW_SECS=(\d+)\s*$", System.Text.RegularExpressions.RegexOptions.Multiline).Groups[1].Value);
+
+        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBeGreaterThanOrEqualTo(aptHealthzFirstAnswerSeconds + settle + jitterCushionSeconds,
+            customMessage: $"terminal `success` lands at ~T+{aptHealthzFirstAnswerSeconds + settle}s (healthz + {settle}s settle); a shorter window stops refreshing the events store before the FE can see it");
+    }
+
+    [Fact]
     public void PollingWindowAndInterval_PinnedToExactEmpiricalValues()
     {
         // Exact-value pins baked in by commit 9b7531d (window: 45→90) and
@@ -1201,25 +1216,27 @@ public sealed class MachineUpgradeServiceTests
         // landed past the 45s window. See session transcript 2026-04-23
         // for the reproducing measurement.
         //
-        // The 90s window is sized for the MEASURED worst-realistic path:
-        //   T+0     click → ScheduleRapidPolling schedules 30 Hangfire jobs
+        // The 120s window is sized for the MEASURED worst-realistic path (the original 90s covered T+51s; the 15s
+        // forward-health-check settle moved the terminal events to ~T+78s, see PollingWindow_CoversTheAptPath…):
+        //   T+0     click → ScheduleRapidPolling schedules 40 Hangfire jobs
         //   T+0-30s Phase A (apt-get update + apt install 67 MB download)
         //   T+30s   scope-exec → systemctl restart squid-tentacle
         //   T+30-60s Phase B silent-window (old tentacle dies, new starts,
         //           Halibut polling re-establishes)
         //   T+51s   healthz-pass + success written to events.jsonl on agent
         //           (measured on arm64 container running apt path)
-        //   T+60-90s final rapid-polls observe the terminal events and
+        //   T+63s   /healthz first answers; +15s settle => `success` at ~T+78s
+        //   T+78-120s final rapid-polls observe the terminal events and
         //           populate IUpgradeEventTimelineStore — FE sees success.
         //
         // The 3s interval matches FE's UPGRADE_EVENTS_POLL_INTERVAL_MS in
         // SquidWeb/src/pages/deploymentTargets/detail.tsx. If server-pull
         // cadence exceeds FE-pull cadence, half the FE polls return
         // duplicate data — wasted RPCs. Keep them in sync.
-        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBe(90,
+        MachineUpgradeService.UpgradePollingWindowSeconds.ShouldBe(120,
             customMessage:
                 "window pinned to the empirical apt-path terminal-event timing " +
-                "(T+51s measured) plus a ~40s reconnect-jitter cushion. Shrinking " +
+                "(T+63s healthz + 15s settle) plus a ~40s reconnect-jitter cushion. Shrinking " +
                 "back to 45 reproduces the 'stream stalled' UX bug fixed in 1.5.8. " +
                 "See commit 9b7531d for the full incident analysis.");
 
@@ -1240,9 +1257,9 @@ public sealed class MachineUpgradeServiceTests
                 "window % interval must be 0 — otherwise the final scheduled job " +
                 "fires before window-end and terminal events (healthz-pass, success) " +
                 "that land in the unscheduled tail are missed by rapid-polling.");
-        jobCount.ShouldBe(30,
+        jobCount.ShouldBe(40,
             customMessage:
-                "30 rapid-polling jobs = 90s / 3s — this is the load-budget pinning. " +
+                "40 rapid-polling jobs = 120s / 3s — this is the load-budget pinning. " +
                 "If either constant changes and the quotient drifts, the Hangfire " +
                 "job count changes and downstream backend cost expectations shift.");
     }

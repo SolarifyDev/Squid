@@ -35,18 +35,35 @@ public class DeploymentCompletionHandlerTests
 
     // ========== OnFailureAsync ==========
 
-    [Theory]
-    [InlineData(TaskState.Executing)]
-    [InlineData(TaskState.Cancelling)]
-    public async Task OnFailure_TransitionsFromCurrentStateToFailed(string currentState)
+    [Fact]
+    public async Task OnFailure_TransitionsExecutingToFailed()
     {
         var ctx = CreateContext();
         _serverTaskService.Setup(s => s.GetTaskAsync(ctx.ServerTaskId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = currentState });
+            .ReturnsAsync(new ServerTaskSummaryDto { Id = ctx.ServerTaskId, State = TaskState.Executing });
 
         await _sut.OnFailureAsync(ctx, new Exception("test error"), CancellationToken.None);
 
-        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, currentState, TaskState.Failed, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+        _serverTaskService.Verify(s => s.TransitionStateAsync(ctx.ServerTaskId, TaskState.Executing, TaskState.Failed, ctx.LeaseOwner, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // Used to pin Cancelling -> Failed. That ended a user's cancel Failed (and left agent scripts running) whenever the failure path was reached with a
+    // Cancelling row (a FailureEncountered batch or a non-resumable timeout racing a cancel that had not reached this run's token). The user's cancel now wins here.
+    [Fact]
+    public async Task OnFailure_WhenTheRowIsCancelling_CompletesTheCancelInstead_ScriptsFirst()
+    {
+        var order = new List<string>();
+        var canceller = new Mock<IInFlightScriptCanceller>();
+        canceller.Setup(c => c.CancelAllAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("cancel-scripts")).Returns(Task.CompletedTask);
+        _serverTaskService.Setup(s => s.GetTaskAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(new ServerTaskSummaryDto { Id = 1, State = TaskState.Cancelling });
+        _serverTaskService.Setup(s => s.TransitionStateAsync(1, It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Callback<int, string, string, string, CancellationToken>((_, from, to, _, _) => order.Add($"{from}->{to}")).Returns(Task.CompletedTask);
+        _checkpointService.Setup(c => c.DeleteAsync(1, It.IsAny<CancellationToken>())).Callback(() => order.Add("delete-checkpoint")).Returns(Task.CompletedTask);
+        var sut = new DeploymentCompletionHandler(_genericDataProvider.Object, _serverTaskService.Object, _deploymentDataProvider.Object, _completionDataProvider.Object, _autoDeployService.Object, _checkpointService.Object, canceller.Object);
+
+        await sut.OnFailureAsync(new DeploymentTaskContext { ServerTaskId = 1, Deployment = new Deployment { Id = 1 } }, new Exception("test error"), CancellationToken.None);
+
+        order.ShouldBe(["cancel-scripts", "Cancelling->Cancelled", "delete-checkpoint"]);
+        _completionDataProvider.Verify(c => c.AddDeploymentCompletionAsync(It.Is<DeploymentCompletion>(dc => dc.State == TaskState.Failed), It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

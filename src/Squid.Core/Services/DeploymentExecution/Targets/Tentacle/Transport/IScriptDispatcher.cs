@@ -37,8 +37,8 @@ public interface IScriptDispatcher : IScopedDependency
 /// <param name="Downgrade">What a V2 cancel needs to fall back to V1 when the agent was downgraded since; without it a failing V2 cancel simply fails.</param>
 public sealed record ScriptSessionContext(RpcRetryHandler Retry, TimeSpan ScriptTimeout, CancellationToken Ct, IHalibutScriptObserver Observer, CancelDowngradeFallback Downgrade = null);
 
-/// <summary>The collaborators of the V2 to V1 cancel fall-back (<see cref="ProtocolDowngrade"/>); <paramref name="Grace"/> is the slack on top of the cancel budget in the one deadline the whole cancel shares.</summary>
-public sealed record CancelDowngradeFallback(IScriptDispatcherSelector Selector, IMachineCapabilitiesRefresher Refresher, TimeSpan Grace);
+/// <summary>The collaborators of the V2 to V1 cancel fall-back (<see cref="ProtocolDowngrade"/>); <paramref name="Grace"/> is the slack on top of the cancel budget in the one deadline the whole cancel shares; <paramref name="Time"/> is the clock that deadline runs on (the system clock unless a test injects one).</summary>
+public sealed record CancelDowngradeFallback(IScriptDispatcherSelector Selector, IMachineCapabilitiesRefresher Refresher, TimeSpan Grace, TimeProvider Time = null);
 
 /// <summary>
 /// One dispatch's protocol-bound conversation with an agent: validate and start the script, probe a

@@ -122,7 +122,7 @@ public class TentacleHealthCheckStrategyTests
         _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
 
         var cache = new InMemoryMachineRuntimeCapabilitiesCache();
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, new MachineCapabilitiesRecorder(cache, new DirectStoreAccess(new Mock<IMachineRuntimeCapabilitiesPersistence>().Object)));
 
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -167,7 +167,7 @@ public class TentacleHealthCheckStrategyTests
         _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
 
         var cache = new InMemoryMachineRuntimeCapabilitiesCache();
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, new MachineCapabilitiesRecorder(cache, new DirectStoreAccess(new Mock<IMachineRuntimeCapabilitiesPersistence>().Object)));
 
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -192,7 +192,7 @@ public class TentacleHealthCheckStrategyTests
         _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
 
         var cache = new InMemoryMachineRuntimeCapabilitiesCache();
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, cache);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, new MachineCapabilitiesRecorder(cache, new DirectStoreAccess(new Mock<IMachineRuntimeCapabilitiesPersistence>().Object)));
 
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -252,7 +252,7 @@ public class TentacleHealthCheckStrategyTests
         _clientFactory.Setup(f => f.CreateCapabilitiesClient(It.IsAny<ServiceEndPoint>())).Returns(capsClient.Object);
 
         var timelineStore = new InMemoryUpgradeEventTimelineStore();
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesCache: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesRecorder: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
 
         var result = await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -300,7 +300,7 @@ public class TentacleHealthCheckStrategyTests
             ExitCode = 7,
             Detail = "old failure"
         });
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesCache: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesRecorder: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
 
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
@@ -371,7 +371,7 @@ public class TentacleHealthCheckStrategyTests
             ExitCode = 0,
             Detail = "previous good outcome"
         });
-        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesCache: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
+        var strategy = new TentacleHealthCheckStrategy(_clientFactory.Object, capabilitiesRecorder: null, upgradeLockReconciler: null, upgradeEventStore: timelineStore);
 
         await strategy.CheckHealthAsync(machine, null, CancellationToken.None);
 
