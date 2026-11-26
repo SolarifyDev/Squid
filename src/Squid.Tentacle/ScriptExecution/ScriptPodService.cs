@@ -561,16 +561,22 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         return new ScriptStatusResponse(request.Ticket, state, exitCode, logs, ctx.LogSequence);
     }
 
-    public ScriptStatusResponse CompleteScript(CompleteScriptCommand command) => CompleteScriptCore(command, null, deferredToCaller: false, out _);
+    public ScriptStatusResponse CompleteScript(CompleteScriptCommand command) => CompleteScriptCore(command, null, out _);
 
     /// <summary>
-    /// <paramref name="recordFinal"/> (V2) records the final result somewhere durable BEFORE the persisted state is released; it
-    /// returns false when that failed, in which case the state file stays so a crash does not turn a finished script into an unknown one.
-    /// <paramref name="deferredToCaller"/> (V2, which holds a shared ticket lock here) means the caller has already stopped the log stream and
-    /// awaited the pod's termination, and will release the isolation mutex (which launches the next queued script) after dropping its lock.
-    /// <paramref name="ownsMutex"/>: this Complete took the tracked pod, so the ticket's isolation mutex is its to release, see <see cref="TakeForComplete"/>.
+    /// V2's part in a Complete, which runs under the shared ticket lock. Before taking the lock V2 stopped the log stream, awaited the pod's termination
+    /// and read its exit code (<paramref name="AwaitedExitCode"/>, null when no pod was tracked then); after dropping it, V2 deletes the pod and releases
+    /// the isolation mutex (which launches the next queued script). <paramref name="RecordFinal"/> records the final result somewhere durable BEFORE the
+    /// persisted state is released; it returns false when that failed, in which case the state file stays so a crash does not turn a finished script
+    /// into an unknown one.
     /// </summary>
-    internal ScriptStatusResponse CompleteScriptCore(CompleteScriptCommand command, Func<ScriptStatusResponse, bool>? recordFinal, bool deferredToCaller, out bool ownsMutex)
+    internal sealed record DeferredCompletion(Func<ScriptStatusResponse, bool> RecordFinal, int? AwaitedExitCode);
+
+    /// <summary>
+    /// <paramref name="deferred"/> is null for V1, which does every step itself. <paramref name="taken"/> is the tracked pod this Complete took: the
+    /// ticket's isolation mutex is then its to release, see <see cref="TakeForComplete"/>.
+    /// </summary>
+    internal ScriptStatusResponse CompleteScriptCore(CompleteScriptCommand command, DeferredCompletion? deferred, out ScriptPodContext? taken)
     {
         ScriptPodContext? ctx = null;
 
@@ -580,9 +586,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
             AfterTicketClaimedHookForTests?.Invoke();
 
-            if (terminal != null) return CompleteTerminal(command.Ticket, terminal, recordFinal);
+            if (terminal != null) return CompleteTerminal(command.Ticket, terminal, deferred?.RecordFinal);
 
-            if (ctx != null) return CompleteTrackedPod(command.Ticket, ctx, recordFinal, deferredToCaller);
+            if (ctx != null) return CompleteTrackedPod(command.Ticket, ctx, deferred);
 
             // A queued or launching script has no result yet, and its launch (not this Complete) owns its state and isolation mutex.
             // The answer stays Complete + UnknownResult as before: a V1 server reads any Complete answer's exit code as the result,
@@ -595,9 +601,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         }
         finally
         {
-            ownsMutex = ctx != null;
+            taken = ctx;
 
-            if (!deferredToCaller && ownsMutex) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            if (deferred == null && ctx != null) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
 
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
@@ -613,17 +619,16 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
         return terminal;
     }
 
-    private ScriptStatusResponse CompleteTrackedPod(ScriptTicket ticket, ScriptPodContext ctx, Func<ScriptStatusResponse, bool>? recordFinal, bool deferredToCaller)
+    private ScriptStatusResponse CompleteTrackedPod(ScriptTicket ticket, ScriptPodContext ctx, DeferredCompletion? deferred)
     {
-        if (!deferredToCaller)
+        if (deferred == null)
         {
             StopLogStream(ctx);
             _podManager.WaitForPodTermination(ctx.PodName, PodTerminationWait);
         }
 
         var logs = DrainFinalLogs(ctx);
-        var containerTermination = _podManager.GetScriptContainerTermination(ctx.PodName);
-        var exitCode = containerTermination?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName);
+        var exitCode = deferred?.AwaitedExitCode ?? ReadPodExitCode(ctx);
 
         // Persist Complete state before workspace cleanup so a crash between
         // these two lines still lets a server redeliver and learn the exit code.
@@ -631,9 +636,9 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         var final = new ScriptStatusResponse(ticket, ProcessState.Complete, exitCode, logs, ctx.LogSequence);
 
-        _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
+        if (deferred == null) DeleteScriptPod(ctx);
 
-        if (recordFinal?.Invoke(final) ?? true)
+        if (deferred?.RecordFinal(final) ?? true)
             CleanupWorkspace(ctx.WorkDir);
         else
             StateOnlyWorkspace.Scrub(ctx.WorkDir);
@@ -645,6 +650,11 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
         return final;
     }
+
+    private int ReadPodExitCode(ScriptPodContext ctx)
+        => _podManager.GetScriptContainerTermination(ctx.PodName)?.ExitCode ?? _podManager.GetPodExitCode(ctx.PodName);
+
+    private void DeleteScriptPod(ScriptPodContext ctx) => _podManager.DeletePod(ctx.PodName, _kubernetesSettings.ScriptPodGracePeriodSeconds);
 
     private static readonly TimeSpan PodTerminationWait = TimeSpan.FromSeconds(30);
 
@@ -674,41 +684,45 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
 
     public ScriptStatusResponse CancelScript(CancelScriptCommand command) => CancelScriptCore(command, deferredToCaller: false);
 
-    /// <param name="deferredToCaller">V2 holds a shared ticket lock here: the caller releases the isolation mutex (launching the next queued script) after dropping it.</param>
-    internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller)
-        => CancelScriptCore(command, deferredToCaller, out _);
-
-    /// <summary>Test-only: runs at the start of <see cref="CancelScriptCore(CancelScriptCommand, bool, out CancelClaim)"/>, before the pending queue is touched.</summary>
+    /// <summary>Test-only: runs at the start of <see cref="ClaimForCancel"/>, before the pending queue is touched.</summary>
     internal Action? BeforeCancelCoreHookForTests { get; set; }
 
-    internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller, out CancelClaim claim)
+    /// <param name="deferredToCaller">The launcher honouring a cancel: it publishes the Canceled result and releases the isolation mutex itself.</param>
+    internal ScriptStatusResponse CancelScriptCore(CancelScriptCommand command, bool deferredToCaller)
     {
-        BeforeCancelCoreHookForTests?.Invoke();
-
-        claim = ClaimForCancel(command.Ticket, deferredToCaller, out var ctx);
+        var claim = ClaimForCancel(command.Ticket, deferredToCaller, out var ctx);
 
         AfterTicketClaimedHookForTests?.Invoke();
 
+        return ActOnCancelClaim(command.Ticket, claim, ctx, releaseMutex: !deferredToCaller);
+    }
+
+    /// <summary>
+    /// The Kubernetes and disk work of a Cancel, outside the ticket lock: the claim already took the ticket out of the queue or tracked set (and, for
+    /// V2 and the launcher, published its Canceled result), so nothing else acts on it meanwhile.
+    /// </summary>
+    private ScriptStatusResponse ActOnCancelClaim(ScriptTicket ticket, CancelClaim claim, ScriptPodContext? ctx, bool releaseMutex)
+    {
         try
         {
             return claim switch
             {
-                CancelClaim.Queued => CancelQueued(command.Ticket),
-                CancelClaim.Tracked => CancelTrackedPod(command.Ticket, ctx!),
-                CancelClaim.HandedToLauncher => CompletedResponse(command.Ticket, ScriptExitCodes.Canceled),
-                _ => CancelUnknown(command.Ticket)
+                CancelClaim.Queued => CancelQueued(ticket),
+                CancelClaim.Tracked => CancelTrackedPod(ticket, ctx!),
+                CancelClaim.HandedToLauncher => CompletedResponse(ticket, ScriptExitCodes.Canceled),
+                _ => CancelUnknown(ticket)
             };
         }
         finally
         {
             // The mutex goes with the tracked pod (see TakeForComplete): a queued script holds none, a launching one's belongs to its launcher.
-            if (!deferredToCaller && claim == CancelClaim.Tracked) ReleaseMutexAndProcessPending(command.Ticket.TaskId);
+            if (releaseMutex && claim == CancelClaim.Tracked) ReleaseMutexAndProcessPending(ticket.TaskId);
 
             EvictStaleTerminalResults(TimeSpan.FromHours(1));
         }
     }
 
-    internal enum CancelClaim { Queued, HandedToLauncher, Tracked, None }
+    private enum CancelClaim { Queued, HandedToLauncher, Tracked, None }
 
     /// <summary>
     /// Under the ticket lock, serialized with Start's launch-or-queue decision, the dequeue and every publish-then-forget step of this ticket: a queued
@@ -716,6 +730,8 @@ public partial class ScriptPodService : IScriptService, ITentacleScriptBackend, 
     /// </summary>
     private CancelClaim ClaimForCancel(ScriptTicket ticket, bool publishCanceled, out ScriptPodContext? ctx)
     {
+        BeforeCancelCoreHookForTests?.Invoke();
+
         ctx = null;
 
         lock (_ticketLocks.For(ticket.TaskId))
