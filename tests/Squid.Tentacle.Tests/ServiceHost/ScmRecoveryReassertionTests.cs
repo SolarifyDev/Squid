@@ -259,6 +259,125 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
     }
 
     [Fact]
+    public void SamePidButAnotherStartTime_IsNotTheSameOwner()
+    {
+        FailureFlagMarker.TryParse(MarkerJson("svc", 1, 4242), out var ours).ShouldBeTrue();
+        FailureFlagMarker.TryParse(MarkerJson("svc", 1, 4242, OwnerStart.AddHours(5)), out var recycled).ShouldBeTrue();
+
+        ours.HasSameOwnerAs(recycled).ShouldBeFalse("a reused PID after a reboot is a different upgrade process");
+        ours.HasSameOwnerAs(ours).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void ReplacementWrittenByAReusedPid_DuringTheRestore_IsNotTreatedAsOurs()
+    {
+        // After a reboot the newer upgrade got the dead owner's PID back; only the start time tells them apart.
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        var recycledStart = OwnerStart.AddHours(5);
+
+        var restored = ScmRecoveryReassertion.Run(_dir, pid => pid == 4242 ? recycledStart : null, (svc, enabled) =>
+        {
+            calls.Add((svc, enabled));
+
+            if (calls.Count == 1) File.WriteAllText(path, MarkerJson("squid-tentacle", 1, 4242, recycledStart));
+
+            return 0;
+        });
+
+        restored.ShouldBe(0);
+        File.ReadAllText(path).ShouldContain(recycledStart.Ticks.ToString(), customMessage: "the reused-PID upgrade's marker must survive");
+        calls.ShouldBe(new[] { ("squid-tentacle", true), ("squid-tentacle", false) });
+    }
+
+    [Fact]
+    public void NewerMarkerLandsBetweenTheOwnerCheckAndTheRemoval_ItIsKept_AndItsSuspensionReasserted()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        var ops = Ops(pid => pid == 5555 ? OwnerStart : null, calls) with { Files = Interleave(path, beforeRemoval: () => WriteNewerMarker(path, 5555)) };
+
+        var restored = ScmRecoveryReassertion.Run(_dir, ops);
+
+        restored.ShouldBe(0, "the marker now belongs to a live newer upgrade");
+        File.ReadAllText(path).ShouldContain("5555", customMessage: "deleting it would leave that upgrade's flag at 0 for good if it is later hard-killed");
+        calls.ShouldBe(new[] { ("squid-tentacle", true), ("squid-tentacle", false) });
+        TombstonesIn(_dir).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void NewerMarkerLandsRightAfterOursIsClaimed_ItIsKept_AndOnlyOursIsDeleted()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        var ops = Ops(pid => pid == 5555 ? OwnerStart : null, calls) with { Files = Interleave(path, afterRemoval: () => WriteNewerMarker(path, 5555)) };
+
+        var restored = ScmRecoveryReassertion.Run(_dir, ops);
+
+        restored.ShouldBe(1, "our own marker was claimed and settled");
+        File.ReadAllText(path).ShouldContain("5555");
+        calls.ShouldBe(new[] { ("squid-tentacle", true) });
+        TombstonesIn(_dir).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void ClaimFails_WhileANewerMarkerHoldsThePath_ItIsKept_AndItsSuspensionReasserted()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        var files = Interleave(path, beforeRemoval: () => { WriteNewerMarker(path, 5555); throw new IOException("sharing violation"); });
+        var ops = Ops(pid => pid == 5555 ? OwnerStart : null, calls) with { Files = files };
+
+        var restored = ScmRecoveryReassertion.Run(_dir, ops);
+
+        restored.ShouldBe(0);
+        File.ReadAllText(path).ShouldContain("5555");
+        calls.ShouldBe(new[] { ("squid-tentacle", true), ("squid-tentacle", false) });
+    }
+
+    [Fact]
+    public void EvenNewerMarkerLandsBeforeTheClaimedOneIsPutBack_TheNewestIsKept_AndTheClaimedOneIsNotDeleted()
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+        var files = Interleave(path, beforeRemoval: () => WriteNewerMarker(path, 5555), beforePutBack: () => WriteNewerMarker(path, 6666));
+        var ops = Ops(pid => pid == 6666 ? OwnerStart : null, calls) with { Files = files };
+
+        var restored = ScmRecoveryReassertion.Run(_dir, ops);
+
+        restored.ShouldBe(0);
+        File.ReadAllText(path).ShouldContain("6666", customMessage: "the newest upgrade's marker must never be overwritten by an older one");
+        calls.ShouldBe(new[] { ("squid-tentacle", true), ("squid-tentacle", false) });
+        TombstonesIn(_dir).Select(File.ReadAllText).ShouldHaveSingleItem().ShouldContain("5555", customMessage: "a marker that is not ours is never deleted");
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(0, false)]
+    public void NewerUpgradeFinishesBeforeItsSuspensionIsReasserted_TheFlagIsPutBackToItsRecordedOriginal(int newerOriginal, bool expectedFinalFlag)
+    {
+        var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
+        var calls = new List<(string, bool)>();
+
+        var restored = ScmRecoveryReassertion.Run(_dir, pid => pid == 5555 ? OwnerStart : null, (svc, enabled) =>
+        {
+            calls.Add((svc, enabled));
+
+            // 1st call: our restore, during which the newer upgrade suspends + writes its marker.
+            // 2nd call: our re-suspend, which lands after the newer upgrade's finally restored its flag and removed its marker.
+            if (calls.Count == 1) File.WriteAllText(path, MarkerJson("squid-tentacle", newerOriginal, 5555));
+            if (calls.Count == 2) File.Delete(path);
+
+            return 0;
+        });
+
+        restored.ShouldBe(1);
+        File.Exists(path).ShouldBeFalse();
+        calls.Count.ShouldBe(3, "flag 0 with no marker would never be healed");
+        calls.Last().ShouldBe(("squid-tentacle", expectedFinalFlag), "the value the newer upgrade recorded, not a blind 1");
+    }
+
+    [Fact]
     public async Task NewerUpgradeThatLaterDies_IsRestoredByTheWatcher()
     {
         var path = WriteMarker("squid-tentacle", 1, ownerPid: 4242);
@@ -516,6 +635,46 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
 
     private static DateTime? OwnerGone(int pid) => null;
 
+    private static ScmReassertionOps Ops(Func<int, DateTime?> startTimeUtcOf, List<(string, bool)> calls) => new(startTimeUtcOf, (svc, enabled) => { calls.Add((svc, enabled)); return 0; }, (_, _) => Task.CompletedTask);
+
+    private static void WriteNewerMarker(string path, int ownerPid) => File.WriteAllText(path, MarkerJson("squid-tentacle", 1, ownerPid));
+
+    /// <summary>Files a restore set aside: everything in the directory that is not a marker.</summary>
+    private static string[] TombstonesIn(string dir) => Directory.GetFiles(dir).Where(f => !f.EndsWith(FailureFlagMarker.FileExtension)).ToArray();
+
+    /// <summary>The real file system, with another writer landing at a chosen point: just before / after the restore first removes (or claims) the marker, or just before something is moved back onto it.</summary>
+    private static MarkerFileOps Interleave(string markerPath, Action beforeRemoval = null, Action afterRemoval = null, Action beforePutBack = null)
+    {
+        var real = MarkerFileOps.Real;
+        var fired = new HashSet<string>();
+
+        void Fire(string point, Action action)
+        {
+            if (action != null && fired.Add(point)) action();
+        }
+
+        return real with
+        {
+            Move = (source, destination) =>
+            {
+                if (source == markerPath) Fire("before", beforeRemoval);
+                if (destination == markerPath) Fire("putBack", beforePutBack);
+
+                real.Move(source, destination);
+
+                if (source == markerPath) Fire("after", afterRemoval);
+            },
+            Delete = path =>
+            {
+                if (path == markerPath) Fire("before", beforeRemoval);
+
+                real.Delete(path);
+
+                if (path == markerPath) Fire("after", afterRemoval);
+            }
+        };
+    }
+
     private string WriteMarker(string service, int originalFlag, int ownerPid)
     {
         var path = Path.Combine(_dir, FailureFlagMarker.FilePrefix + service + FailureFlagMarker.FileExtension);
@@ -531,5 +690,5 @@ public sealed class ScmRecoveryReassertionTests : IDisposable
         return (Task)method.Invoke(service, new object[] { ct })!;
     }
 
-    private static string MarkerJson(string service, int originalFlag, int ownerPid) => $"{{\"service\":\"{service}\",\"originalFlag\":{originalFlag},\"ownerPid\":{ownerPid},\"ownerStartUtcTicks\":{OwnerStart.Ticks}}}";
+    private static string MarkerJson(string service, int originalFlag, int ownerPid, DateTime? ownerStart = null) => $"{{\"service\":\"{service}\",\"originalFlag\":{originalFlag},\"ownerPid\":{ownerPid},\"ownerStartUtcTicks\":{(ownerStart ?? OwnerStart).Ticks}}}";
 }
