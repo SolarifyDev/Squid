@@ -31,6 +31,7 @@ namespace Squid.E2ETests.Deployments.BuiltInPackages;
 /// bytes of the file the deployment acquired, compared with the bytes that were pushed.
 /// </summary>
 [Trait("Category", "E2E")]
+[Collection(Squid.E2ETests.Deployments.Publishing.PublishCollections.Pipeline)]
 public class BuiltInFeedDeployE2ETests : IClassFixture<Deployments.DeploymentPipelineFixture<BuiltInFeedDeployE2ETests>>, IDisposable
 {
     private const string ActionName = "Run packaged script";

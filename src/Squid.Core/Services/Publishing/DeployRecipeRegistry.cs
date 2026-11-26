@@ -37,6 +37,8 @@ public sealed class DeployRecipeRegistry : IDeployRecipeRegistry
         return WithScored(selection, facts, forced);
     }
 
+    public IDeployRecipe Find(string kind) => _recipes.FirstOrDefault(r => string.Equals(r.Kind, kind?.Trim(), StringComparison.OrdinalIgnoreCase));
+
     private RecipeSelection WithScored(RecipeSelection selection, PackageFacts facts, IDeployRecipe forced)
     {
         var scored = _recipes.Select(r => (Recipe: r, Match: r.Match(facts))).ToList();

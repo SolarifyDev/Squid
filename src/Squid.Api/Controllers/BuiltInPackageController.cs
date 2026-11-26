@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Squid.Message.Commands.BuiltInPackages;
+using Squid.Message.Commands.Publishing;
 using Squid.Message.Requests.BuiltInPackages;
 using Squid.Message.Requests.Publishing;
 
@@ -65,6 +66,19 @@ public class BuiltInPackageController(IMediator mediator) : ControllerBase
     public async Task<IActionResult> GetRecipeRecommendationsAsync([FromQuery] GetRecipeRecommendationsRequest request, CancellationToken ct)
     {
         var response = await mediator.RequestAsync<GetRecipeRecommendationsRequest, GetRecipeRecommendationsResponse>(request, ct).ConfigureAwait(false);
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// Publishes a stored version as an app: picks the recipe, creates (or reuses) the package's project and process, creates the release and starts the deployment.
+    /// Needs <c>FeedView</c>, <c>ProjectCreate</c>, <c>ProcessEdit</c>, <c>ReleaseCreate</c> and <c>DeploymentCreate</c>.
+    /// </summary>
+    [HttpPost("packages/publish")]
+    [ProducesResponseType(StatusCodes.Status200OK, Type = typeof(PublishPackageResponse))]
+    public async Task<IActionResult> PublishPackageAsync([FromBody] PublishPackageCommand command, CancellationToken ct)
+    {
+        var response = await mediator.SendAsync<PublishPackageCommand, PublishPackageResponse>(command, ct).ConfigureAwait(false);
 
         return Ok(response);
     }

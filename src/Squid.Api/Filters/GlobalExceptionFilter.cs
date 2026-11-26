@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 using Serilog;
 using Squid.Core.Services.Authorization;
 using Squid.Core.Services.Authorization.Exceptions;
+using Squid.Core.Services.DeploymentExecution.Exceptions;
 using Squid.Core.Services.Deployments.ExternalFeeds.Exceptions;
 using Squid.Core.Services.Deployments.ServerTask.Exceptions;
 using Squid.Core.Services.Deployments.Variables.Exceptions;
@@ -11,6 +12,7 @@ using Squid.Core.Services.Machines.Exceptions;
 using Squid.Core.Services.OctopusImport.Exceptions;
 using Squid.Core.Services.Packages.BuiltIn.Exceptions;
 using Squid.Core.Services.Packages.Storage.Exceptions;
+using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Core.Services.OctopusImport.Rest;
 using Squid.Core.Services.Packages.Versioning.Exceptions;
 using Squid.Message.Response;
@@ -70,6 +72,14 @@ public class GlobalExceptionFilter : IExceptionFilter
             BuiltInFeedDeletionException => HttpStatusCode.Conflict,
             BuiltInFeedTypeChangeException => HttpStatusCode.Conflict,
             BuiltInFeedCreationException => HttpStatusCode.Conflict,
+            DeploymentValidationException => HttpStatusCode.BadRequest,
+            RecipeInputInvalidException => HttpStatusCode.BadRequest,
+            PublishFactsMissingException => HttpStatusCode.Conflict,
+            PublishRecipeUnknownException => HttpStatusCode.BadRequest,
+            PublishNoRecipeFitsException => HttpStatusCode.BadRequest,
+            PublishDefaultsMissingException => HttpStatusCode.BadRequest,
+            PublishProjectNameConflictException => HttpStatusCode.Conflict,
+            PublishReleaseVersionExistsException => HttpStatusCode.Conflict,
             PackageStoreConcurrentChangeException => HttpStatusCode.Conflict,
             InvalidPackageBlobKeyException => HttpStatusCode.BadRequest,
             PackageBlobNotFoundException => HttpStatusCode.NotFound,
