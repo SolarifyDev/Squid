@@ -12,6 +12,9 @@ public class PlanApplication
 
     public string PackageId { get; set; }
 
+    /// <summary>The version being published. When the project already has a release of it, the process is left as that release was made with it.</summary>
+    public string PackageVersion { get; set; }
+
     public string RecipeKind { get; set; }
 
     public string ProjectName { get; set; }

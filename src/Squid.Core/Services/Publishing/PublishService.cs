@@ -18,7 +18,7 @@ public interface IPublishService : IScopedDependency
 {
     /// <summary>
     /// Publishes one stored version of a built-in package as an app: chooses the recipe, renders its plan, applies it to the package's project, creates the release that selects
-    /// this version and starts the deployment. Publishing the same package again reuses the project; a version published twice reuses its release.
+    /// this version and starts the deployment. Publishing the same package again reuses the project; a version published twice (or promoted to another environment) reuses its release, which keeps the process it was made with.
     /// </summary>
     Task<PublishPackageResponseData> PublishAsync(PublishPackageCommand command, CancellationToken ct);
 }
@@ -95,6 +95,7 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
             FeedId = _ctx.FeedId,
             EnvironmentId = _ctx.Command.EnvironmentId,
             PackageId = _ctx.Package.PackageId,
+            PackageVersion = _ctx.Package.Version,
             RecipeKind = _ctx.Recipe.Kind,
             ProjectName = _ctx.Command.ProjectName,
             ProjectGroupId = _ctx.Command.ProjectGroupId,
@@ -110,9 +111,6 @@ public sealed class PublishService(IBuiltInFeedLocator feeds, IBuiltInPackageDat
     {
         var applied = _ctx.Applied;
         var existing = await releaseData.GetReleaseByVersionAsync(applied.ProjectId, applied.ChannelId, _ctx.Package.Version, ct).ConfigureAwait(false);
-
-        if (existing != null && applied.ProcessUpdated)
-            throw new PublishReleaseVersionExistsException(applied.ProjectId, _ctx.Package.Version);
 
         if (existing != null && applied.InputsChanged)
             await releases.UpdateReleaseVariableAsync(new UpdateReleaseVariableCommand { SpaceId = _ctx.Package.SpaceId, ReleaseId = existing.Id }, ct).ConfigureAwait(false);

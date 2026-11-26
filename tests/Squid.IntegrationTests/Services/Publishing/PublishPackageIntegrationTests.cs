@@ -13,7 +13,10 @@ using Squid.Core.Services.Publishing;
 using Squid.Core.Services.Publishing.Exceptions;
 using Squid.Message.Commands.BuiltInPackages;
 using Squid.Message.Commands.PackageStorage;
+using Squid.Core.Services.Deployments.Process.Step;
+using Squid.Message.Commands.Deployments.Process.Step;
 using Squid.Message.Commands.Deployments.Variable;
+using Squid.Message.Models.Deployments.Process;
 using Squid.Message.Commands.Publishing;
 using Squid.Message.Models.Deployments.Variable;
 using Environment = Squid.Core.Persistence.Entities.Deployments.Environment;
@@ -216,7 +219,8 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         var stepProperties = await QueryAsync(r => r.QueryNoTracking<DeploymentStepProperty>(p => steps.Select(s => s.Id).Contains(p.StepId)).ToListAsync());
 
         actions.Select(a => a.ActionType).ShouldBe(["Squid.TentaclePackage", "Squid.Script"]);
-        stepProperties.ShouldAllBe(p => p.PropertyName == "Squid.Action.TargetRoles" && p.PropertyValue == Role);
+        stepProperties.Where(p => p.PropertyName == "Squid.Action.TargetRoles").ShouldAllBe(p => p.PropertyValue == Role);
+        stepProperties.Where(p => p.PropertyName == PublishedProjectMarker.OwnedStepProperty).Select(p => p.StepId).ShouldBe(steps.Select(x => x.Id), ignoreOrder: true, "publishing marks the steps it owns");
         properties.Where(p => p.ActionId == actions[0].Id).ShouldContain(p => p.PropertyName == "Squid.Action.Package.PackageId" && p.PropertyValue == PackageId);
         var script = properties.Single(p => p.ActionId == actions[1].Id && p.PropertyName == "Squid.Action.Script.ScriptBody").PropertyValue;
 
@@ -305,14 +309,20 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
     }
 
     [Fact]
-    public async Task ARecipeChange_ForAVersionThatAlreadyHasARelease_IsRefused_NotSilentlyServedTheOldProcess()
+    public async Task ARecipeChange_ForAVersionThatAlreadyHasARelease_DeploysThatRelease_AndLeavesTheProcessAlone()
     {
         var space = await SetUpAsync();
 
         await PushAsync(space.SpaceId, Zip(("index.html", "x"), ("Dockerfile", "FROM busybox\nEXPOSE 8080\n")), "1.0.0");
-        await PublishAsync(space, "1.0.0", recipe: "static-site");
 
-        await Should.ThrowAsync<PublishReleaseVersionExistsException>(() => PublishAsync(space, "1.0.0", recipe: "dockerfile"));
+        var first = await PublishAsync(space, "1.0.0", recipe: "static-site");
+        var stepsBefore = await StepNamesAsync(first.ProjectId);
+
+        var again = await PublishAsync(space, "1.0.0", recipe: "dockerfile");
+
+        again.ReleaseId.ShouldBe(first.ReleaseId, "the release exists and is what gets deployed");
+        again.ProcessUpdated.ShouldBeFalse();
+        (await StepNamesAsync(first.ProjectId)).ShouldBe(stepsBefore);
     }
 
     [Fact]
@@ -364,8 +374,9 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
     {
         var space = await SetUpAsync();
 
-        await PushAsync(space.SpaceId, Zip(("index.html", "x"), ("Dockerfile", "FROM busybox\nEXPOSE 8080\n")), "1.0.0");
-        await PublishAsync(space, "1.0.0", recipe: "static-site");
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+        await PushAsync(space.SpaceId, DockerfileApp(), "1.1.0");
+        await PublishAsync(space, "1.0.0");
 
         var project = (await QueryAsync(r => r.QueryNoTracking<Project>().SingleAsync()));
         var stepsBefore = (await StepsAsync(project.DeploymentProcessId)).Select(s => s.Id).ToList();
@@ -374,7 +385,8 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            await Should.ThrowAsync<PublishReleaseVersionExistsException>(() => PublishAsync(space, "1.0.0", recipe: "dockerfile"), $"attempt {attempt + 1}: a retry must be refused the same way, not silently deploy the old release");
+            // A new recipe and a role the process does not target: the plan would be rebuilt, then the roles refuse it.
+            await Should.ThrowAsync<PublishTargetRolesConflictException>(() => PublishAsync(space, "1.1.0", recipe: "dockerfile", role: "other"), $"attempt {attempt + 1}: a retry must be refused the same way");
 
             var after = await QueryAsync(r => r.QueryNoTracking<Project>().SingleAsync());
 
@@ -531,6 +543,103 @@ public class PublishPackageIntegrationTests : TestBase, IDisposable
         await Should.ThrowAsync<VariableSetVersionConflictException>(() => Run<IVariableService, VariableSetDto>(s => s.UpdateVariableSetAsync(stale, CancellationToken.None)));
 
         (await InputVariablesAsync(first.ProjectId)).Select(v => v.Value).OrderBy(v => v).ShouldBe(["8080", "8081"]);
+    }
+
+    private async Task AddHandStepAsync(int processId, string name, int? atOrder = null)
+    {
+        var script = new CreateOrUpdateDeploymentActionModel { Name = name, ActionType = "Squid.Script", IsRequired = true, Properties = [new ActionPropertyModel { PropertyName = "Squid.Action.Script.ScriptBody", PropertyValue = "echo hand" }] };
+        var step = new CreateOrUpdateDeploymentStepModel { Name = name, StepType = "Action", Condition = "Success", StartTrigger = "StartAfterPrevious", PackageRequirement = "LetSquidDecide", IsRequired = true, Properties = [new StepPropertyModel { PropertyName = "Squid.Action.TargetRoles", PropertyValue = Role }], Actions = [script] };
+        var command = new CreateDeploymentStepCommand { SpaceId = 0, ProcessId = processId, Step = step };
+
+        if (atOrder is { } order)
+            await Run<IDeploymentStepService, Squid.Message.Events.Deployments.Step.DeploymentStepCreatedEvent>(s => s.InsertDeploymentStepAsync(command, order, CancellationToken.None));
+        else
+            await Run<IDeploymentStepService, Squid.Message.Events.Deployments.Step.DeploymentStepCreatedEvent>(s => s.CreateDeploymentStepAsync(command, CancellationToken.None));
+    }
+
+    private async Task<List<string>> StepNamesAsync(int projectId) => (await StepsAsync((await ProjectAsync(projectId)).DeploymentProcessId)).Select(s => s.Name).ToList();
+
+    private Task<List<string>> StepRolesAsync(int processId)
+    {
+        return QueryAsync(async r =>
+        {
+            var stepIds = await r.QueryNoTracking<DeploymentStep>(s => s.ProcessId == processId).Select(s => s.Id).ToListAsync();
+
+            return await r.QueryNoTracking<DeploymentStepProperty>(p => stepIds.Contains(p.StepId) && p.PropertyName == "Squid.Action.TargetRoles").Select(p => p.PropertyValue).Distinct().ToListAsync();
+        });
+    }
+
+    [Fact]
+    public async Task AReplan_KeepsTheStepsAUserAddedByHand_InTheirPlaces()
+    {
+        var space = await SetUpAsync();
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+        await PushAsync(space.SpaceId, DockerfileApp(), "1.1.0");
+
+        var first = await PublishAsync(space, "1.0.0");
+        var processId = (await ProjectAsync(first.ProjectId)).DeploymentProcessId;
+
+        await AddHandStepAsync(processId, "Notify");
+        await AddHandStepAsync(processId, "Pre-check", atOrder: 0);
+
+        (await StepNamesAsync(first.ProjectId)).ShouldBe(["Pre-check", "Deploy package", "Serve site", "Notify"]);
+
+        var changed = await PublishAsync(space, "1.1.0");
+
+        changed.ProcessUpdated.ShouldBeTrue();
+        (await StepNamesAsync(first.ProjectId)).ShouldBe(["Pre-check", "Deploy package", "Build and run", "Notify"], "only the steps publishing owns are replaced");
+    }
+
+    [Fact]
+    public async Task PromotingAnExistingVersion_AfterThePlanChanged_DeploysItsReleaseToTheOtherEnvironment()
+    {
+        var space = await SetUpAsync();
+        var staging = await AddEnvironmentAsync(space, "Staging");
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+
+        var first = await PublishAsync(space, "1.0.0", port: 8080);
+
+        // What a Squid upgrade that edits a script does to the recorded fingerprint.
+        await Run<IRepository, IUnitOfWork>(async (repository, unitOfWork) =>
+        {
+            var project = await repository.Query<Project>(p => p.Id == first.ProjectId).SingleAsync();
+
+            project.Json = new PublishedProjectMarker(PackageId, "static-site", "from-an-older-squid").ToJson(project.Json);
+
+            await unitOfWork.SaveChangesAsync();
+        });
+
+        var stepsBefore = (await StepsAsync((await ProjectAsync(first.ProjectId)).DeploymentProcessId)).Select(s => s.Id).ToList();
+
+        var promoted = await PublishAsync(staging, "1.0.0", port: 8081);
+
+        promoted.ReleaseId.ShouldBe(first.ReleaseId, "promoting is deploying the release that exists");
+        promoted.ProcessUpdated.ShouldBeFalse();
+        promoted.DeploymentId.ShouldNotBe(first.DeploymentId);
+        (await StepsAsync((await ProjectAsync(first.ProjectId)).DeploymentProcessId)).Select(s => s.Id).ShouldBe(stepsBefore, "the process the release was built with is not rewritten by a promotion");
+        (await CountAsync<ReleaseEntity>()).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PublishingWithRolesTheProcessDoesNotTarget_IsRefused_AndOtherEnvironmentsKeepTheirRoles()
+    {
+        var space = await SetUpAsync();
+        var staging = await AddEnvironmentAsync(space, "Staging");
+
+        await PushAsync(space.SpaceId, StaticSite(), "1.0.0");
+        await PushAsync(space.SpaceId, StaticSite("two"), "1.0.1");
+
+        var first = await PublishAsync(space, "1.0.0");
+        var processId = (await ProjectAsync(first.ProjectId)).DeploymentProcessId;
+
+        var ex = await Should.ThrowAsync<PublishTargetRolesConflictException>(() => PublishAsync(staging, "1.0.1", role: "prod-web"));
+
+        ex.Message.ShouldContain("prod-web");
+        ex.Message.ShouldContain(Role);
+        (await StepRolesAsync(processId)).ShouldBe([Role], "a publish for one environment must not retarget the steps every environment shares");
+        (await CountAsync<ReleaseEntity>()).ShouldBe(1, "the refused publish kept nothing");
     }
 
     [Fact]

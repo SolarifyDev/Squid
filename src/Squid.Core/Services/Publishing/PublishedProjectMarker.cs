@@ -12,6 +12,9 @@ public sealed record PublishedProjectMarker(string PackageId, string Recipe, str
 {
     public const string JsonKey = "squidPublish";
 
+    /// <summary>The step property that marks a process step as built by publishing; steps without it were added by a person and are never replaced by a publish.</summary>
+    public const string OwnedStepProperty = "Squid.Publish.Owned";
+
     public string ToJson() => ToJson(null);
 
     /// <summary>
