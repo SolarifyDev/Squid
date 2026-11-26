@@ -357,6 +357,33 @@ public class ScriptProtocolDowngradeTests
         _events.ShouldNotContain(e => e.StartsWith("V1.Cancel"));
     }
 
+    // The observer's mid-run cancel runs with the script's own timeout, not the cancel budget, and must still cut a V2 cancel hanging on a rolled-back agent at
+    // its share of the one deadline (60s budget + 5s grace - (10s refresh + 5s V1 reserve) = 50s), so the refresh and the V1 cancel keep their reserve. Driven
+    // through the real strategy and observer; the budget is long so the retry handler's own real-time attempt bound cannot end the hang first.
+    [Fact]
+    public async Task LiveRunCancel_OverV2_HangingOnARolledBackAgent_IsCutAtItsShare_AndRetriedOverV1()
+    {
+        var clock = new VirtualClock();
+        _refresher.AgentAnswer = V1OnlyAgent();
+        _v2.CancelAnswer = new TaskCompletionSource<ScriptStatusResponseV2>().Task;
+
+        using var cts = new CancellationTokenSource();
+        _v2.OnGetStatus = () => cts.Cancel();
+
+        var run = Strategy(time: clock, cancelBudget: TimeSpan.FromSeconds(60)).ExecuteScriptAsync(Request(), cts.Token);
+
+        await WaitUntilAsync(() => clock.ActiveTimers >= 2);
+        clock.Advance(TimeSpan.FromSeconds(50) - TimeSpan.FromMilliseconds(1));
+        _events.ShouldNotContain(e => e.StartsWith("Caps.Refresh"), "the V2 cancel still has a tick of its share left");
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+
+        await Should.ThrowAsync<OperationCanceledException>(() => run).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var ticket = _v2.StartCommands.ShouldHaveSingleItem().ScriptTicket.TaskId;
+        _events.ShouldContain($"V1.Cancel:{ticket}");
+    }
+
     // The observer binds stop-retrying (and its liveness handling) only on a client that is IStopRetryingAware: the cancel wrapper must stay transparent to that.
     [Fact]
     public void TheCancelFallbackWrapper_ForwardsTheStopRetryingBindingToTheClientItWraps()
@@ -399,15 +426,23 @@ public class ScriptProtocolDowngradeTests
         for (var i = 0; i < 100; i++) _v2.StartFailuresBeforeRunning.Enqueue(failure);
     }
 
-    private HalibutMachineExecutionStrategy Strategy(FakeClientFactories factories = null)
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        while (!condition())
+            await Task.Delay(1, bound.Token);
+    }
+
+    private HalibutMachineExecutionStrategy Strategy(FakeClientFactories factories = null, TimeProvider time = null, TimeSpan? cancelBudget = null)
     {
         factories ??= _factories;
 
-        var retry = new RpcRetryHandler(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), () => _now, (d, _) => { _now += d; return Task.CompletedTask; });
+        var retry = new RpcRetryHandler(TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), cancelBudget ?? TimeSpan.FromSeconds(1), () => _now, (d, _) => { _now += d; return Task.CompletedTask; });
         var observer = new HalibutScriptObserver(new ObserverSettings { InitialPollIntervalMs = 1, MaxPollIntervalMs = 2 });
         var selector = new ScriptDispatcherSelector(new IScriptDispatcher[] { new V1ScriptDispatcher(factories), new V2ScriptDispatcher(factories) }, _cache);
 
-        return new HalibutMachineExecutionStrategy(factories, new CalamariPayloadBuilder(new Moq.Mock<IYamlNuGetPacker>().Object), observer, new HalibutSetting(), _breakers, inFlightStore: _store, rpcRetry: retry, dispatcherSelector: selector, capabilitiesRefresher: _refresher);
+        return new HalibutMachineExecutionStrategy(factories, new CalamariPayloadBuilder(new Moq.Mock<IYamlNuGetPacker>().Object), observer, new HalibutSetting(), _breakers, inFlightStore: _store, rpcRetry: retry, dispatcherSelector: selector, capabilitiesRefresher: _refresher, time: time);
     }
 
     private ScriptExecutionRequest Request() => new()

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Halibut;
@@ -176,8 +177,10 @@ public class CancelFallbackReserveTests
 
     // ── The cut is a downgrade signal only when the agent says so ────────────
 
+    // A healthy V2 agent whose cancel answers after the V2 share (12s of the 25s) must still be cancelled over V2: the share only decides WHEN to ask the agent,
+    // and an agent that still advertises V2 is waited on, on the SAME call, until the one deadline. No second V2 call, no V1.
     [Fact]
-    public async Task WhenTheV2ShareRunsOut_ButTheAgentStillAdvertisesV2_TheCancelEndsWithoutV1()
+    public async Task WhenTheV2ShareRunsOut_ButTheAgentStillAdvertisesV2_TheSameV2CancelIsAwaitedToTheOneDeadline_AndItsAnswerWins()
     {
         _refresher.AgentAnswer = V2Agent();
 
@@ -186,22 +189,63 @@ public class CancelFallbackReserveTests
         _clock.Advance(DefaultV2Share);
         await _refresher.Started.WaitAsync(Bound);
 
-        await Should.ThrowAsync<OperationCanceledException>(() => cancel).WaitAsync(Bound);
+        _clock.Advance(TimeSpan.FromSeconds(2));
+        cancel.IsCompleted.ShouldBeFalse("the agent still speaks V2: its cancel is still the one to wait for");
+
+        _v2Hangs.SetResult(Status());
+
+        (await cancel.WaitAsync(Bound)).Version.ShouldBe(ScriptProtocolVersion.V2);
         _v1Cancels.ShouldBe(0);
+        _v2.Verify(s => s.CancelAsync(It.IsAny<ScriptTicket>()), Times.Once());
     }
 
-    [Fact]
-    public async Task WhenTheV2ShareRunsOut_AndTheAgentDoesNotAnswer_TheCancelEndsWithoutV1()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WhenTheV2ShareRunsOut_AndTheAgentStillAdvertisesV2OrDoesNotAnswer_TheCancelEndsAtTheOneDeadline_WithoutV1(bool agentAnswers)
     {
-        _refresher.AgentAnswer = null;
+        _refresher.AgentAnswer = agentAnswers ? V2Agent() : null;
 
         var cancel = StartCancel(withFallback: true);
 
         _clock.Advance(DefaultV2Share);
         await _refresher.Started.WaitAsync(Bound);
 
+        _clock.Advance(CancelBudget + Grace - DefaultV2Share - Ms);
+        cancel.IsCompleted.ShouldBeFalse("nothing licenses ending the V2 cancel before the one deadline");
+
+        _clock.Advance(Ms);
         await Should.ThrowAsync<OperationCanceledException>(() => cancel).WaitAsync(Bound);
         _v1Cancels.ShouldBe(0);
+        _v2.Verify(s => s.CancelAsync(It.IsAny<ScriptTicket>()), Times.Once());
+    }
+
+    // After the agent withdrew V2 the V2 cancel is left behind for the V1 one; when it fails later, nothing may surface as an unobserved task exception.
+    [Fact]
+    public async Task AV2CancelLeftBehindForV1_ThatFailsLater_HasItsFailureObserved()
+    {
+        var failure = new HalibutClientException($"late V2 cancel failure {Guid.NewGuid():N}");
+        var unobserved = 0;
+
+        void OnUnobserved(object sender, UnobservedTaskExceptionEventArgs e)
+        {
+            if (e.Exception.Flatten().InnerExceptions.Any(x => ReferenceEquals(x, failure))) Interlocked.Increment(ref unobserved);
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+
+        try
+        {
+            await CancelOverV1ThenFailTheV2CancelLeftBehindAsync(failure);
+
+            CollectAbandonedTasks();
+
+            Volatile.Read(ref unobserved).ShouldBe(0, "the V2 cancel left behind must have its failure observed");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
     }
 
     [Fact]
@@ -284,6 +328,36 @@ public class CancelFallbackReserveTests
         var retry = new RpcRetryHandler(CancelBudget, CancelBudget, CancelBudget, () => _clock.GetUtcNow(), (d, ct) => Task.Delay(d, _clock, ct));
 
         return new HalibutInFlightScriptCanceller(store.Object, machines.Object, selector, new HalibutScriptObserver(), retry, Grace, refresher, _clock);
+    }
+
+    // Its own session and answer, referenced by nothing once it returns, so the V2 cancel task can be collected and its finalizer can report an unobserved failure.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private async Task CancelOverV1ThenFailTheV2CancelLeftBehindAsync(Exception failure)
+    {
+        _refresher.AgentAnswer = V1Only();
+
+        var v2Answer = new TaskCompletionSource<AgentScriptStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var v2 = new Mock<IScriptAgentSession>();
+        v2.SetupGet(s => s.Version).Returns(ScriptProtocolVersion.V2);
+        v2.Setup(s => s.CancelAsync(It.IsAny<ScriptTicket>())).Returns(v2Answer.Task);
+
+        var cancel = ProtocolDowngrade.CancelAsync(v2.Object, Context(withFallback: true), Target(), CancellationToken.None);
+
+        _clock.Advance(DefaultV2Share);
+        await _refresher.Started.WaitAsync(Bound);
+
+        (await cancel.WaitAsync(Bound)).Version.ShouldBe(ScriptProtocolVersion.V1);
+
+        v2Answer.SetException(failure);
+    }
+
+    private static void CollectAbandonedTasks()
+    {
+        for (var i = 0; i < 3; i++)
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)
